@@ -26,6 +26,15 @@ test('deep-linking /settings lands on the Settings rail', async ({ app }) => {
   await expect(window).toHaveURL(/\/settings/);
 });
 
+test('global Project settings opens its picker without a selected project', async ({ app }) => {
+  const { window } = app;
+  const origin = new URL(window.url()).origin;
+  await window.goto(`${origin}/settings/project`);
+  await expect(window.getByRole('heading', { name: 'Project settings' })).toBeVisible({ timeout: 15_000 });
+  await expect(window.getByRole('button', { name: 'Project' })).toBeVisible();
+  await expect(window).toHaveURL(/\/settings\/project$/);
+});
+
 test('/extensions redirects to the installed plugins catalogue', async ({ app }) => {
   const { window } = app;
   const origin = new URL(window.url()).origin;
@@ -79,6 +88,10 @@ test('a project-locked window cannot leave /projects/:id', async ({ app }) => {
     await expect(pw).toHaveURL(new RegExp(`/projects/${projectId}`), { timeout: 15_000 });
     await expect(pw).toHaveURL(/projectId=/);
     await expect(pw.locator('.project-scoped-nav')).toBeVisible({ timeout: 15_000 });
+
+    await pw.locator('.project-scoped-nav').getByRole('link', { name: 'Settings' }).click();
+    await expect(pw).toHaveURL(new RegExp(`/projects/${projectId}/settings`), { timeout: 15_000 });
+    await expect(pw.getByRole('heading', { name: 'Project settings' })).toBeVisible();
 
     const origin = new URL(pw.url()).origin;
     await pw.goto(`${origin}/inbox`);

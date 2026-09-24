@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { useThreadSecondaryPanel } from './useThreadSecondaryPanel.js';
 import { closableTabsToContract } from './threadTabsContract.js';
+import { persistSecondaryPanel, emptySecondaryPanelState } from './threadSecondaryPanelState.js';
 
 const { tabs, updateTabs, onTabs } = vi.hoisted(() => ({
   tabs: vi.fn(), updateTabs: vi.fn(), onTabs: vi.fn(),
@@ -16,6 +17,113 @@ beforeEach(() => {
   onTabs.mockReset().mockReturnValue(() => {});
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+it('hydrates the revision for cached tabs without overwriting local navigation', async () => {
+  persistSecondaryPanel('thread-a', { ...emptySecondaryPanelState(), tabs: [{ id: 'local', kind: 'new-tab', title: 'New Tab' }] });
+  const initial = Promise.withResolvers<unknown>();
+  tabs.mockReturnValueOnce(initial.promise);
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  await act(async () => vi.advanceTimersByTime(1000));
+  expect(updateTabs).not.toHaveBeenCalled();
+  await act(async () => initial.resolve({ revision: 208, tabs: [] }));
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(view.result.current.state.tabs[0].id).toBe('local');
+  expect(updateTabs).toHaveBeenCalledWith('thread-a', { expectedRevision: 208, tabs: [{ id: 'local', kind: 'new-tab' }] });
+});
+
+it('refreshes and retries a stale revision once without losing the local edit', async () => {
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  await act(async () => {});
+  tabs.mockResolvedValue({ revision: 9, tabs: [] });
+  updateTabs.mockRejectedValueOnce(Object.assign(Error('conflict'), { status: 409 }));
+  act(() => view.result.current.openNewTab());
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(updateTabs).toHaveBeenCalledTimes(2);
+  expect(updateTabs.mock.calls[1][1]).toMatchObject({ expectedRevision: 9, tabs: [{ kind: 'new-tab' }] });
+  expect(view.result.current.state.tabs).toHaveLength(1);
+});
+
+it('bounds repeated conflicts and does not echo server updates back to the server', async () => {
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  await act(async () => {});
+  act(() => onTabs.mock.calls[0][0]({ threadId: 'thread-a', revision: 4, tabs: [{ kind: 'new-tab', id: 'remote' }] }));
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(updateTabs).not.toHaveBeenCalled();
+  updateTabs.mockRejectedValue(Object.assign(Error('conflict'), { status: 409 }));
+  tabs.mockResolvedValue({ revision: 5, tabs: [] });
+  act(() => view.result.current.addTab({ kind: 'plugin', title: 'Record', moduleId: 'crm', actionId: 'record' }));
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(updateTabs).toHaveBeenCalledTimes(2);
+  await act(async () => vi.advanceTimersByTime(10000));
+  expect(updateTabs).toHaveBeenCalledTimes(2);
+});
+
+it('waits for the new owner revision before writing cached tabs', async () => {
+  const view = renderHook(({ owner }) => useThreadSecondaryPanel(owner), { initialProps: { owner: 'thread-a' } });
+  await act(async () => {});
+  const initial = Promise.withResolvers<unknown>();
+  tabs.mockReturnValueOnce(initial.promise);
+  view.rerender({ owner: 'thread-b' });
+  act(() => view.result.current.openNewTab());
+  await act(async () => vi.advanceTimersByTime(1000));
+  expect(updateTabs).not.toHaveBeenCalled();
+  await act(async () => initial.resolve({ revision: 6, tabs: [] }));
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(updateTabs).toHaveBeenCalledWith('thread-b', expect.objectContaining({ expectedRevision: 6 }));
+});
+
+it('keeps a newer SSE revision when a delayed hydration response arrives', async () => {
+  const initial = Promise.withResolvers<unknown>();
+  tabs.mockReturnValueOnce(initial.promise);
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  act(() => onTabs.mock.calls[0][0]({ threadId: 'thread-a', revision: 8, tabs: [{ id: 'latest', kind: 'new-tab' }] }));
+  await act(async () => initial.resolve({ revision: 3, tabs: [] }));
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(view.result.current.state.tabs[0].id).toBe('latest');
+  expect(updateTabs).not.toHaveBeenCalled();
+});
+
+it('rehydrates when returning to a thread before the next thread finished loading', async () => {
+  const view = renderHook(({ owner }) => useThreadSecondaryPanel(owner), { initialProps: { owner: 'thread-a' } });
+  await act(async () => {});
+  const pendingB = Promise.withResolvers<unknown>();
+  const pendingA = Promise.withResolvers<unknown>();
+  tabs.mockReturnValueOnce(pendingB.promise).mockReturnValueOnce(pendingA.promise);
+  view.rerender({ owner: 'thread-b' });
+  view.rerender({ owner: 'thread-a' });
+  act(() => view.result.current.openNewTab());
+  await act(async () => vi.advanceTimersByTime(1000));
+  expect(updateTabs).not.toHaveBeenCalled();
+  await act(async () => pendingB.resolve({ revision: 99, tabs: [] }));
+  await act(async () => pendingA.resolve({ revision: 7, tabs: [] }));
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(updateTabs).toHaveBeenCalledWith('thread-a', expect.objectContaining({ expectedRevision: 7 }));
+});
+
+it('does not retry a conflict when the server already has the desired tabs', async () => {
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  await act(async () => {});
+  act(() => view.result.current.openNewTab());
+  tabs.mockResolvedValue({ revision: 3, tabs: closableTabsToContract(view.result.current.state.tabs) });
+  updateTabs.mockRejectedValueOnce(Object.assign(Error('conflict'), { status: 409 }));
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(updateTabs).toHaveBeenCalledOnce();
+});
+
+it('saves only the latest pending edit after refreshing a conflicting revision', async () => {
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  await act(async () => {});
+  const refresh = Promise.withResolvers<unknown>();
+  tabs.mockReturnValueOnce(refresh.promise);
+  updateTabs.mockRejectedValueOnce(Object.assign(Error('conflict'), { status: 409 }));
+  act(() => view.result.current.openNewTab());
+  await act(async () => vi.advanceTimersByTime(300));
+  act(() => view.result.current.addTab({ kind: 'plugin', title: 'Newer', moduleId: 'crm', actionId: 'record' }));
+  await act(async () => vi.advanceTimersByTime(300));
+  await act(async () => refresh.resolve({ revision: 5, tabs: [] }));
+  expect(updateTabs).toHaveBeenCalledTimes(2);
+  expect(updateTabs.mock.calls[1][1]).toMatchObject({ expectedRevision: 5, tabs: [{ title: 'Newer' }] });
+});
 
 it('preserves a newly opened plugin panel when an earlier tab write is echoed', async () => {
   const view = renderHook(() => useThreadSecondaryPanel('thread-a'));

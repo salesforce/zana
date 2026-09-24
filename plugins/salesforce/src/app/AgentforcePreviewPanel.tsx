@@ -17,6 +17,8 @@ import { OrgPicker } from './OrgPicker.js';
 import { fetchConnectedOrg } from './org-rpc.js';
 import { orgSessionLabel } from '../../lib/org-session.js';
 import type { PublicOrgView } from '../../lib/types.js';
+import { AGENTFORCE_STUDIO_STYLES } from './agentforce-studio-styles.js';
+import { Bot } from './components/icons.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -65,7 +67,7 @@ export function AgentforcePreviewPanel(props: {
 
   useEffect(() => {
     let cancelled = false;
-    void callPluginRpc(pluginId, 'agentFiles.list', rpcProject(projectId))
+    void callPluginRpc(pluginId, 'agentFiles.list', rpcProject(projectId, { purpose: 'preview' }))
       .then((listed) => {
         if (cancelled) return;
         const next = listed as { ok?: boolean; files?: PlaygroundFileRef[] };
@@ -164,8 +166,9 @@ export function AgentforcePreviewPanel(props: {
   return (
     <div className="sf-as" style={PANEL_ROOT} data-testid="salesforce-agentforce-preview">
       <style>{AGENTFORCE_PANEL_STYLES}</style>
+      <style>{AGENTFORCE_STUDIO_STYLES}</style>
       <header className="sf-as-header">
-        <span className="sf-as-brand">Preview</span>
+        <span className="af-brand-mark"><Bot /></span><span className="sf-as-brand">Org preview</span>
         <label className="sf-as-crumb">
           <span className="sf-as-crumb-seg">{fileLabel}</span>
           <select
@@ -228,27 +231,29 @@ export function AgentforcePreviewPanel(props: {
         <div className="sf-as-banner">
           {mode === 'live'
             ? `Live Test runs real actions on ${orgSessionLabel(org) ?? 'the selected org'}. Confirm before starting.`
-            : 'Simulate uses mock actions. It does not mutate the org.'}
+            : 'Local bundles use simulated actions. Published agents always use live actions and require confirmation.'}
         </div>
       )}
       <div className="sf-as-body" style={{ flexDirection: 'column' }}>
         <div
           data-testid="salesforce-agentforce-preview-transcript"
-          style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'grid', gap: 8 }}
+          className="af-transcript"
+          role="log"
+          aria-label="Org preview conversation"
+          style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 20 }}
         >
           {turns.length === 0 ? (
-            <p className="sf-as-empty">Start a preview, then send an utterance.</p>
+            <div className="af-welcome"><span className="af-welcome-orbit"><Bot /></span><h3>Try your connected agent</h3><p>Start a preview, then ask a question. Local authoring bundles use simulated actions by default.</p><span className="af-welcome-tag">{fileLabel}</span></div>
           ) : (
             turns.map((turn) => (
-              <p key={turn.id} data-preview-role={turn.role} style={{ margin: 0 }}>
-                {turn.text}
-              </p>
+              turn.role === 'system' ? <p key={turn.id} data-preview-role={turn.role} className="af-caption">{turn.text}</p> :
+              <article key={turn.id} data-preview-role={turn.role} className={`af-message is-${turn.role}`}><div className="af-message-meta"><strong>{turn.role === 'agent' ? 'Agentforce' : 'You'}</strong></div><div className="af-message-text">{turn.text}</div></article>
             ))
           )}
         </div>
         <form
           onSubmit={(event) => void send(event)}
-          style={{ display: 'flex', gap: 8, padding: 12, borderTop: '1px solid var(--border, #2c313a)' }}
+          className="af-composer"
         >
           <input
             aria-label="Agentforce preview utterance"

@@ -12,6 +12,7 @@
 // picker's role list is driven separately by the ACP `mode` configOptions
 // (FAKE_ACP_MODE_OPTIONS), so a spec advertises the same names as session modes.
 const args = process.argv.slice(2);
+const { existsSync } = await import('node:fs');
 
 if (args.includes('--version')) {
   process.stdout.write('opencode 1.18.10\n');
@@ -29,6 +30,10 @@ if (args[0] === 'debug' && args[1] === 'agent') {
 }
 
 if (args[0] === 'acp') {
+  if (existsSync('.zcc-doc-vault-agent')) {
+    process.env.FAKE_ACP_MODE_CONFIG = '1';
+    process.env.FAKE_ACP_MODE_OPTIONS = 'build:Build,plan:Plan,doc-vault:Doc-Vault';
+  }
   await import('../../../plugins/provider-acp/src/bridge/fake-acp-agent.mjs');
 } else {
   // A native `--agent <role>` pins the agent's OWN model. A forced catalog

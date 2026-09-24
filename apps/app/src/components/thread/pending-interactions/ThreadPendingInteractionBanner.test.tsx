@@ -98,6 +98,79 @@ describe('ThreadPendingInteractionBanner', () => {
     expect(screen.getByText('Expand')).toBeTruthy();
   });
 
+  it('keeps command context in a closed disclosure and session grants visible', () => {
+    const interaction = commandInteraction();
+    if (interaction.payload.subject.kind !== 'command') throw new Error('Expected command');
+    interaction.payload.subject.command = "/bin/zsh -lc 'git push'";
+    interaction.payload.subject.actions = [{ type: 'unknown', command: 'git push' }];
+    interaction.payload.subject.sessionGrant = { network: { enabled: true }, fileSystem: null };
+    const { container } = render(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={interaction} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    const disclosure = container.querySelector('details')!;
+    expect(disclosure.open).toBe(false);
+    expect(disclosure.querySelector('summary')?.textContent).toBe('Details');
+    expect(disclosure.textContent).toContain('/tmp/proj');
+    expect(disclosure.textContent).toContain('git push');
+    expect(screen.getByLabelText('Command').closest('details')).toBeNull();
+    expect(screen.getByText('Needs approval').closest('details')).toBeNull();
+    expect(screen.getByText('Network access').closest('details')).toBeNull();
+    expect(screen.getByRole('toolbar', { name: 'Approval decisions' }).closest('details')).toBeNull();
+  });
+
+  it('omits the disclosure when there are no additional command details', () => {
+    const interaction = commandInteraction();
+    if (interaction.payload.subject.kind !== 'command') throw new Error('Expected command');
+    interaction.payload.subject.cwd = null;
+    const { container } = render(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={interaction} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    expect(container.querySelector('details')).toBeNull();
+    expect(screen.getByLabelText('Command').textContent).toBe('$ git push');
+  });
+
+  it('resets expanded command details for a new approval', () => {
+    const interaction = commandInteraction();
+    const { container, rerender } = render(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={interaction} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    container.querySelector('details')!.open = true;
+    rerender(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={{ ...interaction, id: 'pint_2' }} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    expect(container.querySelector('details')!.open).toBe(false);
+  });
+
+  it.each([true, false])('leaves permission approvals expanded (has permissions: %s)', (hasPermissions) => {
+    const interaction: ApprovalPendingInteraction = {
+      ...commandInteraction(),
+      payload: {
+        kind: 'approval', reason: null, availableDecisions: ['allow_once', 'deny'],
+        subject: {
+          kind: 'permission_grant', itemId: 'permission-1', toolName: null,
+          permissions: { network: hasPermissions ? { enabled: true } : null, fileSystem: null }
+        }
+      }
+    };
+    const { container } = render(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={interaction} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    expect(container.querySelector('.thread-pending-command')).toBeNull();
+    expect(container.querySelector('details')).toBeNull();
+    expect(Boolean(screen.queryByText('Network access'))).toBe(hasPermissions);
+    expect(Boolean(container.querySelector('.thread-pending-banner-details'))).toBe(hasPermissions);
+  });
+
   it('renders a source-thread link and a question form', () => {
     const question = {
       ...commandInteraction(),

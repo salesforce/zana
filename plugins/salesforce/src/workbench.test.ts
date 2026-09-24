@@ -213,7 +213,7 @@ describe("workbench evidence and operations", () => {
     expect(JSON.stringify(result).length).toBeLessThan(65_000);
   });
 
-  it("reads bounded records/logs/metadata and handles invalid input, denial and errors", async () => {
+  it("reads bounded records/logs/metadata without an agent and handles invalid input and API denial", async () => {
     const f = fixture();
     expect(
       await f.run(() =>
@@ -252,9 +252,8 @@ describe("workbench evidence and operations", () => {
       truncated: true,
     });
     f.sdk.confirm.mockResolvedValue({ approved: false, reason: "headless" });
-    await expect(f.service.log({ logId: "07L000000000001" })).rejects.toThrow(
-      "approval",
-    );
+    await expect(f.service.log({ logId: "07L000000000001" })).resolves.toMatchObject({ ok: true });
+    expect(f.sdk.confirm).not.toHaveBeenCalled();
     f.sdk.confirm.mockResolvedValue({ approved: true, reason: "submitted" });
     f.sdk.request.mockResolvedValue({
       org: {} as never,
@@ -328,7 +327,7 @@ describe("workbench evidence and operations", () => {
     f.sdk.confirm.mockResolvedValue({ approved: false, reason: "headless" });
     await expect(
       f.run(() => f.service.report({ operationId: operation.id })),
-    ).rejects.toThrow("approval");
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it("runs targeted Apex/LWC, marks actual test failures, and preserves operation history", async () => {

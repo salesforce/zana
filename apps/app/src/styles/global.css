@@ -3264,6 +3264,9 @@ body.resizing-col {
 
 /* --- Agent-inspector modal (live terminal peek) --- */
 .agent-terminal-modal {
+  /* Native drag regions behind the overlay still intercept pointer clicks
+     unless the inspector explicitly excludes itself from window dragging. */
+  -webkit-app-region: no-drag;
   /* Wider + taller than the default modal: it hosts a live terminal beside the
      detail panel, so give it the full viewport height (less a thin gutter) and a
      wider cap than a plain modal — the extra height flows into the terminal
@@ -3274,7 +3277,8 @@ body.resizing-col {
   /* Override `.modal`'s --bg-elevated so the thread inspector is a white
      (panel) surface in light theme, not the gray page wash. */
   background: var(--bg-panel);
-  transition: width 0.15s ease, height 0.15s ease, max-height 0.15s ease, border-radius 0.15s ease;
+  position: relative;
+  transition: width 0.15s ease, height 0.15s ease, max-height 0.15s ease, border-radius 0.15s ease, left 0.15s ease, top 0.15s ease;
 }
 
 /* Full screen: stretch the modal to the whole viewport and drop the
@@ -3284,6 +3288,74 @@ body.resizing-col {
   height: 100vh;
   max-height: 100vh;
   border-radius: 0;
+}
+
+.agent-terminal-modal.is-resizing {
+  transition: none;
+  user-select: none;
+}
+.agent-terminal-modal.is-resizing iframe {
+  pointer-events: none;
+}
+
+.inspector-resize-handle {
+  position: absolute;
+  z-index: 7;
+  touch-action: none;
+}
+.inspector-resize-handle.is-e {
+  top: 36px;
+  right: 0;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+.inspector-resize-handle.is-w {
+  top: 36px;
+  left: 0;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+.inspector-resize-handle.is-s {
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+.inspector-resize-handle.is-se,
+.inspector-resize-handle.is-sw {
+  z-index: 9;
+  width: 16px;
+  height: 16px;
+  bottom: 0;
+}
+.inspector-resize-handle.is-se {
+  right: 0;
+  cursor: nwse-resize;
+}
+.inspector-resize-handle.is-sw {
+  left: 0;
+  cursor: nesw-resize;
+}
+.inspector-resize-handle.is-se::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  opacity: 0.75;
+}
+.inspector-resize-handle:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+.agent-terminal-modal.is-fullscreen .inspector-resize-handle {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6519,6 +6591,8 @@ body.resizing-col {
   overflow: auto;
 }
 .thread-provider-models li {
+  flex: 0 0 auto;
+  line-height: 1.5;
   font-size: 11.5px;
   color: var(--text-dim);
   overflow: hidden;
@@ -31856,8 +31930,8 @@ textarea.ui-command-composer-input {
     white-space: nowrap;
   }
 
-  .thread-pending-shell:not(.is-collapsed) .thread-pending-banner-details,
-  .thread-pending-shell:not(.is-collapsed) .thread-pending-banner-reason {
+  .thread-pending-shell:not(.is-collapsed):not(.thread-pending-command) .thread-pending-banner-details,
+  .thread-pending-shell:not(.is-collapsed):not(.thread-pending-command) .thread-pending-banner-reason {
     display: none;
   }
 }
@@ -32117,6 +32191,68 @@ textarea.ui-command-composer-input {
   background: color-mix(in srgb, var(--danger, #c44) 10%, var(--bg-elevated));
   color: var(--danger, #c44);
 }
+
+.thread-pending-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.thread-pending-command > :is(.thread-pending-shell-header, .thread-pending-banner-reason, .thread-pending-banner-code, .thread-pending-banner-detail, .thread-pending-banner-error) {
+  grid-column: 1 / -1;
+}
+
+.thread-pending-command .thread-pending-banner-title,
+.thread-pending-command .thread-pending-banner-source,
+.thread-pending-command .thread-pending-banner-reason {
+  margin: 0;
+}
+
+.thread-pending-command .thread-pending-banner-title {
+  font-size: 13px;
+}
+
+.thread-pending-command > .thread-pending-banner-code {
+  max-height: 5.5em;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.thread-pending-command .thread-pending-banner-actions {
+  grid-column: 2;
+  margin: 0;
+  gap: 4px;
+}
+
+.thread-pending-command-extra {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.thread-pending-command-extra > summary {
+  width: fit-content;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.thread-pending-command-extra[open] {
+  grid-column: 1 / -1;
+}
+
+.thread-pending-command-extra .thread-pending-banner-details {
+  margin: 4px 0 0;
+}
+
+@container (max-width: 420px) {
+  .thread-pending-command .thread-pending-banner-actions {
+    grid-column: 1 / -1;
+  }
+}
+
 .thread-pending-question-form {
   display: flex;
   flex-direction: column;
@@ -34545,12 +34681,35 @@ textarea.thread-command-editor {
 }
 
 .thread-plan-execution-item.is-done {
-  opacity: 0.55;
+  opacity: 0.7;
+}
+
+.thread-plan-execution-item.is-done .thread-plan-execution-item-text {
+  text-decoration: line-through;
+}
+
+.thread-plan-execution-item.is-current {
+  color: var(--ink, inherit);
+  font-weight: 500;
 }
 
 .thread-plan-execution-glyph {
   flex: 0 0 auto;
   margin-top: 1px;
+  color: var(--ink-muted);
+}
+
+.thread-plan-execution-item[data-status="completed"] .thread-plan-execution-glyph {
+  color: var(--success, var(--accent-green, #3a9));
+}
+
+.thread-plan-execution-item[data-status="in_progress"] .thread-plan-execution-glyph,
+.thread-plan-execution-item[data-status="active"] .thread-plan-execution-glyph {
+  color: var(--accent, var(--accent-blue));
+}
+
+.thread-plan-execution-item[data-status="blocked"] .thread-plan-execution-glyph {
+  color: var(--danger, var(--accent-red, #c44));
 }
 
 .thread-plan-execution-item-text {
@@ -34829,21 +34988,72 @@ textarea.thread-command-editor {
 
 .thread-working-indicator {
   margin: 0;
-  min-height: 1.75rem;
-  color: var(--text-muted, var(--ink-muted));
-  font-size: 14px;
+  box-sizing: border-box;
+  padding: 8px 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .thread-working-indicator-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 1.75rem;
+}
+
+.thread-activity-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.thread-activity-label > [role='status'] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.thread-activity-dot {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: thread-activity-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes thread-activity-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-activity-dot { animation: none; }
 }
 
 .thread-working-indicator > summary.thread-working-indicator-header {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 16px;
   cursor: pointer;
   list-style: none;
+}
+
+.thread-working-indicator > summary.thread-working-indicator-header:hover .thread-activity-label {
+  background: var(--bg-hover);
+}
+
+.thread-working-indicator > summary.thread-working-indicator-header:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .thread-working-indicator > summary.thread-working-indicator-header::-webkit-details-marker {
@@ -35201,12 +35411,13 @@ textarea.thread-command-editor {
 }
 
 .thread-thinking-details {
-  margin: 6px 0 0;
+  margin: 8px 0 0 14px;
+  padding: 2px 12px;
+  border-left: 1px solid var(--border);
   max-height: 18rem;
   overflow: auto;
   white-space: pre-wrap;
   font-size: 13px;
-  font-style: italic;
   line-height: 1.55;
   color: var(--text-muted, var(--ink-muted));
 }
@@ -35861,6 +36072,7 @@ textarea.thread-command-editor {
 
 .thread-secondary-chrome {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -35870,6 +36082,7 @@ textarea.thread-command-editor {
 }
 
 .thread-secondary-pins,
+.thread-secondary-tabs,
 .thread-secondary-controls {
   display: flex;
   align-items: center;
@@ -35877,8 +36090,24 @@ textarea.thread-command-editor {
   min-width: 0;
 }
 
+.thread-secondary-pins,
+.thread-secondary-controls {
+  flex: 0 0 auto;
+}
+
+.thread-secondary-pins:empty {
+  display: none;
+}
+
+.thread-secondary-tabs {
+  flex: 1 1 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
 .thread-secondary-pin {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   width: 28px;
@@ -35897,8 +36126,10 @@ textarea.thread-command-editor {
 
 .thread-secondary-tab {
   display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
   align-items: center;
-  max-width: 9rem;
+  max-width: min(9rem, 100%);
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
@@ -35928,6 +36159,7 @@ textarea.thread-command-editor {
 }
 
 .thread-secondary-tab-close {
+  flex: 0 0 auto;
   padding: 4px 6px 4px 0;
 }
 

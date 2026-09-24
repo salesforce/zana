@@ -61,6 +61,7 @@ export function SalesforceProjectTab(props: {
     "playground",
   );
   const [orgsOpen, setOrgsOpen] = useState(false);
+  const [loginRequest, setLoginRequest] = useState(0);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +69,8 @@ export function SalesforceProjectTab(props: {
   useEffect(() => {
     setDoctor(null);
     setView("overview");
+    setOrgsOpen(false);
+    setLoginRequest(0);
   }, [props.projectId]);
   const alias = status.data?.selectedAlias || status.data?.defaultOrg || "";
   useLayoutEffect(() => {
@@ -118,16 +121,25 @@ export function SalesforceProjectTab(props: {
           pluginId={props.pluginId}
           projectId={props.projectId}
           compact
+          key={props.projectId}
+          loginRequest={loginRequest}
           onSelect={() => {
             setDoctor(null);
             void status.refresh();
           }}
         />
         <button
+          className="sf-btn primary"
+          type="button"
+          onClick={() => setLoginRequest(value => value + 1)}
+        >
+          Connect org
+        </button>
+        <button
           className="sf-btn quiet"
           type="button"
-          onClick={() => setOrgsOpen((value) => !value)}
-          aria-expanded={orgsOpen}
+          onClick={() => setOrgsOpen(value => !value)}
+          aria-expanded={Boolean(orgsOpen)}
         >
           Org details
         </button>
@@ -138,8 +150,10 @@ export function SalesforceProjectTab(props: {
           style={{ flex: "0 1 auto", maxHeight: 360 }}
         >
           <OrgPicker
+            key={props.projectId}
             pluginId={props.pluginId}
             projectId={props.projectId}
+            hideConnect
             onSelect={() => void status.refresh()}
           />
         </div>
@@ -275,7 +289,7 @@ export function SalesforceProjectTab(props: {
                     </button>
                   ))}
                 </div>
-                <div style={{ marginTop: 24 }}>
+                <div style={{ marginTop: 24, height: 420 }}>
                   <OperationsPanel {...scoped} onAddToPrompt={investigate} />
                 </div>
               </>
@@ -322,22 +336,13 @@ export function SalesforceProjectTab(props: {
         )}
         {view === "agentforce" && (
           <>
-            <div className="sf-toolbar">
+            {agentTool === "preview" && <div className="sf-toolbar">
               <button
                 className="sf-btn"
                 type="button"
-                aria-pressed={agentTool === "playground"}
                 onClick={() => setAgentTool("playground")}
               >
-                Playground
-              </button>
-              <button
-                className="sf-btn"
-                type="button"
-                aria-pressed={agentTool === "preview"}
-                onClick={() => setAgentTool("preview")}
-              >
-                Preview
+                <span aria-hidden="true">← </span>Back to studio
               </button>
               {context.threadId && (
                 <button
@@ -353,9 +358,12 @@ export function SalesforceProjectTab(props: {
                   Open beside agent
                 </button>
               )}
-            </div>
+            </div>}
             {agentTool === "playground" ? (
-              <AgentforcePlaygroundPanel {...props} />
+              <AgentforcePlaygroundPanel {...props} headerActions={<>
+                <button className="sf-as-save" type="button" onClick={() => setAgentTool("preview")}>Org preview</button>
+                {context.threadId && <button className="sf-as-save" type="button" onClick={() => navigate.openThreadPanel({ actionId: 'playground', params: { projectId: props.projectId, orgAlias: alias } })}>Open beside agent</button>}
+              </>} />
             ) : (
               <AgentforcePreviewPanel {...scoped} />
             )}

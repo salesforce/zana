@@ -25,6 +25,7 @@ export function createExecSf(): (args: string[], opts?: ExecSfOptions) => Promis
           timeout: opts?.timeoutMs ?? SF_CLI_TIMEOUT_MS,
           maxBuffer: MAX_BUFFER,
           windowsHide: true,
+          ...(opts?.signal ? { signal: opts.signal } : {}),
           ...(opts?.cwd ? { cwd: opts.cwd } : {})
         },
         (error, stdout, stderr) => {
@@ -105,7 +106,7 @@ export async function salesforceRestRequest(
     body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
     signal: composeAbortSignal(SF_REST_TIMEOUT_MS, req.signal)
   });
-  const text = await res.text();
+  const text = req.maxResponseBytes ? await readBoundedResponse(res, req.maxResponseBytes) : await res.text();
   let json: unknown = null;
   try {
     json = text ? JSON.parse(text) : null;
@@ -113,6 +114,23 @@ export async function salesforceRestRequest(
     json = null;
   }
   return { status: res.status, json, text };
+}
+
+export async function readBoundedResponse(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw Error('Salesforce source response exceeds the preview size limit.');
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
 }
 
 function stringField(row: Record<string, unknown>, ...keys: string[]): string {

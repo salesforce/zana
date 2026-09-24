@@ -1,3 +1,4 @@
+import { readAgentDraft, writeAgentDraft, clearAgentDraft } from '../../src/app/agent-script-drafts.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { editor } from 'monaco-editor';
 import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
@@ -22,6 +23,7 @@ import {
 import { orgSessionLabel } from '../../lib/org-session.js';
 import { applyDiagnostics, ensureAgentScriptMonaco, setAgentScriptLspDialect } from './editor';
 import { AgentGraph } from './graph';
+import type { AgentAction } from '../../lib/agent-action-model';
 
 function postToHost(message: Record<string, unknown>): void {
   window.parent.postMessage({ source: PLAYGROUND_BRIDGE_SOURCE, ...message }, window.location.origin);
@@ -30,6 +32,7 @@ function postToHost(message: Record<string, unknown>): void {
 export default function App() {
   const host = ensureAgentScriptMonaco();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const actionsRef = useRef<AgentAction[]>([]);
   const modelRef = useRef<editor.ITextModel | null>(null);
   const pathRef = useRef<string | null>(null);
   const dialectRef = useRef<AgentScriptDialect>('agentforce');
@@ -47,14 +50,27 @@ export default function App() {
   const splitRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
+  const draftRef = useRef<{ key?: string; baseSha?: string; baseline: string; applying: boolean }>({ baseline: '', applying: false });
+  const publishDraft = (content: string) => {
+    const draft = draftRef.current;
+    const dirty = content !== draft.baseline;
+    let persisted = true;
+    if (draft.key) {
+      if (dirty) persisted = writeAgentDraft({ key: draft.key, content, baseSha: draft.baseSha, dialect: dialectRef.current });
+      else clearAgentDraft(draft.key);
+    }
+    postToHost({ type: 'dirty', dirty, draftKey: draft.key, baseSha: draft.baseSha, persisted });
+  };
   const refreshAnalysis = useCallback((source: string, nextDialect: AgentScriptDialect) => {
     setAgentScriptLspDialect(nextDialect);
     const parsed = parseAgentScriptSource(source, nextDialect);
+    actionsRef.current = parsed.actions;
     const lsp = queryAgentScriptLsp({ source, dialect: nextDialect, query: 'diagnostics' });
     const diagnostics = lsp.ok ? lsp.result.diagnostics : parsed.diagnostics;
     setGraph(parsed.graph.nodes.length > 0 ? parsed.graph : graphFromAgentSource(source));
     setIssueCount(diagnostics.length);
     setErrorCount(diagnostics.filter((row) => row.severity === 'error').length);
+    postToHost({ type: 'snapshot', draftKey: draftRef.current.key, content: source, issues: diagnostics.length, actions: parsed.actions });
     if (modelRef.current) applyDiagnostics(modelRef.current, diagnostics);
   }, []);
 
@@ -70,6 +86,7 @@ export default function App() {
     const instance = host.editor.create(container, {
       model,
       theme: theme === 'light' ? 'agentscript-light' : 'agentscript-dark',
+      'semanticHighlighting.enabled': true,
       automaticLayout: true,
       minimap: { enabled: false },
       fontSize: 14,
@@ -88,12 +105,21 @@ export default function App() {
     });
     editorRef.current = instance;
     const sub = instance.onDidChangeModelContent(() => {
-      postToHost({ type: 'dirty', dirty: true });
+      if (draftRef.current.applying) return;
+      publishDraft(instance.getValue());
       refreshAnalysis(instance.getValue(), dialectRef.current);
+    });
+    const targetClick = instance.onMouseDown(event => {
+      if (!event.event.ctrlKey && !event.event.metaKey) return;
+      const line = event.target.position?.lineNumber;
+      if (!line || !/^\s*target\s*:/.test(model.getLineContent(line))) return;
+      const action = actionsRef.current.filter(a => a.target && a.line <= line && model.getLineContent(line).includes(a.target)).sort((a, b) => b.line - a.line)[0];
+      if (action) postToHost({ type: 'openAction', id: action.id });
     });
     postToHost({ type: 'ready' });
     return () => {
       sub.dispose();
+      targetClick.dispose();
       instance.dispose();
       model.dispose();
     };
@@ -108,6 +134,13 @@ export default function App() {
 
   const applyHostMessage = useCallback(
     (message: HostToPlayground) => {
+      if (message.type === 'revealLine') {
+        setView('script');
+        editorRef.current?.revealLineInCenter(message.line);
+        editorRef.current?.setPosition({ lineNumber: message.line, column: 1 });
+        editorRef.current?.focus();
+        return;
+      }
       if (message.type === 'init') {
         setTheme(message.theme);
         setDialect(message.dialect);
@@ -135,22 +168,30 @@ export default function App() {
       }
       if (message.type === 'setFile') {
         pathRef.current = message.path;
-        setDialect(message.dialect);
-        const value = message.content;
+        const recovered = message.draftKey ? readAgentDraft(message.draftKey) : undefined;
+        const nextDialect = recovered?.dialect ?? message.dialect;
+        dialectRef.current = nextDialect;
+        setDialect(nextDialect);
+        draftRef.current = { key: message.draftKey, baseline: message.content, baseSha: recovered?.baseSha ?? message.sha256, applying: true };
+        const value = recovered?.content ?? message.content;
         const model = modelRef.current;
         if (model && model.getValue() !== value) model.setValue(value);
-        refreshAnalysis(value, message.dialect);
-        postToHost({ type: 'dirty', dirty: false });
+        draftRef.current.applying = false;
+        publishDraft(value);
+        refreshAnalysis(value, nextDialect);
         return;
       }
       if (message.type === 'saved') {
-        postToHost({ type: 'dirty', dirty: false });
+        if (message.draftKey && message.draftKey !== draftRef.current.key) return;
+        draftRef.current.baseSha = message.sha256;
+        draftRef.current.baseline = message.content ?? editorRef.current?.getValue() ?? '';
+        publishDraft(editorRef.current?.getValue() ?? '');
         return;
       }
       if (message.type === 'flushSave') {
-        const path = pathRef.current;
+        const path = message.path ?? pathRef.current;
         const content = editorRef.current?.getValue() ?? '';
-        if (path) postToHost({ type: 'persist', path, content });
+        if (path) postToHost({ type: 'persist', path, content, draftKey: draftRef.current.key, create: message.create });
       }
     },
     [refreshAnalysis]
@@ -159,6 +200,7 @@ export default function App() {
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
+      if (event.source !== window.parent) return;
       if (!isHostToPlayground(event.data)) return;
       applyHostMessage(event.data);
     };
@@ -201,7 +243,7 @@ export default function App() {
     >
       <div className="split" ref={splitRef}>
         <section className="pane editor">
-          <header className="pane-header">Agent Definition</header>
+          <header className="pane-header"><span><span className="pane-file-icon">⌘</span> Agent definition</span><span className="pane-kicker">.agent</span></header>
           <div className="pane-body" id="editor-host" />
         </section>
         <div
@@ -228,9 +270,9 @@ export default function App() {
           }}
         />
         <section className="pane graph">
-          <header className="pane-header">Graph</header>
+          <header className="pane-header"><span>Conversation map</span><span className="pane-kicker">{graph.nodes.filter(n => n.kind === 'topic').length} topics · {graph.nodes.filter(n => n.kind === 'action').length} actions</span></header>
           <div className="pane-body">
-            <AgentGraph nodes={graph.nodes} edges={graph.edges} />
+            <AgentGraph nodes={graph.nodes} edges={graph.edges} visible={view !== 'script'} onOpenAction={id => postToHost({ type: 'openAction', id })} />
           </div>
         </section>
       </div>

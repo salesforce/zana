@@ -64,14 +64,15 @@ describe('sf CLI process wrappers', () => {
   });
 
   it('passes cwd and a longer timeout for agent CLI calls', async () => {
+    const controller = new AbortController();
     mocked.mockImplementation((_cmd, _args, opts, cb) => {
-      expect(opts).toMatchObject({ cwd: '/proj', timeout: 120_000 });
+      expect(opts).toMatchObject({ cwd: '/proj', timeout: 120_000, signal: controller.signal });
       const fn = cb as (error: Error | null, stdout: string, stderr: string) => void;
       fn(null, '{"status":0}', '');
       return undefined as never;
     });
     await expect(
-      createExecSf()(['agent', 'validate', 'authoring-bundle'], { cwd: '/proj', timeoutMs: 120_000 })
+      createExecSf()(['agent', 'validate', 'authoring-bundle'], { cwd: '/proj', timeoutMs: 120_000, signal: controller.signal })
     ).resolves.toMatchObject({ code: 0 });
   });
 

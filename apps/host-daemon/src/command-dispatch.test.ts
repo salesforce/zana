@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createCommandRuntime, dispatchHostCommand } from './command-dispatch.js';
 import { HostCommandError } from './host-command-error.js';
 import { handleHostRpcRequest } from './command-router.js';
@@ -270,6 +270,13 @@ describe('host command dispatch', () => {
     }) as { content: string; encoding: string };
     expect(image.encoding).toBe('base64');
     expect(Buffer.from(image.content, 'base64')).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
+    const ranged = await dispatchHostCommand(runtime, {
+      type: 'host.read_file', root, relPath: 'shot.png', byteRange: { offset: 1, length: 3 }
+    });
+    expect(ranged).toEqual({ content: Buffer.from([0x50, 0x4e, 0x47]).toString('base64'), encoding: 'base64', totalBytes: 6 });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'host.read_file', root, relPath: '../outside.mp4', byteRange: { offset: 0, length: 1 }
+    })).rejects.toBeInstanceOf(HostCommandError);
   });
 
   it('lists a single directory and skips denied names', async () => {
@@ -669,6 +676,10 @@ describe('host command dispatch', () => {
     const target = mkdtempSync(join(tmpdir(), 'zcc-unmanaged-keep-'));
     const child = spawn('sleep', ['300'], { cwd: target, detached: true, stdio: 'ignore' });
     child.unref();
+    onTestFinished(() => {
+      child.kill('SIGKILL');
+      rmSync(target, { recursive: true, force: true });
+    });
     const pid = child.pid ?? 0;
     const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude });
     await dispatchHostCommand(runtime, {
@@ -693,10 +704,9 @@ describe('host command dispatch', () => {
       pids: [pid]
     }) as { killed: Array<{ pid: number }> };
     expect(killed.killed.map((row) => row.pid)).toContain(pid);
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {}
-  }, 15_000);
+    // macOS runs several whole-machine lsof scans here. A busy full-suite run
+    // needs more headroom than the isolated test; retain every confinement assertion.
+  }, process.platform === 'darwin' ? 60_000 : 15_000);
 
   it('fails PR actions closed when gh is missing', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'zcc-no-gh-'));

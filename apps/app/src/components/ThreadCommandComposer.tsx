@@ -67,8 +67,9 @@ import {
   NAVIGATE_TO_THREAD_ON_CREATE_KEY,
   resolveThreadSendMode
 } from '../lib/thread-composer-preferences.js';
-import { dispatchOptimisticUserMessage, dispatchThreadStopRequested } from './thread/timeline/thread-optimistic-events.js';
+import { dispatchOptimisticUserMessage, dispatchThreadMessageSent, dispatchThreadStopRequested } from './thread/timeline/thread-optimistic-events.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
+import { ThreadComposerToolbar } from './composer/ThreadComposerToolbar.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
@@ -133,7 +134,7 @@ export function ThreadCommandComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
+  const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
   const ensureScratchRef = useRef(false);
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
   const defaultHarness = useData((s) => s.defaultHarness);
@@ -155,6 +156,7 @@ export function ThreadCommandComposer({
           defaultHarness
         }),
     hostId: catalogHostId,
+    projectId: currentThread?.projectId ?? selectedProject?.id,
     hostPending: !catalogHostId && hosts.length === 0
   });
   const { permissionMode, setPermissionMode } = useThreadPermissionMode({
@@ -304,6 +306,7 @@ export function ThreadCommandComposer({
   }, [composerModeEntriesForProvider, options]);
   const provider = options.provider ?? fallbackProviderOption(options.providerId);
   const field = useComposerPromptField({
+    ariaLabel: 'Message',
     placeholder: threadId
       ? 'Ask for a follow-up. @ to mention files, folders, or threads'
       : 'Ask anything. @ to mention files, folders, or threads',
@@ -513,6 +516,7 @@ export function ThreadCommandComposer({
             acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
           });
           field.clear();
+          dispatchThreadMessageSent(threadId);
         } catch (error) {
           dispatchOptimisticUserMessage(threadId, null);
           throw error;
@@ -658,45 +662,55 @@ export function ThreadCommandComposer({
           triggerKind={field.triggerKind}
           onApply={field.applySuggestion}
         />
-        <ComposerToolbar>
-          {voiceBusy ? (
+        {voiceBusy ? (
+          <ComposerToolbar>
             <VoiceRecordingBar
               state={voice.state === 'transcribing' ? 'transcribing' : 'recording'}
               stream={voice.stream}
               onConfirm={voice.stop}
               onCancel={voice.cancel}
             />
-          ) : (
-            <>
-              <div className="thread-command-footer-start">
-                <ComposerModePicker
-                  value={composerMode}
-                  entries={composerModeEntriesForProvider}
-                  onChange={setComposerWorkMode}
-                  onRefresh={nativeAgentDiscoveryEnabled ? options.refreshAcpModeOptions : undefined}
-                />
-                <ModelReasoningPicker
-                  providerOptions={options.providerOptions}
-                  selectedProviderId={resolvedProviderId ?? options.providerId}
-                  onSelectedProviderChange={threadId ? undefined : options.setProviderId}
-                  modelValue={options.model}
-                  modelOptions={options.modelOptions}
-                  moreModelOptions={options.moreModelOptions}
-                  modelIsLoading={options.modelIsLoading}
-                  modelLoadError={options.modelLoadError}
-                  onModelChange={options.setModel}
-                />
-                <ReasoningEffortPicker
-                  value={options.reasoningLevel}
-                  options={options.reasoningOptions}
-                  onChange={options.setReasoningLevel}
-                />
-                <ComposerSendModePicker
-                  value={composerSendMode}
-                  onChange={(mode) => { void setComposerSendMode(mode); }}
-                />
-              </div>
-              <div className="thread-command-footer-end">
+          </ComposerToolbar>
+        ) : (
+          <ThreadComposerToolbar
+            mode={
+              <ComposerModePicker
+                value={composerMode}
+                entries={composerModeEntriesForProvider}
+                onChange={setComposerWorkMode}
+                onRefresh={nativeAgentDiscoveryEnabled ? options.refreshAcpModeOptions : undefined}
+              />
+            }
+            model={
+              <ModelReasoningPicker
+                providerOptions={options.providerOptions}
+                selectedProviderId={resolvedProviderId ?? options.providerId}
+                onSelectedProviderChange={threadId ? undefined : options.setProviderId}
+                modelValue={options.model}
+                modelOptions={options.modelOptions}
+                moreModelOptions={options.moreModelOptions}
+                modelIsLoading={options.modelIsLoading}
+                modelLoadError={options.modelLoadError}
+                onModelChange={options.setModel}
+              />
+            }
+            reasoning={
+              <ReasoningEffortPicker
+                value={options.reasoningLevel}
+                options={options.reasoningOptions}
+                onChange={options.setReasoningLevel}
+              />
+            }
+            sendMode={
+              <ComposerSendModePicker
+                value={composerSendMode}
+                onChange={(mode) => {
+                  void setComposerSendMode(mode);
+                }}
+              />
+            }
+            secondaryActions={
+              <>
                 <ThreadContextMeter
                   usage={contextWindowUsage}
                   onCompact={
@@ -709,22 +723,34 @@ export function ThreadCommandComposer({
                       : undefined
                   }
                 />
-                <span className="composer-control-tooltip" data-tooltip={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}>
+                <span
+                  className="composer-control-tooltip"
+                  data-tooltip={
+                    field.canAttach ? 'Attach files' : 'File attachments require the desktop app'
+                  }
+                >
                   <ComposerIconButton
-                    onClick={() => { if (!field.canAttach) return; field.attachPickedFiles(); }}
+                    onClick={() => {
+                      if (!field.canAttach) return;
+                      field.attachPickedFiles();
+                    }}
                     disabled={!field.canAttach}
                     aria-label="Attach files"
                   >
                     <Paperclip size={14} aria-hidden="true" />
+                    <span className="thread-command-action-label" aria-hidden="true">Attach files</span>
                   </ComposerIconButton>
                 </span>
-                <span className="composer-control-tooltip" data-tooltip={
+                <span
+                  className="composer-control-tooltip"
+                  data-tooltip={
                     !voice.isSupported
                       ? 'Voice input is not supported in this browser'
                       : !voice.available
                         ? 'Host daemon is not connected'
                         : 'Start voice input'
-                  }>
+                  }
+                >
                   <ComposerIconButton
                     className="voice-input-btn voice-input-btn--icon"
                     aria-label={
@@ -738,27 +764,32 @@ export function ThreadCommandComposer({
                     onClick={() => void voice.start()}
                   >
                     <Mic size={14} />
+                    <span className="thread-command-action-label" aria-hidden="true">Voice input</span>
                   </ComposerIconButton>
                 </span>
-                {threadId && shouldShowThreadStop(threadId, status, inFlightRetry) && (
-                  <ComposerIconButton
-                    className="thread-command-stop"
-                    aria-label="Stop"
-                    title="Stop"
-                    data-testid="thread-command-stop"
-                    onClick={() => {
-                      dispatchThreadStopRequested(threadId);
-                      void product.threads.stop(threadId);
-                    }}
-                  >
-                    <Square size={14} fill="currentColor" />
-                  </ComposerIconButton>
-                )}
-                {sendButton}
-              </div>
-            </>
-          )}
-        </ComposerToolbar>
+              </>
+            }
+            stop={
+              threadId &&
+              shouldShowThreadStop(threadId, status, inFlightRetry) && (
+                <ComposerIconButton
+                  className="thread-command-stop"
+                  aria-label="Stop"
+                  title="Stop"
+                  data-testid="thread-command-stop"
+                  onClick={() => {
+                    dispatchThreadStopRequested(threadId);
+                    void product.threads.stop(threadId);
+                  }}
+                >
+                  <Square size={14} fill="currentColor" />
+                </ComposerIconButton>
+              )
+            }
+            send={sendButton}
+          />
+        )}
+
       </CommandComposer>
       <div className="thread-command-composer-meta">
         <div className="thread-command-composer-meta-start">

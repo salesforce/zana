@@ -1,0 +1,38 @@
+appId: ai.zana.mobile
+name: Unreachable server is recoverable
+---
+- launchApp
+- extendedWaitUntil:
+    visible: 'This device|Scan pairing QR'
+    timeout: 30000
+- openLink:
+    link: zana://connect
+- runFlow:
+    when:
+      platform: iOS
+      visible: Open
+    commands:
+      - tapOn: Open
+- tapOn:
+    id: server-url
+- inputText: http://127.0.0.1:1
+- scrollUntilVisible:
+    element:
+      id: pairing-code
+    direction: DOWN
+    centerElement: true
+- tapOn:
+    id: pairing-code
+- inputText: invalid-pairing-code
+- scrollUntilVisible:
+    element:
+      id: connect-server
+    direction: DOWN
+    centerElement: true
+- tapOn:
+    id: connect-server
+- extendedWaitUntil:
+    visible: 'Could not reach your Zana server.*'
+    timeout: 20000
+- assertVisible: Connect
+- takeScreenshot: zana-unreachable-server

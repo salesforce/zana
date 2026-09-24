@@ -4,9 +4,12 @@ import { orgOptionLabel, resolveListedSelection } from '../../lib/org-list.js';
 import { useSalesforceCall, requireResult } from './components/client.js';
 import { SALESFORCE_STYLES } from './components/styles.js';
 import type { PublicListedOrg } from '../../lib/types.js';
+import { parseOrgLoginInput, type OrgLoginInstance } from '../../lib/org-login.js';
+import { signInWithBrowser } from './org-login-rpc.js';
+import { OrgLoginDialog } from './OrgLoginDialog.js';
 
 export type OrgsRpc =
-  | { ok: true; orgs: PublicListedOrg[]; selectedAlias: string | null }
+  | { ok: true; orgs: PublicListedOrg[]; selectedAlias: string | null; connectedAlias?: string | null; warning?: string }
   | { ok: false; error?: string; code?: string; orgs?: PublicListedOrg[]; selectedAlias?: string | null };
 
 export function parseOrgsRpc(payload: unknown): OrgsRpc {
@@ -15,7 +18,10 @@ export function parseOrgsRpc(payload: unknown): OrgsRpc {
   }
   const row = payload as OrgsRpc;
   const orgs = Array.isArray(row.orgs) ? row.orgs : [];
-  if (row.ok === true) return { ok: true, orgs, selectedAlias: row.selectedAlias ?? null };
+  if (row.ok === true) return { ok: true, orgs, selectedAlias: row.selectedAlias ?? null,
+    ...(typeof row.connectedAlias === 'string' ? { connectedAlias: row.connectedAlias } : {}),
+    ...(typeof row.warning === 'string' ? { warning: row.warning } : {}),
+  };
   return {
     ok: false,
     error: typeof row.error === 'string' ? row.error : 'Could not list Salesforce CLI orgs.',
@@ -35,24 +41,32 @@ type OrgPickerProps = {
   projectId?: string;
   compact?: boolean;
   disabled?: boolean;
+  loginRequest?: number;
+  hideConnect?: boolean;
   onSelect?: (alias: string) => void;
 };
 
 export function OrgPicker(props: OrgPickerProps) {
   const call = useSalesforceCall(props.pluginId, { projectId: props.projectId });
   const generation = useRef(0);
+  const scopeGeneration = useRef(0);
+  const loginPending = useRef(false);
+  const loginController = useRef<AbortController | null>(null);
   const [search, setSearch] = useState('');
   const [inspected, setInspected] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<PublicListedOrg[]>([]);
   const [resolvedAlias, setResolvedAlias] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [loginInstance, setLoginInstance] = useState<'production' | 'sandbox'>('production');
+  const [loginOpen, setLoginOpen] = useState(Boolean(props.loginRequest));
+  const [loginInstance, setLoginInstance] = useState<OrgLoginInstance>('production');
+  const [loginUrl, setLoginUrl] = useState('');
   const [loginAlias, setLoginAlias] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const settingAlias = resolvedAlias ?? '';
   const selected = resolveListedSelection(orgs, settingAlias, resolvedAlias);
+  useEffect(() => { if (props.loginRequest !== undefined) setLoginOpen(Boolean(props.loginRequest)); }, [props.loginRequest]);
 
   const refresh = useCallback(async () => {
     const current = ++generation.current;
@@ -74,32 +88,60 @@ export function OrgPicker(props: OrgPickerProps) {
   }, [call]);
 
   useEffect(() => {
+    scopeGeneration.current += 1;
+    loginPending.current = false;
+    setLoginBusy(false);
+    setNotice(null);
     void refresh();
-    return () => { generation.current += 1; };
+    const changed = () => { void refresh(); };
+    window.addEventListener('sf:context-changed', changed);
+    return () => {
+      generation.current += 1;
+      scopeGeneration.current += 1;
+      loginController.current?.abort();
+      window.removeEventListener('sf:context-changed', changed);
+    };
   }, [refresh]);
 
   const connectMore = async () => {
+    if (loginPending.current || props.disabled) return;
+    const input = { instance: loginInstance, alias: loginAlias.trim() || undefined,
+      ...(loginInstance === 'custom' ? { instanceUrl: loginUrl } : {}) };
+    const parsed = parseOrgLoginInput(input);
+    if (!parsed.ok) { setError(parsed.error); return; }
+    const scope = scopeGeneration.current;
+    loginPending.current = true;
+    const controller = new AbortController();
+    loginController.current = controller;
     setLoginBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const payload = parseOrgsRpc(
-        await call('orgs.login', {
-          instance: loginInstance,
-          alias: loginAlias.trim() || undefined
-        })
+        await signInWithBrowser(call, input, controller.signal)
       );
-      setOrgs(payload.orgs ?? []);
-      setResolvedAlias(payload.selectedAlias ?? null);
+      if (scope !== scopeGeneration.current) return;
       if (!payload.ok) {
         setError(payload.error || 'Could not connect a Salesforce org.');
         return;
       }
+      generation.current += 1;
+      setBusy(false);
+      setOrgs(payload.orgs);
+      setResolvedAlias(payload.selectedAlias);
+      setInspected(payload.connectedAlias ?? null);
+      setSearch('');
+      setNotice(payload.warning || (props.projectId
+        ? `Connected ${payload.connectedAlias || 'org'} and selected it for this project.`
+        : `Connected ${payload.connectedAlias || 'org'}. Select it below to set the shared default.`));
       setLoginOpen(false);
       setLoginAlias('');
+      window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: props.projectId ?? null } }));
+      if (props.projectId && !payload.warning) props.onSelect?.(payload.selectedAlias ?? '');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not connect a Salesforce org.');
+      if (scope === scopeGeneration.current) setError(err instanceof Error ? err.message : 'Could not connect a Salesforce org.');
     } finally {
-      setLoginBusy(false);
+      if (scope === scopeGeneration.current) { loginController.current = null; loginPending.current = false; setLoginBusy(false); }
     }
   };
 
@@ -122,8 +164,17 @@ export function OrgPicker(props: OrgPickerProps) {
     }
   };
 
+  const loginDialog = loginOpen && <OrgLoginDialog
+    instance={loginInstance} url={loginUrl} alias={loginAlias} busy={loginBusy}
+    disabled={props.disabled} projectId={props.projectId} error={error}
+    onInstance={setLoginInstance} onUrl={setLoginUrl} onAlias={setLoginAlias}
+    onSubmit={() => void connectMore()} onClose={() => setLoginOpen(false)}
+  />;
+
   if (props.compact) {
     return (
+      <>
+      {loginDialog}
       <select
         className="sf-org-picker"
         aria-label="Salesforce org"
@@ -142,6 +193,9 @@ export function OrgPicker(props: OrgPickerProps) {
           ))
         )}
       </select>
+      {notice && <p className="sf-connection-status" role="status">{notice}</p>}
+      {error && !loginOpen && <p className="sf-connection-status sf-error" role="alert">{error}</p>}
+      </>
     );
   }
 
@@ -149,68 +203,28 @@ export function OrgPicker(props: OrgPickerProps) {
     <div className="sf-surface sf-org-list" style={{ height: 'auto', flex: '0 0 auto' }} data-testid="salesforce-org-list">
       <style>{SALESFORCE_STYLES}</style>
       <div className="sf-org-list-head">
-        <span>CLI-connected orgs</span>{props.projectId && <button type="button" className="sf-btn quiet" onClick={() => void select('')}>Use shared default</button>}
+        <div><strong>Connected orgs</strong><span className="sf-org-count">{orgs.length}</span><small>Connections from Salesforce CLI</small></div>
         <div className="sf-org-actions">
-          <button
+          {props.projectId && <button type="button" className="sf-btn quiet" onClick={() => void select('')}>Use shared default</button>}
+          {!props.hideConnect && <button
             type="button"
-            className="sf-btn primary"
+            className="sf-btn"
             data-testid="salesforce-connect-orgs"
-            disabled={props.disabled || loginBusy}
-            onClick={() => setLoginOpen((open) => !open)}
+            disabled={props.disabled}
+            onClick={() => setLoginOpen(true)}
           >
-            Connect more orgs
-          </button>
+            Connect org
+          </button>}
           <button type="button" className="sf-btn" disabled={busy || loginBusy} onClick={() => void refresh()}>
             {busy ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
       </div>
-      {loginOpen ? (
-        <form
-          className="sf-org-login sf-form"
-          data-testid="salesforce-org-login"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void connectMore();
-          }}
-        >
-          <p className="sf-muted">
-            {loginBusy
-              ? 'Complete sign-in in the browser that just opened.'
-              : 'Opens Salesforce CLI web login in your browser.'}
-          </p>
-          <div className="sf-form">
-            <label>
-              Environment
-              <select
-                aria-label="Login environment"
-                disabled={loginBusy}
-                value={loginInstance}
-                onChange={(event) => setLoginInstance(event.target.value === 'sandbox' ? 'sandbox' : 'production')}
-              >
-                <option value="production">Production</option>
-                <option value="sandbox">Sandbox</option>
-              </select>
-            </label>
-            <label>
-              Alias
-              <input
-                aria-label="Org alias"
-                disabled={loginBusy}
-                placeholder="optional"
-                value={loginAlias}
-                onChange={(event) => setLoginAlias(event.target.value)}
-              />
-            </label>
-            <button type="submit" className="sf-btn primary" disabled={loginBusy}>
-              {loginBusy ? 'Waiting for login…' : 'Start login'}
-            </button>
-          </div>
-        </form>
-      ) : null}
-      {error ? <p className="sf-error" role="alert">{error}</p> : null}
+      {loginDialog}
+      {error && !loginOpen ? <p className="sf-error" role="alert">{error}</p> : null}
+      {notice ? <p className="sf-notice" role="status">{notice}</p> : null}
       {orgs.length === 0 && !busy ? (
-        <p className="sf-muted">No Salesforce CLI orgs yet. Connect more orgs to authenticate with Salesforce CLI.</p>
+        <p className="sf-muted">No connected orgs yet. Choose Connect org to sign in, or Refresh if you already signed in from your terminal.</p>
       ) : (
         <><input className="sf-input" aria-label="Search connected orgs" placeholder="Search orgs by alias or username…" value={search} onChange={event => setSearch(event.target.value)} /><ul className="sf-org-rows">
           {orgs.filter(org => `${org.alias} ${org.username}`.toLowerCase().includes(search.toLowerCase())).map((org) => {

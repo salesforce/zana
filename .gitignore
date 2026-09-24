@@ -1,5 +1,6 @@
 node_modules
 out
+out-dev
 dist
 # node-gyp configure dump at repo root (not a source tree).
 /build/
@@ -65,8 +66,10 @@ resources/scheduled-supervisor
 # menubar-popover dev preview screenshots
 .mbp-live.png
 
+# Local screenshots, demos, and generated exports. Keep copies on disk, out of Git.
+/artifacts/
+
 # Docker remote-machine join secrets / loopback-proxy pid (local play only)
 docker/remote-machine/.env
 docker/remote-machine/.proxy-state
 docker/remote-machine/.proxy.pid
-

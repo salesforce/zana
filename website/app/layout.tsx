@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+import './fairy.css';
 import './components/product-tour/product-tour.css';
 import '@/lib/plugin-guide/plugin-guide.css';
 import './components/plugin-guide/plugin-guide-site.css';
@@ -23,7 +24,7 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL(site.publicBaseUrl),
   title: {
-    default: `${site.name} — orchestrate AI coding harnesses across every project`,
+    default: `${site.name} — your agents, projects, and decisions in one place`,
     template: `%s — ${site.name}`
   },
   description: site.tagline,
@@ -46,7 +47,7 @@ export const metadata: Metadata = {
     description: site.tagline,
     type: 'website',
     siteName: site.name,
-    images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'Zana Command Center — the control plane for AI coding harnesses' }]
+    images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'Zana — Your agents. Your projects. One clear view.' }]
   },
   twitter: {
     card: 'summary_large_image',
@@ -55,7 +56,11 @@ export const metadata: Metadata = {
     images: ['/opengraph-image']
   },
   icons: {
-    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }]
+    icon: [
+      { url: '/favicon.svg?v=fairy-2', type: 'image/svg+xml', sizes: 'any' },
+      { url: '/favicon-32.png?v=fairy-2', type: 'image/png', sizes: '32x32' }
+    ],
+    apple: [{ url: '/apple-touch-icon.png?v=fairy-2', sizes: '180x180' }]
   }
 };
 

@@ -409,6 +409,26 @@ export interface CcApi {
     };
   };
   /**
+   * Zana Mobile gateway (a live main-process network listener, like
+   * `hosts.pairing`). Enable/disable rides the `mobileGatewayEnabled` AppConfig
+   * toggle; these calls read status and mint/read/revoke pairing state.
+   */
+  mobile: {
+    status(): Promise<{
+      running: boolean;
+      publicUrl: string | null;
+      host: string | null;
+      port: number | null;
+      /** True when bound to a reachable LAN IP — show the trusted-network caveat. */
+      boundLan: boolean;
+      /** Last start failure (e.g. port in use), else null. */
+      error: string | null;
+    }>;
+    pair(): Promise<{ version: number; serverUrl: string; code: string; expiresAt: number }>;
+    devices(): Promise<Array<{ id: string; label: string; createdAt: number; expiresAt: number }>>;
+    revoke(id: string): Promise<boolean>;
+  };
+  /**
    * Outbound pairing-relay tunnel to the public origin (Heroku front door).
    * Status only — the origin and token live in AppConfig / env.
    */
@@ -593,7 +613,7 @@ export interface CcApi {
       model?: string;
       reasoningLevel?: string;
     }): Promise<{ ok: true; operationId: string; requestSequence: number }>;
-    hostFileContent(threadId: string, path: string): Promise<{
+    hostFileContent(threadId: string, path: string, projectId?: string): Promise<{
       path: string;
       relPath: string;
       content: string;
@@ -628,7 +648,7 @@ export interface CcApi {
     }): Promise<{ delivered: number }>;
     onOpen(cb: (payload: unknown) => void): () => void;
     events(threadId: string): Promise<{ events: unknown[] }>;
-    executionOptions(query?: { providerId?: string; hostId?: string }): Promise<{
+    executionOptions(query?: { providerId?: string; hostId?: string; projectId?: string }): Promise<{
       providers: Array<{
         id: string;
         displayName: string;

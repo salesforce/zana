@@ -118,6 +118,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('class="sidebar-utility-bar"');
     expect(markup).toContain('class="sidebar-resizer"');
     expect(markup).toContain('aria-label="Settings"');
+    expect(markup).toContain('href="/projects/proj-1/settings"');
     expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).toContain('aria-label="Open this project in a new window"');
     expect(markup).toContain('>Settings<');
@@ -190,6 +191,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).not.toContain('project-focused-nav');
     expect(markup).not.toContain('aria-label="Open this project in a new window"');
     expect(markup).toContain('aria-label="Settings"');
+    expect(markup).toContain('href="/projects/proj-1/settings"');
     expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).not.toContain('aria-label="Go back"');
     expect(markup).not.toContain('class="settings-app-back"');
@@ -259,7 +261,9 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain("mode: 'agents'");
-    expect(source).toContain('exitProjectFocus(routeMemory.projectBackRoutePath)');
+    expect(source).toContain('useUi.getState().exitProjectFocus(');
+    expect(source).toContain("route.isProjectSettings ? getSettingsRoutePath() : routeMemory.projectBackRoutePath");
+    expect(source).toContain("'Back to Global settings'");
     expect(source).not.toContain('void navigate(routeMemory.projectBackRoutePath)');
     expect(source).toContain('getProjectModeRoutePath(project.id, item.mode)');
     expect(source).toContain('testId: `project-nav-${item.mode}`');

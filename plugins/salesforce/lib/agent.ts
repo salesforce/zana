@@ -308,11 +308,13 @@ export function compactPreviewDigest(payload: unknown, utterance?: string): Reco
         ? row.message
         : typeof row.agentResponse === 'string'
           ? row.agentResponse
-          : '';
+          : Array.isArray(row.messages)
+            ? row.messages.map((m) => m && typeof m === 'object' && typeof m.message === 'string' ? m.message : '').filter(Boolean).join('\n')
+            : '';
   return {
     sessionId,
     utterance: utterance?.slice(0, 200),
-    response: response.slice(0, 800),
+    response: response.slice(0, 32_000),
     topic: typeof row.topic === 'string' ? row.topic : undefined
   };
 }

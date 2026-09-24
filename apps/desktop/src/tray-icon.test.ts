@@ -5,11 +5,12 @@ import { inflateSync } from 'node:zlib';
 // nativeImage to CAPTURE that PNG buffer so we can decode it and assert on the
 // actual pixels — that's the only way to prove the red attention dot survives
 // (it's a NON-template image) and that the glyph tints with the bar theme.
-const captured: { last?: Buffer; template?: boolean } = {};
+const captured: { last?: Buffer; template?: boolean; scaleFactor?: number } = {};
 vi.mock('electron', () => ({
   nativeImage: {
-    createFromBuffer: (buf: Buffer) => {
+    createFromBuffer: (buf: Buffer, opts: { scaleFactor: number }) => {
       captured.last = buf;
+      captured.scaleFactor = opts.scaleFactor;
       captured.template = false;
       return {
         setTemplateImage: (v: boolean) => {
@@ -61,6 +62,21 @@ describe('buildAppGlyphTemplateImage', () => {
     buildAppGlyphTemplateImage();
     expect(captured.last).toBeInstanceOf(Buffer);
     expect(captured.template).toBe(true);
+    expect(captured.scaleFactor).toBe(2);
+  });
+
+  it('keeps the fairy head, wings and dress distinct at menu-bar resolution', () => {
+    buildAppGlyphTemplateImage();
+    const img = decodePng(captured.last!);
+    expect(img.size).toBe(36);
+    for (const [x, y] of [[18, 11], [10, 14], [25, 15], [10, 25], [25, 25], [18, 27]]) {
+      expect(img.at(x, y)[3], `fairy silhouette at ${x},${y}`).toBeGreaterThan(180);
+    }
+    for (const [x, y] of [[0, 0], [35, 35], [18, 14], [18, 6]]) {
+      expect(img.at(x, y)[3], `negative space at ${x},${y}`).toBeLessThan(40);
+    }
+    const alpha = Array.from({ length: 36 * 36 }, (_, i) => img.at(i % 36, Math.floor(i / 36))[3]);
+    expect(alpha.some((a) => a > 0 && a < 255)).toBe(true);
   });
 });
 
@@ -83,7 +99,7 @@ describe('buildAppGlyphAttentionImage', () => {
   });
 
   it('draws the glyph white on a dark bar and black on a light bar', () => {
-    // A pixel on the chevron stroke is glyph-colored (not the dot). Grab a
+    // A pixel on the fairy silhouette is glyph-colored (not the dot). Grab a
     // clearly-glyph pixel by scanning the left half for the first opaque,
     // non-red pixel under each theme.
     const glyphColor = (dark: boolean): [number, number, number] => {

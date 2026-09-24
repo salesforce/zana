@@ -194,6 +194,7 @@ export type SettingsTab =
   | 'about'
   | 'machines'
   | 'connectivity'
+  | 'phone'
   | 'inbox'
   | 'browser'
   | (string & {});
@@ -811,7 +812,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessGrokEnabled: config.harnessGrokEnabled !== false,
     harnessMastracodeEnabled: config.harnessMastracodeEnabled !== false,
     harnessAfcodeEnabled: config.harnessAfcodeEnabled !== false,
-    nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
+    nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? true,
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
     composerShowCliAgent: config.composerShowCliAgent !== false,
@@ -2025,7 +2026,7 @@ export const useData = create<DataState>((set, get) => ({
   harnessGrokEnabled: false,
   harnessMastracodeEnabled: false,
   harnessAfcodeEnabled: false,
-  nativeAgentDiscoveryEnabled: false,
+  nativeAgentDiscoveryEnabled: true,
   harnessStatus: [],
   editorStatus: [],
   lastProjectId: null,

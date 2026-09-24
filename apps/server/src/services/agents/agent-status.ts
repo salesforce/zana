@@ -54,6 +54,8 @@ const EMIT_DEBOUNCE_MS = 250;
  *  500 covers a long multi-agent session. Rule 5 — bounded work. */
 const RING_CAP = 500;
 
+export const PENDING_INPUT_CAP = 128;
+
 /**
  * Classify an OSC title string into an agent state, or `null` when the title
  * carries no agent signal (so we leave the current state untouched).
@@ -127,6 +129,8 @@ interface Entry {
    * Claude shows that same glyph the whole time it's blocked.
    */
   blocked: boolean;
+  /** Explicit requests must be resolved by their lifecycle, never by PTY output. */
+  pendingInput: Set<string>;
   /**
    * A lifecycle source has reported for this session. Until then, visual/output
    * observations remain the fallback authority. Once present, a completed turn
@@ -200,7 +204,7 @@ interface Entry {
  *    fallback, so harnesses that cannot inject hooks do not regress.
  */
 function resolve(entry: Entry): AgentState {
-  if (entry.blocked) return 'blocked';
+  if (entry.blocked || entry.pendingInput.size > 0) return 'blocked';
   if (entry.lifecycleObserved) {
     if (entry.turnFinished) return 'idle';
     if (entry.turnActive || entry.toolsInFlight > 0) return 'working';
@@ -328,6 +332,7 @@ export class AgentStatusTracker extends EventEmitter {
         emitted: 'unknown',
         osc: 'unknown',
         blocked: false,
+        pendingInput: new Set(),
         lifecycleObserved: false,
         turnActive: false,
         turnFinished: false,
@@ -403,14 +408,15 @@ export class AgentStatusTracker extends EventEmitter {
     entry.turnActive = true;
     entry.turnFinished = false;
     entry.blocked = false;
+    entry.pendingInput.clear();
     this.schedule(sessionId, entry);
   }
 
   /**
    * A provider lifecycle hook confirmed the turn ended. Hooks can be duplicated
    * or arrive after a dropped post-tool event, so completion also clears the
-   * in-flight counter. A blocked overlay is intentionally retained: if the
-   * harness still says it needs a person, that remains more specific than end.
+   * in-flight counter and native requests, which cannot outlive their turn.
+   * Legacy notifications may refer to an idle question, so their overlay stays.
    */
   turnFinished(sessionId: string): void {
     const entry = this.entry(sessionId);
@@ -418,6 +424,25 @@ export class AgentStatusTracker extends EventEmitter {
     entry.turnActive = false;
     entry.turnFinished = true;
     entry.toolsInFlight = 0;
+    entry.pendingInput.clear();
+    this.schedule(sessionId, entry);
+  }
+
+  /** A correlated native approval/question is waiting for input. */
+  inputRequested(sessionId: string, key: string): void {
+    const entry = this.entry(sessionId);
+    // Retain an overflow marker until turn end instead of silently forgetting a
+    // wait. At most CAP identities plus one marker can accumulate per session.
+    entry.pendingInput.add(entry.pendingInput.size >= PENDING_INPUT_CAP && !entry.pendingInput.has(key)
+      ? 'overflow' : key);
+    this.schedule(sessionId, entry);
+  }
+
+  /** Completing one tool must not dismiss another tool's unanswered request. */
+  inputResolved(sessionId: string, keys: readonly string[]): void {
+    const entry = this.entries.get(sessionId);
+    if (!entry) return;
+    for (const key of keys) entry.pendingInput.delete(key);
     this.schedule(sessionId, entry);
   }
 
@@ -438,8 +463,9 @@ export class AgentStatusTracker extends EventEmitter {
    */
   clearBlocked(sessionId: string): void {
     const entry = this.entries.get(sessionId);
-    if (!entry || !entry.blocked) return;
+    if (!entry || (!entry.blocked && entry.pendingInput.size === 0)) return;
     entry.blocked = false;
+    entry.pendingInput.clear();
     this.schedule(sessionId, entry);
   }
 

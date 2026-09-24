@@ -32,7 +32,7 @@ const PANEL_FILES = [
 describe('single shell <main> landmark', () => {
   it('App.tsx contains exactly one <main className="shell-main">', () => {
     const app = src('App.tsx');
-    const matches = app.match(/<main className="shell-main">/g) ?? [];
+    const matches = app.match(/<main[^>]*className="shell-main"[^>]*>/g) ?? [];
     expect(matches).toHaveLength(1);
     expect((app.match(/<main\b/g) ?? []).length).toBe(1);
   });
@@ -72,7 +72,7 @@ describe('single shell <main> landmark', () => {
   });
 
   it('InboxView keeps an inner list pane; Scheduler is a single full-width surface', () => {
-    expect(src('views/inbox/InboxView.tsx')).toMatch(/<InboxPane\s*\/>/);
+    expect(src('views/inbox/InboxView.tsx')).toMatch(/<InboxPane\b/);
     expect(src('views/scheduler/SchedulerView.tsx')).not.toMatch(/<SchedulerPane\b/);
     expect(src('views/scheduler/SchedulerView.tsx')).not.toMatch(/scheduler-panel--split/);
   });

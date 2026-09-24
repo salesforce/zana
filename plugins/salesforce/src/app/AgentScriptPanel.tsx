@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { callPluginRpc, setPluginSettings, useSettings, useZccContext } from '@zana-ai/zcc-plugin-sdk/app';
 import {
   dialectOptions,
@@ -36,6 +36,15 @@ import {
 } from './agent-script-panel-logic.js';
 import { orgSessionLabel } from '../../lib/org-session.js';
 import { fetchConnectedOrg } from './org-rpc.js';
+import { AgentforceLabPanel } from './AgentforceLabPanel.js';
+import { AgentforceStudioSplit } from './AgentforceStudioSplit.js';
+import { AGENTFORCE_STUDIO_STYLES } from './agentforce-studio-styles.js';
+import { Bot } from './components/icons.js';
+import type { AgentAction } from '../../lib/agent-action-model.js';
+import { AgentActionExplorer, AgentActionPanel } from './AgentActionPanel.js';
+import { AGENT_ACTION_STYLES } from './agent-action-styles.js';
+import { agentDraftKey, readAgentDraft, writeAgentDraft, clearAgentDraft, rememberAgentSelection, recalledAgentSelection } from './agent-script-drafts.js';
+import { SaveAgentDialog } from './SaveAgentDialog.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -53,7 +62,7 @@ export const AGENTFORCE_PANEL_STYLES = `
 .sf-as-dialect { font: inherit; font-size: 11px; font-weight: 500; color: var(--sf-as-muted); background: transparent; border: 0; }
 .sf-org-picker { font: inherit; font-size: 11px; font-weight: 500; color: var(--sf-as-muted); background: transparent; border: 1px solid var(--sf-as-border); border-radius: 6px; height: 28px; max-width: 240px; padding: 0 6px; }
 .sf-as-save { height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--sf-as-border); background: transparent; color: var(--sf-as-muted); font-size: 12px; font-weight: 600; cursor: pointer; }
-.sf-as-save.is-dirty { background: var(--sf-as-accent); border-color: transparent; color: #061121; }
+.sf-as-save.is-dirty { background: var(--sf-as-accent); border-color: transparent; color: var(--text-on-accent,#fff); }
 .sf-as-save:disabled { opacity: .45; cursor: default; }
 .sf-as-banner { padding: 6px 16px; font-size: 12px; color: var(--sf-as-muted); border-bottom: 1px solid var(--sf-as-border); }
 .sf-as-banner.is-error { color: var(--danger, #ff8a8a); }
@@ -156,12 +165,19 @@ function FileTree({
   );
 }
 
-export function AgentScriptPanel(props: {
+type AgentScriptPanelProps = {
   pluginId: string;
   projectId?: string;
   subPath?: string;
   params?: unknown;
-}) {
+  headerActions?: ReactNode;
+};
+export function AgentScriptPanel(props: AgentScriptPanelProps) {
+  const context = useZccContext();
+  const projectId = props.projectId ?? context.projectId ?? undefined;
+  return <AgentScriptWorkspace key={projectId ?? 'shared'} {...props} projectId={projectId} />;
+}
+function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const pluginId = props.pluginId || PLUGIN_ID;
   const context = useZccContext();
   const projectId = props.projectId ?? context.projectId ?? undefined;
@@ -174,6 +190,14 @@ export function AgentScriptPanel(props: {
   const [exampleId, setExampleId] = useState(AGENT_SCRIPT_EXAMPLES[0]?.id ?? 'support-bot');
   const [sha256, setSha256] = useState<string | undefined>(undefined);
   const [dirty, setDirty] = useState(false);
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [draftWarning, setDraftWarning] = useState(false);
+  const draftScope = projectId ?? `root:${String(settings.values?.projectRoot ?? '')}`;
+  const activeDraft = useRef('');
+  const fileEpoch = useRef(0);
+  const alive = useRef(true);
+  const saving = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; fileEpoch.current++; }; }, []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dialectOverride, setDialectOverride] = useState<AgentScriptDialect | null>(null);
@@ -181,6 +205,24 @@ export function AgentScriptPanel(props: {
   const [iframeError, setIframeError] = useState(false);
   const [playgroundTimedOut, setPlaygroundTimedOut] = useState(false);
   const [view, setView] = useState<PlaygroundView>('script');
+  const [workflow, setWorkflow] = useState<'build' | 'rehearse' | 'test'>('build');
+  const [openedLabs, setOpenedLabs] = useState<Array<'rehearse' | 'test'>>([]);
+  const [source, setSource] = useState('');
+  const [actions, setActions] = useState<AgentAction[]>([]);
+  const [actionTabs, setActionTabs] = useState<Array<{ action: AgentAction; origin: 'project' | 'org' }>>([]);
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
+  const selectedTab = actionTabs.find(tab => tab.action.id === selectedActionId);
+  const selectedAction = selectedTab && (actions.find(action => action.id === selectedActionId) ?? selectedTab.action);
+  const openAction = useCallback((action: AgentAction, origin: 'project' | 'org' = 'project') => {
+    setActionTabs(tabs => tabs.some(tab => tab.action.id === action.id) ? tabs.map(tab => tab.action.id === action.id ? { ...tab, action, origin } : tab) : [...tabs.slice(-7), { action, origin }]);
+    setSelectedActionId(action.id);
+  }, []);
+  const revealLine = useCallback((line: number) => {
+    setSelectedActionId(null);
+    setView('script');
+    postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'revealLine', line });
+  }, []);
+  const [issues, setIssues] = useState(0);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [fileQuery, setFileQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -242,10 +284,17 @@ export function AgentScriptPanel(props: {
 
   const openFile = useCallback(
     async (path: string | null, nextExampleId?: string) => {
+      const generation = ++fileEpoch.current;
       setError(null);
+      setActionTabs([]);
+      setSelectedActionId(null);
+      setActions([]);
       if (!path) {
         const example =
           AGENT_SCRIPT_EXAMPLES.find((row) => row.id === nextExampleId) ?? AGENT_SCRIPT_EXAMPLES[0];
+        const identity = `example:${example?.id ?? 'support-bot'}`;
+        activeDraft.current = agentDraftKey(draftScope, identity);
+        rememberAgentSelection(draftScope, identity);
         setActivePath(null);
         setExampleId(example?.id ?? 'support-bot');
         setSha256(undefined);
@@ -253,6 +302,7 @@ export function AgentScriptPanel(props: {
         postToPlayground(frameRef.current, {
           source: PLAYGROUND_BRIDGE_SOURCE,
           type: 'setFile',
+          draftKey: activeDraft.current,
           path: null,
           content: example?.source ?? '',
           dialect: example?.dialect ?? dialect,
@@ -265,10 +315,14 @@ export function AgentScriptPanel(props: {
         error?: string;
         file?: { path: string; content: string; sha256: string };
       };
+      if (generation !== fileEpoch.current) return;
       if (!result?.ok || !result.file) {
         setError(result?.error || 'Could not read Agentforce file.');
         return;
       }
+      const identity = `file:${result.file.path}`;
+      activeDraft.current = agentDraftKey(draftScope, identity);
+      rememberAgentSelection(draftScope, identity);
       setActivePath(result.file.path);
       setExampleId('');
       setSha256(result.file.sha256);
@@ -276,6 +330,7 @@ export function AgentScriptPanel(props: {
       postToPlayground(frameRef.current, {
         source: PLAYGROUND_BRIDGE_SOURCE,
         type: 'setFile',
+        draftKey: activeDraft.current,
         path: result.file.path,
         content: result.file.content,
         dialect,
@@ -283,7 +338,7 @@ export function AgentScriptPanel(props: {
         sha256: result.file.sha256
       });
     },
-    [dialect, pluginId, rpcArgs]
+    [dialect, pluginId, rpcArgs, draftScope]
   );
 
   const save = useCallback(() => {
@@ -291,43 +346,61 @@ export function AgentScriptPanel(props: {
   }, []);
 
   const persistFromPlayground = useCallback(
-    async (path: string, content: string) => {
-      if (!saveEnabled || !path) {
-        setError('Open a project folder before saving.');
-        return;
-      }
-      setBusy(true);
-      setError(null);
+    async (path: string, content: string, key = activeDraft.current, create = false) => {
+      if (!saveEnabled || !path) { setError('Open a project folder before saving.'); setBusy(false); return; }
+      if (saving.current) return;
+      saving.current = true;
+      setBusy(true); setError(null);
       try {
-        const result = (await callPluginRpc(
-          pluginId,
-          'agentFiles.write',
-          rpcArgs({ path, content, expectedSha256: sha256 })
-        )) as { ok?: boolean; error?: string; file?: { sha256: string; path: string } };
-        if (!result?.ok || !result.file) {
-          setError(result?.error || 'Save failed.');
-          return;
+        const result = await callPluginRpc(pluginId, create ? 'agentFiles.create' : 'agentFiles.write',
+          rpcArgs({ path, content, ...(create ? {} : { expectedSha256: readAgentDraft(key)?.baseSha ?? sha256 }) })
+        ) as { ok?: boolean; error?: string; file?: { sha256: string; path: string } };
+        if (!alive.current) return;
+        if (!result?.ok || !result.file) { setError(result?.error || 'Save failed.'); return; }
+        const remaining = readAgentDraft(key);
+        if (remaining?.content === content) clearAgentDraft(key);
+        else if (remaining && !create) writeAgentDraft({ ...remaining, baseSha: result.file.sha256 });
+        if (key === activeDraft.current) {
+          if (create) {
+            if (remaining && remaining.content !== content) writeAgentDraft({ ...remaining, key: agentDraftKey(draftScope, `file:${result.file.path}`), baseSha: result.file.sha256 });
+            setSaveAsOpen(false);
+            await openFile(result.file.path);
+          } else {
+            setSha256(result.file.sha256);
+            setDirty(Boolean(remaining && remaining.content !== content));
+            postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'saved', draftKey: key, content, sha256: result.file.sha256 });
+          }
         }
-        setSha256(result.file.sha256);
-        setDirty(false);
-        postToPlayground(frameRef.current, {
-          source: PLAYGROUND_BRIDGE_SOURCE,
-          type: 'saved',
-          sha256: result.file.sha256
-        });
-        await refreshFiles();
+        if (alive.current) await refreshFiles();
+      } catch (err) {
+        if (alive.current) setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setBusy(false);
+        saving.current = false;
+        if (alive.current) setBusy(false);
       }
     },
-    [pluginId, refreshFiles, rpcArgs, saveEnabled, sha256]
+    [pluginId, refreshFiles, rpcArgs, saveEnabled, sha256, openFile, draftScope]
   );
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
+      if (event.source !== frameRef.current?.contentWindow) return;
       if (!isPlaygroundToHost(event.data)) return;
       const message = event.data;
+      if ('draftKey' in message && message.draftKey && message.draftKey !== activeDraft.current) return;
+      if (message.type === 'snapshot') {
+        const nextActions = message.actions ?? [];
+        setSource(message.content); setIssues(message.issues); setActions(nextActions);
+        setActionTabs(tabs => tabs.filter(tab => tab.action.id.startsWith('dependency:') || nextActions.some(action => action.id === tab.action.id)));
+        setSelectedActionId(id => id?.startsWith('dependency:') || nextActions.some(action => action.id === id) ? id : null);
+        return;
+      }
+      if (message.type === 'openAction') {
+        const action = actions.find(row => row.id === message.id);
+        if (action) openAction(action);
+        return;
+      }
       if (message.type === 'ready') {
         setPlaygroundReady(true);
         setIframeError(false);
@@ -345,11 +418,15 @@ export function AgentScriptPanel(props: {
         });
         void refreshOrg();
         const queued = projectId ? takeQueuedAgentScriptOpen(projectId) : null;
-        void openFile(initialPath || queued || null);
+        const last = recalledAgentSelection(draftScope);
+        const file = initialPath || queued || (last?.startsWith('file:') ? last.slice(5) : null);
+        void openFile(file, last?.startsWith('example:') ? last.slice(8) : undefined);
         return;
       }
       if (message.type === 'dirty') {
         setDirty(message.dirty);
+        if (message.draftKey) setSha256(message.baseSha);
+        setDraftWarning(message.persisted === false);
         return;
       }
       if (message.type === 'requestOpen') {
@@ -357,12 +434,12 @@ export function AgentScriptPanel(props: {
         return;
       }
       if (message.type === 'persist') {
-        void persistFromPlayground(message.path, message.content);
+        void persistFromPlayground(message.path, message.content, message.draftKey, message.create);
       }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [dialect, files, openFile, persistFromPlayground, projectId, initialPath, refreshOrg, saveEnabled, view, org]);
+  }, [dialect, files, openFile, persistFromPlayground, projectId, initialPath, refreshOrg, saveEnabled, view, org, actions, openAction, draftScope]);
 
   useEffect(() => {
     if (!projectId || !playgroundReady) return;
@@ -416,10 +493,20 @@ export function AgentScriptPanel(props: {
   const saveDisabled = saveIsDisabled(saveEnabled, activePath, busy);
 
   return (
-    <div className="sf-as" style={PANEL_ROOT} data-testid="salesforce-agent-script-panel">
+    <div className="sf-as" style={PANEL_ROOT} data-testid="salesforce-agent-script-panel" data-workflow={workflow}>
       <style>{AGENTFORCE_PANEL_STYLES}</style>
+      <style>{AGENTFORCE_STUDIO_STYLES}</style>
+      <style>{AGENT_ACTION_STYLES}</style>
       <header className="sf-as-header">
-        <span className="sf-as-brand">Playground</span>
+        <div className="af-brand"><span className="af-brand-mark"><Bot /></span><div><strong>Agentforce</strong><small>Playground</small></div></div>
+        <nav className="af-workflows" aria-label="Agentforce workflow">
+          {(['build', 'rehearse', 'test'] as const).map((id, index) => <button key={id} type="button" aria-pressed={workflow === id} onClick={() => { setWorkflow(id); if (id !== 'build') setOpenedLabs(current => current.includes(id) ? current : [...current, id]); }}><span>0{index + 1}</span>{id === 'build' ? 'Build' : id === 'rehearse' ? 'Rehearse' : 'Test'}</button>)}
+        </nav>
+        <span className="sf-as-spacer" />
+        {props.headerActions}
+        <OrgPicker pluginId={pluginId} projectId={projectId} compact onSelect={() => void refreshOrg()} />
+      </header>
+      <div className="af-document-bar">
         <div className="sf-as-crumb" aria-label="Agentforce file">
           {crumbs.length === 0 ? <span className="sf-as-crumb-seg">Untitled</span> : null}
           {crumbs.map((seg, index) => (
@@ -429,6 +516,7 @@ export function AgentScriptPanel(props: {
             </span>
           ))}
         </div>
+        <span className="af-draft-state"><i />{dirty ? 'Unsaved draft' : activePath ? 'Saved' : 'Example'}{issues ? ` · ${issues} issues` : ''}</span>
         <nav className="sf-as-tabs" aria-label="Agentforce view">
           {PLAYGROUND_VIEWS.map((id) => (
             <button
@@ -438,6 +526,7 @@ export function AgentScriptPanel(props: {
               aria-pressed={view === id}
               onClick={() => {
                 const next = normalizePlaygroundView(id);
+                setSelectedActionId(null);
                 setView(next);
                 postToPlayground(frameRef.current, {
                   source: PLAYGROUND_BRIDGE_SOURCE,
@@ -451,9 +540,8 @@ export function AgentScriptPanel(props: {
           ))}
         </nav>
         <span className="sf-as-spacer" />
-        <OrgPicker pluginId={pluginId} projectId={projectId} compact onSelect={() => void refreshOrg()} />
         {orgSessionLabel(org) ? (
-          <span className="sf-as-crumb-seg" data-testid="salesforce-playground-org">
+          <span hidden className="sf-as-crumb-seg" data-testid="salesforce-playground-org">
             {orgSessionLabel(org)}
           </span>
         ) : null}
@@ -486,11 +574,17 @@ export function AgentScriptPanel(props: {
           disabled={saveDisabled}
           onClick={() => void save()}
         >
-          {busy ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+          {busy ? 'Saving…' : !activePath ? 'Example' : dirty ? 'Save' : 'Saved'}
         </button>
-      </header>
+        <button type="button" className="sf-as-save" disabled={!saveEnabled || busy || !playgroundReady} onClick={() => { setError(null); setSaveAsOpen(true); }}>Save as…</button>
+      </div>
+      {saveAsOpen && <SaveAgentDialog busy={busy} error={error} onClose={() => setSaveAsOpen(false)} onSave={path => {
+        setBusy(true); setError(null);
+        postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'flushSave', path, create: true });
+      }} />}
+      {draftWarning && <div className="sf-as-banner is-error" role="alert">Local recovery is unavailable for this draft. Save it to a project file before leaving.</div>}
       {hint ? <div className="sf-as-banner">{hint}</div> : null}
-      {error ? <div className="sf-as-banner is-error">{error}</div> : null}
+      {error ? <div className="sf-as-banner is-error" role="alert">{error}</div> : null}
       <div className="sf-as-body">
         <aside
           className={`sf-as-explorer${explorerOpen ? '' : ' is-collapsed'}`}
@@ -563,24 +657,32 @@ export function AgentScriptPanel(props: {
                     />
                   )}
                 </div>
+                <AgentActionExplorer actions={actions.filter(action => !fileQuery || `${action.name} ${action.owner} ${action.target}`.toLowerCase().includes(fileQuery.toLowerCase()))} selected={selectedActionId ?? undefined} onOpen={openAction} />
               </div>
             </>
           ) : null}
         </aside>
-        {playgroundFailed ? (
+        <AgentforceStudioSplit open={workflow !== 'build'} editor={<div className="af-action-workspace">
+          {actionTabs.length > 0 && <div className="af-related-tabs" aria-label="Open agent files">
+            <div className={`af-related-tab${!selectedActionId ? ' is-active' : ''}`}><button aria-pressed={!selectedActionId} onClick={() => setSelectedActionId(null)}>{activePath?.split('/').pop() ?? 'Agent script'}{dirty ? ' •' : ''}</button></div>
+            {actionTabs.map(tab => <div className={`af-related-tab${selectedActionId === tab.action.id ? ' is-active' : ''}`} key={tab.action.id}><button title={`${tab.action.owner} · ${tab.action.target}`} aria-pressed={selectedActionId === tab.action.id} onClick={() => setSelectedActionId(tab.action.id)}>{tab.action.name}</button><button aria-label={`Close ${tab.action.name}`} onClick={() => { setActionTabs(tabs => tabs.filter(t => t.action.id !== tab.action.id)); if (selectedActionId === tab.action.id) setSelectedActionId(null); }}>×</button></div>)}
+          </div>}
+          {playgroundFailed ? (
           <p data-testid="salesforce-agent-script-playground-error" style={{ color: 'var(--danger, #c00)', padding: 16 }}>
             {PLAYGROUND_LOAD_ERROR}
           </p>
         ) : (
-          <div className="sf-as-stage">
             <iframe
               ref={frameRef}
               title="Agentforce playground"
               src={typeof process !== 'undefined' && process.env.VITEST ? 'about:blank' : PLAYGROUND_ASSET_SRC}
-              style={{ flex: 1, minHeight: 0, width: '100%', border: 0, background: 'transparent' }}
+              style={{ flex: 1, minHeight: 0, width: '100%', border: 0, background: 'transparent', display: selectedAction ? 'none' : undefined }}
             />
-          </div>
         )}
+          {selectedAction && <AgentActionPanel key={`${projectId}:${activePath}:${selectedAction.id}`} pluginId={pluginId} projectId={projectId} org={org} action={selectedAction} initialOrigin={selectedTab?.origin} onOriginChange={origin => setActionTabs(tabs => tabs.map(tab => tab.action.id === selectedActionId ? { ...tab, origin } : tab))} onReveal={revealLine} onOpenTarget={(target, origin) => openAction({ id: `dependency:${target}`, name: target.split('://')[1], owner: `Referenced by ${selectedAction.name}`, target, line: 1, description: '', inputs: [], outputs: [], uses: [] }, origin)} />}
+        </div>}>
+        {openedLabs.map(mode => <AgentforceLabPanel key={`${projectId}:${mode}`} hidden={workflow !== mode} pluginId={pluginId} projectId={projectId} source={source} mode={mode} fileLabel={activePath?.split('/').pop() ?? exampleTitle ?? 'Draft'} />)}
+        </AgentforceStudioSplit>
       </div>
     </div>
   );
@@ -591,12 +693,14 @@ export function AgentforcePlaygroundPanel(props: {
   threadId?: string;
   projectId?: string;
   params?: unknown;
+  headerActions?: ReactNode;
 }) {
   return (
     <AgentScriptPanel
       pluginId={props.pluginId}
       projectId={props.projectId}
       params={props.params}
+      headerActions={props.headerActions}
     />
   );
 }

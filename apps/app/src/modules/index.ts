@@ -21,9 +21,10 @@ export const APP_MODULES: AppModule[] = [docsModule];
 /** Built-in module ids, used to widen the NavId union at runtime. */
 export const MODULE_IDS = APP_MODULES.map((m) => m.id);
 
-/** Look up a built-in module by id. Prefer the merged accessors for code that
- *  must also see runtime-loaded extensions. */
+/** Look up an authorized compiled companion by id. Prefer merged accessors for
+ * code that must also see runtime-loaded extensions. */
 export function getModule(id: string): AppModule | undefined {
+  if (!usePluginAppModules.getState().runtimeLoadedIds.has(id)) return undefined;
   return APP_MODULES.find((m) => m.id === id);
 }
 
@@ -32,15 +33,20 @@ function loadErrorOf(module: AppModule): string | undefined {
 }
 
 /**
- * Combine the static built-ins with the runtime-loaded extension modules. A
- * runtime extension may not collide with a built-in id; if one does, the
- * built-in wins (it was registered first and is trusted). Plugin-app modules
+ * Combine authorized compiled plugin companions with runtime-loaded extension
+ * modules. A runtime extension may not collide with an authorized companion;
+ * if one does, the compiled companion wins. Plugin-app modules
  * normally win over disk extensions for the same id, except a failed plugin
  * load must not hide a working legacy `activate()` module.
  */
-function mergeModules(pluginAppModules: AppModule[], extensionModules: AppModule[]): AppModule[] {
-  if (pluginAppModules.length === 0 && extensionModules.length === 0) return APP_MODULES;
-  const taken = new Set(APP_MODULES.map((m) => m.id));
+function mergeModules(
+  pluginAppModules: AppModule[],
+  extensionModules: AppModule[],
+  runtimeLoadedIds: ReadonlySet<string>
+): AppModule[] {
+  const compiledCompanions = APP_MODULES.filter((module) => runtimeLoadedIds.has(module.id));
+  if (pluginAppModules.length === 0 && extensionModules.length === 0) return compiledCompanions;
+  const taken = new Set(compiledCompanions.map((m) => m.id));
   const byId = new Map<string, AppModule>();
   for (const module of pluginAppModules) byId.set(module.id, module);
   for (const module of extensionModules) {
@@ -56,7 +62,7 @@ function mergeModules(pluginAppModules: AppModule[], extensionModules: AppModule
     taken.add(m.id);
     return true;
   });
-  return extras.length === 0 ? APP_MODULES : [...APP_MODULES, ...extras];
+  return extras.length === 0 ? compiledCompanions : [...compiledCompanions, ...extras];
 }
 
 /**
@@ -68,10 +74,11 @@ function mergeModules(pluginAppModules: AppModule[], extensionModules: AppModule
  */
 export function useMergedModules(): AppModule[] {
   const pluginAppModules = usePluginAppModules((s) => s.modules);
+  const runtimeLoadedIds = usePluginAppModules((s) => s.runtimeLoadedIds);
   const extensionModules = useExtensionModules((s) => s.modules);
   return useMemo(
-    () => mergeModules(pluginAppModules, extensionModules),
-    [pluginAppModules, extensionModules]
+    () => mergeModules(pluginAppModules, extensionModules, runtimeLoadedIds),
+    [pluginAppModules, extensionModules, runtimeLoadedIds]
   );
 }
 
@@ -79,7 +86,8 @@ export function useMergedModules(): AppModule[] {
 export function getMergedModule(id: string): AppModule | undefined {
   return mergeModules(
     usePluginAppModules.getState().modules,
-    useExtensionModules.getState().modules
+    useExtensionModules.getState().modules,
+    usePluginAppModules.getState().runtimeLoadedIds
   ).find((m) => m.id === id);
 }
 
@@ -117,7 +125,11 @@ export function useProjectTabModules(): AppModule[] {
 /** Imperative project-tab module set for non-React call sites. */
 export function getProjectTabModules(): AppModule[] {
   return selectProjectTabModules(
-    mergeModules(usePluginAppModules.getState().modules, useExtensionModules.getState().modules)
+    mergeModules(
+      usePluginAppModules.getState().modules,
+      useExtensionModules.getState().modules,
+      usePluginAppModules.getState().runtimeLoadedIds
+    )
   );
 }
 
@@ -125,6 +137,7 @@ export function getProjectTabModules(): AppModule[] {
 export function getMergedModuleIds(): string[] {
   return mergeModules(
     usePluginAppModules.getState().modules,
-    useExtensionModules.getState().modules
+    useExtensionModules.getState().modules,
+    usePluginAppModules.getState().runtimeLoadedIds
   ).map((m) => m.id);
 }

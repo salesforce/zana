@@ -60,6 +60,7 @@ import type { HarnessModelTarget, ModelLevel } from '@zana-ai/zcc-domain/harness
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { codexLegacyRouting } from './legacy-routing.js';
+import { codexInteractionHook } from './interaction-hooks.js';
 
 export const CODEX_EVIDENCE_VERSION = '0.140.0';
 const codexEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -120,7 +121,7 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'output-activity' },
+  status: { mode: 'output-activity', interactionHook: codexInteractionHook },
   legacyRouting: codexLegacyRouting,
   evidence: [
     codexEvidence('codex.facet.opening-prompt', 'local', 'CLI binds opening prompt at spawn.'),
@@ -177,11 +178,10 @@ function codexOptionArgs(
  * Build one `-c hooks.<Event>=[…]` override registering a single `command` hook.
  * The `command` is a shell string codex runs via `sh -c` (with the event JSON on
  * stdin), so the WHOLE inline-table is one TOML value: escape the assembled
- * command once for the TOML basic string it sits in. Matcher is `"*"` (match-all)
- * — codex's Stop/lifecycle events aren't tool-scoped.
+ * command once for the TOML basic string it sits in.
  */
-function codexHookOverride(event: string, command: string): string[] {
-  return ['-c', `hooks.${event}=[{matcher="*",hooks=[{type="command",command="${tomlBasic(command)}"}]}]`];
+function codexHookOverride(event: string, command: string, matcher = '*'): string[] {
+  return ['-c', `hooks.${event}=[{matcher="${matcher}",hooks=[{type="command",command="${tomlBasic(command)}"}]}]`];
 }
 
 export class CodexProvider extends BaseLaunchProvider {
@@ -401,17 +401,15 @@ export class CodexProvider extends BaseLaunchProvider {
     }
 
     if (urls.notify) {
-      // Blocked/unblocked live status. codex's `PermissionRequest` fires when the
-      // agent is waiting on the user (permission escalation) → POST /blocked; a new
-      // `UserPromptSubmit` means the wait cleared → POST /unblocked. (The claude
-      // path also clears on Stop, but codex's Stop slot is taken by the turn-end
-      // hook above, and `/hook/stop`'s handler already clears blocked — so a
-      // separate unblock-on-stop is redundant.)
+      // Forward identities so prompt repaints cannot resolve pending approval and
+      // another concurrent tool's completion cannot dismiss this request.
+      const post = (action: string) =>
+        `curl -sS -m 5 -o /dev/null -X POST --data-binary @- "${urls.notify}/${action}"`;
       args.push(
-        ...codexHookOverride(
-          'PermissionRequest',
-          `cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST "${urls.notify}/blocked"`
-        )
+        ...codexHookOverride('PermissionRequest', post('blocked')),
+        ...codexHookOverride('PreToolUse', post('blocked'), 'request_user_input'),
+        ...codexHookOverride('PostToolUse', post('unblocked')),
+        ...codexHookOverride('Interrupt', post('unblocked'))
       );
     }
 

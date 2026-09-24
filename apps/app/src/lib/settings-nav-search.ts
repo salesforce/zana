@@ -60,6 +60,7 @@ export const SETTINGS_SEARCH_KEYWORDS: Record<string, readonly string[]> = {
   'global.debug': ['provider', 'traffic', 'unhandled', 'diagnostic'],
   keyboard: ['shortcut', 'shortcuts', 'hotkey', 'hotkeys', 'keybinding', 'remap', 'chords'],
   'keyboard.keyboard': ['shortcut', 'shortcuts', 'hotkey', 'hotkeys', 'keybinding', 'remap'],
+  phone: ['mobile', 'qr', 'pair', 'pairing', 'iphone', 'android', 'device', 'gateway'],
   inbox: ['guidance', 'pdf', 'trust'],
   terminal: ['shell', 'tmux', 'font', 'appearance'],
   harness: ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode', 'mastra', 'modern', 'cli agent', 'update', 'install', 'machines'],

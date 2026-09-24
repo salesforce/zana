@@ -3,6 +3,11 @@ import { useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Bell, Star } from 'lucide-react';
 import { Sidebar } from './components/Sidebar.js';
+import {
+  MobileNavDrawer,
+  MobileShellReporter,
+  useMobileNavigation
+} from './components/MobileShellChrome.js';
 import { SidebarTriggerOverlay } from './components/SidebarTriggerOverlay.js';
 import { AgentLauncher } from './components/AgentLauncher.js';
 import { SettingsPane } from './components/listpane/SettingsPane.js';
@@ -203,7 +208,11 @@ export function App() {
   navigateRef.current = navigate;
   const splitWorkspaceShowing = isSplitWorkspacePath(location.pathname);
   const nav = route.nav;
-  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const desktopSidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const mobileNavigation = useMobileNavigation();
+  const sidebarCollapsed = mobileNavigation.isCompact
+    ? !mobileNavigation.drawerOpen
+    : desktopSidebarCollapsed;
   const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
   // URL project wins; the store keeps sticky focus for Inbox / Next Steps /
   // Settings so the project rail stays while those destinations have no
@@ -680,6 +689,7 @@ export function App() {
       className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
       }`}
+      data-mobile={mobileNavigation.isCompact}
       data-platform={shellChrome.platform}
       data-fullscreen={shellChrome.isFullScreen}
       data-traffic-lights={shellChrome.reserveMacosTrafficLights}
@@ -731,6 +741,11 @@ export function App() {
           main window swaps the global rail for ProjectScopedNav so Agents /
           Terminals / Scheduler / … live in the side panel, with Back returning
           to the cross-project home. */}
+      <MobileNavDrawer
+        enabled={mobileNavigation.isCompact}
+        open={!sidebarCollapsed}
+        onClose={() => mobileNavigation.setDrawerOpen(false)}
+      >
       {sidebarCollapsed ? null : scopedProject ? (
         <ProjectScopedNav project={scopedProject} variant="window" />
       ) : focusedProject && keepsProjectFocusRail(nav, focusedProjectId) ? (
@@ -745,12 +760,14 @@ export function App() {
       ) : (
         <Sidebar />
       )}
+      </MobileNavDrawer>
+      <MobileShellReporter unread={unreadInbox} />
       {/* One persistent landmark. display:contents on .shell-main so route
           panels still participate in the app-shell grid. Workspace stays
           mounted (CSS-hidden) so the terminal portal always has its park
           anchor. TerminalSurface must stay mounted across nav — this landmark
           already does that; it must not sit beside the shell as a host node. */}
-      <main className="shell-main">
+      <main className="shell-main" inert={mobileNavigation.isCompact && mobileNavigation.drawerOpen}>
         <HashNavigationScroll />
         <AppRoutes suggestionsEnabled={suggestionsEnabled} />
       </main>
@@ -765,7 +782,12 @@ export function App() {
           onLaunched={(session, projectId) => stayOnAgentsBoard(session, projectId, navigate)}
         />
       )}
-      <SidebarTriggerOverlay />
+      <SidebarTriggerOverlay
+        collapsed={sidebarCollapsed}
+        onToggle={mobileNavigation.isCompact
+          ? () => mobileNavigation.setDrawerOpen(!mobileNavigation.drawerOpen)
+          : undefined}
+      />
       {/* Headless, always-mounted module backgrounds. Runtime activation results
           retain valid background components, which mount here outside nav-conditional
           views so long-lived work keeps running when a panel is not selected. */}

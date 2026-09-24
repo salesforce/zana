@@ -49,6 +49,12 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Mobile typecheck
+        run: pnpm --filter @zana-ai/zcc-mobile typecheck
+
+      - name: Export mobile bundles
+        run: pnpm --filter @zana-ai/zcc-mobile export
+
       - name: Unit tests
         run: pnpm test
 
@@ -105,7 +111,7 @@ jobs:
           # on GitHub-hosted runners.
           NODE_OPTIONS: --max-old-space-size=6144
 
-      # Flip sqlite to the Electron ABI (cache copy after first compile) and
+      # Prepare the independent Electron SQLite cache (no shared ABI switch) and
       # skip node-pty when Electron can already load it.
       - name: Rebuild native modules for Electron
         run: pnpm run rebuild:electron

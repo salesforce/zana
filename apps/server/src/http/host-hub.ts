@@ -20,7 +20,7 @@ import {
   appendConversationThreadEvent,
   appendThreadEvent,
   closeHostSession,
-  listConversationThreadEventsWindow,
+  getConversationTurnStart,
   disconnectLiveThreadsForHost,
   getConversationThread,
   getHost,
@@ -371,9 +371,9 @@ export function createHostHub(
           const lifecycleEvent = conversationLifecycleEventForHostEvent({
             kind: event.kind,
             payload: event.payload,
-            nestedTurn: isNestedConversationTurnCompletion(
+            nestedTurn: (event.kind === 'turn.completed' || eventType === 'turn/completed') && isNestedConversationTurnCompletion(
               event.payload,
-              listConversationThreadEventsWindow(db, event.threadId, { limit: 80 })
+              (turnId) => getConversationTurnStart(db, conversation.id, turnId)
             )
           });
           if (lifecycleEvent) {

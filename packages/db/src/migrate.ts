@@ -350,6 +350,13 @@ export function migrate(database: SqliteDatabase): void {
   if (!applied.has(17)) applyVersion(database, 17, [
     'CREATE INDEX thread_events_thread_type_seq_idx ON thread_events(thread_id, type, sequence)'
   ]);
+  if (!applied.has(18)) applyVersion(database, 18, [
+    `CREATE INDEX thread_events_turn_start_idx ON thread_events(
+      thread_id,
+      COALESCE(json_extract(payload, '$.event.scope.turnId'), json_extract(payload, '$.scope.turnId')),
+      sequence
+    ) WHERE type = 'turn/started'`
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

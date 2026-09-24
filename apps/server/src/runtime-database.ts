@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { createSqliteDatabase } from '@zana-ai/zcc-db';
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { TerminalHostBinding, TerminalHostEvent } from '@zana-ai/zcc-contracts/terminal-execution';
@@ -46,7 +46,7 @@ export function createRuntimeDatabase(file: string): TerminalSessionRepository {
   // Terminal event replay can include arbitrary process output. The containing
   // directory protects the database and its WAL/SHM sidecars as one unit.
   chmodSync(directory, 0o700);
-  const database = new Database(file);
+  const database = createSqliteDatabase(file);
   chmodSync(file, 0o600);
   database.pragma('journal_mode = WAL');
   database.pragma('foreign_keys = ON');

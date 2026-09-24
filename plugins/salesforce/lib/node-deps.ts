@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, linkSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { SalesforceDeps } from './types.js';
 import { createContainedSpawner, createExecSf, salesforceRestRequest } from './sf-cli.js';
@@ -27,6 +27,21 @@ export function createNodeDeps(): SalesforceDeps {
         return null;
       }
     },
+    readFileBounded: (path, maxBytes) => {
+      const fd = openSync(path, 'r');
+      try {
+        if (fstatSync(fd).size > maxBytes) throw Error('This source exceeds the preview size limit.');
+        const bytes = Buffer.alloc(maxBytes + 1);
+        let count = 0;
+        while (count <= maxBytes) {
+          const read = readSync(fd, bytes, count, bytes.length - count, null);
+          if (!read) break;
+          count += read;
+        }
+        if (count > maxBytes) throw Error('This source exceeds the preview size limit.');
+        return bytes.subarray(0, count).toString('utf8');
+      } finally { closeSync(fd); }
+    },
     readdir: (path) => readdirSync(path),
     realpath: (path) => realpathSync(path),
     writeFile: (path, content) => {
@@ -36,6 +51,16 @@ export function createNodeDeps(): SalesforceDeps {
       renameSync(staging, path);
     },
     spawnContained: createContainedSpawner(),
+    createFile: (path, content) => {
+      const staging = `${path}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+      const fd = openSync(staging, 'wx', 0o600);
+      try {
+        writeFileSync(fd, content, 'utf8');
+        linkSync(staging, path);
+      } finally {
+        try { closeSync(fd); } finally { unlinkSync(staging); }
+      }
+    },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   };
 }

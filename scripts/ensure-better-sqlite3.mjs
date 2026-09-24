@@ -1,20 +1,13 @@
 #!/usr/bin/env node
-/**
- * `pnpm dev` / `dev-local.mjs` open SQLite from Node (listen.ts), not Electron.
- * Electron's utility process needs the same addon compiled for Electron's ABI.
- * Those two NODE_MODULE_VERSION values cannot share one `.node` file, so builds
- * used to recompile from C on every flip. Cache both binaries and copy the
- * matching one into `build/Release` instead of running node-gyp / electron-rebuild
- * unless the cache is missing or fails to load.
- *
- * Native addons cannot be re-dlopen'd in the same process after a failed load.
- * Probe and post-restore verify always run in a child.
- */
+/** Prepare independent, verified binaries for Node and Electron. Never compile in the installed package. */
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
+import { constants, copyFileSync, cpSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { sqliteAbiCachePath as cachePathFor } from '../packages/db/src/native-binding.mjs';
 import { createRequire } from 'node:module';
-import { basename, dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
@@ -37,7 +30,7 @@ export function sqliteAddonPath(root = sqlitePackageRoot()) {
 }
 
 export function nativeAbiCacheRoot() {
-  return join(process.cwd(), 'node_modules', '.cache', 'zcc-native-abi');
+  return fileURLToPath(new URL('../node_modules/.cache/zcc-native-abi', import.meta.url));
 }
 
 export function sqliteAbiCachePath(abi, {
@@ -46,19 +39,13 @@ export function sqliteAbiCachePath(abi, {
   platform = process.platform,
   arch = process.arch
 } = {}) {
-  return join(
-    cacheRoot,
-    'better-sqlite3',
-    packageVersion,
-    `${platform}-${arch}`,
-    `abi-${abi}.node`
-  );
+  return cachePathFor(abi, { cacheRoot, packageVersion, platform, arch });
 }
 
 export function replaceFileAtomic(src, dest) {
   if (!existsSync(src)) return false;
   mkdirSync(dirname(dest), { recursive: true });
-  const tmp = join(dirname(dest), `.${basename(dest)}.${process.pid}.${Date.now()}.tmp`);
+  const tmp = join(dirname(dest), `.${basename(dest)}.${process.pid}.${randomUUID()}.tmp`);
   try {
     copyFileSync(src, tmp);
     chmodSync(tmp, 0o755);
@@ -107,15 +94,16 @@ export function tryLoadBetterSqlite3() {
  * Electron-built .node (that was failing smoke teardown with
  * "Module did not self-register").
  */
-export function probeBetterSqlite3InChild() {
+export function probeBetterSqlite3InChild(nativeBinding) {
   const script = `
     const { createRequire } = require('node:module');
     const requireFrom = createRequire(${JSON.stringify(import.meta.url)});
     const Database = requireFrom('better-sqlite3');
-    const db = new Database(':memory:');
+    const db = new Database(':memory:', ${JSON.stringify(nativeBinding ? { nativeBinding } : {})});
+    if (db.prepare('SELECT 42 AS value').get().value !== 42) throw new Error('SQLite probe failed');
     db.close();
   `;
-  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 });
   return decodeProbeResult(result, 'better-sqlite3 failed to load in child process');
 }
 
@@ -129,6 +117,8 @@ export function electronModulesAbi() {
     ['-e', 'process.stdout.write(String(process.versions.modules))'],
     {
       encoding: 'utf8',
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
     }
   );
@@ -142,22 +132,26 @@ export function electronModulesAbi() {
   return abi;
 }
 
-export function probeBetterSqlite3InElectronChild() {
+export function probeBetterSqlite3InElectronChild(nativeBinding) {
   const script = `
     const { createRequire } = require('node:module');
     const requireFrom = createRequire(${JSON.stringify(import.meta.url)});
     const Database = requireFrom('better-sqlite3');
-    const db = new Database(':memory:');
+    const db = new Database(':memory:', ${JSON.stringify(nativeBinding ? { nativeBinding } : {})});
+    if (db.prepare('SELECT 42 AS value').get().value !== 42) throw new Error('SQLite probe failed');
     db.close();
   `;
   const result = spawnSync(electronBinaryPath(), ['-e', script], {
     encoding: 'utf8',
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
   });
   return decodeProbeResult(result, 'better-sqlite3 failed to load in Electron child process');
 }
 
 function decodeProbeResult(result, fallback) {
+  if (result.error) return { ok: false, error: result.error };
   if (result.status === 0) return { ok: true };
   const message = `${result.stderr || ''}${result.stdout || ''}`.trim() || fallback;
   const error = new Error(message);
@@ -167,15 +161,16 @@ function decodeProbeResult(result, fallback) {
   return { ok: false, error };
 }
 
-export function rebuildBetterSqlite3ForNode() {
-  const cwd = sqlitePackageRoot();
-  const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js', { paths: [cwd, process.cwd()] });
+export function rebuildBetterSqlite3ForNode(cwd) {
+  if (!cwd || resolve(cwd) === resolve(sqlitePackageRoot())) throw new Error('Native rebuild requires a private staging directory');
+  const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js', { paths: [sqlitePackageRoot()] });
   process.stderr.write(
     `[ensure-better-sqlite3] rebuilding for Node ${process.version} (ABI ${process.versions.modules})\n`
   );
   const result = spawnSync(process.execPath, [nodeGyp, 'rebuild'], {
     cwd,
     stdio: 'inherit',
+    timeout: 10 * 60_000,
     env: process.env
   });
   if (result.status !== 0) {
@@ -183,15 +178,15 @@ export function rebuildBetterSqlite3ForNode() {
   }
 }
 
-export function rebuildBetterSqlite3ForElectron() {
-  const cwd = sqlitePackageRoot();
-  const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js', { paths: [cwd, process.cwd()] });
+export function rebuildBetterSqlite3ForElectron(cwd) {
+  if (!cwd || resolve(cwd) === resolve(sqlitePackageRoot())) throw new Error('Native rebuild requires a private staging directory');
+  const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js', { paths: [sqlitePackageRoot()] });
   const electronVersion = require('electron/package.json').version;
   const abi = electronModulesAbi();
   process.stderr.write(
     `[ensure-better-sqlite3] rebuilding for Electron ${electronVersion} (ABI ${abi})\n`
   );
-  // Compile only the resolved install. `electron-rebuild -w better-sqlite3`
+  // Compile only the private staging package. `electron-rebuild -w better-sqlite3`
   // walks every pnpm copy; a leftover version without bindings fails the build.
   const result = spawnSync(
     process.execPath,
@@ -205,6 +200,7 @@ export function rebuildBetterSqlite3ForElectron() {
     {
       cwd,
       stdio: 'inherit',
+      timeout: 10 * 60_000,
       env: {
         ...process.env,
         npm_config_runtime: 'electron',
@@ -221,41 +217,62 @@ export function rebuildBetterSqlite3ForElectron() {
   }
 }
 
-export function ensureBetterSqlite3ForNode() {
-  const loaded = probeBetterSqlite3InChild();
-  if (loaded.ok) {
-    saveSqliteAbiCache(process.versions.modules);
-    return;
+/**
+ * Each attempt owns a staging directory. Only a binary that opened a database
+ * in the target runtime is atomically published; concurrent preparers cannot
+ * expose a partial compile or cache a binary another runtime just replaced.
+ */
+export function prepareSqliteBinding({ abi, cachePath, addonPath, probe, rebuild, packageRoot = sqlitePackageRoot() }) {
+  if (existsSync(cachePath) && probe(cachePath).ok) return cachePath;
+  const stage = mkdtempSync(join(tmpdir(), 'zcc-sqlite-'));
+  try {
+    const candidate = join(stage, 'candidate.node');
+    if (replaceFileAtomic(addonPath, candidate) && probe(candidate).ok) {
+      replaceFileAtomic(candidate, cachePath);
+      return cachePath;
+    }
+    const source = join(stage, 'source');
+    cpSync(packageRoot, source, {
+      recursive: true,
+      mode: constants.COPYFILE_FICLONE,
+      filter: (path) => !['build', 'node_modules'].includes(path.slice(packageRoot.length + 1).split(/[\\/]/)[0])
+    });
+    // pnpm keeps node-gyp dependencies beside the resolved package.
+    symlinkSync(dirname(packageRoot), join(source, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+    rebuild(source);
+    const built = sqliteAddonPath(source);
+    const checked = probe(built);
+    if (!checked.ok) throw checked.error;
+    replaceFileAtomic(built, cachePath);
+    process.stderr.write(`[ensure-better-sqlite3] prepared ABI ${abi} at ${cachePath}\n`);
+    return cachePath;
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
   }
-  if (!isNativeAbiMismatch(loaded.error)) throw loaded.error;
-  if (restoreSqliteAbiCache(process.versions.modules)) {
-    const fromCache = probeBetterSqlite3InChild();
-    if (fromCache.ok) return;
-    process.stderr.write('[ensure-better-sqlite3] cached Node ABI binary failed to load; rebuilding\n');
+}
+
+export function ensureBetterSqlite3ForNode({ cachePath = sqliteAbiCachePath(process.versions.modules), addonPath = sqliteAddonPath() } = {}) {
+  const abi = process.versions.modules;
+  prepareSqliteBinding({
+    abi, cachePath, addonPath,
+    probe: probeBetterSqlite3InChild, rebuild: rebuildBetterSqlite3ForNode
+  });
+  // Third-party tooling still uses the package default. Only Node preparation
+  // repairs that default; our running product connections use the ABI cache.
+  if (!probeBetterSqlite3InChild().ok) {
+    replaceFileAtomic(cachePath, addonPath);
+    const checked = probeBetterSqlite3InChild();
+    if (!checked.ok) throw checked.error;
   }
-  rebuildBetterSqlite3ForNode();
-  saveSqliteAbiCache(process.versions.modules);
-  const retry = probeBetterSqlite3InChild();
-  if (!retry.ok) throw retry.error;
+  return cachePath;
 }
 
 export function ensureBetterSqlite3ForElectron() {
   const abi = electronModulesAbi();
-  const loaded = probeBetterSqlite3InElectronChild();
-  if (loaded.ok) {
-    saveSqliteAbiCache(abi);
-    return;
-  }
-  if (!isNativeAbiMismatch(loaded.error)) throw loaded.error;
-  if (restoreSqliteAbiCache(abi)) {
-    const fromCache = probeBetterSqlite3InElectronChild();
-    if (fromCache.ok) return;
-    process.stderr.write('[ensure-better-sqlite3] cached Electron ABI binary failed to load; rebuilding\n');
-  }
-  rebuildBetterSqlite3ForElectron();
-  saveSqliteAbiCache(abi);
-  const retry = probeBetterSqlite3InElectronChild();
-  if (!retry.ok) throw retry.error;
+  return prepareSqliteBinding({
+    abi, cachePath: sqliteAbiCachePath(abi), addonPath: sqliteAddonPath(),
+    probe: probeBetterSqlite3InElectronChild, rebuild: rebuildBetterSqlite3ForElectron
+  });
 }
 
 const invokedDirectly = Boolean(process.argv[1])

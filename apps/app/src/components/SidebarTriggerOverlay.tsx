@@ -13,8 +13,12 @@ import { CollapsedUnreadThreads } from './CollapsedUnreadThreads.js';
  * controls between independent route headers. When collapsed, search / new
  * chat / unread threads join the same overlay.
  */
-export function SidebarTriggerOverlay() {
-  const collapsed = useUi((s) => s.sidebarCollapsed);
+export function SidebarTriggerOverlay({
+  collapsed: collapsedOverride,
+  onToggle
+}: { collapsed?: boolean; onToggle?: () => void } = {}) {
+  const storedCollapsed = useUi((s) => s.sidebarCollapsed);
+  const collapsed = collapsedOverride ?? storedCollapsed;
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const navigate = useNavigate();
@@ -26,7 +30,7 @@ export function SidebarTriggerOverlay() {
       <button
         type="button"
         className="sidebar-expand-control"
-        onClick={toggleSidebar}
+        onClick={onToggle ?? toggleSidebar}
         aria-label={label}
         aria-expanded={!collapsed}
         title={label}

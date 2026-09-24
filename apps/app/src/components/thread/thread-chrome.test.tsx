@@ -264,7 +264,7 @@ describe('diff hunk helper', () => {
     expect(source).toContain('ThreadDiffHunkView');
     expect(source).not.toContain('from \'../DiffViewer.js\'');
     expect(source).toContain('Expand all files');
-    expect(source).toContain('Search files');
+    expect(source).toContain('ThreadDiffFileNavigator');
     expect(source).toContain('Wrap diff lines');
     expect(source).toContain('Split diff view');
     expect(source).toContain('title={label}');
@@ -844,6 +844,17 @@ describe('expandable row and chips', () => {
     expect(css).toContain('.thread-plan-status');
     expect(css).toContain('.thread-plan-execution');
     expect(css).toContain('.thread-todo-checklist');
+    const workingIndicator = css.slice(
+      css.indexOf('.thread-working-indicator {'),
+      css.indexOf('.thread-working-indicator > summary.thread-working-indicator-header {')
+    );
+    expect(workingIndicator).toContain('padding: 8px 0;');
+    expect(workingIndicator).not.toContain('.thread-working-indicator-gutter');
+    const thinkingDetails = css.slice(
+      css.indexOf('.thread-thinking-details {'),
+      css.indexOf('.thread-file-hunk,')
+    );
+    expect(thinkingDetails).toContain('border-left: 1px solid var(--border);');
     const mentionPopover = css.slice(
       css.indexOf('.thread-detail-view .mention-popover {'),
       css.indexOf('.composer-typeahead-heading {')

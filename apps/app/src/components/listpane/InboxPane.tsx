@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, X, Check, Trash2, ChevronsDownUp, ChevronsUpDown, InboxIcon, Bookmark, FolderTree, Clock, MoreHorizontal, MailCheck } from 'lucide-react';
+import { Search, X, Check, Trash2, ChevronsDownUp, ChevronsUpDown, InboxIcon, Bookmark, FolderTree, Clock, MoreHorizontal, MailCheck, LayoutDashboard } from 'lucide-react';
 import { useInbox, useInboxRead, useInboxKeep, useInboxCollapsed, useInboxScopeProjectId, clearInbox, useSaved, useUi, INBOX_LIST_MIN } from '../../store.js';
 import { groupByBucketThenProject, subGroupKey } from '@zana-ai/zcc-domain/inbox-grouping';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
@@ -13,7 +13,7 @@ function tabAriaLabel(name: string, count: number, countKind?: string): string {
   return countKind ? `${name}, ${count} ${countKind}` : `${name}, ${count}`;
 }
 
-export function InboxPane() {
+export function InboxPane({ onShowOverview }: { onShowOverview?: () => void } = {}) {
   const allEntries = useInbox((s) => s.entries);
   const readIds = useInboxRead((s) => s.readIds);
   const markAllRead = useInboxRead((s) => s.markAllRead);
@@ -149,6 +149,11 @@ export function InboxPane() {
             {savedCount > 0 && <span className="inbox-tab-count">{savedCount}</span>}
           </button>
         </div>
+        {!showingSaved && onShowOverview && (
+          <button type="button" className="inbox-mobile-overview" aria-label="Inbox overview" title="Inbox overview" onClick={onShowOverview}>
+            <LayoutDashboard size={16} aria-hidden />
+          </button>
+        )}
         {!showingSaved && (
           <div className="inbox-actions-more" ref={actionsMenuRef}>
             <button

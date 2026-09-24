@@ -1,5 +1,12 @@
 export const THREAD_OPTIMISTIC_USER_EVENT = 'zcc-thread-optimistic-user';
 export const THREAD_STOP_REQUESTED_EVENT = 'zcc-thread-stop-requested';
+export const THREAD_MESSAGE_SENT_EVENT = 'zcc-thread-message-sent';
+
+/** A successful local send also includes queued sends, which have no optimistic row. */
+export function dispatchThreadMessageSent(threadId: string): void {
+  if (typeof window === 'undefined' || !threadId) return;
+  window.dispatchEvent(new CustomEvent(THREAD_MESSAGE_SENT_EVENT, { detail: { threadId } }));
+}
 
 export function dispatchOptimisticUserMessage(
   threadId: string,

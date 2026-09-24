@@ -8,6 +8,7 @@ interface SourceThread {
 }
 
 export function PendingInteractionShell({
+  className,
   title,
   sourceThread,
   errorMessage,
@@ -16,6 +17,7 @@ export function PendingInteractionShell({
   onFooterKeyDown,
   children
 }: {
+  className?: string;
   title?: string;
   sourceThread?: SourceThread;
   errorMessage?: string | null;
@@ -27,7 +29,7 @@ export function PendingInteractionShell({
   const [collapsed, setCollapsed] = useState(false);
   return (
     <div
-      className={`thread-pending-banner thread-pending-shell thread-composer-stack-card${collapsed ? ' is-collapsed' : ''}`}
+      className={`thread-pending-banner thread-pending-shell thread-composer-stack-card${collapsed ? ' is-collapsed' : ''}${className ? ` ${className}` : ''}`}
       data-testid="thread-pending-banner"
     >
       <div className="thread-pending-shell-header">

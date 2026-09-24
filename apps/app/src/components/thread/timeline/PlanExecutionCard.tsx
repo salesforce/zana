@@ -1,9 +1,26 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Circle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot } from 'lucide-react';
 import {
+  planCompletedCount,
   planExecutionCurrentIndex,
+  planTaskStatusLabel,
+  planTaskVisual,
   type PlanExecutionTask
 } from './plan-execution-card.js';
+
+function PlanTaskGlyph({ status }: { status: string }) {
+  const props = { size: 14, className: 'thread-plan-execution-glyph', 'aria-hidden': true as const };
+  switch (planTaskVisual(status)) {
+    case 'completed':
+      return <CircleCheck {...props} />;
+    case 'in_progress':
+      return <CircleDot {...props} />;
+    case 'blocked':
+      return <CircleAlert {...props} />;
+    default:
+      return <Circle {...props} />;
+  }
+}
 
 export function PlanExecutionCard({
   title,
@@ -17,12 +34,16 @@ export function PlanExecutionCard({
   const currentIndex = planExecutionCurrentIndex(tasks);
   const current = tasks[currentIndex];
   if (!current) return null;
-  const remaining = tasks.filter((_, index) => index !== currentIndex);
+  const completed = planCompletedCount(tasks);
+  // The header names the plan (falling back to the active task) and shows how
+  // many steps are done; the body lists every step with its own status glyph,
+  // so a finished step reads as done instead of repeating the current task.
+  const heading = title.trim() || current.text;
   return (
     <section
       className="thread-plan-execution"
       data-testid="thread-plan-execution"
-      aria-label={title}
+      aria-label={heading}
     >
       <button
         type="button"
@@ -33,33 +54,41 @@ export function PlanExecutionCard({
         {expanded
           ? <ChevronDown size={12} className="thread-timeline-work-chevron" aria-hidden="true" />
           : <ChevronRight size={12} className="thread-timeline-work-chevron" aria-hidden="true" />}
-        <span className="thread-plan-execution-title">{current.text}</span>
-        <span className="thread-plan-execution-count" data-testid="thread-plan-execution-count">
-          {currentIndex + 1}/{tasks.length}
+        <span className="thread-plan-execution-title">{heading}</span>
+        <span
+          className="thread-plan-execution-count"
+          data-testid="thread-plan-execution-count"
+          aria-label={`${completed} of ${tasks.length} done`}
+        >
+          {completed}/{tasks.length}
         </span>
       </button>
       {expanded ? (
         <div className="thread-plan-execution-body">
-          <p className="thread-plan-execution-current" data-testid="thread-plan-execution-current">
-            {current.text}
-          </p>
-          {remaining.length > 0 ? (
-            <ol className="thread-plan-execution-list">
-              {remaining.map((task) => {
-                const done = task.status === 'completed';
-                return (
-                  <li
-                    key={task.id}
-                    className={`thread-plan-execution-item${done ? ' is-done' : ''}`}
-                    data-status={task.status}
-                  >
-                    <Circle size={14} aria-hidden="true" className="thread-plan-execution-glyph" />
-                    <span className="thread-plan-execution-item-text">{task.text}</span>
-                  </li>
-                );
-              })}
-            </ol>
-          ) : null}
+          <ol className="thread-plan-execution-list">
+            {tasks.map((task, index) => {
+              const visual = planTaskVisual(task.status);
+              const isCurrent = index === currentIndex;
+              return (
+                <li
+                  key={task.id}
+                  className={[
+                    'thread-plan-execution-item',
+                    visual === 'completed' ? 'is-done' : '',
+                    isCurrent ? 'is-current' : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  data-status={task.status}
+                  aria-current={isCurrent ? 'step' : undefined}
+                  aria-label={`${planTaskStatusLabel(task.status)}: ${task.text}`}
+                >
+                  <PlanTaskGlyph status={task.status} />
+                  <span className="thread-plan-execution-item-text">{task.text}</span>
+                </li>
+              );
+            })}
+          </ol>
         </div>
       ) : null}
     </section>

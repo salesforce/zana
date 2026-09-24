@@ -3,11 +3,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
+import { fireEvent } from '@testing-library/react';
+import { readAgentDraft, writeAgentDraft } from './agent-script-drafts.js';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AgentScriptPanel } from './AgentScriptPanel.js';
 import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 import { queueAgentScriptOpen } from './agent-script-open.js';
+import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
+import { ACTION_AGENT } from '../action-fixtures.js';
 
 const rpc = vi.fn(async (_pluginId: string, method: string, args?: { path?: string; projectId?: string }) => {
   if (method === 'status') {
@@ -49,11 +53,17 @@ const rpc = vi.fn(async (_pluginId: string, method: string, args?: { path?: stri
   return { ok: false };
 });
 
+const baseRpc = rpc.getMockImplementation()!;
+
 describe('AgentScriptPanel', () => {
   const nodes: Array<{ unmount: () => void }> = [];
 
   beforeEach(() => {
+    localStorage.clear();
+    vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function () { this.setAttribute('open', ''); });
+    vi.spyOn(HTMLDialogElement.prototype, 'close').mockImplementation(function () { this.removeAttribute('open'); });
     rpc.mockClear();
+    rpc.mockImplementation(baseRpc);
     (globalThis as { __ZCC_PLUGIN_HOST__?: unknown }).__ZCC_PLUGIN_HOST__ = {
       callRpc: rpc,
       getSettings: async () => ({ values: { agentScriptDialect: 'agentforce' } }),
@@ -66,6 +76,7 @@ describe('AgentScriptPanel', () => {
 
   afterEach(() => {
     for (const node of nodes.splice(0)) node.unmount();
+    vi.restoreAllMocks();
     delete (globalThis as { __ZCC_PLUGIN_HOST__?: unknown }).__ZCC_PLUGIN_HOST__;
     delete (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__;
   });
@@ -114,6 +125,7 @@ describe('AgentScriptPanel', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: window.location.origin,
+          source: el.querySelector("iframe")!.contentWindow,
           data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'ready' }
         })
       );
@@ -132,6 +144,7 @@ describe('AgentScriptPanel', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: window.location.origin,
+          source: el.querySelector("iframe")!.contentWindow,
           data: {
             source: PLAYGROUND_BRIDGE_SOURCE,
             type: 'persist',
@@ -154,7 +167,7 @@ describe('AgentScriptPanel', () => {
       dialect.value = 'agentscript';
       dialect.dispatchEvent(new Event('change', { bubbles: true }));
       const example = [...el.querySelectorAll('.sf-as-tree-btn')].find((button) =>
-        button.textContent?.includes('Minimal')
+        button.textContent?.includes('Support concierge')
       ) as HTMLButtonElement | undefined;
       example?.click();
     });
@@ -162,11 +175,12 @@ describe('AgentScriptPanel', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: window.location.origin,
+          source: el.querySelector("iframe")!.contentWindow,
           data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty', dirty: true }
         })
       );
     });
-    expect(save.textContent).toBe('Save');
+    expect(save.textContent).toBe('Example');
     await act(async () => {
       save.click();
     });
@@ -184,11 +198,12 @@ describe('AgentScriptPanel', () => {
 
   it('opens a queued path after the playground is ready', async () => {
     queueAgentScriptOpen('proj-1', 'force-app/bots/QC.agent');
-    await mount();
+    const el = await mount();
     await act(async () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: window.location.origin,
+          source: el.querySelector("iframe")!.contentWindow,
           data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'ready' }
         })
       );
@@ -226,6 +241,54 @@ describe('AgentScriptPanel', () => {
     expect(el.querySelector('iframe')).toBeNull();
   });
 
+  it('accepts draft snapshots only from its iframe and preserves labs between workflow views', async () => {
+    const el = await mount();
+    const workflow = (name: string) => [...el.querySelectorAll<HTMLButtonElement>('.af-workflows button')].find(button => button.textContent?.endsWith(name))!;
+    await act(async () => workflow('Rehearse').click());
+    const start = el.querySelector<HTMLButtonElement>('.af-primary')!;
+    expect(start.disabled).toBe(true);
+    const data = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'snapshot', content: 'start_agent:\n', issues: 0 };
+    await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data })); });
+    expect(start.disabled).toBe(true);
+    await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: el.querySelector('iframe')!.contentWindow, data })); });
+    expect(start.disabled).toBe(false);
+    await act(async () => workflow('Test').click());
+    const lab = el.querySelector<HTMLElement>('[data-testid="agentforce-lab"]:not([hidden])')!;
+    await act(async () => { [...lab.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Missing details')!.click(); });
+    const persona = lab.querySelector<HTMLTextAreaElement>('textarea')!.value;
+    expect(persona).toContain('distracted');
+    await act(async () => workflow('Build').click());
+    expect([...el.querySelectorAll<HTMLElement>('[data-testid="agentforce-lab"]')].every(node => node.hidden)).toBe(true);
+    await act(async () => workflow('Test').click());
+    expect(lab.hidden).toBe(false);
+    expect(lab.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe(persona);
+    expect(el.querySelectorAll('iframe')).toHaveLength(1);
+  });
+
+  it('opens related tabs from the explorer and graph, preserves the iframe, and removes deleted draft actions', async () => {
+    const el = await mount();
+    const frame = el.querySelector('iframe')!;
+    const post = vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+    const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
+    const dispatch = async (data: Record<string, unknown>) => act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source: frame.contentWindow, data: { source: PLAYGROUND_BRIDGE_SOURCE, ...data } })); });
+    await dispatch({ type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    await act(async () => el.querySelector<HTMLButtonElement>('[aria-label="Inspect lookup in start_agent.orders"]')!.click());
+    expect(frame.style.display).toBe('none');
+    expect(el.querySelector('[aria-label="Action lookup"]')).toBeTruthy();
+    await act(async () => [...el.querySelectorAll<HTMLButtonElement>('.af-action-nav button')].find(b => b.textContent === 'Used by')!.click());
+    await act(async () => [...el.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('Go to action definition'))!.click());
+    expect(frame.style.display).toBe(''); expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'revealLine', line: actions[0].line }), location.origin);
+    await dispatch({ type: 'openAction', id: actions[1].id });
+    expect(el.querySelector('[aria-label="Action refund"]')).toBeTruthy();
+    await act(async () => el.querySelector<HTMLButtonElement>('[aria-label="Close refund"]')!.click());
+    expect(frame.style.display).toBe('');
+    await dispatch({ type: 'openAction', id: actions[0].id });
+    await dispatch({ type: 'snapshot', content: '', issues: 0, actions: [] });
+    expect(el.querySelector('[data-testid="agent-action-panel"]')).toBeNull();
+    expect(el.querySelector('iframe')).toBe(frame);
+    expect(el.querySelector('.af-related-tabs')).toBeNull();
+  });
+
   it('ignores playground messages from other origins', async () => {
     await mount();
     const calls = rpc.mock.calls.length;
@@ -239,4 +302,76 @@ describe('AgentScriptPanel', () => {
     });
     expect(rpc.mock.calls.length).toBe(calls);
   });
+  async function message(el: HTMLElement, data: object) {
+    await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: el.querySelector('iframe')!.contentWindow, data: { source: PLAYGROUND_BRIDGE_SOURCE, ...data } })); });
+  }
+  it('saves recovered files against their original disk revision and retains a failed draft', async () => {
+    const key = 'proj-1:file:force-app/bots/QC.agent';
+    writeAgentDraft({ key, content: 'unsaved recovered', baseSha: 'original', dialect: 'agentforce' });
+    const el = await mount('force-app/bots/QC.agent');
+    await message(el, { type: 'ready' });
+    rpc.mockImplementation(async (id, method, args) => method === 'agentFiles.write' ? { ok: false, error: 'Changed on disk' } : baseRpc(id, method, args));
+    await message(el, { type: 'persist', path: 'force-app/bots/QC.agent', content: 'unsaved recovered', draftKey: key });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.write', expect.objectContaining({ expectedSha256: 'original' }));
+    expect(el.textContent).toContain('Changed on disk');
+    expect(readAgentDraft(key)?.content).toBe('unsaved recovered');
+  });
+
+  it('creates an example copy and keeps the Save as dialog open on collision', async () => {
+    const el = await mount();
+    await message(el, { type: 'ready' });
+    await act(async () => { [...el.querySelectorAll('button')].find(b => b.textContent === 'Save as…')!.click(); });
+    expect(el.querySelector('dialog[open]')).toBeTruthy();
+    const post = vi.spyOn(el.querySelector('iframe')!.contentWindow!, 'postMessage');
+    await act(async () => { fireEvent.change(el.querySelector('dialog input')!, { target: { value: 'Copy.agent' } }); fireEvent.submit(el.querySelector('dialog form')!); });
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'flushSave', path: 'Copy.agent', create: true }), window.location.origin);
+    rpc.mockImplementation(async (id, method, args) => method === 'agentFiles.create' ? { ok: false, error: 'Already exists' } : baseRpc(id, method, args));
+    await message(el, { type: 'persist', path: 'Copy.agent', content: 'draft', create: true });
+    expect(el.querySelector('dialog [role=alert]')?.textContent).toContain('Already exists');
+    rpc.mockImplementation(async (id, method, args) => method === 'agentFiles.create' ? { ok: true, file: { path: 'Copy.agent', sha256: 'new-sha' } } : baseRpc(id, method, args));
+    await message(el, { type: 'persist', path: 'Copy.agent', content: 'draft', create: true });
+    expect(el.querySelector('dialog')).toBeNull();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.create', expect.objectContaining({ path: 'Copy.agent', content: 'draft', projectId: 'proj-1' }));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'Copy.agent' }));
+  });
+
+  it('warns when local recovery is unavailable and rejects stale editor messages', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await message(el, { type: 'ready' });
+    await message(el, { type: 'dirty', dirty: true, draftKey: 'old-project:file:Other.agent', persisted: false });
+    expect(el.querySelector('[role=alert]')).toBeNull();
+    await message(el, { type: 'dirty', dirty: true, draftKey: 'proj-1:file:force-app/bots/QC.agent', persisted: false, baseSha: 'abc' });
+    expect(el.querySelector('[role=alert]')?.textContent).toContain('Local recovery is unavailable');
+  });
+
+  it('preserves typing during a save and advances only the saved base revision', async () => {
+    const key = 'proj-1:file:force-app/bots/QC.agent';
+    const el = await mount('force-app/bots/QC.agent');
+    await message(el, { type: 'ready' });
+    writeAgentDraft({ key, content: 'submitted', baseSha: 'abc', dialect: 'agentforce' });
+    let finish!: (result: any) => void;
+    rpc.mockImplementation((id, method, args) => method === 'agentFiles.write' ? new Promise(resolve => { finish = resolve; }) : baseRpc(id, method, args));
+    await message(el, { type: 'persist', path: 'force-app/bots/QC.agent', content: 'submitted', draftKey: key });
+    await message(el, { type: 'persist', path: 'force-app/bots/QC.agent', content: 'duplicate', draftKey: key });
+    expect(rpc.mock.calls.filter(([, method]) => method === 'agentFiles.write')).toHaveLength(1);
+    writeAgentDraft({ key, content: 'newer typing', baseSha: 'abc', dialect: 'agentforce' });
+    await act(async () => finish({ ok: true, file: { path: 'force-app/bots/QC.agent', sha256: 'saved-revision' } }));
+    expect(readAgentDraft(key)).toMatchObject({ content: 'newer typing', baseSha: 'saved-revision' });
+    expect(el.querySelector('[data-testid="salesforce-agent-script-save"]')?.textContent).toBe('Save');
+  });
+
+  it('keeps recovery data when saving throws and allows cancelling Save as', async () => {
+    const key = 'proj-1:file:force-app/bots/QC.agent';
+    const el = await mount('force-app/bots/QC.agent');
+    await message(el, { type: 'ready' });
+    writeAgentDraft({ key, content: 'recover me', baseSha: 'abc', dialect: 'agentforce' });
+    rpc.mockImplementation((id, method, args) => method === 'agentFiles.write' ? Promise.reject(Error('Disk unavailable')) : baseRpc(id, method, args));
+    await message(el, { type: 'persist', path: 'force-app/bots/QC.agent', content: 'recover me', draftKey: key });
+    expect(el.querySelector('[role=alert]')?.textContent).toContain('Disk unavailable');
+    expect(readAgentDraft(key)?.content).toBe('recover me');
+    await act(async () => { [...el.querySelectorAll('button')].find(b => b.textContent === 'Save as…')!.click(); });
+    await act(async () => { el.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })); });
+    expect(el.querySelector('dialog')).toBeNull();
+  });
+
 });

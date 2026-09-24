@@ -17,6 +17,8 @@ import { MarkdownContent } from './MarkdownContent.js';
 import { mdToPlainText } from '../lib/plainText.js';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
 import { StencilLines } from './ui/Skeleton.js';
+import { InspectorResizeHandles } from './InspectorResizeHandles.js';
+import { useInspectorWindow } from './useInspectorWindow.js';
 
 /**
  * Agent-inspector modal: a peek at one agent's LIVE terminal plus its metadata,
@@ -56,38 +58,12 @@ export function AgentTerminalModal({
   onClose
 }: Props) {
   const heartbeatEnabled = useData((s) => s.heartbeatEnabled);
-  const ref = useRef<HTMLDivElement | null>(null);
+  const windowState = useInspectorWindow();
 
   // The stage is the live terminal. Working-tree changes live in the secondary
   // panel's Diff pin; reports remain a header overlay so they stay agent-only.
 
   const [showReport, setShowReport] = useState(false);
-
-  // Full screen: the modal already sizes to ~94vh, so the CSS side just
-  // stretches it to fill the viewport and hides its rounded-corner chrome — no
-  // new terminal/anchor is created (same live xterm, just a bigger box). The
-  // button ALSO drives the OS window into real fullscreen (Electron
-  // `win.setFullScreen`, over the `app.setFullScreen` IPC) so the whole app —
-  // not just this modal — goes edge-to-edge, matching what a user expects from
-  // a "full screen" control. `onFullScreenChanged` keeps this in sync when the
-  // OS state changes from elsewhere (the green traffic-light button, a
-  // fullscreen keyboard shortcut).
-  const [fullScreen, setFullScreen] = useState(false);
-  const fullScreenRef = useRef(false);
-  fullScreenRef.current = fullScreen;
-  useEffect(() => product.app.onFullScreenChanged(setFullScreen), []);
-  const toggleFullScreen = () => {
-    const next = !fullScreen;
-    setFullScreen(next);
-    void product.app.setFullScreen(next);
-  };
-  // Leaving the modal shouldn't strand the user in OS fullscreen — drop it on
-  // unmount if THIS control put the window there.
-  useEffect(() => {
-    return () => {
-      if (fullScreenRef.current) void product.app.setFullScreen(false);
-    };
-  }, []);
 
   // Drive the live "running for X" timer the same way the board does: a 1s tick
   // while the agent is live, recomputed from createdAt at render.
@@ -98,16 +74,6 @@ export function AgentTerminalModal({
     const id = setInterval(() => setTick((n) => (n + 1) % 1_000_000), 1000);
     return () => clearInterval(id);
   }, [exited]);
-
-  // Mount-only: grab focus ONCE. Must not depend on any per-render value —
-  // otherwise the 1s tick and agent status polling re-run this ~once/second and
-  // node.focus() repeatedly yanks focus off the live xterm the user is typing
-  // into. Escape is intentionally NOT intercepted here: it must reach the
-  // embedded terminal as Claude's interrupt. The dismiss chord is ⌘. (see
-  // shortcuts.ts); backdrop-click and the X button also close the modal.
-  useEffect(() => {
-    ref.current?.focus();
-  }, []);
 
   // Heartbeat is offered only when the master switch is on, the profile can
   // actually wire the idle-nudge hooks (a shell can't), the session is live and
@@ -146,9 +112,10 @@ export function AgentTerminalModal({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        ref={ref}
+        ref={windowState.ref}
         data-testid="agent-terminal-modal"
-        className={`modal agent-terminal-modal ${fullScreen ? 'is-fullscreen' : ''}`}
+        className={windowState.className}
+        style={windowState.style}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label={`Agent ${session.title}`}
@@ -185,12 +152,12 @@ export function AgentTerminalModal({
             <button
               type="button"
               className="agent-modal-fullscreen-button"
-              onClick={toggleFullScreen}
-              aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
-              title={fullScreen ? 'Exit full screen for the agent window' : 'Show the entire agent window in full screen'}
+              onClick={windowState.toggleFullScreen}
+              aria-label={windowState.fullScreen ? 'Exit full screen' : 'Full screen'}
+              title={windowState.fullScreen ? 'Exit full screen for the agent window' : 'Show the entire agent window in full screen'}
             >
               <AppWindow size={14} aria-hidden="true" />
-              <span>{fullScreen ? 'Exit full screen' : 'Full screen'}</span>
+              <span>{windowState.fullScreen ? 'Exit full screen' : 'Full screen'}</span>
             </button>
             <span className="agent-modal-window-divider" aria-hidden="true" />
             <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close agent window">
@@ -240,6 +207,14 @@ export function AgentTerminalModal({
             }
           />
         </div>
+        <InspectorResizeHandles
+          hidden={windowState.fullScreen}
+          onBegin={windowState.beginResize}
+          onMove={windowState.moveResize}
+          onEnd={windowState.endResize}
+          onReset={windowState.resetFrame}
+          onKey={windowState.keyResize}
+        />
       </div>
     </div>
   );

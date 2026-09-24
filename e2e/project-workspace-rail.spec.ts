@@ -45,6 +45,19 @@ test('selecting a project puts workspace modes in the side panel', async ({ app 
 
     await rail.getByTestId('project-nav-agents').click();
     await expect(window.locator('.agents-board')).toBeVisible({ timeout: 15_000 });
+
+    await rail.getByRole('link', { name: 'Settings' }).click();
+    await expect(window).toHaveURL(new RegExp(`/projects/${projectId}/settings$`));
+    await expect(window.getByRole('heading', { name: 'Project settings' })).toBeVisible();
+
+    await rail.getByRole('button', { name: 'Back to Global settings' }).click();
+    await expect(window).toHaveURL(/\/settings$/);
+    await expect(window.locator('aside.settings-pane')).toBeVisible();
+    await expect(window.getByRole('link', { name: 'Back to app' })).toBeVisible();
+
+    await window.getByRole('link', { name: 'Back to app' }).click();
+    await expect(window).toHaveURL(/\/agents$/);
+    await expect(window.locator('.project-scoped-nav')).toHaveCount(0);
   } finally {
     await window.evaluate(async (pid) => {
       try {

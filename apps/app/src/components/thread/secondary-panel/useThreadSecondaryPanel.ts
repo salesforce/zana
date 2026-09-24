@@ -11,12 +11,20 @@ import {
 } from './threadSecondaryPanelState.js';
 import {
   applyContractTabs,
+  closableTabsToContract,
+  contractTabsToClosable,
   revisionFromTabsResponse,
   tabsPutBody
 } from './threadTabsContract.js';
 import type { ThreadTab, ThreadTabsResponse } from '@zana-ai/zcc-server-contract';
 
 const TABS_PUT_DEBOUNCE_MS = 300;
+
+// Compare the fields this panel persists, in canonical property order. Incoming
+// JSON order and server-only fields must not turn an SSE echo into another PUT.
+function tabsSignature(tabs: ThreadTab[]): string {
+  return JSON.stringify(closableTabsToContract(contractTabsToClosable(tabs)));
+}
 
 function isThreadTabsPayload(payload: unknown): payload is {
   threadId: string;
@@ -47,11 +55,15 @@ export function useSecondaryPanel(
     modal: options?.modal === true,
     getContainerWidthPx: options?.getContainerWidthPx
   };
+  const ownerRef = useRef({ id: ownerId });
+  if (ownerRef.current.id !== ownerId) ownerRef.current = { id: ownerId };
   const [state, setState] = useState<ThreadSecondaryPanelState>(() => (
     restoreSecondaryPanel(ownerId, { defaultOpen })
   ));
-  const [serverHydrated, setServerHydrated] = useState(() => !syncServer);
+  const [hydratedOwner, setHydratedOwner] = useState<{ id: string | undefined } | null>(null);
+  const serverHydrated = !syncServer || hydratedOwner === ownerRef.current;
   const revisionRef = useRef(0);
+  const serverTabsRef = useRef<string | null>(null);
   const localVersionRef = useRef(0);
   const savedVersionRef = useRef(0);
   const savingRef = useRef(false);
@@ -60,8 +72,6 @@ export function useSecondaryPanel(
     state: ThreadSecondaryPanelState;
     version: number;
   } | null>(null);
-  const ownerRef = useRef({ id: ownerId });
-  if (ownerRef.current.id !== ownerId) ownerRef.current = { id: ownerId };
   const mountedRef = useRef(true);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -76,6 +86,7 @@ export function useSecondaryPanel(
   useEffect(() => {
     if (!ownerId) return;
     revisionRef.current = 0;
+    serverTabsRef.current = null;
     localVersionRef.current = 0;
     savedVersionRef.current = 0;
     const next = restoreSecondaryPanel(ownerId, { defaultOpen });
@@ -84,27 +95,27 @@ export function useSecondaryPanel(
 
   useEffect(() => {
     if (!syncServer || !ownerId) {
-      setServerHydrated(true);
       return;
     }
     let cancelled = false;
+    const owner = ownerRef.current;
     const initialVersion = localVersionRef.current;
+    const hasLocalTabs = hasStoredSecondaryPanel(ownerId);
     const hydrate = async () => {
-      if (hasStoredSecondaryPanel(ownerId)) {
-        if (!cancelled) setServerHydrated(true);
-        return;
-      }
       try {
         const body = await product.threads.tabs(ownerId) as ThreadTabsResponse;
         if (cancelled) return;
+        // Even a cached panel needs the current revision before its first PUT.
+        if (body.revision < revisionRef.current) return;
         revisionRef.current = revisionFromTabsResponse(body);
-        if (body.tabs.length > 0 && localVersionRef.current === initialVersion) {
+        serverTabsRef.current = tabsSignature(body.tabs);
+        if (!hasLocalTabs && body.tabs.length > 0 && localVersionRef.current === initialVersion) {
           setState((current) => applyContractTabs(current, body.tabs));
         }
       } catch {
         /* stay local */
       } finally {
-        if (!cancelled) setServerHydrated(true);
+        if (!cancelled) setHydratedOwner(owner);
       }
     };
     void hydrate();
@@ -136,8 +147,28 @@ export function useSecondaryPanel(
             pendingSaveRef.current = null;
             if (!mountedRef.current || ownerRef.current !== pending.owner || !pending.owner.id) continue;
             try {
-              const body = await product.threads.updateTabs(pending.owner.id, tabsPutBody(pending.state, revisionRef.current));
+              const signature = tabsSignature(tabsPutBody(pending.state, 0).tabs);
+              if (signature === serverTabsRef.current) {
+                savedVersionRef.current = Math.max(savedVersionRef.current, pending.version);
+                continue;
+              }
+              let body: ThreadTabsResponse;
+              try {
+                body = await product.threads.updateTabs(pending.owner.id, tabsPutBody(pending.state, revisionRef.current)) as ThreadTabsResponse;
+              } catch (error) {
+                if (!(error && typeof error === 'object' && 'status' in error && error.status === 409)) throw error;
+                const latest = await product.threads.tabs(pending.owner.id) as ThreadTabsResponse;
+                if (!mountedRef.current || ownerRef.current !== pending.owner) continue;
+                revisionRef.current = Math.max(revisionRef.current, revisionFromTabsResponse(latest));
+                serverTabsRef.current = tabsSignature(latest.tabs);
+                // A newer queued edit supersedes this snapshot. Otherwise retry
+                // once; a second conflict must not create an unbounded loop.
+                if (pendingSaveRef.current) continue;
+                body = signature === serverTabsRef.current ? latest
+                  : await product.threads.updateTabs(pending.owner.id, tabsPutBody(pending.state, revisionRef.current)) as ThreadTabsResponse;
+              }
               if (!mountedRef.current || ownerRef.current !== pending.owner) continue;
+              if (body.revision >= revisionRef.current) serverTabsRef.current = tabsSignature(body.tabs);
               revisionRef.current = Math.max(revisionRef.current, revisionFromTabsResponse(body as ThreadTabsResponse));
               savedVersionRef.current = Math.max(savedVersionRef.current, pending.version);
             } catch { /* retain local state; a later edit retries the save */ }
@@ -170,6 +201,7 @@ export function useSecondaryPanel(
       if (!isThreadTabsPayload(payload) || payload.threadId !== ownerId) return;
       if (payload.revision <= revisionRef.current) return;
       revisionRef.current = payload.revision;
+      serverTabsRef.current = tabsSignature(payload.tabs);
       if (localVersionRef.current > savedVersionRef.current) return;
       setState((current) => applyContractTabs(current, payload.tabs));
     });

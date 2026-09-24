@@ -27,6 +27,7 @@ import { RecordInspector, OrgBadge } from '../components/ui.js';
 import { ActionDialog } from '../components/ActionDialog.js';
 import { useSalesforceDraft } from '../components/drafts.js';
 import { OrgPicker } from '../OrgPicker.js';
+import { QueryEditorPane } from './QueryEditorPane.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -38,7 +39,7 @@ export const SOQL_HOST_STYLES = `
 .sf-org-picker { font: inherit; font-size: 12px; color: var(--sf-soql-text); background: var(--sf-soql-sunken); border: 1px solid var(--sf-soql-border); border-radius: 6px; height: 28px; max-width: 280px; }
 .sf-soql-spacer { flex: 1; }
 .sf-soql-btn { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--sf-soql-border); background: transparent; color: var(--sf-soql-text); font-size: 12px; cursor: pointer; }
-.sf-soql-btn.primary { background: var(--sf-soql-accent); border-color: transparent; color: var(--text-bright); font-weight: 600; }
+.sf-soql-btn.primary { background: var(--sf-soql-accent); border-color: transparent; color: var(--text-on-accent,#fff); font-weight: 600; }
 .sf-soql-btn:disabled { opacity: .45; cursor: default; }
 .sf-soql-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sf-soql-muted); }
 .sf-soql-banner { padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--sf-soql-border); color: var(--sf-soql-muted); }
@@ -62,9 +63,9 @@ export const SOQL_HOST_STYLES = `
 .sf-soql-link { border: 0; background: transparent; color: var(--sf-soql-muted); font-size: 11px; cursor: pointer; }
 .sf-soql-stage { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .sf-soql-split { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.sf-soql-editor { flex: 0 0 42%; min-height: 140px; display: flex; flex-direction: column; border-bottom: 1px solid var(--sf-soql-border); position: relative; }
+.sf-soql-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--sf-soql-border); position: relative; }
 .sf-soql-textarea { flex: 1; min-height: 0; resize: none; border: 0; padding: 12px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; background: var(--sf-soql-surface); color: var(--sf-soql-text); }
-.sf-soql-editor-meta { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--sf-soql-border); }
+.sf-soql-editor-meta { display: flex; flex-wrap:wrap; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--sf-soql-border); }
 .sf-soql-hint { font-size: 11px; color: var(--sf-soql-muted); }
 .sf-soql-editor-error { margin: 0; padding: 6px 10px; font-size: 12px; color: var(--danger, #ff8a8a); }
 .sf-soql-completions { position: absolute; left: 12px; bottom: 42px; max-height: 180px; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--sf-soql-elevated); border: 1px solid var(--sf-soql-border); border-radius: 8px; min-width: 240px; z-index: 2; }
@@ -113,6 +114,7 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; line?: number; column?: number } | null>(null);
   const [apiUsage, setApiUsage] = useState<string | null>(null);
+  const [accessoryErrors, setAccessoryErrors] = useState<string[]>([]);
   const [inspected, setInspected] = useState<Record<string, unknown> | null>(null);
   const [dialog, setDialog] = useState<{ title: string; message?: string; input?: string; confirm(value: string): void } | null>(null);
   const [explain, setExplain] = useState<string | null>(null);
@@ -123,10 +125,27 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
   const banner = productionBanner(org);
   const runEnabled = canRun(soql, hasOrg, busy);
 
+  const loadAccessories = useCallback(async (alias: string, generation: number) => {
+    const results = await Promise.allSettled([
+      call('soql.limits', { orgAlias: alias }).then(requireResult<{ dailyApiRequests?: { max: number; remaining: number } | null }>),
+      call('soql.history.list', { orgAlias: alias }).then(requireResult<{ recent: SoqlHistoryItem[]; saved: SoqlHistoryItem[] }>),
+    ]);
+    if (generation !== epoch.current) return;
+    const [limits, history] = results;
+    const errors: string[] = [];
+    if (limits.status === 'fulfilled') {
+      const usage = limits.value.dailyApiRequests;
+      setApiUsage(usage ? `${usage.remaining}/${usage.max}` : null);
+    } else errors.push('API usage');
+    if (history.status === 'fulfilled') { setRecent(history.value.recent); setSaved(history.value.saved); }
+    else errors.push('Query history');
+    setAccessoryErrors(errors);
+  }, [call]);
+
   const loadOrgAndSchema = useCallback(
     async (forceRefresh = false) => {
       const generation = ++epoch.current;
-      setOrgError(null); setError(null); setOrg(null); setRecent([]); setSaved([]); setCatalogs({ standard: [], tooling: [] }); setApiUsage(null); setExplain(null); setDialog(null); setResult(null); setInspected(null); setDescribe(null); setSelected(undefined); setBusy(false);
+      setOrgError(null); setAccessoryErrors([]); setError(null); setOrg(null); setRecent([]); setSaved([]); setCatalogs({ standard: [], tooling: [] }); setApiUsage(null); setExplain(null); setDialog(null); setResult(null); setInspected(null); setDescribe(null); setSelected(undefined); setBusy(false);
       if (requestIdRef.current) void call('soql.abort', { requestId: requestIdRef.current }).catch(() => {});
       requestIdRef.current = null;
       try {
@@ -142,28 +161,14 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
         }
         setOrg(payload.org);
         setCatalogs(payload.catalogs);
-        const limits = (await call('soql.limits', { orgAlias: payload.org.alias })) as
-          | { ok: true; dailyApiRequests?: { max: number; remaining: number } | null }
-          | RpcFail;
-        if (generation !== epoch.current) return;
-        if (limits && limits.ok === true && limits.dailyApiRequests) {
-          setApiUsage(`${limits.dailyApiRequests.remaining}/${limits.dailyApiRequests.max}`);
-        }
-        const history = (await call('soql.history.list', { orgAlias: payload.org.alias })) as
-          | { ok: true; recent: SoqlHistoryItem[]; saved: SoqlHistoryItem[] }
-          | RpcFail;
-        if (generation !== epoch.current) return;
-        if (history && history.ok === true) {
-          setRecent(history.recent);
-          setSaved(history.saved);
-        }
+        void loadAccessories(payload.org.alias, generation);
       } catch (err) {
         if (generation !== epoch.current) return;
         setOrg(null);
         setOrgError(err instanceof Error ? err.message : emptyOrgMessage());
       }
     },
-    [call]
+    [call, loadAccessories]
   );
 
   useEffect(() => {
@@ -346,32 +351,6 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
         {org && !props.orgAlias ? <span className="sf-soql-chip">{orgChip(org)}</span> : null}
         {apiUsage ? <span className="sf-soql-chip">API {apiUsage}</span> : null}
         <span className="sf-soql-spacer" />
-        <input
-          className="sf-soql-search-table"
-          value={tableSearch}
-          onChange={(event) => setTableSearch(event.target.value)}
-          placeholder="Search table…"
-          aria-label="Search table"
-        />
-        <label className="sf-soql-toggle">
-          <input
-            type="checkbox"
-            checked={useToolingApi}
-            onChange={(event) => {
-              setUseToolingApi(event.target.checked);
-              setDescribe(null);
-            }}
-          />
-          Tooling
-        </label>
-        <label className="sf-soql-toggle">
-          <input
-            type="checkbox"
-            checked={includeDeleted}
-            onChange={(event) => setIncludeDeleted(event.target.checked)}
-          />
-          Deleted
-        </label>
         {busy ? (
           <button type="button" className="sf-soql-btn" data-testid="soql-abort" onClick={() => void abort()}>
             Abort
@@ -387,23 +366,16 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
             Run
           </button>
         )}
-        <button type="button" className="sf-soql-btn" disabled={!result?.records?.length} onClick={() => void exportResult('csv')}>
-          CSV
-        </button>
-        <button type="button" className="sf-soql-btn" disabled={!result?.records?.length} onClick={() => void exportResult('json')}>
-          JSON
-        </button>
-        <button type="button" className="sf-soql-btn" disabled={!result?.records?.length} onClick={() => void exportResult('copy-tsv')}>
-          Excel
-        </button>
         <button type="button" className="sf-soql-btn" disabled={!soql.trim() || busy} onClick={() => void runExplain()}>
           Explain
         </button>
+        <button type="button" className="sf-soql-btn" disabled={!soql.trim() || !org} onClick={() => setDialog({ title: 'Save query', input: selected || 'Query', confirm: saveQuery })}>Save query</button>
         <button type="button" className="sf-soql-btn" data-testid="soql-history-toggle" onClick={() => setHistoryOpen((open) => !open)}>
           History
         </button>
       </header>
       {orgError ? <div className="sf-soql-banner is-error">{orgError}</div> : null}
+      {accessoryErrors.length > 0 && <div className="sf-soql-banner" role="status">{accessoryErrors.join(' and ')} unavailable. Queries are still available. <button type="button" className="sf-soql-btn" onClick={() => org && void loadAccessories(org.alias, epoch.current)}>Retry details</button></div>}
       {banner ? <div className="sf-soql-banner is-warn">{banner}</div> : null}
       <div className="sf-soql-body">
         <SoqlSchemaRail
@@ -425,16 +397,52 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
         />
         <div className="sf-soql-stage">
           <div className="sf-soql-split">
-            <SoqlEditor
+            <QueryEditorPane><SoqlEditor
               ref={editorRef}
               value={soql}
               onChange={setSoql}
               onRun={() => void run()}
+              onSave={() => { if (org && soql.trim()) setDialog({ title: 'Save query', input: selected || 'Query', confirm: saveQuery }); }}
+              options={<>
+        <label className="sf-soql-toggle">
+          <input
+            type="checkbox"
+            checked={useToolingApi}
+            onChange={(event) => {
+              setUseToolingApi(event.target.checked);
+              setDescribe(null);
+            }}
+          />
+          Tooling
+        </label>
+        <label className="sf-soql-toggle">
+          <input
+            type="checkbox"
+            checked={includeDeleted}
+            onChange={(event) => setIncludeDeleted(event.target.checked)}
+          />
+          Deleted
+        </label>
+              </>}
               catalogs={catalogs}
               useToolingApi={useToolingApi}
               describe={describe}
               error={error}
-            />
+            /></QueryEditorPane>
+            <div className="sf-soql-result-tools" aria-label="Result actions">
+              <strong>Results</strong><span className="sf-soql-spacer" />
+        <input
+          className="sf-soql-search-table"
+          value={tableSearch}
+          onChange={(event) => setTableSearch(event.target.value)}
+          placeholder="Search loaded rows…"
+          aria-label="Search table"
+        />
+
+              <select className="sf-soql-btn" aria-label="Export results" value="" disabled={!result?.records?.length} onChange={event => void exportResult(event.target.value as 'csv' | 'json' | 'copy-tsv')}>
+                <option value="" disabled>Export…</option><option value="csv">CSV file</option><option value="json">JSON file</option><option value="copy-tsv">Copy for Excel</option>
+              </select>
+            </div>
             {explain ? (
               <pre className="sf-soql-empty" data-testid="soql-explain">
                 {explain}
@@ -476,9 +484,24 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
 }
 
 const SOQL_RESPONSIVE_STYLES = `
-.sf-soql { position:relative; }
+.sf-soql { position:relative; font-size:13px; }
+.sf-soql .sf-soql-textarea { font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.sf-soql-editor-pane { flex:0 0 auto; min-height:140px; display:flex; flex-direction:column; }
+.sf-query-divider { flex-shrink:0; height:7px; cursor:row-resize; touch-action:none; display:grid; place-items:center; background:var(--bg-base); border-bottom:1px solid var(--border); }
+.sf-query-divider span { width:32px; height:2px; border-radius:2px; background:var(--border); }
+.sf-query-divider:hover span,.sf-query-divider:focus-visible span { background:var(--accent); }
+.sf-query-divider:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.sf-soql-result-tools { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 12px; border-bottom:1px solid var(--border); background:var(--bg-panel); font-size:12px; }
+.sf-soql-result-tools strong { font-weight:600; }
+.sf-soql-header .sf-soql-btn { height:30px; }
+.sf-soql-result-tools .sf-soql-search-table { width:180px; }
+.sf-soql-stage .sf-soql-editor-meta { padding:8px 12px; }
+.sf-soql-editor-meta .sf-soql-hint { margin-left:auto; font-size:10px; }
+.sf-soql-rail { width:240px; }
+.sf-soql-table td { max-width:420px; overflow:hidden; text-overflow:ellipsis; }
+
 .sf-soql-record { width:300px; flex-shrink:0; border-left:1px solid var(--border); overflow:auto; }
 .sf-soql-header { background:var(--bg-panel); }
 @container sf (max-width:900px) { .sf-soql-rail { width:200px; } .sf-soql-record { width:260px; } .sf-soql-history { position:absolute; right:0; top:100px; bottom:0; z-index:3; width:min(100%,300px); box-shadow:-10px 0 30px color-mix(in srgb,var(--text-primary) 8%,transparent); } }
-@container sf (max-width:600px) { .sf-soql-rail:not(.is-collapsed) { width:150px; } .sf-soql-record { position:absolute; inset:0; width:auto; z-index:3; background:var(--bg-panel); } .sf-soql-header .sf-soql-chip { display:none; } .sf-soql-editor { min-height:160px; } .sf-soql-search-table { width:120px; } }
+@container sf (max-width:600px) { .sf-soql-rail:not(.is-collapsed) { width:150px; } .sf-soql-record { position:absolute; inset:0; width:auto; z-index:3; background:var(--bg-panel); } .sf-soql-header .sf-soql-chip { display:none; } .sf-soql-editor-meta .sf-soql-hint { display:none; } .sf-soql-result-tools .sf-soql-search-table { width:120px; } .sf-soql-search-table { width:120px; } }
 `;

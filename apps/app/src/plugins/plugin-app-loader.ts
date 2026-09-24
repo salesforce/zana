@@ -34,14 +34,21 @@ export interface PluginAppModule extends AppModule {
 
 interface PluginAppModulesState {
   modules: PluginAppModule[];
-  setModules: (modules: PluginAppModule[]) => void;
+  runtimeLoadedIds: ReadonlySet<string>;
+  setSnapshot: (modules: PluginAppModule[], runtimeLoadedIds: ReadonlySet<string>) => void;
 }
 
 /** Live server-plugin app modules, merged with built-ins and legacy extensions. */
 export const usePluginAppModules = create<PluginAppModulesState>((set) => ({
   modules: [],
-  setModules: (modules) => set({ modules })
+  runtimeLoadedIds: new Set(),
+  setSnapshot: (modules, runtimeLoadedIds) => set({ modules, runtimeLoadedIds })
 }));
+
+interface PluginAppLoadOutcome {
+  module: PluginAppModule | null;
+  runtimeLoaded: boolean;
+}
 
 type PluginAppImporter = (url: string) => Promise<{ default?: unknown }>;
 
@@ -113,9 +120,10 @@ function moduleFromSet(entry: PluginAppEntry, set: PluginRegistrationSet): Plugi
 
 async function loadPluginApp(
   entry: PluginAppEntry,
-  importer: PluginAppImporter
-): Promise<PluginAppModule | null> {
-  if (!entry.appUrl) return null;
+  importer: PluginAppImporter,
+  isCurrent: () => boolean
+): Promise<PluginAppLoadOutcome> {
+  if (!entry.appUrl) return { module: null, runtimeLoaded: false };
   try {
     // Some bundled renderer apps use the host React shim during module evaluation
     // (before their slot registration runs), so prime it before importing.
@@ -123,9 +131,12 @@ async function loadPluginApp(
     (globalThis as Record<string, unknown>).__ZCC_HOST_REACT_DOM__ = ReactDOM;
     (globalThis as Record<string, unknown>).__ZCC_HOST_REACT_DOM_CLIENT__ = ReactDOMClient;
     const mod = await importer(entry.appUrl);
+    // Imports cannot be cancelled. Do not let a stale import register slots after
+    // a newer lifecycle snapshot disabled, removed, or reloaded this plugin.
+    if (!isCurrent()) return { module: null, runtimeLoaded: false };
     if (isPluginAppDefinition(mod.default)) {
       const set = interpretPluginApp(entry.id, mod.default, entry.name);
-      return moduleFromSet(entry, set);
+      return { module: moduleFromSet(entry, set), runtimeLoaded: true };
     }
     // Leftover extension.json renderers call ModuleHost.call → modules:call.
     // PluginService never spawns that Electron main, so activating them here
@@ -133,20 +144,27 @@ async function loadPluginApp(
     // when a live child exists.
     if (isRendererEntry(mod.default)) {
       clearPluginSlots(entry.id);
-      return null;
+      return { module: null, runtimeLoaded: false };
     }
     clearPluginSlots(entry.id);
-    return errorModule(entry, 'Bundle did not default-export a plugin app.');
+    return {
+      module: errorModule(entry, 'Bundle did not default-export a plugin app.'),
+      runtimeLoaded: false
+    };
   } catch (error) {
+    if (!isCurrent()) return { module: null, runtimeLoaded: false };
     clearPluginSlots(entry.id);
-    return errorModule(entry, error instanceof Error ? error.message : String(error));
+    return {
+      module: errorModule(entry, error instanceof Error ? error.message : String(error)),
+      runtimeLoaded: false
+    };
   }
 }
 
 let reconcileSequence = 0;
 let activePluginIds = new Set<string>();
 const appliedAppUrls = new Map<string, string>();
-const loadedModules = new Map<string, PluginAppModule | null>();
+const loadedOutcomes = new Map<string, PluginAppLoadOutcome>();
 
 /**
  * Renderer bundles for plugins that are live enough to own UI. `needs-configuration`
@@ -165,26 +183,29 @@ export function pluginAppIsLoadable(
  */
 export async function reconcilePluginApps(
   entries: readonly PluginAppEntry[],
-  options: { importer?: PluginAppImporter } = {}
+  options: { importer?: PluginAppImporter } = {},
+  sequence = ++reconcileSequence
 ): Promise<void> {
-  const sequence = ++reconcileSequence;
   const wanted = entries.filter(pluginAppIsLoadable);
   const wantedIds = new Set(wanted.map((entry) => entry.id));
   const importer = options.importer ?? importPluginApp;
   const modules: PluginAppModule[] = [];
+  const runtimeLoadedIds = new Set<string>();
 
   for (const entry of wanted) {
     const url = entry.appUrl as string;
-    if (appliedAppUrls.get(entry.id) === url && loadedModules.has(entry.id)) {
-      const previous = loadedModules.get(entry.id);
-      if (previous) modules.push(previous);
+    if (appliedAppUrls.get(entry.id) === url && loadedOutcomes.has(entry.id)) {
+      const previous = loadedOutcomes.get(entry.id)!;
+      if (previous.module) modules.push(previous.module);
+      if (previous.runtimeLoaded) runtimeLoadedIds.add(entry.id);
       continue;
     }
-    const module = await loadPluginApp(entry, importer);
+    const outcome = await loadPluginApp(entry, importer, () => sequence === reconcileSequence);
     if (sequence !== reconcileSequence) return;
     appliedAppUrls.set(entry.id, url);
-    loadedModules.set(entry.id, module);
-    if (module) modules.push(module);
+    loadedOutcomes.set(entry.id, outcome);
+    if (outcome.module) modules.push(outcome.module);
+    if (outcome.runtimeLoaded) runtimeLoadedIds.add(entry.id);
   }
 
   if (sequence !== reconcileSequence) return;
@@ -193,11 +214,11 @@ export async function reconcilePluginApps(
       clearPluginSlots(id);
       evictHost(id);
       appliedAppUrls.delete(id);
-      loadedModules.delete(id);
+      loadedOutcomes.delete(id);
     }
   }
   activePluginIds = wantedIds;
-  usePluginAppModules.getState().setModules(modules);
+  usePluginAppModules.getState().setSnapshot(modules, runtimeLoadedIds);
 }
 
 /**
@@ -263,7 +284,8 @@ function toSdkSettingsSnapshot(snapshot: DomainPluginSettingsSnapshot): SdkPlugi
 }
 
 /** Initial snapshot for the server-owned plugin app registry. */
-export async function initPluginApps(): Promise<void> {
+export async function refreshPluginApps(): Promise<void> {
+  const sequence = ++reconcileSequence;
   const host: PluginHostBridge = {
     callRpc: (pluginId, method, args) => product.pluginApps.callRpc(pluginId, method, args),
     getSettings: (pluginId) => product.pluginApps.getSettings(pluginId).then(toSdkSettingsSnapshot),
@@ -277,8 +299,14 @@ export async function initPluginApps(): Promise<void> {
   // module state in the production renderer chunk graph).
   installPluginRuntime();
   try {
-    await reconcilePluginApps(await product.pluginApps.list());
+    const entries = await product.pluginApps.list();
+    await reconcilePluginApps(entries, {}, sequence);
   } catch {
     // Plugins are optional. Keep the shell usable if the runtime is offline.
   }
+}
+
+/** Initial snapshot for the server-owned plugin app registry. */
+export async function initPluginApps(): Promise<void> {
+  await refreshPluginApps();
 }

@@ -2654,6 +2654,7 @@ async function handleModelList(
  */
 function decodeLaunchProfile(
   providerOptions: Record<string, unknown> | undefined,
+  cwd?: string,
 ): AcpAgentProfile | null {
   const launchSpec = hostDaemonAcpLaunchSpecSchema.safeParse(
     providerOptions?.["acpLaunchSpec"],
@@ -2661,7 +2662,8 @@ function decodeLaunchProfile(
   if (!launchSpec.success) {
     return null;
   }
-  return acpProfileFromLaunchSpec(launchSpec.data, ACP_CANONICAL_PROVIDER_ID);
+  const profile = acpProfileFromLaunchSpec(launchSpec.data, ACP_CANONICAL_PROVIDER_ID);
+  return cwd ? { ...profile, cwd } : profile;
 }
 
 const acpProviderOptionsSchema = z
@@ -2812,7 +2814,7 @@ async function handleRequest(
       await handleModelList(
         request.id,
         buildAcpModelListParams(
-          decodeLaunchProfile(request.params.providerOptions),
+          decodeLaunchProfile(request.params.providerOptions, request.params.cwd),
           decodeAcpModelPickerOptions(request.params.providerOptions),
         ),
       );

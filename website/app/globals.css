@@ -1,22 +1,24 @@
 /* ==========================================================================
    Zana Command Center — public site
-   Dark-first, matching the desktop app tokens (graphite, blue, gold).
+   Fairy identity: midnight, pearl, blue/lavender wings, and a golden spark.
    ========================================================================== */
 
 :root {
-  --bg-base: #0b0f15;
-  --bg-panel: #10151c;
-  --bg-elevated: #161c25;
-  --bg-hover: #1a212c;
-  --bg-input: #0d1117;
-  --border: #1f2731;
-  --border-strong: #2a3340;
-  --text-primary: #e6edf3;
+  --bg-base: #0d152b;
+  --bg-panel: #121e35;
+  --bg-elevated: #172641;
+  --bg-hover: #213452;
+  --bg-input: #101b30;
+  --border: #2b3c58;
+  --border-strong: #435a7c;
+  --text-primary: #f0f7ff;
   --text-bright: #ffffff;
-  --text-muted: #8b949e;
-  --text-dim: #6e7681;
-  --accent-gold: #d4a017;
-  --accent-blue: #2f81f7;
+  --text-muted: #b6c9e0;
+  --text-dim: #91a8c7;
+  --accent-gold: #ffdb9e;
+  --accent-blue: #93dfff;
+  --accent-lavender: #c0b9ff;
+  --accent-ink: #0d152b;
   --accent: var(--accent-blue);
   --danger: #f85149;
   --success: #3fb950;
@@ -30,21 +32,21 @@
   --panel-3: var(--bg-hover);
   --border-soft: var(--border);
   --text: var(--text-primary);
-  --text-2: #c9d1d9;
+  --text-2: #d3e1f2;
   --muted: var(--text-muted);
   --muted-2: var(--text-dim);
-  --accent-2: #58a6ff;
+  --accent-2: #b5eaff;
   --accent-3: var(--success);
   --accent-soft: color-mix(in srgb, var(--accent-blue) 14%, transparent);
   --accent-border: color-mix(in srgb, var(--accent-blue) 36%, transparent);
   --glow: color-mix(in srgb, var(--accent-blue) 28%, transparent);
   --warn: var(--accent-gold);
-  --code-bg: #0d1117;
-  --code-text: #e6edf3;
+  --code-bg: #101b30;
+  --code-text: #f0f7ff;
   --brand: var(--accent-blue);
-  --brand-2: #58a6ff;
+  --brand-2: #b5eaff;
   --brand-3: var(--success);
-  --brand-ink: #ffffff;
+  --brand-ink: var(--accent-ink);
   --gold: var(--accent-gold);
   --gold-soft: #e3b341;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -57,7 +59,7 @@
   --radius-lg: 14px;
   --maxw: 1120px;
   --maxw-prose: 768px;
-  --nav-h: 48px;
+  --nav-h: 72px;
   --font-sans: var(--font-inter, "Inter"), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains, "JetBrains Mono"), "SF Mono", SFMono-Regular, Menlo, ui-monospace, monospace;
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -66,7 +68,7 @@
 }
 
 [data-theme="light"] {
-  --bg-base: #f6f8fa;
+  --bg-base: #f5f7fc;
   --bg-panel: #ffffff;
   --bg-elevated: #f0f3f6;
   --bg-hover: #e6ebf1;
@@ -76,9 +78,11 @@
   --text-primary: #1f2328;
   --text-bright: #010409;
   --text-muted: #57606a;
-  --text-dim: #8c959f;
-  --accent-gold: #b88512;
-  --accent-blue: #0969da;
+  --text-dim: #63728a;
+  --accent-gold: #88620f;
+  --accent-blue: #2855a6;
+  --accent-lavender: #6850aa;
+  --accent-ink: #ffffff;
   --danger: #cf222e;
   --success: #1a7f37;
   --text-2: #343a40;
@@ -172,10 +176,10 @@ h1, h2, h3, h4 {
 
 .skip-link {
   position: fixed; top: 8px; left: 8px; z-index: 200; transform: translateY(-140%);
-  background: var(--accent-blue); color: #fff; padding: 8px 14px; border-radius: 6px;
+  background: var(--accent-blue); color: var(--accent-ink); padding: 8px 14px; border-radius: 6px;
   font-size: 13px; font-weight: 600;
 }
-.skip-link:focus { transform: translateY(0); color: #fff; }
+.skip-link:focus { transform: translateY(0); color: var(--accent-ink); }
 
 .eyebrow, .zcc-kicker {
   display: inline-flex; align-items: center; gap: 8px;
@@ -203,7 +207,7 @@ h1, h2, h3, h4 {
     linear-gradient(to bottom, color-mix(in srgb, var(--border) 60%, transparent) 1px, transparent 1px);
   background-position: center;
   background-size: 40px 40px;
-  opacity: 0.5;
+  opacity: 0.2;
 }
 .aurora-host .aurora-grid::before {
   content: '';
@@ -249,9 +253,9 @@ h1, h2, h3, h4 {
   animation: home-aurora-beam-h linear infinite;
 }
 .aurora-host .aurora-grid-beam.b1 { left: calc(50% - 340px); --home-beam: var(--accent-blue); animation-duration: 340s; animation-delay: 0s; }
-.aurora-host .aurora-grid-beam.b2 { left: calc(50% + 100px); --home-beam: #d6409f; animation-duration: 372s; animation-delay: -70s; }
+.aurora-host .aurora-grid-beam.b2 { left: calc(50% + 100px); --home-beam: #c0b9ff; animation-duration: 372s; animation-delay: -70s; }
 .aurora-host .aurora-grid-beam.b3 { left: calc(50% + 420px); --home-beam: var(--accent-gold); animation-duration: 356s; animation-delay: -150s; }
-.aurora-host .aurora-grid-beam.b4 { top: calc(50% - 180px); --home-beam: #d6409f; animation-duration: 388s; animation-delay: -220s; }
+.aurora-host .aurora-grid-beam.b4 { top: calc(50% - 180px); --home-beam: #c0b9ff; animation-duration: 388s; animation-delay: -220s; }
 .aurora-host .aurora-grid-beam.b5 { top: calc(50% + 140px); --home-beam: var(--accent-blue); animation-duration: 364s; animation-delay: -300s; }
 @keyframes home-aurora-beam-v {
   0% { transform: translateY(-180px); opacity: 0; }
@@ -291,11 +295,11 @@ h1, h2, h3, h4 {
 }
 .zcc-btn:hover, .btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border-strong); }
 .zcc-btn-primary, .btn-primary {
-  background: var(--accent-blue); border-color: var(--accent-blue); color: #fff;
+  background: var(--accent-blue); border-color: var(--accent-blue); color: var(--accent-ink);
 }
 .zcc-btn-primary:hover, .btn-primary:hover {
   background: color-mix(in srgb, var(--accent-blue) 88%, #fff);
-  border-color: transparent; color: #fff;
+  border-color: transparent; color: var(--accent-ink);
 }
 .zcc-btn-ghost, .btn-ghost { background: transparent; }
 .zcc-btn-lg, .btn-lg { min-height: 42px; padding: 10px 18px; font-size: 14px; }
@@ -348,11 +352,11 @@ section .section-lede { color: var(--muted); margin: 0; font-size: 15px; }
 }
 .nav .wrap { display: flex; align-items: center; gap: 16px; height: var(--nav-h); }
 .brand {
-  font-weight: 650; letter-spacing: -0.02em; font-size: 13px;
-  display: flex; align-items: center; gap: 8px; color: var(--text); flex: none;
+  font-weight: 650; letter-spacing: -0.02em; font-size: 19px;
+  display: flex; align-items: center; gap: 10px; color: var(--text); flex: none;
 }
 .brand:hover { color: var(--text); }
-.brand-mark { width: 22px; height: 22px; flex: none; }
+.brand-mark { width: 30px; height: 30px; flex: none; }
 .brand-short { display: none; }
 .nav-links { display: flex; min-width: 0; gap: 2px; margin-left: auto; align-items: center; font-size: 13px; }
 .nav-links a:not(.zcc-btn):not(.btn) {
@@ -597,7 +601,7 @@ section .section-lede { color: var(--muted); margin: 0; font-size: 15px; }
 .mk-head h3 { margin: 0; font-size: 15px; }
 .mk-icon {
   width: 32px; height: 32px; border-radius: 7px; display: grid; place-items: center;
-  font-size: 13px; font-weight: 700; color: #fff; flex: none;
+  font-size: 13px; font-weight: 700; color: var(--accent-ink); flex: none;
   background: var(--accent-blue);
 }
 .mk-badge {
@@ -769,7 +773,7 @@ section .section-lede { color: var(--muted); margin: 0; font-size: 15px; }
   position: absolute; top: 8px; right: 8px; z-index: 2;
   font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.06);
-  color: #e6edf3; cursor: pointer;
+  color: #f0f7ff; cursor: pointer;
 }
 .code-wrap:hover .code-copy { opacity: 1; }
 .code-copy.copied { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }

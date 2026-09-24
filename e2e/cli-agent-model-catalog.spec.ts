@@ -4,7 +4,9 @@
  * is only a loading placeholder — once the catalog is ready, More models holds
  * selectedOnly aliases and the mode chip sits left of the harness trigger.
  */
-import { test, expect } from './fixtures/app.js';
+import { test, expect, launchApp } from './fixtures/app.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 
 const PTY_ALIAS_IDS = ['haiku', 'sonnet', 'opus', 'fable'] as const;
@@ -55,4 +57,74 @@ test('CLI Agent mode sits left of harness and uses the Thread catalog, not PTY a
 
   await window.getByTestId('model-reasoning-more-toggle').click();
   await expect(window.getByTestId('model-reasoning-more-menu')).toBeVisible();
+});
+
+test('local project switches reuse models while remote discovery remains pending', async ({ home }) => {
+  const remoteId = 'composer-remote-project';
+  const remoteHost = 'composer-remote-host';
+  const localProjects = [
+    { id: 'composer-local-a', name: 'Local A', path: join(home, 'local-a') },
+    { id: 'composer-local-b', name: 'Local B', path: join(home, 'local-b') }
+  ];
+  mkdirSync(join(home, '.zcc'), { recursive: true });
+  for (const project of localProjects) mkdirSync(project.path, { recursive: true });
+  writeFileSync(join(home, '.zcc', 'projects.json'), JSON.stringify([
+    { id: remoteId, name: 'Remote first in store', path: '/remote', hostId: remoteHost },
+    ...localProjects
+  ]));
+  const app = await launchApp(home, { initialConfig: { lastProjectId: remoteId } });
+  const { window } = app;
+  let releaseRemote!: () => void;
+  const remoteGate = new Promise<void>((resolve) => { releaseRemote = resolve; });
+  const requests: string[] = [];
+  await window.route('**/api/v1/system/execution-options*', async (route) => {
+    const url = new URL(route.request().url());
+    requests.push(url.search);
+    const remote = url.searchParams.get('hostId') === remoteHost;
+    if (remote || url.searchParams.get('projectId') === 'composer-local-b') await remoteGate;
+    await route.fulfill({ json: {
+      providers: [{ id: 'claude-code', displayName: 'Claude', available: true,
+        composerActions: [], capabilities: { permissionModes: ['full'] } }],
+      models: [{ id: remote ? 'remote-model' : 'local-model', model: remote ? 'remote-model' : 'local-model',
+        displayName: remote ? 'Remote Model' : 'Local Model', isDefault: true,
+        supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Medium' }],
+        defaultReasoningEffort: 'medium' }],
+      selectedOnlyModels: [], modelLoadError: null, permissionCeiling: 'full'
+    } });
+  });
+  try {
+    await window.reload();
+    await window.getByRole('button', { name: 'Open Remote first in store', exact: true }).click();
+    await window.evaluate(() => {
+      window.history.pushState({}, '', '/agents');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    const modal = await openCliAgentLauncher(window);
+    const project = modal.getByRole('button', { name: 'Project', exact: true });
+    const model = modal.getByTestId('model-reasoning-picker-trigger');
+    await expect(project).not.toContainText('Remote first in store');
+    const choose = async (name: string) => {
+      await project.click();
+      await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name, exact: false }).click();
+      await expect(project).toContainText(name);
+    };
+    await choose('Local A');
+    await expect(model).toContainText('Local Model');
+    const localRequestCount = () => requests.filter((query) => query.includes('composer-local-a')).length;
+    const count = localRequestCount();
+    await choose('Remote first in store');
+    await expect.poll(() => requests.some((query) => query.includes(remoteHost))).toBe(true);
+    await choose('Local B');
+    await expect(model).toContainText('Local Model', { timeout: 2_000 });
+    await expect(model.locator('[data-model-loading-placeholder]')).toHaveCount(0);
+    await choose('Local A');
+    await expect(model).toContainText('Local Model');
+    expect(localRequestCount()).toBe(count);
+    await modal.getByRole('button', { name: 'Modern', exact: true }).click();
+    await expect(modal.getByTestId('model-reasoning-picker-trigger')).toContainText('Local Model');
+    expect(localRequestCount()).toBe(count);
+  } finally {
+    releaseRemote();
+    try { await window.unrouteAll({ behavior: 'wait' }); } finally { await app.electron.close(); }
+  }
 });

@@ -1,24 +1,17 @@
 import { deflateSync } from 'node:zlib';
 import { nativeImage, type NativeImage } from 'electron';
+import { FAIRY_GLYPH_ALPHA, FAIRY_GLYPH_SIZE } from './generated/zana-glyph.js';
+
+const glyphAlpha = Buffer.from(FAIRY_GLYPH_ALPHA, 'base64');
 
 /**
- * Builds the app's own glyph — the same `WandSparkles` mark (lucide-react)
- * used in the menu-bar popover's brand badge (`MenubarPopover.tsx`) — as a
- * macOS *template image* (black pixels with an alpha mask, which the OS
- * recolors for light/dark menu bars). We redraw the marks monochrome rather
- * than shrink a colored icon: at the 18pt menu-bar slot a colored icon
- * collapses into an illegible dark blob and can't tint. This keeps the
- * menu-bar presence identical to the popover's own brand glyph while staying
- * crisp and menu-bar-correct.
- *
- * Self-contained: rasterizes the glyph by 3× supersampling for cheap
- * anti-aliasing, then encodes a real (zlib-compressed) PNG. Returns a template
- * NativeImage at 2× density. Callers should fall back to the app icon (or an
- * empty image) if this throws.
+ * Zana's fairy silhouette as a macOS template image, tinted by the OS.
+ * The checked-in alpha mask comes from resources/zana-glyph.svg, shared with
+ * the popover and Stream Deck. No file reads or SVG rendering at app startup.
  */
 export function buildAppGlyphTemplateImage(): NativeImage {
-  const size = 36; // @2x of an 18pt menu-bar slot
-  const rgba = rasterizeGlyph(size);
+  const size = FAIRY_GLYPH_SIZE; // @2x of an 18pt menu-bar slot
+  const rgba = colorizeGlyph();
   const png = encodePng(size, size, rgba);
   const img = nativeImage.createFromBuffer(png, { scaleFactor: 2 });
   img.setTemplateImage(true);
@@ -30,7 +23,7 @@ const ATTENTION_RGB = { r: 0xff, g: 0x3b, b: 0x30 };
 
 /**
  * The attention variant of the app glyph: the same marks, plus a small red disc
- * baked into the upper-right corner (over the wand's upper sparkle) to signal
+ * baked into the upper-right corner (over the fairy's upper sparkle) to signal
  * that one or more agents need the user. Because `setTitle` on macOS cannot color text
  * (Electron exposes only `fontType`), the RED in "agents requesting attention"
  * has to live in the icon — and a red pixel can't survive a *template* image
@@ -45,9 +38,9 @@ const ATTENTION_RGB = { r: 0xff, g: 0x3b, b: 0x30 };
  * throws.
  */
 export function buildAppGlyphAttentionImage(opts: { dark: boolean }): NativeImage {
-  const size = 36; // @2x of an 18pt menu-bar slot
+  const size = FAIRY_GLYPH_SIZE; // @2x of an 18pt menu-bar slot
   const glyph = opts.dark ? { r: 0xff, g: 0xff, b: 0xff } : { r: 0, g: 0, b: 0 };
-  const rgba = rasterizeGlyph(size, glyph);
+  const rgba = colorizeGlyph(glyph);
   paintAttentionDot(size, rgba);
   const png = encodePng(size, size, rgba);
   // NON-template: keep the literal red. No setTemplateImage(true).
@@ -56,8 +49,8 @@ export function buildAppGlyphAttentionImage(opts: { dark: boolean }): NativeImag
 
 /**
  * Paints a filled red disc in the upper-right corner of the RGBA buffer, over
- * the wand's tip, so the attention signal reads even at 18pt. Uses the same 3×
- * supersampled coverage the glyph rasterizer uses for a clean edge, and fully
+ * the fairy's sparkle, so the attention signal reads even at 18pt. Uses 3×
+ * supersampling for a clean edge, and fully
  * overwrites (not blends) the underlying glyph pixels inside the disc so the dot
  * reads as one solid mark rather than a glyph-tinted smudge.
  */
@@ -93,90 +86,17 @@ function paintAttentionDot(size: number, rgba: Buffer) {
   }
 }
 
-/**
- * Renders the app marks (black, alpha-masked) into an RGBA buffer: the
- * `WandSparkles` glyph (lucide-react) — a diagonal wand with a tip tick, and
- * three cross-shaped sparkles of varying size — reproduced from lucide's own
- * 24×24 path data (`node_modules/lucide-react/dist/esm/icons/wand-sparkles.js`),
- * every mark a stroked line segment with the icon's own `strokeWidth={2}`.
- * The segments are fitted into the canvas so their combined bounding box
- * fills the slot with a small margin.
- */
-function rasterizeGlyph(size: number, color: { r: number; g: number; b: number } = { r: 0, g: 0, b: 0 }): Buffer {
-  // --- source geometry, in lucide's 24×24 viewBox, strokeWidth 2 -------------
-  const halfStroke = 1;
-  const segments = [
-    // Wand rod (the icon's rounded-parallelogram path, approximated as a line).
-    { x1: 2.36, y1: 20.36, x2: 19.64, y2: 3.64 },
-    // Tip tick, just below the rod's upper end.
-    { x1: 14, y1: 7, x2: 17, y2: 10 },
-    // Large sparkle (bottom-left): vertical + horizontal arm.
-    { x1: 5, y1: 6, x2: 5, y2: 10 },
-    { x1: 7, y1: 8, x2: 3, y2: 8 },
-    // Medium sparkle (right, below the rod).
-    { x1: 19, y1: 14, x2: 19, y2: 18 },
-    { x1: 21, y1: 16, x2: 17, y2: 16 },
-    // Small sparkle (top).
-    { x1: 10, y1: 2, x2: 10, y2: 4 },
-    { x1: 11, y1: 3, x2: 9, y2: 3 }
-  ];
-
-  // --- fit the combined bbox into the canvas with a small padding ------------
-  const minX = Math.min(...segments.flatMap((s) => [s.x1, s.x2])) - halfStroke;
-  const maxX = Math.max(...segments.flatMap((s) => [s.x1, s.x2])) + halfStroke;
-  const minY = Math.min(...segments.flatMap((s) => [s.y1, s.y2])) - halfStroke;
-  const maxY = Math.max(...segments.flatMap((s) => [s.y1, s.y2])) + halfStroke;
-  const bboxW = maxX - minX;
-  const bboxH = maxY - minY;
-  const pad = 2; // px of empty margin inside the canvas
-  const avail = size - pad * 2;
-  const scale = avail / Math.max(bboxW, bboxH);
-  const offX = pad + (avail - bboxW * scale) / 2;
-  const offY = pad + (avail - bboxH * scale) / 2;
-  const tx = (x: number) => (x - minX) * scale + offX;
-  const ty = (y: number) => (y - minY) * scale + offY;
-
-  // Transform the marks into canvas space up front.
-  const segs = segments.map((s) => ({ x1: tx(s.x1), y1: ty(s.y1), x2: tx(s.x2), y2: ty(s.y2) }));
-  const strokeR = halfStroke * scale;
-
-  const ss = 3; // supersample factor
-  const samples = ss * ss;
-  const buf = Buffer.alloc(size * size * 4, 0);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      let hits = 0;
-      for (let sy = 0; sy < ss; sy++) {
-        for (let sx = 0; sx < ss; sx++) {
-          const px = x + (sx + 0.5) / ss;
-          const py = y + (sy + 0.5) / ss;
-          const onMark = segs.some((s) => pointNearSegment(px, py, s.x1, s.y1, s.x2, s.y2) <= strokeR);
-          if (onMark) hits++;
-        }
-      }
-      if (hits > 0) {
-        const alpha = Math.round((hits / samples) * 255);
-        const i = (y * size + x) * 4;
-        buf[i] = color.r;
-        buf[i + 1] = color.g;
-        buf[i + 2] = color.b;
-        buf[i + 3] = alpha;
-      }
-    }
+/** Color the shared antialiased mask; retain its transparent negative space. */
+function colorizeGlyph(color = { r: 0, g: 0, b: 0 }): Buffer {
+  const rgba = Buffer.alloc(glyphAlpha.length * 4);
+  for (let pixel = 0; pixel < glyphAlpha.length; pixel++) {
+    const offset = pixel * 4;
+    rgba[offset] = color.r;
+    rgba[offset + 1] = color.g;
+    rgba[offset + 2] = color.b;
+    rgba[offset + 3] = glyphAlpha[pixel];
   }
-  return buf;
-}
-
-/** Distance from point (px,py) to segment (ax,ay)-(bx,by). */
-function pointNearSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len2 = dx * dx + dy * dy || 1;
-  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  const cx = ax + t * dx;
-  const cy = ay + t * dy;
-  return Math.hypot(px - cx, py - cy);
+  return rgba;
 }
 
 // ----- minimal PNG encoder (truecolor + alpha, no filtering) ----------------

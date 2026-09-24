@@ -14,6 +14,7 @@ import { useRef, type ReactNode } from 'react';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { ExpandableTimelineRow } from './ExpandableTimelineRow.js';
 import { ConversationRow } from './ConversationRow.js';
+import { ThreadActivityLabel } from './ThreadActivityLabel.js';
 import { TimelineTitleView } from './TimelineTitleView.js';
 import { TimelineWorkGlyph } from './TimelineWorkGlyph.js';
 import { TurnArchiveRow } from './TurnArchiveRow.js';
@@ -218,6 +219,7 @@ function TimelineRowView({
 
   if (row.kind === 'system') {
     const label = systemRowLabel(row);
+    const isRunning = row.systemKind === 'operation' && row.status === 'pending';
     const isError = row.systemKind === 'error' || row.systemKind === 'reconnect';
     if (isError && row.detail) {
       return (
@@ -238,12 +240,12 @@ function TimelineRowView({
     }
     return (
       <p
-        className={`thread-timeline-system${dim ? ' is-dim' : ''}`}
+        className={`thread-timeline-system${isRunning ? ' thread-working-indicator' : dim ? ' is-dim' : ''}`}
         data-testid="thread-system-row"
         data-row-id={row.id}
         data-status={row.status ?? undefined}
       >
-        {label}
+        {isRunning ? <ThreadActivityLabel label={label} /> : label}
       </p>
     );
   }

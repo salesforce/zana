@@ -13,11 +13,18 @@ zcc sf org
 zcc sf lint [path]
 ```
 
-The Salesforce project tab lists every org the Salesforce CLI has authenticated (`sf org list`). Picking one saves `defaultOrg` for **SOQL**, Apex, LWC, Agentforce Preview, and the family tools. `zcc sf org` prints that same roster (no tokens) and the resolved target.
+The Salesforce project tab lists every org the Salesforce CLI has authenticated (`sf org list`). Picking one saves the project's target for **SOQL**, Apex, LWC, Agentforce Preview, and the family tools. The plugin settings' `defaultOrg` is the shared fallback. `zcc sf org` prints that same roster (no tokens) and the resolved target.
+
+For a new connection, use **Salesforce → Connect org → Sign in with browser**.
+Choose Production / Developer Edition, Sandbox, or My Domain / SSO (a Salesforce
+login URL); the alias is optional. The CLI saves authentication and the plugin
+selects the new org for that project, preserving shared and CLI defaults. Existing
+terminal logins can be loaded with **Refresh**. Never ask for a password or token
+in the agent chat.
 
 ## SOQL Explorer (human)
 
-The Salesforce plugin's per-project **SOQL** tab runs interactive REST/Tooling queries: schema rail, query editor (⌘/Ctrl+Enter), results grid, export, recent/saved queries, and BotVersion/BotDefinition examples. It does not perform DML. Open it from the project row menu or the Salesforce project tab.
+The Salesforce plugin's **Data** tab runs interactive REST/Tooling queries in SOQL Explorer: schema rail, query editor (⌘/Ctrl+Enter), results grid, export, recent/saved queries, and BotVersion/BotDefinition examples. It does not perform DML. Open **Salesforce → Data** in the project, or use the SOQL agent side panel.
 
 ## `sf_soql`
 

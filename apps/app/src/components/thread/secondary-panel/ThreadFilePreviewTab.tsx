@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useSyncExternal
 import { Copy, FileText } from 'lucide-react';
 import { product } from '../../../lib/product-client.js';
 import { DocContent } from '../../MarkdownContent.js';
+import { DocumentPdfButton } from '../../DocumentPdfButton.js';
 import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
 import { listFileOpeners, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import {
@@ -13,6 +14,8 @@ import {
 } from '../../../plugins/plugin-slot-resolvers.js';
 import type { PluginFileOpenerRegistration } from '@zana-ai/zcc-plugin-sdk';
 import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
+import { videoContentType } from '@zana-ai/zcc-domain';
+import { ThreadVideoPreview, videoPreviewUrl } from './ThreadVideoPreview.js';
 import {
   applyPreviewResult,
   copyText,
@@ -41,6 +44,7 @@ export function ThreadFilePreviewView({
   error,
   threadId,
   projectId,
+  storage = false,
   lineNumber = null
 }: {
   path: string;
@@ -48,6 +52,7 @@ export function ThreadFilePreviewView({
   error: string | null;
   threadId?: string;
   projectId?: string | null;
+  storage?: boolean;
   lineNumber?: number | null;
 }) {
   if (error) return <p className="thread-detail-empty">{error}</p>;
@@ -76,6 +81,7 @@ export function ThreadFilePreviewView({
         exportable
         threadId={threadId}
         projectId={projectId}
+        storage={storage}
       />
     </div>
   );
@@ -126,12 +132,14 @@ export function ThreadFilePreviewChrome({
   matches,
   selectedKey,
   onSelect,
+  documentContent = null,
   statusBadge = null
 }: {
   path: string;
   matches: readonly PluginFileOpenerRegistration[];
   selectedKey: string;
   onSelect: (key: string) => void;
+  documentContent?: string | null;
   statusBadge?: ReturnType<typeof planDocumentBadge>;
 }) {
   const { name, dir } = previewPathParts(path);
@@ -145,6 +153,9 @@ export function ThreadFilePreviewChrome({
       </span>
       {statusBadge ? <PlanStatusBadge badge={statusBadge} /> : null}
       <div className="thread-file-preview-chrome-actions">
+        {/\.(md|mdx|markdown)$/i.test(path) && (
+          <DocumentPdfButton path={path} title={name} content={documentContent} />
+        )}
         <button
           type="button"
           className="thread-file-preview-copy"
@@ -211,6 +222,7 @@ export function ThreadFilePreviewTab({
   const opener = resolveFileOpener(path, openers, override);
   const OpenerComponent = opener?.component;
   const matches = matchingFileOpeners(path, openers);
+  const videoSrc = videoContentType(path) ? videoPreviewUrl(path, threadId, storage, projectId) : null;
 
   const liveDocument = livePlan
     ? (planDocument ?? {
@@ -231,12 +243,12 @@ export function ThreadFilePreviewTab({
     : null;
 
   useEffect(() => {
-    if (livePlan) return;
+    if (livePlan || videoSrc) return;
     let cancelled = false;
     const hostReader = storage
       ? product.threads.storageContent
       : threadId
-        ? product.threads.hostFileContent
+        ? (id: string, filePath: string) => product.threads.hostFileContent(id, filePath, projectId ?? undefined)
         : undefined;
     void loadFilePreview(
       product.fs.readFile,
@@ -253,7 +265,7 @@ export function ThreadFilePreviewTab({
       applyPreviewResult(cancelled, result, setError, setContent);
     });
     return () => { cancelled = true; };
-  }, [path, storage, threadId, livePlan]);
+  }, [path, storage, threadId, projectId, livePlan, videoSrc]);
 
   const chrome = (
     <ThreadFilePreviewChrome
@@ -261,6 +273,7 @@ export function ThreadFilePreviewTab({
       matches={matches}
       selectedKey={opener ? fileOpenerKey(opener) : 'host'}
       statusBadge={liveBadge}
+      documentContent={error ? null : liveDocument?.markdown ?? content}
       onSelect={(next) => {
         setOverride(next);
         const extension = fileExtensionOf(path);
@@ -281,13 +294,16 @@ export function ThreadFilePreviewTab({
       </div>
     );
   }
-  const hostPreview = (
+  const hostPreview = videoSrc ? (
+    <ThreadVideoPreview key={videoSrc} src={videoSrc} path={path} />
+  ) : (
     <ThreadFilePreviewView
       path={path}
       content={content}
       error={error}
       threadId={threadId}
       projectId={projectId}
+      storage={storage}
       lineNumber={lineNumber}
     />
   );

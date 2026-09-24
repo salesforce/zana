@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useRef, useState, type KeyboardEvent } from 'react';
+import { forwardRef, useImperativeHandle, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { formatQuery } from './soql-ast.js';
 import { soqlCompletions, type SoqlCompletion } from './soql-completions.js';
 import type { SObjectListEntry, SoqlSObjectDescribe } from '../../../lib/soql-describe.js';
@@ -15,6 +15,8 @@ export const SoqlEditor = forwardRef<
     value: string;
     onChange: (value: string) => void;
     onRun: () => void;
+    onSave?: () => void;
+    options?: ReactNode;
     catalogs: { standard: SObjectListEntry[]; tooling: SObjectListEntry[] };
     useToolingApi: boolean;
     describe?: SoqlSObjectDescribe | null;
@@ -57,6 +59,7 @@ export const SoqlEditor = forwardRef<
     }
     if ((event.metaKey || event.ctrlKey) && event.key === 's') {
       event.preventDefault();
+      props.onSave?.();
       return;
     }
     if (event.key === ' ' && (event.ctrlKey || event.metaKey)) {
@@ -88,6 +91,7 @@ export const SoqlEditor = forwardRef<
         onKeyDown={onKeyDown}
       />
       <div className="sf-soql-editor-meta">
+        {props.options}
         <button
           type="button"
           className="sf-soql-btn"

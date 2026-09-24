@@ -2,10 +2,10 @@
  * @vitest-environment happy-dom
  */
 import { createElement } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanup, render } from '@testing-library/react';
+import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
 import { useThreadComposerOptions } from './useThreadComposerOptions.js';
 import { resetThreadModelCatalog } from './thread-model-catalog.js';
 
@@ -29,13 +29,13 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('hostId?: string');
     expect(source).toContain('hostPending?: boolean');
     expect(source).toContain('if (input.hostPending) return');
-    expect(source).toContain('void setThreadModelCatalogHost(input.hostId)');
-    expect(source).toContain('setThreadModelCatalogHost');
-    expect(source).toContain('ensureThreadProviderModels');
-    expect(source).toContain('if (cached) return');
-    expect(source).toContain('[providerId, cached]');
+    expect(source).toContain('void hostCatalog.ensure()');
+    expect(source).toContain('threadModelCatalogForHost(input.hostId, input.projectId)');
+    expect(source).toContain('hostCatalog.ensureProvider');
+    expect(source).toContain('if (input.hostPending || cached) return');
+    expect(source).toContain('[hostCatalog, input.hostPending, providerId, cached]');
     expect(source).toContain('catalog.inflight.has(providerId)');
-    expect(source).toContain('getThreadModelCatalog');
+    expect(source).toContain('hostCatalog.getSnapshot');
     expect(source).toContain('reconcileReasoningLevel');
     expect(source).toContain('if (catalog.providers.length === 0) return');
     expect(source).toContain('rememberComposerSelection');
@@ -76,7 +76,7 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('initialAcpMode');
     expect(source).toContain('requestedValid');
     expect(source).toContain('appliedRequestedAcpModeRef');
-    expect(source).toContain('reloadThreadProviderModels(providerId)');
+    expect(source).toContain('hostCatalog.reloadProvider(providerId)');
     expect(source).toContain('refreshAcpModeOptions');
   });
 
@@ -121,5 +121,45 @@ describe('useThreadComposerOptions acpMode rehydration (rendered)', () => {
 
     rerender(createElement(Probe, { threadId: 'thread-b', initialAcpMode: null }));
     expect(getByTestId('acp-mode').textContent).toBe('none');
+  });
+});
+
+describe('composer host cache subscriptions', () => {
+  afterEach(() => { cleanup(); resetThreadModelCatalog(); });
+
+  it('keeps simultaneous composers on different hosts isolated and reuses local models on return', async () => {
+    const fetcher = vi.fn(async (query?: { hostId?: string; providerId?: string }) => ({
+      providers: [{ id: 'codex', displayName: 'Codex', capabilities: { permissionModes: ['full'] } }],
+      models: [{ id: query?.hostId, model: query?.hostId, displayName: query?.hostId,
+        supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Medium' }],
+        defaultReasoningEffort: 'medium', isDefault: true }],
+      selectedOnlyModels: [], modelLoadError: null
+    }));
+    resetThreadModelCatalog(fetcher as never);
+    const local = renderHook(({ hostId }) => useThreadComposerOptions({ lockedProviderId: 'codex', hostId }), {
+      initialProps: { hostId: 'local-model' }
+    });
+    await waitFor(() => expect(local.result.current.model).toBe('local-model'));
+    const remote = renderHook(() => useThreadComposerOptions({ lockedProviderId: 'codex', hostId: 'remote-model' }));
+    await waitFor(() => expect(remote.result.current.model).toBe('remote-model'));
+    expect(local.result.current.model).toBe('local-model');
+    fetcher.mockClear();
+    local.rerender({ hostId: 'remote-model' });
+    await waitFor(() => expect(local.result.current.model).toBe('remote-model'));
+    local.rerender({ hostId: 'local-model' });
+    await waitFor(() => expect(local.result.current.model).toBe('local-model'));
+    expect(local.result.current.modelIsLoading).toBe(false);
+    expect(remote.result.current.model).toBe('remote-model');
+    expect(fetcher).not.toHaveBeenCalled();
+    await act(async () => local.result.current.refreshAcpModeOptions());
+    expect(fetcher).toHaveBeenCalledWith({ providerId: 'codex', hostId: 'local-model' });
+  });
+
+  it('does not start discovery before the host roster is ready', async () => {
+    const fetcher = vi.fn(async () => ({ providers: [], models: [], selectedOnlyModels: [], modelLoadError: null }));
+    resetThreadModelCatalog(fetcher as never);
+    renderHook(() => useThreadComposerOptions({ lockedProviderId: 'codex', hostPending: true }));
+    await act(async () => {});
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

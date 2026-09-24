@@ -71,7 +71,8 @@ export function SidebarRail({
   trailingIds = [],
   items,
   header,
-  utilityStart
+  utilityStart,
+  settingsRoutePath
 }: {
   className: string;
   navAriaLabel: string;
@@ -81,6 +82,8 @@ export function SidebarRail({
   items: readonly SidebarRailItem[];
   header?: ReactNode;
   utilityStart?: ReactNode;
+  /** Overrides remembered global settings for a project-scoped rail. */
+  settingsRoutePath?: string;
 }): ReactElement {
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const { nav } = useRouteState();
@@ -197,7 +200,7 @@ export function SidebarRail({
       <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
         {utilityStart}
         <Link
-          to={routeMemory.settingsRoutePath}
+          to={settingsRoutePath ?? routeMemory.settingsRoutePath}
           className={`sidebar-utility-button sidebar-utility-button--settings ${nav === 'settings' ? 'active' : ''}`}
           aria-label="Settings"
           aria-current={nav === 'settings' ? 'page' : undefined}

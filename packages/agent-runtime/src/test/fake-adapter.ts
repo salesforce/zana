@@ -350,6 +350,7 @@ function translateFakeDelta(
           threadId,
           providerThreadId: "",
           scope: turnScope(turnId),
+          ...(delta.parentRef ? { parentToolCallId: delta.parentRef } : {}),
         },
       ];
     case "input.accepted": {

@@ -1,7 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
-  WandSparkles,
   RefreshCw,
   Star,
   ArrowRight,
@@ -11,6 +10,7 @@ import {
   AppWindow
 } from 'lucide-react';
 import type { AgentState, MenubarAgent, MenubarSnapshot } from '@zana-ai/zcc-domain/product';
+import fairyGlyph from '../assets/zana-glyph.svg';
 
 /**
  * The macOS menu-bar popover — a frameless card rendered by the same bundle
@@ -107,7 +107,10 @@ export function MenubarPopover() {
       <header className="mbp-header">
         <div className="mbp-brand">
           <span className="mbp-brand-badge" aria-hidden="true">
-            <WandSparkles size={15} className="mbp-brand-glyph" />
+            <span className="mbp-brand-glyph" style={{
+              display: 'block', width: 18, height: 18, backgroundColor: 'currentColor',
+              mask: `url("${fairyGlyph}") center / contain no-repeat`
+            }} />
           </span>
           <span className="mbp-brand-name">Zana</span>
         </div>

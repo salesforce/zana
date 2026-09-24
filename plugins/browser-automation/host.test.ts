@@ -32,6 +32,7 @@ describe("host runtime preparation", () => {
     const factory = vi.fn(async (): Promise<RuntimeSession> => ({
       close: async () => {},
       stop: async () => {},
+      preview: null,
       run: async () => {
         throw new Error("unused");
       },
@@ -166,6 +167,7 @@ describe("host session lifetime", () => {
         async () => ({
           close,
           stop: close,
+          preview: null,
           run: async (_script, _timeout, signal) =>
             new Promise((_resolve, reject) => {
               signal.addEventListener(

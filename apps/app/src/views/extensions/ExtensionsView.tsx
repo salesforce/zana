@@ -18,6 +18,8 @@ import { PluginPanelPaneView } from '@/views/thread-detail/PluginPanelPaneView';
 import { ExtensionsHub } from '@/views/extensions/ExtensionsHub';
 import { SkillsBody } from '@/views/extensions/SkillsView';
 import { McpBody } from '@/views/extensions/McpView';
+import { hasDesktopBridge } from '@/lib/app-surface';
+import { PaneEmptyState } from '@/components/PaneEmptyState';
 
 export function ExtensionsView() {
   const tab = useUi((s) => s.extensionsTab);
@@ -36,7 +38,15 @@ export function ExtensionsView() {
   return (
     <div className="settings-panel extensions-panel">
       <div className={`settings-inner${showingCatalogue ? '' : ' settings-inner--wide'}`}>
-        {tab === 'skills' ? (
+        {(showingCatalogue || tab === 'marketplace') && !hasDesktopBridge() ? (
+          <PaneEmptyState
+            art="missing"
+            title={tab === 'skills' ? 'Skills' : tab === 'mcp' ? 'MCP servers' : 'Plugin catalogue'}
+            hint={tab === 'marketplace'
+              ? 'Browse and install plugins in the Zana desktop app on your connected computer.'
+              : `Manage ${tab === 'skills' ? 'skills' : 'MCP servers'} in the Zana desktop app on your connected computer.`}
+          />
+        ) : tab === 'skills' ? (
           <SkillsBody showHeader={false} />
         ) : tab === 'mcp' ? (
           <McpBody showHeader={false} />

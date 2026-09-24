@@ -158,7 +158,7 @@ export class TrayController {
     const key = `${attention}:${dark}`;
     const cached = this.iconCache.get(key);
     if (cached) return cached;
-    // The app's own marks (chevron + caret + Claude spark), redrawn monochrome
+    // Zana's fairy silhouette, drawn monochrome
     // as a macOS template image — the OS tints it for light/dark menu bars.
     // This keeps the menu-bar presence on-brand while staying crisp at 18pt;
     // shrinking the colored 1024px app icon here would collapse into an

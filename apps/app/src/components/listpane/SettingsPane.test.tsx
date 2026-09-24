@@ -88,6 +88,6 @@ describe('focused Settings navigation', () => {
     second.unmount();
     h.ui.selectedProjectId = null;
     mount();
-    expect(screen.getByRole('link', { name: 'Project settings' }).getAttribute('href')).toBe('/settings');
+    expect(screen.getByRole('link', { name: 'Project settings' }).getAttribute('href')).toBe('/settings/project');
   });
 });

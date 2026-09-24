@@ -1,18 +1,16 @@
 import { ImageResponse } from 'next/og';
-import { site } from '@/lib/site';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-/**
- * Site-wide default social card, generated at build time via Satori/ImageResponse
- * (no static asset to maintain). Per-page metadata inherits this unless a route
- * defines its own opengraph-image. Palette matches the desktop app's graphite,
- * blue, and gold system.
- */
 export const runtime = 'nodejs';
-export const alt = 'Zana Command Center — the control plane for AI coding harnesses';
+export const alt = 'Zana — Many agents. One clear view.';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
-export default function OgImage() {
+export default async function OgImage() {
+  const icon = await readFile(
+    join(process.cwd(), 'public', 'zana-icon-512.png')
+  );
   return new ImageResponse(
     (
       <div
@@ -22,50 +20,81 @@ export default function OgImage() {
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
-          padding: '72px',
-          background: 'linear-gradient(135deg, #0b0f15 0%, #10151c 58%, #161c25 100%)',
-          color: '#e6edf3',
+          padding: '62px 70px',
+          background: 'linear-gradient(120deg, #0d152b, #172641)',
+          color: '#f0f7ff',
           fontFamily: 'sans-serif'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
-          <div
-            style={{
-              width: 68,
-              height: 68,
-              display: 'flex',
-              borderRadius: 18,
-              overflow: 'hidden'
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`${site.publicBaseUrl}/favicon.svg`} alt="" width={68} height={68} />
-          </div>
-          <div style={{ fontSize: 30, fontWeight: 600, color: '#c9d1d9' }}>Zana Command Center</div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <div style={{ fontSize: 27, fontWeight: 600, color: '#58a6ff', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
-            — a control plane for coding harnesses —
-          </div>
-          <div style={{ fontSize: 74, fontWeight: 700, lineHeight: 1.04, letterSpacing: '-0.02em', maxWidth: 980, color: '#e6edf3' }}>
-            Make the work visible. Keep the momentum.
-          </div>
-          <div style={{ fontSize: 30, color: '#8b949e', maxWidth: 980 }}>{site.tagline}</div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18, fontSize: 24, color: '#8b949e' }}>
-          <span
-            style={{
-              padding: '8px 18px',
-              borderRadius: 999,
-              border: '1px solid #2a3340',
-              color: '#c9d1d9'
-            }}
-          >
-            macOS today · Windows &amp; Linux soon
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}
+        >
+          <span style={{ fontSize: 28, fontWeight: 600 }}>
+            Zana Command Center
           </span>
-          <span style={{ color: '#3fb950' }}>● Free &amp; open</span>
+          <span style={{ color: '#ffdb9e', fontSize: 19 }}>
+            FREE & OPEN SOURCE
+          </span>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 30
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                fontSize: 76,
+                fontWeight: 700,
+                letterSpacing: '-3px',
+                lineHeight: 1.06
+              }}
+            >
+              <span>Many agents.</span>
+              <span style={{ color: '#93dfff' }}>One clear view.</span>
+            </div>
+            <span
+              style={{
+                color: '#b6c9e0',
+                fontSize: 24,
+                maxWidth: 650,
+                lineHeight: 1.5
+              }}
+            >
+              Your agents, projects, and decisions. All together.
+            </span>
+          </div>
+          {/* Local brand artwork keeps social-card generation independent of the deployed site. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`data:image/png;base64,${icon.toString('base64')}`}
+            alt=""
+            width={254}
+            height={254}
+            style={{ borderRadius: 54 }}
+          />
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            borderTop: '1px solid #34496b',
+            paddingTop: 24,
+            color: '#b6c9e0',
+            fontSize: 20
+          }}
+        >
+          <span>zana-ide.com</span>
+          <span>Make room for what comes next.</span>
         </div>
       </div>
     ),

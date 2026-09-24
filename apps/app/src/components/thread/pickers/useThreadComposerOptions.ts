@@ -21,13 +21,7 @@ import {
   rememberedProviderId,
   rememberedSelectionFor
 } from './composer-selection-preference.js';
-import {
-  ensureThreadProviderModels,
-  getThreadModelCatalog,
-  reloadThreadProviderModels,
-  setThreadModelCatalogHost,
-  subscribeThreadModelCatalog
-} from './thread-model-catalog.js';
+import { threadModelCatalogForHost } from './thread-model-catalog.js';
 import { nextAcpModeSelection } from './acp-mode-selection.js';
 
 export type { ThreadComposerProviderOption };
@@ -65,14 +59,12 @@ export function useThreadComposerOptions(input: {
   initialAcpMode?: string | null;
   preferredProviderId?: string | null;
   hostId?: string;
+  projectId?: string;
   /** True while the host roster is still hydrating — do not treat missing hostId as a machine change. */
   hostPending?: boolean;
 }) {
-  const catalog = useSyncExternalStore(
-    subscribeThreadModelCatalog,
-    getThreadModelCatalog,
-    getThreadModelCatalog
-  );
+  const hostCatalog = threadModelCatalogForHost(input.hostId, input.projectId);
+  const catalog = useSyncExternalStore(hostCatalog.subscribe, hostCatalog.getSnapshot, hostCatalog.getSnapshot);
   const [providerId, setProviderIdState] = useState(
     () => input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code'
   );
@@ -117,8 +109,8 @@ export function useThreadComposerOptions(input: {
   }, [model, providerId, reasoningLevel]);
 
   const refreshAcpModeOptions = useCallback(() => {
-    void reloadThreadProviderModels(providerId);
-  }, [providerId]);
+    void hostCatalog.reloadProvider(providerId);
+  }, [hostCatalog, providerId]);
 
   useEffect(() => {
     if (input.lockedProviderId) setProviderIdState(input.lockedProviderId);
@@ -145,8 +137,8 @@ export function useThreadComposerOptions(input: {
 
   useEffect(() => {
     if (input.hostPending) return;
-    void setThreadModelCatalogHost(input.hostId);
-  }, [input.hostId, input.hostPending]);
+    void hostCatalog.ensure();
+  }, [hostCatalog, input.hostPending]);
 
   const providers = composerProvidersFromCatalog(
     catalog.providers,
@@ -163,9 +155,9 @@ export function useThreadComposerOptions(input: {
   const acpModeOptions = cached?.acpMode?.options ?? [];
 
   useEffect(() => {
-    if (cached) return;
-    void ensureThreadProviderModels(providerId);
-  }, [providerId, cached]);
+    if (input.hostPending || cached) return;
+    void hostCatalog.ensureProvider(providerId);
+  }, [hostCatalog, input.hostPending, providerId, cached]);
 
   useEffect(() => {
     appliedRequestedAcpModeRef.current = undefined;

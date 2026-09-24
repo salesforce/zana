@@ -1,3 +1,4 @@
+import { getNativeShell } from './native-shell.js';
 import { getAppSurface } from './app-surface.js';
 
 export const APP_SURFACE_HEADER = 'x-zcc-app-surface';
@@ -8,24 +9,29 @@ export async function fetchWithAppSurface(
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set(APP_SURFACE_HEADER, getAppSurface());
-  return fetch(input, { ...init, headers });
+  const response = await fetch(input, { ...init, headers });
+  if (response.status === 401) getNativeShell()?.post({ type: 'auth-required' });
+  return response;
 }
 
 export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body !== undefined && !headers.has('content-type')) {
+  const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes((init.method ?? 'GET').toUpperCase());
+  if ((init.body !== undefined || isMutation) && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
   const response = await fetchWithAppSurface(`/api/v1${path}`, { ...init, headers });
   if (!response.ok) {
     let detail = `${response.status}`;
+    let code: string | undefined;
     try {
-      const body = (await response.json()) as { error?: string; message?: string };
+      const body = (await response.json()) as { error?: string; code?: string; message?: string };
       detail = body.message ?? body.error ?? detail;
+      code = body.code ?? body.error;
     } catch {
       /* keep status text */
     }
-    throw new Error(detail);
+    throw Object.assign(new Error(detail), { status: response.status, code });
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

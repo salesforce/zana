@@ -46,7 +46,7 @@ import { EventRecorder } from '../sdk/events.js';
 import { linuxCiElectronArgs, linuxCiElectronEnv } from './linux-electron-launch.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const MAIN_ENTRY = join(REPO_ROOT, 'out/main/index.js');
+const MAIN_ENTRY = join(process.env.ZCC_E2E_APP_ROOT || REPO_ROOT, 'out/main/index.js');
 const PACKAGE_VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).version as string;
 
 /** This repo's Electron binary — ABI-matched to node-pty / better-sqlite3. */
@@ -243,6 +243,20 @@ async function appWindow(app: ElectronApplication): Promise<Page> {
   throw new Error('app renderer window never appeared');
 }
 
+async function closeApp(app: ElectronApplication): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    app.close().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        app.process()?.kill('SIGKILL');
+        resolve();
+      }, 15_000);
+    })
+  ]);
+  clearTimeout(timer);
+}
+
 /** Production uses the supervised loopback server; dev/repair keeps file URLs. */
 export function isAppRendererUrl(url: string): boolean {
   return url.includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(url);
@@ -306,20 +320,24 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     env,
     timeout: 60_000
   });
-  const stderrChunks: string[] = [];
-  app.process()?.stderr?.on('data', (chunk: Buffer | string) => {
-    stderrChunks.push(String(chunk));
-  });
+  let stderrTail = '';
+  const captureStderr = (chunk: Buffer | string) => {
+    stderrTail = (stderrTail + String(chunk)).slice(-64 * 1024);
+  };
+  app.process()?.stderr?.on('data', captureStderr);
   try {
     const window = await appWindow(app);
     await window.waitForSelector('#root', { timeout: 30_000 });
     await dismissConsentOverlays(window);
     return { electron: app, window, home };
   } catch (err) {
-    const stderr = stderrChunks.join('').trim();
+    await closeApp(app);
+    const stderr = stderrTail.trim();
     if (!stderr) throw err;
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`${message}\n\nmain stderr:\n${stderr}`);
+  } finally {
+    app.process()?.stderr?.off('data', captureStderr);
   }
 }
 
@@ -430,27 +448,6 @@ export const test = base.extend<Fixtures>({
     // its onboarding/auth artifacts BEFORE launch (the CLI reads them at spawn).
     if (seedClaudeAuth) seedClaudeAuthState(home);
     if (seedOpenCodeAuth) seedOpenCodeAuthState(home);
-    // SAFETY: on macOS the app resolves ~/.zcc via app.getPath('home') and
-    // IGNORES the sandbox HOME, so any test that calls `config.set(...)` writes
-    // the DEVELOPER's real ~/.zcc/config.json. A spec pointing `claudeBinary` at
-    // a throwaway stub (see agent-status-hydrate) would otherwise leave the real
-    // config pointing at a deleted temp file — silently breaking real agent
-    // launches after the suite runs. Snapshot the real config here and restore
-    // it verbatim on teardown so no spec can leak into it. Belt-and-suspenders:
-    // the sandbox HOME already isolates ~/.zcc on Linux/CI.
-    const realConfigPath = join(homedir(), '.zcc', 'config.json');
-    const realConfigBefore = existsSync(realConfigPath)
-      ? readFileSync(realConfigPath, 'utf8')
-      : null;
-
-    // Electron on macOS resolves config through app.getPath('home'), not the
-    // sandbox HOME. Seed its real path before boot, then restore it in teardown.
-    if (process.platform === 'darwin' && Object.keys(initialConfig).length > 0) {
-      const current = realConfigBefore === null ? {} : JSON.parse(realConfigBefore) as Record<string, unknown>;
-      mkdirSync(join(homedir(), '.zcc'), { recursive: true });
-      writeFileSync(realConfigPath, JSON.stringify({ ...current, ...initialConfig }, null, 2));
-    }
-
     const env: Record<string, string> = { ...launchEnv };
     if (isolateBundledCatalog) {
       const empty = join(home, 'empty-bundled-catalog');
@@ -473,29 +470,7 @@ export const test = base.extend<Fixtures>({
       // Race the graceful close against a deadline and force-kill the process if
       // it overruns, so a stuck agent can never eat the whole test timeout in
       // teardown. Deterministic specs close well within the deadline.
-      let closed = false;
-      await Promise.race([
-        handle.electron.close().then(() => { closed = true; }).catch(() => { closed = true; }),
-        new Promise<void>((resolve) => setTimeout(resolve, 15_000)),
-      ]);
-      if (!closed) {
-        try {
-          handle.electron.process()?.kill('SIGKILL');
-        } catch {
-          /* already exited */
-        }
-      }
-      // Restore the developer's real config exactly as it was (or remove a file
-      // the suite created where none existed).
-      try {
-        if (realConfigBefore !== null) {
-          writeFileSync(realConfigPath, realConfigBefore);
-        } else if (existsSync(realConfigPath)) {
-          rmSync(realConfigPath, { force: true });
-        }
-      } catch {
-        /* best-effort */
-      }
+      await closeApp(handle.electron);
     }
   },
 

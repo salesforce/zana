@@ -247,7 +247,7 @@ These are product features that sit *on top of* the server/host split:
 
 ## Build, test, and native deps
 
-- **Node 20+**, **pnpm**, native modules: `node-pty` (prebuilds load in both Node and Electron; `ensure-node-pty-helper.mjs --electron` rebuilds only when Electron cannot `require` it), `better-sqlite3` (Node ABI for `pnpm dev` / Vitest; Electron ABI for the unpackaged utility process). Node and Electron cannot share one sqlite `.node` binary. `scripts/ensure-better-sqlite3.mjs` caches both ABIs under `node_modules/.cache/zcc-native-abi` and copies the matching one instead of recompiling on every flip.
+- **Node 20+**, **pnpm**, native modules: `node-pty` (prebuilds load in both Node and Electron; `ensure-node-pty-helper.mjs --electron` rebuilds only when Electron cannot `require` it), `better-sqlite3` (Node ABI for `pnpm dev` / Vitest; Electron ABI for the unpackaged utility process). Node and Electron load separate verified sqlite binaries from `node_modules/.cache/zcc-native-abi`, selected by dependency version, platform, architecture and runtime ABI. Compilation happens in a private staging directory; Electron preparation never replaces Node’s installed binary. Electron E2E runs also own private app/native copies and artifact folders (see `docs/native-runtime-isolation.md`).
 - pnpm **onlyBuiltDependencies** allowlists Electron and those natives; keep it narrow.
 - **Unit tests:** Vitest per package/app. Coverage expectation for new code is high (80%+ in project rules).
 - **E2E:** Playwright against a **built Electron** app for child-process / CLI integrations. Piped stdout in Electron can differ from Node; do not treat Vitest as production-boundary proof for PTY/CLI capture.

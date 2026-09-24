@@ -34,6 +34,7 @@ import {
 } from './timeline/ThreadBanners.js';
 import { TimelineRows } from './timeline/TimelineRows.js';
 import { retainTerminalExpansionIds } from './timeline/timeline-window.js';
+import { THREAD_MESSAGE_SENT_EVENT } from './timeline/thread-optimistic-events.js';
 
 export interface ThreadTimelineProps {
   rows: TimelineRow[];
@@ -112,6 +113,7 @@ export function ThreadTimeline({
     return () => window.clearInterval(id);
   }, []);
   const paneRef = useRef<HTMLDivElement>(null);
+  const lastPinnedTopRef = useRef<number | null>(null);
   const scrollbarIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedAway, setPinnedAway] = useState(false);
   const [initialOpen, setInitialOpen] = useState(true);
@@ -151,6 +153,12 @@ export function ThreadTimeline({
     userPinnedAway: pinnedAway,
     initialOpen
   });
+  const pin = useCallback(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    pinScrollToBottom(pane);
+    lastPinnedTopRef.current = pane.scrollTop;
+  }, []);
 
   useLayoutEffect(() => {
     setInitialOpen(true);
@@ -160,13 +168,27 @@ export function ThreadTimeline({
   useLayoutEffect(() => {
     const pane = paneRef.current;
     if (!pane || !stick) return;
-    const pin = () => pinScrollToBottom(pane);
     pin();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(pin);
+    // The mobile keyboard and composer options resize the viewport, not its rows.
+    observer.observe(pane);
     for (const child of pane.children) observer.observe(child);
     return () => observer.disconnect();
-  }, [stick, viewRows, thinking, contentKey]);
+  }, [stick, viewRows, thinking, contentKey, pin]);
+
+  useEffect(() => {
+    if (!threadId) return;
+    const onSend = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId: string }>).detail;
+      if (detail?.threadId !== threadId) return;
+      setPinnedAway(false);
+      setInitialOpen(true);
+      pin();
+    };
+    window.addEventListener(THREAD_MESSAGE_SENT_EVENT, onSend);
+    return () => window.removeEventListener(THREAD_MESSAGE_SENT_EVENT, onSend);
+  }, [threadId, pin]);
 
   useEffect(() => {
     if (!searchHitRowId) return;
@@ -191,6 +213,10 @@ export function ThreadTimeline({
     if (!pane) return;
     markTransientScrollbarScrolling(pane, scrollbarIdleRef);
     const near = isNearBottom(pane);
+    // Android may deliver our own scroll event after new rows have increased
+    // scrollHeight. The unchanged position is not a user scrollback gesture.
+    if (!near && lastPinnedTopRef.current !== null
+      && Math.abs(pane.scrollTop - lastPinnedTopRef.current) < 1) return;
     setPinnedAway(!near);
     if (!near) setInitialOpen(false);
     if (near) onReachedBottom?.();
@@ -199,7 +225,7 @@ export function ThreadTimeline({
   const scrollToBottom = () => {
     const pane = paneRef.current;
     if (!pane) return;
-    pinScrollToBottom(pane);
+    pin();
     setPinnedAway(false);
     setInitialOpen(true);
     onReachedBottom?.();

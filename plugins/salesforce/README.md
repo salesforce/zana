@@ -14,9 +14,22 @@ project. A project without a selection inherits the shared default.
 zcc plugin install salesforce
 ```
 
-Requires the Salesforce CLI (`sf`) on PATH. Log in with `sf org login web`, then
-pick an org under **Plugins → Salesforce** or on the Salesforce tab (or set
-`defaultOrg` / `SF_TARGET_ORG`).
+Requires the Salesforce CLI (`sf`) on PATH. On a project's **Salesforce** tab,
+choose **Connect org**, select Production / Developer Edition, Sandbox, or
+My Domain / SSO, and choose **Sign in with browser**. An alias is optional.
+For My Domain, enter the Salesforce login host (for example,
+`https://company.my.salesforce.com` or `https://company--qa.sandbox.my.salesforce.com`).
+Finish sign-in in your browser; the new org is selected for this project automatically.
+The connection dialog can be closed while sign-in is pending; **Connect org**
+reopens its progress. **Org details** keeps the existing connections separate
+from sign-in, with search and explicit project-target selection.
+
+Authentication is saved by Salesforce CLI, so the same connection works in your
+terminal. Existing `sf org login web` connections appear in the org picker; use
+**Refresh** after signing in externally. Connecting from **Plugins → Salesforce**
+adds the connection and lets you choose whether to set it as the shared default.
+Project login preserves other project targets and the CLI/shared defaults.
+The browser and `sf` run on the Zana host; no password or token is entered in Zana.
 
 ## Using this plugin
 
@@ -25,15 +38,95 @@ pick an org under **Plugins → Salesforce** or on the Salesforce tab (or set
 | Plugins → Salesforce | CLI-connected org list, default alias, API version, DX root |
 | Salesforce tab | Overview, Data, Apex & logs, Deployments, and Agentforce workbench |
 | New Project | Salesforce DX project (`sf project generate`) |
-| Data / SOQL tab | Schema, queries, saved history, retained drafts, and record inspectors |
+| Salesforce → Data | Schema, SOQL queries, saved history, retained drafts, and record inspectors |
 | Agent side panels | Org, SOQL, object, record, Apex/logs, deployments, and operation history |
-| Agentforce playground | `.agent` editor (script + graph) |
+| Agentforce playground | Build, Rehearse, and Test: `.agent` editor, conversation map, AI customer role-play |
 | Agentforce preview | Simulate or live Test against the selected org |
 | Agent tools | `sf_soql`, `sf_apex`, `sf_lwc`, `sf_agent` |
 | CLI | `zcc sf doctor`, `zcc sf org`, … |
 
-Frontend panels call this plugin’s RPC (`soql.*`, `org`, `agentPreview.*`). They
-do not hold tokens. The server SDK owns OAuth refresh and 401 retry.
+Frontend panels call this plugin’s RPC (`soql.*`, `org`, `agentPreview.*`, `agentLab.*`). They
+do not hold tokens. The server SDK owns org authentication.
+
+From a project tab, deployment, retrieval and Anonymous Apex actions stage the
+selected org and exact inputs in a thread for review. Opening the draft does not
+run the action; approval still happens in the thread. **Debug logs → Refresh logs**
+fetches newly generated logs without leaving the view. Data queries remain usable
+if API usage or saved history cannot load; **Retry details** retries those requests.
+
+Deployments keeps component selection beside results and history. Search metadata,
+select components across types, and remove individual selections before previewing
+or validating. Apex and deployments show their own activity by default; switch to
+**All activity** to search other runs. On narrow panels, these sections stack.
+
+Data separates query actions from result search and export. Drag the divider below
+the editor to resize it, use the arrow keys when the divider is focused, or
+double-click to reset. **Save query** and `Cmd/Ctrl+S` save the current query.
+Debug logs has a filterable execution list and a text finder; **Next match** or
+Enter moves through highlighted matches without altering the log.
+
+## Agentforce Studio
+
+Actions declared in an open script appear in the explorer, grouped by subagent.
+Select one to inspect its Apex source or Flow map in a related editor tab. The
+Project/Org switch distinguishes local source from deployed Apex or an active
+Flow version. Inputs & outputs compares parameter names; Used by reveals the
+call and its bindings. Rehearse/Test stays open while you inspect implementations.
+
+Open **Salesforce → Agentforce**, or the Agentforce playground beside
+a thread. **Build** provides the editor, live diagnostics and a conversation map.
+The divider between the editor and Rehearse/Test is draggable. Arrow keys resize
+it when focused, and double-click resets it. The width stays set across workflow
+changes. Monaco applies semantic syntax colors in both light and dark themes.
+The included starters pass the installed language server without diagnostics.
+
+File and example edits recover when you switch files or leave and return to the
+project tab. Recovery keeps the 12 most recent drafts locally, up to 180,000
+characters each; a visible warning tells you if recovery cannot save a draft.
+Use **Save as…** to turn an example into a `.agent` or `.afscript` project file.
+Choose an existing folder and a new filename: existing files are never overwritten.
+Normal Save checks the original disk revision, including after draft recovery;
+if another tool changes the file, use Save as to preserve both versions.
+
+**Rehearse** starts a conversation from an exact snapshot of the current editor,
+including unsaved changes. Choose an engine:
+
+- **Salesforce Preview** compiles the draft through Salesforce's Preview API and
+  uses the real planner with simulated actions. Requires an Agentforce-enabled
+  org and access to the named-user bootstrap/Preview endpoints. Nothing is
+  published or activated, and real actions are never enabled in the Studio.
+- **AI rehearsal** asks a Salesforce Models API model to interpret the script.
+  Actions are imaginary. It is useful for wording, scope and conversational
+  exploration; it does not validate compilation or Agentforce runtime behavior.
+
+**Test** runs an AI customer with a persona, goal, opening message, success
+criteria and a budget of 1–8 turns against either engine. Choose a preset or edit
+the scenario. The customer and evaluator use the selected org's Models API,
+which requires the relevant API scopes, model permissions and Einstein request
+capacity. The default model is `sfdc_ai__DefaultOpenAIGPT4OmniMini`; expand
+**AI model & usage** to use another model API name enabled in your org.
+
+Results include conversation text, response latency, Preview plan IDs, org and
+source fingerprint. An AI assessment includes evidence and is always advisory;
+it is never activation evidence. API errors, empty replies, evaluator failures,
+and stopped conversations cannot produce a passing assessment. **Export run**
+downloads the tested source, scenario, transcript and assessment as JSON.
+
+Switching Build/Rehearse/Test preserves the editor and each conversation while
+the playground stays open. Editing after a run shows a stale-snapshot notice.
+**Stop** cancels in-flight requests and prevents additional turns; closing the
+playground also closes its local handles. Draft Preview has no documented remote
+DELETE contract: Salesforce owns remote expiry. Server handles expire after
+30 minutes of inactivity and do not survive a plugin restart. Export evidence
+before leaving; saved scenario suites and cross-run comparison are future work.
+
+The separate **Org preview** panel retains the CLI workflow for saved authoring
+bundles and published agents. Published agents always execute live actions and
+therefore require the existing live-action confirmation, even when a caller
+omits the live flag. The Studio does not share that live-action path.
+
+See [the design and verification notes](./AGENTFORCE_STUDIO.md) for API boundaries,
+research sources and test commands.
 
 ## Reusable UI and side panels
 

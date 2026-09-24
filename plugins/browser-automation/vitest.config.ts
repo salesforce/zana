@@ -2,7 +2,7 @@ import { defineWorkspaceTestConfig } from "../../vitest.shared.js";
 export default defineWorkspaceTestConfig({
   test: {
     name: "@zcc-ext/browser-automation",
-    include: ["**/*.test.ts"],
+    include: ["**/*.test.{ts,tsx}"],
     exclude: ["dist/**", "node_modules/**"],
   },
 });

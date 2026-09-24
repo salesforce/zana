@@ -49,7 +49,7 @@ export type {
   HarnessSessionReference
 } from './session.js';
 
-export type { HarnessStatusAdapter, HarnessStatusMode } from './status.js';
+export type { HarnessStatusAdapter, HarnessStatusMode, HarnessInteractionEvent } from './status.js';
 export type { HarnessVerificationDefinition } from './verification.js';
 
 export type {

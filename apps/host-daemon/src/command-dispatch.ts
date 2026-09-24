@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { realpath, stat } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
@@ -45,6 +46,7 @@ import { probeExtraAcpAgents } from './extra-acp-agent-probes.js';
 import { verifyHarnesses } from './harness/harness-verify.js';
 import { registrationFor } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
+import { readConfinedFileRange } from './read-file-range.js';
 import { watchWorkspacePath } from './workspace-fs-watch.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
 import { completeCodexInference } from './codex-inference-complete.js';
@@ -611,10 +613,19 @@ export async function dispatchHostCommand(
       if (!runtime.listModels) {
         throw new HostCommandError('unsupported', 'model listing is not available on this host');
       }
+      let cwd: string | undefined;
+      if (command.cwd !== undefined) {
+        try {
+          cwd = await realpath(command.cwd);
+          if (!(await stat(cwd)).isDirectory()) throw new Error('not a directory');
+        } catch {
+          throw new HostCommandError('invalid_request', 'model discovery cwd is unavailable');
+        }
+      }
       return runtime.listModels({
         providerId: command.providerId,
         bridgeLaunch: command.bridgeLaunch,
-        ...(command.cwd !== undefined ? { cwd: command.cwd } : {})
+        ...(cwd !== undefined ? { cwd } : {})
       });
     }
     case 'provider.health': {
@@ -942,6 +953,13 @@ export async function dispatchHostCommand(
       return { entries: listDirShallow(contained) };
     }
     case 'host.read_file': {
+      if (command.byteRange) {
+        try {
+          return await readConfinedFileRange(command.root, command.relPath, command.byteRange.offset, command.byteRange.length);
+        } catch (error) {
+          mapWorkspaceError(error);
+        }
+      }
       const contained = await resolveContainedReal(command.root, command.relPath);
       if (!contained) {
         throw new HostCommandError('path_not_found', 'path is outside the authorized root');

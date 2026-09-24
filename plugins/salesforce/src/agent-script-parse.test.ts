@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { parseAgentScriptSource } from '../lib/agent-script-parse.js';
 import { AGENT_SCRIPT_EXAMPLES } from '../lib/agent-script-model.js';
+import { queryAgentScriptLsp } from '../lib/agent-script-lsp.js';
 
 describe('agent script parse', () => {
+  it('ships examples that pass the actual language server without diagnostics', () => {
+    for (const example of AGENT_SCRIPT_EXAMPLES) {
+      const result = queryAgentScriptLsp({ source: example.source, dialect: example.dialect, query: 'diagnostics' });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.result.diagnostics, example.id).toEqual([]);
+    }
+  });
   it('parses the support-bot example without throwing', () => {
     const example = AGENT_SCRIPT_EXAMPLES[0]!;
     const result = parseAgentScriptSource(example.source, example.dialect);

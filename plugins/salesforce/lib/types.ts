@@ -52,6 +52,7 @@ export interface ExecResult {
 export type SalesforceHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface SalesforceRequest {
+  maxResponseBytes?: number;
   method: SalesforceHttpMethod;
   path: string;
   query?: Record<string, string>;
@@ -125,6 +126,7 @@ export interface GuardrailDecision {
 export interface ExecSfOptions {
   cwd?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface SalesforceDeps {
@@ -134,9 +136,12 @@ export interface SalesforceDeps {
   exists(path: string): boolean;
   stat(path: string): 'file' | 'dir' | 'missing';
   readFile(path: string): string | null;
+  readFileBounded?(path: string, maxBytes: number): string | null;
   readdir(path: string): string[];
   realpath(path: string): string;
   writeFile(path: string, content: string): void;
+  /** Publish a complete new file atomically; must refuse an existing destination. */
+  createFile?(path: string, content: string): void;
   spawnContained(
     bin: string,
     argv: string[],

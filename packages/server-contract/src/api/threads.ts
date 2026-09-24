@@ -888,6 +888,7 @@ export type ThreadStorageContentQuery = z.infer<
 
 export const threadHostFileContentQuerySchema = z.object({
   path: z.string().min(1),
+  projectId: z.string().min(1).optional(),
 });
 export type ThreadHostFileContentQuery = z.infer<
   typeof threadHostFileContentQuerySchema

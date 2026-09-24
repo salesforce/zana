@@ -1,0 +1,148 @@
+/** @vitest-environment happy-dom */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { AgentActionExplorer, AgentActionPanel } from './AgentActionPanel.js';
+import { ActionCodePreview } from './ActionCodePreview.js';
+import { ActionFlowMap } from './ActionFlowMap.js';
+import { flowModel } from './action-flow.js';
+import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
+import { ACTION_AGENT, ACTION_APEX, ACTION_FLOW_XML, ACTION_FLOW } from '../action-fixtures.js';
+import type { PublicOrgView } from '../../lib/types.js';
+import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
+const rpc = vi.fn();
+const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
+const org = { alias: 'dev', orgId: '1', username: 'u' } as PublicOrgView;
+const props = { pluginId: 'salesforce', projectId: 'p', org, action: actions[0], onReveal: vi.fn(), onOpenTarget: vi.fn() };
+const ok = (data: Record<string, unknown> = {}) => ({ ok: true, data: { origin: 'project', target: actions[0].target, status: 'ready', label: 'classes/OrderLookup.cls', language: 'apex', content: ACTION_APEX, ...data } });
+beforeEach(() => { rpc.mockReset().mockResolvedValue(ok()); props.onReveal.mockClear(); props.onOpenTarget.mockClear(); (globalThis as Record<string, unknown>).__ZCC_PLUGIN_HOST__ = { callRpc: rpc }; });
+afterEach(() => { cleanup(); delete (globalThis as Record<string, unknown>).__ZCC_PLUGIN_HOST__; vi.restoreAllMocks(); });
+
+describe('Agent action explorer', () => {
+  it('keeps same-named actions scoped and supports empty and unsupported targets', () => {
+    const onOpen = vi.fn(); const view = render(<AgentActionExplorer actions={actions} selected={actions[0].id} onOpen={onOpen} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect lookup in subagent.returns' }));
+    expect(onOpen).toHaveBeenCalledWith(actions[2]);
+    view.rerender(<AgentActionExplorer actions={[]} onOpen={onOpen} />);
+    expect(screen.getByText(/Actions declared/)).toBeTruthy();
+    view.rerender(<AgentActionExplorer actions={[{ ...actions[0], target: '' }]} onOpen={onOpen} />);
+    expect(screen.getByText('Action')).toBeTruthy();
+  });
+});
+describe('action implementation panel', () => {
+  it('loads project source, checks org parameters, and reveals actual call-site bindings', async () => {
+    render(<AgentActionPanel {...props} />);
+    await screen.findByText('classes/OrderLookup.cls');
+    expect(screen.getByTitle('Action implementation source')).toBeTruthy();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentActions.source', { projectId: 'p', target: 'apex://OrderLookup', origin: 'project' });
+    fireEvent.click(screen.getByRole('button', { name: 'Inputs & outputs' }));
+    expect(screen.getAllByText('Unverified')).toHaveLength(2);
+    rpc.mockResolvedValue(ok({ origin: 'org', label: 'dev · Deployed Apex', inputs: [{ name: 'orderId', type: 'String', required: true }, { name: 'extra', type: 'Boolean' }], outputs: [] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Org · dev' }));
+    await screen.findByText('dev · Deployed Apex');
+    expect(screen.getByText(/Name matched/)).toBeTruthy(); expect(screen.getByText('Missing in target')).toBeTruthy(); expect(screen.getByText('Not declared')).toBeTruthy();
+    expect(rpc.mock.calls.at(-1)?.[2]).toMatchObject({ orgAlias: 'dev' });
+    fireEvent.click(screen.getByRole('button', { name: 'Used by' }));
+    expect(screen.getByText(/set @variables.status = @outputs.status/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Go to action definition/ })); expect(props.onReveal).toHaveBeenCalledWith(actions[0].line);
+    fireEvent.click(screen.getByRole('button', { name: /Explicit run/ })); expect(props.onReveal).toHaveBeenCalledWith(actions[0].uses[0].line);
+    fireEvent.click(screen.getByRole('button', { name: 'Last preview' }));
+    expect(screen.getByText('No action trace available')).toBeTruthy();
+  });
+  it('ignores late results from an old org and refreshes the selected snapshot', async () => {
+    let release!: (value: unknown) => void;
+    rpc.mockImplementationOnce(() => new Promise(r => { release = r; }));
+    const view = render(<AgentActionPanel {...props} initialOrigin="org" />);
+    expect(screen.getByRole('status').textContent).toContain('Loading');
+    view.rerender(<AgentActionPanel {...props} org={{ ...org, alias: 'new', orgId: '2' }} initialOrigin="org" />);
+    await screen.findByText('classes/OrderLookup.cls');
+    await act(async () => release(ok({ label: 'OLD ORG SOURCE' })));
+    expect(screen.queryByText('OLD ORG SOURCE')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh implementation' }));
+    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(3));
+    expect(rpc.mock.calls.at(-1)?.[2].orgAlias).toBe('new');
+  });
+  it('requires choosing an ambiguous project match and presents source failures without a fake editor', async () => {
+    rpc.mockResolvedValueOnce(ok({ status: 'ambiguous', content: undefined, message: 'Choose a package.', candidates: ['one/A.cls', 'two/A.cls'] }));
+    render(<AgentActionPanel {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'two/A.cls →' }));
+    await screen.findByText('classes/OrderLookup.cls');
+    expect(rpc.mock.calls.at(-1)?.[2].candidate).toBe('two/A.cls');
+    rpc.mockResolvedValueOnce({ ok: false, error: 'Forbidden' });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh implementation' }));
+    await screen.findByRole('alert'); expect(screen.queryByTitle('Action implementation source')).toBeNull();
+    rpc.mockRejectedValueOnce(new Error('Network down'));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh implementation' }));
+    await screen.findByText('Network down');
+    fireEvent.click(screen.getByRole('button', { name: 'Inputs & outputs' })); expect(screen.getByRole('alert')).toBeTruthy();
+  });
+  it('renders Flow decisions and fault paths, opens dependencies and can switch to source', async () => {
+    rpc.mockResolvedValue(ok({ language: 'xml', content: ACTION_FLOW_XML, label: 'flows/CheckReturn.flow-meta.xml' }));
+    render(<AgentActionPanel {...props} action={actions[1]} />);
+    await screen.findByLabelText('Flow implementation map');
+    expect(screen.getByText('Within 30 days')).toBeTruthy(); expect(screen.getByText('Fault')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Subflow: Create return' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open flow://CreateReturn ↗' }));
+    expect(props.onOpenTarget).toHaveBeenCalledWith('flow://CreateReturn', 'project');
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Action: Log lookup failure' }), { key: 'Enter' });
+    expect(screen.getByRole('button', { name: 'Open apex://OrderLookup ↗' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close step details' }));
+    expect(screen.queryByLabelText('Flow step details')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in Flow' })); expect(screen.getByText('120%')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out Flow' })); fireEvent.click(screen.getByRole('button', { name: 'Reset Flow zoom' }));
+    const viewport = document.querySelector('.af-flow-viewport')!;
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ width: 500, height: 350 } as DOMRect);
+    fireEvent.click(screen.getByRole('button', { name: 'Fit Flow to view' }));
+    expect(screen.queryByText('100%')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Source', exact: true })); expect(screen.getByTitle('Action implementation source')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Flow map', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Inputs & outputs' })); expect(screen.getAllByText('Name matched')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Used by' })); expect(screen.getByRole('button', { name: /Available to the model/ })).toBeTruthy();
+  });
+  it('handles missing source, malformed/empty Flow metadata, unsupported targets and no org', async () => {
+    rpc.mockResolvedValueOnce(ok({ status: 'missing', message: 'No source found', content: undefined, contractMessage: 'Describe unavailable' }));
+    const view = render(<AgentActionPanel {...props} />);
+    await screen.findByText('No source found');
+    fireEvent.click(screen.getByRole('button', { name: 'Inputs & outputs' })); expect(screen.getByText('Describe unavailable')).toBeTruthy();
+    view.unmount();
+    const missing = render(<AgentActionPanel {...props} org={null} initialOrigin="org" />);
+    expect(screen.getByText(/Connect an org/)).toBeTruthy(); missing.unmount();
+    const unsupported = render(<AgentActionPanel {...props} action={{ ...actions[2], target: 'prompt://p' }} />);
+    expect(screen.getByText(/no implementation viewer/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Used by' })); expect(screen.getByText(/No direct calls/)).toBeTruthy(); unsupported.unmount();
+    rpc.mockResolvedValue(ok({ language: 'xml', content: '<Wrong/>' }));
+    const invalid = render(<AgentActionPanel {...props} action={actions[1]} />);
+    await screen.findByText('The source is not valid Salesforce Flow XML.');
+    rpc.mockResolvedValue(ok({ flow: {}, version: 7 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh implementation' }));
+    await screen.findByText(/No drawable steps/);
+    fireEvent.click(screen.getByRole('button', { name: 'Inputs & outputs' }));
+    expect(screen.getAllByText('Missing in target')).toHaveLength(2); invalid.unmount();
+    rpc.mockResolvedValue(ok({ flow: { ...ACTION_FLOW, assignments: Array.from({ length: 125 }, (_, i) => ({ name: 'x' + i })) } }));
+    render(<AgentActionPanel {...props} action={actions[1]} />); await screen.findByText(/Showing the first 120/);
+  });
+});
+describe('read-only source bridge', () => {
+  it('renders cyclic Flow connectors and lets keyboard users inspect long-named steps', () => {
+    const label = 'A long decision label with useful context';
+    const model = flowModel({ assignments: [{ name: 'a', label, connector: { targetReference: 'b' } }, { name: 'b', connector: { targetReference: 'a' }, faultConnector: { targetReference: 'missing' } }] });
+    render(<ActionFlowMap model={model} onOpenTarget={props.onOpenTarget} />);
+    expect(document.querySelectorAll('.af-flow-edge')).toHaveLength(2);
+    fireEvent.keyDown(screen.getByRole('button', { name: `Assignment: ${label}` }), { key: ' ' });
+    expect(screen.getByLabelText('Flow step details').textContent).toContain(label);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Assignment: b' }), { key: 'Tab' });
+    expect(screen.getByLabelText('Flow step details').textContent).toContain(label);
+  });
+  it('waits for the actual frame, applies latest content and theme, and locates the invocable method', async () => {
+    const view = render(<ActionCodePreview content={ACTION_APEX} language="apex" />);
+    const frame = screen.getByTitle('Action implementation source') as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+    const message = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'ready' };
+    fireEvent(window, new MessageEvent('message', { origin: location.origin, source: window, data: message })); expect(post).not.toHaveBeenCalled();
+    fireEvent(window, new MessageEvent('message', { origin: location.origin, source: frame.contentWindow, data: message }));
+    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ type: 'reference', content: ACTION_APEX, language: 'apex', line: 10 });
+    view.rerender(<ActionCodePreview content="<Flow/>" language="xml" />);
+    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ language: 'xml', content: '<Flow/>' });
+    await act(async () => { document.documentElement.dataset.theme = 'light'; await new Promise(r => setTimeout(r, 0)); });
+    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ type: 'setTheme', theme: 'light' });
+  });
+});

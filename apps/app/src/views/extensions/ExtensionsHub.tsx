@@ -34,6 +34,7 @@ import { EXTENSION_PERMISSIONS } from '@zana-ai/zcc-extension-sdk';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { useMergedModules } from '@/modules';
+import { reconcilePluginApps } from '@/plugins/plugin-app-loader';
 import { getHost } from '@/modules/ModulePanelHost';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { appNavigate } from '@/lib/app-navigate';
@@ -68,7 +69,11 @@ import {
   type HubRow,
   type InstalledPublisherFilter
 } from './installed-plugins.js';
-import { reportPluginEnabledFailure, setHubRowEnabled } from './plugin-row-enabled.js';
+import {
+  refreshPluginAppsAfterToggle,
+  reportPluginEnabledFailure,
+  setHubRowEnabled
+} from './plugin-row-enabled.js';
 import { reportHubInstallFailure } from './hub-install.js';
 import { uninstallHubRow } from './plugin-row-uninstall.js';
 import {
@@ -555,7 +560,12 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
     if (!canToggle) return;
     setPending(next);
     void setHubRowEnabled(row, next, product)
-      .then((res) => reportPluginEnabledFailure(res, useUi.getState().pushToast))
+      .then((res) => {
+        reportPluginEnabledFailure(res, useUi.getState().pushToast);
+        if (res.ok) {
+          void refreshPluginAppsAfterToggle(() => product.pluginApps.list(), reconcilePluginApps);
+        }
+      })
       .catch((err) => {
         reportPluginEnabledFailure(
           {

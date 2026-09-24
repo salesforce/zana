@@ -1,0 +1,28 @@
+appId: ai.zana.mobile
+name: Pair and open Zana
+# Run with: maestro test -e PAIR_LINK='zana://connect?payload=...' e2e/flows/pair-and-chat.yaml
+# Generate a fresh link using `pair` in the running mobile gateway.
+---
+- launchApp
+- extendedWaitUntil:
+    visible: 'This device|Scan pairing QR'
+    timeout: 30000
+- openLink:
+    link: ${PAIR_LINK}
+- runFlow:
+    when:
+      platform: iOS
+      visible: Open
+    commands:
+      - tapOn: Open
+- tapOn:
+    id: connect-server
+- extendedWaitUntil:
+    visible: This device
+    timeout: 20000
+- tapOn: This device
+- assertVisible: Saved servers
+- scrollUntilVisible:
+    element: Add server
+    direction: DOWN
+- assertVisible: Add server

@@ -26,29 +26,36 @@ export function isScratchWorkspaceProject(
 export function scratchWorkspaceProject(
   projects: readonly ComposerProject[]
 ): ComposerProject | undefined {
-  return projects.find((project) => project.quickAgent)
-    ?? projects.find((project) => project.name === SCRATCH_WORKSPACE_NAME);
+  const local = projects.filter((project) => !isRemoteWorkspaceProject(project));
+  return local.find((project) => project.quickAgent)
+    ?? local.find((project) => project.name === SCRATCH_WORKSPACE_NAME);
 }
 
 export function composerProjectLabel(project: ComposerProject): string {
   return SCRATCH_FOLDER_NAMES.has(project.name) ? DEFAULT_COMPOSER_WORKSPACE_LABEL : project.name;
 }
 
-/** Scratch workspace first, then the rest in the store's existing order. */
-export function composerProjectOptions<T extends Pick<Project, 'quickAgent'>>(projects: readonly T[]): T[] {
-  return [...projects].sort((left, right) => Number(Boolean(right.quickAgent)) - Number(Boolean(left.quickAgent)));
+/** Local projects first, scratch first within each machine group; otherwise preserve order. */
+export function composerProjectOptions<T extends Pick<Project, 'quickAgent' | 'remote' | 'hostId'>>(projects: readonly T[]): T[] {
+  return [...projects].sort((left, right) =>
+    Number(isRemoteWorkspaceProject(left)) - Number(isRemoteWorkspaceProject(right))
+    || Number(Boolean(right.quickAgent)) - Number(Boolean(left.quickAgent)));
 }
 
 /**
- * Unpinned composer default: last-used project, then leftover sidebar
- * selection. A pinned project-view launch never consults this — it passes
+ * Unpinned composer default: last-used local project, then local sidebar
+ * selection. Remote projects require an explicit pick or pinned launch, so an
+ * old remote sidebar selection cannot silently change the execution machine.
+ * A pinned project-view launch never consults this — it passes
  * `pinnedId` into `resolveComposerProjectId` instead.
  */
 export function preferredComposerProjectId(input: {
+  projects: readonly ComposerProject[];
   lastProjectId?: string | null;
   selectedProjectId?: string | null;
 }): string | undefined {
-  return input.lastProjectId || input.selectedProjectId || undefined;
+  return [input.lastProjectId, input.selectedProjectId].find((id): id is string =>
+    Boolean(id && input.projects.some((project) => project.id === id && !isRemoteWorkspaceProject(project))));
 }
 
 /**

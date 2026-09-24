@@ -1,4 +1,5 @@
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import { randomUUID } from 'node:crypto';
 import {
   activateArgs,
   agentCliOpts,
@@ -37,6 +38,8 @@ import { diagnoseApexSource, parseApexInput } from './apex.js';
 import { createKvArtifactStore, type ArtifactStore } from './artifacts.js';
 import { CONSTITUTION_INSTRUCTIONS, shouldContributeConstitution } from './constitution.js';
 import { ConnectionError, ConnectionManager } from './connection.js';
+import { AgentforceLab } from './agentforce-lab.js';
+import type { AgentforceTransport } from './agentforce-transport.js';
 import { formatDoctor } from './doctor.js';
 import { createSalesforceSdk } from './sdk.js';
 import { WorkbenchService } from './workbench-service.js';
@@ -46,18 +49,21 @@ import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-p
 import { generatedOutputPath, parseGenerateInput } from './project-generate.js';
 import {
   AgentFilesError,
+  createAgentFile,
   listAgentFiles,
   readAgentFile,
   writeAgentFile
 } from './agent-files.js';
 import { parseAgentScriptSource } from './agent-script-parse.js';
+import { readOrgAction, readProjectAction } from './action-source.js';
 import { isAgentScriptLspQuery, queryAgentScriptLsp } from './agent-script-lsp.js';
 import { AGENT_SCRIPT_EXAMPLES } from './agent-script-model.js';
 import { envelopeTitle, Guardrail } from './guardrail.js';
 import { diagnoseLwc, findLwcComponent, inspectLwc, parseLwcInput, resolveJestBin, scanLwcComponents } from './lwc.js';
 import { createNodeDeps } from './node-deps.js';
 import { formatOrgRoster, orgRosterInstructions } from './org-list.js';
-import { orgLoginArgs, parseOrgLoginInput, SF_ORG_LOGIN_TIMEOUT_MS } from './org-login.js';
+import { OrgLoginService } from './org-login-service.js';
+import { parseOrgLoginInput } from './org-login.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
 import { SoqlExplorer } from './soql-explorer.js';
 import {
@@ -117,7 +123,7 @@ function dialectSetting(value: unknown): AgentScriptDialect {
   return normalizeAgentScriptDialect(value);
 }
 
-export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: SalesforceDeps = createNodeDeps()): Promise<void> {
+export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: SalesforceDeps = createNodeDeps(), labTransport?: AgentforceTransport): Promise<void> {
   const settings = zcc.settings.define(SETTINGS);
   const artifacts: ArtifactStore = createKvArtifactStore(zcc.storage.kv);
   const readSharedSettings = async (): Promise<PluginSettingsValues> => {
@@ -148,6 +154,15 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   };
   const guardrail = new Guardrail(async (envelope, threadId) => confirmEnvelope(zcc, envelope, threadId));
   const evalEvidence = new EvalEvidenceStore(zcc.storage.kv);
+  const lab = new AgentforceLab({
+    transport: labTransport,
+    connect: () => connections.connect(),
+    scope: () => contexts.current()?.projectId ?? contexts.current()?.settings.projectRoot ?? 'global'
+  });
+  zcc.onDispose(() => lab.dispose());
+  for (const method of ['start', 'send', 'next', 'evaluate', 'end'] as const) {
+    registerRpc(`agentLab.${method}`, async (args) => ({ ok: true, data: await lab[method](args) }));
+  }
   let lastDoctor: DoctorReport | null = null;
   const { sdk, emitOrgChange } = createSalesforceSdk({
     connections,
@@ -259,41 +274,48 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return { ok: false, error: message, code, orgs: [], selectedAlias: null };
     }
   });
-  registerRpc('orgs.login', async (args) => {
+  const orgLogin = new OrgLoginService({
+    execSf: deps.execSf,
+    listOrgs: () => sdk.listOrgs(),
+    invalidate: () => connections.invalidate(),
+  });
+  zcc.onDispose(() => orgLogin.dispose());
+  const runOrgLogin = async (args: unknown) => {
+    const context = contexts.current()!;
+    let projectSelected: string | null = null;
+    const result = await orgLogin.run(args, {
+      cwd: context.settings.projectRoot || undefined,
+      onConnected: context.projectId ? async (alias, orgs) => {
+        await contexts.select({ projectId: context.projectId, selectedAlias: alias }, orgs.flatMap(org => [org.alias, org.username]));
+        projectSelected = alias;
+        zcc.realtime.publish('context.changed', { projectId: context.projectId });
+      } : undefined,
+    });
+    if (!result.ok) return result;
+    return { ...result, selectedAlias: projectSelected ?? await sdk.resolveAlias(), targetSource: projectSelected ? 'project' : context.targetSource };
+  };
+  registerRpc('orgs.login', runOrgLogin);
+  // Human sign-in outlives the desktop RPC deadline. Keep only bounded, public
+  // results and poll with short requests; AsyncLocalStorage pins the owner scope.
+  const loginJobs = new Map<string, { projectId: string | null; result?: Awaited<ReturnType<typeof runOrgLogin>> }>();
+  zcc.onDispose(() => loginJobs.clear());
+  registerRpc('orgs.login.start', args => {
     const parsed = parseOrgLoginInput(args);
-    if (!parsed.ok) return { ok: false, code: parsed.code, error: parsed.error, orgs: [], selectedAlias: null };
-    const result = await deps.execSf(orgLoginArgs(parsed), { timeoutMs: SF_ORG_LOGIN_TIMEOUT_MS });
-    if (result.code === 127) {
-      return {
-        ok: false,
-        code: 'cli_missing',
-        error: result.stderr.trim() || result.stdout.trim() || 'Salesforce CLI missing. Install sf, then retry.',
-        orgs: [],
-        selectedAlias: null
-      };
-    }
-    if (result.code !== 0) {
-      return {
-        ok: false,
-        code: 'login_failed',
-        error:
-          result.stderr.trim() ||
-          result.stdout.trim() ||
-          'Salesforce CLI web login did not finish. Complete sign-in in the browser, then retry.',
-        orgs: [],
-        selectedAlias: null
-      };
-    }
-    connections.invalidate();
-    try {
-      const orgs = await sdk.listOrgs();
-      const selectedAlias = await sdk.resolveAlias();
-      return { ok: true, orgs, selectedAlias, targetSource: contexts.current()?.targetSource ?? 'shared' };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const code = error instanceof ConnectionError ? error.code : 'orgs_failed';
-      return { ok: false, error: message, code, orgs: [], selectedAlias: null };
-    }
+    if (!parsed.ok) return parsed;
+    if ([...loginJobs.values()].some(job => !job.result)) return { ok: false, code: 'login_busy', error: 'Another org sign-in is in progress. Complete it in your browser, then retry.' };
+    if (loginJobs.size >= 12) loginJobs.delete(loginJobs.keys().next().value!);
+    const loginId = randomUUID();
+    const job: { projectId: string | null; result?: Awaited<ReturnType<typeof runOrgLogin>> } = { projectId: contexts.current()!.projectId };
+    loginJobs.set(loginId, job);
+    void runOrgLogin(args).then(result => { job.result = result; }, () => {
+      job.result = { ok: false, code: 'login_failed', error: 'Sign-in could not finish. Refresh the org list, then retry.' };
+    });
+    return { ok: true, loginId };
+  });
+  registerRpc('orgs.login.status', args => {
+    const job = loginJobs.get(rpcString(args, 'loginId'));
+    if (!job || job.projectId !== contexts.current()!.projectId) return { ok: false, error: 'This sign-in is no longer available. Refresh your orgs, then retry.' };
+    return job.result ? { ok: true, done: true, result: job.result } : { ok: true, done: false };
   });
   registerRpc('project.generate', async (args) => {
     const parsed = parseGenerateInput(args);
@@ -332,10 +354,36 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       path: generatedOutputPath(cli.result, parsed.outputDir, parsed.name)
     };
   });
+  let actionReads = 0;
+  registerRpc('agentActions.source', async (args) => {
+    if (actionReads >= 4) return { ok: false, error: 'Source previews are busy. Try again in a moment.' };
+    actionReads++;
+    try {
+      const target = rpcString(args, 'target');
+      const origin = rpcString(args, 'origin');
+      if (origin !== 'project' && origin !== 'org') throw Error('Choose project or org source.');
+      const snapshot = await readSettings();
+      let sourceRoot = snapshot.projectRoot;
+      if (origin === 'project' && sourceRoot && !contexts.current()?.projectId) {
+        // A settings string alone cannot grant filesystem access. Global views
+        // may use that folder only when it canonically matches a registered project.
+        const projects = await zcc.sdk.projects.list();
+        const registered = projects.some(project => {
+          try { return project.path && deps.realpath(project.path) === deps.realpath(sourceRoot); }
+          catch { return false; }
+        });
+        if (!registered) sourceRoot = '';
+      }
+      const data = origin === 'org'
+        ? await readOrgAction(await connections.connect(), target, deps)
+        : readProjectAction(sourceRoot, target, deps, rpcString(args, 'candidate') || undefined);
+      return { ok: true, data };
+    } finally { actionReads--; }
+  });
   registerRpc('agentFiles.list', async (args) => {
     try {
       const resolved = await resolveAgentFilesRoot(args);
-      return { ok: true, files: listAgentFiles(resolved.root, deps, resolved.options) };
+      return { ok: true, files: listAgentFiles(resolved.root, deps, { ...resolved.options, bundlesOnly: rpcString(args, 'purpose') === 'preview' }) };
     } catch (error) {
       return agentFilesFailure(error);
     }
@@ -349,6 +397,15 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     } catch (error) {
       return agentFilesFailure(error);
     }
+  });
+  registerRpc('agentFiles.create', async (args) => {
+    const path = rpcString(args, 'path');
+    const content = args && typeof args === 'object' ? (args as { content?: unknown }).content : undefined;
+    if (!path || typeof content !== 'string') return { ok: false, code: 'invalid_input', error: 'Create requires a path and source.' };
+    try {
+      const resolved = await resolveAgentFilesRoot(args);
+      return { ok: true, file: createAgentFile(resolved.root, path, content, deps, resolved.options) };
+    } catch (error) { return agentFilesFailure(error); }
   });
   registerRpc('agentFiles.write', async (args) => {
     const path = rpcString(args, 'path');
@@ -431,21 +488,11 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     'history.remove': (args) => explorer.historyRemove(args)
   };
   for (const [name, handler] of Object.entries(soqlRpcs)) {
-    const guarded = async (args: unknown) => {
-      if (name !== 'abort' && !name.startsWith('history.')) {
-        const org = await sdk.connect();
-        const query = rpcString(args, 'soql');
-        const unbounded = name === 'query' && (!/\bLIMIT\s+\d+\s*$/i.test(query) || /\bALL\s+ROWS\b/i.test(query));
-        const decision = await sdk.confirm({ orgAlias: org.alias, orgId: org.orgId, orgKind: org.kind,
-          kind: unbounded ? 'soql.unbounded' : undefined, summary: `SOQL ${name} on ${org.alias}`, preview: query.slice(0, 400)
-        }, rpcString(args, 'threadId'));
-        if (!decision.approved) return fail('refused', 'This query needs approval in a thread. Open SOQL beside an agent and retry.');
-      }
-      return handler(args);
-    };
-    registerRpc(`soql.${name}`, guarded);
+    // The workbench exposes read-only, paginated Salesforce APIs. It is usable
+    // without an agent; agent tools independently mediate through runSoql.
+    registerRpc(`soql.${name}`, handler);
     // Older bundles used the sql prefix.
-    registerRpc(`sql.${name}`, guarded);
+    registerRpc(`sql.${name}`, handler);
   }
   zcc.onDispose(() => explorer.dispose());
   await applyStatus();
@@ -1128,7 +1175,6 @@ async function runUiPreview(
   readSettings: () => Promise<PluginSettingsValues>
 ): Promise<ToolResult> {
   const threadId = rpcString(args, 'threadId');
-  if (!threadId) return fail('refused', 'Preview requires an open thread.');
   const parsed = parseAgentInput({
     action,
     apiName: rpcString(args, 'apiName') || undefined,
@@ -1167,11 +1213,12 @@ async function runAgentPreview(
   const resolved = await resolvePreviewIdentity(plan, snapshot, deps, verb === 'start');
   if ('ok' in resolved) return resolved;
   const label = resolved.identity?.apiName ?? plan.sessionId ?? '';
+  const live = plan.live || resolved.identity?.flag === 'api-name';
   const { org, mediated } = await mediateOrgRead(
     ctx,
     sdk,
-    (connected) => `${plan.live ? 'Live ' : ''}${plan.action} ${label} on ${connected.alias} (${connected.kind})`,
-    plan.live ? 'agent.preview.live' : undefined,
+    (connected) => `${live ? 'Live ' : ''}${plan.action} ${label} on ${connected.alias} (${connected.kind})`,
+    live ? 'agent.preview.live' : undefined,
     { preview: label }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} ${plan.action}.`);

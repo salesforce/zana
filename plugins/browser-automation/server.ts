@@ -8,10 +8,12 @@ import {
   rpcContract,
   runtimeStateSchema,
   sessionSchema,
+  type PreviewOutput,
   type RunOutput,
   type Session,
 } from "./contracts.js";
 import { parseCli, commands } from "./cli.js";
+import { previewDirective } from "./preview-directive.js";
 
 const desktopSchema = z
   .object({
@@ -36,6 +38,7 @@ const recordSchema = z
 type RecordEntry = z.infer<typeof recordSchema>;
 const ttlMs = 30 * 60_000;
 const idleTimeoutMs = 5 * 60_000;
+const previewWaitMs = 5_000;
 const keyFor = (threadId: string, sessionId: string) =>
   `sessions/${encodeURIComponent(threadId)}/${sessionId}`;
 
@@ -356,6 +359,31 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
       }
     }
   }
+  async function preview(
+    input: z.output<typeof rpcContract.preview.input>,
+    signal: AbortSignal,
+  ): Promise<PreviewOutput> {
+    const { session } = await owned(input.threadId, input.sessionId);
+    if (
+      session.backend !== "local" ||
+      session.state !== "ready" ||
+      Date.now() >= session.expiresAt
+    )
+      return { session, frame: null };
+    const { frame } = hostContract.preview.output.parse(
+      await host.call(
+        "preview",
+        {
+          sessionId: session.id,
+          afterSequence: input.afterSequence,
+          waitMs: previewWaitMs,
+          size: input.size,
+        },
+        { hostId: session.hostId, signal },
+      ),
+    );
+    return { session, frame };
+  }
   function handlers(
     signal: AbortSignal,
   ): PluginRpcHandlers<typeof rpcContract> {
@@ -391,6 +419,7 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
           },
           signal,
         ),
+      preview: (input) => preview(input, signal),
       stop: async (input) =>
         finish(await owned(input.threadId, input.sessionId), "stopped"),
       close: async (input) =>
@@ -415,13 +444,20 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
         return h.pages(rpcContract.pages.input.parse(input));
       case "screenshot":
         return h.screenshot(rpcContract.screenshot.input.parse(input));
+      case "preview":
+        return h.preview(rpcContract.preview.input.parse(input));
       case "stop":
         return h.stop(rpcContract.stop.input.parse(input));
       case "close":
         return h.close(rpcContract.close.input.parse(input));
     }
   }
-  zcc.agents.configure(() => ({ tools: [], skills: ["browser-automation"] }));
+  zcc.agents.configure(() => ({
+    tools: [],
+    skills: ["browser-automation"],
+    instructions:
+      "When `zcc browser-automation open` returns a previewDirective, copy it into your next response exactly once as a standalone line before you continue working. Do not wrap it in backticks or a code fence, and do not invent or edit the session ID. The directive shows the user a live view of that headless browser in ZCC chat. Desktop sessions return no directive.",
+  }));
   zcc.cli.register({
     name: "browser-automation",
     summary: "Persistent DevBrowser desktop and headless sessions",
@@ -465,14 +501,39 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
           ]),
         );
         const output = rpcContract.run.output.safeParse(result);
-        const printable = output.success
+        const previewed = rpcContract.preview.output.safeParse(result);
+        const opened =
+          parsed.method === "open"
+            ? rpcContract.open.output.safeParse(result)
+            : null;
+        const printable = opened?.success
           ? {
-              ...output.data,
-              hostId: (
-                await owned(parsed.input.threadId!, parsed.input.sessionId!)
-              ).session.hostId,
+              ...opened.data,
+              ...(opened.data.backend === "local"
+                ? { previewDirective: previewDirective(opened.data.id) }
+                : {}),
             }
-          : result;
+          : output.success
+            ? {
+                ...output.data,
+                hostId: (
+                  await owned(parsed.input.threadId!, parsed.input.sessionId!)
+                ).session.hostId,
+              }
+            : previewed.success
+              ? {
+                  session: previewed.data.session,
+                  frame: previewed.data.frame && {
+                    sequence: previewed.data.frame.sequence,
+                    mimeType: previewed.data.frame.mimeType,
+                    width: previewed.data.frame.width,
+                    height: previewed.data.frame.height,
+                    url: previewed.data.frame.url,
+                    title: previewed.data.frame.title,
+                    bytes: Buffer.byteLength(previewed.data.frame.data, "base64"),
+                  },
+                }
+              : result;
         return {
           exitCode: output.success ? output.data.exitCode : 0,
           stdout: JSON.stringify(printable),
