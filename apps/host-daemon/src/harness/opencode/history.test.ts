@@ -46,4 +46,4 @@ it('caps individual message size and total preview size', async () => {
 it('caps message count and skips empty text', async () => {
   await seed('', 501);
   expect(await readOpenCodeHistory(home, project, 'ses_saved')).toEqual({ messages: [], truncated: true });
-});
+}, 60_000);

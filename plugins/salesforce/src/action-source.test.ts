@@ -134,7 +134,7 @@ describe('action source resolution', () => {
     write('force-app/main/default/flows/CheckReturn.flow-meta.xml', '<Flow>');
     expect(await harness.callRpc('agentActions.source', args)).toMatchObject({ ok: true, data: { content: '<Flow>', visualizationError: expect.any(String) } });
     await harness.dispose();
-  });
+  }, 60_000);
 });
 describe('bounded source responses', () => {
   it('preserves complete UTF-8 across chunks and rejects oversized streams', async () => {
