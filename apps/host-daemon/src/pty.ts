@@ -823,8 +823,9 @@ export class PtyManager extends EventEmitter {
      */
     remoteToolProxy?: boolean;
     /**
-     * Interactive opening task for a harness whose TUI cannot take a seed argv
-     * (`initialTaskDelivery: stdin-after-ready`). Typed via {@link reply} after
+     * Interactive opening task for a harness whose TUI cannot take an initial
+     * prompt on argv (`initialTaskDelivery: stdin-after-ready`). Typed via
+     * {@link reply} after
      * first output. Absent for spawn-arg harnesses (prompt already on argv) and
      * for resume / scheduled launches.
      */
@@ -1693,7 +1694,7 @@ export class PtyManager extends EventEmitter {
     // server by packing the argv into a libevent imsg capped at MAX_IMSGSIZE
     // (16 KiB). A launch whose argv is large — a durable Job Team coordinator
     // carries a multi-KiB `--append-system-prompt` + `--settings` JSON + the
-    // seed-prompt positional — overflows that cap, so tmux exits 1 printing
+    // initial-prompt positional — overflows that cap, so tmux exits 1 printing
     // "command too long" and the inner child is NEVER spawned (the live symptom:
     // orchestrator never boots → no plan registered → run stuck at 0 work units).
     // node-pty's own direct spawn is bounded by ARG_MAX (~256 KiB on macOS), far
