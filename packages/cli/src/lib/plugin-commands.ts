@@ -382,7 +382,7 @@ export async function runMarketplaceCommand(
   }
   if (subcommand === 'add') {
     const url = rest[0];
-    if (!url) return err('marketplace add requires a <https-url | git:url[@ref] | path:dir>', 2);
+    if (!url) return err('marketplace add requires a <manifest-url | https-repository-url | git:url[@ref] | git@host:owner/repository.git | path:dir>', 2);
     return live(dataDir, 'marketplace.add', { url }, jsonOutput);
   }
   if (subcommand === 'refresh') {

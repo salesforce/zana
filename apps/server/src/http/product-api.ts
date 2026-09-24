@@ -189,6 +189,38 @@ function pluginAppErrorStatus(message: string): number {
   return 400;
 }
 
+function marketplaceError(error: unknown): { status: number; error: string } {
+  const message = error instanceof Error ? error.message : '';
+  if (/^invalid marketplace (URL|source|git source)/i.test(message)) {
+    return { status: 400, error: 'invalid marketplace source' };
+  }
+  if (message === 'marketplace source has an empty path') {
+    return { status: 400, error: message };
+  }
+  if (/^marketplace directory does not exist:/i.test(message)) {
+    return { status: 400, error: 'marketplace directory does not exist' };
+  }
+  if (/^marketplace\.json not found in /i.test(message)) {
+    return { status: 400, error: 'marketplace manifest not found' };
+  }
+  if (/^marketplace manifest exceeds \d+ bytes$/i.test(message)) {
+    return { status: 400, error: 'marketplace manifest exceeds size limit' };
+  }
+  if (/^git clone timed out after \d+ms$/i.test(message)) {
+    return { status: 400, error: 'git clone timed out' };
+  }
+  if (/^git clone (failed|could not start|output exceeded)/i.test(message)) {
+    return { status: 400, error: 'git clone failed' };
+  }
+  if (/^marketplace fetch failed: \d+$/i.test(message)) {
+    return { status: 400, error: 'marketplace fetch failed' };
+  }
+  if (message === 'marketplace source could not be materialized') {
+    return { status: 400, error: message };
+  }
+  return { status: 400, error: 'marketplace operation failed; check source and try again' };
+}
+
 async function handlePluginAppRpc(
   request: IncomingMessage,
   response: ServerResponse,
@@ -2787,7 +2819,8 @@ export async function handleProductHttp(
       try {
         sendJson(response, 201, toPublicMarketplaceCatalog(await ctx.plugins.addMarketplace(source)));
       } catch (error) {
-        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+        const problem = marketplaceError(error);
+        sendJson(response, problem.status, { error: problem.error });
       }
       return true;
     }
@@ -2806,7 +2839,8 @@ export async function handleProductHttp(
       try {
         sendJson(response, 200, toPublicMarketplaceCatalog(await ctx.plugins.refreshMarketplace(source)));
       } catch (error) {
-        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+        const problem = marketplaceError(error);
+        sendJson(response, problem.status, { error: problem.error });
       }
       return true;
     }
@@ -2830,7 +2864,8 @@ export async function handleProductHttp(
         }
         sendJson(response, 200, { ok: true as const });
       } catch (error) {
-        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+        const problem = marketplaceError(error);
+        sendJson(response, problem.status, { error: problem.error });
       }
       return true;
     }

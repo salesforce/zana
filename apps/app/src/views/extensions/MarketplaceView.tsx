@@ -467,8 +467,9 @@ export function MarketplaceView({
               <summary className="ext-market-catalogs-title">Catalog sources</summary>
               <p className="settings-help">
                 Official plugins install offline from the app. Community catalogs are provenance-only —
-                refresh never runs plugin code. Add <code>https://…/marketplace.json</code>,{' '}
-                <code>git:&lt;url&gt;[@ref]</code>, or <code>path:&lt;dir&gt;</code>.
+                refresh never runs plugin code. Add a manifest URL, a bare HTTPS repository URL,{' '}
+                <code>git:&lt;url&gt;[@ref]</code>, <code>git@host:owner/repository.git</code>, or{' '}
+                <code>path:&lt;dir&gt;</code>.
               </p>
               <div className="ext-market-catalogs-add">
                 <input
@@ -476,7 +477,7 @@ export function MarketplaceView({
                   className="settings-input"
                   value={catalogSource}
                   onChange={(e) => setCatalogSource(e.target.value)}
-                  placeholder="https://…/marketplace.json"
+                  placeholder="https://…/catalog or git@host:owner/catalog.git"
                   aria-label="Marketplace catalog source"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {

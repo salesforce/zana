@@ -6,9 +6,11 @@
  * shipped engine enforces: opt-in channel, HTTPS, sha256 integrity, Ed25519
  * signature, and the UI wiring from a click through IPC to disk.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, expect, launchApp } from './fixtures/app.js';
+import { startGitHttpServer } from './fixtures/git-http.js';
 import { MarketplacePage } from './fixtures/marketplace.js';
 
 test.describe('marketplace — bundled catalog without a remote registry', () => {
@@ -42,8 +44,9 @@ test.describe('marketplace — signed registry configured', () => {
     const market = new MarketplacePage(app.window);
     await market.open();
 
-    // Catalog lists exactly the published dummy extension.
-    await expect(market.rows()).toHaveCount(1);
+    // Bundled entries may coexist with the signed fixture catalog. The fixture
+    // card itself proves configured registry discovery.
+    await expect(market.rows()).not.toHaveCount(0);
     const titleRow = market.row('E2E Dummy');
     await expect(titleRow).toBeVisible();
 
@@ -159,4 +162,67 @@ test.describe('marketplace — catalog sources from the on-disk store', () => {
       await handle.electron.close();
     }
   });
+
+  test('adds a bare HTTPS Git catalog through Catalog Sources and persists its canonical identity', async ({ home }) => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), 'zcc-marketplace-git-http-'));
+    const git = await startGitHttpServer(fixtureDir, [{
+      repoName: 'catalog',
+      files: {
+        'marketplace.json': JSON.stringify({
+          schemaVersion: 1,
+          name: 'https-git',
+          displayName: 'HTTPS Git catalog',
+          plugins: []
+        })
+      }
+    }]);
+    const source = git.bareUrlFor('catalog');
+    const handle = await launchApp(home, {
+      caCertPath: git.caCertPath,
+      env: {
+        GIT_SSL_CAINFO: git.caCertPath,
+        ZCC_OFFICIAL_MARKETPLACE_URL: 'off',
+        ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off'
+      }
+    });
+    try {
+      const market = new MarketplacePage(handle.window);
+      await market.open();
+      await market.openCatalogSources();
+      await handle.window.getByLabel('Marketplace catalog source').fill(source);
+      await handle.window.getByRole('button', { name: 'Add catalog' }).click();
+      await expect(market.catalogNames()).toHaveText(['HTTPS Git catalog'], { timeout: 45_000 });
+
+      const catalogs = await handle.window.evaluate(() =>
+        (window as unknown as {
+          cc: { marketplaces: { list: () => Promise<Array<{ source: string; sourceKind: string }>> } };
+        }).cc.marketplaces.list()
+      );
+      expect(catalogs).toEqual([expect.objectContaining({ source: `git:${source}`, sourceKind: 'git' })]);
+      await handle.electron.close();
+
+      const relaunched = await launchApp(home, {
+        caCertPath: git.caCertPath,
+        env: {
+          GIT_SSL_CAINFO: git.caCertPath,
+          ZCC_OFFICIAL_MARKETPLACE_URL: 'off',
+          ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off'
+        }
+      });
+      try {
+        const persisted = await relaunched.window.evaluate(() =>
+          (window as unknown as {
+            cc: { marketplaces: { list: () => Promise<Array<{ source: string }>> } };
+          }).cc.marketplaces.list()
+        );
+        expect(persisted).toEqual([expect.objectContaining({ source: `git:${source}` })]);
+      } finally {
+        await relaunched.electron.close();
+      }
+    } finally {
+      await handle.electron.close().catch(() => undefined);
+      await git.close();
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  }, 90_000);
 });

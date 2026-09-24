@@ -145,7 +145,7 @@ describe('PtyManager remote agent reap', () => {
     expect(reap).not.toContain('-t');
   });
 
-  it('tmux-backed remote agent: reaps via the tmux SESSION on close (tmux swallows the sentinel → no pid)', () => {
+  it('tmux-backed remote agent: reaps via the tmux SESSION on close (tmux swallows the sentinel → no pid)', async () => {
     const mgr = new PtyManager();
     const session = makeRemoteAgent(mgr); // non-headless + tmuxScope 'all' → tmux-backed
 
@@ -164,6 +164,7 @@ describe('PtyManager remote agent reap', () => {
     // group + the pid, then drop the tmux session. This is the regression the
     // fake-fixture E2E masked: tmux-backed coordinators were never reaped.
     mgr.close(session.id);
+    await new Promise<void>((resolve) => setImmediate(resolve));
     const cmd = reapCall()?.at(-1);
     expect(cmd).toContain(`tmux list-panes -t cc-${session.id} -F '#{pane_pid}'`);
     expect(cmd).toContain('kill -KILL -"$p"');

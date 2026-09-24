@@ -2271,6 +2271,46 @@ describe('product HTTP plugins', () => {
     expect(listed.status).toBe(200);
     await expect(listed.json()).resolves.toEqual({ catalogs: [] });
   });
+
+  it('projects marketplace errors without credentials or command output', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-errors-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const secret = 'super-secret-token';
+    const rawStderr = `fatal: authentication failed for https://user:${secret}@example.test/private.git\ntrace`;
+    server.ctx.plugins = {
+      addMarketplace: async () => {
+        throw new Error('invalid marketplace URL: credentials, query strings, and fragments are refused');
+      },
+      refreshMarketplace: async () => {
+        throw new Error('git clone timed out after 30000ms');
+      },
+      removeMarketplace: async () => {
+        throw new Error(rawStderr);
+      }
+    } as never;
+
+    for (const [path, expected] of [
+      ['/api/v1/marketplaces', 'invalid marketplace source'],
+      ['/api/v1/marketplaces/refresh', 'git clone timed out'],
+      ['/api/v1/marketplaces/remove', 'marketplace operation failed; check source and try again']
+    ] as const) {
+      const response = await fetch(`${server.url.slice(0, -1)}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ source: 'git:https://example.test/community.git' })
+      });
+      expect(response.status).toBe(400);
+      const body = await response.text();
+      expect(body).toContain(expected);
+      expect(body).not.toContain(secret);
+      expect(body).not.toContain('authentication failed');
+      expect(body).not.toContain('example.test/private.git');
+      expect(body).not.toContain('trace');
+    }
+  });
 });
 
 describe('product HTTP CLI skills', () => {
