@@ -165,6 +165,11 @@ export function startEnrolledHostConnection(options: {
       resizeWork: (input) => adapter!.resizeWork(input),
       writeWork: (input) => adapter!.writeWork(input),
       stopWork: (input) => adapter!.stopWork(input),
+      cancelPlan: async (input) => {
+        const cancelled = await adapter!.cancelPlan?.(input) ?? false;
+        await sink.flush();
+        return cancelled;
+      },
       prepareRewind: (input) => adapter!.prepareRewind(input),
       discardRewind: (input) => adapter!.discardRewind(input),
       renameWork: (input) => adapter!.renameWork(input),

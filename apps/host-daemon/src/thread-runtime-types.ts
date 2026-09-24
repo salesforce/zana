@@ -26,6 +26,7 @@ export interface ThreadRuntimeAdapter {
     mode?: string;
     model?: string;
     reasoningLevel?: ReasoningLevel;
+    serviceTier?: 'default' | 'fast';
     acpMode?: string;
     clientRequestId?: string;
     permissionMode?: 'accept-edits' | 'auto' | 'full';
@@ -38,6 +39,7 @@ export interface ThreadRuntimeAdapter {
   resizeWork(input: { threadId: string; cols: number; rows: number }): Promise<void>;
   writeWork(input: { threadId: string; data: string }): Promise<void>;
   stopWork(input: { threadId: string }): Promise<void>;
+  cancelPlan?(input: { threadId: string; expectedTurnId: string }): Promise<boolean>;
   prepareRewind(input: ThreadRewindPrepareInput): Promise<{ providerThreadId: string }>;
   discardRewind(input: { leaseId: string; environmentId: string }): Promise<void>;
   renameWork(input: { threadId: string; title: string }): Promise<void>;

@@ -34,7 +34,7 @@ import { SoqlExplorerPanel } from "./soql/SoqlExplorerPanel.js";
 import { SalesforceProjectTab } from "./SalesforceProjectTab.js";
 
 vi.mock("./AgentScriptPanel.js", () => ({
-  AgentforcePlaygroundPanel: ({ headerActions }: { headerActions?: React.ReactNode }) => <div>Agentforce script{headerActions}</div>,
+  AgentforcePlaygroundPanel: ({ headerActions, orgPicker }: { headerActions?: React.ReactNode; orgPicker?: boolean }) => <div data-testid="script" data-org-picker={String(orgPicker)}>Agentforce script{headerActions}</div>,
 }));
 vi.mock("./AgentforcePreviewPanel.js", () => ({
   AgentforcePreviewPanel: () => <div>Agentforce conversation</div>,
@@ -295,7 +295,7 @@ describe("public Salesforce panels", () => {
         ? { cliOk: true, org, agentBundleCount: 2 }
         : respond(method, args),
     );
-    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" headerActions={<button>Close pane</button>} />);
     await screen.findByText("Ready for your next change.");
     fireEvent.click(screen.getByRole("button", { name: "Check project" }));
     await screen.findByText(/Salesforce CLI available.*dev connected/);
@@ -319,19 +319,15 @@ describe("public Salesforce panels", () => {
     expect(screen.getByLabelText("Targeted Apex tests")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Agentforce" }));
     expect(screen.getByText("Agentforce script")).toBeTruthy();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Org preview", exact: true }),
-    );
-    expect(screen.getByText("Agentforce conversation")).toBeTruthy();
+    expect(screen.getByTestId('script').getAttribute('data-org-picker')).toBe('false');
+    expect(screen.getAllByRole('combobox', { name: 'Salesforce org' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Close pane' }).closest('.sf-workbench-toolbar')).toBeTruthy();
+    expect(document.querySelector('.sf-workbench>.sf-footer')).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open beside agent" }));
     expect(navigate.openThreadPanel).toHaveBeenCalledWith({
-      actionId: "preview",
+      actionId: "playground",
       params: { projectId: "p", orgAlias: "dev" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Back to studio", exact: true }),
-    );
-    expect(screen.getByText("Agentforce script")).toBeTruthy();
     expect(call).toHaveBeenCalledWith(
       "doctor",
       expect.objectContaining({ projectId: "p", threadId: "t" }),
@@ -353,9 +349,9 @@ describe("public Salesforce panels", () => {
           : respond(method, args),
     );
     mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
-    await screen.findByText("Connect your Salesforce project.");
+    await screen.findByText("Start building locally.");
     fireEvent.click(
-      screen.getByRole("button", { name: "Connect or select an org" }),
+      screen.getByRole("button", { name: "Choose an existing org" }),
     );
     await screen.findByLabelText("Search connected orgs");
     fireEvent.click(screen.getByRole("button", { name: "Check project" }));
@@ -369,6 +365,75 @@ describe("public Salesforce panels", () => {
     await screen.findByText(
       /Salesforce CLI unavailable.*No active org connection/,
     );
+  });
+
+  it.each([null, 'Salesforce CLI (sf) was not found on PATH.'])('keeps local authoring usable while org connections need setup: %s', async orgsError => {
+    let ready = false;
+    call.mockImplementation(async (method, args) => method === 'status' && !ready
+      ? { ...respond(method, args), defaultOrg: '', selectedAlias: null, orgs: [], orgsError }
+      : method === 'orgs' && !ready ? { ok: true, orgs: [], selectedAlias: null }
+      : respond(method, args));
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    await screen.findByText('Local authoring ready');
+    await screen.findByRole('heading', { name: orgsError ? 'Org connections unavailable' : 'Choose an org when you need it' });
+    fireEvent.click(screen.getByRole('button', { name: /Build an agent/ }));
+    expect(screen.getByTestId('script')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Data', exact: true }));
+    expect(screen.queryByTestId('soql-editor')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Sign in to an org' })).toBeTruthy();
+    const reads = call.mock.calls.filter(row => row[0] === 'status').length;
+    await act(async () => { window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: 'other' } })); });
+    expect(call.mock.calls.filter(row => row[0] === 'status')).toHaveLength(reads);
+    ready = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await screen.findByTestId('soql-editor');
+    expect(screen.queryByRole('button', { name: 'Sign in to an org' })).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
+    await screen.findByText('Ready for your next change.');
+    expect(screen.getByText('Local authoring ready')).toBeTruthy();
+  });
+
+  it('does not claim local readiness when the project status itself is unavailable', async () => {
+    call.mockImplementation(async (method, args) => method === 'status' ? { ok: false, error: 'Project folder unavailable' } : respond(method, args));
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    await screen.findByText('Project folder unavailable');
+    expect(screen.queryByText('Local authoring ready')).toBeNull();
+  });
+
+  it('shows connection loading when Data is opened before the first status response', async () => {
+    let finish!: (value: unknown) => void;
+    call.mockImplementation(async (method, args) => method === 'status' ? new Promise(resolve => { finish = resolve; }) : respond(method, args));
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Data', exact: true }));
+    await screen.findByText('Checking org connections…');
+    await act(async () => finish(respond('status')));
+    await screen.findByTestId('soql-editor');
+    expect(screen.queryByText('Checking org connections…')).toBeNull();
+  });
+
+  it('uses a confirmed org selection immediately and preserves results when status catches up', async () => {
+    const other = { ...org, alias: 'other' };
+    let chosen = 'dev';
+    let finish!: (value: unknown) => void;
+    call.mockImplementation(async (method, args) => {
+      if (method === 'context.select') { chosen = String(args?.selectedAlias); return { ok: true }; }
+      if (method === 'orgs') return { ok: true, selectedAlias: chosen, orgs: [org, other] };
+      if (method === 'status') return chosen === 'dev'
+        ? { ...respond(method, args), orgs: [org, other] }
+        : new Promise(resolve => { finish = resolve; });
+      return respond(method, args);
+    });
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    await screen.findByText('Ready for your next change.');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Salesforce org' }), { target: { value: 'other' } });
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Data', exact: true }));
+    fireEvent.change(await screen.findByTestId('soql-editor'), { target: { value: 'SELECT Id, Name FROM Account LIMIT 1' } });
+    fireEvent.click(screen.getByTestId('soql-run'));
+    await screen.findByRole('cell', { name: 'Acme' });
+    expect(call).toHaveBeenCalledWith('soql.query', expect.objectContaining({ orgAlias: 'other' }));
+    await act(async () => finish({ ...respond('status'), defaultOrg: 'other', selectedAlias: 'other', orgs: [org, other] }));
+    expect(screen.getByRole('cell', { name: 'Acme' })).toBeTruthy();
   });
 
   it("discards a delayed connection check after changing projects", async () => {

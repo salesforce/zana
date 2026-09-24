@@ -480,6 +480,10 @@ describe('zcc-plugin-authoring skill', () => {
     expect(skill).toContain('## Testing a plugin');
     expect(skill).toContain('renderSlot');
     expect(skill).toContain('loadPluginApp');
+    expect(skill).toContain('LIVE_TEST.md');
+    expect(skill).toContain('zcc plugin dev --once');
+    expect(skill).toContain('already-open panel');
+    expect(skill).toContain('cua.getApp("Zana")');
   });
 
   it('documents thread plugin metadata on spawn, get, update, and configure', () => {

@@ -4,8 +4,9 @@ import { parseActionTarget, type AgentAction, type ActionParameter } from '../..
 import type { ActionSource } from '../../lib/action-source.js';
 import type { PublicOrgView } from '../../lib/types.js';
 import { ActionCodePreview } from './ActionCodePreview.js';
-import { ActionFlowMap } from './ActionFlowMap.js';
+import { FlowVisualization } from './FlowVisualization.js';
 import { flowFromXml, flowModel } from './action-flow.js';
+import { LoadingState } from './components/SalesforceState.js';
 
 export function AgentActionExplorer({ actions, selected, onOpen }: { actions: AgentAction[]; selected?: string; onOpen(action: AgentAction): void }) {
   const groups = [...new Set(actions.map(action => action.owner))];
@@ -48,7 +49,7 @@ export function AgentActionPanel({ pluginId, projectId, action, org, onReveal, o
     if (!parseActionTarget(action.target)) return;
     if (origin === 'org' && !org) return;
     let cancelled = false;
-    void callPluginRpc(pluginId, 'agentActions.source', { projectId, target: action.target, origin, ...(origin === 'org' ? { orgAlias: org!.alias || org!.username } : {}), ...(candidate && origin === 'project' ? { candidate } : {}) }).then(value => {
+    void callPluginRpc(pluginId, 'agentActions.source', { projectId, target: action.target, origin, ...(parseActionTarget(action.target)?.kind === 'flow' ? { visualize: true } : {}), ...(origin === 'org' ? { orgAlias: org!.alias || org!.username } : {}), ...(candidate && origin === 'project' ? { candidate } : {}) }).then(value => {
       const result = value as { ok: boolean; data?: ActionSource; error?: string };
       if (!cancelled) setState({ key, ...(result.ok && result.data ? { data: result.data } : { error: result.error || 'Could not load this implementation.' }) });
     }).catch(error => { if (!cancelled) setState({ key, error: error instanceof Error ? error.message : String(error) }); });
@@ -68,12 +69,12 @@ export function AgentActionPanel({ pluginId, projectId, action, org, onReveal, o
     <nav className="af-action-nav" aria-label="Action details">{([['implementation', 'Implementation'], ['parameters', 'Inputs & outputs'], ['usage', 'Used by'], ['preview', 'Last preview']] as const).map(([id, label]) => <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
     <div className={`af-action-content${tab === 'implementation' ? ' is-implementation' : ''}`}>
       {tab === 'implementation' && <>
-        {!parsed ? <p className="af-action-note">This target type has no implementation viewer yet. Its action definition and usage remain available.</p> : origin === 'org' && !org ? <p className="af-action-note">Connect an org to inspect its deployed implementation.</p> : !current ? <p role="status" className="af-action-note">Loading implementation…</p> : current.error ? <p role="alert" className="af-action-note">{current.error}</p> : <>
+        {!parsed ? <p className="af-action-note">This target type has no implementation viewer yet. Its action definition and usage remain available.</p> : origin === 'org' && !org ? <p className="af-action-note">Connect an org to inspect its deployed implementation.</p> : !current ? <LoadingState compact art="code" label="Loading implementation…" /> : current.error ? <p role="alert" className="af-action-note">{current.error}</p> : <>
           {data?.message && <p className="af-action-note">{data.message}</p>}
           {data?.candidates?.map(path => <button key={path} className="af-source-candidate" onClick={() => setCandidate(path)}>{path} →</button>)}
           {data?.status === 'ready' && <>
             {parsed.kind === 'flow' && <div className="af-flow-mode"><button aria-pressed={!raw} onClick={() => setRaw(false)}>Flow map</button><button aria-pressed={raw} onClick={() => setRaw(true)}>Source</button></div>}
-            {parsed.kind === 'flow' && !raw ? flow?.model ? <ActionFlowMap model={flow.model} onOpenTarget={target => onOpenTarget(target, origin)} /> : <p className="af-action-note" role="alert">{flow?.error}</p> : <ActionCodePreview content={data.content ?? ''} language={data.language ?? 'apex'} />}
+            {parsed.kind === 'flow' && !raw ? flow?.model ? <FlowVisualization key={key} pluginId={pluginId} visualization={data.visualization} error={data.visualizationError} sourceLabel={`${data.label}${data.version != null ? ` · v${data.version}` : ''}`} model={flow.model} onOpenTarget={target => onOpenTarget(target, origin)} /> : <p className="af-action-note" role="alert">{flow?.error}</p> : <ActionCodePreview content={data.content ?? ''} language={data.language ?? 'apex'} />}
           </>}
         </>}
       </>}

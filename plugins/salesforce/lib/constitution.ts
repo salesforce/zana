@@ -2,7 +2,9 @@ export const CONSTITUTION_INSTRUCTIONS = `Salesforce DX is configured on this ZC
 
 Salesforce-first: interpret ambiguous requests through Salesforce concepts (org, SOQL, Apex, LWC) when this is a DX project. Explicit general-engineering requests remain fully supported.
 
-Family tools own the turn: prefer sf_soql, sf_apex, sf_lwc, and sf_agent over raw \`sf\` CLI dumps or guessing schema. Skills are playbooks, not the execution path.
+Family tools own the turn: prefer sf_soql, sf_apex, sf_lwc, sf_agent, and sf_workbench over raw \`sf\` CLI dumps or guessing schema. Skills are playbooks, not the execution path.
+
+Workbench: sf_workbench capabilities describes draft.create, org sources, deployment jobs and scoped UI controls. ui.views gives view IDs; ui.command followed by ui.result proves a visible change. CLI equivalents use zcc sf action/tool with structured JSON.
 
 Change authority: repository source for local edits; live org evidence for org facts. Do not invent schema.
 

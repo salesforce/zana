@@ -11,7 +11,7 @@ vi.mock('@zana-ai/zcc-db', () => ({
 }));
 
 import { getConversationThread, getEnvironment } from '@zana-ai/zcc-db';
-import { IMAGE_READ_MAX_BYTES, readThreadHostFile } from './thread-host-file.js';
+import { IMAGE_READ_MAX_BYTES, imageContentType, readThreadHostFile } from './thread-host-file.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 
 describe('readThreadHostFile', () => {
@@ -198,6 +198,9 @@ describe('CLI session workspace previews', () => {
 });
 
 describe('uploaded attachment previews', () => {
+  it.each([['photo.bmp', 'image/bmp'], ['photo.AVIF', 'image/avif']])('recognizes the accepted %s image format', (path, mime) => {
+    expect(imageContentType(path)).toBe(mime);
+  });
   let dataDir: string;
   let root: string;
   let ctx: ProductHttpContext;
@@ -275,6 +278,7 @@ describe('uploaded attachment previews', () => {
   );
 
   it('allows an image at the exact read cap', async () => {
+    expect(IMAGE_READ_MAX_BYTES).toBe(35 * 1024 * 1024);
     const path = join(root, 'limit.png');
     await writeFile(path, Buffer.alloc(IMAGE_READ_MAX_BYTES));
     const file = await readThreadHostFile(ctx, 't1', path);

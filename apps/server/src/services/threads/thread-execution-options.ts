@@ -30,7 +30,7 @@ export interface ThreadExecutionOptionsResponse {
   permissionCeiling: PermissionMode;
   models: AvailableModel[];
   selectedOnlyModels: AvailableModel[];
-  modelLoadError: { providerId: string; code: ThreadModelLoadErrorCode } | null;
+  modelLoadError: { providerId: string; code: ThreadModelLoadErrorCode; detail: string | null } | null;
   acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
 }
 
@@ -397,6 +397,13 @@ export function selectedOnlyModelsForThreadProvider(providerId: string): Availab
   return [];
 }
 
+export function modelListErrorDetail(error: unknown, maxChars = 300): string | null {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const collapsed = message.replace(/\s+/gu, ' ').trim();
+  if (!collapsed) return null;
+  return collapsed.length > maxChars ? collapsed.slice(0, maxChars) : collapsed;
+}
+
 export function classifyModelListError(error: unknown): Exclude<ThreadModelLoadErrorCode, 'provider_unavailable'> {
   const code = error && typeof error === 'object' && 'code' in error
     ? String((error as { code: unknown }).code)
@@ -416,7 +423,13 @@ export function classifyModelListError(error: unknown): Exclude<ThreadModelLoadE
   ) {
     return 'auth_required';
   }
-  if (code === 'enoent' || text.includes('enoent')) {
+  if (
+    code === 'missing_executable'
+    || code === 'enoent'
+    || code === '-32004'
+    || text.includes('enoent')
+    || (text.includes('could not find the') && text.includes('cli'))
+  ) {
     return 'missing_executable';
   }
   if (text.includes('timed out') || text.includes('timeout')) {
@@ -431,6 +444,7 @@ export function buildThreadExecutionOptions(input: {
   extraInstalled?: Readonly<Record<string, boolean>>;
   listed?: { models: AvailableModel[]; selectedOnlyModels: AvailableModel[]; acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> } } | null;
   listError?: ThreadModelLoadErrorCode | null;
+  listErrorDetail?: string | null;
 }): ThreadExecutionOptionsResponse {
   const catalog = listThreadProviders();
   const offered = catalog.filter((provider) => isThreadProviderOffered(provider, input.availability, input.extraInstalled));
@@ -442,10 +456,11 @@ export function buildThreadExecutionOptions(input: {
     : [];
   const staticMore = requested ? selectedOnlyModelsForThreadProvider(requested.id) : [];
   const useListed = Boolean(input.listed && input.listed.models.length > 0);
+  const detail = input.listErrorDetail ?? null;
   const modelLoadError = !requested && input.providerId
-    ? { providerId: input.providerId, code: 'provider_unavailable' as const }
+    ? { providerId: input.providerId, code: 'provider_unavailable' as const, detail: null }
     : requested && input.listError
-      ? { providerId: requested.id, code: input.listError }
+      ? { providerId: requested.id, code: input.listError, detail }
       : null;
   return {
     providers: offered.map((provider) => toProviderInfo(provider, true)),

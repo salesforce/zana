@@ -80,6 +80,7 @@ export interface RuntimeProviderProcessManagerArgs {
 }
 
 export interface EnsureRuntimeProviderArgs {
+  skillRoots?: readonly AgentRuntimeSkillRoot[];
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   processKey: string;
@@ -129,45 +130,9 @@ interface ProviderProcessExitedErrorArgs {
 const PROVIDER_STDERR_TAIL_MAX_BYTES = 4_000;
 const PROVIDER_PROCESS_CLOSE_GRACE_MS = 1_000;
 
-const BRIDGE_PROCESS_KEY_MARKER = "#bridge:";
-
-interface BridgeProcessKeyParts {
-  /** Everything before the artifact hash (provider id, thread-scoped prefix). */
-  base: string;
-  /** The plugin artifact hash the process was spawned from. */
-  hash: string;
-  /** Any launch-fingerprint suffix that follows the hash (e.g. `#acp:…`). */
-  suffix: string;
-}
-
-/**
- * Split a plugin-bridge process key into the parts that identify the same
- * provider configuration (`base` + `suffix`) and the artifact it was spawned
- * from (`hash`). Non-bridge keys return null.
- */
-function parseBridgeProcessKey(
-  processKey: string,
-): BridgeProcessKeyParts | null {
-  const markerIndex = processKey.indexOf(BRIDGE_PROCESS_KEY_MARKER);
-  if (markerIndex === -1) {
-    return null;
-  }
-  const base = processKey.slice(0, markerIndex);
-  const rest = processKey.slice(markerIndex + BRIDGE_PROCESS_KEY_MARKER.length);
-  const suffixIndex = rest.indexOf("#");
-  if (suffixIndex === -1) {
-    return { base, hash: rest, suffix: "" };
-  }
-  return {
-    base,
-    hash: rest.slice(0, suffixIndex),
-    suffix: rest.slice(suffixIndex),
-  };
-}
-
-/** Same provider configuration, any artifact/declaration generation. */
-function bridgeConfigurationKey(parts: BridgeProcessKeyParts): string {
-  return `${parts.base}\u0000${parts.suffix}`;
+/** Artifact and skill generations share a configuration; ACP launch settings do not. */
+function providerConfigurationKey(processKey: string): string {
+  return processKey.replace(/#(?:bridge|skills):[^#]*/g, "");
 }
 
 export class ProviderProcessExitedError extends Error {
@@ -186,12 +151,10 @@ export class RuntimeProviderProcessManager {
   private readonly processes = new Map<string, RuntimeProviderProcess>();
   private readonly providerStarting = new Map<string, Promise<void>>();
   /**
-   * The artifact+declaration hash most recently ensured for each bridge
-   * configuration (`base` + `suffix` of the process key). A process whose own
-   * hash differs from this has been superseded by a plugin update and is kept
-   * alive only by the threads that already run on it.
+   * The most recently ensured artifact/skill generation for each provider
+   * configuration. Older generations stay alive while they own threads.
    */
-  private readonly currentBridgeHashByConfiguration = new Map<string, string>();
+  private readonly currentProcessByConfiguration = new Map<string, string>();
   private shuttingDown = false;
 
   constructor(args: RuntimeProviderProcessManagerArgs) {
@@ -271,7 +234,7 @@ export class RuntimeProviderProcessManager {
 
         const providerSkillRoots = filterSkillRootsForProvider({
           providerId: args.providerId,
-          skillRoots: this.args.skillRoots,
+          skillRoots: args.skillRoots ?? this.args.skillRoots,
         });
         if (providerSkillRoots.length > 0) {
           const skillRootsCmd = adapter.buildCommandPlan({
@@ -314,8 +277,8 @@ export class RuntimeProviderProcessManager {
   }
 
   /**
-   * A plugin update changes the bridge artifact hash, which is part of the
-   * process key, so the new artifact spawns a fresh process beside the old
+   * Plugin artifacts and skill snapshots contribute to the process key, so
+   * a new generation spawns a fresh process beside the old
    * one. Threads keep their process until they are released, but a process
    * that owns no thread (model listing, maintenance) has nothing left to
    * retire it — it would leak one node process per superseded artifact until
@@ -324,31 +287,13 @@ export class RuntimeProviderProcessManager {
   private async retireStaleBridgeProcesses(
     args: EnsureRuntimeProviderArgs,
   ): Promise<void> {
-    const current = parseBridgeProcessKey(args.processKey);
-    if (current === null) {
-      return;
-    }
-    this.currentBridgeHashByConfiguration.set(
-      bridgeConfigurationKey(current),
-      current.hash,
-    );
+    const configuration = providerConfigurationKey(args.processKey);
+    this.currentProcessByConfiguration.set(configuration, args.processKey);
     const staleKeys = [...this.processes.entries()]
-      .filter(([processKey, providerProcess]) => {
-        if (
-          processKey === args.processKey ||
-          providerProcess.providerId !== args.providerId ||
-          providerProcess.identity.threadIds.size > 0
-        ) {
-          return false;
-        }
-        const other = parseBridgeProcessKey(processKey);
-        return (
-          other !== null &&
-          other.base === current.base &&
-          other.suffix === current.suffix &&
-          other.hash !== current.hash
-        );
-      })
+      .filter(([processKey, process]) => processKey !== args.processKey
+        && !this.providerStarting.has(processKey)
+        && process.providerId === args.providerId && process.identity.threadIds.size === 0
+        && providerConfigurationKey(processKey) === configuration)
       .map(([processKey]) => processKey);
 
     for (const processKey of staleKeys) {
@@ -369,16 +314,8 @@ export class RuntimeProviderProcessManager {
     if (providerProcess.identity.threadIds.size > 0) {
       return;
     }
-    const parts = parseBridgeProcessKey(providerProcess.processKey);
-    if (parts === null) {
-      return;
-    }
-    const currentHash = this.currentBridgeHashByConfiguration.get(
-      bridgeConfigurationKey(parts),
-    );
-    if (currentHash === undefined || currentHash === parts.hash) {
-      return;
-    }
+    const currentKey = this.currentProcessByConfiguration.get(providerConfigurationKey(providerProcess.processKey));
+    if (currentKey === undefined || currentKey === providerProcess.processKey) return;
     await this.shutdownProvider({
       processKey: providerProcess.processKey,
       providerId: providerProcess.providerId,

@@ -1,3 +1,4 @@
+import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBanner.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
@@ -144,12 +145,14 @@ export function ThreadDetail({
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
   const [isWorktree, setIsWorktree] = useState(false);
   const [branchName, setBranchName] = useState<string | null>(null);
+  const [archivedAt, setArchivedAt] = useState<number | null>(null);
   const [threadProviderId, setThreadProviderId] = useState<string | null>(null);
   const [threadModel, setThreadModel] = useState<string | null>(null);
   const [threadReasoning, setThreadReasoning] = useState<string | null>(null);
   const [threadAcpMode, setThreadAcpMode] = useState<string | null>(null);
   const [threadPermissionMode, setThreadPermissionMode] = useState<{ threadId: string; mode: string | null } | null>(null);
   const [rows, setRows] = useState<TimelineRow[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(true);
   const [thinking, setThinking] = useState<ActiveThinking | null>(null);
   const [todos, setTodos] = useState<ThreadTimelinePendingTodos | null>(null);
   const [goal, setGoal] = useState<ThreadTimelineGoal | null>(null);
@@ -165,7 +168,10 @@ export function ThreadDetail({
   const [lastReadSeq, setLastReadSeq] = useState<number | null>(null);
   const [diffPath, setDiffPath] = useState<string | null>(null);
   const [todoExpanded, setTodoExpanded] = useState(false);
+  const inFlightRetry = timelineHasInFlightRetry(rows);
   const [planExitPending, setPlanExitPending] = useState(false);
+  const [planAction, setPlanAction] = useState<{ id: number; threadId: string; kind: 'revise' | 'implement'; revision: number } | null>(null);
+  const [planActionPending, setPlanActionPending] = useState(false);
   const [optimisticRow, setOptimisticRow] = useState<TimelineRow | null>(null);
   const [isStopping, setIsStopping] = useState(false);
   const [stoppingAnchorAt, setStoppingAnchorAt] = useState(0);
@@ -269,6 +275,7 @@ export function ThreadDetail({
     loadedRef.current = false;
     hadThreadRecordRef.current = false;
     setLoadError(null);
+    setArchivedAt(null);
     setExecutionModeRequested(null);
 
     const applyTimeline = (
@@ -350,6 +357,7 @@ export function ThreadDetail({
       setEnvironmentId(typeof thread.environmentId === 'string' ? thread.environmentId : null);
       setIsWorktree(thread.isWorktree ?? false);
       setBranchName(thread.branchName ?? null);
+      setArchivedAt(thread.archivedAt ?? null);
       setThreadProviderId(typeof thread.providerId === 'string' ? thread.providerId : null);
       setThreadModel(typeof thread.model === 'string' ? thread.model : null);
       setThreadReasoning(typeof thread.reasoningLevel === 'string' ? thread.reasoningLevel : null);
@@ -384,11 +392,16 @@ export function ThreadDetail({
     };
 
     const runner = createCoalescedRunner(async () => {
+      if (!loadedRef.current) {
+        setTimelineLoading(true);
+        setLoadError(null);
+      }
       const [detailOutcome, timelineOutcome] = await Promise.allSettled([
         product.threads.get(threadId),
         loadTimeline(false)
       ]);
       if (cancelled) return;
+      setTimelineLoading(false);
       const detailFailed = detailOutcome.status === 'rejected';
       const timelineFailed = timelineOutcome.status === 'rejected';
       if (timelineOutcome.status === 'fulfilled') {
@@ -598,6 +611,10 @@ export function ThreadDetail({
     panelBody = (
       <ThreadPlanPanel
         document={document}
+        onRevise={() => setPlanAction({ id: Date.now(), threadId, kind: 'revise', revision: durablePlan?.revision ?? 0 })}
+        onImplement={() => setPlanAction({ id: Date.now(), threadId, kind: 'implement', revision: durablePlan?.revision ?? 0 })}
+        actionsDisabled={Boolean(archivedAt) || (status !== 'idle' && status !== 'error') || pendingInteractions.length > 0 || inFlightRetry}
+        actionPending={planActionPending}
         durablePlan={durablePlan}
         todos={todos}
         onOpenFile={(path) => {
@@ -661,7 +678,6 @@ export function ThreadDetail({
   );
 
   const awaitingUser = pendingInteractions.length > 0 || timelineRowsAwaitUser(rows);
-  const inFlightRetry = timelineHasInFlightRetry(rows);
 
   const exitPlanMode = useCallback(() => {
     if (!threadId || planExitPending) return;
@@ -776,6 +792,7 @@ export function ThreadDetail({
               waitingOnUser={awaitingUser}
               thinking={thinking}
               goal={goal}
+              loading={timelineLoading}
               loadError={loadError}
               onRetryLoad={() => runLoadRef.current()}
               activeWorkflows={workflows}
@@ -855,7 +872,7 @@ export function ThreadDetail({
                 environmentId={environmentId}
                 onOpenDiff={(path) => openDiff(path)}
               />
-              <ThreadCommandComposer
+              {archivedAt ? <ArchivedThreadBanner key={threadId} threadId={threadId} onRestored={() => { setArchivedAt(null); runLoadRef.current(); }} /> : <ThreadCommandComposer
                 threadId={threadId}
                 project={project ?? undefined}
                 autoFocus={!embedded && pane?.isFocused !== false && pendingInteractions.length === 0}
@@ -870,7 +887,10 @@ export function ThreadDetail({
                 acpMode={threadAcpMode}
                 permissionMode={threadPermissionMode?.threadId === threadId ? threadPermissionMode.mode : null}
                 executionModeRequested={executionModeRequested}
-              />
+                planAction={planAction}
+                onPlanActionPending={setPlanActionPending}
+                onPlanActionHandled={() => setPlanAction(null)}
+              />}
             </div>
           </div>
         </div>

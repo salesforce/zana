@@ -48,6 +48,8 @@ describe('sf CLI parsers', () => {
       }
     ]);
     expect(defaultCliAlias(listed)).toBe('prod');
+    expect(defaultCliAlias(listed.map(row => ({ ...row, isDefault: false })))).toBeNull();
+    expect(defaultCliAlias([])).toBeNull();
   });
 
   it('parses org display and keeps the token only on the resolved org object', () => {

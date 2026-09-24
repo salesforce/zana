@@ -31,7 +31,7 @@ Commands:
 - `zcc plugin types [dir]` — sync bundled SDK `.d.ts` (`--check` for CI). Look up the API here.
 - `zcc plugin install <source>` — `path:` | `git:` | `npm:` | `builtin:<name>`. Path installs load `server.ts` from source.
 - `zcc plugin reload <id>` — one-shot HTTP reload. Rebuild is not implied. Needs a running app.
-- `zcc plugin dev [dir]` — optional watch loop **after** a path install. On save, rebuilds the declared **app** (unminified), then reloads. Needs a running app. A failed build keeps the last good generation. `--once` skips watch.
+- `zcc plugin dev [dir]` — optional watch loop **after** a path install. On save, rebuilds the declared **app** (unminified), then reloads. Needs a running app. A failed build keeps the last good generation. `zcc plugin dev --once` performs one cycle, checks backend health, and returns nonzero on failure; prefer it for agent-driven iteration.
 - `zcc plugin build [dir]` — one-shot `dist/` compile. No running app. CI / publish. Minified.
 - `zcc plugin list` / `zcc plugin logs <id> [-n] [-f]` — inspect status and persisted JSONL logs.
 - `zcc plugin run <pluginId> <args…>` — explicit equivalent of a contributed command.
@@ -69,6 +69,7 @@ this list fails CI):
    `type: "string"`, `type: "boolean"`, `type: "number"`, `type: "select"` (needs `options`),
    `type: "project"`. String settings may set `secret: true`.
 - `zcc.storage` — `storage.kv` (`get` / `set` / `delete` / `list`) and
+  HTTP handlers can receive bounded binary `rawBody` (25 MiB cap) and return a `Uint8Array` body.
   `storage.database()` (per-plugin SQLite under `<dataDir>/plugins/<id>/`).
   `database().runScript(sql)`, `prepare(sql)`, `migrate(statements)`, `transaction(fn)`.
 - `zcc.http` — `http.route(method, path, handler)` served at
@@ -110,7 +111,7 @@ this list fails CI):
   threadId? }` and returns `{ id, label, insertText? }[]`. `resolve` returns
   `{ context }` that the host appends as agent-only text at send.
 - `zcc.status` — `status.needsConfiguration(message)`.
-- `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId?, parentThreadId?, title?, model?, permissionMode?, visibility?, environment?, pluginMetadata? })`
+- `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId?, parentThreadId?, title?, model?, reasoningLevel?, serviceTier?, permissionMode?, visibility?, hostId?, environment?, pluginMetadata? })`
   attributes the thread to this plugin. Hidden workers use `visibility: "hidden"`.
   `pluginMetadata` seeds this plugin's per-thread namespace at spawn.
   `sdk.threads.getPluginMetadata({ threadId, pluginId? })` and
@@ -122,7 +123,12 @@ this list fails CI):
   unchanged). Forks inherit nothing. Metadata never appears on ordinary thread GET.
   `sdk.threads.output` / `stop` / `defaultExecutionOptions` take `{ threadId }`.
   `sdk.threads.archive` / `fork` / `unarchive` take `{ threadId }`.
-  `sdk.environments.get({ environmentId })` and `sdk.files.read({ hostId, path, rootPath })`
+  `sdk.system.defaultHost()` returns the primary machine id or null.
+  `sdk.environments.pullRequest({ environmentId })` reads a thread environment's PR (or an explicit unavailable reason).
+  `sdk.providers.models({ providerId, hostId?, environmentId? })` discovers models on the selected machine.
+  Spawn `environment` accepts `unmanaged`, `personal`, `worktree` (optional `baseBranch`), or `reuse` with `environmentId`.
+  `sdk.files.write({ hostId?, path, rootPath?, content, contentEncoding?, createParents? })` uses the host file boundary.
+  `sdk.environments.get({ environmentId })` and `sdk.files.read({ hostId?, path, rootPath? })`
   confine file reads to a workspace root. `sdk.inbox.push({ projectId, comments })`
   appends to the product inbox after the host confines `projectId` to a
   registered project. `sdk.projects.list()` returns `{ id, name, path? }[]`.
@@ -230,7 +236,7 @@ runs a headless same-origin script with an `AbortSignal` on unload.
   from `sidebarFooterAction` or `commandPaletteAction` via `toPluginPanel`.
 - `settingsSection` — `id`, `title`, `description`, `component`. Props: `pluginId`.
 - `homepageSection` — `id`, `title`, `component`. Props: `pluginId`, `projectId`.
-- `projectTab` — `id`, `label`, `icon`, `order`, `global`, `component`.
+- `projectTab` — `id`, `label`, `icon`, `order`, `global`, `component`. A panel with its own toolbar may set `header: 'custom'`; render the component's `headerActions` prop in that toolbar to retain the host's split-pane controls without a duplicate title row.
   Props: `pluginId`, `projectId`.
 - `sidebarFooterAction` — `id`, `title`, `icon`, `run`. `run` receives
   `{ openSettings(), toPluginPanel(path) }`. `openSettings()` opens this plugin’s
@@ -272,7 +278,8 @@ app.slots.projectStatusbarItem({
 - `experimental_newThreadPanelAction` — same registration fields; props
   `pluginId`, `projectId`, `params`.
 - `experimental_threadList` — `id`, `title`, `description`, `component`.
-  Exclusive replacement of the Agents list. Props: `pluginId`,
+  Exclusive replacement of the thread portion of the global and project
+  sidebars. Projects and CLI Agents remain host-owned. Props: `pluginId`,
   `activeThreadId`, `activeProjectId`, `isCompactViewport`, `onNavigate`,
   `searchQuery`, `experimental_Original`.
 - `experimental_threadHeaderAction` — `id`, `title`, `component`. Props:
@@ -329,6 +336,23 @@ Three ways a plugin teaches an agent:
 - Runtime `zcc.agents.contributeSkills(rootPaths)`.
 - Generated `plugin-commands` from `zcc.cli.register`.
 
+## Thread list hooks
+
+`experimental_useSidebarThreads()` subscribes to the live visible thread roster
+and Project names. Threads include status, pin order, unread sequences, branch,
+and pending-interaction state. Scope and filter this data using the slot's
+`activeProjectId` and `searchQuery`.
+
+`experimental_useSidebarThreadActions()` exposes `open`, `openNewThread`,
+`setPinned`, `setRead`, `rename`, `archive`, `stop`, and `closeFollowup`.
+Mutations return promises and go through the authorized product API. Handle
+rejections in the plugin UI. Archive and close preserve the host's confirmation
+and split-pane cleanup behavior.
+
+`experimental_useSidebarThreadSplit(threadId)` supplies `splitProps` (spread on
+the row), `isAvailable`, `openInSplit`, and `consumeClick`. Check `consumeClick`
+before navigation so a completed drag does not also open the row.
+
 ## Closed loop
 
 After install, a **new** thread's catalog includes `plugin-commands` listing
@@ -367,3 +391,35 @@ Live loop after `zcc plugin install .` (the plugin is already live):
 - Backend-only edit → `zcc plugin reload <id>` (`zcc plugin dev` optional)
 - UI (`zcc.app`) edit → `zcc plugin dev`, or `zcc plugin build` then `reload`
 - Compile check → `zcc plugin build` (no running app)
+
+### Verify directly in ZCC
+
+Read the scaffold's `AGENTS.md` and `LIVE_TEST.md`. Complete this loop before
+claiming a UI plugin works:
+
+1. Check `zcc status --json`. Keep `ZCC_SERVER_URL` and `ZCC_DATA_DIR` on the
+   same instance: normally `http://127.0.0.1:8780` + `~/.zcc`; dev uses
+   `http://127.0.0.1:8781` + `~/.zcc-dev`.
+2. Run `zcc plugin install .` from the source directory. Path installs compile
+   the frontend before installation. After edits, use `zcc plugin dev --once`.
+   The install/reload authoring commands are available to authenticated agents;
+   preserve the session credentials the app supplied.
+3. Use the available computer-use tool to open the plugin in the **running ZCC**
+   (for example, `cua.getApp("Zana")`). Exercise the actual slot: sidebar panel,
+   project tab, Settings, or thread action. Inspect the rendered content and
+   layout, perform the main action, and check the visible result.
+4. For the todo starter, add and toggle a uniquely named todo, then run
+   `zcc plugin run <id> list` and verify the CLI agrees with the UI.
+5. Make a visible source edit and reload. Observe the already-open panel update
+   without restarting ZCC; verify stored data survives. Inspect errors with
+   `zcc plugin logs <id> -n 50`. Remove only disposable probes/test data you made.
+
+A successful rebuild and backend health check do **not** establish that the UI
+mounted or its actions worked. Report the commands and observed behavior; if UI
+control is unavailable, say which check remains unverified. Headless plugins
+should exercise their real CLI/RPC and reload behavior instead.
+
+If `plugin new` reports an npm failure, repair dependencies with
+`npm install --include=dev` before running unit tests. The packaged CLI includes
+its build engine and SDK app facade; do not work around missing build tools by
+editing the installed app or its plugin registry.

@@ -431,6 +431,8 @@ const api: CcApi = {
     install: async () => ({ results: [] })
   },
   threads: {
+    history: async () => ({ rows: [] }),
+    unarchive: async () => { throw new Error("threads require the product server"); },
     create: async () => ({
       ok: false as const,
       code: 'desktop-use-terminals',
@@ -445,11 +447,13 @@ const api: CcApi = {
     get: async () => ({ thread: {} }),
     send: async () => ({ ok: false }),
     stop: async () => ({ ok: false }),
+    implementPlan: async () => ({ ok: false }),
     cancelPlan: async () => ({ ok: false }),
     plan: async () => ({ ok: false }),
     updatePlan: async () => ({ ok: false }),
     addPlanTask: async () => ({ ok: false }),
     flushNextTurn: async () => ({ ok: false }),
+    sendNextTurn: async () => ({ ok: false }),
     nextTurn: async () => ({ items: [] }),
     compact: async () => ({ ok: false }),
     promptHistory: async () => ({ entries: [] }),
@@ -689,6 +693,7 @@ const api: CcApi = {
     listSessions: (projectId) => ipcRenderer.invoke(IPC.opencode.listSessions, projectId)
   },
   history: {
+    transcript: (snapshotId, historyId) => ipcRenderer.invoke(IPC.history.transcript, snapshotId, historyId),
     start: (input) => ipcRenderer.invoke(IPC.history.start, input),
     refresh: (snapshotId) => ipcRenderer.invoke(IPC.history.refresh, snapshotId),
     page: (snapshotId, opaquePageCursor) => ipcRenderer.invoke(IPC.history.page, snapshotId, opaquePageCursor),

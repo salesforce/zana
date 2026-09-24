@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { conversationThreadOutput, emitPluginThreadEvent } from './thread-events.js';
+import { conversationThreadOutput, emitPluginThreadEvent, emitPluginThreadStatus } from './thread-events.js';
 import type { ProductHttpContext } from '../http/product-context.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({
@@ -17,6 +17,14 @@ vi.mock('@zana-ai/zcc-db', () => ({
 }));
 
 describe('emitPluginThreadEvent', () => {
+  it('forwards root status transitions and ignores intermediate states', () => {
+    const emitThreadEvent = vi.fn().mockResolvedValue(undefined);
+    const ctx = { plugins: { emitThreadEvent } } as unknown as ProductHttpContext;
+    for (const status of ['active', 'idle', 'error', 'pending', 'starting', 'stopping'] as const) {
+      emitPluginThreadStatus(ctx, { id: 'thread', projectId: 'project', status });
+    }
+    expect(emitThreadEvent.mock.calls.map(([event]) => event.name)).toEqual(['thread.active', 'thread.idle', 'thread.failed']);
+  });
   it('no-ops when plugins are not wired', () => {
     expect(() =>
       emitPluginThreadEvent({} as ProductHttpContext, {

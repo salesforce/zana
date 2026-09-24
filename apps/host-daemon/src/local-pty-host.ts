@@ -23,7 +23,7 @@ export function createLocalPtyTerminalManager(emit: (event: TerminalHostEvent) =
         onExit: (listener) => { handle.onExit((event) => listener({ exitCode: event.exitCode, signal: event.signal })); },
         write: (data) => handle.write(data),
         resize: (cols, rows) => handle.resize(cols, rows),
-        kill: () => handle.kill()
+        kill: (signal?: string) => handle.kill(signal)
       };
     },
     emit

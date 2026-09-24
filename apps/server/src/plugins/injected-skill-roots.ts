@@ -4,17 +4,22 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { generatedSkillsRootPath } from './plugin-commands-skill.js';
 import { tryResolveContainedPath } from './plugin-skills.js';
 
 export interface InjectedSkillRootManifest {
   directoryRoots: string[];
+  /** Main-authorized builtin skill targets for the filtered staging directory. */
+  builtinSkillTargets?: string[];
 }
 
 /**
@@ -122,10 +127,22 @@ export function writeInjectedSkillRootManifest(
 ): void {
   mkdirSync(dataDir, { recursive: true });
   const unique = [...new Set(directoryRoots.filter((root) => existsSync(root)))].sort();
-  writeFileSync(
-    injectedSkillRootsPath(dataDir),
-    `${JSON.stringify({ directoryRoots: unique } satisfies InjectedSkillRootManifest)}\n`
-  );
+  const builtinSkillTargets: string[] = [];
+  const staging = injectedBuiltinSkillsStagingPath(dataDir);
+  if (unique.includes(staging)) {
+    const builtin = builtinSkillsRootPath();
+    for (const entry of readdirSync(staging, { withFileTypes: true })) {
+      if (!entry.isSymbolicLink()) continue;
+      const target = tryResolveContainedPath(builtin, entry.name);
+      if (target && realpathSync(join(staging, entry.name)) === target) builtinSkillTargets.push(target);
+    }
+  }
+  const destination = injectedSkillRootsPath(dataDir);
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify({ directoryRoots: unique, builtinSkillTargets } satisfies InjectedSkillRootManifest)}\n`, { mode: 0o600 });
+    renameSync(temporary, destination);
+  } finally { rmSync(temporary, { force: true }); }
 }
 
 export function readInjectedSkillDirectoryRoots(dataDir: string): string[] {

@@ -86,6 +86,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         bullets: [
           'Receives `pluginId` and `projectId`.',
           'The project topbar labels the tab; fill the slot, not the list pane.',
+          '`header: "custom"` removes that title row; render the supplied `headerActions` in your toolbar to retain split-pane controls.',
           '`global: false` hides the global sidebar entry.'
         ],
         apiSymbols: ['PluginAppSlots.projectTab', 'PluginProjectTabRegistration'],
@@ -330,7 +331,12 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         title: 'Background',
         tagline: 'Services and cron.',
         summary: 'Long-running work and minute-aligned schedules.',
-        bullets: ['Named schedules persist last-fired minute.'],
+        bullets: [
+          'Named schedules persist last-fired minute.',
+          'Product SDK: spawn threads with host, environment and service tier; discover provider models on the selected host.',
+          'Use sdk.system.defaultHost, confined sdk.files.read/write, and sdk.environments.pullRequest for delegated work.',
+          'HTTP routes preserve request headers and rawBody up to 25 MiB; binary responses use Uint8Array.'
+        ],
         apiSymbols: ['ZccPluginApi.background.service', 'ZccPluginApi.background.schedule']
       },
       {

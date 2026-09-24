@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { BRIDGE_JSON_RPC_ERRORS } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 import { experimental_killAllChildrenForTests, handleLine } from "./bridge.js";
 
@@ -76,4 +77,18 @@ it("replaces the cached app-server after a model catalog failure", async () => {
       },
     ],
   });
+});
+
+it("rejects a model catalog request with the missing-executable code when codex cannot be spawned", async () => {
+  vi.stubEnv(
+    "BB_CODEX_BRIDGE_APP_SERVER_COMMAND",
+    join(tmpdir(), "bb-codex-does-not-exist"),
+  );
+  vi.stubEnv("BB_CODEX_BRIDGE_APP_SERVER_ARGS", "[]");
+
+  harness.sendRequest(1, "model/list", {});
+  const response = await harness.waitForResponse(1);
+
+  expect(response.error?.code).toBe(BRIDGE_JSON_RPC_ERRORS.MISSING_EXECUTABLE);
+  expect(response.error?.message).toContain("could not find the Codex CLI");
 });

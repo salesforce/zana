@@ -1,3 +1,6 @@
+import { assertPlanRevision, planImplementationMode, planImplementationPrompt } from '../services/threads/conversation-plan-implementation.js';
+import { readPluginHttpBody, PluginHttpBodyTooLarge } from './plugin-http-body.js';
+import { conversationHistory } from '../services/threads/conversation-history.js';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
@@ -38,6 +41,7 @@ import {
   archiveConversation,
   cancelConversationPlan,
   flushHeldConversationSends,
+  sendHeldConversationMessage,
   forkConversation,
   resumeConversation,
   sendConversationTurn,
@@ -82,6 +86,7 @@ import { toRemoteStartPathHost } from '../services/hosts/host-public.js';
 import {
   buildThreadExecutionOptions,
   classifyModelListError,
+  modelListErrorDetail,
   type ThreadModelLoadErrorCode
 } from '../services/threads/thread-execution-options.js';
 import { archiveThread, destroyEnvironment, destroyEnvironmentIfIdle } from '../services/environments/environment-cleanup.js';
@@ -122,6 +127,7 @@ import { toPublicMarketplaceCatalog } from '../plugins/marketplace-store.js';
 import { presentAppConfig } from './public-app-url.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
+import { PROMPT_ATTACHMENT_MAX_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   ProjectAttachmentError,
   readAttachment,
@@ -388,6 +394,7 @@ export async function handleProductHttp(
   const path = requestUrl.pathname;
   const isVoiceTranscription = path === '/api/v1/system/voice-transcription' && method === 'POST';
   const isProjectAttachmentUpload = Boolean(routeParams(path, '/api/v1/projects/:id/attachments')) && method === 'POST';
+  const isPluginHttp = /^\/api\/v1\/plugins\/[^/]+\/http\//u.test(path);
   const problem = browserRequestProblem(
     {
       req: {
@@ -397,7 +404,7 @@ export async function handleProductHttp(
       }
     },
     { config: ctx.origins },
-    { requireJsonForMutation: request.method !== 'OPTIONS' && !isVoiceTranscription && !isProjectAttachmentUpload }
+    { requireJsonForMutation: request.method !== 'OPTIONS' && !isVoiceTranscription && !isProjectAttachmentUpload && !isPluginHttp }
   );
   if (problem) {
     sendJson(response, problem.status, { error: problem.error });
@@ -1096,6 +1103,17 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/threads/history' && method === 'GET') {
+      const archived = requestUrl.searchParams.get('archived');
+      sendJson(response, 200, conversationHistory(ctx.db, {
+        projectId: requestUrl.searchParams.get('projectId') ?? undefined,
+        query: requestUrl.searchParams.get('q') ?? undefined,
+        archived: archived === 'archived' || archived === 'active' ? archived : 'all',
+        offset: Number(requestUrl.searchParams.get('offset') ?? 0)
+      }, listThreadProviders()));
+      return true;
+    }
+
     if (path === '/api/v1/threads/search' && method === 'GET') {
       const q = requestUrl.searchParams.get('q') ?? requestUrl.searchParams.get('query') ?? '';
       const projectId = requestUrl.searchParams.get('projectId');
@@ -1613,6 +1631,23 @@ export async function handleProductHttp(
       return true;
     }
 
+    const threadPlanImplement = routeParams(path, '/api/v1/threads/:id/plan/implement');
+    if (threadPlanImplement && method === 'POST') {
+      try {
+        const body = (await readJsonBody(request)) as { revision?: unknown; acpMode?: unknown };
+        const revision = typeof body.revision === 'number' ? body.revision : 0;
+        const markdown = assertPlanRevision(ctx, threadPlanImplement.id, revision);
+        const thread = await sendConversationTurn(ctx, threadPlanImplement.id,
+          planImplementationPrompt(markdown, revision), 'start',
+          { acpMode: planImplementationMode(body.acpMode, readLastThreadExecution(ctx, threadPlanImplement.id).acpMode) }, { drain: true, planRevision: revision });
+        sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) sendJson(response, error.status, { error: error.code, message: error.message });
+        else sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     const threadPlanCancel = routeParams(path, '/api/v1/threads/:id/plan/cancel');
     if (threadPlanCancel && method === 'POST') {
       try {
@@ -1714,6 +1749,24 @@ export async function handleProductHttp(
           return true;
         }
         sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const nextTurnSend = routeParams(path, '/api/v1/threads/:id/next-turn/:itemId/send');
+    if (nextTurnSend && method === 'POST') {
+      try {
+        await sendHeldConversationMessage(ctx, nextTurnSend.id, nextTurnSend.itemId);
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+        } else {
+          sendHostFailure(response, error);
+        }
+      } finally {
+        const thread = getConversationThread(ctx.db, nextTurnSend.id);
+        if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
       }
       return true;
     }
@@ -1912,6 +1965,7 @@ export async function handleProductHttp(
         mode?: unknown;
         model?: unknown;
         reasoningLevel?: unknown;
+        serviceTier?: unknown;
         acpMode?: unknown;
         permissionMode?: unknown;
       };
@@ -1925,6 +1979,7 @@ export async function handleProductHttp(
             ? body.permissionMode : undefined,
           model: typeof body.model === 'string' ? body.model : undefined,
           reasoningLevel: parseReasoningLevel(body.reasoningLevel),
+          serviceTier: body.serviceTier === 'default' || body.serviceTier === 'fast' ? body.serviceTier : undefined,
           acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined
         });
         sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
@@ -1971,6 +2026,7 @@ export async function handleProductHttp(
             : undefined,
           model: typeof body.model === 'string' ? body.model : undefined,
           reasoningLevel: parseReasoningLevel(body.reasoningLevel),
+          serviceTier: body.serviceTier === 'default' || body.serviceTier === 'fast' ? body.serviceTier : undefined,
           acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined,
           parentThreadId: typeof body.parentThreadId === 'string' ? body.parentThreadId : undefined,
           visibility: body.visibility === 'hidden' || body.visibility === 'visible'
@@ -2198,7 +2254,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        const body = await readVoiceBody(request);
+        const body = await readVoiceBody(request, PROMPT_ATTACHMENT_MAX_BYTES + 64 * 1024);
         const form = parseMultipartVoiceForm(body, contentType);
         if (!form.file) {
           sendJson(response, 400, { error: 'invalid_request', message: 'Attachment file is required' });
@@ -2837,11 +2893,12 @@ export async function handleProductHttp(
           query[key] = value;
         });
         let body: unknown = undefined;
+        let rawBody: Uint8Array | undefined;
         if (httpMethod !== 'GET') {
-          try {
-            body = await readJsonBody(request);
-          } catch {
-            body = undefined;
+          try { ({ body, rawBody } = await readPluginHttpBody(request)); }
+          catch (error) {
+            sendJson(response, error instanceof PluginHttpBodyTooLarge ? 413 : 400, { error: error instanceof Error ? error.message : 'invalid plugin request body' });
+            return true;
           }
         }
         try {
@@ -2849,7 +2906,9 @@ export async function handleProductHttp(
             method: httpMethod,
             path: routePath,
             query,
-            body
+            body,
+            ...(rawBody ? { rawBody } : {}),
+            headers: Object.fromEntries(Object.entries(request.headers).flatMap(([key, value]) => typeof value === 'string' ? [[key, value]] : []))
           });
           const status = result.status ?? 200;
           if (result.json !== undefined) {
@@ -3170,6 +3229,7 @@ export async function handleProductHttp(
       }
       let listed: ProviderListModelsResult | null = null;
       let listError: ThreadModelLoadErrorCode | null = null;
+      let listErrorDetail: string | null = null;
       if (providerId) {
         try {
           const hostId = ctx.hostHub.resolveHostId(discoveryHostId);
@@ -3190,9 +3250,10 @@ export async function handleProductHttp(
         } catch (error) {
           listed = null;
           listError = classifyModelListError(error);
+          listErrorDetail = modelListErrorDetail(error);
         }
       }
-      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, extraInstalled, listed, listError }));
+      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, extraInstalled, listed, listError, listErrorDetail }));
       return true;
     }
 

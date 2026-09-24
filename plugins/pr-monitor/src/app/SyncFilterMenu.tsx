@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import type { ModuleHost } from './host.js';
 import type { MonitoredRepo, ConnectionState } from '../../lib/types.js';
+import { useFilterPopover } from './useFilterPopover.js';
 import { portal } from './portal.js';
 
 type RepoRow = MonitoredRepo & { shortHost: string; connection: ConnectionState };
@@ -42,15 +43,10 @@ export function SyncFilterMenu({
   onSelectAll,
   onSync,
 }: Props) {
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const { ref, position } = useFilterPopover(anchorRef, onClose, true);
   const [repos, setRepos] = useState<RepoRow[]>([]);
 
-  useEffect(() => {
-    const el = anchorRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setPos({ top: r.bottom + 4, left: r.right });
-  }, [anchorRef]);
+
 
   useEffect(() => {
     let alive = true;
@@ -67,15 +63,9 @@ export function SyncFilterMenu({
     };
   }, [host]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
-  if (!pos || typeof document === 'undefined') return null;
+
+  if (typeof document === 'undefined') return null;
 
   const allSelected = selectedRepos.length === 0;
 
@@ -90,7 +80,9 @@ export function SyncFilterMenu({
       />
       <div
         className="prm-tile-menu prm-sync-filter"
-        style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translateX(-100%)' }}
+        ref={ref}
+        style={{ position: 'fixed', ...position }}
+        aria-label="Sync & Filter"
         role="menu"
       >
         <div className="prm-sync-filter-header">

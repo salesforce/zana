@@ -9,6 +9,17 @@ import {
 } from './prompt-attachments.js';
 
 describe('prompt attachments', () => {
+  it('rejects oversized images and files before creating an upload', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    for (const type of ['image/png', 'application/pdf']) {
+      const file = new File([], 'huge', { type });
+      Object.defineProperty(file, 'size', { value: 35 * 1024 * 1024 + 1 });
+      await expect(uploadPromptAttachment('p', file)).rejects.toThrow('35MB attachment limit');
+      await expect(uploadPromptAttachment('p', file, vi.fn())).rejects.toThrow('35MB attachment limit');
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

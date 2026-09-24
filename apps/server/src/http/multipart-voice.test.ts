@@ -1,11 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
+import { parseMultipartVoiceForm, readVoiceBody, VOICE_BODY_MAX_BYTES } from './multipart-voice.js';
 
 function formBody(parts: string[], boundary = '----TestBoundary'): Buffer {
   return Buffer.from(parts.join(''), 'utf8');
 }
 
 describe('multipart voice form', () => {
+  it('enforces the caller limit across chunks and retains the default voice limit', async () => {
+    const request = {
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from('abc');
+        yield Buffer.from('def');
+      }
+    } as unknown as import('node:http').IncomingMessage;
+    await expect(readVoiceBody(request, 6)).resolves.toEqual(Buffer.from('abcdef'));
+    await expect(readVoiceBody(request, 5)).rejects.toMatchObject({ status: 413, code: 'too_large' });
+    expect(VOICE_BODY_MAX_BYTES).toBe(25 * 1024 * 1024 + 64 * 1024);
+    const oversized = {
+      async *[Symbol.asyncIterator]() { yield Buffer.alloc(VOICE_BODY_MAX_BYTES + 1); }
+    } as unknown as import('node:http').IncomingMessage;
+    await expect(readVoiceBody(oversized)).rejects.toMatchObject({ status: 413 });
+  });
   it('reads file bytes and an optional prompt', () => {
     const boundary = '----TestBoundary';
     const body = formBody([

@@ -48,6 +48,7 @@ import {
   experimental_assembleCapturedThreadEvents as assembleCapturedThreadEvents,
   experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
+import { BRIDGE_JSON_RPC_ERRORS } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import type { BridgeJsonRpcOutputMessage } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 
 import { BRIDGE_INBOUND_REQUEST_METHODS } from "@zana-ai/zcc-provider-bridge-protocol";
@@ -2554,6 +2555,44 @@ describe("bridge", () => {
     }
   });
 
+  it("answers model/list with the missing-executable code when the Claude CLI is absent", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    queryMock.mockReturnValue({
+      initializationResult: vi
+        .fn()
+        .mockRejectedValue(
+          new Error("Native CLI binary for darwin-arm64 not found at /tmp/cli"),
+        ),
+      close: vi.fn(),
+    });
+
+    try {
+      bridge.sendRequest(1, "model/list", {});
+      const missing = await bridge.waitForResponse(1);
+
+      expect(missing.error?.code).toBe(
+        BRIDGE_JSON_RPC_ERRORS.MISSING_EXECUTABLE,
+      );
+      expect(missing.error?.message).toContain(
+        "could not find the Claude Code CLI",
+      );
+
+      queryMock.mockReturnValue({
+        initializationResult: vi
+          .fn()
+          .mockRejectedValue(new Error("Claude SDK stream closed")),
+        close: vi.fn(),
+      });
+      bridge.sendRequest(2, "model/list", {});
+      const other = await bridge.waitForResponse(2);
+
+      expect(other.error?.code).toBe(BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR);
+      expect(other.error?.message).toBe("Claude SDK stream closed");
+    } finally {
+      bridge.restore();
+    }
+  });
+
   it("returns the bridge-owned Claude model list from the SDK probe", async () => {
     const { binDir, executablePath } = createTempClaudeExecutable();
     const close = vi.fn();
@@ -2611,6 +2650,9 @@ describe("bridge", () => {
         persistSession: false,
       }),
     });
+    const probeOptions = queryMock.mock.calls.at(-1)?.[0]?.options;
+    expect(probeOptions).not.toHaveProperty("allowDangerouslySkipPermissions");
+    expect(probeOptions).not.toHaveProperty("permissionMode");
     expect(close).toHaveBeenCalledOnce();
   });
 

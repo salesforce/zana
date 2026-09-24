@@ -1,13 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readLastThreadExecution } from './thread-last-execution.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({
+  getThreadExecutionState: vi.fn(() => null),
   listConversationThreadEventsWindow: vi.fn()
 }));
 
-import { listConversationThreadEventsWindow } from '@zana-ai/zcc-db';
+import { getThreadExecutionState, listConversationThreadEventsWindow } from '@zana-ai/zcc-db';
+
+beforeEach(() => { vi.mocked(getThreadExecutionState).mockReturnValue(null); });
 
 describe('readLastThreadExecution', () => {
+  it.each(['plan', 'agent'])('reconciles native Plan against the current %s mode after cancellation', requestedMode => {
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([{ payload: { type: 'client/turn/requested', execution: { model: 'chosen', acpMode: 'plan', serviceTier: 'fast' } } }] as never);
+    vi.mocked(getThreadExecutionState).mockReturnValue({ requestedMode } as never);
+    expect(readLastThreadExecution({ db: {} }, 't1')).toMatchObject({ model: 'chosen', serviceTier: 'fast', acpMode: requestedMode === 'plan' ? 'plan' : null });
+  });
+  it('retains the last valid service tier across requests that omit it', () => {
+    const turn = (serviceTier?: unknown) => ({ payload: { type: 'client/turn/requested', execution: { serviceTier } } });
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([turn('fast'), turn('invalid'), turn()] as never);
+    expect(readLastThreadExecution({ db: {} }, 't1').serviceTier).toBe('fast');
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([turn('fast'), turn('default')] as never);
+    expect(readLastThreadExecution({ db: {} }, 't1').serviceTier).toBe('default');
+  });
   it.each(['accept-edits', 'auto', 'full'])('reads the newest valid %s permission and filters the bounded query to turn requests', (permissionMode) => {
     const turn = (execution: unknown) => ({ payload: { type: 'client/turn/requested', execution } });
     vi.mocked(listConversationThreadEventsWindow).mockReturnValue([

@@ -6,8 +6,12 @@ import {
   deleteDeferredThreadMessage,
   deleteDeferredThreadMessagesForThread,
   getConversationThread,
+  getDeferredThreadMessage,
   isThreadQueueAutoSendPaused,
   listDueDeferredThreadMessages,
+  listRetryableDeferredThreadMessages,
+  retryDeferredThreadMessage,
+  postponeDeferredThreadRetry,
   markDeferredThreadMessageDispatching,
   markDeferredThreadMessageFailed,
   pauseDeferredThreadMessagesForThread,
@@ -26,7 +30,7 @@ export interface DeferredSendPayload {
   kind: 'send';
   input: unknown;
   mode: ThreadSendMode;
-  execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+  execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: 'default' | 'fast'; acpMode?: string };
   senderThreadId?: string;
 }
 
@@ -50,7 +54,7 @@ export function deferConversationSend(
     threadId: string;
     input: unknown;
     mode: ThreadSendMode;
-    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: 'default' | 'fast'; acpMode?: string };
     senderThreadId?: string;
     sendAfter?: number | null;
     paused?: boolean;
@@ -113,6 +117,52 @@ function hostOnline(ctx: ProductHttpContext, hostId: string): boolean {
   return ctx.hostHub.connectedHostIds?.().includes(hostId) === true;
 }
 
+/** Retry only failures known to precede acceptance, never an ambiguous timeout/disconnect. */
+export function isRetryableDeferredFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { code, message, delivery } = error as { code?: string; message?: string; delivery?: string };
+  if (error instanceof ThreadCreateError) return ['already_active', 'host_unavailable', 'awaiting_user_interaction'].includes(code ?? '');
+  if (code === 'host-unavailable' && /\bis not connected\b/.test(message ?? '')) return true;
+  return delivery === 'rejected' && ['already_active', 'already-active', 'busy', 'temporarily_unavailable'].includes(code ?? '');
+}
+
+/** Recheck admission before reviving a failed row; a timer never resumes a paused queue. */
+export async function retryDueConversationSends(
+  ctx: ProductHttpContext,
+  flush: (threadId: string) => Promise<void>,
+  now = Date.now()
+): Promise<void> {
+  const groups = new Map<string, DeferredThreadMessageRow[]>();
+  for (const row of listRetryableDeferredThreadMessages(ctx.db, now)) {
+    const group = groups.get(row.threadId) ?? [];
+    group.push(row);
+    groups.set(row.threadId, group);
+  }
+  for (const [threadId, rows] of groups) {
+    const row = rows[0]!;
+    const thread = getConversationThread(ctx.db, row.threadId);
+    if (!thread) continue;
+    const decision = canDispatch({
+      archived: Boolean(thread.archivedAt),
+      queuePaused: isThreadQueueAutoSendPaused(ctx.db, row.threadId),
+      pendingInteraction: ctx.pendingInteractions.hasPendingThreadInteraction(row.threadId),
+      hostOnline: hostOnline(ctx, thread.hostId),
+      sendAfter: row.sendAfter,
+      liveActiveCount: countActiveConversationTurns(ctx.db),
+      threadActive: thread.status === 'active' || thread.status === 'starting'
+        || findOpenConversationTurn(ctx.db, row.threadId) != null,
+      now
+    });
+    if (decision.kind !== 'allow') {
+      for (const candidate of rows) postponeDeferredThreadRetry(ctx.db, candidate, now);
+      continue;
+    }
+    let claimed = false;
+    for (const candidate of rows) if (retryDeferredThreadMessage(ctx.db, candidate, now)) claimed = true;
+    if (claimed) await flush(threadId);
+  }
+}
+
 function groupedFlushPrefix(rows: DeferredThreadMessageRow[]): DeferredThreadMessageRow[] {
   const first = rows[0];
   if (!first) return [];
@@ -164,10 +214,40 @@ function forceFlushError(reason: string): ThreadCreateError {
   return new ThreadCreateError(409, reason.replace(/-/g, '_'), 'Could not send queued messages');
 }
 
+/** Explicitly send one row without resuming, regrouping, or retrying its neighbors. */
+export async function sendDeferredConversationMessage(
+  ctx: ProductHttpContext,
+  threadId: string,
+  itemId: string,
+  deliver: (payload: DeferredSendPayload) => Promise<void>
+): Promise<void> {
+  const thread = getConversationThread(ctx.db, threadId);
+  if (!thread) throw forceFlushError('unknown-thread');
+  if (thread.archivedAt) throw forceFlushError('thread-archived');
+  if (ctx.pendingInteractions.hasPendingThreadInteraction(threadId)) throw forceFlushError('pending-interaction');
+  if (!hostOnline(ctx, thread.hostId)) throw forceFlushError('host-offline');
+  const row = getDeferredThreadMessage(ctx.db, { id: itemId, threadId });
+  if (!row) throw new ThreadCreateError(404, 'unknown-queued-send', 'queued send was not found');
+  // Auto-drain and repeated clicks compete for the same atomic claim. Never
+  // reclaim an in-flight row: that can submit the same prompt twice.
+  if (!markDeferredThreadMessageDispatching(ctx.db, { id: itemId, threadId, retryFailed: true })) {
+    throw new ThreadCreateError(409, 'queued-send-dispatching', 'This message is already being sent');
+  }
+  try {
+    await deliver(parseDeferredSendPayload(row));
+    deleteDeferredThreadMessage(ctx.db, { id: itemId, threadId });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'dispatch-failed';
+    markDeferredThreadMessageFailed(ctx.db, { id: itemId, threadId, reason, retryable: isRetryableDeferredFailure(error) });
+    throw error instanceof ThreadCreateError ? error : new ThreadCreateError(502, 'dispatch-failed', reason);
+  }
+}
+
 /**
  * Deliver held sends in arrival order once the thread is no longer blocked.
  * Stops at the first delay or failed dispatch. Failed rows stay failed on
- * auto-drain — no auto-retry. Force / Send now requeues them. Manual stop
+ * auto-drain. The separate bounded retry sweep revives safe transient failures.
+ * Force / Send now requeues them. Manual stop
  * leaves rows paused until an explicit resume.
  */
 export async function flushDeferredConversationMessages(
@@ -253,7 +333,7 @@ export async function flushDeferredConversationMessages(
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'dispatch-failed';
       for (const row of claimed) {
-        markDeferredThreadMessageFailed(ctx.db, { id: row.id, threadId, reason });
+        markDeferredThreadMessageFailed(ctx.db, { id: row.id, threadId, reason, retryable: isRetryableDeferredFailure(error) });
       }
       if (options.force) {
         throw error instanceof ThreadCreateError

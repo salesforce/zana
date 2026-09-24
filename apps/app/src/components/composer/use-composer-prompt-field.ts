@@ -5,6 +5,7 @@ import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { COMPOSER_COMMANDS_RELOAD_EVENT } from '../../lib/composer-commands-reload.js';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
+import { PROJECT_DRAG_MIME, projectFromDrag } from '../../lib/project-drag.js';
 import {
   composerPromptExtensions,
   MARKDOWN_IN_PROMPT_DEFAULT,
@@ -230,7 +231,8 @@ export function useComposerPromptField({
       },
       handleDOMEvents: {
         dragover: (_view, event) => {
-          if (!isComposerPathDrag(Array.from(event.dataTransfer?.types ?? []))) return false;
+          const types = Array.from(event.dataTransfer?.types ?? []);
+          if (!types.includes(PROJECT_DRAG_MIME) && !isComposerPathDrag(types)) return false;
           event.preventDefault();
           if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
           if (!dropOverRef.current) {
@@ -368,7 +370,23 @@ export function useComposerPromptField({
 
   const insertDroppedMentions = useCallback((event: DragEvent, atDropPoint: boolean): boolean => {
     const data = event.dataTransfer;
-    if (!editor || !data) return false;
+    if (!editor || !data || disabled) return false;
+    if (Array.from(data.types).includes(PROJECT_DRAG_MIME)) {
+      // Consume stale/unknown project drags too, so their text fallback cannot
+      // turn into a misleading mention or an accidental editor move.
+      event.preventDefault();
+      const project = projectFromDrag(data, projects);
+      if (!project) return true;
+      const chain = editor.chain().focus();
+      if (atDropPoint) {
+        const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        if (typeof pos === 'number') chain.setTextSelection(pos);
+      }
+      return chain.insertContent([
+        { type: 'mention', attrs: mentionAttrsForSuggestion({ kind: 'project', projectId: project.id, name: project.name }) },
+        { type: 'text', text: ' ' }
+      ]).run();
+    }
     const imageFiles = imageFilesFromList(Array.from(data.files));
     const attachedImages = addImageFiles(imageFiles);
     const paths = mentionPathsAfterImageAttach(droppedPathsFromDataTransfer({
@@ -388,7 +406,7 @@ export function useComposerPromptField({
       if (typeof pos === 'number') chain.setTextSelection(pos);
     }
     return chain.insertContent(mentionContentForDroppedPaths(paths)).run();
-  }, [addImageFiles, editor, projectRoot]);
+  }, [addImageFiles, editor, projectRoot, projects, disabled]);
 
   const canAttach = hasDesktopBridge();
   const attachPickedFiles = useCallback(() => {
@@ -411,7 +429,8 @@ export function useComposerPromptField({
 
   const dropHandlers = {
     onDragOver: (event: ReactDragEvent) => {
-      if (!isComposerPathDrag(Array.from(event.dataTransfer.types))) return;
+      const types = Array.from(event.dataTransfer.types);
+      if (disabled || (!types.includes(PROJECT_DRAG_MIME) && !isComposerPathDrag(types))) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'copy';
       if (!dropOverRef.current) {

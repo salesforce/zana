@@ -18,6 +18,7 @@ export interface WorkbenchStatus {
   apiVersion?: string;
   dxProject?: boolean;
   orgs?: PublicListedOrg[];
+  orgsError?: string | null;
   lastDoctor?: DoctorReport | null;
 }
 export interface SalesforceResource {

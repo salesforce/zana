@@ -380,6 +380,10 @@ function translateFakeDelta(
       ];
     }
     case "item.close": {
+      if (delta.item.type === 'planSteps' && turnId) {
+        return [{ type: 'item/completed', threadId, providerThreadId: '', scope: turnScope(turnId),
+          item: { type: 'planSteps', id: delta.key.providerItemId ?? 'plan', status: 'completed', steps: delta.item.steps } }];
+      }
       if (delta.item.type !== "agentMessage" || !turnId) return [];
       const id = delta.key.providerItemId ?? "msg";
       return [

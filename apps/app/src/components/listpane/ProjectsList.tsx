@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   DndContext,
   KeyboardSensor,
-  PointerSensor,
+  TouchSensor,
   closestCenter,
   useSensor,
   useSensors,
@@ -53,6 +53,7 @@ import { copyText } from '../../lib/copy-text.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { railThreadsForProject, threadIsLiveForRail } from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
+import { beginProjectDrag, PROJECT_DRAG_MIME, projectFromDrag } from '../../lib/project-drag.js';
 import { composerProjectLabel, isRemoteWorkspaceProject, isScratchWorkspaceProject } from '../composer-project-default.js';
 import { ProjectDot } from './ProjectDot.js';
 import { resolveIcon } from '../../lib/resolveIcon.js';
@@ -298,10 +299,14 @@ export function ProjectsList({
   } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    // Mouse drags use native DataTransfer so projects can leave the rail and
+    // become composer mentions. Keep touch and keyboard sorting via dnd-kit.
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const suppressClickRef = useRef(false);
+  const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
+  const [projectDropId, setProjectDropId] = useState<string | null>(null);
   const consumeProjectClick = () => {
     if (!suppressClickRef.current) return false;
     suppressClickRef.current = false;
@@ -314,7 +319,7 @@ export function ProjectsList({
     }, POST_DRAG_CLICK_SUPPRESS_MS);
   };
   const onProjectDragStart = ({ activatorEvent }: DragStartEvent) => {
-    suppressClickRef.current = activatorEvent.type === 'pointerdown';
+    suppressClickRef.current = activatorEvent.type === 'touchstart';
   };
 
   // Manual reload of the project list — covers out-of-band edits to
@@ -614,6 +619,27 @@ export function ProjectsList({
         <>
           <div
             className="project-item"
+            style={projectDropId === p.id ? { outline: '1px solid var(--accent)', borderRadius: 6 } : undefined}
+            onDragOver={(event) => {
+              const source = projects.find((project) => project.id === draggedProjectId);
+              if (!sortable || !source || source.id === p.id || isScratchWorkspaceProject(source)
+                || !event.dataTransfer.types.includes(PROJECT_DRAG_MIME)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = 'move';
+              setProjectDropId(p.id);
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProjectDropId(null);
+            }}
+            onDrop={(event) => {
+              if (!event.dataTransfer.types.includes(PROJECT_DRAG_MIME)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setProjectDropId(null);
+              const source = projectFromDrag(event.dataTransfer, projects);
+              if (sortable && source?.id === draggedProjectId) reorderWithinGroup(group, source.id, p.id);
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               setAgentMenu(null);
@@ -706,6 +732,17 @@ export function ProjectsList({
                   <button
                     type="button"
                     className="project-select"
+                    draggable
+                    onDragStart={(event) => {
+                      beginProjectDrag(event.dataTransfer, p);
+                      suppressClickRef.current = true;
+                      setDraggedProjectId(p.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedProjectId(null);
+                      setProjectDropId(null);
+                      releaseProjectClick();
+                    }}
                     aria-label={`Open ${displayName}`}
                     onClick={() => {
                       if (consumeProjectClick()) return;

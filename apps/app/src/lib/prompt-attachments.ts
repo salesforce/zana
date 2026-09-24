@@ -1,3 +1,4 @@
+import { PROMPT_ATTACHMENT_MAX_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
 import { APP_SURFACE_HEADER, fetchWithAppSurface } from './fetch-with-app-surface.js';
 import { getAppSurface } from './app-surface.js';
 
@@ -18,6 +19,9 @@ export async function uploadPromptAttachment(
   file: File,
   onProgress?: (ratio: number) => void
 ): Promise<UploadedPromptAttachment> {
+  if (file.size > PROMPT_ATTACHMENT_MAX_BYTES) {
+    throw new Error(`${file.name} exceeds the ${PROMPT_ATTACHMENT_MAX_BYTES / (1024 * 1024)}MB attachment limit`);
+  }
   const form = new FormData();
   form.set('file', file, file.name);
   if (!onProgress) {

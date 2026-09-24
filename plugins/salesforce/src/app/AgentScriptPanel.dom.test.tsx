@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, within } from '@testing-library/react';
 import { readAgentDraft, writeAgentDraft } from './agent-script-drafts.js';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -66,10 +66,12 @@ describe('AgentScriptPanel', () => {
     rpc.mockImplementation(baseRpc);
     (globalThis as { __ZCC_PLUGIN_HOST__?: unknown }).__ZCC_PLUGIN_HOST__ = {
       callRpc: rpc,
+      useZccNavigate: () => ({ toCompose: vi.fn() }),
       getSettings: async () => ({ values: { agentScriptDialect: 'agentforce' } }),
       setSettings: async () => undefined
     };
     (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__ = {
+      useZccNavigate: () => ({ toCompose: vi.fn() }),
       useSettings: () => ({ values: { agentScriptDialect: 'agentforce', defaultOrg: 'dev' }, isLoading: false })
     };
   });
@@ -81,7 +83,7 @@ describe('AgentScriptPanel', () => {
     delete (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__;
   });
 
-  async function mount(subPath = '', projectId = 'proj-1') {
+  async function mount(subPath = '', projectId = 'proj-1', orgPicker = true) {
     const el = document.createElement('div');
     document.body.appendChild(el);
     const root = createRoot(el);
@@ -92,7 +94,7 @@ describe('AgentScriptPanel', () => {
       }
     });
     await act(async () => {
-      root.render(createElement(AgentScriptPanel, { pluginId: 'salesforce', subPath, projectId }));
+      root.render(createElement(AgentScriptPanel, { pluginId: 'salesforce', subPath, projectId, orgPicker }));
     });
     await act(async () => {
       await Promise.resolve();
@@ -105,14 +107,12 @@ describe('AgentScriptPanel', () => {
     const el = await mount();
     expect(el.querySelector('[data-testid="salesforce-agent-script-panel"]')).toBeTruthy();
     expect(el.querySelector('iframe')?.getAttribute('title')).toBe('Agentforce playground');
-    expect((el.querySelector('[aria-label="Agentforce dialect"]') as HTMLSelectElement | null)?.value).toBe(
-      'agentforce'
-    );
+    expect(el.querySelector('[aria-label="Agentforce dialect"]')).toBeNull();
     expect(el.querySelector('[aria-label="Agentforce file"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="salesforce-agent-script-explorer"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="salesforce-agent-script-file:force-app/bots/QC.agent"]')).toBeTruthy();
     expect(el.querySelector('select[aria-label="Agent Script file"]')).toBeNull();
-    expect(el.querySelector('[aria-label="Agentforce view"]')?.textContent).toContain('Script');
+    expect(el.querySelector('[aria-label="AgentScript tools"]')?.textContent).toContain('File explorer');
     expect(el.querySelector('[data-testid="salesforce-agent-script-save"]')).toBeTruthy();
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.list', { projectId: 'proj-1' });
     expect(rpc.mock.calls.some((call) => call[0] === 'salesforce' && call[1] === 'org')).toBe(true);
@@ -163,9 +163,6 @@ describe('AgentScriptPanel', () => {
       expect.objectContaining({ path: 'force-app/bots/QC.agent', content: 'updated', projectId: 'proj-1' })
     );
     await act(async () => {
-      const dialect = el.querySelector('[aria-label="Agentforce dialect"]') as HTMLSelectElement;
-      dialect.value = 'agentscript';
-      dialect.dispatchEvent(new Event('change', { bubbles: true }));
       const example = [...el.querySelectorAll('.sf-as-tree-btn')].find((button) =>
         button.textContent?.includes('Support concierge')
       ) as HTMLButtonElement | undefined;
@@ -218,14 +215,29 @@ describe('AgentScriptPanel', () => {
     );
   });
 
-  it('switches Script / Graph / Split views', async () => {
-    const el = await mount();
-    const graph = [...el.querySelectorAll('.sf-as-tab')].find((button) => button.textContent === 'Graph') as HTMLButtonElement;
-    expect(graph).toBeTruthy();
-    await act(async () => {
-      graph.click();
-    });
-    expect(graph.getAttribute('aria-pressed')).toBe('true');
+  async function openTool(el: HTMLElement, name: string) {
+    const tab = within(el).queryByRole('tab', { name, exact: true });
+    if (tab) { await act(async () => { tab.click(); }); return; }
+    await act(async () => { within(el).getByRole('button', { name: 'Add side panel tab' }).click(); });
+    await act(async () => { within(el).getByRole('button', { name: new RegExp(`^${name}`) }).click(); });
+  }
+
+  it('opens a graph beside the same editor and can hide and restore the panel', async () => {
+    const el = await mount('', 'proj-1', false);
+    expect(within(el).queryByRole('combobox', { name: 'Salesforce org' })).toBeNull();
+    expect(el.querySelector('.sf-as-header')).toBeNull();
+    expect(el.querySelector('.sf-as-stage .af-document-bar')).toBeTruthy();
+    const editor = el.querySelector('iframe')!;
+    await openTool(el, 'Graph view');
+    expect(within(el).getByRole('tab', { name: 'Graph view' }).getAttribute('aria-selected')).toBe('true');
+    expect(el.querySelector('iframe')).toBe(editor);
+    expect(editor.style.display).not.toBe('none');
+    expect(el.querySelector('iframe[title="AgentScript graph"]')).toBeTruthy();
+    await act(async () => within(el).getAllByRole('button', { name: 'Hide side panel' })[0].click());
+    expect(el.querySelector<HTMLElement>('.af-tools')!.hidden).toBe(true);
+    await act(async () => within(el).getByRole('button', { name: 'Show side panel' }).click());
+    expect(el.querySelector<HTMLElement>('.af-tools')!.hidden).toBe(false);
+    expect(el.querySelector('iframe')).toBe(editor);
   });
 
   it('shows a load error when the playground iframe fails', async () => {
@@ -241,10 +253,31 @@ describe('AgentScriptPanel', () => {
     expect(el.querySelector('iframe')).toBeNull();
   });
 
+  it('follows the shared org selector without losing the editor or applying stale responses', async () => {
+    const el = await mount('', 'proj-1', false);
+    const editor = el.querySelector('iframe');
+    const response = await baseRpc('salesforce', 'org') as { ok: boolean; org: Record<string, unknown> };
+    const pending: Array<(value: unknown) => void> = [];
+    rpc.mockImplementation((id, method, args) => method === 'org'
+      ? new Promise(resolve => pending.push(resolve)) as ReturnType<typeof baseRpc>
+      : baseRpc(id, method, args));
+    const change = (projectId: string | null) => window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId } }));
+    await act(async () => { change('another-project'); });
+    expect(pending).toHaveLength(0);
+    await act(async () => { change('proj-1'); change(null); });
+    expect(pending).toHaveLength(2);
+    await act(async () => pending[1]({ ...response, org: { ...response.org, alias: 'latest' } }));
+    await act(async () => pending[0]({ ...response, org: { ...response.org, alias: 'stale' } }));
+    expect(el.querySelector('[data-testid="salesforce-playground-org"]')?.textContent).toBe('latest (sandbox)');
+    expect(el.querySelector('iframe')).toBe(editor);
+    await act(async () => nodes.pop()!.unmount());
+    change('proj-1');
+    expect(pending).toHaveLength(2);
+  });
+
   it('accepts draft snapshots only from its iframe and preserves labs between workflow views', async () => {
     const el = await mount();
-    const workflow = (name: string) => [...el.querySelectorAll<HTMLButtonElement>('.af-workflows button')].find(button => button.textContent?.endsWith(name))!;
-    await act(async () => workflow('Rehearse').click());
+    await openTool(el, 'Preview');
     const start = el.querySelector<HTMLButtonElement>('.af-primary')!;
     expect(start.disabled).toBe(true);
     const data = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'snapshot', content: 'start_agent:\n', issues: 0 };
@@ -252,15 +285,15 @@ describe('AgentScriptPanel', () => {
     expect(start.disabled).toBe(true);
     await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: el.querySelector('iframe')!.contentWindow, data })); });
     expect(start.disabled).toBe(false);
-    await act(async () => workflow('Test').click());
-    const lab = el.querySelector<HTMLElement>('[data-testid="agentforce-lab"]:not([hidden])')!;
+    await openTool(el, 'Tests');
+    const lab = within(el).getByRole('tabpanel', { name: 'Tests' }).querySelector<HTMLElement>('[data-testid="agentforce-lab"]')!;
     await act(async () => { [...lab.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Missing details')!.click(); });
     const persona = lab.querySelector<HTMLTextAreaElement>('textarea')!.value;
     expect(persona).toContain('distracted');
-    await act(async () => workflow('Build').click());
-    expect([...el.querySelectorAll<HTMLElement>('[data-testid="agentforce-lab"]')].every(node => node.hidden)).toBe(true);
-    await act(async () => workflow('Test').click());
-    expect(lab.hidden).toBe(false);
+    await openTool(el, 'File explorer');
+    expect(lab.closest<HTMLElement>('[role=tabpanel]')!.hidden).toBe(true);
+    await openTool(el, 'Tests');
+    expect(lab.closest<HTMLElement>('[role=tabpanel]')!.hidden).toBe(false);
     expect(lab.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe(persona);
     expect(el.querySelectorAll('iframe')).toHaveLength(1);
   });
@@ -272,8 +305,9 @@ describe('AgentScriptPanel', () => {
     const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
     const dispatch = async (data: Record<string, unknown>) => act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source: frame.contentWindow, data: { source: PLAYGROUND_BRIDGE_SOURCE, ...data } })); });
     await dispatch({ type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    await openTool(el, 'Actions');
     await act(async () => el.querySelector<HTMLButtonElement>('[aria-label="Inspect lookup in start_agent.orders"]')!.click());
-    expect(frame.style.display).toBe('none');
+    expect(frame.style.display).toBe('');
     expect(el.querySelector('[aria-label="Action lookup"]')).toBeTruthy();
     await act(async () => [...el.querySelectorAll<HTMLButtonElement>('.af-action-nav button')].find(b => b.textContent === 'Used by')!.click());
     await act(async () => [...el.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('Go to action definition'))!.click());

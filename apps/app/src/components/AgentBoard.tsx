@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Kanban, KanbanColumn } from '@zana-ai/zcc-ui/kanban';
 import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, Calendar, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
@@ -15,6 +15,8 @@ import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { shortRunId } from '../lib/executionIdentity.js';
+import { boardDropAction, boardItemKey } from '../lib/agent-board-moves.js';
+import { agentBoardMoves, useAgentBoardMoves } from '../stores/agent-board-moves.js';
 import {
   agentCardRuntimeLabel,
   agentFleetItem,
@@ -34,10 +36,9 @@ import {
  * owns the lane definitions, the live-timer tick, and the card/lane rendering
  * (pulse/sweep on working, red pulse on blocked).
  *
- * Unlike a classic Kanban, cards aren't dragged between lanes — the lane is
- * decided by the agent's own live {@link AgentState}, so cards flow left→right
- * on their own as the agent works / blocks / idles / finishes. The board
- * itself pans like a canvas (drag empty space, or two-finger scroll).
+ * Lanes follow live status. Dropping an active card into Idle interrupts it;
+ * dropping a live card into Done stops it and schedules its close in one minute.
+ * Other moves do nothing. Drag empty space or two-finger scroll to pan.
  */
 
 export interface AgentCard {
@@ -739,6 +740,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
   const [controllingExecutionId, setControllingExecutionId] = useState<string | null>(null);
   const [executionMenu, setExecutionMenu] = useState<{ card: AgentCard; execution: ExecutionBoardProjection; x: number; y: number } | null>(null);
   const [laneMenu, setLaneMenu] = useState<{ x: number; y: number; agents: AgentCard[] } | null>(null);
+  const { done: pendingDone, busy: moving } = useAgentBoardMoves();
+  const dragging = useRef<string | null>(null);
+  const [dropLane, setDropLane] = useState<LaneKey | null>(null);
 
   useEffect(() => {
     if (!executionMenu) return;
@@ -810,7 +814,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     () =>
       visibleAgentLanes(includeScheduled).map((lane) => {
         const laneCards = boardCards.filter((item) =>
-          fleetMatchesLane(item, lane.key, (card) => lane.match(card, sensitivity))
+          pendingDone[boardItemKey(item)] !== undefined
+            ? lane.key === 'done'
+            : fleetMatchesLane(item, lane.key, (card) => lane.match(card, sensitivity))
         );
         // In the Idle lane, order most-recent first — the agent that just
         // settled leads, so the latest is easiest to find. Cards missing a
@@ -835,7 +841,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
         }
         return { lane, cards: laneCards };
       }),
-    [boardCards, sensitivity, includeScheduled]
+    [boardCards, sensitivity, includeScheduled, pendingDone]
   );
 
   const lanes = sortedLanes.map(({ lane, cards: laneCards }) => {
@@ -848,13 +854,50 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
         ...lane,
         cards: laneCards.filter(
           (item) =>
-            item.kind === 'agent' &&
-            (item.card.isSyntheticExecutionHost || isRecentlyFinished(item.card.session, now))
+            pendingDone[boardItemKey(item)] !== undefined || (item.kind === 'agent' &&
+            (item.card.isSyntheticExecutionHost || isRecentlyFinished(item.card.session, now)))
         )
       };
     }
     return { ...lane, cards: laneCards };
   });
+
+  const endDrag = () => {
+    dragging.current = null;
+    setDropLane(null);
+  };
+  const dragProps = (item: FleetItem, lane: LaneKey) => ({
+    draggable: boardDropAction(item, lane, 'done') !== null && !moving.has(boardItemKey(item)),
+    onDragStart: (event: DragEvent<HTMLButtonElement>) => {
+      if (!boardDropAction(item, lane, 'done') || moving.has(boardItemKey(item))) {
+        event.preventDefault();
+        return;
+      }
+      event.stopPropagation();
+      dragging.current = boardItemKey(item);
+      event.dataTransfer.setData('application/x-zcc-agent-card', dragging.current);
+      event.dataTransfer.effectAllowed = 'move';
+      setMenu(null);
+      setThreadMenu(null);
+    },
+    onDragEnd: endDrag
+  });
+  // Resolve from the current lanes, not a stale drag-start status or external
+  // dataTransfer payload. An agent may finish while the pointer is moving.
+  const dropTarget = (target: LaneKey) => {
+    for (const lane of lanes) {
+      const item = lane.cards.find((candidate) => boardItemKey(candidate) === dragging.current);
+      if (item && !moving.has(boardItemKey(item)) && boardDropAction(item, lane.key, target)) {
+        return { item, from: lane.key };
+      }
+    }
+    return null;
+  };
+  const closingBadge = (item: FleetItem) => {
+    const deadline = pendingDone[boardItemKey(item)];
+    if (deadline === undefined) return null;
+    return <span className="agent-card-badge"><Clock size={10} aria-hidden="true" />Closes in {Math.max(0, Math.ceil((deadline - now) / 1000))}s</span>;
+  };
 
   const renderCard = (c: AgentCard, laneKey: LaneKey, grouped = false) => {
     const { session: t } = c;
@@ -924,6 +967,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     const cardButton = (
       <button
         key={t.id}
+        {...dragProps(agentFleetItem(c), laneKey)}
         className={`agent-card lane-${laneKey} ${active ? 'active' : ''} ${bad ? 'bad' : ''} ${
           cohort ? `has-cohort ${isOrchestrator ? 'cohort-orch' : 'cohort-worker'}` : ''
         } ${execution ? 'has-execution' : ''}`}
@@ -964,6 +1008,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           {!exited && <span className={`tab-agent-dot agent-${c.state}`} aria-hidden="true" />}
           {!c.isSyntheticExecutionHost && <FavoriteStar session={t} className="agent-card-fav" />}
         </span>
+        {closingBadge(agentFleetItem(c))}
         {triageBadge && (
           // Resolution badge with the model's one-line gloss as the tooltip.
           // class carries the resolution so CSS can color it (waiting=amber,
@@ -1164,6 +1209,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
         type="button"
         className={`agent-card is-thread lane-${laneKey} ${item.id === activeId ? 'active' : ''}`}
         data-kind="thread"
+        {...dragProps(item, laneKey)}
         onClick={() => onInspect(item)}
         onContextMenu={(e) => {
           setMenu(null);
@@ -1187,6 +1233,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
           <FavoriteStar session={{ id: item.thread.id, kind: 'thread' }} className="agent-card-fav" />
         </span>
+        {closingBadge(item)}
         <span className="agent-card-meta">
           {/* Grouped under a project header: the project is already named above —
               show runtime/harness instead of repeating the project slug. */}
@@ -1265,17 +1312,37 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
 
   return (
     <>
-      <Kanban label="Agents board. Drag empty space to pan; two-finger scroll also pans.">
+      <Kanban label="Agents board. Drag agents to Idle to stop, or Done to close after one minute. Drag empty space to pan; two-finger scroll also pans.">
         {lanes.map((lane) => {
           const Icon = lane.icon;
           return (
             <KanbanColumn
               key={lane.key}
               columnId={lane.key}
-              className={`agents-lane lane-${lane.key}`}
+              className={`agents-lane lane-${lane.key}${dropLane === lane.key ? ' is-drop-target' : ''}`}
               label={lane.label}
               count={lane.cards.length}
               icon={<Icon size={13} aria-hidden="true" />}
+              onDragOver={(event) => {
+                if (!dropTarget(lane.key)) {
+                  event.dataTransfer.dropEffect = 'none';
+                  setDropLane(null);
+                  return;
+                }
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                setDropLane(lane.key);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropLane(null);
+              }}
+              onDrop={(event) => {
+                const target = dropTarget(lane.key);
+                endDrag();
+                if (!target) return;
+                event.preventDefault();
+                void agentBoardMoves.move(target.item, target.from, lane.key);
+              }}
               onContextMenu={(e: MouseEvent<HTMLElement>) => {
                 e.preventDefault();
                 setMenu(null);

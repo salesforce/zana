@@ -143,6 +143,7 @@ import {
   copyConversationThreadEvents,
   createConversationThread,
   createDeferredThreadMessage,
+  countActiveConversationTurns,
   deleteDeferredThreadMessagesForThread,
   getConversationThread,
   getEnvironment,
@@ -196,6 +197,7 @@ function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHt
 const providerHandles: Array<{ unregister(): void }> = [];
 
 beforeEach(() => {
+  vi.mocked(applyConversationThreadLifecycleEvent).mockClear();
   providerHandles.push(
     registerThreadProvider('test', {
       id: 'claude-code',
@@ -223,12 +225,36 @@ beforeEach(() => {
   vi.mocked(getHost).mockReturnValue({ id: 'host-1', maxPermissionMode: 'full' } as never);
   vi.mocked(setConversationProviderThreadId).mockReset();
   vi.mocked(createDeferredThreadMessage).mockClear();
+  vi.mocked(countActiveConversationTurns).mockReturnValue(0);
   vi.mocked(pauseDeferredThreadMessagesForThread).mockClear();
   vi.mocked(deleteDeferredThreadMessagesForThread).mockClear();
 });
 
 afterEach(() => {
   for (const handle of providerHandles.splice(0)) handle.unregister();
+});
+
+describe('durable queue acknowledgment', () => {
+  it('waits for acceptance and propagates host rejection to the queue owner', async () => {
+    let reject!: (error: Error) => void;
+    const rpc = vi.fn(() => new Promise((_, fail) => { reject = fail; }));
+    let settled = false;
+    const send = sendConversationTurn(ctx(rpc), thread.id, 'queued', 'queue-if-active', undefined, { drain: true });
+    const observed = send.then(() => { settled = true; }, error => { settled = true; return error; });
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalled());
+    expect(settled).toBe(false);
+    const failure = Object.assign(new Error('busy'), { code: 'busy', delivery: 'rejected' });
+    reject(failure);
+    expect(await observed).toBe(failure);
+    expect(createDeferredThreadMessage).not.toHaveBeenCalled();
+  });
+  it('awaits unknown-session recovery instead of dropping a rejected queued message', async () => {
+    const rpc = vi.fn().mockRejectedValueOnce(Object.assign(new Error('unknown'), { code: 'unknown_thread' }))
+      .mockResolvedValueOnce({ providerThreadId: 'prov-1' }).mockRejectedValueOnce(new Error('resume send failed'));
+    await expect(sendConversationTurn(ctx(rpc), thread.id, 'queued', 'queue-if-active', undefined, { drain: true }))
+      .rejects.toThrow('resume send failed');
+    expect(rpc).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('thread permission persistence', () => {
@@ -271,6 +297,22 @@ describe('thread permission persistence', () => {
 });
 
 describe('conversation lifecycle', () => {
+  it.each([8, 20])('starts an idle follow-up with %i unrelated active threads', async (activeCount) => {
+    vi.mocked(countActiveConversationTurns).mockReturnValue(activeCount);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, 'did you test it?', 'queue-if-active');
+
+    expect(createDeferredThreadMessage).not.toHaveBeenCalled();
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        mode: 'start',
+        input: [{ type: 'text', text: 'did you test it?', mentions: [] }]
+      })
+    }));
+  });
+
   it('sends a follow-up turn through turn.submit', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }], 'queue-if-active');
@@ -336,6 +378,55 @@ describe('conversation lifecycle', () => {
         ])
       })
     }));
+  });
+
+  it.each(['stop', 'archive'])('%s cancels a send still resolving a plugin mention', async action => {
+    let resolve!: (value: { ok: true; context: string }) => void;
+    const resolveMention = vi.fn(() => new Promise<{ ok: true; context: string }>(done => { resolve = done; }));
+    const rpc = vi.fn(async (_input: { command: { type: string } }) => ({ threadId: thread.id }));
+    const context = { ...ctx(rpc), plugins: { resolveMention, emitThreadEvent: vi.fn(async () => {}) } } as unknown as ProductHttpContext;
+    const pending = sendConversationTurn(context, thread.id, [{ type: 'text', text: '@slow', mentions: [{
+      start: 0, end: 5, resource: { kind: 'plugin', pluginId: 'test', itemId: 'slow', label: 'slow' }
+    }] }]);
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'send_cancelled' });
+    await vi.waitFor(() => expect(resolveMention).toHaveBeenCalled());
+    if (action === 'stop') await stopConversation(context, thread.id);
+    else await archiveConversation(context, thread.id, { skipEnvironmentCleanup: true });
+    resolve({ ok: true, context: 'late context' });
+    await rejected;
+    expect(rpc.mock.calls.some(([call]) => (call as { command: { type: string } }).command.type === 'turn.submit')).toBe(false);
+  });
+
+  it('rechecks queue-if-active admission after async mention resolution', async () => {
+    let resolve!: (value: { ok: true; context: string }) => void;
+    const resolveMention = vi.fn(() => new Promise<{ ok: true; context: string }>(done => { resolve = done; }));
+    const rpc = vi.fn(async () => ({}));
+    const context = { ...ctx(rpc), plugins: { resolveMention, emitThreadEvent: vi.fn(async () => {}) } } as unknown as ProductHttpContext;
+    const pending = sendConversationTurn(context, thread.id, [{ type: 'text', text: '@slow', mentions: [{
+      start: 0, end: 5, resource: { kind: 'plugin', pluginId: 'test', itemId: 'slow', label: 'slow' }
+    }] }], 'queue-if-active');
+    vi.mocked(upsertThreadExecutionState).mockClear();
+    await vi.waitFor(() => expect(resolveMention).toHaveBeenCalled());
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
+    resolve({ ok: true, context: 'context' });
+    await pending;
+    expect(createDeferredThreadMessage).toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(upsertThreadExecutionState).not.toHaveBeenCalled();
+  });
+
+  it('does not resume a stopped thread after a late unknown-thread response', async () => {
+    let reject!: (error: unknown) => void;
+    const acceptance = new Promise<unknown>((_resolve, fail) => { reject = fail; });
+    const rpc = vi.fn((input: { command: { type: string } }) => input.command.type === 'turn.submit' ? acceptance : Promise.resolve({}));
+    const context = ctx(rpc);
+    await sendConversationTurn(context, thread.id, 'follow up');
+    await stopConversation(context, thread.id);
+    reject(Object.assign(new Error('released'), { code: 'unknown_thread' }));
+    await vi.waitFor(() => expect(appendConversationThreadEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      type: 'client/turn/rejected', payload: expect.objectContaining({ reason: 'send_cancelled' })
+    })));
+    expect(rpc.mock.calls.map(([input]) => input.command.type)).toEqual(['turn.submit', 'thread.stop']);
   });
 
   it('appends agent-only path mention context before turn.submit', async () => {
@@ -413,6 +504,46 @@ describe('conversation lifecycle', () => {
         model: 'claude-sonnet-5',
         reasoningLevel: 'high'
       })
+    }));
+  });
+
+  it('retains model, reasoning and native mode for a follow-up and explicit resume', async () => {
+    const execution = { model: 'chosen-model', reasoningLevel: 'high', acpMode: 'agent', serviceTier: 'fast' };
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([{
+      type: 'client/turn/requested', payload: { type: 'client/turn/requested', execution }
+    }] as never);
+    const rpc = vi.fn(async () => ({}));
+    const context = ctx(rpc);
+    await sendConversationTurn(context, thread.id, 'keep settings');
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'turn.submit', ...execution, resume: expect.objectContaining(execution)
+    }) }));
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      payload: expect.objectContaining({ execution: expect.objectContaining(execution) })
+    }));
+    await resumeConversation(context, thread.id);
+    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'thread.resume', ...execution }) }));
+  });
+
+  it('rejects resume of an archived thread before contacting its host', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, archivedAt: 123 });
+    const rpc = vi.fn(async () => ({}));
+    await expect(resumeConversation(ctx(rpc), thread.id)).rejects.toMatchObject({ code: 'archived' });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'default'] as const)('retains a preset service tier unless explicitly changed to %s', async (serviceTier) => {
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([{
+      type: 'client/turn/requested',
+      payload: { type: 'client/turn/requested', execution: { serviceTier: 'fast' } }
+    }] as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'task notification' }], 'auto', { serviceTier });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({ type: 'turn.submit', serviceTier: serviceTier ?? 'fast' })
+    }));
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      payload: expect.objectContaining({ execution: expect.objectContaining({ serviceTier: serviceTier ?? 'fast' }) })
     }));
   });
 
@@ -1477,7 +1608,15 @@ describe('conversation lifecycle', () => {
         createdAt: 2
       }
     ] as never);
-    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, cancelled: true }));
+    const callHostOnlineRpc = vi.fn(async () => {
+      vi.mocked(listConversationThreadEvents).mockReturnValue([]);
+      return { threadId: thread.id, cancelled: true };
+    });
+    callHostOnlineRpc.mockResolvedValueOnce({ threadId: thread.id, cancelled: false });
+    await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id)).rejects.toMatchObject({ status: 409 });
+    // A claimed success is insufficient while the provider still exposes the same plan turn.
+    callHostOnlineRpc.mockResolvedValueOnce({ threadId: thread.id, cancelled: true });
+    await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id)).rejects.toMatchObject({ status: 409 });
     await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id)).resolves.toEqual({ ok: true });
     expect(callHostOnlineRpc).toHaveBeenCalledWith({
       hostId: thread.hostId,
@@ -1557,21 +1696,13 @@ describe('conversation lifecycle', () => {
     });
   });
 
-  it('exits sticky plan when no live plan turn is active', async () => {
-    vi.mocked(getThreadExecutionState).mockReturnValueOnce({
-      threadId: thread.id,
-      requestedMode: 'plan',
-      effectiveMode: 'plan',
-      updatedAt: 1
-    });
+  it('does not claim to cancel a plan without an identifiable live turn', async () => {
+    vi.mocked(upsertThreadExecutionState).mockClear();
+    vi.mocked(getThreadExecutionState).mockReturnValue({ threadId: thread.id, requestedMode: 'plan', effectiveMode: 'plan', updatedAt: 1 });
     const callHostOnlineRpc = vi.fn(async () => ({ cancelled: true }));
-    await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id)).resolves.toEqual({ ok: true });
+    await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id)).rejects.toMatchObject({ status: 409 });
     expect(callHostOnlineRpc).not.toHaveBeenCalled();
-    expect(upsertThreadExecutionState).toHaveBeenCalledWith(expect.anything(), {
-      threadId: thread.id,
-      requestedMode: 'agent',
-      effectiveMode: 'agent'
-    });
+    expect(upsertThreadExecutionState).not.toHaveBeenCalled();
   });
 
   it('unarchives a conversation thread when the environment still exists', async () => {
@@ -1695,7 +1826,7 @@ describe('conversation lifecycle', () => {
     const next = await stopConversation(context, thread.id);
     expect(next.status).toBe('idle');
     expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalled();
-    expect(pauseDeferredThreadMessagesForThread).not.toHaveBeenCalled();
+    expect(pauseDeferredThreadMessagesForThread).toHaveBeenCalledWith(context.db, thread.id);
   });
 
   it('returns while a live turn.submit RPC is still running', async () => {
@@ -1839,5 +1970,24 @@ describe('conversation lifecycle', () => {
       expect.objectContaining({ type: 'client/turn/rejected' })
     );
     expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalledWith(...lifecycleCall('run.failed'));
+  });
+});
+
+
+describe('reviewed plan send admission', () => {
+  it.each([2, 3])('rejects a revision changed at validation pass %s', async changedAt => {
+    const db = await import('@zana-ai/zcc-db');
+    const getPlan = vi.mocked(db.getThreadPlanByRootThread);
+    const getRevision = vi.mocked(db.latestThreadPlanRevision);
+    getPlan.mockReturnValue({ id: 'plan', rootThreadId: thread.id, status: 'draft', filePath: null, createdAt: 1, updatedAt: 1 });
+    let reads = 0;
+    getRevision.mockImplementation(() => ({ id: 'revision', planId: 'plan', sequence: ++reads >= changedAt ? 2 : 1, markdown: '# Reviewed plan', source: 'provider-draft', createdAt: 1 }));
+    const rpc = vi.fn().mockResolvedValue({});
+    try {
+      await expect(sendConversationTurn(ctx(rpc), thread.id, 'Implement saved plan', 'start', { acpMode: '' }, { drain: true, planRevision: 1 }))
+        .rejects.toMatchObject({ code: 'stale_plan' });
+      expect(rpc).not.toHaveBeenCalled();
+      if (changedAt === 3) expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('run.failed'));
+    } finally { getPlan.mockReturnValue(null); getRevision.mockReturnValue(null); }
   });
 });

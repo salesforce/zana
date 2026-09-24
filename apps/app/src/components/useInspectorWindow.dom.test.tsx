@@ -49,7 +49,7 @@ function Harness() {
 
 function mockRect() {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
-    new DOMRect(200, 80, 800, 600)
+    new DOMRect(400, 200, 800, 600)
   );
   vi.stubGlobal('innerWidth', 1600);
   vi.stubGlobal('innerHeight', 1000);
@@ -58,7 +58,7 @@ function mockRect() {
 }
 
 describe('inspector window resize', () => {
-  it('captures a southeast drag and plants the opposite edge', () => {
+  it('captures a southeast drag and expands both sides equally', () => {
     mockRect();
     render(<Harness />);
     const handle = screen.getByTestId('inspector-resize-se');
@@ -74,15 +74,15 @@ describe('inspector window resize', () => {
     expect(screen.getByTestId('inspector').style.width).toBe('800px');
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 1080, clientY: 760 });
     const inspector = screen.getByTestId('inspector');
-    expect(inspector.style.width).toBe('880px');
-    expect(inspector.style.height).toBe('680px');
-    expect(inspector.style.left).toBe('200px');
-    expect(inspector.style.top).toBe('80px');
+    expect(inspector.style.width).toBe('960px');
+    expect(inspector.style.height).toBe('760px');
+    expect(inspector.style.left).toBe('320px');
+    expect(inspector.style.top).toBe('120px');
     expect(inspector.className).toContain('is-resizing');
     fireEvent.pointerUp(handle, { pointerId: 1 });
     expect(inspector.className).not.toContain('is-resizing');
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 1400, clientY: 900 });
-    expect(inspector.style.width).toBe('880px');
+    expect(inspector.style.width).toBe('960px');
   });
 
   it('clamps a custom frame when the viewport shrinks', () => {
@@ -154,7 +154,7 @@ describe('inspector window resize', () => {
     fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 1000, clientY: 680 });
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 1080, clientY: 760 });
     fireEvent.pointerUp(handle, { pointerId: 1 });
-    expect(screen.getByTestId('inspector').style.width).toBe('880px');
+    expect(screen.getByTestId('inspector').style.width).toBe('960px');
     fireEvent.pointerDown(screen.getByText('toggle-fs'));
     fireEvent.click(screen.getByText('toggle-fs'));
     expect(h.setFullScreen).toHaveBeenCalledWith(true);
@@ -163,6 +163,6 @@ describe('inspector window resize', () => {
     expect(screen.getByTestId('inspector').style.width).toBe('');
     fireEvent.click(screen.getByText('toggle-fs'));
     expect(screen.getByTestId('inspector-resize-se')).toBeTruthy();
-    expect(screen.getByTestId('inspector').style.width).toBe('880px');
+    expect(screen.getByTestId('inspector').style.width).toBe('960px');
   });
 });

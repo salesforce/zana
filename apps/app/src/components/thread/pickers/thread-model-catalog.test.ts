@@ -115,7 +115,7 @@ describe('thread model catalog', () => {
     const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
       const body = optionsBody(['acp-cursor'], query?.providerId ?? 'roster');
       if (query?.providerId === 'acp-cursor' && timedOut) {
-        return { ...body, models: [], modelLoadError: { providerId: 'acp-cursor', code: 'timeout' } };
+        return { ...body, models: [], modelLoadError: { providerId: 'acp-cursor', code: 'timeout' , detail: null } };
       }
       return body;
     };
@@ -135,7 +135,7 @@ describe('thread model catalog', () => {
     const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
       const body = optionsBody(['acp-cursor'], query?.providerId ?? 'roster');
       if (query?.providerId === 'acp-cursor' && !signedIn) {
-        return { ...body, models: [], modelLoadError: { providerId: 'acp-cursor', code: 'auth_required' } };
+        return { ...body, models: [], modelLoadError: { providerId: 'acp-cursor', code: 'auth_required' , detail: null } };
       }
       return body;
     };

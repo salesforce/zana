@@ -1,3 +1,4 @@
+import { createPiHistory } from './history.js';
 import type { HarnessRegistration } from '../registration.js';
 import { PiProvider } from './provider.js';
 import { stripSessionResumeFlags } from '../argv-utils.js';
@@ -6,6 +7,8 @@ const implementation = new PiProvider();
 
 export const piHarness: HarnessRegistration = {
   id: 'pi',
+  createHistoryAdapter: createPiHistory,
+  historyIconId: 'pi',
   label: 'PI',
   profiles: [
     { id: 'pi', posture: 'default' },

@@ -10,6 +10,13 @@ import {
 } from './playground-bridge.js';
 
 describe('playground bridge', () => {
+  it('bounds graph snapshots and requires explicit visibility and theme', () => {
+    const graph = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'graph', content: 'start_agent:', visible: true, theme: 'dark' };
+    expect(isHostToPlayground(graph)).toBe(true);
+    for (const change of [{ content: 42 }, { content: 'x'.repeat(180_001) }, { visible: 'yes' }, { theme: 'unknown' }]) {
+      expect(isHostToPlayground({ ...graph, ...change })).toBe(false);
+    }
+  });
   it('validates draft identities and save-as flags before accepting editor messages', () => {
     const persist = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'persist', path: 'New.agent', content: 'source', draftKey: 'p:example:one', create: true };
     expect(isPlaygroundToHost(persist)).toBe(true);

@@ -135,7 +135,7 @@ describe('ThreadProviderCatalog', () => {
       models: [],
       selectedOnlyModels: [],
       permissionCeiling: 'full',
-      modelLoadError: { providerId: 'acp-cursor', code: 'timeout' }
+      modelLoadError: { providerId: 'acp-cursor', code: 'timeout' , detail: null }
     });
     resetThreadModelCatalog(fetcher);
     await prefetchThreadModelCatalog();
@@ -145,7 +145,7 @@ describe('ThreadProviderCatalog', () => {
         providers={[{ id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' }]}
       />
     );
-    expect(screen.getByText('No models available (timeout)')).toBeTruthy();
+    expect(screen.getByText('Timed out loading models (timeout)')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Load' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Models for Cursor' }));
@@ -173,7 +173,7 @@ describe('ThreadProviderCatalog', () => {
       models: [],
       selectedOnlyModels: [],
       permissionCeiling: 'full',
-      modelLoadError: { providerId: 'acp-opencode', code: 'auth_required' }
+      modelLoadError: { providerId: 'acp-opencode', code: 'auth_required' , detail: null }
     });
     resetThreadModelCatalog(fetcher);
     await prefetchThreadModelCatalog();

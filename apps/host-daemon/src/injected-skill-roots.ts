@@ -8,6 +8,15 @@ export function injectedSkillRootsFile(dataDir: string): string {
   return join(dataDir, 'injected-skill-roots.json');
 }
 
+/** Main stamps these paths after confining filtered builtin symlinks to its own bundle. */
+export function readBuiltinSkillTargets(dataDir: string): ReadonlySet<string> {
+  try {
+    const parsed = JSON.parse(readFileSync(injectedSkillRootsFile(dataDir), 'utf8'));
+    return new Set(Array.isArray(parsed.builtinSkillTargets)
+      ? parsed.builtinSkillTargets.filter((value: unknown) => typeof value === 'string').slice(0, 64) : []);
+  } catch { return new Set(); }
+}
+
 function skillDescriptionFromFrontmatter(body: string, fallback: string): string {
   const fence = body.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fence) return fallback;

@@ -31,11 +31,14 @@
     "./panels": "./panels.tsx"
   },
   "dependencies": {
+    "@salesforce/metadata-visualizer-web": "1.7.0",
     "@sf-agentscript/agentforce": "2.10.38",
     "@sf-agentscript/lsp": "2.6.33",
     "@sf-agentscript/monaco": "2.4.39",
     "@sf-agentscript/parser": "4.0.19",
     "@xyflow/react": "^12.10.0",
+    "fast-xml-parser": "5.11.1",
+    "lucide-react": "^1.47.0",
     "monaco-editor": "^0.54.0"
   },
   "devDependencies": {

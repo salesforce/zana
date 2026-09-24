@@ -231,7 +231,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         projectId: 'p',
         prompt: 'work',
         visibility: 'hidden',
-        environment: { kind: 'reuse', environmentId: '11111111-1111-1111-1111-111111111111' },
+        environment: { kind: 'reuse', environmentId: '11111111-1111-4111-8111-111111111111' },
         title: 'Review · 1',
         model: 'opus',
         permissionMode: 'accept-edits'
@@ -241,7 +241,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         projectId: 'p',
         prompt: 'work',
         visibility: 'hidden',
-        environment: { kind: 'reuse', environmentId: '11111111-1111-1111-1111-111111111111' },
+        environment: { kind: 'reuse', environmentId: '11111111-1111-4111-8111-111111111111' },
         title: 'Review · 1',
         model: 'opus',
         permissionMode: 'accept-edits'
@@ -255,6 +255,41 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       await bare.dispose();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('forwards worktree, host, and service tier choices after validating the environment', async () => {
+    const spawnThread = vi.fn(async () => ({ id: 'thr-worker' }));
+    const handle = createPluginApi('demo', '/tmp', { spawnThread });
+    try {
+      const args = {
+        projectId: 'p',
+        prompt: 'Implement the task',
+        hostId: 'host-1',
+        serviceTier: 'fast' as const,
+        environment: { kind: 'worktree' as const, baseBranch: 'main' }
+      };
+      await expect(handle.api.sdk.threads.spawn(args)).resolves.toEqual({ id: 'thr-worker' });
+      expect(spawnThread).toHaveBeenCalledWith({ pluginId: 'demo', ...args });
+      spawnThread.mockClear();
+      await expect(handle.api.sdk.threads.spawn({
+        ...args,
+        environment: { kind: 'reuse', environmentId: 'not-an-environment-id' }
+      })).rejects.toThrow();
+      expect(spawnThread).not.toHaveBeenCalled();
+    } finally {
+      await handle.dispose();
+    }
+  });
+
+  it('requires a product runtime for host-backed task APIs', async () => {
+    const handle = createPluginApi('demo', '/tmp');
+    try {
+      await expect(handle.api.sdk.system.defaultHost()).rejects.toThrow(/not available/);
+      await expect(handle.api.sdk.files.write({ path: '/tmp/task-output', content: 'result' })).rejects.toThrow(/not available/);
+      await expect(handle.api.sdk.environments.pullRequest({ environmentId: 'env-1' })).rejects.toThrow(/not available/);
+    } finally {
+      await handle.dispose();
     }
   });
 

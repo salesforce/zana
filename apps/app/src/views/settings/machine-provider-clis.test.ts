@@ -17,6 +17,7 @@ import {
   providerCliInstallOutcome,
   providerCliInstallOutputSnippet,
   providerCliKeyForFamily,
+  providerCliKeyForProviderId,
   providerCliPresentation,
   providerCliStartLog
 } from './machine-provider-clis.js';
@@ -145,6 +146,19 @@ describe('machine provider CLI rows', () => {
     });
   });
 
+  it('does not claim a CLI is current when the latest version is unknown', () => {
+    const unknown = status({ latestVersion: null, needsUpdate: false, installAction: null });
+    expect(providerCliPresentation(unknown)).toMatchObject({ tone: 'warn', badge: 'Latest unknown' });
+    expect(providerCliPresentation({ ...unknown, versionUnsupported: true }).badge).toBe('Unsupported');
+    expect(providerCliPresentation({ ...unknown, installed: false }).badge).toBe('Not installed');
+    expect(providerCliPresentation({ ...unknown, needsUpdate: true }).badge).toBe('Update');
+    expect(machineCliInventorySummary([{ provider: 'codex', status: unknown }])).toBe('Latest unknown');
+    expect(machineCliInventorySummary([
+      { provider: 'codex', status: unknown },
+      { provider: 'pi', status: status({}) }
+    ])).toBe('1 update');
+  });
+
   it('summarizes inventory updates', () => {
     expect(machineCliInventorySummary([])).toBeNull();
     expect(machineCliInventorySummary([
@@ -202,6 +216,10 @@ describe('machine provider CLI rows', () => {
     expect(providerCliKeyForFamily('claude')).toBe('claudeCode');
     expect(providerCliKeyForFamily('codex')).toBe('codex');
     expect(providerCliKeyForFamily('grok')).toBeNull();
+    expect(providerCliKeyForProviderId('claude-code')).toBe('claudeCode');
+    expect(providerCliKeyForProviderId('acp-cursor')).toBe('cursor');
+    expect(providerCliKeyForProviderId('acp-opencode')).toBe('opencode');
+    expect(providerCliKeyForProviderId('fake')).toBeNull();
     expect(providerCliBusyLabel('update')).toBe('Updating…');
     expect(providerCliBusyLabel('install')).toBe('Installing…');
     expect(providerCliStartLog('codex update')).toBe(

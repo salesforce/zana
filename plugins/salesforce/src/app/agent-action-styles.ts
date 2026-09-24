@@ -52,6 +52,19 @@ export const AGENT_ACTION_STYLES = `
 .af-action-empty strong { color:var(--sf-as-text); }
 .af-flow-mode { display:flex; gap:6px; padding:10px 20px; border-bottom:1px solid var(--sf-as-border); }
 .af-flow { flex:1; min-height:0; display:flex; flex-direction:column; }
+.af-flow-official { position:relative; flex:1; min-height:240px; display:flex; }
+.af-flow-frame { width:100%; flex:1; min-width:0; border:0; background:var(--sf-as-surface); }
+.af-flow-loading { position:absolute; inset:0; z-index:1; display:grid; place-items:center; background:var(--sf-as-surface); }
+.af-flow-dependencies { flex-shrink:0; border-top:1px solid var(--sf-as-border); padding:8px 14px; font-size:11px; color:var(--sf-as-muted); }
+.af-flow-dependencies summary { cursor:pointer; }
+.af-flow-dependencies > div { display:flex; flex-wrap:wrap; gap:4px 16px; max-height:110px; overflow:auto; }
+.af-flow-dialog { color:var(--sf-as-text); background:var(--sf-as-surface); border:1px solid var(--sf-as-border); border-radius:10px; padding:0; width:calc(100vw - 40px); height:calc(100vh - 40px); max-width:none; max-height:none; }
+.af-flow-dialog[open] { display:flex; flex-direction:column; }
+.af-flow-dialog::backdrop { background:rgba(0,0,0,.5); }
+.af-flow-dialog > header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 16px; border-bottom:1px solid var(--sf-as-border); }
+.af-flow-dialog > header div { min-width:0; }
+.af-flow-dialog strong { font-size:14px; overflow-wrap:anywhere; }
+.af-flow-dialog small { display:block; font-size:11px; color:var(--sf-as-muted); margin-top:3px; }
 .af-flow-toolbar { display:flex; padding:6px 12px; align-items:center; font-size:10px; color:var(--sf-as-muted); }
 .af-flow-toolbar span { margin-right:auto; }
 .af-flow-viewport { flex:1; overflow:auto; min-height:150px; background-image:radial-gradient(var(--sf-as-border) .7px, transparent .7px); background-size:16px 16px; }

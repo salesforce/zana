@@ -357,6 +357,11 @@ export function migrate(database: SqliteDatabase): void {
       sequence
     ) WHERE type = 'turn/started'`
   ]);
+  if (!applied.has(19)) applyVersion(database, 19, [
+    'ALTER TABLE deferred_thread_messages ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE deferred_thread_messages ADD COLUMN retry_at INTEGER',
+    'CREATE INDEX deferred_thread_messages_retry_idx ON deferred_thread_messages(status, paused, retry_at)'
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

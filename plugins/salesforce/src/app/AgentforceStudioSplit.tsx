@@ -18,13 +18,13 @@ export function AgentforceStudioSplit({ editor, children, open }: { editor: Reac
     setDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
-  return <div ref={workspace} className="af-workspace" data-lab-open={open} data-resizing={dragging} style={{ '--af-editor-ratio': ratio } as CSSProperties}>
+  return <div ref={workspace} className="af-workspace" data-panel-open={open} data-resizing={dragging} style={{ '--af-editor-ratio': ratio } as CSSProperties}>
     <div className="sf-as-stage">{editor}</div>
     {open && <div
       className="af-workspace-divider" role="separator" tabIndex={0}
-      aria-label="Resize editor and conversation" aria-orientation="vertical"
+      aria-label="Resize editor and side panel" aria-orientation="vertical"
       aria-valuemin={Math.round(MIN_SPLIT_RATIO * 100)} aria-valuemax={Math.round(MAX_SPLIT_RATIO * 100)} aria-valuenow={Math.round(ratio * 100)}
-      aria-valuetext={`${Math.round(ratio * 100)}% editor, ${Math.round((1 - ratio) * 100)}% conversation`}
+      aria-valuetext={`${Math.round(ratio * 100)}% editor, ${Math.round((1 - ratio) * 100)}% side panel`}
       title="Drag to resize · double-click to reset · arrow keys to adjust"
       onPointerDown={event => {
         if (event.button !== 0) return;

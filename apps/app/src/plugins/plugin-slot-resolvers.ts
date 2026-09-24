@@ -8,6 +8,16 @@ import type {
 
 const FILE_OPENER_PIN_KEY = 'zcc.plugin.fileOpenerPins';
 const THREAD_LIST_PIN_KEY = 'zcc.plugin.threadListPin';
+const THREAD_LIST_PIN_CHANGED = 'zcc:thread-list-pin-changed';
+
+export function subscribeThreadListPin(listener: () => void): () => void {
+  window.addEventListener(THREAD_LIST_PIN_CHANGED, listener);
+  window.addEventListener('storage', listener);
+  return () => {
+    window.removeEventListener(THREAD_LIST_PIN_CHANGED, listener);
+    window.removeEventListener('storage', listener);
+  };
+}
 
 /**
  * The main `@zana-ai/zcc-plugin-sdk` entry doesn't export the bare
@@ -112,6 +122,7 @@ export function writeThreadListPin(key: string | null): void {
   if (typeof localStorage === 'undefined') return;
   if (key === null) localStorage.removeItem(THREAD_LIST_PIN_KEY);
   else localStorage.setItem(THREAD_LIST_PIN_KEY, key);
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(THREAD_LIST_PIN_CHANGED));
 }
 
 export function resolveActiveThreadList(

@@ -1,10 +1,11 @@
+import { useSalesforceControl, controlText } from '../useSalesforceControl.js';
 import { useId, useState } from 'react';
 import type { OperationKind } from '../../../lib/workbench-contract.js';
 import type { SalesforcePanelProps } from './WorkbenchPanels.js';
 import { useSalesforceCall, requireResult } from '../components/client.js';
 import { useSalesforceDraft } from '../components/drafts.js';
 import { useResource } from '../components/use-resource.js';
-import { ErrorState, LoadingState, SalesforcePanelFrame } from '../components/ui.js';
+import { EmptyState, ErrorState, LoadingState, SalesforcePanelFrame } from '../components/ui.js';
 import { needsOperationThread, operationReviewDraft } from '../operation-review.js';
 import { OperationsPanel } from './OperationsPanel.js';
 
@@ -23,6 +24,17 @@ export function DeploymentsPanel(props: SalesforcePanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const metadata = useResource<{ records: Array<{ fullName: string }>; truncated?: boolean }>(call, browseType ? 'metadata.list' : null, { metadataType: browseType });
+  useSalesforceControl({ pluginId: props.pluginId, projectId: props.projectId, orgAlias: props.orgAlias, threadId: props.threadId, surface: 'deployments',
+    commands: ['state', 'form.set', 'filter.set'], state: () => ({ components, tests, metadataType: type, filter: search, busy }),
+    execute: ({ command, input }) => {
+      if (command === 'filter.set') setSearch(controlText(input, 'query', 200));
+      if (command === 'form.set') {
+        if (busy || input.expectedComponents !== components || input.expectedTests !== tests) throw Error('Read current selection before changing it.');
+        if (input.components !== undefined) setComponents(controlText(input, 'components', 10_000));
+        if (input.tests !== undefined) setTests(controlText(input, 'tests', 4000));
+      }
+    },
+  });
   const selected = [...new Set(components.split(/[\n,]+/).map(value => value.trim()).filter(Boolean))];
   const visible = (metadata.data?.records ?? []).filter(row => row.fullName.toLowerCase().includes(search.toLowerCase())).sort((a, b) => a.fullName.localeCompare(b.fullName, undefined, { numeric: true }));
   function toggle(key: string, checked: boolean) { setComponents((checked ? [...selected, key] : selected.filter(value => value !== key)).join('\n')); }
@@ -49,7 +61,7 @@ export function DeploymentsPanel(props: SalesforcePanelProps) {
             <button className="sf-btn" type="button" disabled={metadata.busy} onClick={() => { if (browseType === type) void metadata.refresh(); else setBrowseType(type); }}>Browse org metadata</button>
           </div>
           {metadata.error && <ErrorState message={metadata.error} />}
-          {metadata.busy && <LoadingState />}
+          {metadata.busy && <LoadingState compact art="deploy" label="Loading components…" />}
           {metadata.data ? <div className="sf-metadata-browser">
             <input className="sf-input" aria-label="Search metadata" placeholder="Search components…" value={search} onChange={event => setSearch(event.target.value)} />
             <div className="sf-metadata-list" role="group" aria-label="Available metadata">
@@ -57,7 +69,7 @@ export function DeploymentsPanel(props: SalesforcePanelProps) {
                 <input type="checkbox" aria-label={`Select ${row.fullName}`} checked={selected.includes(`${browseType}:${row.fullName}`)} onChange={event => toggle(`${browseType}:${row.fullName}`, event.target.checked)} />
                 <span>{row.fullName}</span>
               </label>)}
-              {!visible.length && <p className="sf-muted">No matching components.</p>}
+              {!metadata.busy && !visible.length && <EmptyState compact art={search ? 'search' : 'deploy'} title="No matching components.">Try another metadata type or search.</EmptyState>}
             </div>
             <p className="sf-list-caption">{visible.length} shown{metadata.data.truncated ? ' · First 200 components loaded' : ''}</p>
           </div> : !metadata.busy && !metadata.error && <p className="sf-section-hint">Browse your org or enter component names below.</p>}

@@ -99,12 +99,16 @@ zcc term is a deprecated alias.
     content: `  zcc plugin new <name> [--app]
   zcc plugin install <source>
   zcc plugin list|dev|reload|logs|run ...
+  zcc plugin dev --once        One rebuild + reload; nonzero on failure
   zcc marketplace ls|add|refresh|remove
 
 plugin reload and plugin dev use product HTTP (ZCC_SERVER_URL) and do not need the control socket.
 Contributed verbs appear as zcc <name> and in the generated plugin-commands skill.
 Core command names always win. Combined plugin output is capped at 1MiB.
 Writing a plugin? Use the zcc-plugin-authoring skill.
+New scaffolds include AGENTS.md and LIVE_TEST.md. Open the plugin in running ZCC,
+exercise its primary action, and observe a source edit after reload. Backend health
+is checked by reload/dev; a successful command does not verify the rendered UI.
 `
   },
   {

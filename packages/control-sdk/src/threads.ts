@@ -51,7 +51,7 @@ export class ThreadHandle {
     return waitForThreadEvent(this.http, this.id, { type, ...opts });
   }
 
-  async send(text: string, opts?: { mode?: string; model?: string; acpMode?: string }): Promise<ThreadRecord> {
+  async send(text: string, opts?: { mode?: string; model?: string; acpMode?: string; reasoningLevel?: string; serviceTier?: 'default' | 'fast'; permissionMode?: ThreadLaunchSpec['permissionMode'] }): Promise<ThreadRecord> {
     const sent = await this.http.request<{ thread?: ThreadRecord }>(
       'POST',
       `/api/v1/threads/${encodeURIComponent(this.id)}/send`,
@@ -60,7 +60,10 @@ export class ThreadHandle {
           text,
           mode: opts?.mode ?? 'auto',
           model: opts?.model,
-          acpMode: opts?.acpMode
+          acpMode: opts?.acpMode,
+          reasoningLevel: opts?.reasoningLevel,
+          serviceTier: opts?.serviceTier,
+          permissionMode: opts?.permissionMode
         }
       }
     );
@@ -137,6 +140,7 @@ export async function spawnThread(
         acpMode: spec.acpMode,
         permissionMode: spec.permissionMode,
         reasoningLevel: spec.reasoningLevel,
+        serviceTier: spec.serviceTier,
         environment: spec.environment,
         hostId: spec.hostId,
         title: tagged ? liveTitle(ctx.runId, spec.title) : spec.title,

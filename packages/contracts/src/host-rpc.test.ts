@@ -772,7 +772,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(27);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(28);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');

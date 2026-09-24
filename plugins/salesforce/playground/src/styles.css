@@ -358,6 +358,7 @@ body.is-resizing-split iframe {
 .pane.graph { background:var(--ide-surface-sunken); }
 .pane-header { height:38px; box-sizing:border-box; font-size:11px; font-weight:500; padding:0 16px; }
 .pane { grid-template-rows:38px 1fr; }
+.pane.editor { grid-template-rows:minmax(0,1fr); }
 .pane-header>span { display:flex; gap:9px; align-items:center; }
 .pane-file-icon { color:var(--ide-accent); font-size:15px; }
 .pane-kicker { font-size:10px; font-weight:400; color:var(--ide-text-muted); }
@@ -371,3 +372,6 @@ body.is-resizing-split iframe {
 .statusbar { font-size:10px; }
 @media (max-width:480px) { .pane-kicker { display:none!important; }.statusbar-right { max-width:55%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; } }
 @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; } }
+
+.ide.graph-preview { grid-template-rows: auto minmax(0, 1fr); min-width: 0; }
+.graph-preview .pane-header { flex-wrap: wrap; gap: 6px; }

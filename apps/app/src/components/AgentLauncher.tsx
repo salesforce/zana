@@ -141,14 +141,7 @@ export const AgentLauncher = memo(function AgentLauncher({
 
   // Project mode is pinned to one project; scratch mode offers the picker.
   const projectMode = !!project;
-  const unavailableHistoryProviders = [
-    harnessCursorEnabled ? 'Cursor' : null,
-    harnessCodexEnabled ? 'Codex' : null,
-    harnessPiEnabled ? 'PI' : null,
-    harnessGrokEnabled ? 'Grok Build' : null,
-    harnessMastracodeEnabled ? 'Mastra Code' : null,
-    harnessAfcodeEnabled ? 'afcode' : null
-  ].filter((provider): provider is string => provider !== null);
+
   // Resolve scratch-mode project selection.
   const target = projectMode
     ? project!
@@ -313,7 +306,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             </div>
           )}
 
-          {projectMode && <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />}
+          {projectMode && <AgentConversationHistory projectId={project!.id} onResumed={onClose} />}
           </div>
         </div>
       </div>

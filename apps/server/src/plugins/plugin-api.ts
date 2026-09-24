@@ -1,10 +1,15 @@
+import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
+import { readHostFile, writeHostFile } from '../http/files-via-host.js';
+import { environmentPullRequest } from '../services/environments/environment-actions.js';
+import { conversationHistory } from '../services/threads/conversation-history.js';
+import { threadSummary } from './thread-events.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as jitiModule from 'jiti';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { createSqliteDatabase } from '@zana-ai/zcc-db';
+import { createSqliteDatabase, listHosts, getPrimaryHost, getConversationThread } from '@zana-ai/zcc-db';
 import type {
   PluginAgentConfigureContext,
   PluginAgentConfigureResult,
@@ -87,7 +92,9 @@ import {
   publicSettingsValues
 } from './plugin-secret-settings.js';
 
-export const HOST_ZCC_VERSION = '2.2.0';
+// Bundlers inline this value; packaged servers must not inspect a cwd's package.json.
+import { version as packageVersion } from '../../../../package.json';
+export const HOST_ZCC_VERSION = packageVersion;
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
 export const FACTORY_TIMEOUT_MS = 10_000;
 
@@ -284,6 +291,7 @@ export function createPluginApi(
     loadProviderModels?: (args: {
       pluginId: string;
       environmentId?: string;
+      hostId?: string;
       providerId: string;
     }) => Promise<PluginSdkModelCatalog>;
     archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
@@ -541,7 +549,38 @@ export function createPluginApi(
       }
     },
     sdk: {
+      system: {
+        defaultHost: async () => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          const host = getPrimaryHost(options.productContext.db);
+          return host ? { id: host.id } : null;
+        }
+      },
+      hosts: {
+        list: async (args) => {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          if (!options?.productContext) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return listHosts(options.productContext.db).map(({ id, name }) => ({ id, name }));
+        }
+      },
       threads: {
+        search: async (args) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          const limit = Number.isSafeInteger(args.limit) ? Math.max(1, Math.min(25, args.limit!)) : 25;
+          const { db } = options.productContext;
+          return conversationHistory(db, {
+            query: typeof args.query === 'string' ? args.query : '',
+            ...(typeof args.archived === 'boolean' ? { archived: args.archived ? 'archived' as const : 'active' as const } : {})
+          }).rows.slice(0, limit).flatMap(({ id }) => {
+            const row = getConversationThread(db, id);
+            return row ? [threadSummary(row)] : [];
+          });
+        },
         spawn: async (args) => {
           assertLive();
           if (!options?.spawnThread) {
@@ -568,9 +607,9 @@ export function createPluginApi(
               ? { permissionMode: args.permissionMode }
               : {}),
             ...(args?.visibility === 'hidden' || args?.visibility === 'visible' ? { visibility: args.visibility } : {}),
-            ...(args?.environment?.kind === 'reuse' && typeof args.environment.environmentId === 'string'
-              ? { environment: { kind: 'reuse', environmentId: args.environment.environmentId } }
-              : {}),
+            ...(args?.environment ? { environment: spawnEnvironmentChoiceSchema.parse(args.environment) } : {}),
+            ...(args?.hostId ? { hostId: args.hostId } : {}),
+            ...(args?.serviceTier === 'default' || args?.serviceTier === 'fast' ? { serviceTier: args.serviceTier } : {}),
             ...(args?.pluginMetadata !== undefined
               ? { pluginMetadata: validatePluginMetadata(args.pluginMetadata) }
               : {})
@@ -812,6 +851,11 @@ export function createPluginApi(
         }
       },
       environments: {
+        pullRequest: async ({ environmentId }) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return await environmentPullRequest(options.productContext, environmentId) as Awaited<ReturnType<ZccPluginApi['sdk']['environments']['pullRequest']>>;
+        },
         get: async (args) => {
           assertLive();
           if (!options?.getEnvironment) {
@@ -823,6 +867,11 @@ export function createPluginApi(
         }
       },
       files: {
+        write: async (args) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          await writeHostFile(options.productContext, args);
+        },
         read: async (args) => {
           assertLive();
           if (!options?.readWorkspaceFile) {
@@ -831,8 +880,9 @@ export function createPluginApi(
           const hostId = typeof args?.hostId === 'string' ? args.hostId.trim() : '';
           const path = typeof args?.path === 'string' ? args.path : '';
           const rootPath = typeof args?.rootPath === 'string' ? args.rootPath : '';
-          if (!hostId) throw new Error('hostId is required');
           if (!path.trim()) throw new Error('path is required');
+          if (!hostId && options.productContext) return readHostFile(options.productContext, { path, ...(rootPath ? { rootPath } : {}) });
+          if (!hostId) throw new Error('hostId is required');
           return options.readWorkspaceFile({ pluginId, hostId, path, rootPath });
         }
       },
@@ -911,6 +961,7 @@ export function createPluginApi(
           return options.loadProviderModels({
             pluginId,
             providerId,
+            ...(args.hostId ? { hostId: args.hostId } : {}),
             ...(environmentId ? { environmentId } : {})
           });
         }

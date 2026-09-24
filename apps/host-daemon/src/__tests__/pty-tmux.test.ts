@@ -41,11 +41,13 @@ vi.mock('../mcp-config.js', () => ({
 
 // Control tmux availability deterministically.
 const tmuxAvailable = vi.fn(() => true);
+const killLocalTmuxSession = vi.fn(async () => undefined);
 vi.mock('../tmux.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../tmux.js')>();
   return {
     ...actual,
-    isTmuxAvailable: () => tmuxAvailable()
+    isTmuxAvailable: () => tmuxAvailable(),
+    killLocalTmuxSession: (sessionId: string) => killLocalTmuxSession(sessionId)
   };
 });
 
@@ -72,6 +74,7 @@ describe('pty tmux wrapping (local)', () => {
   beforeEach(() => {
     spawned.length = 0;
     tmuxAvailable.mockReturnValue(true);
+    killLocalTmuxSession.mockClear();
     ptys = new PtyManager();
   });
 
@@ -173,6 +176,17 @@ describe('pty tmux wrapping (local)', () => {
 
     expect(spawned[0].killed).toBe(false);
     expect(spawned[1].killed).toBe(true);
+  });
+
+  it('explicit close kills the local tmux session, not only the client pty', () => {
+    const session = ptys.create({
+      projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims
+    });
+
+    ptys.close(session.id);
+
+    expect(killLocalTmuxSession).toHaveBeenCalledWith(session.id);
+    expect(spawned[0].killed).toBe(true);
   });
 });
 

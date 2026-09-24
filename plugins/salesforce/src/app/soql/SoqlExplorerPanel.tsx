@@ -1,3 +1,4 @@
+import { useSalesforceControl, controlText } from '../useSalesforceControl.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { EXPLORER_LOAD_ALL_CAP } from '../../../lib/types.js';
 import type { PublicOrgView } from '../../../lib/types.js';
@@ -194,6 +195,33 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
       if (generation === epoch.current && selection === describeEpoch.current) setDescribe(payload.describe);
     } catch (err) { if (generation === epoch.current && selection === describeEpoch.current) setError({ message: String(err) }); }
   };
+
+  useSalesforceControl({ pluginId, projectId: props.projectId, orgAlias: props.orgAlias, threadId: props.threadId, surface: 'data',
+    commands: ['state', 'query.set', 'object.select', 'record.open', 'filter.set', 'query.show'],
+    state: () => ({ query: soql, objectName: selected, useToolingApi, includeDeleted, busy, rows: result?.records?.length ?? 0, filter: tableSearch, schemaFilter: schemaSearch }),
+    execute: async ({ command, input }) => {
+      if (command === 'state') return;
+      if (command === 'query.set') {
+        if (busy || input.expectedQuery !== soql) throw Error('Read the current view state and provide expectedQuery; the query may have changed.');
+        setSoql(controlText(input, 'query', 20_000));
+        if (typeof input.useToolingApi === 'boolean') setUseToolingApi(input.useToolingApi);
+        if (typeof input.includeDeleted === 'boolean') setIncludeDeleted(input.includeDeleted);
+      } else if (command === 'object.select') {
+        const name = controlText(input, 'objectName', 160);
+        if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw Error('Choose an object API name.');
+        if (input.expectedQuery !== soql) throw Error('Read the current query before selecting an object.');
+        await selectSObject(name);
+      } else if (command === 'record.open') {
+        const data = requireResult<{ record: Record<string, unknown> }>(await call('records.get', { recordId: controlText(input, 'recordId', 18), objectName: controlText(input, 'objectName', 160) }));
+        setInspected(data.record);
+      } else if (command === 'filter.set') {
+        if (input.target === 'schema') setSchemaSearch(controlText(input, 'query', 200)); else setTableSearch(controlText(input, 'query', 200));
+      } else if (command === 'query.show') {
+        const data = requireResult<{ result: QueryState }>(await call('query.result', { resultId: controlText(input, 'resultId', 80) }));
+        setResult(data.result); setError(null);
+      }
+    },
+  });
 
   const run = async () => {
     if (!runEnabled) return;

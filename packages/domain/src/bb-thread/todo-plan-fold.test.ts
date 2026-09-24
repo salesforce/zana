@@ -63,6 +63,13 @@ describe("foldTodoPlanSnapshot", () => {
   it("returns null when the payload is not a todos snapshot", () => {
     const state: TodoPlanFoldState = new Map();
     expect(foldTodoPlanSnapshot(state, { command: "echo ping" })).toBeNull();
-    expect(foldTodoPlanSnapshot(state, { todos: [] })).toBeNull();
+    expect(foldTodoPlanSnapshot(state, { todos: [null, {}] })).toBeNull();
+  });
+
+  it('clears a checklist on an explicit empty snapshot', () => {
+    const state: TodoPlanFoldState = new Map();
+    foldTodoPlanSnapshot(state, { todos: [{ content: 'Old step', status: 'pending' }] });
+    expect(foldTodoPlanSnapshot(state, { todos: [] })).toEqual([]);
+    expect(state.size).toBe(0);
   });
 });

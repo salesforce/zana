@@ -4,6 +4,7 @@ import type { HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import {
   buildThreadExecutionOptions,
   classifyModelListError,
+  modelListErrorDetail,
   isThreadProviderOffered,
   modelsForThreadProvider,
   pluginHostModelCatalog,
@@ -302,7 +303,7 @@ describe('buildThreadExecutionOptions', () => {
       availability: [verify('codex')],
       listError: 'auth_required'
     });
-    expect(body.modelLoadError).toEqual({ providerId: 'codex', code: 'auth_required' });
+    expect(body.modelLoadError).toEqual({ providerId: 'codex', code: 'auth_required', detail: null });
     expect(body.models.map((row) => row.displayName)).toEqual([
       'GPT-5.5',
       'GPT-5.4',
@@ -362,6 +363,8 @@ describe('classifyModelListError', () => {
     expect(classifyModelListError(new Error('Run `opencode auth login` to continue'))).toBe('auth_required');
     expect(classifyModelListError(new Error('opencode login required'))).toBe('auth_required');
     expect(classifyModelListError(new Error('spawn cursor-agent ENOENT'))).toBe('missing_executable');
+    expect(classifyModelListError(new Error('bb could not find the Codex CLI on this machine.'))).toBe('missing_executable');
+    expect(classifyModelListError(Object.assign(new Error('CLI missing'), { code: -32004 }))).toBe('missing_executable');
     expect(classifyModelListError(new Error('host rpc timed out: provider.list_models'))).toBe('timeout');
     expect(classifyModelListError(new Error('bridge crashed'))).toBe('failed');
   });

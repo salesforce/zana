@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createPluginDevLoop, isIgnoredPluginDevPath } from './plugin-dev-loop.js';
 import { createPluginArtifactMeta } from './build-plugin.js';
 
@@ -79,6 +79,70 @@ describe('plugin dev loop', () => {
     await loop.flushNow();
     expect(reloads).toEqual(['ok']);
     loop.dispose();
+  });
+
+  it.each(['server', 'app', 'reload'] as const)('reports %s failures and recovers on the next save', async (stage) => {
+    const order: string[] = [];
+    let broken = true;
+    const step = (name: string) => async () => {
+      order.push(name);
+      if (broken && name === stage) throw 'broken';
+    };
+    const loop = createPluginDevLoop({
+      pluginId: 'hello', hasServer: true, hasApp: true,
+      buildServer: step('server'), buildApp: step('app'), reloadPlugin: step('reload'),
+      log: vi.fn(), now: () => 100
+    });
+    loop.handleChange('server.ts');
+    expect(await loop.flushNow()).toEqual({ ok: false, stage, message: 'broken' });
+    expect(order).toEqual(['server', 'app', 'reload'].slice(0, ['server', 'app', 'reload'].indexOf(stage) + 1));
+    broken = false;
+    loop.handleChange('server.ts');
+    expect(await loop.flushNow()).toEqual({ ok: true });
+    expect(order.slice(-3)).toEqual(['server', 'app', 'reload']);
+    loop.dispose();
+  });
+
+  it('coalesces changes, serializes cycles, and cancels queued work on dispose', async () => {
+    let finish!: () => void;
+    const build = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const reload = vi.fn(async () => undefined);
+    const logs: string[] = [];
+    const loop = createPluginDevLoop({
+      pluginId: 'hello', hasServer: false, hasApp: true,
+      buildServer: async () => undefined, buildApp: build, reloadPlugin: reload,
+      log: (line) => logs.push(line)
+    });
+    loop.handleChange('app.tsx');
+    loop.handleChange('style.css');
+    const first = loop.flushNow();
+    await Promise.resolve();
+    loop.handleChange('server.ts');
+    const second = loop.flushNow();
+    expect(build).toHaveBeenCalledTimes(1);
+    loop.dispose();
+    finish();
+    expect(await first).toEqual({ ok: true });
+    expect(await second).toBeNull();
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(logs[0]).toContain('2 files changed');
+    loop.handleChange('app.tsx');
+    expect(await loop.flushNow()).toBeNull();
+  });
+
+  it('does not invent a cycle for ignored or cancelled changes', async () => {
+    const reload = vi.fn(async () => undefined);
+    const loop = createPluginDevLoop({
+      pluginId: 'hello', hasServer: false, hasApp: false,
+      buildServer: async () => undefined, buildApp: async () => undefined,
+      reloadPlugin: reload, log: vi.fn()
+    });
+    loop.handleChange('dist/app.js');
+    expect(await loop.flushNow()).toBeNull();
+    loop.handleChange('app.tsx');
+    loop.dispose();
+    expect(await loop.flushNow()).toBeNull();
+    expect(reload).not.toHaveBeenCalled();
   });
 });
 

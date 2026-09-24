@@ -1,3 +1,4 @@
+import type { ThreadHistoryQuery, ThreadHistoryPage, ConversationTranscript } from '@zana-ai/zcc-domain/product';
 import type { DesktopBrowserApi } from './browser.js';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
 import type {
@@ -454,6 +455,8 @@ export interface CcApi {
    * Not a PTY spawn path. Desktop `terminals.create` remains legacyAgentSession.
    */
   threads: {
+    history(query: ThreadHistoryQuery): Promise<ThreadHistoryPage>;
+    unarchive(threadId: string): Promise<{ thread: unknown }>;
     create(input: {
       projectId: string;
       providerId: string;
@@ -465,6 +468,7 @@ export interface CcApi {
       permissionMode?: 'accept-edits' | 'auto' | 'full';
       model?: string;
       reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+      serviceTier?: 'default' | 'fast';
       acpMode?: string;
     }): Promise<Result<{
       id: string;
@@ -535,15 +539,18 @@ export interface CcApi {
         permissionMode?: 'accept-edits' | 'auto' | 'full';
         model?: string;
         reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+        serviceTier?: 'default' | 'fast';
         acpMode?: string;
       }
     ): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
+    implementPlan(threadId: string, revision: number, acpMode?: string): Promise<{ ok: boolean }>;
     cancelPlan(threadId: string): Promise<{ ok: boolean }>;
     plan(threadId: string): Promise<{ ok: boolean; plan?: unknown }>;
     updatePlan(threadId: string, markdown: string): Promise<{ ok: boolean; plan?: unknown }>;
     addPlanTask(threadId: string, text: string): Promise<{ ok: boolean; plan?: unknown }>;
     flushNextTurn(threadId: string, force?: boolean): Promise<{ ok: boolean }>;
+    sendNextTurn(threadId: string, itemId: string): Promise<{ ok: boolean }>;
     deleteNextTurn(threadId: string, itemId: string): Promise<{ ok: boolean }>;
     nextTurn(threadId: string): Promise<{ ok?: boolean; items?: unknown[] }>;
     compact(threadId: string): Promise<{ ok: boolean }>;
@@ -673,7 +680,7 @@ export interface CcApi {
         isDefault: boolean;
       }>;
       permissionCeiling: string;
-      modelLoadError: { providerId: string; code: string } | null;
+      modelLoadError: { providerId: string; code: string; detail: string | null } | null;
       acpMode?: {
         currentValue?: string;
         options: Array<{ value: string; name?: string }>;
@@ -1025,6 +1032,7 @@ export interface CcApi {
     listSessions(projectId: string): Promise<OpenCodeSessionSummary[]>;
   };
   history: {
+    transcript(snapshotId: string, historyId: string): Promise<ConversationTranscript>;
     start(input: ConversationHistoryStartInput): Promise<ConversationHistorySnapshot>;
     refresh(snapshotId: string): Promise<ConversationHistorySnapshot>;
     page(snapshotId: string, opaquePageCursor?: string): Promise<ConversationHistorySnapshot>;

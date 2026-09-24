@@ -1,7 +1,7 @@
 import { type AvailableModel } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { buildClaudeCodeModels } from "../model-list.js";
-import { translateMissingClaudeCliError } from "./missing-cli-error.js";
+import { translateMissingClaudeCliCatalogError } from "./missing-cli-error.js";
 import { resolveClaudeCodeExecutable } from "./session-options.js";
 
 function buildModelProbeOptions(env: NodeJS.ProcessEnv): Options {
@@ -10,8 +10,6 @@ function buildModelProbeOptions(env: NodeJS.ProcessEnv): Options {
     cwd: process.cwd(),
     maxTurns: 0,
     persistSession: false,
-    allowDangerouslySkipPermissions: true,
-    permissionMode: "bypassPermissions",
     settingSources: [],
     ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
   };
@@ -30,14 +28,14 @@ export async function listClaudeCodeBridgeModels(
       options: buildModelProbeOptions(env),
     });
   } catch (error) {
-    throw translateMissingClaudeCliError(error);
+    throw translateMissingClaudeCliCatalogError(error);
   }
 
   try {
     const initialization = await session.initializationResult();
     return buildClaudeCodeModels(initialization.models);
   } catch (error) {
-    throw translateMissingClaudeCliError(error);
+    throw translateMissingClaudeCliCatalogError(error);
   } finally {
     session.close();
   }

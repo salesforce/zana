@@ -26,9 +26,11 @@
  * extensionless launcher exists the moment `pnpm run build:cli` runs —
  * dev, CI, and the packaged app all go through the same path.
  */
-import { chmodSync, copyFileSync, existsSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 
 const distDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 const binDir = join(distDir, 'bin');
@@ -45,4 +47,35 @@ chmodSync(zccBare, 0o755);
 
 writeFileSync(join(distDir, 'package.json'), JSON.stringify({ type: 'module' }, null, 2) + '\n');
 
-console.log(`[postbuild] wrote ${zccBare} (0755) and dist/package.json`);
+// extraResources copies only dist/. Neither the build engine nor the SDK app
+// facade may depend on the checkout's node_modules or TypeScript sources.
+const require = createRequire(import.meta.url);
+const esbuildRoot = dirname(require.resolve('esbuild/package.json'));
+const esbuildRequire = createRequire(join(esbuildRoot, 'package.json'));
+const runtimeModules = join(distDir, 'node_modules');
+mkdirSync(runtimeModules, { recursive: true });
+for (const name of ['esbuild', '@esbuild']) {
+  rmSync(join(runtimeModules, name), { recursive: true, force: true });
+}
+cpSync(esbuildRoot, join(runtimeModules, 'esbuild'), { recursive: true, dereference: true });
+const optional = JSON.parse(readFileSync(join(esbuildRoot, 'package.json'), 'utf8')).optionalDependencies;
+for (const name of Object.keys(optional)) {
+  let manifest;
+  try { manifest = esbuildRequire.resolve(`${name}/package.json`); }
+  catch { continue; } // Only platforms installed by the package manager ship.
+  cpSync(dirname(manifest), join(runtimeModules, name), { recursive: true, dereference: true });
+}
+
+const sdkRoot = join(distDir, '../../plugin-sdk');
+const runtimeDir = join(distDir, 'runtime');
+await build({
+  entryPoints: [join(sdkRoot, 'src/app.ts')],
+  outfile: join(runtimeDir, 'plugin-sdk-app.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'esm',
+  target: 'es2022'
+});
+copyFileSync(join(sdkRoot, 'bundled-types/zcc-plugin-sdk.d.ts'), join(runtimeDir, 'zcc-plugin-sdk.d.ts'));
+
+console.log(`[postbuild] wrote ${zccBare} (0755), build runtime, and SDK facade`);

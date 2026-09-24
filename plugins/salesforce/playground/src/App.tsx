@@ -169,7 +169,7 @@ export default function App() {
       if (message.type === 'setFile') {
         pathRef.current = message.path;
         const recovered = message.draftKey ? readAgentDraft(message.draftKey) : undefined;
-        const nextDialect = recovered?.dialect ?? message.dialect;
+        const nextDialect = message.dialect;
         dialectRef.current = nextDialect;
         setDialect(nextDialect);
         draftRef.current = { key: message.draftKey, baseline: message.content, baseSha: recovered?.baseSha ?? message.sha256, applying: true };
@@ -243,7 +243,6 @@ export default function App() {
     >
       <div className="split" ref={splitRef}>
         <section className="pane editor">
-          <header className="pane-header"><span><span className="pane-file-icon">⌘</span> Agent definition</span><span className="pane-kicker">.agent</span></header>
           <div className="pane-body" id="editor-host" />
         </section>
         <div

@@ -1,6 +1,7 @@
+import { assertPlanImplementationReady, assertPlanRevision } from './conversation-plan-implementation.js';
+import { withConversationSend, withConversationSendCancellation, type ConversationSendLease } from './conversation-send-guard.js';
 import {
   archiveConversationThread,
-  countActiveConversationTurns,
   createConversationThread,
   getConversationThread,
   getEnvironment,
@@ -24,13 +25,13 @@ import {
   dropDeferredConversationMessages,
   flushDeferredConversationMessages,
   pauseConversationQueue,
-  resumeConversationQueue
+  resumeConversationQueue,
+  sendDeferredConversationMessage
 } from './conversation-deferred-messages.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import type { PermissionMode, ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import {
-  canDispatch,
   isHostOfflineError,
   isHostRpcTimeout,
   type ThreadSendMode
@@ -62,6 +63,7 @@ import { LIVE_TURN_COMMAND_TIMEOUT_MS } from '../../http/host-hub.js';
 import { archiveConversationOnHost, unarchiveConversationOnHost } from './thread-host-commands.js';
 import { collectConversationArchiveDescendants } from './conversation-child-ops.js';
 import { bridgeLaunchForProvider, getThreadProvider } from './thread-provider-catalog.js';
+import { readLastThreadExecution } from './thread-last-execution.js';
 import { threadPermissionMode } from './thread-permission-mode.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
@@ -99,33 +101,56 @@ export async function sendConversationTurn(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
+    serviceTier?: 'default' | 'fast';
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean } = {}
+  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number } = {}
+): Promise<ConversationThreadRow> {
+  return withConversationSend(ctx.db, threadId, lease => sendConversationTurnWithLease(lease, ctx, threadId, input, mode, execution, options));
+}
+
+async function sendConversationTurnWithLease(
+  lease: ConversationSendLease,
+  ctx: ProductHttpContext,
+  threadId: string,
+  input: unknown,
+  mode: ThreadSendMode = 'auto',
+  execution?: {
+    permissionMode?: PermissionMode;
+    model?: string;
+    reasoningLevel?: ReasoningLevel;
+    serviceTier?: 'default' | 'fast';
+    acpMode?: string;
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
+  },
+  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number } = {}
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
-  const live = recoverConversationProviderThreadId(ctx.db, thread);
+  let live = recoverConversationProviderThreadId(ctx.db, thread);
+  if (options.planRevision !== undefined) assertPlanImplementationReady(ctx, live, options.planRevision);
   ensureConversationThreadIsWritable(live);
   if (!live.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
   const permissionMode = threadPermissionMode(ctx, live, execution?.permissionMode);
-  let packedExecution = { ...execution, permissionMode };
+  const lastExecution = readLastThreadExecution(ctx, live.id);
+  execution = {
+    ...execution,
+    model: execution?.model ?? lastExecution.model ?? undefined,
+    reasoningLevel: execution?.reasoningLevel ?? lastExecution.reasoningLevel ?? undefined,
+    acpMode: execution?.acpMode ?? lastExecution.acpMode ?? undefined,
+    serviceTier: execution?.serviceTier ?? lastExecution.serviceTier
+  };
+  const serviceTier = execution.serviceTier;
+  let packedExecution = { ...execution, permissionMode, serviceTier };
+  const requestedMode = requestedExecutionModeFromTurn({ acpMode: execution?.acpMode, input });
   if (options.compact !== true) {
-    const requestedMode = requestedExecutionModeFromTurn({
-      acpMode: execution?.acpMode,
-      input
-    });
-    recordThreadExecutionMode(ctx.db, {
-      threadId: live.id,
-      requestedMode,
-      effectiveMode: requestedMode
-    });
     const claudeCodePermissionMode = claudeCodePermissionModeForTurn(live.providerId, requestedMode);
     const providerOptions = derivedProviderOptionsForCommand({
       providerId: live.providerId,
@@ -139,6 +164,7 @@ export async function sendConversationTurn(
     packedExecution = {
       ...execution,
       permissionMode,
+      serviceTier,
       ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
       ...(providerOptions ? { providerOptions } : {})
     };
@@ -163,26 +189,21 @@ export async function sendConversationTurn(
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
+  // Direct follow-ups wait only on this thread. The global concurrency cap
+  // belongs to host-reconnect fan-out; queuing an idle thread here leaves it
+  // without a completion event to trigger its drain.
   const shouldQueue = options.drain !== true && (
     ghostQueue
     || pending
     || !hostOnline
     || (mode === 'queue-if-active' && threadActive)
-    || canDispatch({
-      archived: Boolean(live.archivedAt),
-      queuePaused: false,
-      pendingInteraction: pending,
-      hostOnline,
-      sendAfter: null,
-      liveActiveCount: countActiveConversationTurns(ctx.db)
-    }).kind === 'delay' && mode === 'queue-if-active'
   );
   if (shouldQueue) {
     deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
-  const resolvedMode = resolveConversationSendMode(live, mode);
+  let resolvedMode = resolveConversationSendMode(live, mode);
   ensureRuntimeCanAcceptActiveSend(ctx, live, resolvedMode);
   const resolvedInput = prependDeferredFirstTurnContext(
     await withResolvedPathMentionContext(
@@ -191,6 +212,16 @@ export async function sendConversationTurn(
     ),
     resolveDeferredFirstTurnContext(ctx, live.id)
   );
+  lease.assertCurrent();
+  if (options.planRevision !== undefined) assertPlanImplementationReady(ctx, getConversationThread(ctx.db, threadId) ?? live, options.planRevision);
+  live = recoverConversationProviderThreadId(ctx.db, getConversationThread(ctx.db, threadId) ?? live);
+  ensureConversationThreadIsWritable(live);
+  if (options.drain !== true && mode === 'queue-if-active' && (live.status === 'active' || live.status === 'starting')) {
+    deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
+    ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
+    return live;
+  }
+  resolvedMode = resolveConversationSendMode(live, mode);
   const textPrompt = flattenThreadInput(resolvedInput).map((part) => part.trim()).filter((part) => part.length > 0);
   const prompt = hostPromptInputFromInput(
     resolvedInput,
@@ -203,6 +234,9 @@ export async function sendConversationTurn(
   const steerTurnId = resolvedMode === 'steer'
     ? findOpenConversationTurn(ctx.db, live.id)?.turnId ?? null
     : null;
+  if (options.compact !== true) {
+    recordThreadExecutionMode(ctx.db, { threadId: live.id, requestedMode, effectiveMode: requestedMode });
+  }
   const clientRequestId = appendClientTurnRequested(ctx, {
     threadId: live.id,
     prompt: textPrompt,
@@ -212,6 +246,7 @@ export async function sendConversationTurn(
     permissionMode,
     model: execution?.model,
     reasoningLevel: execution?.reasoningLevel,
+    serviceTier,
     acpMode: execution?.acpMode
   });
   const started = applyLoggedConversationLifecycleEvent(ctx, {
@@ -223,6 +258,11 @@ export async function sendConversationTurn(
     return getConversationThread(ctx.db, live.id) ?? live;
   }
   await dispatchTurnSubmit(ctx, {
+    lease: options.planRevision === undefined ? lease : {
+      get cancelled() { return lease.cancelled; },
+      retain: () => lease.retain(),
+      assertCurrent: () => { lease.assertCurrent(); assertPlanRevision(ctx, threadId, options.planRevision!); }
+    },
     thread: live,
     prompt,
     mode: resolvedMode,
@@ -254,63 +294,95 @@ export async function sendConversationTurn(
 async function dispatchTurnSubmit(
   ctx: ProductHttpContext,
   args: {
+    lease: ConversationSendLease;
     thread: ConversationThreadRow;
     prompt: PromptInput[];
     mode: ThreadSendMode;
-    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+    execution?: {
+      permissionMode?: PermissionMode;
+      model?: string;
+      reasoningLevel?: ReasoningLevel;
+      serviceTier?: 'default' | 'fast';
+      acpMode?: string;
+    };
     clientRequestId?: string;
     input: unknown;
     drain: boolean;
   }
 ): Promise<void> {
-  if (!args.thread.providerThreadId && args.thread.originKind === 'fork') {
-    const command = await threadStartCommandForFork(
+  // Direct sends return promptly; a durable queue claim must wait for acceptance.
+  const dispatch = async (command: Parameters<typeof startLiveTurnCommand>[1]['command'], onSuccess?: (result: unknown) => void) => {
+    args.lease.assertCurrent();
+    if (!args.drain) {
+      const release = args.lease.retain();
+      try {
+        startLiveTurnCommand(ctx, {
+          hostId: args.thread.hostId, command,
+          onSuccess: result => { try { if (!args.lease.cancelled) onSuccess?.(result); } finally { release(); } },
+          onError: (error) => {
+            void recoverOrSettleTurnSubmit(ctx, args, error, command.type as 'thread.start' | 'turn.submit').catch(() => undefined).finally(release);
+          }
+        });
+      } catch (error) {
+        release();
+        throw error;
+      }
+      return;
+    }
+    try {
+      const result = await ctx.hostHub.callHostOnlineRpc({
+        hostId: args.thread.hostId, command, timeoutMs: LIVE_TURN_COMMAND_TIMEOUT_MS
+      });
+      if (!args.lease.cancelled) onSuccess?.(result);
+    } catch (error) {
+      await recoverOrSettleTurnSubmit(ctx, args, error, command.type as 'thread.start' | 'turn.submit');
+    }
+  };
+  try {
+    if (!args.thread.providerThreadId && args.thread.originKind === 'fork') {
+      const command = await threadStartCommandForFork(
+        ctx,
+        args.thread,
+        args.prompt,
+        args.execution,
+        args.clientRequestId
+      );
+      await dispatch(command, (result) => {
+        const started = result as { providerThreadId?: string };
+        if (started?.providerThreadId) setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
+      });
+      return;
+    }
+    const command = await turnSubmitCommand(
       ctx,
       args.thread,
       args.prompt,
+      args.mode,
       args.execution,
-      args.clientRequestId
+      args.clientRequestId,
+      args.drain
     );
-    startLiveTurnCommand(ctx, {
-      hostId: args.thread.hostId,
-      command,
-      onSuccess: (result) => {
-        const started = result as { providerThreadId?: string };
-        if (started?.providerThreadId) {
-          setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
-        }
-      },
-      onError: (error) => {
-        void recoverOrSettleTurnSubmit(ctx, args, error, 'thread.start').catch(() => undefined);
-      }
-    });
-    return;
+    await dispatch(command);
+  } catch (error) {
+    if (args.lease.cancelled || (error instanceof ThreadCreateError && error.code === 'stale_plan')) settleLiveTurnCommandFailure(ctx, { thread: args.thread, commandType: 'turn.submit', clientRequestId: args.clientRequestId, error });
+    throw error;
   }
-  const command = await turnSubmitCommand(
-    ctx,
-    args.thread,
-    args.prompt,
-    args.mode,
-    args.execution,
-    args.clientRequestId,
-    args.drain
-  );
-  startLiveTurnCommand(ctx, {
-    hostId: args.thread.hostId,
-    command,
-    onError: (error) => {
-      void recoverOrSettleTurnSubmit(ctx, args, error, 'turn.submit').catch(() => undefined);
-    }
-  });
 }
 
 async function recoverOrSettleTurnSubmit(
   ctx: ProductHttpContext,
   args: {
+    lease: ConversationSendLease;
     thread: ConversationThreadRow;
     prompt: PromptInput[];
     mode: ThreadSendMode;
-    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+    execution?: {
+      permissionMode?: PermissionMode;
+      model?: string;
+      reasoningLevel?: ReasoningLevel;
+      serviceTier?: 'default' | 'fast';
+      acpMode?: string;
+    };
     clientRequestId?: string;
     input: unknown;
     drain: boolean;
@@ -318,6 +390,11 @@ async function recoverOrSettleTurnSubmit(
   error: unknown,
   commandType: 'thread.start' | 'turn.submit'
 ): Promise<void> {
+  if (args.lease.cancelled) {
+    settleLiveTurnCommandFailure(ctx, { thread: args.thread, commandType, clientRequestId: args.clientRequestId,
+      error: new ThreadCreateError(409, 'send_cancelled', 'Send cancelled by Stop or Archive') });
+    return;
+  }
   if (isHostOfflineError(error) && !isHostRpcTimeout(error) && !args.drain) {
     deferConversationSend(ctx, {
       threadId: args.thread.id,
@@ -333,18 +410,12 @@ async function recoverOrSettleTurnSubmit(
         ctx.db,
         getConversationThread(ctx.db, args.thread.id) ?? args.thread
       );
-      await resumeConversationOnHost(ctx, current);
+      await resumeConversationOnHost(ctx, current, () => args.lease.assertCurrent());
+      const command = await turnSubmitCommand(ctx, current, args.prompt, args.mode, args.execution, args.clientRequestId, args.drain);
+      args.lease.assertCurrent();
       await ctx.hostHub.callHostOnlineRpc({
         hostId: current.hostId,
-        command: await turnSubmitCommand(
-          ctx,
-          current,
-          args.prompt,
-          args.mode,
-          args.execution,
-          args.clientRequestId,
-          args.drain
-        ),
+        command,
         timeoutMs: LIVE_TURN_COMMAND_TIMEOUT_MS
       });
       return;
@@ -355,6 +426,7 @@ async function recoverOrSettleTurnSubmit(
         clientRequestId: args.clientRequestId,
         error: resumeError
       });
+      if (args.drain) throw resumeError;
       return;
     }
   }
@@ -364,9 +436,17 @@ async function recoverOrSettleTurnSubmit(
     clientRequestId: args.clientRequestId,
     error
   });
+  if (args.drain) throw error;
 }
 
 export async function stopConversation(
+  ctx: ProductHttpContext,
+  threadId: string
+): Promise<ConversationThreadRow> {
+  return withConversationSendCancellation(ctx.db, threadId, () => stopConversationInternal(ctx, threadId));
+}
+
+async function stopConversationInternal(
   ctx: ProductHttpContext,
   threadId: string
 ): Promise<ConversationThreadRow> {
@@ -374,6 +454,7 @@ export async function stopConversation(
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
+  pauseConversationQueue(ctx, thread.id);
   await revokeThreadDesktopBrowserControl(ctx, thread.id).catch(() => {});
   const openTurn = findOpenConversationTurn(ctx.db, thread.id);
   const hasLiveRuntime = thread.status === 'active'
@@ -393,7 +474,6 @@ export async function stopConversation(
   }
 
   appendStopRequestedEvent(ctx.db, ctx.hub, thread.id);
-  pauseConversationQueue(ctx, thread.id);
   ctx.pendingInteractions.interruptPendingInteractionsForThreadIds({
     threadIds: [thread.id],
     reason: 'thread-stopped'
@@ -448,21 +528,16 @@ export async function cancelConversationPlan(
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
   const activePlanTurn = resolveActivePlanTurn(ctx, thread);
-  const execution = getThreadExecutionState(ctx.db, threadId);
-  const stickyPlan = isPlanExecutionMode(execution?.requestedMode)
-    || isPlanExecutionMode(execution?.effectiveMode);
-  if (!activePlanTurn && !stickyPlan) {
+  if (!activePlanTurn) {
     throw new ThreadCreateError(409, 'invalid_request', 'Plan mode is not active');
   }
-  if (activePlanTurn) {
-    await ctx.hostHub.callHostOnlineRpc({
-      hostId: thread.hostId,
-      command: {
-        type: 'thread.plan.cancel',
-        threadId: thread.id,
-        expectedTurnId: activePlanTurn.turnId
-      }
-    });
+  const result = await ctx.hostHub.callHostOnlineRpc<{ threadId: string; cancelled: boolean }>({
+    hostId: thread.hostId,
+    command: { type: 'thread.plan.cancel', threadId: thread.id, expectedTurnId: activePlanTurn.turnId }
+  });
+  const refreshed = getConversationThread(ctx.db, thread.id) ?? thread;
+  if (!result.cancelled || result.threadId !== thread.id || resolveActivePlanTurn(ctx, refreshed)) {
+    throw new ThreadCreateError(409, 'invalid_request', 'The provider did not confirm that Plan mode exited');
   }
   recordThreadExecutionMode(ctx.db, {
     threadId: thread.id,
@@ -483,6 +558,7 @@ export async function resumeConversation(
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
   const live = recoverConversationProviderThreadId(ctx.db, thread);
+  ensureConversationThreadIsWritable(live);
   if (!live.environmentId || !live.providerThreadId) {
     throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
   }
@@ -493,6 +569,14 @@ export async function resumeConversation(
 }
 
 export async function archiveConversation(
+  ctx: ProductHttpContext,
+  threadId: string,
+  options: { skipEnvironmentCleanup?: boolean } = {}
+): Promise<boolean> {
+  return withConversationSendCancellation(ctx.db, threadId, () => archiveConversationInternal(ctx, threadId, options));
+}
+
+async function archiveConversationInternal(
   ctx: ProductHttpContext,
   threadId: string,
   options: { skipEnvironmentCleanup?: boolean } = {}
@@ -551,7 +635,8 @@ export async function unarchiveConversation(
   if (!thread.archivedAt) {
     throw new ThreadCreateError(409, 'not_archived', 'thread is not archived');
   }
-  if (!thread.environmentId || !getEnvironment(ctx.db, thread.environmentId)) {
+  const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
+  if (!environment || ['destroyed', 'destroying', 'failed'].includes(environment.status)) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'environment is not registered');
   }
   const restored = unarchiveConversationThread(ctx.db, threadId) ?? thread;
@@ -609,7 +694,12 @@ export async function forkConversation(
     : buildForkTranscriptSeed(copied);
   const seed = transcript ? [transcript, ...pluginSeed] : pluginSeed;
   if (seed.length > 0) {
+    const inherited = readLastThreadExecution(ctx, thread.id);
     appendClientTurnRequested(ctx, {
+      model: inherited.model ?? undefined,
+      reasoningLevel: inherited.reasoningLevel ?? undefined,
+      acpMode: inherited.acpMode ?? undefined,
+      serviceTier: inherited.serviceTier,
       threadId: forked.id,
       prompt: [],
       promptInput: seed,
@@ -636,9 +726,29 @@ export async function flushHeldConversationSends(
   options: { force?: boolean; enforceConcurrencyCap?: boolean } = {}
 ): Promise<void> {
   if (options.force) resumeConversationQueue(ctx, threadId);
-  await flushDeferredConversationMessages(ctx, threadId, async (payload) => {
-    await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true });
-  }, options);
+  try {
+    await flushDeferredConversationMessages(ctx, threadId, async (payload) => {
+      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true });
+    }, options);
+  } finally {
+    const thread = getConversationThread(ctx.db, threadId);
+    if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
+  }
+}
+
+export async function sendHeldConversationMessage(
+  ctx: ProductHttpContext,
+  threadId: string,
+  itemId: string
+): Promise<void> {
+  try {
+    await sendDeferredConversationMessage(ctx, threadId, itemId, async (payload) => {
+      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true });
+    });
+  } finally {
+    const thread = getConversationThread(ctx.db, threadId);
+    if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
+  }
 }
 
 /** Drain due next-turn rows for every thread on a host that just came online. */
@@ -699,6 +809,7 @@ async function turnSubmitCommand(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
+    serviceTier?: 'default' | 'fast';
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
@@ -719,6 +830,7 @@ async function turnSubmitCommand(
     ...(resume ? { resume } : {}),
     ...(execution?.model ? { model: execution.model } : {}),
     ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {}),
+    ...(execution?.serviceTier ? { serviceTier: execution.serviceTier } : {}),
     ...(execution?.acpMode ? { acpMode: execution.acpMode } : {}),
     ...(execution?.claudeCodePermissionMode
       ? { claudeCodePermissionMode: execution.claudeCodePermissionMode }
@@ -743,6 +855,7 @@ async function threadStartCommandForFork(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
+    serviceTier?: 'default' | 'fast';
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
@@ -775,6 +888,7 @@ async function threadStartCommandForFork(
     permissionMode,
     ...(execution?.model ? { model: execution.model } : {}),
     ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {}),
+    ...(execution?.serviceTier ? { serviceTier: execution.serviceTier } : {}),
     ...(execution?.acpMode ? { acpMode: execution.acpMode } : {}),
     ...(execution?.claudeCodePermissionMode
       ? { claudeCodePermissionMode: execution.claudeCodePermissionMode }

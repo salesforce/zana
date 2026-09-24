@@ -20,4 +20,7 @@ npm run --silent typecheck
 echo "pre-push: tests…"
 npm test --silent
 
+echo "pre-push: tasks plugin tests…"
+npm test --silent --prefix plugins/tasks
+
 echo "pre-push: ok"

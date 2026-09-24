@@ -3,11 +3,15 @@ import {
   appendThreadPlanRevision,
   createThreadPlan,
   createThreadPlanTask,
+  deleteProviderThreadPlanTask,
   getConversationThread,
   getEnvironment,
   getThreadExecutionState,
   getThreadPlanByRootThread,
-  listConversationThreadEvents,
+  getThreadPlanTask,
+  listConversationThreadEventsWindow,
+  getConversationTurnStart,
+  appendConversationThreadEvent,
   listThreadPlanReferences,
   listThreadPlanTasks,
   latestThreadPlanRevision,
@@ -20,10 +24,10 @@ import {
   type ThreadPlanTaskStatus,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
-import { foldTodoPlanFromInputs } from '@zana-ai/zcc-domain/thread-runtime';
+import { foldTodoPlanSnapshot, type TodoPlanFoldState } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { isPlanExecutionMode } from './conversation-execution-mode.js';
+import { isPlanExecutionMode, requestedExecutionModeFromTurn } from './conversation-execution-mode.js';
 import { isSubstantialPlanDraft, writeThreadPlanFile } from './thread-plan-files.js';
 
 export interface DurableThreadPlanView {
@@ -33,6 +37,7 @@ export interface DurableThreadPlanView {
   markdown: string | null;
   filePath: string | null;
   revision: number;
+  revisionSource: string | null;
   createdAt: number;
   updatedAt: number;
   requestedExecutionMode: string | null;
@@ -182,50 +187,45 @@ export function importProviderPlanSteps(
     owningThreadId?: string;
   }
 ): void {
-  if (args.steps.length === 0) return;
+  const previous = getThreadPlanByRootThread(db, rootThreadIdFor(db, args.threadId));
+  if (!previous && args.steps.length === 0) return;
   const plan = ensureDraftThreadPlan(db, args.threadId);
-  const existing = listThreadPlanTasks(db, plan.id);
-  const byKey = new Map(existing.filter((task) => task.providerKey).map((task) => [task.providerKey!, task]));
+  const sourceThread = args.owningThreadId ?? args.threadId;
+  const existing = listThreadPlanTasks(db, plan.id).filter(task =>
+    task.ownerKind === 'provider' && (task.owningThreadId === sourceThread
+      || (task.owningThreadId === null && sourceThread === plan.rootThreadId)));
   const used = new Set<string>();
-  args.steps.forEach((step, index) => {
-    const text = step.step.trim();
-    if (!text) return;
-    const key = providerKeyFor(text, index);
-    used.add(key);
-    const status = normalizeProviderStatus(step.status);
-    const match = byKey.get(key)
-      ?? existing.find((task) => !task.userEdited && task.text.trim() === text && !used.has(task.providerKey ?? ''));
-    if (match) {
-      if (match.userEdited && match.text !== text) return;
-      if (match.status === 'completed' && status === 'in_progress') return;
-      const startedAt = status === 'in_progress'
-        ? match.startedAt ?? Date.now()
-        : match.startedAt;
-      updateThreadPlanTask(db, match.id, {
-        status,
-        providerKey: key,
-        startedAt,
-        owningThreadId: status === 'in_progress' ? (args.owningThreadId ?? args.threadId) : match.owningThreadId,
-        latestActivity: status === 'in_progress' ? 'provider-plan-steps' : match.latestActivity,
-        blockedReason: status === 'blocked' ? 'interrupted' : match.blockedReason
-      });
-      return;
-    }
-    const created = createThreadPlanTask(db, {
-      planId: plan.id,
-      text,
-      status,
-      ownerKind: 'provider',
-      providerKey: key
-    });
-    if (status === 'in_progress') {
+  db.sqlite.transaction(() => {
+    args.steps.forEach((step, index) => {
+      const text = step.step.trim();
+      if (!text) return;
+      const key = providerKeyFor(text, index);
+      const match = existing.find(task => !used.has(task.id) && task.providerKey === key)
+        ?? existing.find(task => !used.has(task.id) && !task.userEdited && task.text.trim() === text);
+      const status = normalizeProviderStatus(step.status);
+      if (match) {
+        used.add(match.id);
+        if (match.userEdited) return;
+        updateThreadPlanTask(db, match.id, {
+          text, status, providerKey: key, sortOrder: index,
+          startedAt: status === 'in_progress' ? match.startedAt ?? Date.now() : match.startedAt,
+          owningThreadId: sourceThread,
+          latestActivity: status === 'in_progress' ? 'provider-plan-steps' : match.latestActivity,
+          blockedReason: status === 'blocked' ? 'interrupted' : null
+        });
+        return;
+      }
+      const created = createThreadPlanTask(db, { planId: plan.id, text, status,
+        ownerKind: 'provider', providerKey: key, sortOrder: index });
       updateThreadPlanTask(db, created.id, {
-        startedAt: Date.now(),
-        owningThreadId: args.owningThreadId ?? args.threadId,
-        latestActivity: 'provider-plan-steps'
+        owningThreadId: sourceThread,
+        ...(status === 'in_progress' ? { startedAt: Date.now(), latestActivity: 'provider-plan-steps' } : {})
       });
+    });
+    for (const task of existing) {
+      if (!used.has(task.id) && !task.userEdited) deleteProviderThreadPlanTask(db, task.id);
     }
-  });
+  })();
   reconcileThreadPlanStatus(db, plan.id);
 }
 
@@ -267,6 +267,7 @@ export function getDurableThreadPlanView(
     markdown: revision?.markdown ?? null,
     filePath: plan.filePath,
     revision: revision?.sequence ?? 0,
+    revisionSource: revision?.source ?? null,
     createdAt: plan.createdAt,
     updatedAt: plan.updatedAt,
     requestedExecutionMode: execution?.requestedMode ?? null,
@@ -330,6 +331,10 @@ export function updateUserPlanTask(
   if (!thread) throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   const plan = getThreadPlanByRootThread(ctx.db, rootThreadIdFor(ctx.db, threadId));
   if (!plan) throw new ThreadCreateError(404, 'unknown-plan', 'thread has no plan');
+  const task = getThreadPlanTask(ctx.db, taskId);
+  if (!task || task.planId !== plan.id) {
+    throw new ThreadCreateError(404, 'unknown-task', 'plan task is not registered');
+  }
   const updated = updateThreadPlanTask(ctx.db, taskId, {
     ...patch,
     userEdited: true
@@ -360,22 +365,32 @@ type CompletedPlanItem = {
 };
 
 export function syncPlanFromLatestEvents(db: ZccDatabase, threadId: string): void {
-  const rows = listConversationThreadEvents(db, threadId);
+  // Bound completed items separately so streamed deltas cannot evict the final reply.
+  const rows = listConversationThreadEventsWindow(db, threadId, { limit: 400, type: 'item/completed' });
   const completed: CompletedPlanItem[] = [];
   for (let index = 0; index < rows.length; index += 1) {
     const parsed = completedItemFromPayload(rows[index]?.payload);
     if (!parsed) continue;
-    completed.push({ ...parsed, index });
+    completed.push({ ...parsed, index: rows[index]!.sequence });
   }
-  const latestSteps = [...completed].reverse().find((row) => row.itemType === 'planSteps');
-  const steps = latestSteps
-    ? planStepsFromItem(latestSteps.item)
-    : foldTodoPlanFromInputs(completed.flatMap((row) => todoInputFromItem(row)));
-  if (steps.length > 0) {
+  let steps: Array<{ step: string; status?: string }> | null = null;
+  const todos: TodoPlanFoldState = new Map();
+  for (const row of completed) {
+    if (row.itemType === 'planSteps') {
+      steps = planStepsFromItem(row.item);
+      todos.clear();
+    } else if (row.itemType === 'toolCall') {
+      const snapshot = foldTodoPlanSnapshot(todos, row.item.arguments);
+      if (snapshot !== null) steps = snapshot;
+    }
+  }
+  if (steps !== null) {
     importProviderPlanSteps(db, { threadId, steps, owningThreadId: threadId });
   }
-  const markdown = resolveProviderPlanMarkdown(db, threadId, completed, latestSteps);
-  if (markdown) snapshotApprovedPlan(db, { threadId, markdown, source: markdownSource(latestSteps, completed) });
+  const draft = resolveProviderPlanMarkdown(db, threadId, completed);
+  if (!draft) return;
+  snapshotApprovedPlan(db, { threadId, markdown: draft.markdown, source: draft.source });
+  appendConversationThreadEvent(db, { threadId, type: 'plan/document/captured', payload: { sourceSequence: draft.index } });
 }
 
 function persistPlanFile(
@@ -399,55 +414,62 @@ function persistPlanFile(
   if (plan && plan.filePath !== written) updateThreadPlanFilePath(db, plan.id, written);
 }
 
-function markdownSource(
-  latestSteps: CompletedPlanItem | undefined,
-  completed: readonly CompletedPlanItem[]
-): string {
-  if (latestSteps) {
-    const explanation = stringField(latestSteps.item, 'explanation');
-    if (explanation) return 'provider';
-  }
-  const turnId = latestSteps?.turnId;
-  const planItem = [...completed].reverse().find((row) => {
-    if (row.itemType !== 'plan') return false;
-    if (turnId && row.turnId && row.turnId !== turnId) return false;
-    if (latestSteps && row.index > latestSteps.index) return false;
-    return Boolean(stringField(row.item, 'text'));
-  });
-  if (planItem) return 'provider';
-  return 'provider-draft';
+function eventRecord(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object') return {};
+  const record = payload as Record<string, unknown>;
+  return record.event && typeof record.event === 'object' ? record.event as Record<string, unknown> : record;
 }
 
 function resolveProviderPlanMarkdown(
   db: ZccDatabase,
   threadId: string,
-  completed: readonly CompletedPlanItem[],
-  latestSteps: CompletedPlanItem | undefined
-): string | null {
-  const turnId = latestSteps?.turnId ?? completed.at(-1)?.turnId ?? null;
-  const sameTurn = (row: CompletedPlanItem) => {
-    if (latestSteps && row.index > latestSteps.index) return false;
-    if (turnId && row.turnId) return row.turnId === turnId;
-    if (latestSteps) return row.index <= latestSteps.index;
-    return true;
-  };
-  const planItem = [...completed].reverse().find((row) => row.itemType === 'plan' && sameTurn(row));
-  const planText = planItem ? stringField(planItem.item, 'text') : null;
-  if (planText) return planText;
-  const explanation = latestSteps ? stringField(latestSteps.item, 'explanation') : null;
-  if (explanation) return explanation;
-  if (!latestSteps) return null;
-  const execution = getThreadExecutionState(db, threadId);
-  if (!isPlanExecutionMode(execution?.requestedMode) && !isPlanExecutionMode(execution?.effectiveMode)) {
-    return null;
-  }
+  completed: readonly CompletedPlanItem[]
+): { markdown: string; source: string; index: number } | null {
+  const latest = completed.at(-1);
+  if (!latest) return null;
+  const sameTurn = completed.filter(row => row.turnId === latest.turnId && !row.item.parentToolCallId);
+  const planItem = sameTurn.findLast(row => row.itemType === 'plan' && stringField(row.item, 'text'));
+  const explanation = sameTurn.findLast(row => row.itemType === 'planSteps' && stringField(row.item, 'explanation'));
+  const message = sameTurn.findLast(row => row.itemType === 'agentMessage');
+  const candidate = planItem ?? explanation ?? message;
+  if (!candidate) return null;
+  const captured = listConversationThreadEventsWindow(db, threadId, { limit: 1, type: 'plan/document/captured' })[0];
+  const capturedSequence = eventRecord(captured?.payload).sourceSequence;
+  if (typeof capturedSequence === 'number' && candidate.index <= capturedSequence) return null;
   const plan = getThreadPlanByRootThread(db, rootThreadIdFor(db, threadId));
-  const latestRevision = plan ? latestThreadPlanRevision(db, plan.id) : null;
-  if (latestRevision && latestRevision.source !== 'provider-draft') return null;
-  const message = [...completed].reverse().find((row) => row.itemType === 'agentMessage' && sameTurn(row));
-  const text = message ? stringField(message.item, 'text') : null;
+  const revision = plan ? latestThreadPlanRevision(db, plan.id) : null;
+  const start = latest.turnId ? getConversationTurnStart(db, threadId, latest.turnId) : null;
+  if (eventRecord(start?.payload).parentToolCallId) return null;
+  const request = listConversationThreadEventsWindow(db, threadId, {
+    limit: 1, type: 'client/turn/requested', beforeSeq: start?.sequence ?? candidate.index
+  })[0];
+  const requestPayload = eventRecord(request?.payload);
+  const execution = eventRecord(requestPayload.execution);
+  const mode = request
+    ? requestedExecutionModeFromTurn({ input: requestPayload.input, acpMode: typeof execution.acpMode === 'string' ? execution.acpMode : undefined })
+    : getThreadExecutionState(db, threadId)?.requestedMode;
+  // Only a fresh, explicitly requested planning turn can revise a user-edited or
+  // approved document. Ordinary chat and replayed provider history cannot.
+  const explicitlyRevising = request && revision && request.createdAt >= revision.createdAt && isPlanExecutionMode(mode);
+  if (revision && (revision.source === 'user' || revision.source === 'approval') && !explicitlyRevising) return null;
+  // Execution checklists describe progress; their explanations must not replace
+  // the reviewed document while the agent is implementing it.
+  if (explanation && !planItem && revision && !isPlanExecutionMode(mode)) return null;
+  if (planItem || explanation) {
+    return { markdown: stringField(candidate.item, planItem ? 'text' : 'explanation')!, source: 'provider', index: candidate.index };
+  }
+  if (revision && revision.source !== 'provider-draft' && !explicitlyRevising) return null;
+  if (!latest.turnId || !isPlanExecutionMode(mode)) return null;
+  const terminal = ['turn/completed', 'turn.completed'].flatMap(type =>
+    listConversationThreadEventsWindow(db, threadId, { limit: 80, type }))
+    .sort((a, b) => a.sequence - b.sequence)
+    .findLast(row => turnIdFrom(eventRecord(row.payload)) === latest.turnId);
+  // An assistant item can be commentary. Wait for a successful turn boundary.
+  // Legacy checklist-backed drafts retain their existing capture behavior.
+  if (terminal ? eventRecord(terminal.payload).status !== 'completed' : !sameTurn.some(row => row.itemType === 'planSteps')) return null;
+  const text = stringField(candidate.item, 'text');
   if (!text || !isSubstantialPlanDraft(text)) return null;
-  return text;
+  return { markdown: text, source: 'provider-draft', index: candidate.index };
 }
 
 function planStepsFromItem(item: Record<string, unknown>): Array<{ step: string; status?: string }> {
@@ -458,11 +480,6 @@ function planStepsFromItem(item: Record<string, unknown>): Array<{ step: string;
     if (typeof row.step !== 'string') return [];
     return [{ step: row.step, status: typeof row.status === 'string' ? row.status : undefined }];
   });
-}
-
-function todoInputFromItem(row: CompletedPlanItem): unknown[] {
-  if (row.itemType !== 'toolCall') return [];
-  return [row.item.arguments];
 }
 
 function completedItemFromPayload(payload: unknown): Omit<CompletedPlanItem, 'index'> | null {

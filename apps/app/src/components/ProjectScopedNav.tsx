@@ -1,3 +1,5 @@
+import { History } from 'lucide-react';
+import { useConversationHistory } from './history/history-store.js';
 import { product } from '../lib/product-client.js';
 import { useEffect, type ReactNode, useSyncExternalStore } from 'react';
 import {
@@ -144,6 +146,9 @@ export function ProjectScopedNav({
   const backLabel = route.isProjectSettings ? 'Back to Global settings' : 'Back to all projects';
 
   const items: SidebarRailItem[] = [
+    { kind: 'row', id: 'conversation-history', label: 'History', icon: <History size={16} />,
+      to: '#', testId: 'nav-conversation-history', active: false,
+      onClick: (event) => { event.preventDefault(); useConversationHistory.getState().open(project.id); } },
     {
       kind: 'row',
       id: 'inbox',

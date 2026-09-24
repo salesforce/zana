@@ -487,7 +487,7 @@ function AddRepoForm({
             ))}
           </select>
         </label>
-        {error && <div className="prm-modal-error">{error}</div>}
+        {error && <div className="prm-modal-error" role="alert">{error}</div>}
       </div>
       <footer className="prm-modal-footer">
         <button type="button" className="prm-btn" onClick={onClose} disabled={busy}>
@@ -591,7 +591,7 @@ function SuggestedDialog({
             <Loader2 size={14} className="prm-spin" /> Looking at your activity in the last 90 days…
           </div>
         ) : error ? (
-          <div className="prm-modal-error">{error}</div>
+          <div className="prm-modal-error" role="alert">{error}</div>
         ) : rows.length === 0 ? (
           <div className="prm-area-empty">
             No repositories found in your last 90 days of activity. To monitor a repository, author or review a
@@ -810,7 +810,7 @@ function BrowseDialog({
           />
         </div>
 
-        {error && <div className="prm-modal-error">{error}</div>}
+        {error && <div className="prm-modal-error" role="alert">{error}</div>}
 
         {loading ? (
           <div className="prm-loading">
@@ -989,10 +989,11 @@ function RepoSettingsDialog({
       onClose={onClose}
       busy={busy}
     >
-      <nav className="prm-dialog-tabs">
+      <nav className="prm-dialog-tabs" aria-label="Repository settings sections">
         <button
           type="button"
           className={`prm-dialog-tab${tab === 'general' ? ' active' : ''}`}
+          aria-current={tab === 'general' ? 'page' : undefined}
           onClick={() => setTab('general')}
         >
           <Edit2 size={12} /> General
@@ -1000,6 +1001,7 @@ function RepoSettingsDialog({
         <button
           type="button"
           className={`prm-dialog-tab${tab === 'status' ? ' active' : ''}`}
+          aria-current={tab === 'status' ? 'page' : undefined}
           onClick={() => setTab('status')}
         >
           <Clock size={12} /> Status
@@ -1007,6 +1009,7 @@ function RepoSettingsDialog({
         <button
           type="button"
           className={`prm-dialog-tab${tab === 'notifications' ? ' active' : ''}`}
+          aria-current={tab === 'notifications' ? 'page' : undefined}
           onClick={() => setTab('notifications')}
         >
           <Bell size={12} /> Notifications
@@ -1128,7 +1131,7 @@ function RepoSettingsDialog({
             </span>
           </label>
         )}
-        {error && <div className="prm-modal-error">{error}</div>}
+        {error && <div className="prm-modal-error" role="alert">{error}</div>}
       </div>
       <footer className="prm-modal-footer">
         <button type="button" className="prm-btn" onClick={onClose} disabled={busy}>

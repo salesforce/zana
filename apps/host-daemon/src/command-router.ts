@@ -6,6 +6,7 @@ import {
   type HostRpcResponseMessage
 } from '@zana-ai/zcc-contracts/host-rpc';
 import { dispatchHostCommand, type CommandRuntime } from './command-dispatch.js';
+import { BRIDGE_JSON_RPC_ERRORS } from '@zana-ai/zcc-provider-bridge-protocol';
 import { HostCommandError } from './host-command-error.js';
 
 const LooseRequestSchema = z.object({
@@ -14,6 +15,19 @@ const LooseRequestSchema = z.object({
   requestId: z.string().min(1),
   command: z.object({ type: z.string() }).passthrough()
 });
+
+
+function hostRpcErrorCode(error: unknown): string {
+  if (error instanceof HostCommandError) return error.code;
+  if (
+    error instanceof Error
+    && 'code' in error
+    && (error as { code: unknown }).code === BRIDGE_JSON_RPC_ERRORS.MISSING_EXECUTABLE
+  ) {
+    return 'missing_executable';
+  }
+  return 'internal';
+}
 
 export async function handleHostRpcRequest(
   runtime: CommandRuntime,
@@ -61,7 +75,7 @@ export async function handleHostRpcRequest(
       result: parseHostRpcResult(command.data.type, result)
     };
   } catch (error) {
-    const code = error instanceof HostCommandError ? error.code : 'internal';
+    const code = hostRpcErrorCode(error);
     const message = error instanceof Error ? error.message : String(error);
     return {
       type: 'host-rpc.response',

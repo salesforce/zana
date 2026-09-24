@@ -37,6 +37,7 @@ describe('host command dispatch', () => {
       workspaceProvisionType: 'unmanaged',
       path: join(tmpdir(), 'zcc-missing-env', randomUUID())
     })).rejects.toMatchObject({ code: 'path_not_found' });
+    expect(runtime.lanes.size).toBe(0);
   });
 
   it('starts a thread after unmanaged provision when the provider CLI is present', async () => {
@@ -67,6 +68,7 @@ describe('host command dispatch', () => {
     expect(provisioned.path).toBeTruthy();
     expect(provisioned.isGitRepo).toBe(false);
     expect(Array.isArray(provisioned.transcript)).toBe(true);
+    expect(runtime.lanes.size).toBe(0);
     const started = await dispatchHostCommand(runtime, {
       type: 'thread.start',
       threadId,
@@ -501,12 +503,14 @@ describe('host command dispatch', () => {
     })).rejects.toMatchObject({ code: 'environment_not_ready' });
   });
 
-  it('cancels plan mode without dropping the running thread', async () => {
+  it('keeps stale plans live and requires a resume after confirmed cancellation', async () => {
     const stopped: string[] = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
-      stopWork: async (input) => {
+      cancelPlan: async (input) => {
+        if (input.expectedTurnId !== 'turn-plan-1') return false;
         stopped.push(input.threadId);
+        return true;
       }
     });
     const threadId = randomUUID();
@@ -517,13 +521,16 @@ describe('host command dispatch', () => {
       threadId: missingId,
       expectedTurnId: 'turn-plan-1'
     })).resolves.toMatchObject({ threadId: missingId, cancelled: false });
+    await expect(dispatchHostCommand(runtime, { type: 'thread.plan.cancel', threadId, expectedTurnId: 'stale-turn' })).resolves.toMatchObject({ cancelled: false });
+    expect(runtime.threads.has(threadId)).toBe(true);
     await expect(dispatchHostCommand(runtime, {
       type: 'thread.plan.cancel',
       threadId,
       expectedTurnId: 'turn-plan-1'
     })).resolves.toMatchObject({ threadId, cancelled: true });
+    await expect(dispatchHostCommand(runtime, { type: 'thread.plan.cancel', threadId, expectedTurnId: 'stale-turn' })).resolves.toMatchObject({ cancelled: false });
     expect(stopped).toEqual([threadId]);
-    expect(runtime.threads.has(threadId)).toBe(true);
+    expect(runtime.threads.has(threadId)).toBe(false);
     await expect(dispatchHostCommand(runtime, {
       type: 'thread.stop',
       threadId
@@ -793,10 +800,12 @@ describe('host command dispatch', () => {
     const runtime = createCommandRuntime({ resumeWork: async (input) => { resumed.push(input); } });
     const stored = {
       model: 'stored-model', reasoningLevel: 'low' as const, acpMode: 'agent',
+      serviceTier: 'fast' as const,
       providerOptions: { retained: true, executable: 'old' }
     };
     const current = {
       model: 'selected-model', reasoningLevel: 'high' as const, acpMode: 'plan',
+      serviceTier: 'default' as const,
       claudeCodePermissionMode: 'plan' as const, providerOptions: { executable: 'new' }
     };
     try {

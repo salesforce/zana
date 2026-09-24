@@ -106,8 +106,12 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
                   process.env.ZCC_CENTER_DIR ||
                   defaultDataDir();
 
-  if (argsNoData.length === 0 || argsNoData.includes('--help') || argsNoData.includes('-h')) {
+  if (argsNoData.length === 0 || argsNoData[0] === '--help' || argsNoData[0] === '-h') {
     return help();
+  }
+  if (argsNoData.includes('--help') || argsNoData.includes('-h')) {
+    const { pluginProxyCandidate } = await import('./plugin-cli-proxy.js');
+    if (!pluginProxyCandidate(argsNoData[0])) return help();
   }
 
   if (argsNoData.includes('--version') || argsNoData.includes('-v')) {

@@ -15,7 +15,7 @@ export function planFileTabTitle(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-export type PlanDocumentBadge = 'building' | 'ready' | 'complete';
+export type PlanDocumentBadge = 'draft' | 'building' | 'ready' | 'complete';
 
 export type PlanReferenceView = {
   threadId: string;
@@ -47,12 +47,14 @@ export function isLivePlanFilePath(
 
 export function planDocumentBadge(plan: {
   status?: string | null;
+  isDraft?: boolean;
   processing?: { text?: string } | null;
   progress?: { completed: number; total: number } | null;
   tasks?: ReadonlyArray<{ status: string }>;
   markdown?: string | null;
 } | null | undefined): PlanDocumentBadge | null {
   if (!plan) return null;
+  if (plan.isDraft && plan.markdown?.trim()) return 'draft';
   const tasks = plan.tasks ?? [];
   if (plan.processing || tasks.some((task) => task.status === 'in_progress' || task.status === 'active')) {
     return 'building';
@@ -69,6 +71,7 @@ export function planDocumentBadge(plan: {
 }
 
 export function planDocumentBadgeLabel(badge: PlanDocumentBadge): string {
+  if (badge === 'draft') return 'Draft';
   if (badge === 'building') return 'Building';
   if (badge === 'complete') return 'Complete';
   return 'Ready';
@@ -91,6 +94,7 @@ export function planReferenceDetail(ref: PlanReferenceView): string {
   const title = ref.title?.trim() || 'Untitled agent';
   const role = ref.role?.trim() || 'Agent';
   const n = ref.todosAssigned ?? 0;
+  if (n === 0) return `${title} · ${role}`;
   return `${title} · ${role} · ${n} ${n === 1 ? 'todo' : 'todos'} assigned`;
 }
 

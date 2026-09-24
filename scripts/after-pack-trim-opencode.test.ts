@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   archName,
+  installPackagedSqliteBinding,
+  packagedSqliteAddonPath,
   resolveOpencodeResourceDir,
   trimOtherOpencodeArches
 } from './after-pack-trim-opencode.mjs';
@@ -68,5 +70,41 @@ describe('after-pack-trim-opencode', () => {
     roots.push(appOutDir);
     mkdirSync(join(appOutDir, 'Zana.app', 'Contents', 'Resources'), { recursive: true });
     expect(trimOtherOpencodeArches(appOutDir, 'darwin', 'arm64')).toEqual([]);
+  });
+
+  it('replaces the packaged SQLite addon with the Electron ABI binary', () => {
+    const appOutDir = mkdtempSync(join(tmpdir(), 'zcc-sqlite-pack-'));
+    roots.push(appOutDir);
+    const addonPath = join(
+      appOutDir,
+      'Zana.app',
+      'Contents',
+      'Resources',
+      'app.asar.unpacked',
+      'node_modules',
+      'better-sqlite3',
+      'build',
+      'Release',
+      'better_sqlite3.node'
+    );
+    mkdirSync(join(addonPath, '..'), { recursive: true });
+    writeFileSync(addonPath, 'node-abi');
+    const cachePath = join(appOutDir, 'abi-148.node');
+    writeFileSync(cachePath, 'electron-abi');
+
+    expect(packagedSqliteAddonPath(appOutDir, 'darwin')).toBe(addonPath);
+    installPackagedSqliteBinding(addonPath, cachePath);
+    expect(readFileSync(addonPath, 'utf8')).toBe('electron-abi');
+  });
+
+  it('refuses to package when the Electron SQLite binary is missing', () => {
+    const appOutDir = mkdtempSync(join(tmpdir(), 'zcc-sqlite-missing-'));
+    roots.push(appOutDir);
+    const addonPath = join(appOutDir, 'better_sqlite3.node');
+    writeFileSync(addonPath, 'node-abi');
+    expect(() => installPackagedSqliteBinding(addonPath, join(appOutDir, 'missing.node'))).toThrow(
+      /Electron SQLite ABI cache is missing/
+    );
+    expect(readFileSync(addonPath, 'utf8')).toBe('node-abi');
   });
 });

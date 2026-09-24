@@ -76,7 +76,9 @@ describe('composer image attachments', () => {
     expect(composerImageRejectReason(file('a.heic', 'image/heic'))).toMatch(/HEIC/);
     expect(composerImageRejectReason(file('a.txt', 'text/plain'))).toMatch(/Only image/);
     const huge = file('a.png', 'image/png', COMPOSER_IMAGE_LIMIT_BYTES + 1);
-    expect(composerImageRejectReason(huge)).toMatch(/10MB/);
+    expect(composerImageRejectReason(huge)).toMatch(/35MB/);
+    expect(COMPOSER_IMAGE_LIMIT_BYTES).toBe(35 * 1024 * 1024);
+    expect(composerImageRejectReason(file('limit.png', 'image/png', COMPOSER_IMAGE_LIMIT_BYTES))).toBeNull();
     expect(composerImageRejectReason(file('a.png', 'image/png'))).toBeNull();
     expect(composerImageRejectReason(file('a.png', 'image/png; charset=binary'))).toBeNull();
   });

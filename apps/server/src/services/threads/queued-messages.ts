@@ -14,9 +14,10 @@ function withLock<T>(key: string, fn: () => T): Promise<T> {
   const prev = writeChains.get(key) ?? Promise.resolve();
   const run = prev.catch(() => undefined).then(fn);
   writeChains.set(key, run);
-  void run.finally(() => {
+  const cleanup = () => {
     if (writeChains.get(key) === run) writeChains.delete(key);
-  });
+  };
+  void run.then(cleanup, cleanup);
   return run;
 }
 

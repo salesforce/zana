@@ -16,6 +16,7 @@
     "paths": {
       "@/*": ["./apps/app/src/*"],
       "@zana-ai/zcc-plugin-sdk": ["./packages/plugin-sdk/src/index.ts"],
+      "@zana-ai/zcc-plugin-sdk/testing/app": ["./packages/plugin-sdk/src/testing/app-entry.ts"],
       "@zana-ai/zcc-plugin-sdk/*": ["./packages/plugin-sdk/src/*"],
       "@zana-ai/zcc-domain": ["./packages/domain/src/index.ts"],
       "@zana-ai/zcc-domain/*": ["./packages/domain/src/*"],

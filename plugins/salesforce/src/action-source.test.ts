@@ -8,7 +8,7 @@ import { readBoundedResponse, salesforceRestRequest } from '../lib/sf-cli.js';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import type { ResolvedOrg, SalesforceDeps } from '../lib/types.js';
-import { ACTION_APEX, ACTION_FLOW } from './action-fixtures.js';
+import { ACTION_APEX, ACTION_FLOW, ACTION_FLOW_XML } from './action-fixtures.js';
 const dirs: string[] = [];
 const org = { alias: 'dev', username: 'dev@example.com', orgId: '00D1', instanceUrl: 'https://dev.my.salesforce.com', accessToken: 'PRIVATE_TOKEN', apiVersion: '62.0' } as ResolvedOrg;
 const response = (json: unknown, status = 200) => ({ json, status, text: JSON.stringify(json) });
@@ -120,6 +120,21 @@ describe('action source resolution', () => {
     expect(await harness.callRpc('agentActions.source', { ...args, origin: 'project', target: 'apex://OrderLookup' })).toMatchObject({ ok: true });
     await harness.dispose();
   });
+  it('visualizes only the authorized Flow snapshot on demand and retains source after parser failure', async () => {
+    const { root, write, deps } = setup();
+    write('force-app/main/default/flows/CheckReturn.flow-meta.xml', ACTION_FLOW_XML);
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p', name: 'Project', path: root }] });
+    await createSalesforcePlugin(zcc, deps);
+    const args = { projectId: 'p', target: 'flow://CheckReturn', origin: 'project', visualize: true };
+    expect(await harness.callRpc('agentActions.source', { ...args, projectId: 'unknown' })).toMatchObject({ ok: false });
+    const ordinary: any = await harness.callRpc('agentActions.source', { ...args, visualize: false });
+    expect(ordinary.data.visualization).toBeUndefined();
+    const rendered: any = await harness.callRpc('agentActions.source', { ...args, content: '<Flow/>', projectRoot: '/etc' });
+    expect(rendered.data.visualization.data.nodes).toContainEqual(expect.objectContaining({ id: 'Eligible' }));
+    write('force-app/main/default/flows/CheckReturn.flow-meta.xml', '<Flow>');
+    expect(await harness.callRpc('agentActions.source', args)).toMatchObject({ ok: true, data: { content: '<Flow>', visualizationError: expect.any(String) } });
+    await harness.dispose();
+  }, 60_000);
 });
 describe('bounded source responses', () => {
   it('preserves complete UTF-8 across chunks and rejects oversized streams', async () => {

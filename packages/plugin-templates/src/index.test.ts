@@ -10,6 +10,18 @@ afterEach(() => {
 });
 
 describe('scaffoldPlugin', () => {
+  it.each(['panel', 'main-panel', 'mcp-consumer', 'agent-preset'])('teaches %s live verification to every agent provider', async (kind) => {
+    const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-live-guide-'));
+    dirs.push(dest);
+    await scaffoldPlugin({ targetDir: dest, id: 'verify', name: 'Verify', kind });
+    const agents = readFileSync(join(dest, 'AGENTS.md'), 'utf8');
+    expect(agents).toBe(readFileSync(join(dest, 'CLAUDE.md'), 'utf8'));
+    expect(agents).toContain('LIVE_TEST.md');
+    const recipe = readFileSync(join(dest, 'LIVE_TEST.md'), 'utf8');
+    expect(recipe).toContain('zcc plugin dev --once');
+    expect(recipe).toContain('ZCC_SERVER_URL');
+    expect(recipe).toContain(kind === 'agent-preset' ? 'actual response' : 'already-open panel');
+  });
   it('writes a package.json zcc plugin with a runnable app panel', async () => {
     const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-scaffold-'));
     dirs.push(dest);

@@ -722,6 +722,8 @@ export async function dispatchOp(
     case 'plugin.search':
     case 'plugin.outdated':
     case 'plugin.update':
+    case 'plugin.contributions':
+    case 'plugin.cli':
     case 'marketplace.list':
     case 'marketplace.add':
     case 'marketplace.refresh':

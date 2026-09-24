@@ -38,6 +38,15 @@ describe('PaneEmptyState', () => {
     expect(html).not.toContain('pane-empty-hint');
   });
 
+  it('announces loading while keeping its animated illustration decorative', () => {
+    const html = renderToStaticMarkup(<PaneEmptyState art="loading" title="Loading conversation…" />);
+    expect(html).toContain('role="status"');
+    expect(html).toContain('pane-empty-loading-lines');
+    expect(html).toContain('class="pane-empty-art" aria-hidden="true"');
+    expect(html).toContain('Loading conversation…');
+    expect(renderToStaticMarkup(<PaneEmptyState art="agents" title="No agents" />)).not.toContain('role="status"');
+  });
+
   it('appends an extra className', () => {
     const html = renderToStaticMarkup(
       <PaneEmptyState art="missing" title="Missing" className="extra-slot" />

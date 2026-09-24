@@ -1,3 +1,4 @@
+import { createCursorHistory } from './history.js';
 import type { HarnessRegistration } from '../registration.js';
 import { CursorProvider } from './provider.js';
 import { discoverCursorModels } from '../cursor-model-catalog.js';
@@ -8,6 +9,8 @@ const implementation = new CursorProvider();
 
 export const cursorHarness: HarnessRegistration = {
   id: 'cursor',
+  createHistoryAdapter: createCursorHistory,
+  historyIconId: 'acp-cursor',
   label: 'Cursor',
   profiles: [
     { id: 'cursor', posture: 'default' },

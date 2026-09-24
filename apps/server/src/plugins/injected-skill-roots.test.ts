@@ -94,6 +94,10 @@ describe('selectBuiltinSkillDirectoryRoots', () => {
     expect(roots[0]).not.toBe(builtinSkillsRootPath());
     expect(existsSync(join(roots[0]!, 'zcc-inbox', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(roots[0]!, 'zcc-cli', 'SKILL.md'))).toBe(false);
+    writeInjectedSkillRootManifest(dataDir, roots);
+    const manifest = JSON.parse(readFileSync(join(dataDir, 'injected-skill-roots.json'), 'utf8'));
+    expect(manifest.builtinSkillTargets).toContain(realpathSync(join(builtinSkillsRootPath(), 'zcc-inbox')));
+    expect(manifest.builtinSkillTargets).not.toContain(realpathSync(join(builtinSkillsRootPath(), 'zcc-cli')));
   });
 
   it('lists the same slugs as BUNDLED_PRODUCT_SKILL_IDS', async () => {

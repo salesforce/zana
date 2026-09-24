@@ -71,6 +71,8 @@ import { dispatchOptimisticUserMessage, dispatchThreadMessageSent, dispatchThrea
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { ThreadComposerToolbar } from './composer/ThreadComposerToolbar.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
+import { ProviderCliBanner } from './composer/ProviderCliBanner.js';
+import { useComposerProviderCli } from './composer/use-composer-provider-cli.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -95,6 +97,9 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   onCreated?: (threadId: string) => void;
   /** Sticky requested mode from `thread_execution_state` (plan/goal/agent or native ACP id). */
   executionModeRequested?: string | null;
+  planAction?: { id: number; threadId: string; kind: 'revise' | 'implement'; revision: number } | null;
+  onPlanActionPending?: (pending: boolean) => void;
+  onPlanActionHandled?: () => void;
 }
 
 export function ThreadCommandComposer({
@@ -115,7 +120,10 @@ export function ThreadCommandComposer({
   initialText,
   autoFocus = false,
   onCreated,
-  executionModeRequested = null
+  executionModeRequested = null,
+  planAction,
+  onPlanActionPending,
+  onPlanActionHandled
 }: ThreadCommandComposerProps) {
   const navigate = useNavigate();
   const route = useRouteState();
@@ -256,6 +264,13 @@ export function ThreadCommandComposer({
     ? options.providerId
     : options.providers.find((row) => row.id === 'fake')?.id
       ?? (options.providers.some((row) => row.id === options.providerId) ? options.providerId : options.providers[0]?.id);
+  const providerCliHostId = currentThread?.hostId ?? selectedProject?.hostId ?? hostId;
+  const providerCli = useComposerProviderCli({
+    enabled: !threadId,
+    hostId: providerCliHostId,
+    providerId: resolvedProviderId
+  });
+  const providerCliBlocked = !threadId && providerCli.blocked;
   const canSend = Boolean(
     threadId
     || ((pinnedProject || projectId) && resolvedProviderId && options.rosterReady)
@@ -341,6 +356,34 @@ export function ThreadCommandComposer({
     },
     onError: setError
   });
+  const handledPlanActionRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!planAction || planAction.threadId !== threadId || handledPlanActionRef.current === planAction.id) return;
+    handledPlanActionRef.current = planAction.id;
+    onPlanActionHandled?.();
+    if (busy || sendBlocked) return;
+    if (planAction.kind === 'revise') {
+      if (!composerModeEntriesForProvider.some(entry => entry.id === 'plan')) {
+        setError('Plan mode is not available for this provider.');
+        return;
+      }
+      setComposerWorkMode('plan');
+      if (!field.text.trim()) field.setText('Revise the plan: ');
+      field.focus();
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    onPlanActionPending?.(true);
+    const execute = composerModeEntriesForProvider.find(entry => entry.kind === 'execute');
+    void product.threads.implementPlan(threadId!, planAction.revision, execute?.nativeValue).then(() => {
+      setComposerWorkMode('agent');
+      dispatchThreadMessageSent(threadId!);
+    }).catch(error => {
+      setError(error instanceof Error ? error.message : 'Could not implement the plan');
+      dispatchThreadMessageSent(threadId!);
+    }).finally(() => { setBusy(false); onPlanActionPending?.(false); });
+  }, [planAction, threadId, busy, sendBlocked, field, composerModeEntriesForProvider, setComposerWorkMode, onPlanActionPending, onPlanActionHandled]);
   promptHistoryHandlerRef.current = (event) => {
     if (!threadId || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return false;
     const stepped = stepPromptHistory({
@@ -444,7 +487,7 @@ export function ThreadCommandComposer({
   }, [hostAction, hostBusy, hosts, runPeerDaemon]);
 
   const submit = useCallback(async (opts?: { modifierEnter?: boolean }) => {
-    if (busy || sendBlocked || hostSendBlocked || followUpSubmitBlocked) return;
+    if (busy || sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked) return;
     if (field.typeaheadOpen && field.suggestions.length > 0) return;
     const serialized = field.serialize();
     if (!serialized.text.trim() && field.images.length === 0) {
@@ -558,6 +601,7 @@ export function ThreadCommandComposer({
     busy,
     sendBlocked,
     hostSendBlocked,
+    providerCliBlocked,
     field,
     composerMode,
     selectedComposerMode,
@@ -603,13 +647,15 @@ export function ThreadCommandComposer({
       title={
         hostSendBlocked && hostAction.kind !== 'ready'
           ? hostAction.reason
-          : followUpSubmitBlocked
-            ? (submitMode.kind === 'blocked' ? submitMode.reason : 'Stop the agent to send')
-            : sendLabel
+          : providerCliBlocked && providerCli.status
+            ? `${providerCli.status.installed ? 'Update' : 'Install'} ${providerCli.status.displayName} before starting a thread.`
+            : followUpSubmitBlocked
+              ? (submitMode.kind === 'blocked' ? submitMode.reason : 'Stop the agent to send')
+              : sendLabel
       }
       aria-busy={busy}
       data-testid="thread-command-send"
-      disabled={busy || sendBlocked || hostSendBlocked || followUpSubmitBlocked || !canSend}
+      disabled={busy || sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked || !canSend}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => void submit()}
     >
@@ -636,8 +682,22 @@ export function ThreadCommandComposer({
       {...field.dropHandlers}
     >
       <span id="thread-command-label" className="thread-command-label">Agent composer</span>
+      {!threadId && providerCli.status && providerCliBlocked ? (
+        <ProviderCliBanner
+          displayName={providerCli.status.displayName}
+          installed={providerCli.status.installed}
+          currentVersion={providerCli.status.currentVersion}
+          minimumSupportedVersion={providerCli.status.minimumSupportedVersion}
+          canRunAction={Boolean(providerCli.status.installAction)}
+          actionRunning={providerCli.busy}
+          onAction={() => { void providerCli.runInstall(); }}
+        />
+      ) : null}
       {error ? (
         <p className="thread-command-error" data-testid="thread-command-error">{error}</p>
+      ) : null}
+      {providerCli.error ? (
+        <p className="thread-command-error" data-testid="provider-cli-install-error">{providerCli.error}</p>
       ) : null}
       {uploadProgress != null ? (
         <p className="thread-command-upload" data-testid="thread-command-upload-progress">
@@ -691,6 +751,7 @@ export function ThreadCommandComposer({
                 moreModelOptions={options.moreModelOptions}
                 modelIsLoading={options.modelIsLoading}
                 modelLoadError={options.modelLoadError}
+                modelLoadErrorDetail={options.modelLoadErrorDetail}
                 onModelChange={options.setModel}
               />
             }

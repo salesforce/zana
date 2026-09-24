@@ -167,6 +167,41 @@ function userClick(el: Element) {
   }
 }
 
+describe('completed sync snapshots', () => {
+  it.each(['success', 'malformed', 'rejected'] as const)('preserves newer PR metadata when a job completes (%s)', async (result) => {
+    const { host, prs, cacheStore } = makeStatefulHost();
+    const originalCall = host.call;
+    let settle!: (value: unknown) => void;
+    let afterHydration = false;
+    const stale = { ...makePr() };
+    host.call = (async (method: string, ...args: unknown[]) => {
+      if (method === 'pollAll') return new Promise((resolve) => { settle = resolve; });
+      if (method === 'listPrs' && afterHydration) {
+        if (result === 'malformed') return null;
+        if (result === 'rejected') throw new Error('Refresh unavailable');
+      }
+      return originalCall(method, ...args);
+    }) as ModuleHost['call'];
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => root.render(<PrMonitorPanel host={host} />));
+    cleanup = () => { act(() => root.unmount()); container.remove(); };
+    await flush();
+    expect(settle).toBeTypeOf('function');
+    const updated = { ...makePr(), projectId: 'proj-b', favorite: true, lastSeenAt: Date.now() };
+    prs.set(updated.url, updated);
+    cacheStore.set(MONITORED_PRS_CACHE_KEY, [updated]);
+    afterHydration = true;
+    await act(async () => {
+      settle({ state: 'succeeded', prs: [stale], deltas: [] });
+      await flush();
+    });
+    expect(cacheStore.get(MONITORED_PRS_CACHE_KEY)).toEqual([updated]);
+    if (result !== 'success') expect(container.querySelector('.prm-error')?.textContent).toMatch(/refresh|unavailable/i);
+  });
+});
+
 // Phase 2: board view unwired (tile UI is default). These tests query for card/board
 // DOM that no longer renders. Tile tests in PrTile.dom.test.tsx cover menu + assignment.
 describe.skip('PrMonitorPanel project assignment (DOM, full round-trip)', () => {

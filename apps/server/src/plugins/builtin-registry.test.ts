@@ -3,6 +3,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { derivePluginId, normalizeSkillsRootPaths, readPluginManifest } from '@zana-ai/zcc-domain';
+import { HOST_ZCC_VERSION, HOST_PLUGIN_SDK_VERSION } from './plugin-api.js';
+import { satisfiesRange } from '@zana-ai/zcc-domain';
 import {
   BUNDLED_PLUGINS,
   BUILTIN_PLUGINS,
@@ -14,6 +16,14 @@ import {
 } from './builtin-registry.js';
 
 const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
+
+it('accepts the engine requirements of every automatically installed bundled plugin', () => {
+  for (const plugin of BUILTIN_PLUGINS.filter(plugin => plugin.autoInstall)) {
+    const pkg = JSON.parse(readFileSync(join(pluginsRoot, plugin.name, 'package.json'), 'utf8'));
+    if (pkg.engines?.zcc) expect(satisfiesRange(HOST_ZCC_VERSION, pkg.engines.zcc), plugin.pluginId).toBe(true);
+    if (pkg.engines?.zccPluginSdk) expect(satisfiesRange(HOST_PLUGIN_SDK_VERSION, pkg.engines.zccPluginSdk), plugin.pluginId).toBe(true);
+  }
+});
 
 /** Definition completeness only. Official plugins stay installable; feature depth is per plugin. */
 
@@ -33,6 +43,7 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   'harness-grok': 'Agent interaction',
   'harness-mastracode': 'Agent interaction',
   'inline-vis': 'Interface',
+  'thread-list': 'Agent interaction',
   'keep-awake': 'Host access',
   memory: 'Context & knowledge',
   'monaco-editor': 'Interface',
@@ -69,6 +80,7 @@ const EXPECTED_ICONS: Record<string, string> = {
   'harness-grok': './icons/grok.svg',
   'harness-mastracode': './icons/mastracode.svg',
   'inline-vis': 'ChartNoAxesColumn',
+  'thread-list': 'List',
   'keep-awake': 'Coffee',
   memory: 'Brain',
   'monaco-editor': 'Code',

@@ -265,5 +265,5 @@ export function parseOrgDisplay(stdout: string, fallbackAlias: string, fallbackA
 }
 
 export function defaultCliAlias(listed: ListedOrg[]): string | null {
-  return listed.find((row) => row.isDefault)?.alias ?? listed[0]?.alias ?? null;
+  return listed.find((row) => row.isDefault)?.alias ?? null;
 }

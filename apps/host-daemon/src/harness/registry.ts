@@ -26,6 +26,19 @@ import { grokHarness } from './grok/registration.js';
 import { mastracodeHarness } from './mastracode/registration.js';
 import { afcodeHarness } from './afcode/registration.js';
 import { shellHarness } from './shell/registration.js';
+import type { HistoryProvider } from '../conversation-history.js';
+
+/** Native readers are owned by trusted registrations, including honest unsupported entries. */
+export function createHistoryProviders(input: { home: string; dataDir: string }): HistoryProvider[] {
+  return HARNESS_REGISTRATIONS.filter((registration) => registration.id !== 'shell').map((registration) => ({
+    id: registration.id,
+    label: registration.label,
+    iconId: registration.historyIconId ?? registration.id,
+    adapter: registration.createHistoryAdapter?.(input),
+    resume: registration.nativeConversationResume,
+    unavailableReason: registration.historyUnavailableReason
+  }));
+}
 
 export const HARNESS_REGISTRATIONS: readonly HarnessRegistration[] = Object.freeze([
   claudeHarness,

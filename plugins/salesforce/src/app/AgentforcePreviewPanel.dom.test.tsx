@@ -44,11 +44,13 @@ const rpc = vi.fn(async (_pluginId: string, method: string, args?: Record<string
   return { ok: false, error: `unexpected ${method}` };
 });
 
+const baseRpc = rpc.getMockImplementation()!;
 describe('AgentforcePreviewPanel', () => {
   const nodes: Array<{ unmount: () => void }> = [];
 
   beforeEach(() => {
     rpc.mockClear();
+    rpc.mockImplementation(baseRpc);
     (globalThis as { __ZCC_PLUGIN_HOST__?: unknown }).__ZCC_PLUGIN_HOST__ = {
       callRpc: rpc,
       setSettings: async () => undefined
@@ -204,5 +206,30 @@ describe('AgentforcePreviewPanel', () => {
       await Promise.resolve();
     });
     expect(el.querySelector('[data-testid="salesforce-agentforce-preview-error"]')?.textContent).toBe('no org');
+  });
+
+  it('releases the pinned session on tab close, including a start that finishes after closing', async () => {
+    const el = await mount();
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    rpc.mockClear();
+    await act(async () => { nodes.pop()!.unmount(); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentPreview.end', expect.objectContaining({ sessionId: 'sess-1', projectId: 'proj-1', orgAlias: 'dev' }));
+    const pending = await mount();
+    let finish!: (value: any) => void;
+    rpc.mockImplementation((id, method, args) => method === 'agentPreview.start' ? new Promise(resolve => { finish = resolve; }) : baseRpc(id, method, args));
+    await act(async () => { pending.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    await act(async () => { nodes.pop()!.unmount(); });
+    rpc.mockClear();
+    await act(async () => { finish({ ok: true, data: { sessionId: 'late' } }); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentPreview.end', expect.objectContaining({ sessionId: 'late', projectId: 'proj-1', orgAlias: 'dev' }));
+  });
+
+  it('does not end an explicitly ended session a second time', async () => {
+    const el = await mount();
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-end"]')!.click(); });
+    rpc.mockClear();
+    await act(async () => { nodes.pop()!.unmount(); });
+    expect(rpc.mock.calls.some(([, method]) => method === 'agentPreview.end')).toBe(false);
   });
 });

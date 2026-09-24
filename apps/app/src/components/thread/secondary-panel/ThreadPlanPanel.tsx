@@ -19,6 +19,7 @@ export type DurablePlanPanelView = {
   filePath?: string | null;
   status?: string | null;
   revision: number;
+  revisionSource?: string | null;
   progress: { completed: number; total: number };
   executionModeMismatch?: boolean;
   requestedExecutionMode?: string | null;
@@ -60,6 +61,10 @@ export function ThreadPlanPanel({
   todos,
   durablePlan,
   onOpenFile,
+  onRevise,
+  onImplement,
+  actionsDisabled = false,
+  actionPending = false,
   showStatusBadge = true,
   emptyLabel = 'The agent has not written a plan yet.'
 }: {
@@ -67,6 +72,10 @@ export function ThreadPlanPanel({
   todos?: ThreadTimelinePendingTodos | null;
   durablePlan?: DurablePlanPanelView | null;
   onOpenFile?: (path: string) => void;
+  onRevise?: () => void;
+  onImplement?: () => void;
+  actionsDisabled?: boolean;
+  actionPending?: boolean;
   showStatusBadge?: boolean;
   emptyLabel?: string;
 }) {
@@ -83,6 +92,7 @@ export function ThreadPlanPanel({
   const markdown = document.markdown ?? durablePlan?.markdown ?? null;
   const badge = planDocumentBadge({
     status: durablePlan?.status,
+    isDraft: durablePlan?.revisionSource === 'provider-draft' && durablePlan?.requestedExecutionMode === 'plan',
     processing: durablePlan?.processing,
     progress: durablePlan?.progress,
     tasks: items,
@@ -100,6 +110,12 @@ export function ThreadPlanPanel({
         </header>
       ) : document.prompt ? (
         <p className="thread-plan-panel-prompt" data-testid="thread-plan-prompt">{document.prompt}</p>
+      ) : null}
+      {markdown && document.source !== 'approval' && (onRevise || onImplement) ? (
+        <div className="thread-plan-panel-actions">
+          <button type="button" className="btn" disabled={actionsDisabled || actionPending} onClick={onRevise}>Revise plan</button>
+          <button type="button" className="btn btn-primary" disabled={actionsDisabled || actionPending} onClick={onImplement}>{actionPending ? 'Starting…' : 'Implement plan'}</button>
+        </div>
       ) : null}
       {durablePlan?.executionModeMismatch ? (
         <p className="thread-plan-panel-mismatch" data-testid="thread-plan-mode-mismatch">
@@ -129,10 +145,9 @@ export function ThreadPlanPanel({
           </h3>
           <ThreadTodoChecklist items={items} />
         </section>
-      ) : durablePlan ? (
-        <p className="thread-plan-panel-progress" data-testid="thread-plan-progress">
-          {durablePlan.progress.completed}/{durablePlan.progress.total} complete
-          {durablePlan.revision > 0 ? ` · revision ${durablePlan.revision}` : ''}
+      ) : durablePlan && durablePlan.revision > 0 ? (
+        <p className="thread-plan-panel-progress" data-testid="thread-plan-revision">
+          Revision {durablePlan.revision} · No checklist provided
         </p>
       ) : null}
       {filePath ? (
@@ -150,7 +165,7 @@ export function ThreadPlanPanel({
           <p className="thread-plan-panel-file" title={filePath}>{filePath}</p>
         )
       ) : null}
-      {refs.length > 0 ? (
+      {refs.some(ref => ref.role !== 'Author' || (ref.todosAssigned ?? 0) > 0) ? (
         <section className="thread-plan-panel-refs" data-testid="thread-plan-referenced-by">
           <h3>{planReferenceSummary(refs)}</h3>
           <ul>

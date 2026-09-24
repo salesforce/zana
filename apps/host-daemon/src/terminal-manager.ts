@@ -4,6 +4,7 @@ import {
   type TerminalHostCommand,
   type TerminalHostEvent
 } from '@zana-ai/zcc-contracts/terminal-execution';
+import { terminatePtyProcessTree } from './pty-termination.js';
 
 export interface PtyHandle {
   readonly pid?: number;
@@ -11,7 +12,7 @@ export interface PtyHandle {
   onExit(listener: (event: { exitCode: number; signal?: number }) => void): void;
   write(data: string): void;
   resize(cols: number, rows: number): void;
-  kill(): void;
+  kill(signal?: string): void;
 }
 
 export interface HostTerminalManagerOptions {
@@ -50,7 +51,7 @@ export class HostTerminalManager {
     const terminals = [...this.live.values()];
     for (const live of terminals) {
       try {
-        live.handle.kill();
+        terminatePtyProcessTree(live.handle);
       } catch {
         // A process can win the exit race; the host still drops its handle.
       }
@@ -69,7 +70,7 @@ export class HostTerminalManager {
         live.binding.hostConnectionId === binding.hostConnectionId
       ) {
         try {
-          live.handle.kill();
+          terminatePtyProcessTree(live.handle);
         } catch {
           // A process can win the exit race; it is no longer host-controlled.
         }
@@ -131,7 +132,7 @@ export class HostTerminalManager {
     }
     if (command.kind === 'terminate') {
       live.expectedExit = command.expected;
-      live.handle.kill();
+      terminatePtyProcessTree(live.handle);
       return;
     }
     for (const item of live.backlog) {

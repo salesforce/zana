@@ -155,12 +155,11 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     await composer.fill('');
     await composer.focus();
     await expect(phone.locator('.sponsor-nudge')).toBeHidden();
-    await expect.poll(() =>
-      composer
-        .locator('p')
-        .first()
-        .evaluate((el) => getComputedStyle(el, '::before').content)
-    ).toContain('Message');
+    await expect(composer).toBeVisible();
+    await expect(composer.locator('p.is-editor-empty').first()).toHaveAttribute(
+      'data-placeholder',
+      /Ask/
+    );
     await phone.screenshot({ path: testInfo.outputPath('zana-mobile-composer.png') });
     if (process.env.ZCC_MOBILE_MAESTRO) {
       // Force native swipes through the renderer's inner scroll area. A short

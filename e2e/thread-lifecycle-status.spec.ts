@@ -239,3 +239,112 @@ test('a distant child completion keeps the parent Working and follow-ups queued'
   await expect(detail.getByTestId('thread-queued-messages')).toHaveCount(0);
   await expect(composer.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Send');
 });
+
+test('idle follow-ups start despite eight hidden active threads', async ({ app }) => {
+  const { window } = app;
+  await window.getByTestId('nav-home').click();
+  const home = window.locator('.thread-command-composer').first();
+  await expect(home.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  await home.getByTestId('thread-command-input').fill('Finish the initial job');
+  await home.getByTestId('thread-command-send').click();
+  const detail = window.getByTestId('thread-detail');
+  const timeline = detail.getByTestId('thread-timeline');
+  await expect(timeline).toContainText('Response to: Finish the initial job', { timeout: 30_000 });
+  const composer = detail.locator('.thread-command-composer');
+  const send = composer.getByTestId('thread-command-send');
+  await expect(send).toHaveAttribute('aria-label', 'Send');
+
+  // Real host sessions in the isolated app reproduce hidden live probes filling
+  // the reconnect concurrency budget while this visible thread is idle.
+  const hiddenIds = await window.evaluate(async () => {
+    const { threads } = await (await fetch('/api/v1/threads')).json();
+    const { projectId, hostId, environmentId } = threads[0];
+    const ids: string[] = [];
+    for (let index = 0; index < 8; index += 1) {
+      const response = await fetch('/api/v1/threads', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId, hostId, providerId: 'fake', visibility: 'hidden',
+          environment: { kind: 'reuse', environmentId },
+          input: `delay:60000 hidden work ${index}`
+        })
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(JSON.stringify(body));
+      ids.push(body.thread.id);
+    }
+    return ids;
+  });
+  try {
+    await expect.poll(() => window.evaluate(async (ids) => {
+      const rows = await Promise.all(ids.map(async (id) => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread));
+      return rows.filter((row) => row.status === 'active').length;
+    }, hiddenIds), { timeout: 20_000 }).toBe(8);
+
+    for (const submit of ['Enter', 'Send']) {
+      const prompt = `Follow-up via ${submit}`;
+      await expect(send).toHaveAttribute('aria-label', 'Send');
+      await composer.getByTestId('thread-command-input').fill(prompt);
+      if (submit === 'Enter') await composer.getByTestId('thread-command-input').press('Enter');
+      else await send.click();
+      await expect(timeline).toContainText(`Response to: ${prompt}`, { timeout: 20_000 });
+      await expect(detail.getByTestId('thread-queued-messages')).toHaveCount(0);
+      await expect.poll(() => pendingLabelCount(timeline)).toBe(0);
+    }
+  } finally {
+    await window.evaluate(async (ids) => {
+      for (const id of ids) {
+        const response = await fetch(`/api/v1/threads/${id}/stop`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+        });
+        if (!response.ok) throw new Error(`Failed to stop fixture thread: ${response.status}`);
+      }
+    }, hiddenIds);
+  }
+});
+
+test('Send now sends the selected message from active and paused queues', async ({ app }, testInfo) => {
+  const { window } = app;
+  await window.getByTestId('nav-home').click();
+  const home = window.locator('.thread-command-composer').first();
+  await expect(home.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  await home.getByTestId('thread-command-input').fill('delay:60000 keep the original job running');
+  await home.getByTestId('thread-command-send').click();
+  const detail = window.getByTestId('thread-detail');
+  const timeline = detail.getByTestId('thread-timeline');
+  const composer = detail.locator('.thread-command-composer');
+  const input = composer.getByTestId('thread-command-input');
+  await expect(composer.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Queue');
+  const queued = detail.getByTestId('thread-queued-messages');
+  for (const message of ['Keep this queued', 'Send this during the job', 'Send this after stop']) {
+    await input.fill(message);
+    await input.press('Enter');
+    await expect(queued).toContainText(message);
+  }
+  const during = queued.locator('.thread-queued-ghost').filter({ hasText: 'Send this during the job' });
+  await expect(during.getByRole('button', { name: 'Send now', exact: true })).toBeVisible();
+  await queued.screenshot({ path: testInfo.outputPath('queue-send-now.png') });
+  const sent = window.waitForResponse((response) => response.request().method() === 'POST'
+    && /\/next-turn\/[^/]+\/send$/.test(response.url()));
+  await during.getByRole('button', { name: 'Send now', exact: true }).click();
+  expect((await sent).status()).toBe(200);
+  await expect(timeline.getByTestId('thread-user-text').filter({ hasText: 'Send this during the job' })).toBeVisible();
+  await expect(queued.locator('.thread-queued-item-text')).toHaveText(['Keep this queued', 'Send this after stop']);
+  await expect(timeline).not.toContainText('Response to: delay:60000 keep the original job running');
+
+  await window.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(queued.getByTestId('thread-queued-paused')).toBeVisible();
+  await expect(composer.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Send');
+  const afterStop = queued.locator('.thread-queued-ghost').filter({ hasText: 'Send this after stop' });
+  // The per-row button is also keyboard-operable without using the bulk action.
+  await afterStop.getByRole('button', { name: 'Send now', exact: true }).focus();
+  await window.keyboard.press('Enter');
+  await expect(timeline).toContainText('Response to: Send this after stop', { timeout: 20_000 });
+  await expect(queued.locator('.thread-queued-item-text')).toHaveText(['Keep this queued']);
+  await expect(queued.getByTestId('thread-queued-paused')).toBeVisible();
+  await expect(timeline.getByTestId('thread-user-text').filter({ hasText: 'Keep this queued' })).toHaveCount(0);
+  await expect(queued.getByRole('button', { name: 'Send all', exact: true })).toBeVisible();
+  await expect(queued.getByRole('button', { name: 'Send now', exact: true })).toBeEnabled();
+  await expect(queued.getByRole('alert')).toHaveCount(0);
+});

@@ -35,6 +35,8 @@ import {
 import { TimelineRows } from './timeline/TimelineRows.js';
 import { retainTerminalExpansionIds } from './timeline/timeline-window.js';
 import { THREAD_MESSAGE_SENT_EVENT } from './timeline/thread-optimistic-events.js';
+import { observeStickyUserPrompts } from './timeline/timeline-sticky-user.js';
+import { PaneEmptyState } from '../PaneEmptyState.js';
 
 export interface ThreadTimelineProps {
   rows: TimelineRow[];
@@ -60,6 +62,7 @@ export interface ThreadTimelineProps {
   includePluginMessageActions?: boolean;
   planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
   loadError?: string | null;
+  loading?: boolean;
   onRetryLoad?: () => void;
 }
 
@@ -103,6 +106,7 @@ export function ThreadTimeline({
   messageActions,
   includePluginMessageActions,
   planExecution,
+  loading = false,
   loadError = null,
   onRetryLoad
 }: ThreadTimelineProps) {
@@ -118,6 +122,7 @@ export function ThreadTimeline({
   const [pinnedAway, setPinnedAway] = useState(false);
   const [initialOpen, setInitialOpen] = useState(true);
   const viewRows = useMemo(() => buildTimelineViewRows(rows), [rows]);
+  const showLoading = loading && viewRows.length === 0 && !loadError;
   const awaitingUser = waitingOnUser || timelineRowsAwaitUser(rows);
   const expansion = useMemo(
     () => collectTimelineAutoExpansionRowIds({
@@ -164,6 +169,11 @@ export function ThreadTimeline({
     setInitialOpen(true);
     setPinnedAway(false);
   }, [threadId]);
+
+  useLayoutEffect(() => {
+    const pane = paneRef.current;
+    if (pane) return observeStickyUserPrompts(pane);
+  }, [viewRows]);
 
   useLayoutEffect(() => {
     const pane = paneRef.current;
@@ -241,11 +251,19 @@ export function ThreadTimeline({
       <div
         className="thread-detail-timeline thread-scrollbar"
         data-testid="thread-timeline"
+        aria-busy={showLoading}
         ref={paneRef}
         onScroll={onScroll}
       >
-        {viewRows.length === 0 ? (
-          <p className="thread-detail-empty">Waiting for the first turn…</p>
+        {showLoading ? (
+          <PaneEmptyState
+            art="loading"
+            title="Loading conversation…"
+            hint="Bringing your thread back into view."
+            testId="thread-loading"
+          />
+        ) : viewRows.length === 0 ? (
+          loadError ? null : <p className="thread-detail-empty">Waiting for the first turn…</p>
         ) : (
           <TimelineRows
             rows={viewRows}
@@ -270,12 +288,12 @@ export function ThreadTimeline({
           />
         )}
         <ThreadHostDisconnectedBanner status={status} />
-        <ThreadWorkingIndicator
+        {!showLoading && <ThreadWorkingIndicator
           status={status}
           thinking={thinking}
           waitingOnUser={awaitingUser}
           hasRunningWork={timelineHasRunningWork(rows)}
-        />
+        />}
       </div>
       {pinnedAway ? (
         <button

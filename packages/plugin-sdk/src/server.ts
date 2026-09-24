@@ -115,12 +115,15 @@ export interface PluginHttpRequest {
   path: string;
   query: Record<string, string>;
   body: unknown;
+  /** Bounded raw body for binary uploads; JSON routes continue to receive `body`. */
+  rawBody?: Uint8Array;
+  headers?: Record<string, string>;
 }
 
 export interface PluginHttpResponse {
   status?: number;
   json?: unknown;
-  body?: string;
+  body?: string | Uint8Array;
   headers?: Record<string, string>;
 }
 
@@ -215,6 +218,10 @@ export interface PluginEvents {
 
 export interface PluginSdkThreadSummary {
   id: string;
+  title?: string | null;
+  titleFallback?: string | null;
+  updatedAt?: number;
+  deletedAt?: number | null;
   projectId: string;
   hostId: string;
   environmentId: string | null;
@@ -256,9 +263,11 @@ export interface PluginSdkThreadSpawnArgs {
   title?: string;
   model?: string;
   reasoningLevel?: string;
+  serviceTier?: 'default' | 'fast';
+  hostId?: string;
   permissionMode?: 'accept-edits' | 'auto' | 'full';
   visibility?: 'visible' | 'hidden';
-  environment?: { kind: 'reuse'; environmentId: string };
+  environment?: import('@zana-ai/zcc-domain').SpawnEnvironmentChoice;
   pluginMetadata?: JsonObject;
 }
 
@@ -280,7 +289,7 @@ export interface PluginSdkEnvironment {
 }
 
 export interface PluginSdkFileReadArgs {
-  hostId: string;
+  hostId?: string;
   path: string;
   rootPath?: string;
   signal?: AbortSignal;
@@ -294,9 +303,14 @@ export interface PluginSdkFileReadResult {
 
 export interface PluginSdkProviderInfo {
   id: string;
+  displayName?: string;
+  logoUrl?: string | null;
+  icon?: string | null;
+  strings?: { iconTint?: string | null };
   available: boolean;
   capabilities?: {
     permissionModes: string[];
+    supportsServiceTier?: boolean;
   };
 }
 
@@ -309,7 +323,7 @@ export interface PluginSdkProviderModel {
 export interface PluginSdkModelCatalog {
   models: PluginSdkProviderModel[];
   selectedOnlyModels: PluginSdkProviderModel[];
-  modelLoadError: { providerId: string; code: string } | null;
+  modelLoadError: { providerId: string; code: string; detail?: string | null } | null;
 }
 
 export interface PluginSdkThreadIdArgs {
@@ -350,6 +364,8 @@ export interface PluginSdkThreads {
   spawn(args: PluginSdkThreadSpawnArgs): Promise<{ id: string }>;
   get(args: { threadId: string }): Promise<PluginSdkThreadSummary | null>;
   list(args?: PluginSdkThreadListArgs): Promise<PluginSdkThreadSummary[]>;
+  /** Search visible saved threads by title/message, newest first, including archives unless filtered. */
+  search(args: { query: string; archived?: boolean; limit?: number }): Promise<PluginSdkThreadSummary[]>;
   events: {
     list(args: PluginSdkThreadEventListArgs): Promise<PluginSdkThreadEventRow[]>;
   };
@@ -379,10 +395,18 @@ export interface PluginSdkThreads {
 
 export interface PluginSdkEnvironments {
   get(args: { environmentId: string }): Promise<PluginSdkEnvironment>;
+  pullRequest(args: { environmentId: string }): Promise<{
+    pullRequest: import('@zana-ai/zcc-domain').GitHostPullRequest | null;
+    unavailableReason?: string;
+  }>;
 }
 
 export interface PluginSdkFiles {
   read(args: PluginSdkFileReadArgs): Promise<PluginSdkFileReadResult>;
+  write(args: {
+    hostId?: string; path: string; rootPath?: string; content: string;
+    contentEncoding?: 'utf8' | 'base64'; createParents?: boolean;
+  }): Promise<void>;
 }
 
 export type PluginSdkLibraryScope = 'project' | 'global';
@@ -427,7 +451,7 @@ export interface PluginSdkLibrary {
 
 export interface PluginSdkProviders {
   list(args?: { environmentId?: string }): Promise<PluginSdkProviderInfo[]>;
-  models(args: { environmentId?: string; providerId: string }): Promise<PluginSdkModelCatalog>;
+  models(args: { environmentId?: string; hostId?: string; providerId: string }): Promise<PluginSdkModelCatalog>;
 }
 
 export interface PluginSdkInboxPushArgs {
@@ -450,6 +474,11 @@ export interface PluginSdkProjects {
 }
 
 export interface PluginSdk {
+  system: { defaultHost(): Promise<{ id: string } | null> };
+  /** Enrolled machine identity only; no host credentials or connection metadata. */
+  hosts: {
+    list(args?: { signal?: AbortSignal }): Promise<Array<{ id: string; name: string }>>;
+  };
   threads: PluginSdkThreads;
   inbox: PluginSdkInbox;
   projects: PluginSdkProjects;

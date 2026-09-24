@@ -51,6 +51,7 @@ export type {
 
 export type { HarnessStatusAdapter, HarnessStatusMode, HarnessInteractionEvent } from './status.js';
 export type { HarnessVerificationDefinition } from './verification.js';
+export type { HarnessHistoryAdapter, HarnessHistoryScope, HarnessHistoryConversation, HarnessHistoryTranscript } from './history.js';
 
 export type {
   AgentAction,

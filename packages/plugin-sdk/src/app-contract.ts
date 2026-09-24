@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, ReactNode, HTMLAttributes } from 'react';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 
 export const PLUGIN_SLOT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -60,7 +60,9 @@ export interface PluginProjectTabRegistration extends PluginSlotBase {
   icon?: string;
   order?: number;
   global?: boolean;
-  component: ComponentType<{ pluginId: string; projectId: string }>;
+  /** Own the toolbar instead of adding a host title row. Render the supplied headerActions in it. */
+  header?: 'custom';
+  component: ComponentType<{ pluginId: string; projectId: string; headerActions?: ReactNode }>;
 }
 
 export interface ZccNavigateToProjectOptions {
@@ -739,6 +741,33 @@ export interface PluginRpcClient {
   call(method: string, args?: unknown): Promise<unknown>;
 }
 
+export interface PluginSidebarThread {
+  id: string;
+  projectId: string;
+  title: string | null;
+  providerId: string;
+  status: string;
+  createdAt: number;
+  updatedAt?: number;
+  pinnedAt?: number | null;
+  pinOrder?: number | null;
+  hasPendingInteraction?: boolean;
+  lastReadSeq?: number | null;
+  maxSeq?: number;
+  branchName?: string | null;
+}
+
+export interface PluginSidebarThreadActions {
+  open(threadId: string): void;
+  openNewThread(options?: { projectId?: string }): void;
+  setPinned(threadId: string, pinned: boolean): Promise<void>;
+  setRead(threadId: string, read: boolean): Promise<void>;
+  rename(threadId: string, title: string): Promise<void>;
+  archive(threadId: string): Promise<void>;
+  stop(threadId: string): Promise<void>;
+  closeFollowup(threadId: string): Promise<void>;
+}
+
 export interface PluginSdkApp {
   definePluginApp(setup: PluginAppSetup): PluginAppDefinition;
   useRpc(): PluginRpcClient;
@@ -749,16 +778,19 @@ export interface PluginSdkApp {
   useZccNavigate(): ZccNavigate;
   useComposer(): PluginComposerApi;
   useComposerView(): ComposerView;
-  experimental_useSidebarThreads(): { status: 'loading' | 'ready' | 'error'; threads: unknown[]; projects: unknown[] };
-  experimental_useSidebarThreadActions(): {
-    open(threadId: string): void;
-    openNewThread(options?: { projectId?: string }): void;
-  };
+  experimental_useSidebarThreads(): { status: 'loading' | 'ready' | 'error'; threads: PluginSidebarThread[]; projects: { id: string; name: string }[] };
+  experimental_useSidebarThreadActions(): PluginSidebarThreadActions;
   experimental_useSidebarThreadPullRequest(threadId: string): {
     isLoading: boolean;
     pullRequest: unknown | null;
   };
-  experimental_useSidebarThreadSplit(threadId: string): { isAvailable: boolean; splitProps: object; layout: null };
+  experimental_useSidebarThreadSplit(threadId: string): {
+    isAvailable: boolean;
+    splitProps: HTMLAttributes<HTMLElement>;
+    layout: null;
+    openInSplit?: () => void;
+    consumeClick?: () => boolean;
+  };
   ThreadChat: ComponentType<ThreadChatProps>;
   Markdown: ComponentType<MarkdownProps>;
   experimental_NewThreadComposer: ComponentType<NewThreadComposerProps>;

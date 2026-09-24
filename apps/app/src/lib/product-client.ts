@@ -607,6 +607,15 @@ function httpProduct(): Pick<
       })
     },
     threads: {
+      history: async (query) => {
+        const params = new URLSearchParams();
+        if (query.projectId) params.set('projectId', query.projectId);
+        if (query.query) params.set('q', query.query);
+        if (query.archived) params.set('archived', query.archived);
+        if (query.offset) params.set('offset', String(query.offset));
+        return apiJson(`/threads/history?${params}`);
+      },
+      unarchive: async (id) => apiJson(`/threads/${encodeURIComponent(id)}/unarchive`, { method: 'POST', body: '{}' }),
       create: async (input) => {
         const response = await fetchWithAppSurface('/api/v1/threads', {
           method: 'POST',
@@ -622,6 +631,7 @@ function httpProduct(): Pick<
             permissionMode: input.permissionMode,
             model: input.model,
             reasoningLevel: input.reasoningLevel,
+            serviceTier: input.serviceTier,
             acpMode: input.acpMode
           })
         });
@@ -652,12 +662,15 @@ function httpProduct(): Pick<
             mode,
             ...(extras?.permissionMode ? { permissionMode: extras.permissionMode } : {}),
             ...(extras?.model ? { model: extras.model } : {}),
-            ...(extras?.reasoningLevel ? { reasoningLevel: extras.reasoningLevel } : {})
-            , ...(extras?.acpMode ? { acpMode: extras.acpMode } : {})
+            ...(extras?.reasoningLevel ? { reasoningLevel: extras.reasoningLevel } : {}),
+            ...(extras?.serviceTier ? { serviceTier: extras.serviceTier } : {}),
+            ...(extras?.acpMode ? { acpMode: extras.acpMode } : {})
           })
         }),
       stop: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/stop`, { method: 'POST', body: '{}' }),
+      implementPlan: async (threadId, revision, acpMode) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/plan/implement`, { method: 'POST', body: JSON.stringify({ revision, acpMode }) }),
       cancelPlan: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/plan/cancel`, { method: 'POST', body: '{}' }),
       plan: async (threadId: string) =>
@@ -676,6 +689,10 @@ function httpProduct(): Pick<
         apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/flush`, {
           method: 'POST',
           body: JSON.stringify({ force })
+        }),
+      sendNextTurn: async (threadId: string, itemId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}/send`, {
+          method: 'POST', body: '{}'
         }),
       deleteNextTurn: async (threadId: string, itemId: string) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}`, {

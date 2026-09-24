@@ -5,7 +5,7 @@
  * the same row actions as the list tile.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   AlertCircle,
   Bell,
@@ -22,7 +22,6 @@ import {
   RefreshCw,
   Star,
   Trash2,
-  X,
 } from 'lucide-react';
 import { runPrAction } from './prAction.js';
 import type { ModuleHost, ProjectInfo } from './host.js';
@@ -48,7 +47,7 @@ import { buildStallState, reviewState, isBuildHappy } from '../../lib/pillState.
 import { copyText } from './clipboard.js';
 import { PrProjectControl } from './PrProjectControl.js';
 import { PrChecksCollapse } from './PrChecksCollapse.js';
-import { portal } from './portal.js';
+import { Dialog } from './Dialog.js';
 
 const REVIEWER_GROUPS: Array<{ state: ReviewState; label: string; className: string }> = [
   { state: 'changes-requested', label: 'Changes requested', className: 'prm-reviewers--changes' },
@@ -105,41 +104,8 @@ export function PrDetailModal({
   onProjectAssign,
 }: Props) {
   const [retrying, setRetrying] = useState(false);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-
-  useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null;
-    dialogRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        closeRef.current();
-      }
-      if (e.key === 'Tab') {
-        const dialog = dialogRef.current;
-        const buttons = dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), [tabindex="0"]');
-        if (!dialog || !buttons?.length) return;
-        const first = buttons[0];
-        const last = buttons[buttons.length - 1];
-        if (e.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && (document.activeElement === last || document.activeElement === dialog)) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
-  }, []);
-
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const longDescription = (pr.body?.length ?? 0) > 600;
   const unread = pr.lastSeenAt === 0 || pr.lastStatusChange > (pr.lastSeenAt ?? pr.addedAt);
   const closed = pr.status === 'closed-merged' || pr.status === 'closed-abandoned';
   const muted = Boolean(pr.muted);
@@ -236,30 +202,16 @@ export function PrDetailModal({
     }
   };
 
-  const dialog = (
-    <div className="modal-backdrop" onClick={onClose} data-testid="prm-detail-backdrop">
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        className="modal prm-modal prm-modal--detail"
-        role="dialog"
-        aria-modal
-        aria-labelledby="prm-detail-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="prm-modal-header">
-          <h3 id="prm-detail-title">
-            <StateIcon size={14} aria-hidden />
-            <span className="prm-detail-id">
-              #{pr.number}
-              <span className="prm-detail-repo">{pr.repo}</span>
-            </span>
-          </h3>
-          <button type="button" className="prm-row-icon-btn" onClick={onClose} title="Close" aria-label="Close PR details">
-            <X size={14} />
-          </button>
-        </header>
-
+  return (
+    <Dialog
+      title={<span className="prm-detail-id">#{pr.number}<span className="prm-detail-repo">{pr.repo}</span></span>}
+      icon={<StateIcon size={18} />}
+      titleId="prm-detail-title"
+      closeLabel="Close PR details"
+      backdropTestId="prm-detail-backdrop"
+      className="prm-modal--detail"
+      onClose={onClose}
+    >
         <div className="prm-modal-body prm-detail-body">
           <div className="prm-detail-heading">
             {workItem &&
@@ -308,104 +260,8 @@ export function PrDetailModal({
 
           {hint && <div className="prm-detail-hint">{hint}</div>}
 
-          <dl className="prm-detail-facts">
-            {pr.author && (
-              <div className="prm-detail-fact">
-                <dt>Author</dt>
-                <dd>
-                  <span className="prm-avatar prm-avatar--initials">{initialsOf(pr.author)}</span>
-                  {pr.author.name || pr.author.login}
-                </dd>
-              </div>
-            )}
-            {pr.createdAt ? (
-              <div className="prm-detail-fact">
-                <dt>Opened</dt>
-                <dd>{formatRelative(pr.createdAt)}</dd>
-              </div>
-            ) : null}
-            {(pr.updatedAt || pr.lastChecked) ? (
-              <div className="prm-detail-fact">
-                <dt>Updated</dt>
-                <dd>{formatRelative(pr.updatedAt || pr.lastChecked)}</dd>
-              </div>
-            ) : null}
-            {pr.lastChecked ? (
-              <div className="prm-detail-fact">
-                <dt>Last synced</dt>
-                <dd>{formatRelative(pr.lastChecked)}</dd>
-              </div>
-            ) : null}
-          </dl>
-
-          {(pr.headRefName || pr.baseRefName) && (
-            <div className="prm-detail-section">
-              <div className="prm-detail-label">Branches</div>
-              <div className="prm-detail-branch">
-                <GitBranch size={12} aria-hidden />
-                <span className="prm-branch">
-                  {pr.headRefName || '?'} → {pr.baseRefName || '?'}
-                </span>
-                {pr.headRefName && (
-                  <button
-                    type="button"
-                    className="prm-tile-icon-btn prm-tip"
-                    title="Copy branch"
-                    data-tip="Copy branch"
-                    aria-label="Copy branch name"
-                    onClick={() => void copyToClipboard(pr.headRefName!, 'Branch name')}
-                  >
-                    <Link2 size={10} />
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {pr.body && (
-            <div className="prm-detail-section">
-              <div className="prm-detail-label">Description preview</div>
-              <div className="prm-detail-desc">{pr.body}</div>
-              <button type="button" className="prm-btn prm-btn--sm prm-detail-description-link" onClick={openPr}>
-                Read full description on GitHub <ExternalLink size={12} aria-hidden />
-              </button>
-            </div>
-          )}
-
-          {reviewers.length > 0 && (
-            <div className="prm-detail-section">
-              <div className="prm-detail-label">Reviewers</div>
-              <div className="prm-reviewers">
-                {REVIEWER_GROUPS.map(({ state, label, className }) => {
-                  const group = reviewersByState[state];
-                  if (group.length === 0) return null;
-                  return (
-                    <span key={state} className={`prm-reviewers-group ${className}`} title={label}>
-                      <span className="prm-reviewers-label">{label}</span>
-                      {group.map((r) => (
-                        <span
-                          key={r.login}
-                          className="prm-avatar prm-avatar--initials prm-reviewer-avatar"
-                          title={r.name || r.login}
-                          aria-label={`${label}: ${r.name || r.login}`}
-                        >
-                          {initialsOf(r)}
-                        </span>
-                      ))}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <div className="prm-detail-section">
-            <div className="prm-detail-label">Checks</div>
-            <PrChecksCollapse checks={checks} />
-          </div>
-
           {hasSyncError && (
-            <div className="prm-detail-sync-error">
+            <div className="prm-detail-sync-error" role="alert">
               <AlertCircle size={12} aria-hidden />
               <span>Couldn't sync this PR: {pr.syncError}</span>
               <button
@@ -420,12 +276,122 @@ export function PrDetailModal({
             </div>
           )}
 
-          <div className="prm-detail-section">
-            <PrProjectControl
-              projectId={pr.projectId}
-              projects={projects}
-              onAssign={(projectId) => onProjectAssign(pr.url, projectId)}
-            />
+          <div className="prm-detail-grid">
+            <div className="prm-detail-main">
+              <div className="prm-detail-section">
+                <h4 className="prm-detail-label">Checks</h4>
+                <PrChecksCollapse checks={checks} />
+              </div>
+
+              {pr.body && (
+                <div className="prm-detail-section">
+                  <h4 className="prm-detail-label">Description preview</h4>
+                  <div className="prm-detail-desc" id="prm-description-preview">
+                    {longDescription && !descriptionExpanded ? `${pr.body.slice(0, 600).trimEnd()}…` : pr.body}
+                  </div>
+                  {longDescription && <button type="button" className="prm-text-btn"
+                    aria-expanded={descriptionExpanded} aria-controls="prm-description-preview"
+                    onClick={() => setDescriptionExpanded((expanded) => !expanded)}>
+                    {descriptionExpanded ? 'Collapse preview' : 'Expand preview'}
+                  </button>}
+                  <button type="button" className="prm-btn prm-btn--sm prm-detail-description-link" onClick={openPr}>
+                    Read full description on GitHub <ExternalLink size={12} aria-hidden />
+                  </button>
+                </div>
+              )}
+
+            </div>
+            <aside className="prm-detail-sidebar" aria-label="Pull request information">
+              <dl className="prm-detail-facts">
+                {pr.author && (
+                  <div className="prm-detail-fact">
+                    <dt>Author</dt>
+                    <dd>
+                      <span className="prm-avatar prm-avatar--initials">{initialsOf(pr.author)}</span>
+                      {pr.author.name || pr.author.login}
+                    </dd>
+                  </div>
+                )}
+                {pr.createdAt ? (
+                  <div className="prm-detail-fact">
+                    <dt>Opened</dt>
+                    <dd>{formatRelative(pr.createdAt)}</dd>
+                  </div>
+                ) : null}
+                {(pr.updatedAt || pr.lastChecked) ? (
+                  <div className="prm-detail-fact">
+                    <dt>Updated</dt>
+                    <dd>{formatRelative(pr.updatedAt || pr.lastChecked)}</dd>
+                  </div>
+                ) : null}
+                {pr.lastChecked ? (
+                  <div className="prm-detail-fact">
+                    <dt>Last synced</dt>
+                    <dd>{formatRelative(pr.lastChecked)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+
+              {(pr.headRefName || pr.baseRefName) && (
+                <div className="prm-detail-section">
+                  <h4 className="prm-detail-label">Branches</h4>
+                  <div className="prm-detail-branch">
+                    <GitBranch size={12} aria-hidden />
+                    <span className="prm-branch">
+                      {pr.headRefName || '?'} → {pr.baseRefName || '?'}
+                    </span>
+                    {pr.headRefName && (
+                      <button
+                        type="button"
+                        className="prm-tile-icon-btn prm-tip"
+                        title="Copy branch"
+                        data-tip="Copy branch"
+                        aria-label="Copy branch name"
+                        onClick={() => void copyToClipboard(pr.headRefName!, 'Branch name')}
+                      >
+                        <Link2 size={10} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {reviewers.length > 0 && (
+                <div className="prm-detail-section">
+                  <h4 className="prm-detail-label">Reviewers</h4>
+                  <div className="prm-reviewers">
+                    {REVIEWER_GROUPS.map(({ state, label, className }) => {
+                      const group = reviewersByState[state];
+                      if (group.length === 0) return null;
+                      return (
+                        <span key={state} className={`prm-reviewers-group ${className}`} title={label}>
+                          <span className="prm-reviewers-label">{label}</span>
+                          {group.map((r) => (
+                            <span
+                              key={r.login}
+                              className="prm-avatar prm-avatar--initials prm-reviewer-avatar"
+                              title={r.name || r.login}
+                              aria-label={`${label}: ${r.name || r.login}`}
+                            >
+                              {initialsOf(r)}
+                            </span>
+                          ))}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="prm-detail-section">
+                <h4 className="prm-detail-label">Project</h4>
+                <PrProjectControl
+                  projectId={pr.projectId}
+                  projects={projects}
+                  onAssign={(projectId) => onProjectAssign(pr.url, projectId)}
+                />
+              </div>
+            </aside>
           </div>
         </div>
 
@@ -466,6 +432,7 @@ export function PrDetailModal({
             title={muted ? 'Unmute' : 'Mute'}
             data-tip={muted ? 'Unmute' : 'Mute'}
             aria-label={muted ? 'Unmute' : 'Mute'}
+            aria-pressed={muted}
             onClick={() => void toggleMute()}
           >
             {muted ? <BellOff size={13} /> : <Bell size={13} />}
@@ -491,9 +458,6 @@ export function PrDetailModal({
             <Trash2 size={13} />
           </button>
         </footer>
-      </div>
-    </div>
+    </Dialog>
   );
-
-  return typeof document !== 'undefined' ? portal(dialog, document.body) : dialog;
 }

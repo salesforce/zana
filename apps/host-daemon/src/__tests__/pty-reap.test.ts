@@ -174,4 +174,15 @@ describe('PtyManager.reapDeadSessions', () => {
     expect(spawned[0].signals).toEqual(['SIGTERM']);
   });
 
+  it('closes a plain agent by signalling its process group and PTY handle', () => {
+    const mgr = new PtyManager();
+    const session = makeSession(mgr, false);
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    mgr.close(session.id);
+
+    expect(killSpy).toHaveBeenCalledWith(-session.pid!, 'SIGTERM');
+    expect(spawned[0].signals).toEqual(['SIGTERM']);
+    killSpy.mockRestore();
+  });
 });

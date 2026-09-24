@@ -194,6 +194,19 @@ describe('PrDetailModal', () => {
     expect(opened).toEqual(['https://github.com/acme/webapp/pull/42']);
   });
 
+  it('keeps long descriptions compact without losing access to the cached text', () => {
+    const body = 'Detailed implementation notes. '.repeat(100);
+    mount(makePr({ body }));
+    expect(dialog()?.querySelector('.prm-detail-desc')?.textContent?.length).toBeLessThan(body.length);
+    const toggle = dialog()!.querySelector<HTMLButtonElement>('[aria-controls="prm-description-preview"]')!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(dialog()?.querySelector('.prm-detail-desc')?.textContent).toBe(body);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('refuses a non-http URL and a malformed URL', () => {
     const a = mount(makePr({ url: 'file:///etc/passwd' }));
     fireEvent.click(dialog()!.querySelector<HTMLButtonElement>('button[title="Open on GitHub"]')!);

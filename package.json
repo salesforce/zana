@@ -1,7 +1,7 @@
 {
   "name": "zana-command-center",
   "productName": "Zana",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "private": true,
   "description": "Zana Command Center — multi-project terminal hub for Claude Code sessions",
   "author": "grebmann",
@@ -69,7 +69,7 @@
     "croner": "^10.0.1",
     "electron-updater": "^6.8.9",
     "jiti": "^2.6.1",
-    "node-pty": "^1.1.0",
+    "node-pty": "1.2.0-beta.15",
     "smol-toml": "^1.7.0",
     "ws": "^8.21.3",
     "zod": "^4.0.0"

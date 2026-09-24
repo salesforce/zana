@@ -138,7 +138,7 @@ describe('execution mapping options', () => {
 describe('project-scoped conversation history', () => {
   it('uses generic main-owned history for every project launcher', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('<AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />');
+    expect(source).toContain('<AgentConversationHistory projectId={project!.id} onResumed={onClose} />');
     expect(source).not.toContain('conversationHistoryEnabled');
   });
 });

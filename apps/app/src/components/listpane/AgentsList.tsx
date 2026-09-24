@@ -21,7 +21,7 @@ import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '@/componen
 import { PromptModal } from '@/components/PromptModal';
 import { ListPaneResizer } from '@/components/ListPaneResizer';
 import { PluginNavRows } from '@/plugins/PluginNavRows';
-import { PluginExclusiveThreadList } from '@/plugins/PluginExclusiveThreadList';
+import { PluginExclusiveThreadList, useActiveThreadList } from '@/plugins/PluginExclusiveThreadList';
 import { usePaneContentSplitDrag } from '@/components/sidebar/useThreadRowSplitDrag';
 import { usePaneContentSplitIndicator } from '@/components/sidebar/paneContentSplitIndicator';
 import { SplitPaneMiniMap } from '@/components/sidebar/SplitPaneMiniMap';
@@ -437,6 +437,8 @@ export function AgentsListPane() {
     | { kind: 'agent'; row: AgentRow }
     | { kind: 'thread'; thread: ThreadListItem; projectName: string; state: AgentState };
 
+  const exclusiveThreadList = useActiveThreadList();
+
   const visibleThreads = useMemo(
     () =>
       threads.filter(
@@ -451,14 +453,14 @@ export function AgentsListPane() {
   const liveEntries = useMemo<LiveEntry[]>(() => {
     const nameById = new Map(projects.map((p) => [p.id, p.name]));
     const agents: LiveEntry[] = live.map((row) => ({ kind: 'agent', row }));
-    const threadEntries: LiveEntry[] = unpinnedThreads.map((thread) => ({
+    const threadEntries: LiveEntry[] = (exclusiveThreadList ? [] : unpinnedThreads).map((thread) => ({
       kind: 'thread',
       thread,
       projectName: nameById.get(thread.projectId) ?? 'Unknown',
       state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity)
     }));
     return [...agents, ...threadEntries];
-  }, [live, unpinnedThreads, projects]);
+  }, [live, unpinnedThreads, projects, exclusiveThreadList]);
 
   const entryNeedsYou = (entry: LiveEntry): boolean => {
     if (entry.kind === 'thread') return entry.state === 'blocked';
@@ -474,7 +476,7 @@ export function AgentsListPane() {
   // waiting, so they read as "at rest" alongside idle. Order: most-urgent first.
   // Each group is mutually exclusive: a promoted card is in "Needs you", not Idle.
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
-  const pinnedEntries: LiveEntry[] = pinnedThreads.map((thread) => ({
+  const pinnedEntries: LiveEntry[] = (exclusiveThreadList ? [] : pinnedThreads).map((thread) => ({
     kind: 'thread' as const,
     thread,
     projectName: nameById.get(thread.projectId) ?? 'Unknown',
@@ -558,7 +560,7 @@ export function AgentsListPane() {
         <PluginExclusiveThreadList
           activeThreadId={activeThreadId ?? null}
           activeProjectId={scopedProjectId}
-        >
+        >{null}</PluginExclusiveThreadList>
         {rows.length === 0 && visibleThreads.length === 0 ? (
           <div className="agents-list-empty">
             <Bot size={20} aria-hidden="true" />
@@ -611,7 +613,7 @@ export function AgentsListPane() {
                 )}
               </div>
             ))}
-            {organization === 'team-run' && visibleThreads.length > 0 && (
+            {!exclusiveThreadList && organization === 'team-run' && visibleThreads.length > 0 && (
               <div className="agents-group">
                 <div className="agents-group-label group-threads">
                   <span>Threads</span>
@@ -659,7 +661,6 @@ export function AgentsListPane() {
             )}
           </>
         )}
-        </PluginExclusiveThreadList>
       </div>
       <ListPaneResizer />
       {menu && (

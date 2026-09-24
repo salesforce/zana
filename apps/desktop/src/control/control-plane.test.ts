@@ -120,7 +120,7 @@ describe('authorizeRequest', () => {
       expect(r).toMatchObject({ ok: true, caller: 'orchestrator' });
     }
   );
-  it.each(['plugin.reload', 'plugin.install', 'plugin.logs', 'marketplace.list'])(
+  it.each(['plugin.reload', 'plugin.install', 'plugin.logs', 'plugin.contributions', 'plugin.cli', 'marketplace.list'])(
     'allows an agent-class caller the plugin control op %s',
     (op) => {
       const r = authorizeRequest({ ...EXPECTED, op, callerSessionId: 'sess-1' }, EXPECTED);
@@ -281,6 +281,41 @@ describe('dispatchOp', () => {
       { id: 'builtin:reviewer', name: 'Code Reviewer', baseProfile: 'claude', model: 'opus' },
       { id: 'builtin:qa-engineer', name: 'QA Engineer', baseProfile: 'claude' }
     ]);
+  });
+
+  it('plugin.contributions dispatches to the live plugin host', async () => {
+    const cliContributions = vi.fn(async () => [
+      { pluginId: 'tasks', name: 'tasks', summary: 'Plan and track work' }
+    ]);
+    const deps = makeDeps({ pluginHost: { cliContributions } as any });
+    const r = await dispatchOp('plugin.contributions', {}, deps);
+    expect(r).toMatchObject({
+      ok: true,
+      value: [{ pluginId: 'tasks', name: 'tasks', summary: 'Plan and track work' }]
+    });
+    expect(cliContributions).toHaveBeenCalledOnce();
+  });
+
+  it('plugin.cli dispatches argv and bounded context to the live plugin host', async () => {
+    const runCliCommand = vi.fn(async () => ({ exitCode: 0, stdout: 'TASK-1 added\n' }));
+    const deps = makeDeps({ pluginHost: { runCliCommand } as any });
+    const r = await dispatchOp(
+      'plugin.cli',
+      {
+        id: 'tasks',
+        argv: ['tasks', 'add', 'write report'],
+        projectId: 'p1',
+        threadId: 'thr-1',
+        cwd: '/tmp/p1'
+      },
+      deps
+    );
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0, stdout: 'TASK-1 added\n' } });
+    expect(runCliCommand).toHaveBeenCalledWith('tasks', ['tasks', 'add', 'write report'], {
+      projectId: 'p1',
+      threadId: 'thr-1',
+      cwd: '/tmp/p1'
+    });
   });
 
   it('term.close returns NOT_FOUND for an unknown session', async () => {
@@ -718,6 +753,42 @@ describe('startControlPlane (real socket)', () => {
     expect(allowed).toMatchObject({ ok: true, value: { id: 'demo' } });
     expect(confirmOperatorMutation).not.toHaveBeenCalled();
     expect(reload).toHaveBeenCalledWith('demo');
+  });
+
+  it('runs plugin CLI contribution ops over the socket without native confirmation', async () => {
+    const cliContributions = vi.fn(async () => [
+      { pluginId: 'tasks', name: 'tasks', summary: 'Plan and track work' }
+    ]);
+    const runCliCommand = vi.fn(async () => ({ exitCode: 0, stdout: 'TASK-1 added\n' }));
+    const confirmOperatorMutation = vi.fn(async () => false);
+    const { socketPath, tokenPath } = await boot({
+      confirmOperatorMutation,
+      pluginHost: {
+        cliContributions,
+        runCliCommand
+      } as any
+    });
+    const tok = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const listed = await rawRequest(socketPath, [
+      JSON.stringify({ token: tok.token, nonce: tok.nonce, op: 'plugin.contributions' }) + '\n'
+    ]);
+    expect(listed).toMatchObject({
+      ok: true,
+      value: [{ pluginId: 'tasks', name: 'tasks', summary: 'Plan and track work' }]
+    });
+
+    const ran = await rawRequest(socketPath, [
+      JSON.stringify({
+        token: tok.token,
+        nonce: tok.nonce,
+        op: 'plugin.cli',
+        args: { id: 'tasks', argv: ['tasks', 'add', 'write report'], projectId: 'p1' }
+      }) + '\n'
+    ]);
+    expect(ran).toMatchObject({ ok: true, value: { exitCode: 0, stdout: 'TASK-1 added\n' } });
+    expect(confirmOperatorMutation).not.toHaveBeenCalled();
+    expect(cliContributions).toHaveBeenCalledOnce();
+    expect(runCliCommand).toHaveBeenCalledWith('tasks', ['tasks', 'add', 'write report'], { projectId: 'p1' });
   });
 
   it('removes the socket + token file on close', async () => {

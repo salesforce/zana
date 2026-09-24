@@ -138,6 +138,65 @@ describe('OrgPicker and Salesforce project tab', () => {
     expect(onSelect).toHaveBeenCalledWith('prod');
   });
 
+  it('keeps full org identities in the native toolbar picker while showing a concise label', async () => {
+    const onSelect = vi.fn();
+    const el = await mount(createElement(OrgPicker, { pluginId: 'salesforce', projectId: 'proj-1', compact: true, appearance: 'toolbar', onSelect }));
+    const picker = el.querySelector('select')!;
+    const label = el.querySelector('.sf-org-switcher-label')!;
+    expect(label.textContent).toBe('devsandbox');
+    expect(label.getAttribute('aria-hidden')).toBe('true');
+    expect(picker.title).toBe('dev (sandbox) · dev@example.com · CLI default');
+    expect(picker.options[1].textContent).toContain('prod@example.com');
+    await act(async () => { fireEvent.change(picker, { target: { value: 'prod' } }); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'context.select', { projectId: 'proj-1', selectedAlias: 'prod' });
+    expect(onSelect).toHaveBeenCalledWith('prod');
+  });
+
+  it('uses the username when an org has no alias and respects disabled toolbars', async () => {
+    rpc.mockResolvedValue({ ok: true, orgs: [{ ...orgs[0], alias: '' }], selectedAlias: 'dev@example.com' });
+    const el = await mount(createElement(OrgPicker, { pluginId: 'salesforce', compact: true, appearance: 'toolbar', disabled: true }));
+    expect(el.querySelector('.sf-org-switcher-name')?.textContent).toBe('dev@example.com');
+    expect(el.querySelector('select')?.disabled).toBe(true);
+    expect(el.querySelector('.sf-org-switcher')?.getAttribute('data-disabled')).toBe('true');
+  });
+
+  it.each([null, 'missing'])('does not imply an org selection when the target is %s', async selectedAlias => {
+    rpc.mockResolvedValue({ ok: true, orgs, selectedAlias });
+    const el = await mount(createElement(OrgPicker, { pluginId: 'salesforce', projectId: 'proj-1', compact: true, appearance: 'toolbar' }));
+    const picker = el.querySelector('select')!;
+    expect(picker.value).toBe(selectedAlias ?? '');
+    expect(picker.selectedOptions[0].textContent).toBe(selectedAlias ? 'missing (unavailable)' : 'Choose an org');
+    expect(picker.title).toBe(selectedAlias ? 'missing (unavailable)' : 'Choose an org');
+    expect(el.querySelector('.sf-org-switcher-name')?.textContent).toBe('Select org');
+    expect(setSettings).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.change(picker, { target: { value: 'dev' } }); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'context.select', { projectId: 'proj-1', selectedAlias: 'dev' });
+  });
+
+  it('matches a selected username to its aliased option', async () => {
+    rpc.mockResolvedValue({ ok: true, orgs, selectedAlias: 'DEV@EXAMPLE.COM' });
+    const el = await mount(createElement(OrgPicker, { pluginId: 'salesforce', compact: true, appearance: 'toolbar' }));
+    expect(el.querySelector('select')?.value).toBe('dev');
+    expect(el.querySelector('.sf-org-switcher-name')?.textContent).toBe('dev');
+  });
+
+  it('shows a short disabled toolbar state when there are no connected orgs', async () => {
+    rpc.mockResolvedValue({ ok: true, orgs: [], selectedAlias: null });
+    const el = await mount(createElement(OrgPicker, { pluginId: 'salesforce', compact: true, appearance: 'toolbar' }));
+    expect(el.querySelector('.sf-org-switcher-name')?.textContent).toBe('Select org');
+    expect(el.querySelector('.sf-org-switcher-kind')).toBeNull();
+    expect(el.querySelector('select')?.disabled).toBe(true);
+    expect(el.querySelector('select')?.title).toBe('No connected orgs');
+  });
+
+  it('keeps toolbar connection failures concise and exposes the explanation as its title', async () => {
+    rpc.mockResolvedValue({ ok: false, error: 'Salesforce CLI was not found', orgs: [], selectedAlias: null });
+    const el = await mount(createElement(OrgPicker, { pluginId: 'salesforce', compact: true, appearance: 'toolbar' }));
+    expect(el.querySelector('.sf-org-switcher-name')?.textContent).toBe('Connection unavailable');
+    expect(el.querySelector('select')?.title).toBe('Salesforce CLI was not found');
+    expect(el.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('lists CLI orgs from the plugin settings section', async () => {
     const Section = collectTestPluginApp(app, 'salesforce').settingsSections[0]?.component;
     expect(Section).toBeTruthy();
@@ -175,20 +234,20 @@ describe('OrgPicker and Salesforce project tab', () => {
     const el = await mount(createElement(SalesforceProjectTab, { pluginId: 'salesforce', projectId: 'proj-1' }));
     expect(el.querySelectorAll('[role=tab]')).toHaveLength(5);
     expect(el.textContent).toContain('Explore data');
-    await act(async () => { [...el.querySelectorAll('button')].find(button => button.textContent === 'Org details')!.click(); });
+    await act(async () => { el.querySelector<HTMLButtonElement>('[aria-label="Org details"]')!.click(); });
     expect(el.querySelector('[data-testid="salesforce-org:prod"]')).toBeTruthy();
   });
 
   it('opens sign-in directly from the project header', async () => {
     const el = await mount(createElement(SalesforceProjectTab, { pluginId: 'salesforce', projectId: 'proj-1' }));
-    await act(async () => { [...el.querySelectorAll('button')].find(button => button.textContent === 'Connect org')!.click(); });
+    await act(async () => { el.querySelector<HTMLButtonElement>('[aria-label="Connect org"]')!.click(); });
     expect(el.querySelector('[data-testid="salesforce-org-login"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="salesforce-org-list"]')).toBeNull();
     expect(el.textContent).toContain('selected for this project');
     rpc.mockImplementation(async (_id, method) => method === 'orgs.login.start' ? { ok: true, loginId: 'login' } : method === 'orgs.login.status' ? { ok: true, done: true, result: { ok: true, orgs, selectedAlias: 'dev', connectedAlias: 'dev' } } : { ok: true, orgs, selectedAlias: 'dev' });
     await act(async () => { fireEvent.submit(el.querySelector('form')!); });
     expect(el.querySelector('form')).toBeNull();
-    await act(async () => { el.querySelector<HTMLButtonElement>('.sf-header .primary')!.click(); });
+    await act(async () => { el.querySelector<HTMLButtonElement>('[aria-label="Connect org"]')!.click(); });
     expect(el.querySelector('form')).toBeTruthy();
   });
 

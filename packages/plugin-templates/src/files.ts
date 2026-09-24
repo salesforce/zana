@@ -40,6 +40,37 @@ MCP servers belong in \`zcc.mcpServers\`. Author against \`@zana-ai/zcc-plugin-s
 
 ${hasApp ? 'The panel is a `definePluginApp` setup that registers `app.slots.navPanel`.' : 'This starter has no app slot — add `zcc.app` if you need a panel.'}
 ${hasServer ? 'The server factory default-exports `(zcc) => { … }` and registers `zcc.rpc` methods the panel can call after a reload.' : 'This starter is app-only — add `zcc.server` if you need a backend.'}
+
+## Verify in running ZCC
+
+Follow \`LIVE_TEST.md\` before claiming completion. Use \`zcc plugin dev --once\`
+for an agent-controlled rebuild and reload without a background watcher.
+A successful command checks backend health; it does not prove the UI rendered.
+${hasApp ? 'Open the plugin in ZCC with the available computer-use tool, exercise its controls, then change the source and verify the open panel updates.' : 'Exercise the contributed CLI or RPC in the running app and verify its result after reloading.'}
+Report what you observed and any blocked checks. Do not claim live verification from unit tests alone.
+`;
+}
+
+function liveTestMd(opts: PluginScaffoldFiles): string {
+  const hasApp = opts.kind !== 'agent-preset';
+  return `# Live verification: ${opts.name}
+
+Use the running ZCC instance. Keep \`ZCC_SERVER_URL\` and \`ZCC_DATA_DIR\`
+pointed at the same instance (normally port 8780; dev uses 8781 and ~/.zcc-dev).
+Do not change session credentials or edit installed-plugin records.
+
+1. Run \`zcc status --json\`, then \`zcc plugin install .\` from this directory.
+2. After edits run \`zcc plugin dev --once\`. It rebuilds the UI and reloads;
+   a build or unhealthy reload must return a nonzero exit. Use
+   \`zcc plugin logs ${opts.id} -n 50\` to diagnose backend failures.
+3. ${hasApp ? `Open **${opts.name}** in ZCC's sidebar using the available computer-use tool (for example, \`cua.getApp("Zana")\`). Verify the panel fills its space and shows the expected content.` : 'Exercise a contributed CLI command or RPC through the running app. Verify the actual response, including an error case.'}
+4. ${opts.kind === 'main-panel' ? `Add a uniquely named todo in the panel, toggle it, and run \`zcc plugin run ${opts.id} list\`. The UI and CLI must agree.` : hasApp ? 'Exercise the primary action and verify the result. Check any loading, empty, and failure states the feature exposes.' : 'Change a backend response, reload, and verify the new response. Skill changes are checked in a fresh thread.'}
+5. ${hasApp ? 'Make a visible source edit, run `zcc plugin dev --once`, and observe the already-open panel update without restarting ZCC. Verify saved data survives the reload.' : 'Verify stored data survives the reload and disposal leaves no duplicate service or timer.'}
+
+Use only test data you create. Keep a user's requested plugin installed; remove
+an explicitly disposable probe with \`zcc plugin remove ${opts.id}\` when finished.
+If UI control or the app is unavailable, report that limit instead of claiming
+the panel passed. Record the command results and visible behavior in your handoff.
 `;
 }
 
@@ -52,6 +83,8 @@ zcc plugin install .
 \`\`\`
 
 After install the plugin is live.${isTodos ? ' Then `npm test` (no running app).' : ''} Backend: \`zcc plugin reload ${opts.id}\`. UI watch: optional \`zcc plugin dev\`. Compile: \`zcc plugin build\`.
+
+For one rebuild and reload, use \`zcc plugin dev --once\`. Follow [LIVE_TEST.md](LIVE_TEST.md) to verify the result in ZCC.
 `;
 }
 
@@ -454,7 +487,9 @@ function tsconfigJson(include: string[]): string {
 export function pluginScaffoldFileMap(opts: PluginScaffoldFiles): Record<string, string> {
   const files: Record<string, string> = {
     'README.md': readmeMd(opts),
-    'CLAUDE.md': claudeMd(opts)
+    'AGENTS.md': claudeMd(opts),
+    'CLAUDE.md': claudeMd(opts),
+    'LIVE_TEST.md': liveTestMd(opts)
   };
 
   if (opts.kind === 'panel') {

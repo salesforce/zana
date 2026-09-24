@@ -138,11 +138,13 @@ Implementation previews are read-only:
   invocable method. Org contracts come from the registered Actions API, not a
   guess from the Apex source. Managed or permission-restricted classes can still
   show a contract when source is unavailable.
-- Flow renders actual connectors, decision labels, fault paths, loops and
-  dependencies. Select a step for its metadata and open a referenced subflow or
-  Apex class. XML/JSON remains available in Source. Unknown positioned steps are
-  preserved rather than silently omitted. Maps are capped at 120 steps and 300
-  edges; a visible notice directs the user to the complete source.
+- Flow uses Salesforce’s official Metadata Visualizer for connectors, decision
+  labels, fault paths, loops, and scheduled/asynchronous branches. Select an
+  element for its properties, collapse branches, or pan/zoom. **Expand Flow**
+  opens a larger canvas while preserving the agent editor and conversation.
+  Referenced subflows and Apex classes are available under **Related implementations**.
+  XML/JSON remains available in Source. Parser or frame failures show the existing
+  basic map (capped at 120 steps/300 edges with a visible notice).
 - Inputs & outputs compares declared names with local Flow variables or the org
   contract. It explicitly leaves local Apex contracts unverified. A matching
   name is not a claim that types or runtime behavior are compatible. Call-site
@@ -178,3 +180,31 @@ copy of the production build and SQLite binary, isolating it from concurrent
 builds/native-ABI switches in this shared checkout. Screenshots are saved under
 `artifacts/agentforce-studio/actions-*.png`. The installed path plugin was reloaded
 successfully. Real org source permissions and API availability remain unverified.
+
+
+### Official Flow viewer implementation
+
+The plugin pins `@salesforce/metadata-visualizer-web` 1.7.0 (BSD-3-Clause).
+`build-flow-visualizer.mjs` generates self-contained light/dark HTML assets and
+copies the package license. No CDN or external rendering service is used.
+The backend parses only the already-authorized local XML or org metadata
+snapshot through a read-only virtual filesystem. The SDK never receives disk
+access. Input is capped at 750 KB, depth 40 and 25,000 metadata tags; interactive
+models are capped at 500 nodes, 1,000 edges and 2 MB, then fall back to the basic map.
+DTD/entity declarations are rejected before parsing.
+
+The iframe has only `allow-scripts`, an opaque origin and a CSP that denies
+network access. Its message handler checks both frame identity and origin,
+returns only the parsed data and synthetic source name, and exposes no edit or
+execution commands. Source provenance/version stays in the host UI. Timers,
+message listeners and theme observers are removed on unmount. A missing frame
+handshake falls back after ten seconds. This is a visual source inspector, not
+Flow Builder or a Flow execution preview.
+
+Verification on 2026-09-24: 533 Salesforce tests in 75 files; focused viewer,
+filesystem, parser and action-panel coverage is 100% lines and 93.72% branches.
+Root typecheck and plugin build pass. Two built-Electron journeys cover local
+and org source, expanded-view focus restoration, light/dark and narrow layouts,
+element details, fault/loop/scheduled branches, related implementations, blocked
+frame fallback and unchanged source files. Real org permissions remain outside
+these fixture-based checks.

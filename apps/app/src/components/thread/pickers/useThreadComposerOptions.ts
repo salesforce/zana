@@ -152,6 +152,7 @@ export function useThreadComposerOptions(input: {
   const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);
   const loading = !cached && catalog.inflight.has(providerId);
   const modelLoadError = cached?.modelLoadError ?? null;
+  const modelLoadErrorDetail = cached?.modelLoadErrorDetail ?? null;
   const acpModeOptions = cached?.acpMode?.options ?? [];
 
   useEffect(() => {
@@ -284,6 +285,7 @@ export function useThreadComposerOptions(input: {
     moreModelOptions,
     modelIsLoading: loading,
     modelLoadError,
+    modelLoadErrorDetail,
     reasoningLevel,
     setReasoningLevel,
     reasoningOptions

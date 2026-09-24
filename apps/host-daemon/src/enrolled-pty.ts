@@ -1,11 +1,12 @@
 import * as pty from 'node-pty';
 import type { HostEventEnvelope } from '@zana-ai/zcc-contracts/host-rpc';
+import { terminatePtyProcessTree } from './pty-termination.js';
 
 export interface EnrolledPtyHandle {
   pid?: number;
   write(data: string): void;
   resize(cols: number, rows: number): void;
-  kill(): void;
+  kill(signal?: string): void;
   onData(listener: (data: string) => void): void;
   onExit(listener: (event: { exitCode: number; signal?: number }) => void): void;
 }
@@ -30,7 +31,7 @@ function defaultSpawn(
     pid: handle.pid,
     write: (data) => handle.write(data),
     resize: (cols, rows) => handle.resize(cols, rows),
-    kill: () => handle.kill(),
+    kill: (signal?: string) => handle.kill(signal),
     onData: (listener) => { handle.onData(listener); },
     onExit: (listener) => {
       handle.onExit((event) => listener({ exitCode: event.exitCode, signal: event.signal }));
@@ -50,7 +51,7 @@ export function createEnrolledPty(options: {
   function startTerminal(input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }): { pid?: number } {
     const existing = sessions.get(input.sessionId);
     if (existing) {
-      existing.kill();
+      terminatePtyProcessTree(existing);
       sessions.delete(input.sessionId);
     }
     const launch = input.command?.trim();
@@ -100,13 +101,13 @@ export function createEnrolledPty(options: {
     stopTerminal: async (input: { sessionId: string }) => {
       const handle = sessions.get(input.sessionId);
       if (!handle) return;
-      handle.kill();
+      terminatePtyProcessTree(handle);
       sessions.delete(input.sessionId);
     },
     dispose(): void {
       for (const handle of sessions.values()) {
         try {
-          handle.kill();
+          terminatePtyProcessTree(handle);
         } catch {
           /* already gone */
         }
