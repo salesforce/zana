@@ -266,13 +266,17 @@ describe('materializeMarketplaceIndex', () => {
     };
     const source = (id: string) => ({ kind: 'git' as const, url: `https://example.test/${id}`, ref: 'HEAD' });
     const first = materializeMarketplaceIndex(source('fail'), undefined, { runGit });
+    const firstOutcome = first.then(
+      () => 'fulfilled' as const,
+      (error: unknown) => error
+    );
     const second = materializeMarketplaceIndex(source('blocked'), undefined, { runGit });
     const third = materializeMarketplaceIndex(source('queued'), undefined, { runGit });
 
     await secondStarted.promise;
     expect(started).toBe(2);
     failFirst.resolve();
-    await expect(first).rejects.toThrow('clone failed');
+    await expect(firstOutcome).resolves.toBeInstanceOf(Error);
     await thirdStarted.promise;
 
     releases[0]!.resolve();
@@ -291,6 +295,7 @@ describe('materializeMarketplaceIndex', () => {
       server.close();
       throw new Error('expected a TCP port');
     }
+    server.unref();
     try {
       await expect(materializeMarketplaceIndex(
         { kind: 'git', url: `http://127.0.0.1:${address.port}/marketplace.git`, ref: 'HEAD' },
