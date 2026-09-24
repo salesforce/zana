@@ -16,6 +16,7 @@ import {
   marketplaceSourceDisplay,
   marketplaceSourcesEqual,
   materializeMarketplaceIndex,
+  materializeMarketplaceSource,
   parseMarketplaceSource
 } from './marketplace-source.js';
 import {
@@ -1633,15 +1634,15 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     listMarketplaces: () => marketplaces.list(),
     async addMarketplace(source, extra) {
       const parsed = parseMarketplaceSource(source);
-      const index = await materializeMarketplaceIndex(parsed, fetchJson);
-      return marketplaces.add(marketplaceSourceDisplay(parsed), index, extra);
+      const materialized = await materializeMarketplaceSource(parsed, fetchJson);
+      return marketplaces.add(marketplaceSourceDisplay(materialized.source), materialized.index, extra);
     },
     async refreshMarketplace(source) {
       const parsed = parseMarketplaceSource(source);
       const display = marketplaceSourceDisplay(parsed);
       try {
-        const index = await materializeMarketplaceIndex(parsed, fetchJson);
-        return marketplaces.refresh(display, index);
+        const materialized = await materializeMarketplaceSource(parsed, fetchJson);
+        return marketplaces.refresh(marketplaceSourceDisplay(materialized.source), materialized.index);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const row = await marketplaces.recordRefreshError(display, message);

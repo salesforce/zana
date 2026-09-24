@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createPluginService,
   defaultPluginDataDir,
@@ -15,6 +15,20 @@ import { containsNativeAddon } from './plugin-api.js';
 import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
 import { createPluginUninstalledStore, pluginUninstalledPath } from './plugin-uninstalled.js';
 
+const marketplaceMaterializer = vi.hoisted(() => ({
+  resolve: null as null | ((...args: Parameters<typeof import('./marketplace-source.js').materializeMarketplaceSource>) => ReturnType<typeof import('./marketplace-source.js').materializeMarketplaceSource>)
+}));
+
+vi.mock('./marketplace-source.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./marketplace-source.js')>();
+  return {
+    ...actual,
+    materializeMarketplaceSource: (...args: Parameters<typeof actual.materializeMarketplaceSource>) => (
+      marketplaceMaterializer.resolve?.(...args) ?? actual.materializeMarketplaceSource(...args)
+    )
+  };
+});
+
 const roots: string[] = [];
 
 function root(): string {
@@ -25,6 +39,7 @@ function root(): string {
 
 afterEach(() => {
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
+  marketplaceMaterializer.resolve = null;
 });
 
 function writePlugin(
@@ -434,6 +449,45 @@ describe('PluginService', () => {
     expect(service.listMarketplaces()).toHaveLength(1);
     const hits = await service.searchCatalog('from');
     expect(hits.some((h) => h.id === 'from-catalog' && h.marketplace === 'official')).toBe(true);
+  });
+
+  it('persists Git source when bare HTTPS catalog falls back from manifest fetch', async () => {
+    const dataDir = root();
+    const source = 'https://example.test/team/catalog';
+    let materializations = 0;
+    const fetchJson = vi.fn(async () => {
+      throw new Error('manifest unavailable');
+    });
+    marketplaceMaterializer.resolve = async (parsed, fetch) => {
+      await expect(fetch('https://example.test/team/catalog')).rejects.toThrow('manifest unavailable');
+      expect(parsed).toEqual({ kind: 'https', manifestUrl: source });
+      materializations += 1;
+      return {
+        source: { kind: 'git', url: source, ref: 'HEAD' },
+        index: {
+          schemaVersion: 1,
+          name: 'community',
+          displayName: materializations === 1 ? 'Community' : 'Community refreshed',
+          plugins: []
+        }
+      };
+    };
+    const service = createPluginService({ dataDir, bundledRoot: root(), fetchJson });
+
+    const row = await service.addMarketplace(source);
+
+    expect(fetchJson).toHaveBeenCalledWith(source);
+    expect(row).toMatchObject({ source: `git:${source}`, sourceKind: 'git' });
+    expect(service.listMarketplaces()).toEqual([expect.objectContaining({ source: `git:${source}` })]);
+
+    const refreshed = await service.refreshMarketplace(source);
+
+    expect(materializations).toBe(2);
+    expect(refreshed).toMatchObject({
+      source: `git:${source}`,
+      sourceKind: 'git',
+      displayName: 'Community refreshed'
+    });
   });
 
   it('keeps the last-good catalog when refresh fails', async () => {

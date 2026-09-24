@@ -8,10 +8,17 @@ import {
   materializeMarketplaceIndex,
   parseMarketplaceSource,
   marketplaceSourceDisplay,
-  marketplaceSourcesEqual
+  marketplaceSourcesEqual,
+  resolveMarketplaceSource
 } from './marketplace-source.js';
 
 const dirs: string[] = [];
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
 
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -33,7 +40,7 @@ const SAMPLE_INDEX = {
 };
 
 describe('parseMarketplaceSource', () => {
-  it('parses https, git, git+https, and path forms', () => {
+  it('parses HTTPS and SSH Git forms plus paths', () => {
     expect(parseMarketplaceSource('https://example.test/marketplace.json')).toEqual({
       kind: 'https',
       manifestUrl: 'https://example.test/marketplace.json'
@@ -53,6 +60,16 @@ describe('parseMarketplaceSource', () => {
       url: 'https://example.test/mp.git',
       ref: 'main'
     });
+    expect(parseMarketplaceSource('git+ssh://git@git.soma.salesforce.com/chatbots/catalog.git@main')).toEqual({
+      kind: 'git',
+      url: 'ssh://git@git.soma.salesforce.com/chatbots/catalog.git',
+      ref: 'main'
+    });
+    expect(parseMarketplaceSource('git@git.soma.salesforce.com:chatbots/catalog.git')).toEqual({
+      kind: 'git',
+      url: 'ssh://git@git.soma.salesforce.com/chatbots/catalog.git',
+      ref: 'HEAD'
+    });
     const parsed = parseMarketplaceSource('path:/tmp/catalog');
     expect(parsed).toEqual({ kind: 'path', directory: resolve('/tmp/catalog') });
   });
@@ -62,6 +79,38 @@ describe('parseMarketplaceSource', () => {
     expect(() => parseMarketplaceSource('example.test/mp.json')).toThrow(/https:\/\/<manifest-url>/);
     expect(() => parseMarketplaceSource('')).toThrow(/invalid marketplace source/);
     expect(() => parseMarketplaceSource('path:')).toThrow(/empty path/);
+  });
+
+  it('canonicalizes structured URLs and refuses unsafe URL components', () => {
+    expect(parseMarketplaceSource('https://EXAMPLE.test:443/marketplace.json')).toEqual({
+      kind: 'https',
+      manifestUrl: 'https://example.test/marketplace.json'
+    });
+    expect(parseMarketplaceSource('git+https://EXAMPLE.test:443/org/catalog@main')).toEqual({
+      kind: 'git',
+      url: 'https://example.test/org/catalog',
+      ref: 'main'
+    });
+    for (const source of [
+      'https://user@example.test/marketplace.json',
+      'https://example.test/marketplace.json?token=secret',
+      'git:https://example.test/catalog#main',
+      'git:https://user@example.test/catalog',
+      'git+ssh://user@git.soma.salesforce.com/catalog'
+    ]) {
+      expect(() => parseMarketplaceSource(source)).toThrow(/refused/);
+    }
+    expect(() => parseMarketplaceSource('https://example.test/marketplace.json?token=secret'))
+      .not.toThrow('token=secret');
+  });
+
+  it('resolves bare repository-shaped HTTPS sources manifest-first with a git fallback', () => {
+    const source = parseMarketplaceSource('https://example.test/team/catalog');
+    expect(resolveMarketplaceSource(source)).toEqual([
+      { kind: 'https', manifestUrl: 'https://example.test/team/catalog' },
+      { kind: 'git', url: 'https://example.test/team/catalog', ref: 'HEAD' }
+    ]);
+    expect(resolveMarketplaceSource(parseMarketplaceSource('https://example.test/marketplace.json'))).toHaveLength(1);
   });
 
   it('round-trips display strings', () => {
@@ -106,6 +155,23 @@ describe('materializeMarketplaceIndex', () => {
     expect(index.displayName).toBe('Official');
   });
 
+  it('does not try a git fallback when a manifest resolves', async () => {
+    const index = await materializeMarketplaceIndex(
+      parseMarketplaceSource('https://example.test/team/catalog'),
+      async () => SAMPLE_INDEX
+    );
+    expect(index.name).toBe('official');
+  });
+
+  it('does not fall back to Git after a network failure', async () => {
+    await expect(materializeMarketplaceIndex(
+      parseMarketplaceSource('https://example.test/team/catalog'),
+      async () => {
+        throw new Error('marketplace fetch failed: 401');
+      }
+    )).rejects.toThrow(/401/);
+  });
+
   it('refuses a path that is a file, not a directory', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-mp-file-'));
     dirs.push(dir);
@@ -144,6 +210,74 @@ describe('materializeMarketplaceIndex', () => {
     const index = await materializeMarketplaceIndex({ kind: 'git', url: repo, ref: 'HEAD' });
     expect(index.name).toBe('official');
     expect(index.plugins).toHaveLength(1);
+  });
+
+  it('limits Git materialization to two FIFO lifecycles', async () => {
+    const firstTwoStarted = deferred();
+    const thirdStarted = deferred();
+    const releases = [deferred(), deferred(), deferred()];
+    let started = 0;
+    let active = 0;
+    let peak = 0;
+    const runGit = async (args: string[]) => {
+      const index = started++;
+      active += 1;
+      peak = Math.max(peak, active);
+      if (started === 2) firstTwoStarted.resolve();
+      if (started === 3) thirdStarted.resolve();
+      await releases[index]!.promise;
+      writeFileSync(join(args.at(-1)!, 'marketplace.json'), JSON.stringify(SAMPLE_INDEX));
+      active -= 1;
+      return '';
+    };
+    const source = (id: string) => ({ kind: 'git' as const, url: `https://example.test/${id}`, ref: 'HEAD' });
+    const jobs = ['one', 'two', 'three'].map((id) => materializeMarketplaceIndex(source(id), undefined, { runGit }));
+
+    await firstTwoStarted.promise;
+    expect(started).toBe(2);
+    expect(peak).toBe(2);
+
+    releases[0]!.resolve();
+    await thirdStarted.promise;
+    expect(peak).toBe(2);
+
+    releases[1]!.resolve();
+    releases[2]!.resolve();
+    await expect(Promise.all(jobs)).resolves.toHaveLength(3);
+  });
+
+  it('releases Git materialization slot after clone error', async () => {
+    const secondStarted = deferred();
+    const thirdStarted = deferred();
+    const failFirst = deferred();
+    const releases = [deferred(), deferred()];
+    let started = 0;
+    const runGit = async (args: string[]) => {
+      const index = started++;
+      if (index === 0) {
+        await failFirst.promise;
+        throw new Error('clone failed');
+      }
+      if (index === 1) secondStarted.resolve();
+      if (index === 2) thirdStarted.resolve();
+      await releases[index - 1]!.promise;
+      writeFileSync(join(args.at(-1)!, 'marketplace.json'), JSON.stringify(SAMPLE_INDEX));
+      return '';
+    };
+    const source = (id: string) => ({ kind: 'git' as const, url: `https://example.test/${id}`, ref: 'HEAD' });
+    const first = materializeMarketplaceIndex(source('fail'), undefined, { runGit });
+    const second = materializeMarketplaceIndex(source('blocked'), undefined, { runGit });
+    const third = materializeMarketplaceIndex(source('queued'), undefined, { runGit });
+
+    await secondStarted.promise;
+    expect(started).toBe(2);
+    failFirst.resolve();
+    await expect(first).rejects.toThrow('clone failed');
+    await thirdStarted.promise;
+
+    releases[0]!.resolve();
+    releases[1]!.resolve();
+    await expect(Promise.all([second, third])).resolves.toHaveLength(2);
   });
 
   it('times out a hung git clone when timeoutMs is set', async () => {

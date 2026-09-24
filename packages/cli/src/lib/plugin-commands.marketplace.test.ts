@@ -5,7 +5,7 @@ describe('marketplace CLI', () => {
   it('requires a source for add, refresh, and remove', async () => {
     await expect(runMarketplaceCommand('/tmp', 'add', [], false)).resolves.toMatchObject({
       exitCode: 2,
-      stderr: expect.stringMatching(/https-url \| git:url\[@ref\] \| path:dir/)
+      stderr: expect.stringMatching(/manifest-url \| https-repository-url \| git:url\[@ref\] \| git@host:owner\/repository\.git \| path:dir/)
     });
     await expect(runMarketplaceCommand('/tmp', 'refresh', [], false)).resolves.toMatchObject({
       exitCode: 2
