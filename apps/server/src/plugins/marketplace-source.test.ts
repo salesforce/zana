@@ -66,6 +66,11 @@ describe('parseMarketplaceSource', () => {
       url: 'ssh://git@git.soma.salesforce.com/chatbots/catalog.git',
       ref: 'main'
     });
+    expect(parseMarketplaceSource('git:ssh://git@git.soma.salesforce.com/chatbots/catalog.git@release')).toEqual({
+      kind: 'git',
+      url: 'ssh://git@git.soma.salesforce.com/chatbots/catalog.git',
+      ref: 'release'
+    });
     expect(parseMarketplaceSource('git@git.soma.salesforce.com:chatbots/catalog.git')).toEqual({
       kind: 'git',
       url: 'ssh://git@git.soma.salesforce.com/chatbots/catalog.git',
@@ -173,6 +178,13 @@ describe('materializeMarketplaceIndex', () => {
     )).rejects.toThrow(/401/);
   });
 
+  it('does not fall back to Git for unrelated fetch errors', async () => {
+    await expect(materializeMarketplaceIndex(
+      parseMarketplaceSource('https://example.test/team/catalog'),
+      async () => { throw new Error('schema service unavailable'); }
+    )).rejects.toThrow('schema service unavailable');
+  });
+
   it('refuses a path that is a file, not a directory', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-mp-file-'));
     dirs.push(dir);
@@ -272,18 +284,17 @@ describe('materializeMarketplaceIndex', () => {
     };
     const source = (id: string) => ({ kind: 'git' as const, url: `https://example.test/${id}`, ref: 'HEAD' });
     const withGitMaterializationSlot = createGitMaterializationGate();
-    const first = materializeMarketplaceIndex(source('fail'), undefined, { runGit, withGitMaterializationSlot });
-    const firstOutcome = first.then(
-      () => 'fulfilled' as const,
-      (error: unknown) => error
-    );
+    let firstError: unknown;
+    const firstHandled = materializeMarketplaceIndex(source('fail'), undefined, { runGit, withGitMaterializationSlot })
+      .catch((error: unknown) => { firstError = error; });
     const second = materializeMarketplaceIndex(source('blocked'), undefined, { runGit, withGitMaterializationSlot });
     const third = materializeMarketplaceIndex(source('queued'), undefined, { runGit, withGitMaterializationSlot });
 
     await secondStarted.promise;
     expect(started).toBe(2);
     failFirst.resolve();
-    await expect(firstOutcome).resolves.toBeInstanceOf(Error);
+    await firstHandled;
+    expect(firstError).toBeInstanceOf(Error);
     await thirdStarted.promise;
 
     releases[0]!.resolve();

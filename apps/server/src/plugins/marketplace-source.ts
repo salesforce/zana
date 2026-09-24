@@ -67,8 +67,10 @@ function parseGitSpec(spec: string): MarketplaceSource {
   if (authority.includes('@') && !authority.startsWith('git@')) {
     throw new Error('invalid marketplace URL: credentials, query strings, and fragments are refused');
   }
+  // The userinfo separator belongs to the authority. Only a later @ can select a ref.
+  const pathStart = authorityEnd < 0 ? spec.length : schemeEnd + authorityEnd;
   const split = spec.lastIndexOf('@');
-  const hasRef = split > spec.indexOf('/', schemeEnd);
+  const hasRef = split > pathStart;
   const url = hasRef ? spec.slice(0, split) : spec;
   const ref = hasRef ? spec.slice(split + 1) : 'HEAD';
   if (!url || !ref) throw new Error('invalid marketplace git source');
@@ -162,11 +164,7 @@ export interface MarketplaceMaterializeOptions {
 
 function isNotManifestError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return (
-    error instanceof SyntaxError
-    || error.name === 'ZodError'
-    || /marketplace index|schema|plugins|invalid .*marketplace/i.test(error.message)
-  );
+  return error instanceof SyntaxError || error.name === 'ZodError';
 }
 
 async function runGit(args: string[], options: MarketplaceMaterializeOptions = {}): Promise<string> {

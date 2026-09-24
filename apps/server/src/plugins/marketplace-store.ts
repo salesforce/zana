@@ -181,24 +181,20 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
       }
       const catalogs: MarketplaceCatalogRow[] = [];
       const preservedCatalogRows: unknown[] = [];
+      let canonicalized = false;
       for (const row of parsed.catalogs) {
         if (!row || typeof row !== 'object') {
           preservedCatalogRows.push(row);
           continue;
         }
         const migrated = migrateCatalog(row as Record<string, unknown>);
-        if (migrated) catalogs.push(migrated);
+        if (migrated) {
+          catalogs.push(migrated);
+          canonicalized ||= JSON.stringify(row) !== JSON.stringify(migrated);
+        }
         else preservedCatalogRows.push(row);
       }
       const merged = mergeCatalogs(catalogs);
-      const canonicalized = parsed.catalogs.some((row) => (
-        row != null
-        && typeof row === 'object'
-        && (() => {
-          const migrated = migrateCatalog(row as Record<string, unknown>);
-          return migrated != null && JSON.stringify(row) !== JSON.stringify(migrated);
-        })()
-      ));
       return {
         catalogs: merged,
         preservedCatalogRows,
