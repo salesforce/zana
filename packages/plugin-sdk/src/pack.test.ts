@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { access, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
+import { withPluginSdkDistLock } from '../scripts/dist-lock.mjs';
 
 const execFileAsync = promisify(execFile);
 const pluginSdkRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -14,11 +14,11 @@ describe('npm pack @zana-ai/zcc-plugin-sdk', () => {
   it('emits a consumer tarball with dist testing entries and no workspace protocol', async () => {
     const packDir = await mkdtemp(join(tmpdir(), 'zcc-plugin-sdk-pack-'));
     try {
-      if (!existsSync(join(pluginSdkRoot, 'dist', 'testing', 'app.js'))) {
+      await withPluginSdkDistLock(async () => {
         await execFileAsync(process.execPath, ['scripts/build-runtime.mjs'], { cwd: pluginSdkRoot });
-      }
-      await execFileAsync('npm', ['pack', '--silent', '--ignore-scripts', '--pack-destination', packDir], {
-        cwd: pluginSdkRoot
+        await execFileAsync('npm', ['pack', '--silent', '--ignore-scripts', '--pack-destination', packDir], {
+          cwd: pluginSdkRoot
+        });
       });
       const tarballs = (await readdir(packDir)).filter((name) => name.endsWith('.tgz'));
       expect(tarballs).toHaveLength(1);

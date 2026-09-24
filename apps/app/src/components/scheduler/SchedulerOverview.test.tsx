@@ -99,8 +99,8 @@ describe('SchedulerOverview', () => {
     expect(props.onJump).toHaveBeenCalledWith(tasks[0]);
   });
   it('preserves per-schedule run, toggle, edit and report actions using task identity', () => {
-    const a = withRun('a', 'success', { report: 'Report A' }); a.name = 'Duplicate';
-    const b = withRun('b', 'success', { report: 'Report B' }); b.name = 'Duplicate'; b.enabled = false;
+    const a = withRun('a', 'success', { report: 'Report A', at: '2026-01-02T00:00:00.000Z' }); a.name = 'Duplicate';
+    const b = withRun('b', 'success', { report: 'Report B', at: '2026-01-01T00:00:00.000Z' }); b.name = 'Duplicate'; b.enabled = false;
     const { props, inventory } = mount([a, b]);
     const rows = within(inventory()).getAllByRole('listitem');
     fireEvent.click(within(rows[1]).getByRole('button', { name: 'View last report for Duplicate' }));

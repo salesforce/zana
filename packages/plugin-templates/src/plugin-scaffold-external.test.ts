@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PLUGIN_SDK_VERSION } from '@zana-ai/zcc-plugin-sdk';
+import { withPluginSdkDistLock } from '../../plugin-sdk/scripts/dist-lock.mjs';
 import { scaffoldPlugin } from './index.js';
 
 const execFileAsync = promisify(execFile);
@@ -56,9 +57,11 @@ async function packPluginSdk(packDir: string): Promise<string> {
   // A stale `dist/` from a prior run must never be packed as-is: its mere
   // existence says nothing about whether it matches the current source, so
   // rebuild unconditionally rather than gating on a presence check.
-  await execFileAsync(process.execPath, ['scripts/build-runtime.mjs'], { cwd: pluginSdkRoot });
-  await execFileAsync('npm', ['pack', '--silent', '--ignore-scripts', '--pack-destination', packDir], {
-    cwd: pluginSdkRoot
+  await withPluginSdkDistLock(async () => {
+    await execFileAsync(process.execPath, ['scripts/build-runtime.mjs'], { cwd: pluginSdkRoot });
+    await execFileAsync('npm', ['pack', '--silent', '--ignore-scripts', '--pack-destination', packDir], {
+      cwd: pluginSdkRoot
+    });
   });
   const tarballs = (await readdir(packDir)).filter((entry) => entry.endsWith('.tgz'));
   expect(tarballs).toHaveLength(1);
