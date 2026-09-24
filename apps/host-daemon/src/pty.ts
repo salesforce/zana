@@ -3038,6 +3038,9 @@ export class PtyManager extends EventEmitter {
     const l = this.live.get(id);
     if (!l) return;
     if (l.reattach) {
+      // `tmux kill-session` only SIGHUPs the pane. SIGKILL the agent first so a
+      // HUP-ignoring process cannot orphan out of the session we are closing.
+      this.maybeReapRemote(l);
       void this.killRemoteTmux(id).then((terminated) => {
         const live = this.live.get(id);
         if (!live || !terminated) return;
@@ -3083,6 +3086,7 @@ export class PtyManager extends EventEmitter {
     if (!l) return false;
     if (l.reattach) {
       const localAlreadyGone = l.session.pid === undefined;
+      this.maybeReapRemote(l);
       void this.killRemoteTmux(id).then((terminated) => {
         const live = this.live.get(id);
         if (!live || !terminated) return;
