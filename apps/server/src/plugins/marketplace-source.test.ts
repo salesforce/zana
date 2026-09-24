@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  createGitMaterializationGate,
   materializeMarketplaceIndex,
   parseMarketplaceSource,
   marketplaceSourceDisplay,
@@ -231,7 +232,12 @@ describe('materializeMarketplaceIndex', () => {
       return '';
     };
     const source = (id: string) => ({ kind: 'git' as const, url: `https://example.test/${id}`, ref: 'HEAD' });
-    const jobs = ['one', 'two', 'three'].map((id) => materializeMarketplaceIndex(source(id), undefined, { runGit }));
+    const withGitMaterializationSlot = createGitMaterializationGate();
+    const jobs = ['one', 'two', 'three'].map((id) => materializeMarketplaceIndex(
+      source(id),
+      undefined,
+      { runGit, withGitMaterializationSlot }
+    ));
 
     await firstTwoStarted.promise;
     expect(started).toBe(2);
@@ -265,13 +271,14 @@ describe('materializeMarketplaceIndex', () => {
       return '';
     };
     const source = (id: string) => ({ kind: 'git' as const, url: `https://example.test/${id}`, ref: 'HEAD' });
-    const first = materializeMarketplaceIndex(source('fail'), undefined, { runGit });
+    const withGitMaterializationSlot = createGitMaterializationGate();
+    const first = materializeMarketplaceIndex(source('fail'), undefined, { runGit, withGitMaterializationSlot });
     const firstOutcome = first.then(
       () => 'fulfilled' as const,
       (error: unknown) => error
     );
-    const second = materializeMarketplaceIndex(source('blocked'), undefined, { runGit });
-    const third = materializeMarketplaceIndex(source('queued'), undefined, { runGit });
+    const second = materializeMarketplaceIndex(source('blocked'), undefined, { runGit, withGitMaterializationSlot });
+    const third = materializeMarketplaceIndex(source('queued'), undefined, { runGit, withGitMaterializationSlot });
 
     await secondStarted.promise;
     expect(started).toBe(2);
@@ -300,7 +307,7 @@ describe('materializeMarketplaceIndex', () => {
       await expect(materializeMarketplaceIndex(
         { kind: 'git', url: `http://127.0.0.1:${address.port}/marketplace.git`, ref: 'HEAD' },
         undefined,
-        { timeoutMs: 400, nonInteractive: true }
+        { timeoutMs: 400, nonInteractive: true, withGitMaterializationSlot: createGitMaterializationGate() }
       )).rejects.toThrow(/timed out/);
     } finally {
       server.close();

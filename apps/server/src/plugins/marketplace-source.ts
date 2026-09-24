@@ -156,6 +156,8 @@ export interface MarketplaceMaterializeOptions {
   nonInteractive?: boolean;
   /** Test seam for controlled Git lifecycle execution. */
   runGit?: (args: string[], options: MarketplaceMaterializeOptions) => Promise<string>;
+  /** Test seam for isolated Git materialization scheduling. */
+  withGitMaterializationSlot?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 function isNotManifestError(error: unknown): boolean {
@@ -264,7 +266,7 @@ export async function materializeMarketplaceSource(
       }
     }
     if (candidate.kind === 'git') {
-      return await withGitMaterializationSlot(async () => {
+      return await (options.withGitMaterializationSlot ?? withGitMaterializationSlot)(async () => {
         const staging = await mkdtemp(join(tmpdir(), 'zcc-marketplace-'));
         try {
           const cloneArgs = ['-c', 'core.hooksPath=/dev/null', 'clone', '--quiet', '--depth', '1', '--no-recurse-submodules'];
