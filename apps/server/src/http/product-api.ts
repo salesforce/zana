@@ -1144,7 +1144,11 @@ export async function handleProductHttp(
         viewContext: ctx
       });
       const requestedLimit = Number(requestUrl.searchParams.get('limit') ?? MENUBAR_THREAD_LIMIT);
-      const agents = source.list(Number.isFinite(requestedLimit) ? requestedLimit : MENUBAR_THREAD_LIMIT);
+      if (!Number.isInteger(requestedLimit)) {
+        sendJson(response, 400, { error: 'limit must be an integer' });
+        return true;
+      }
+      const agents = source.list(requestedLimit);
       sendJson(response, 200, {
         agents,
         needsYou: agents.filter((agent) => agent.state === 'blocked').length,

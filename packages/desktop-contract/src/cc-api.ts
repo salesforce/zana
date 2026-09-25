@@ -1222,6 +1222,8 @@ export interface CcApi {
     isFullScreen(): Promise<boolean>;
     /** Fired on 'enter-full-screen'/'leave-full-screen' for this window (OS-initiated or IPC-initiated). */
     onFullScreenChanged(cb: (isFullScreen: boolean) => void): () => void;
+    /** Acknowledge that app event subscriptions and product WebSocket are ready. */
+    rendererReady(): Promise<void>;
     /**
      * Persist a renderer crash report under the main-owned crashes dir and
      * return version/OS plus the saved basename (never an absolute path).
@@ -1247,6 +1249,8 @@ export interface CcApi {
     onSnapshot(cb: (snapshot: MenubarSnapshot) => void): () => void;
     /** Show the main window and focus a main-authorized agent identity. */
     focusAgent(kind: 'cli' | 'thread', agentId: string, projectId: string): Promise<void>;
+    /** @deprecated Use focusAgent('cli', sessionId, projectId). */
+    focusSession(sessionId: string, projectId: string): Promise<void>;
     /** Toggle a session's favorite/pin (the row pin affordance). */
     setFavorite(sessionId: string, favorite: boolean): Promise<void>;
     /**

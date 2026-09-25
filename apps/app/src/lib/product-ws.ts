@@ -8,6 +8,7 @@ type Listener = (event: ProductWsEvent) => void;
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<Listener>();
+const openWaiters = new Set<() => void>();
 
 function wsUrl(): string {
   const devPort =
@@ -40,6 +41,10 @@ function connect(): void {
     } catch {
       /* ignore malformed frames */
     }
+  });
+  socket.addEventListener('open', () => {
+    for (const resolve of openWaiters) resolve();
+    openWaiters.clear();
   });
   socket.addEventListener('close', () => {
     socket = null;
@@ -74,4 +79,10 @@ export function subscribeProductEvent<T>(type: string, callback: (payload: T) =>
   return subscribeProductWs((event) => {
     if (event.type === type) callback(event.payload as T);
   });
+}
+
+export function waitForProductWsOpen(): Promise<void> {
+  connect();
+  if (socket?.readyState === WebSocket.OPEN) return Promise.resolve();
+  return new Promise((resolve) => openWaiters.add(resolve));
 }

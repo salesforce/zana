@@ -74,6 +74,7 @@ export interface IpcCtx {
   llmService: any;
   logMainError: any;
   mainWindow: any;
+  markRendererReady: any;
   menubar: any;
   menubarPopoverEnabled: any;
   openMenubarThread: any;

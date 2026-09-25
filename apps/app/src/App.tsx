@@ -83,6 +83,7 @@ import { useRouteState } from './hooks/useRouteState.js';
 import { HashNavigationScroll } from './components/HashNavigationScroll.js';
 import { isSplitWorkspacePath } from './lib/split-layout/splitThreadNavigation.js';
 import { product } from './lib/product-client.js';
+import { waitForProductWsOpen } from './lib/product-ws.js';
 import { useCliAgentTerminalSignal } from './components/thread/secondary-panel/useThreadOpenTerminalSignal.js';
 import { installAgentBoardMoves } from './stores/agent-board-moves.js';
 import {
@@ -414,6 +415,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
     init();
     const offShortcuts = installShortcuts();
     // Keep inbox read/answered/saved/kept state live across windows: these are
@@ -538,6 +540,11 @@ export function App() {
       useUi.getState().enterProjectFocus(event.projectId);
       navigateRef.current(`/projects/${event.projectId}/threads/${event.threadId}`);
     });
+    // Main may be waiting to deliver a cold-start menu-bar Thread open. Ack only
+    // after this listener exists and its ProductHub WebSocket can receive it.
+    void waitForProductWsOpen()
+      .then(() => mounted ? product.app.rendererReady() : undefined)
+      .catch(() => {});
     // Tray "Open Scheduler" / per-schedule "Show in Scheduler". With a task id
     // we jump to that schedule's scope and reveal the row; without one we land
     // on the overview (matching the plain menu item).
@@ -569,6 +576,7 @@ export function App() {
       useInboxRead.getState().markRead(entryId);
     });
     return () => {
+      mounted = false;
       offShortcuts();
       offData();
       offMenu();

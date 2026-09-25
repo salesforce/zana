@@ -1,4 +1,6 @@
 import { createHistoryProviders } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { RendererReadiness } from './window/renderer-readiness.js';
+import { runStartupDependencyDoctor } from './startup-dependency-doctor.js';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
  * in `apps/desktop`; Electron-free helpers live in workspace packages and
@@ -811,6 +813,13 @@ function setActiveProjectSkillsWatcher(
  */
 const windows = new Map<number, { win: BrowserWindow; projectId?: string }>();
 const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
+const rendererReadiness = new RendererReadiness();
+
+function markRendererReady(win: BrowserWindow): void {
+  const registered = windows.get(win.id);
+  if (!registered || registered.win !== win || registered.projectId) return;
+  rendererReadiness.markReady(win.id);
+}
 /**
  * The unscoped "main" window, kept as a hint for the dock-reactivate and
  * tray "show window" paths (which want *a* window, preferring the full shell).
@@ -2849,16 +2858,27 @@ async function probeConversationThreadLive(threadId: string, projectId: string):
   }
 }
 
+const MENUBAR_THREAD_FETCH_TIMEOUT_MS = 2_000;
+const MAIN_RENDERER_READY_TIMEOUT_MS = 15_000;
+
 async function listMenubarThreads(): Promise<MenubarThreadAgent[]> {
   if (runtimeSupervisor) return (await runtimeSupervisor.listMenubarThreads(100)).agents;
   try {
     const response = await fetch(new URL('api/v1/menubar/threads?limit=100', productServerUrl()), {
-      signal: AbortSignal.timeout(2000)
+      signal: AbortSignal.timeout(MENUBAR_THREAD_FETCH_TIMEOUT_MS)
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logMainError('listMenubarThreads dev fallback', `HTTP ${response.status}`);
+      return [];
+    }
     const parsed = MenubarThreadsListResultSchema.safeParse(await response.json());
-    return parsed.success ? parsed.data.agents.filter((agent) => agent.kind === 'thread') : [];
-  } catch {
+    if (!parsed.success) {
+      logMainError('listMenubarThreads dev fallback', parsed.error);
+      return [];
+    }
+    return parsed.data.agents.filter((agent) => agent.kind === 'thread');
+  } catch (error) {
+    logMainError('listMenubarThreads dev fallback', error);
     return [];
   }
 }
@@ -2872,12 +2892,17 @@ async function openMenubarThread(threadId: string, projectId: string): Promise<{
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ projectId }),
-        signal: AbortSignal.timeout(2000)
+        signal: AbortSignal.timeout(MENUBAR_THREAD_FETCH_TIMEOUT_MS)
       }
     );
     const parsed = MenubarThreadOpenResultSchema.safeParse(await response.json());
-    return parsed.success ? parsed.data : { ok: false, reason: 'invalid thread response' };
-  } catch {
+    if (!parsed.success) {
+      logMainError('openMenubarThread dev fallback', parsed.error);
+      return { ok: false, reason: 'invalid thread response' };
+    }
+    return parsed.data;
+  } catch (error) {
+    logMainError('openMenubarThread dev fallback', error);
     return { ok: false, reason: 'thread service unavailable' };
   }
 }
@@ -3045,14 +3070,14 @@ function showMainWindow() {
   win.focus();
 }
 
-async function ensureMainWindowReady(): Promise<void> {
+async function ensureMainWindowReady(): Promise<boolean> {
   let win = unscopedWindow();
   if (!win) {
     createWindow(undefined, startupState.mode === 'repair-required');
     win = unscopedWindow();
   }
-  if (!win || win.webContents.isDestroyed() || !win.webContents.isLoading()) return;
-  await new Promise<void>((resolve) => win!.webContents.once('did-finish-load', () => resolve()));
+  if (!win || win.webContents.isDestroyed()) return false;
+  return rendererReadiness.wait(win.id, MAIN_RENDERER_READY_TIMEOUT_MS);
 }
 
 /**
@@ -5921,6 +5946,14 @@ function createWindow(projectId?: string, repairOnly = false) {
   });
 
   windows.set(win.id, { win, projectId });
+  rendererReadiness.reset(win.id);
+  win.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
+    if (isMainFrame) rendererReadiness.reset(win.id);
+  });
+  win.webContents.on('render-process-gone', () => rendererReadiness.remove(win.id));
+  win.webContents.on('did-fail-load', (_event, _code, _description, _url, isMainFrame) => {
+    if (isMainFrame) rendererReadiness.remove(win.id);
+  });
   desktopBrowserBroker.registerWindow(win);
   // E2E hard guarantee: never let a window become visible or take focus during a
   // local Playwright run, no matter which code path (boot maximize, native
@@ -5957,6 +5990,7 @@ function createWindow(projectId?: string, repairOnly = false) {
     desktopBrowserBroker.releaseWindow(hostWebContentsId);
     desktopBrowserViewManager.releaseWindow(hostWebContentsId);
     conversationHistory.releaseWindow(win.id);
+    rendererReadiness.remove(win.id);
     windows.delete(win.id);
     boundsControllers.delete(win.id);
   });
@@ -6560,6 +6594,7 @@ function registerIpc() {
     get llmService() { return llmService; },
     get logMainError() { return logMainError; },
     get mainWindow() { return mainWindow; },
+    get markRendererReady() { return markRendererReady; },
     get menubar() { return menubar; },
     get menubarPopoverEnabled() { return menubarPopoverEnabled; },
     get openMenubarThread() { return openMenubarThread; },
@@ -8173,11 +8208,11 @@ async function bootstrapNormal() {
   // invokes `/usr/bin/security -i` on macOS, which escapes the isolated HOME
   // and raises a real login-Keychain prompt. Keep manual dependency checks
   // available, but never probe host credentials during an isolated E2E boot.
-  if (!E2E_LAUNCH) {
-    doctor
-      .check()
-      .catch((err) => logMainError('dependencyDoctor.check', err));
-  }
+  runStartupDependencyDoctor(
+    E2E_LAUNCH,
+    () => doctor.check(),
+    (err) => logMainError('dependencyDoctor.check', err)
+  );
   // Boot the CLI control plane (UDS at ~/.zcc/control.sock). Errors are logged
   // but non-fatal — the GUI works without the CLI. Started once here (CLAUDE.md
   // #3), torn down in before-quit. All op handlers reuse main's existing

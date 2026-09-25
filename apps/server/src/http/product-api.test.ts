@@ -892,6 +892,9 @@ describe('product HTTP', () => {
     expect(list.agents).toEqual([
       expect.objectContaining({ agentId: thread.id, projectName: 'Alpha' })
     ]);
+    const invalidLimit = await fetch(`${server.url}api/v1/menubar/threads?limit=1.5`);
+    expect(invalidLimit.status).toBe(400);
+    await expect(invalidLimit.json()).resolves.toEqual({ error: 'limit must be an integer' });
 
     const opened: unknown[] = [];
     const dispose = server.ctx.hub.subscribe('threads:open', (payload) => opened.push(payload));
