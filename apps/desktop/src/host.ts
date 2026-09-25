@@ -8197,20 +8197,21 @@ async function bootstrapNormal() {
   // never blocks boot. The check runs once here; the periodic poll lives in
   // the updater, not here, since dependency state only changes on explicit
   // user action.
-  doctor = createDoctor({
+  const startupDoctor = createDoctor({
     safeSend,
     log: logMainError,
     setDismissed: (dismissed) => {
       store.setConfig({ setupDismissed: dismissed });
     }
   });
+  doctor = startupDoctor;
   // Startup discovery executes installed provider CLIs. Claude's `doctor`
   // invokes `/usr/bin/security -i` on macOS, which escapes the isolated HOME
   // and raises a real login-Keychain prompt. Keep manual dependency checks
   // available, but never probe host credentials during an isolated E2E boot.
   runStartupDependencyDoctor(
     E2E_LAUNCH,
-    () => doctor.check(),
+    () => startupDoctor.check(),
     (err) => logMainError('dependencyDoctor.check', err)
   );
   // Boot the CLI control plane (UDS at ~/.zcc/control.sock). Errors are logged
