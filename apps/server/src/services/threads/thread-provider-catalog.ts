@@ -11,7 +11,11 @@ export interface ThreadProviderRecord extends PluginProviderDeclaration {
   hostEntry: string | null;
 }
 
-const providers = new Map<string, ThreadProviderRecord>();
+const providers = new Map<string, ThreadProviderRecord[]>();
+
+function currentProvider(id: string): ThreadProviderRecord | undefined {
+  return providers.get(id)?.at(-1);
+}
 
 function fakeProviderEnabled(): boolean {
   return process.env.ZCC_FAKE_PROVIDER === '1' || process.env.ZCC_AGENT_RUNTIME_ADAPTER === 'fake';
@@ -37,7 +41,7 @@ const FAKE_DECLARATION: PluginProviderDeclaration & { pluginId: string; hostEntr
 
 function syncFakeProvider(): void {
   if (fakeProviderEnabled()) {
-    if (!providers.has('fake')) providers.set('fake', FAKE_DECLARATION);
+    if (!providers.has('fake')) providers.set('fake', [FAKE_DECLARATION]);
   } else {
     providers.delete('fake');
   }
@@ -51,27 +55,33 @@ export function registerThreadProvider(
   const record: ThreadProviderRecord = {
     ...declaration,
     pluginId,
-    hostEntry: hostEntry ?? providers.get(declaration.id)?.hostEntry ?? 'src/bridge/bridge.ts'
+    hostEntry: hostEntry ?? currentProvider(declaration.id)?.hostEntry ?? 'src/bridge/bridge.ts'
   };
-  providers.set(declaration.id, record);
+  const stack = providers.get(declaration.id) ?? [];
+  stack.push(record);
+  providers.set(declaration.id, stack);
   return {
     id: declaration.id,
     unregister() {
-      if (providers.get(declaration.id) === record) providers.delete(declaration.id);
+      const current = providers.get(declaration.id);
+      if (!current) return;
+      const next = current.filter((entry) => entry !== record);
+      if (next.length > 0) providers.set(declaration.id, next);
+      else providers.delete(declaration.id);
     }
   };
 }
 
 export function listThreadProviders(): ThreadProviderRecord[] {
   syncFakeProvider();
-  const rows = [...providers.values()];
+  const rows = [...providers.values()].flatMap((stack) => stack.at(-1) ?? []);
   if (!fakeProviderEnabled()) return rows;
   return rows.sort((a, b) => Number(b.id === 'fake') - Number(a.id === 'fake'));
 }
 
 export function getThreadProvider(providerId: string): ThreadProviderRecord | undefined {
   syncFakeProvider();
-  return providers.get(canonicalThreadProviderId(providerId));
+  return currentProvider(canonicalThreadProviderId(providerId));
 }
 
 export function canonicalThreadProviderId(providerId: string): string {
