@@ -131,7 +131,14 @@ this list fails CI):
   `sdk.environments.get({ environmentId })` and `sdk.files.read({ hostId?, path, rootPath? })`
   confine file reads to a workspace root. `sdk.inbox.push({ projectId, comments })`
   appends to the product inbox after the host confines `projectId` to a
-  registered project. `sdk.projects.list()` returns `{ id, name, path? }[]`.
+  registered project. `sdk.projects.list()` returns `{ id, name, path?, icon? }[]`.
+  `sdk.projects.setIcon({ projectId, icon })` persists a project glyph and refreshes
+  the project list. Import `PROJECT_ICONS` / `ProjectIcon` from
+  `@zana-ai/zcc-plugin-sdk` for the supported names: Circle, Cloud, Folder, Code,
+  Database, Globe, Package, Rocket, Briefcase, Terminal, Layers, Wrench.
+  Circle restores the colored dot. The built-in default project always displays
+  Home. Set an icon when creating or connecting a project; do not repeatedly
+  overwrite a user's choice on refresh.
   Throws when the host has not wired the called member.
 - `zcc.host` — optional native bridge. `host.experimental_call(method, input?)`
   and `host.experimental_client()` (`call(method, input, { hostId? })`) dispatch

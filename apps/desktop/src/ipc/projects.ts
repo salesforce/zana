@@ -178,6 +178,7 @@ export function registerProjectsIpc(): void {
       patch: {
         name?: string;
         color?: string;
+        icon?: Project['icon'];
         defaultAgents?: string[];
         defaultPersonas?: string[];
         launchDefault?: Project['launchDefault'];
@@ -190,11 +191,12 @@ export function registerProjectsIpc(): void {
         || patch.launchDefault !== undefined
         || patch.favorite !== undefined
         || patch.remotePath !== undefined;
-      if (!ctx.runtimeSupervisor || usesLegacyFields || (patch.name === undefined && patch.color === undefined)) {
+      if (!ctx.runtimeSupervisor || usesLegacyFields || (patch.name === undefined && patch.color === undefined && patch.icon === undefined)) {
         return store.updateProject(id, patch);
       }
       const project = await ctx.runtimeSupervisor.updateProject(id, {
         ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.icon !== undefined ? { icon: patch.icon } : {}),
         ...(patch.color !== undefined ? { color: patch.color as '#2f81f7' | '#3fb950' | '#d4a017' | '#bc8cff' | '#39c5cf' | '#f85149' | '#ff7b72' | '#8b949e' } : {})
       });
       ctx.safeSend(IPC.projects.onChanged, await ctx.runtimeSupervisor.listProjects() as Project[]);

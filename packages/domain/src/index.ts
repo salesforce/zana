@@ -123,6 +123,7 @@ export * from './parse-every.js';
 export * from './schedule-spec.js';
 export * from './path-encoding.js';
 export * from './project-colors.js';
+export * from './project-icons.js';
 export * from './terminal-themes.js';
 export * from './workflow-args.js';
 export * from './telemetry-events.js';

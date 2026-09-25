@@ -1,3 +1,4 @@
+import { ProjectIconPicker } from './ProjectIconPicker.js';
 import { product } from '../../lib/product-client.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -1345,6 +1346,13 @@ export function ProjectsList({
           )}
           {p && (
             <>
+              {!isScratchWorkspaceProject(p) && <>
+                <div className="project-menu-label">Icon</div>
+                <ProjectIconPicker value={p.icon} onChange={icon => {
+                  void updateProject(p.id, { icon });
+                  setMenu(null);
+                }} />
+              </>}
               <div className="project-menu-label">Color</div>
               <div className="project-menu-swatches">
                 {PROJECT_COLORS.map((c) => (

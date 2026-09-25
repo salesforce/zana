@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createFakePluginHost, PluginContextStaleError } from './index.js';
 
 describe('createFakePluginHost', () => {
@@ -120,6 +120,11 @@ describe('createFakePluginHost sdk stubs', () => {
     const bare = createFakePluginHost({ pluginId: 'bare' });
     await expect(bare.zcc.sdk.inbox.push({ projectId: 'p', comments: 'x' })).rejects.toThrow(/not available/);
     await expect(bare.zcc.sdk.projects.list()).rejects.toThrow(/not available/);
+    await expect(bare.zcc.sdk.projects.setIcon({ projectId: 'p1', icon: 'Cloud' })).rejects.toThrow(/not available/);
+    const setProjectIcon = vi.fn(async () => undefined);
+    const iconHost = createFakePluginHost({ setProjectIcon });
+    await iconHost.zcc.sdk.projects.setIcon({ projectId: 'p1', icon: 'Cloud' });
+    expect(setProjectIcon).toHaveBeenCalledWith({ projectId: 'p1', icon: 'Cloud' });
     const wired = createFakePluginHost({
       pluginId: 'wired',
       pushInbox: async (args) => ({ id: `inb:${args.projectId}` }),

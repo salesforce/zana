@@ -1,6 +1,7 @@
 import { startStaticHost } from './static-host.js';
 import { toBrowserProjectSummaries } from './browser-bootstrap.js';
 import { createProductHttpContext } from './http/product-context.js';
+import type { ProductHub } from './http/product-hub.js';
 import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './http/ports.js';
 import { SERVER_RUNTIME_PROTOCOL_VERSION, ServerRuntimeInboundSchema } from '@zana-ai/zcc-contracts/runtime';
 import { join } from 'node:path';
@@ -42,6 +43,7 @@ let terminalSessions: TerminalSessionService | null = null;
 let terminalLaunchAuthority: ReturnType<typeof createTerminalLaunchAuthority> | null = null;
 let runtimeDatabase: TerminalSessionRepository | null = null;
 let projects: ProjectStore | null = null;
+let productHub: ProductHub | null = null;
 let projectSettings: ProjectSettingsStore | null = null;
 let hostConnectionRenewal: NodeJS.Timeout | null = null;
 let plugins: PluginService | null = null;
@@ -75,6 +77,7 @@ parentPort.on('message', async ({ data }) => {
         origins: { serverPort: preferredPort, devAppPort: DEFAULT_DEV_APP_PORT },
         projects: projects ?? undefined
       });
+      productHub = product.hub;
       product.teamOps = createTeamOpsViaControl(message.dataDir);
       product.cliAgentOps = createCliAgentOpsViaControl(message.dataDir);
       threadDb = product.db;
@@ -195,7 +198,10 @@ parentPort.on('message', async ({ data }) => {
         parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'project storage is unavailable' });
         return;
       }
-      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await projects.update(message.projectId, message.patch) });
+      const updated = await projects.update(message.projectId, message.patch);
+      // The renderer subscribes over product HTTP even when the mutation arrived via IPC.
+      if (updated) productHub?.emit('projects:changed', projects.list());
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: updated });
     }
     if (message.operation === 'projects-reorder') {
       if (!projects) {

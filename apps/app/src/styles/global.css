@@ -2769,6 +2769,38 @@ body.resizing-col {
   display: block;
 }
 
+.project-dot--icon,
+.overview-project-row .project-dot.project-dot--icon {
+  width: 12px;
+  height: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-menu-icons {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  padding: 4px 10px 8px;
+}
+.project-menu-icons button {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.project-menu-icons button:hover { background: var(--bg-hover); }
+.project-menu-icons button[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
+.project-menu-icons button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .project-dot.unread {
   box-shadow: 0 0 0 0 currentColor;
   animation: project-dot-pulse 1.6s ease-out infinite;

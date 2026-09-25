@@ -256,6 +256,7 @@ export interface CcApi {
       patch: {
         name?: string;
         color?: string;
+        icon?: Project['icon'];
         defaultAgents?: string[];
         defaultPersonas?: string[];
         favorite?: boolean;

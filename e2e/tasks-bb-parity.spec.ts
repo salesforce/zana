@@ -15,6 +15,101 @@ const test = base.extend({
 });
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true } });
 
+test('Tasks dialogs and property menus stay styled in body portals', async ({ app }, testInfo) => {
+  const win = app.window;
+  await win.setViewportSize({ width: 1440, height: 1000 });
+  // Electron's configured zoom makes CSS viewport pixels differ from window pixels.
+  const viewport = await win.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  const rem = await win.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+  expect(await win.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'tasks' }))).toMatchObject({ ok: true });
+  await win.locator('.nav-item', { hasText: 'Tasks' }).first().click();
+  const panel = win.locator('.bb-tasks').filter({ has: win.getByRole('button', { name: 'New task', exact: true, includeHidden: true }) });
+  await expect(panel).toBeVisible();
+  const initialPanel = await panel.boundingBox();
+  await win.getByRole('button', { name: 'New task', exact: true }).click();
+  const dialog = win.getByRole('dialog', { name: /New task/ });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveCSS('position', 'fixed');
+  await expect(dialog).toHaveCSS('box-sizing', 'border-box');
+  await expect(dialog).toHaveCSS('z-index', '50');
+  await expect.poll(async () => {
+    const box = await dialog.boundingBox();
+    return box ? Math.max(Math.abs(box.x + box.width / 2 - viewport.width / 2), Math.abs(box.y + box.height / 2 - viewport.height / 2)) : Infinity;
+  }).toBeLessThan(2);
+  const bounds = await dialog.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.width).toBeLessThan(700);
+  expect(bounds!.y).toBeGreaterThan(0);
+  expect(bounds!.y + bounds!.height).toBeLessThan(viewport.height);
+  expect(await panel.boundingBox()).toEqual(initialPanel);
+  expect(await win.evaluate(() => window.scrollY)).toBe(0);
+  const backdrop = win.locator('[data-bb-plugin="tasks"][data-state="open"]').filter({ hasNot: win.locator('*') }).filter({ visible: true });
+  await expect(backdrop).toHaveCSS('position', 'fixed');
+  const backdropBounds = await backdrop.boundingBox();
+  expect(backdropBounds).toMatchObject({ x: 0, y: 0 });
+  expect(Math.abs(backdropBounds!.width - viewport.width)).toBeLessThan(1);
+  expect(Math.abs(backdropBounds!.height - viewport.height)).toBeLessThan(1);
+  await expect(dialog.locator('.ProseMirror')).toHaveCSS('min-height', `${5 * rem}px`);
+  // A nested Select also portals outside the dialog's DOM subtree.
+  await dialog.getByRole('combobox', { name: 'Status', exact: true }).click();
+  const options = win.getByRole('listbox');
+  await expect(options).toHaveCSS('z-index', '50');
+  expect(await options.evaluate(node => parseFloat(getComputedStyle(node).borderTopWidth))).toBeGreaterThan(0);
+  await win.getByRole('option', { name: 'Done', exact: true }).click();
+  await dialog.getByRole('textbox', { name: 'Task title', exact: true }).fill('Portal layout regression');
+  await testInfo.attach('new-task-dialog', { body: await win.screenshot({ path: testInfo.outputPath('new-task-dialog.png') }), contentType: 'image/png' });
+  await dialog.getByRole('button', { name: 'Create task', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(win.getByText('Portal layout regression', { exact: true })).toBeVisible();
+  await win.getByRole('button', { name: 'No priority', exact: true }).click();
+  const menu = win.getByRole('menu');
+  await expect(menu).toBeVisible();
+  await expect(menu).toHaveCSS('z-index', '50');
+  expect(await menu.evaluate(node => parseFloat(getComputedStyle(node).borderTopWidth))).toBeGreaterThan(0);
+  await expect(menu).toHaveCSS('padding', `${rem / 4}px`);
+  expect(await menu.evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+  expect(await menu.evaluate(node => getComputedStyle(node).boxShadow)).not.toBe('none');
+  const menuBounds = await menu.boundingBox();
+  const urgent = win.getByRole('menuitem', { name: 'Urgent', exact: true });
+  const urgentBounds = await urgent.boundingBox();
+  expect(urgentBounds!.x).toBeGreaterThan(menuBounds!.x);
+  expect(urgentBounds!.x + urgentBounds!.width).toBeLessThan(menuBounds!.x + menuBounds!.width);
+  await testInfo.attach('priority-menu', { body: await win.screenshot({ path: testInfo.outputPath('priority-menu.png') }), contentType: 'image/png' });
+  await urgent.click();
+  await expect(menu).toBeHidden();
+  await expect(win.getByRole('button', { name: 'Urgent', exact: true })).toBeVisible();
+  await win.getByRole('button', { name: 'Set due date', exact: true }).click();
+  const dueDate = win.getByRole('dialog');
+  await expect(dueDate).toHaveCSS('z-index', '50');
+  await expect(dueDate).toHaveCSS('padding', `${rem / 2}px`);
+  await win.keyboard.press('Escape');
+  await expect(dueDate).toBeHidden();
+  // Plugin utility class names must not restyle an unrelated host element.
+  expect(await win.evaluate(() => {
+    const host = document.createElement('div');
+    host.className = 'fixed z-50 bg-popover';
+    document.body.append(host);
+    const position = getComputedStyle(host).position;
+    host.remove();
+    return position;
+  })).toBe('static');
+  // Compact view uses separate body-portal roots for its sheet and backdrop.
+  await win.getByRole('button', { name: 'Back (Esc)', exact: true }).click();
+  await win.setViewportSize({ width: 700, height: 900 });
+  const compactHeight = await win.evaluate(() => innerHeight);
+  await win.getByRole('button', { name: 'New task', exact: true }).click();
+  const sheet = win.getByRole('dialog', { name: /New task/ });
+  await expect(sheet).toHaveCSS('position', 'fixed');
+  await expect(sheet).toHaveCSS('z-index', '50');
+  await expect.poll(async () => {
+    const box = await sheet.boundingBox();
+    return box ? Math.abs(box.y + box.height - compactHeight) : Infinity;
+  }).toBeLessThan(1);
+  await expect(sheet.getByRole('textbox', { name: 'Task title', exact: true })).toBeVisible();
+  await win.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+});
+
 test('BB Tasks migrates, scopes CLI, delegates, and round-trips attachments in built Electron', async ({ app, home }) => {
   test.setTimeout(120_000);
   const win = app.window;

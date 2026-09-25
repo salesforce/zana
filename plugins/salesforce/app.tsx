@@ -1,8 +1,9 @@
 import { registerSalesforcePanels } from './panels.js';
 import type { ComponentType } from 'react';
-import { definePluginApp, useComposerView, useZccContext, useZccNavigate, type PluginCreateProjectDialogProps, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, useComposerView, useZccContext, useZccNavigate, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { AgentforcePlaygroundPanel } from './src/app/AgentScriptPanel.js';
 import { AgentforcePreviewPanel } from './src/app/AgentforcePreviewPanel.js';
+import { CreateSalesforceProjectDialog } from './src/app/CreateSalesforceProjectDialog.js';
 import { OrgPicker } from './src/app/OrgPicker.js';
 import { SalesforceOrgsPanel } from './src/app/SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './src/app/SalesforceProjectTab.js';
@@ -169,136 +170,6 @@ function AgentFileOpener(props: {
   );
 }
 
-function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogProps) {
-  const React = hostReact();
-  if (!React) return null;
-  const [name, setName] = React.useState('');
-  const [outputDir, setOutputDir] = React.useState('');
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  React.useEffect(() => {
-    let cancelled = false;
-    props
-      .cloneRoot()
-      .then((root) => {
-        if (!cancelled && root) setOutputDir(root);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-    // Default the parent folder once when the dialog opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- host passes fresh closures each render
-  }, []);
-  const canSubmit = name.trim().length > 0 && outputDir.trim().length > 0 && !busy;
-  const submit = () => {
-    if (!canSubmit) return;
-    setBusy(true);
-    setError(null);
-    pluginHost()
-      ?.callRpc(props.pluginId, 'project.generate', { name: name.trim(), outputDir: outputDir.trim() })
-      .then(async (raw) => {
-        const result = raw as { ok?: boolean; path?: string; error?: string };
-        if (!result?.ok || !result.path) {
-          throw new Error(result?.error || 'Could not generate the Salesforce project.');
-        }
-        const project = await props.addProject(result.path);
-        if (!project) throw new Error('Generated the DX folder, but could not add it as a project.');
-        props.toProject(project.id, { tabId: 'salesforce' });
-        props.close();
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setBusy(false));
-  };
-  const onNameChange = (event: { currentTarget: { value: string } }) => {
-    setName(event.currentTarget.value);
-    if (error) setError(null);
-  };
-  const onDirChange = (event: { currentTarget: { value: string } }) => {
-    setOutputDir(event.currentTarget.value);
-    if (error) setError(null);
-  };
-  const onEnter = (event: { key: string }) => {
-    if (event.key === 'Enter') submit();
-  };
-  return React.createElement(
-    React.Fragment,
-    null,
-    React.createElement(
-      'div',
-      { className: 'modal-hint' },
-      'Creates a Salesforce DX project with ',
-      React.createElement('code', null, 'sf project generate'),
-      ', then adds it to ZCC.'
-    ),
-    React.createElement(
-      'label',
-      { className: 'remote-form-row local-path-row' },
-      React.createElement('span', null, 'Project name'),
-      React.createElement('input', {
-        value: name,
-        onChange: onNameChange,
-        onKeyDown: onEnter,
-        placeholder: 'MyDxProject',
-        disabled: busy,
-        autoFocus: true,
-        spellCheck: false,
-        autoCapitalize: 'off',
-        autoCorrect: 'off'
-      })
-    ),
-    React.createElement(
-      'label',
-      { className: 'remote-form-row local-path-row' },
-      React.createElement('span', null, 'Parent folder'),
-      React.createElement(
-        'div',
-        { className: 'local-path-input-group' },
-        React.createElement('input', {
-          value: outputDir,
-          onChange: onDirChange,
-          onKeyDown: onEnter,
-          placeholder: '~/zcc-workspace',
-          disabled: busy,
-          spellCheck: false,
-          autoCapitalize: 'off',
-          autoCorrect: 'off'
-        }),
-        React.createElement(
-          'button',
-          {
-            type: 'button',
-            className: 'btn',
-            disabled: busy,
-            'aria-label': 'Browse for folder',
-            onClick: () => {
-              void props.pickDirectory().then((picked) => {
-                if (picked) setOutputDir(picked);
-              });
-            }
-          },
-          'Browse…'
-        )
-      )
-    ),
-    error ? React.createElement('div', { className: 'modal-error' }, error) : null,
-    React.createElement(
-      'div',
-      { className: 'plugin-create-project-actions' },
-      React.createElement(
-        'button',
-        { type: 'button', className: 'btn', disabled: busy, onClick: () => props.close() },
-        'Cancel'
-      ),
-      React.createElement(
-        'button',
-        { type: 'button', className: 'btn primary', disabled: !canSubmit, onClick: submit },
-        busy ? 'Creating…' : 'Create project'
-      )
-    )
-  );
-}
-
 export default definePluginApp((app) => {
   registerSalesforcePanels(app);
   app.slots.settingsSection({
@@ -355,11 +226,11 @@ export default definePluginApp((app) => {
   });
   app.slots.experimental_createProjectAction({
     id: 'dx-project',
-    title: 'Salesforce DX project',
+    title: 'Salesforce project',
     icon: 'Cloud',
     component: CreateSalesforceProjectDialog,
     run: (ctx) => {
-      ctx.openDialog({ title: 'Create Salesforce DX project' });
+      ctx.openDialog({ title: 'Create Salesforce project' });
     }
   });
   app.slots.pendingInteraction({

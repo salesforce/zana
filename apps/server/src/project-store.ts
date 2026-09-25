@@ -1,3 +1,4 @@
+import { isProjectIcon, type ProjectIcon } from '@zana-ai/zcc-domain';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
@@ -10,7 +11,7 @@ import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-
  * dedup rules on top of the durable-store primitive so the on-disk
  * `projects.json` shape stays byte-compatible with the legacy Electron-main
  * writer while neither side has crossed an IPC boundary yet. This is
- * deliberately a bounded subset of `Project` (id/name/path/color/timestamps/
+ * deliberately a bounded subset of `Project` (id/name/path/color/icon/timestamps/
  * tag/category) — remote projects, launch defaults, favorites, and the
  * Quick Agent scratch-folder heuristics stay on the legacy path until their
  * own bounded migration steps.
@@ -20,6 +21,7 @@ export interface ProjectRecord {
   name: string;
   path: string;
   color?: string;
+  icon?: ProjectIcon;
   createdAt: number;
   lastActiveAt: number;
   sortIndex?: number;
@@ -29,7 +31,7 @@ export interface ProjectRecord {
   remote?: unknown;
 }
 
-export type ProjectMutationPatch = Partial<Pick<ProjectRecord, 'name' | 'color' | 'category'>> & {
+export type ProjectMutationPatch = Partial<Pick<ProjectRecord, 'name' | 'color' | 'icon' | 'category'>> & {
   remotePath?: string;
 };
 
@@ -173,6 +175,10 @@ function canonicalStoredLocalPath(project: ProjectRecord): string | null {
 
 function sanitizeProjectPatch(patch: ProjectMutationPatch): ProjectMutationPatch {
   const safePatch: ProjectMutationPatch = {};
+  if (patch.icon !== undefined) {
+    if (!isProjectIcon(patch.icon)) throw new Error('unsupported project icon');
+    safePatch.icon = patch.icon;
+  }
   if ('name' in patch && patch.name !== undefined) {
     if (typeof patch.name !== 'string' || patch.name.length === 0 || patch.name.length > 256) {
       throw new Error('project name must be between 1 and 256 characters');

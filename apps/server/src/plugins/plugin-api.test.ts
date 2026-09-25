@@ -334,6 +334,31 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
     }
   });
 
+  it('sets only validated icons on registered projects, publishes changes, and stops on dispose', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-project-icon-'));
+    try {
+      const update = vi.fn(async (id: string) => id === 'p1' ? { id, icon: 'Cloud' } : null);
+      const list = vi.fn(() => [{ id: 'p1', icon: 'Cloud' }]);
+      const emit = vi.fn();
+      const handle = createPluginApi('demo', dir, { productContext: { projects: { update, list }, hub: { emit } } as never });
+      await handle.api.sdk.projects.setIcon({ projectId: ' p1 ', icon: 'Cloud' });
+      expect(update).toHaveBeenCalledWith('p1', { icon: 'Cloud' });
+      expect(emit).toHaveBeenCalledWith('projects:changed', [{ id: 'p1', icon: 'Cloud' }]);
+      update.mockClear(); emit.mockClear();
+      for (const args of [undefined, { projectId: '' }, { projectId: 'p1', icon: 'bad' }, { projectId: 'p1', icon: null }]) {
+        await expect(handle.api.sdk.projects.setIcon(args as never)).rejects.toThrow();
+      }
+      expect(update).not.toHaveBeenCalled();
+      await expect(handle.api.sdk.projects.setIcon({ projectId: 'unknown', icon: 'Cloud' })).rejects.toThrow('unrecognized projectId');
+      expect(emit).not.toHaveBeenCalled();
+      await handle.dispose();
+      await expect(handle.api.sdk.projects.setIcon({ projectId: 'p1', icon: 'Cloud' })).rejects.toThrow();
+      const bare = createPluginApi('bare', dir);
+      await expect(bare.api.sdk.projects.setIcon({ projectId: 'p1', icon: 'Cloud' })).rejects.toThrow('not available');
+      await bare.dispose();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('wires sdk.inbox.push and sdk.projects.list when callbacks are provided', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-sdk-inbox-'));
     try {

@@ -1,3 +1,4 @@
+export { PROJECT_ICONS, type ProjectIcon } from '@zana-ai/zcc-domain';
 /**
  * Process-agnostic plugin SDK entry. Safe from server or renderer.
  *

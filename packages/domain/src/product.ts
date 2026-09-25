@@ -1,3 +1,4 @@
+import type { ProjectIcon } from './project-icons.js';
 /**
  * Product vocabulary extracted from the historical `src/shared/types.ts` dump.
  * Named sibling modules re-export slices so callers can import a destination
@@ -207,6 +208,8 @@ export const DEFAULT_PROJECT_DISPLAY_NAME = 'Default Project';
 export const DEFAULT_WORKSPACE_DISPLAY_NAME = DEFAULT_PROJECT_DISPLAY_NAME;
 
 export interface Project {
+  /** Saved glyph. Circle or absent keeps the colored dot; the default project always uses Home. */
+  icon?: ProjectIcon;
   id: string;
   name: string;
   path: string;

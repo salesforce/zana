@@ -5,6 +5,8 @@
  */
 
 declare module '@zana-ai/zcc-plugin-sdk' {
+  export const PROJECT_ICONS: readonly ['Circle', 'Cloud', 'Folder', 'Code', 'Database', 'Globe', 'Package', 'Rocket', 'Briefcase', 'Terminal', 'Layers', 'Wrench'];
+  export type ProjectIcon = (typeof PROJECT_ICONS)[number];
   export const PLUGIN_SDK_VERSION: string;
   export const PLUGIN_SDK_API_MAJOR: number;
   export function derivePluginId(packageName: string): string;
@@ -15,6 +17,7 @@ declare module '@zana-ai/zcc-plugin-sdk' {
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/server' {
+  export { PROJECT_ICONS, type ProjectIcon } from '@zana-ai/zcc-plugin-sdk';
   export const PLUGIN_CLI_OUTPUT_MAX_BYTES: number;
   export function enforcePluginCliOutputLimit(result: {
     exitCode: number;
@@ -309,7 +312,8 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         push(args: { projectId: string; comments: string }): Promise<{ id: string }>;
       };
       projects: {
-        list(): Promise<Array<{ id: string; name: string; path?: string }>>;
+        list(): Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-plugin-sdk').ProjectIcon }>>;
+        setIcon(args: { projectId: string; icon: import('@zana-ai/zcc-plugin-sdk').ProjectIcon }): Promise<void>;
       };
     };
     readonly host: {
@@ -341,7 +345,7 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/testing' {
-  export function createFakePluginHost(options?: { pluginId?: string }): {
+  export function createFakePluginHost(options?: { pluginId?: string; setProjectIcon?: import('@zana-ai/zcc-plugin-sdk/server').ZccPluginApi['sdk']['projects']['setIcon'] }): {
     zcc: import('@zana-ai/zcc-plugin-sdk/server').ZccPluginApi;
     harness: {
       callRpc(name: string, args?: unknown): Promise<unknown>;

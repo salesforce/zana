@@ -109,6 +109,23 @@ export const SALESFORCE_STYLES = `
 .sf-org-row small { display:block; font-size:12px; color:var(--text-muted); }
 .sf-login-dialog { width:540px; max-width:calc(100vw - 32px); max-height:calc(100dvh - 32px); margin:auto; padding:0; border:1px solid var(--border); border-radius:16px; color:var(--text-primary); background:var(--bg-panel); box-shadow:0 24px 80px #0004,0 4px 16px #0001; overflow:auto; text-align:left; font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
 .sf-login-dialog::backdrop { background:#0b14225c; backdrop-filter:blur(4px); }
+.sf-create-project { height:auto; background:transparent; }
+.sf-create-steps { display:flex; flex-wrap:wrap; gap:12px 24px; list-style:none; padding:0 0 18px; margin:0; border-bottom:1px solid var(--border); color:var(--text-muted); font-size:12px; }
+.sf-create-steps li { display:flex; align-items:center; gap:7px; }
+.sf-create-steps li[aria-current=step] { color:var(--text-primary); font-weight:600; }
+.sf-create-steps li span { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; background:var(--bg-elevated); }
+.sf-create-steps li[aria-current=step] span { color:var(--text-on-accent,#fff); background:var(--accent); }
+.sf-create-body { display:grid; gap:18px; padding:20px 0; }
+.sf-create-body p { margin:0; }
+.sf-create-shortcut { justify-self:start; padding:0; }
+.sf-create-footer { display:flex; justify-content:flex-end; gap:8px; padding:16px 0; border-top:1px solid var(--border); }
+.sf-create-connected { display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--border); border-radius:8px; }
+.sf-create-connected>svg { width:20px; height:20px; color:var(--success); flex-shrink:0; }
+.sf-create-connected>div { flex:1; min-width:0; overflow-wrap:anywhere; }
+.sf-create-connected small { display:block; color:var(--text-muted); font-size:11px; }
+.sf-create-folder { display:flex; gap:8px; min-width:0; }
+.sf-create-folder input { flex:1; }
+.sf-create-path { font:11px/1.5 ui-monospace,monospace; color:var(--text-muted); overflow-wrap:anywhere; }
 .sf-org-login { margin:0; }
 .sf-login-heading { position:relative; padding:28px 28px 0; }
 .sf-login-mark { width:42px; height:42px; display:grid; place-items:center; color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,transparent); border:1px solid color-mix(in srgb,var(--accent) 15%,transparent); border-radius:12px; margin-bottom:16px; }
@@ -140,7 +157,7 @@ export const SALESFORCE_STYLES = `
 .sf-login-destination svg { width:15px; height:15px; flex-shrink:0; }
 .sf-login-footer { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:16px; padding:18px 24px; border-top:1px solid var(--border); background:var(--bg-base); }
 .sf-login-footer p { margin:0; color:var(--text-muted); font-size:10px; line-height:1.6; }
-.sf-login-buttons { display:flex; gap:8px; align-items:center; }
+.sf-login-buttons { display:flex; gap:8px; align-items:center; margin-left:auto; }
 .sf-login-buttons .sf-btn { padding:8px 11px; border-radius:7px; font-size:12px; }
 .sf-login-buttons .primary { font-weight:550; }
 .sf-login-buttons .primary:hover:not(:disabled) { filter:brightness(1.08); }

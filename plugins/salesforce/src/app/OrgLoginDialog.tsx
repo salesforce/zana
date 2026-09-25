@@ -1,25 +1,11 @@
 import { useEffect, useId, useRef } from 'react';
-import type { OrgLoginInstance } from '../../lib/org-login.js';
+import { OrgLoginFields, type OrgLoginFieldsProps } from './OrgLoginFields.js';
 import { ArrowUpRight, CircleCheck, Cloud } from './components/icons.js';
 
-const ENVIRONMENTS = [
-  ['production', 'Production', 'Live & developer orgs'],
-  ['sandbox', 'Sandbox', 'Test environments'],
-  ['custom', 'My Domain', 'Company domain / SSO'],
-] as const;
-
 /** Native top-layer dialog keeps focus and pointer interaction inside the form. */
-export function OrgLoginDialog(props: {
-  instance: OrgLoginInstance;
-  url: string;
-  alias: string;
-  busy: boolean;
-  disabled?: boolean;
+export function OrgLoginDialog(props: OrgLoginFieldsProps & {
   projectId?: string;
   error: string | null;
-  onInstance: (value: OrgLoginInstance) => void;
-  onUrl: (value: string) => void;
-  onAlias: (value: string) => void;
   onSubmit: () => void;
   onClose: () => void;
 }) {
@@ -49,29 +35,7 @@ export function OrgLoginDialog(props: {
           <p id={`${id}-description`}>Sign in to Salesforce with your browser.</p>
         </div>
         <div className="sf-login-body">
-          <fieldset className="sf-login-environments" disabled={props.busy || props.disabled}>
-            <legend>Choose your environment</legend>
-            <div className="sf-login-options">
-              {ENVIRONMENTS.map(([value, title, description]) => (
-                <label key={value} className="sf-login-option">
-                  <input type="radio" name={`${id}-environment`} value={value} checked={props.instance === value}
-                    onChange={() => props.onInstance(value)} aria-label={title} />
-                  <span><strong>{title}</strong><small>{description}</small></span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          {props.instance === 'custom' && <label className="sf-login-field">
-            My Domain URL
-            <input className="sf-input" aria-label="My Domain URL" required disabled={props.busy || props.disabled} autoCapitalize="none" spellCheck={false}
-              placeholder="company.my.salesforce.com" value={props.url} onChange={event => props.onUrl(event.target.value)} />
-          </label>}
-          <label className="sf-login-field">
-            <span>Org alias <span className="sf-login-optional">Optional</span></span>
-            <input className="sf-input" aria-label="Org alias" disabled={props.busy || props.disabled} autoCapitalize="none" spellCheck={false}
-              placeholder="e.g. my-dev-org" value={props.alias} onChange={event => props.onAlias(event.target.value)} />
-            <small>A short name to recognize this org in Zana and your terminal.</small>
-          </label>
+          <OrgLoginFields {...props} />
           {props.busy ? <div className="sf-login-waiting" role="status">
             <span className="sf-login-spinner" aria-hidden="true" />
             <div><strong>Finish signing in in your browser</strong><span>This will update automatically. You can close this dialog while you wait.</span></div>
@@ -81,7 +45,6 @@ export function OrgLoginDialog(props: {
           {props.error && <p className="sf-login-error" role="alert">{props.error}</p>}
         </div>
         <div className="sf-login-footer">
-          <p>Saved to Salesforce CLI.<br />Ready to use in your terminal.</p>
           <div className="sf-login-buttons">
             <button type="button" className="sf-btn quiet" onClick={props.onClose}>{props.busy ? 'Close' : 'Cancel'}</button>
             <button type="submit" className="sf-btn primary" disabled={props.disabled || props.busy}>

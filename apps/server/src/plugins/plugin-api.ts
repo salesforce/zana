@@ -1,4 +1,4 @@
-import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
+import { isProjectIcon, spawnEnvironmentChoiceSchema, type ProjectIcon } from '@zana-ai/zcc-domain';
 import { readHostFile, writeHostFile } from '../http/files-via-host.js';
 import { environmentPullRequest } from '../services/environments/environment-actions.js';
 import { conversationHistory } from '../services/threads/conversation-history.js';
@@ -328,7 +328,7 @@ export function createPluginApi(
       remove: readonly string[];
     }) => Promise<JsonObject>;
     pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
-    listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
+    listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string; icon?: ProjectIcon }>>;
     productContext?: import('../http/product-context.js').ProductHttpContext;
     hostEntryPath?: string | null;
     hostCall?: (method: string, input?: unknown, hostId?: string) => Promise<unknown>;
@@ -848,6 +848,17 @@ export function createPluginApi(
             throw new Error('zcc.sdk is not available in this runtime');
           }
           return options.listProjects({ pluginId });
+        },
+        setIcon: async (args) => {
+          assertLive();
+          const ctx = options?.productContext;
+          if (!ctx) throw new Error('zcc.sdk is not available in this runtime');
+          const projectId = typeof args?.projectId === 'string' ? args.projectId.trim() : '';
+          if (!projectId) throw new Error('projectId is required');
+          if (!isProjectIcon(args?.icon)) throw new Error('unsupported project icon');
+          const project = await ctx.projects.update(projectId, { icon: args.icon });
+          if (!project) throw new Error('unrecognized projectId');
+          ctx.hub.emit('projects:changed', ctx.projects.list());
         }
       },
       environments: {
