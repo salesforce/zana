@@ -518,11 +518,12 @@ export const IPC = {
     setFullScreen: 'app:setFullScreen',
     isFullScreen: 'app:isFullScreen',
     onFullScreenChanged: 'app:onFullScreenChanged',
+    rendererReady: 'app:rendererReady',
     saveCrashReport: 'app:saveCrashReport'
   },
   /**
    * Menu-bar popover surface (macOS frameless-card tray, behind
-   * `menubarPopoverEnabled`). `request`/`focusSession`/`setFavorite`/`open`/
+    * `menubarPopoverEnabled`). `request`/`focusAgent`/`setFavorite`/`open`/
    * `hide`/`quit` are popover→main requests, each main-authorized (Rule 1);
    * `onSnapshot` is a main→popover push of the live fleet snapshot. See
    * `src/main/menubar.ts`.
@@ -531,6 +532,7 @@ export const IPC = {
     request: 'menubar:request',
     onSnapshot: 'menubar:onSnapshot',
     focusSession: 'menubar:focusSession',
+    focusAgent: 'menubar:focusAgent',
     setFavorite: 'menubar:setFavorite',
     /**
      * Light-interaction WRITE path: reply to a blocked agent's parked question

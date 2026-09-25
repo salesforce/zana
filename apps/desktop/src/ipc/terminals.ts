@@ -11,6 +11,43 @@ import { app } from 'electron';
 import type { SessionStats } from '@zana-ai/zcc-host-daemon/harness/claude/transcript-reader';
 import type { CatchUpSummaryResult, CreateTerminalRequest, LaunchProfileId, MenubarReplyResult, Result, TerminalSession } from '@zana-ai/zcc-domain/product';
 
+interface MenubarFocusDeps {
+  ptys: { getSession(id: string): { projectId: string } | null | undefined };
+  showMainWindow(): void;
+  ensureMainWindowReady(): Promise<boolean>;
+  openMenubarThread(agentId: string, projectId: string): Promise<{ ok: boolean; reason?: string } | null | undefined>;
+  logMainError(context: string, error: unknown): void;
+  safeSend(channel: string, ...args: unknown[]): void;
+  menubar?: { hide(): void } | null;
+}
+
+export async function focusMenubarAgent(
+  deps: MenubarFocusDeps,
+  kind: 'cli' | 'thread',
+  agentId: string,
+  projectId: string
+): Promise<void> {
+  if (kind === 'thread') {
+    deps.showMainWindow();
+    if (!await deps.ensureMainWindowReady()) {
+      deps.logMainError('menubar focus thread', 'main renderer did not become ready');
+      return;
+    }
+    const result = await deps.openMenubarThread(agentId, projectId);
+    if (!result?.ok) {
+      deps.logMainError('menubar focus thread', result?.reason ?? 'thread unavailable');
+      return;
+    }
+    deps.menubar?.hide();
+    return;
+  }
+  const session = deps.ptys.getSession(agentId);
+  if (!session || session.projectId !== projectId) return;
+  deps.menubar?.hide();
+  deps.showMainWindow();
+  deps.safeSend('app:focusSession', agentId, projectId);
+}
+
 function cliPlanSessionId(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 && value.length < 128 ? value : null;
 }
@@ -352,8 +389,8 @@ export function registerTerminalsIpc(): void {
   // failed to construct.
   ctx.safeHandle(
     IPC.menubar.request,
-    () =>
-      ctx.menubar?.buildSnapshot() ?? {
+    async () =>
+      await ctx.menubar?.refreshData() ?? {
         agents: [],
         needsYou: 0,
         working: 0,
@@ -370,17 +407,16 @@ export function registerTerminalsIpc(): void {
       theme: 'dark' as const
     })
   );
+  const focusAgent = (kind: 'cli' | 'thread', agentId: string, projectId: string) =>
+    focusMenubarAgent(ctx, kind, agentId, projectId);
+  ctx.safeHandle(
+    IPC.menubar.focusAgent,
+    focusAgent,
+    () => undefined
+  );
   ctx.safeHandle(
     IPC.menubar.focusSession,
-    (sessionId: string, projectId: string) => {
-      // Authorize from main's OWN session record — a forged pair that doesn't
-      // match a live session is dropped rather than focused (Rule 1).
-      const s = ctx.ptys.getSession(sessionId);
-      if (!s || s.projectId !== projectId) return;
-      ctx.menubar?.hide();
-      ctx.showMainWindow();
-      ctx.safeSend('app:focusSession', sessionId, projectId);
-    },
+    (sessionId: string, projectId: string) => focusAgent('cli', sessionId, projectId),
     () => undefined
   );
   ctx.safeHandle(
@@ -513,4 +549,3 @@ export function registerTerminalsIpc(): void {
     () => undefined
   );
 }
-

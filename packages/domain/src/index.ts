@@ -101,6 +101,7 @@ export * from './project.js';
 export * from './inbox.js';
 export type * from './library.js';
 export type * from './agent.js';
+export * from './menubar-agent.js';
 export type * from './session.js';
 export * from './config.js';
 export type * from './settings.js';

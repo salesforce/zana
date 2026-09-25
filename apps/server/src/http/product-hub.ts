@@ -43,6 +43,7 @@ export interface ProductEvent {
  */
 export function createProductHub() {
   const clients = new Set<WebSocket>();
+  const listeners = new Map<ProductEventType, Set<(payload: unknown) => void>>();
   return {
     add(socket: WebSocket): void {
       clients.add(socket);
@@ -51,10 +52,20 @@ export function createProductHub() {
       });
     },
     emit(type: ProductEventType, payload: unknown): void {
+      for (const listener of listeners.get(type) ?? []) listener(payload);
       const msg = JSON.stringify({ type, payload } satisfies ProductEvent);
       for (const socket of clients) {
         if (socket.readyState === socket.OPEN) socket.send(msg);
       }
+    },
+    subscribe(type: ProductEventType, listener: (payload: unknown) => void): () => void {
+      const set = listeners.get(type) ?? new Set<(payload: unknown) => void>();
+      set.add(listener);
+      listeners.set(type, set);
+      return () => {
+        set.delete(listener);
+        if (set.size === 0) listeners.delete(type);
+      };
     },
     size(): number {
       return clients.size;

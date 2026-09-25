@@ -1183,6 +1183,7 @@ function httpProduct(): Pick<
       homedir: async () => '',
       version: async () => '',
       microVmSupported: async () => false,
+      rendererReady: async () => {},
       saveCrashReport: async () => ({ ok: false as const })
     } as CcApi['app']
   };

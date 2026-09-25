@@ -1,4 +1,6 @@
 import { createHistoryProviders } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { RendererReadiness } from './window/renderer-readiness.js';
+import { runStartupDependencyDoctor } from './startup-dependency-doctor.js';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
  * in `apps/desktop`; Electron-free helpers live in workspace packages and
@@ -41,6 +43,7 @@ import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
 import { registerDesktopBrowserIpc } from './desktop-browser-main-ipc.js';
 import {
@@ -56,7 +59,7 @@ import { setDesktopBrowserBroker } from '@zana-ai/zcc-server/services/threads/de
 import { registerIpcFamilies } from './ipc/register.js';
 import type { IpcCtx } from './ipc/ctx.js';
 import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
-import { titleFromObjective, MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME } from '@zana-ai/zcc-domain';
+import { titleFromObjective, MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
@@ -810,6 +813,13 @@ function setActiveProjectSkillsWatcher(
  */
 const windows = new Map<number, { win: BrowserWindow; projectId?: string }>();
 const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
+const rendererReadiness = new RendererReadiness();
+
+function markRendererReady(win: BrowserWindow): void {
+  const registered = windows.get(win.id);
+  if (!registered || registered.win !== win || registered.projectId) return;
+  rendererReadiness.markReady(win.id);
+}
 /**
  * The unscoped "main" window, kept as a hint for the dock-reactivate and
  * tray "show window" paths (which want *a* window, preferring the full shell).
@@ -2848,6 +2858,55 @@ async function probeConversationThreadLive(threadId: string, projectId: string):
   }
 }
 
+const MENUBAR_THREAD_FETCH_TIMEOUT_MS = 2_000;
+const MAIN_RENDERER_READY_TIMEOUT_MS = 15_000;
+
+async function listMenubarThreads(): Promise<MenubarThreadAgent[]> {
+  if (runtimeSupervisor) return (await runtimeSupervisor.listMenubarThreads(100)).agents;
+  try {
+    const response = await fetch(new URL('api/v1/menubar/threads?limit=100', productServerUrl()), {
+      signal: AbortSignal.timeout(MENUBAR_THREAD_FETCH_TIMEOUT_MS)
+    });
+    if (!response.ok) {
+      logMainError('listMenubarThreads dev fallback', `HTTP ${response.status}`);
+      return [];
+    }
+    const parsed = MenubarThreadsListResultSchema.safeParse(await response.json());
+    if (!parsed.success) {
+      logMainError('listMenubarThreads dev fallback', parsed.error);
+      return [];
+    }
+    return parsed.data.agents.filter((agent) => agent.kind === 'thread');
+  } catch (error) {
+    logMainError('listMenubarThreads dev fallback', error);
+    return [];
+  }
+}
+
+async function openMenubarThread(threadId: string, projectId: string): Promise<{ ok: boolean; reason?: string }> {
+  if (runtimeSupervisor) return runtimeSupervisor.openMenubarThread(threadId, projectId);
+  try {
+    const response = await fetch(
+      new URL(`api/v1/menubar/threads/${encodeURIComponent(threadId)}/open`, productServerUrl()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId }),
+        signal: AbortSignal.timeout(MENUBAR_THREAD_FETCH_TIMEOUT_MS)
+      }
+    );
+    const parsed = MenubarThreadOpenResultSchema.safeParse(await response.json());
+    if (!parsed.success) {
+      logMainError('openMenubarThread dev fallback', parsed.error);
+      return { ok: false, reason: 'invalid thread response' };
+    }
+    return parsed.data;
+  } catch (error) {
+    logMainError('openMenubarThread dev fallback', error);
+    return { ok: false, reason: 'thread service unavailable' };
+  }
+}
+
 function resolvedAppVersion(): string {
   const version = app.getVersion();
   const e2eVersion = process.env.ZCC_E2E_APP_VERSION;
@@ -3009,6 +3068,16 @@ function showMainWindow() {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+}
+
+async function ensureMainWindowReady(): Promise<boolean> {
+  let win = unscopedWindow();
+  if (!win) {
+    createWindow(undefined, startupState.mode === 'repair-required');
+    win = unscopedWindow();
+  }
+  if (!win || win.webContents.isDestroyed()) return false;
+  return rendererReadiness.wait(win.id, MAIN_RENDERER_READY_TIMEOUT_MS);
 }
 
 /**
@@ -5877,6 +5946,14 @@ function createWindow(projectId?: string, repairOnly = false) {
   });
 
   windows.set(win.id, { win, projectId });
+  rendererReadiness.reset(win.id);
+  win.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
+    if (isMainFrame) rendererReadiness.reset(win.id);
+  });
+  win.webContents.on('render-process-gone', () => rendererReadiness.remove(win.id));
+  win.webContents.on('did-fail-load', (_event, _code, _description, _url, isMainFrame) => {
+    if (isMainFrame) rendererReadiness.remove(win.id);
+  });
   desktopBrowserBroker.registerWindow(win);
   // E2E hard guarantee: never let a window become visible or take focus during a
   // local Playwright run, no matter which code path (boot maximize, native
@@ -5913,6 +5990,7 @@ function createWindow(projectId?: string, repairOnly = false) {
     desktopBrowserBroker.releaseWindow(hostWebContentsId);
     desktopBrowserViewManager.releaseWindow(hostWebContentsId);
     conversationHistory.releaseWindow(win.id);
+    rendererReadiness.remove(win.id);
     windows.delete(win.id);
     boundsControllers.delete(win.id);
   });
@@ -6516,8 +6594,10 @@ function registerIpc() {
     get llmService() { return llmService; },
     get logMainError() { return logMainError; },
     get mainWindow() { return mainWindow; },
+    get markRendererReady() { return markRendererReady; },
     get menubar() { return menubar; },
     get menubarPopoverEnabled() { return menubarPopoverEnabled; },
+    get openMenubarThread() { return openMenubarThread; },
     get mobileGateway() { return mobileGateway; },
     get moduleRouter() { return moduleRouter; },
     get offLoudInboxAppended() { return offLoudInboxAppended; },
@@ -6544,6 +6624,7 @@ function registerIpc() {
     get restorePrincipal() { return restorePrincipal; },
     get runDiskSync() { return runDiskSync; },
     get runtimeSupervisor() { return runtimeSupervisor; },
+    ensureMainWindowReady,
     get safeHandle() { return safeHandle; },
     get safeHandleFromWindow() { return safeHandleFromWindow; },
     get safeSend() { return safeSend; },
@@ -7059,6 +7140,8 @@ async function bootstrapNormal() {
       // agent is waiting for), for the popover's light-interaction rows. No LLM/
       // fs cost on the hot snapshot path (Rule 5).
       triage: (sessionId) => lastTriageBySession.get(sessionId) ?? null,
+      listThreads: listMenubarThreads,
+      onThreadsChanged: (listener) => runtimeSupervisor?.onMenubarThreadsChanged(listener) ?? (() => {}),
       theme: () => resolveTheme(),
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
@@ -8114,16 +8197,23 @@ async function bootstrapNormal() {
   // never blocks boot. The check runs once here; the periodic poll lives in
   // the updater, not here, since dependency state only changes on explicit
   // user action.
-  doctor = createDoctor({
+  const startupDoctor = createDoctor({
     safeSend,
     log: logMainError,
     setDismissed: (dismissed) => {
       store.setConfig({ setupDismissed: dismissed });
     }
   });
-  doctor
-    .check()
-    .catch((err) => logMainError('dependencyDoctor.check', err));
+  doctor = startupDoctor;
+  // Startup discovery executes installed provider CLIs. Claude's `doctor`
+  // invokes `/usr/bin/security -i` on macOS, which escapes the isolated HOME
+  // and raises a real login-Keychain prompt. Keep manual dependency checks
+  // available, but never probe host credentials during an isolated E2E boot.
+  runStartupDependencyDoctor(
+    E2E_LAUNCH,
+    () => startupDoctor.check(),
+    (err) => logMainError('dependencyDoctor.check', err)
+  );
   // Boot the CLI control plane (UDS at ~/.zcc/control.sock). Errors are logged
   // but non-fatal — the GUI works without the CLI. Started once here (CLAUDE.md
   // #3), torn down in before-quit. All op handlers reuse main's existing

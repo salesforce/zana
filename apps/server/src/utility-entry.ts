@@ -20,6 +20,7 @@ import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
 import { getConversationThread } from '@zana-ai/zcc-db';
 import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
+import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
 import {
   attachProductPluginService,
   bundledPluginsRootFromDataDir,
@@ -54,6 +55,9 @@ const runtimeMcpConfig = createRuntimeMcpConfig();
 // can read the conversation-thread store (main asks before honoring a loopback
 // launch_team from a Modern/ACP thread).
 let threadDb: ZccDatabase | null = null;
+let menubarThreads: ReturnType<typeof createMenubarThreadSource> | null = null;
+let disposeMenubarThreadHints: (() => void) | null = null;
+let menubarThreadHintTimer: NodeJS.Timeout | null = null;
 parentPort.on('message', async ({ data }) => {
   const parsed = ServerRuntimeInboundSchema.safeParse(data);
   if (!parsed.success) {
@@ -81,6 +85,22 @@ parentPort.on('message', async ({ data }) => {
       product.teamOps = createTeamOpsViaControl(message.dataDir);
       product.cliAgentOps = createCliAgentOpsViaControl(message.dataDir);
       threadDb = product.db;
+      menubarThreads = createMenubarThreadSource({
+        db: product.db,
+        projects,
+        hub: product.hub,
+        viewContext: product
+      });
+      disposeMenubarThreadHints = product.hub.subscribe('threads:updated', () => {
+        if (menubarThreadHintTimer) clearTimeout(menubarThreadHintTimer);
+        menubarThreadHintTimer = setTimeout(() => {
+          menubarThreadHintTimer = null;
+          parentPort.postMessage({
+            type: 'menubar-threads-changed',
+            protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION
+          });
+        }, 100);
+      });
       plugins = await attachProductPluginService(product, {
         bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),
         hostAgentToolSource: createModernTeamLaunchConfigSource({
@@ -182,6 +202,23 @@ parentPort.on('message', async ({ data }) => {
         live = false;
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: live });
+    }
+    if (message.operation === 'menubar-threads-list') {
+      const agents = menubarThreads?.list(message.limit) ?? [];
+      parentPort.postMessage({
+        type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id,
+        value: {
+          agents,
+          needsYou: agents.filter((agent) => agent.state === 'blocked').length,
+          working: agents.filter((agent) => agent.state === 'working').length
+        }
+      });
+    }
+    if (message.operation === 'menubar-thread-open') {
+      parentPort.postMessage({
+        type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id,
+        value: menubarThreads?.open(message.threadId, message.projectId) ?? { ok: false, reason: 'thread service unavailable' }
+      });
     }
     if (message.operation === 'projects-list') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: projects?.list() ?? [] });
@@ -424,6 +461,10 @@ parentPort.on('message', async ({ data }) => {
     }
   }
   if (message.type === 'stop') {
+    disposeMenubarThreadHints?.();
+    disposeMenubarThreadHints = null;
+    if (menubarThreadHintTimer) clearTimeout(menubarThreadHintTimer);
+    menubarThreadHintTimer = null;
     if (hostConnectionRenewal) clearInterval(hostConnectionRenewal);
     await close?.();
     runtimeDatabase?.close();

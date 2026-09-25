@@ -221,6 +221,40 @@ export function listVisibleConversationThreads(
   ).all(limit) as ConversationThreadSqlRow[]).map(toThread);
 }
 
+/** Bounded, attention-first source for menu-bar Modern Thread projection. */
+export function listMenubarConversationThreads(
+  db: ZccDatabase,
+  opts?: { limit?: number }
+): ConversationThreadRow[] {
+  const limit = Math.max(1, Math.min(opts?.limit ?? 100, 100));
+  return (db.sqlite.prepare(
+    `SELECT threads.* FROM threads
+     WHERE threads.archived_at IS NULL
+       AND threads.visibility = 'visible'
+       AND (
+         threads.status IN ('active', 'starting', 'error')
+         OR EXISTS (
+           SELECT 1 FROM pending_interactions
+           WHERE pending_interactions.thread_id = threads.id
+             AND pending_interactions.status = 'pending'
+         )
+       )
+     ORDER BY
+       CASE
+         WHEN threads.status = 'error' THEN 0
+         WHEN EXISTS (
+           SELECT 1 FROM pending_interactions
+           WHERE pending_interactions.thread_id = threads.id
+             AND pending_interactions.status = 'pending'
+         ) THEN 0
+         ELSE 1
+       END,
+       threads.created_at DESC,
+       threads.id ASC
+     LIMIT ?`
+  ).all(limit) as ConversationThreadSqlRow[]).map(toThread);
+}
+
 export function updateConversationThreadStatus(
   db: ZccDatabase,
   id: string,

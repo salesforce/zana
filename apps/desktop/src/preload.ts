@@ -1237,6 +1237,7 @@ const api: CcApi = {
       ipcRenderer.on(IPC.app.onFullScreenChanged, handler);
       return () => ipcRenderer.off(IPC.app.onFullScreenChanged, handler);
     },
+    rendererReady: () => ipcRenderer.invoke(IPC.app.rendererReady),
     saveCrashReport: (input) => ipcRenderer.invoke(IPC.app.saveCrashReport, input)
   },
   menubar: {
@@ -1246,6 +1247,8 @@ const api: CcApi = {
       ipcRenderer.on(IPC.menubar.onSnapshot, handler);
       return () => ipcRenderer.off(IPC.menubar.onSnapshot, handler);
     },
+    focusAgent: (kind: 'cli' | 'thread', agentId: string, projectId: string) =>
+      ipcRenderer.invoke(IPC.menubar.focusAgent, kind, agentId, projectId),
     focusSession: (sessionId: string, projectId: string) =>
       ipcRenderer.invoke(IPC.menubar.focusSession, sessionId, projectId),
     setFavorite: (sessionId: string, favorite: boolean) =>

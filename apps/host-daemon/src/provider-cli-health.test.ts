@@ -225,6 +225,17 @@ describe('provider CLI health', () => {
     expect(status.opencode?.executableName).toBe('opencode');
   });
 
+  it('does not execute installed provider CLIs under an isolated E2E home', async () => {
+    const runner = new FakeProviderCliCommandRunner(() => {
+      throw new Error('provider CLI must not run during E2E');
+    });
+    await expect(getProviderCliStatus({
+      env: { ZCC_E2E_HOME: '/tmp/zcc-e2e' },
+      runner,
+      nodePlatform: 'darwin'
+    })).resolves.toEqual({});
+  });
+
   it('collects install events and refuses a second concurrent install', async () => {
     let piInstalled = false;
     const piRunner = new FakeProviderCliCommandRunner((call) => cliInspectBehavior({
