@@ -154,7 +154,7 @@ export function marketplaceSourcesEqual(a: string, b: string): boolean {
 
 export interface MarketplaceMaterializeOptions {
   timeoutMs?: number;
-  /** Seed path only: no TTY prompts. Keeps the user's credential helper. */
+  /** Seed path only: must not invoke terminal, askpass, or credential-helper UI. */
   nonInteractive?: boolean;
   /** Test seam for controlled Git lifecycle execution. */
   runGit?: (args: string[], options: MarketplaceMaterializeOptions) => Promise<string>;
@@ -170,9 +170,13 @@ function isNotManifestError(error: unknown): boolean {
 async function runGit(args: string[], options: MarketplaceMaterializeOptions = {}): Promise<string> {
   return await new Promise((settle, reject) => {
     const env = { ...process.env };
-    // Marketplace adds run without a terminal. Keep credential helpers enabled,
-    // but never let Git block indefinitely waiting for interactive credentials.
+    // Background marketplace discovery must never surface Keychain/askpass UI.
     env.GIT_TERMINAL_PROMPT = '0';
+    if (options.nonInteractive) {
+      env.GIT_ASKPASS = '/usr/bin/false';
+      env.SSH_ASKPASS = '/usr/bin/false';
+      env.GCM_INTERACTIVE = 'Never';
+    }
     const timeoutMs = options.timeoutMs != null && options.timeoutMs > 0
       ? options.timeoutMs
       : DEFAULT_GIT_TIMEOUT_MS;
@@ -267,7 +271,14 @@ export async function materializeMarketplaceSource(
       return await (options.withGitMaterializationSlot ?? withGitMaterializationSlot)(async () => {
         const staging = await mkdtemp(join(tmpdir(), 'zcc-marketplace-'));
         try {
-          const cloneArgs = ['-c', 'core.hooksPath=/dev/null', 'clone', '--quiet', '--depth', '1', '--no-recurse-submodules'];
+          const cloneArgs = ['-c', 'core.hooksPath=/dev/null'];
+          if (options.nonInteractive) {
+            // `GIT_TERMINAL_PROMPT=0` does not suppress GUI-capable helpers such
+            // as git-credential-osxkeychain. Empty helper/askPass config prevents
+            // background startup discovery from opening macOS Keychain dialogs.
+            cloneArgs.push('-c', 'credential.helper=', '-c', 'core.askPass=');
+          }
+          cloneArgs.push('clone', '--quiet', '--depth', '1', '--no-recurse-submodules');
           if (candidate.ref !== 'HEAD') cloneArgs.push('--branch', candidate.ref);
           cloneArgs.push(candidate.url, staging);
           await (options.runGit ?? runGit)(cloneArgs, options);

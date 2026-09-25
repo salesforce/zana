@@ -85,7 +85,8 @@ export const ZCC_PLUGIN_SAMPLE_FILES: Record<string, string> = {
         name: 'git-hello',
         description: 'git hello plugin',
         branding: { icon: 'Puzzle' },
-        server: './server.mjs'
+        server: './server.mjs',
+        app: './app.js'
       }
     },
     null,
@@ -94,5 +95,21 @@ export const ZCC_PLUGIN_SAMPLE_FILES: Record<string, string> = {
   'server.mjs': `export default function plugin(zcc) {
   zcc.rpc.method('ping', () => ({ ok: true, id: zcc.pluginId }));
 }
+`,
+  'app.js': `const definition = {
+  __zccPluginApp: true,
+  setup(app) {
+    app.slots.navPanel({
+      id: 'main',
+      title: 'Git Hello',
+      icon: 'Puzzle',
+      component() {
+        const React = globalThis.__ZCC_HOST_REACT__;
+        return React.createElement('div', { 'data-testid': 'git-hello-panel' }, 'Git Hello renderer loaded');
+      }
+    });
+  }
+};
+export default definition;
 `
 };

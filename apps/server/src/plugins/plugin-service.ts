@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { fileURLToPath } from 'node:url';
@@ -111,6 +112,7 @@ import {
 import { startPluginUpdateSweep } from './plugin-updates.js';
 import { buildPluginApp, buildPluginServer, createPluginDevLoop } from '@zana-ai/zcc-plugin-build';
 import { createPluginServicesRegistry } from '@zana-ai/zcc-plugin-sdk/server';
+import { createSerializedTransactionQueue } from '../durable-store.js';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -494,6 +496,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   let updateSweep: { stop(): void } | null = null;
   const builtinWatchers: Array<{ close(): void }> = [];
   const servicesRegistry = createPluginServicesRegistry();
+  const promotionQueue = createSerializedTransactionQueue();
+  const lifecycleEpochs = new Map<string, number>();
+
+  const lifecycleEpoch = (id: string): number => lifecycleEpochs.get(id) ?? 0;
+  const bumpLifecycleEpoch = (id: string): void => {
+    lifecycleEpochs.set(id, lifecycleEpoch(id) + 1);
+  };
 
   function requiresOf(row: InstalledPluginRow): string[] {
     try {
@@ -775,22 +784,26 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   /**
    * Source plugins declare `zcc.app` as `.tsx`. The renderer cannot import
-   * TypeScript, so a one-shot `buildPluginApp` writes the `.js` sibling when
-   * it's missing. Failure is best-effort: the plugin still loads (server via
-   * jiti); the panel stays absent until `zcc plugin dev` or a later reload.
+   * TypeScript, so a one-shot `buildPluginApp` writes the `.js` sibling. A
+   * missing renderer is an activation failure: fresh installs degrade and
+   * replacement candidates leave the active generation untouched.
    */
   async function ensureCompiledApp(row: InstalledPluginRow): Promise<void> {
     const declared = row.appEntry;
-    if (!declared || !/\.tsx?$/.test(declared)) return;
+    if (!declared) return;
     const compiledRel = declared.replace(/\.tsx?$/, '.js');
-    if (existsSync(join(row.rootDir, compiledRel))) return;
-    try {
-      await buildPluginApp(row.rootDir, hostVersion, { minify: false, sourcemap: true });
-    } catch (error) {
-      console.warn(
-        `[plugins] one-shot app build failed for ${row.id}:`,
-        error instanceof Error ? error.message : error
-      );
+    if (/\.tsx?$/.test(declared) && !existsSync(join(row.rootDir, compiledRel))) {
+      try {
+        await buildPluginApp(row.rootDir, hostVersion, { minify: false, sourcemap: true });
+      } catch (error) {
+        const detail = (error instanceof Error ? error.message : String(error))
+          .replaceAll(row.rootDir, '<plugin>')
+          .slice(0, 500);
+        throw new Error(`renderer build failed: ${detail}`);
+      }
+    }
+    if (!existsSync(join(row.rootDir, compiledRel))) {
+      throw new Error(`renderer asset missing: ${compiledRel}`);
     }
   }
 
@@ -805,7 +818,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const served = /\.tsx?$/.test(declared)
         ? resolveContainedEntry(row.rootDir, declared.replace(/\.tsx?$/, '.js'))
         : resolveContainedEntry(row.rootDir, declared);
-      if (/\.tsx?$/.test(served)) return null;
+      if (/\.tsx?$/.test(served) || !existsSync(served) || !statSync(served).isFile()) return null;
       const entryPath = relative(root, served).split(sep).map(encodeURIComponent).join('/');
       return `/plugins/${encodeURIComponent(row.id)}/assets/${entryPath}?v=${row.updatedAt}`;
     } catch {
@@ -836,14 +849,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     if (!existsSync(row.rootDir)) {
       if (previous?.handle && previous.row.status === 'running') {
-        const kept = {
-          ...previous.row,
-          status: 'running' as const,
-          statusDetail: 'reload failed: plugin directory missing'
-        };
-        live.set(row.id, { ...previous, row: kept });
-        await store.upsert(kept);
-        return;
+        throw new Error('plugin directory missing');
       }
       await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: 'plugin directory missing' };
@@ -851,9 +857,22 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await store.upsert(degraded);
       return;
     }
-    await ensureCompiledApp(row);
+    try {
+      await ensureCompiledApp(row);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (previous?.handle && previous.row.status === 'running') throw error;
+      await disposeOne(row.id);
+      const degraded = { ...row, status: 'degraded' as const, statusDetail: detail };
+      live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
+      await store.upsert(degraded);
+      return;
+    }
     const files = listFiles(row.rootDir);
     if (containsNativeAddon(row.rootDir, files)) {
+      if (previous?.handle && previous.row.status === 'running') {
+        throw new Error('native addons are not allowed');
+      }
       await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: 'native addons are not allowed' };
       live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
@@ -880,16 +899,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      if (previous?.handle && previous.row.status === 'running') {
-        const kept = {
-          ...previous.row,
-          status: 'running' as const,
-          statusDetail: `reload failed: ${detail}`
-        };
-        live.set(row.id, { ...previous, row: kept });
-        await store.upsert(kept);
-        return;
-      }
+      if (previous?.handle && previous.row.status === 'running') throw error;
       await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: detail };
       live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
@@ -973,8 +983,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         status: (configurationMessage ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
         statusDetail: configurationMessage
       };
-      live.set(row.id, { row: running, handle, rpc });
       await store.upsert(running);
+      live.set(row.id, { row: running, handle, rpc });
       if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
       else hostArtifacts.delete(row.id);
       if (previous && previous.handle && previous.handle !== handle) {
@@ -984,17 +994,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     } catch (error) {
       await handle.dispose();
       const detail = error instanceof Error ? error.message : String(error);
-      if (previous?.handle && previous.row.status === 'running') {
-        const kept = {
-          ...previous.row,
-          status: 'running' as const,
-          statusDetail: `reload failed: ${detail}`
-        };
-        live.set(row.id, { ...previous, row: kept });
-        await store.upsert(kept);
-        return;
-      }
-      hostArtifacts.delete(row.id);
+      if (previous?.handle && previous.row.status === 'running') throw error;
+      if (!previous?.handle) hostArtifacts.delete(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: detail };
       live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
       await store.upsert(degraded);
@@ -1047,27 +1048,31 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     if (source.kind === 'npm') {
       const spawn = spawnNpm;
-      const dest = join(opts.dataDir, 'plugins', 'npm', source.name.replace('/', '__'));
+      const dest = join(opts.dataDir, 'plugins', 'generations', randomUUID(), 'npm');
       mkdirSync(dirname(dest), { recursive: true });
-      rmSync(dest, { recursive: true, force: true });
       mkdirSync(dest, { recursive: true });
       const spec = source.spec ? `${source.name}@${source.spec}` : source.name;
-      const result = await spawn(['install', spec, '--ignore-scripts', '--prefix', dest], dest);
-      if (result.code !== 0) throw new Error(result.stderr || `npm install failed for ${spec}`);
-      const pkgRoot = join(dest, 'node_modules', ...source.name.split('/'));
-      if (!existsSync(pkgRoot)) throw new Error(`npm install did not produce ${source.name}`);
-      const pkg = readJson(join(pkgRoot, 'package.json')) as { version?: string };
-      return {
-        rootDir: pkgRoot,
-        provenance: 'direct',
-        sourceKind: 'npm',
-        display: `npm:${spec}`,
-        npmResolvedVersion: pkg.version ?? source.spec ?? null,
-        npmIntegrity: null,
-        gitResolvedCommit: null,
-        catalogMarketplace: null,
-        catalogEntryId: null
-      };
+      try {
+        const result = await spawn(['install', spec, '--ignore-scripts', '--prefix', dest], dest);
+        if (result.code !== 0) throw new Error(result.stderr || `npm install failed for ${spec}`);
+        const pkgRoot = join(dest, 'node_modules', ...source.name.split('/'));
+        if (!existsSync(pkgRoot)) throw new Error(`npm install did not produce ${source.name}`);
+        const pkg = readJson(join(pkgRoot, 'package.json')) as { version?: string };
+        return {
+          rootDir: pkgRoot,
+          provenance: 'direct',
+          sourceKind: 'npm',
+          display: `npm:${spec}`,
+          npmResolvedVersion: pkg.version ?? source.spec ?? null,
+          npmIntegrity: null,
+          gitResolvedCommit: null,
+          catalogMarketplace: null,
+          catalogEntryId: null
+        };
+      } catch (error) {
+        removeManagedGeneration(opts.dataDir, dest);
+        throw error;
+      }
     }
     if (source.kind === 'git') {
       const cloned = await cloneGitTree(source.url, source.spec);
@@ -1091,14 +1096,18 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     spec: string,
     subdir?: string
   ): Promise<{ rootDir: string; commit: string }> {
-    const dest = join(opts.dataDir, 'plugins', 'git', Buffer.from(url).toString('hex').slice(0, 24));
-    rmSync(dest, { recursive: true, force: true });
+    const dest = join(opts.dataDir, 'plugins', 'generations', randomUUID(), 'git');
     mkdirSync(dirname(dest), { recursive: true });
-    const cloned = await cloneGit(url, dest, spec);
-    if (!subdir) return { rootDir: dest, commit: cloned.commit };
-    const contained = await resolveContainedReal(dest, subdir);
-    if (!contained) throw new Error(`marketplace git subdir is not contained: ${subdir}`);
-    return { rootDir: contained, commit: cloned.commit };
+    try {
+      const cloned = await cloneGit(url, dest, spec);
+      if (!subdir) return { rootDir: dest, commit: cloned.commit };
+      const contained = await resolveContainedReal(dest, subdir);
+      if (!contained) throw new Error(`marketplace git subdir is not contained: ${subdir}`);
+      return { rootDir: contained, commit: cloned.commit };
+    } catch (error) {
+      removeManagedGeneration(opts.dataDir, dest);
+      throw error;
+    }
   }
 
   async function materializeMarketplaceEntry(entry: MarketplaceEntry): Promise<{
@@ -1137,16 +1146,45 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     };
   }
 
-  async function installParsed(source: ParsedPluginSource, enable: boolean): Promise<InstalledPluginRow> {
-    return installFromMaterialized(await materialize(source), enable);
+  async function installParsed(
+    source: ParsedPluginSource,
+    enable: boolean,
+    overrides: Partial<Pick<InstalledPluginRow, 'provenance' | 'catalogMarketplace' | 'catalogEntryId'>> = {}
+  ): Promise<InstalledPluginRow> {
+    return installFromMaterialized(await materialize(source), enable, overrides);
   }
 
   async function installFromMaterialized(
     materialized: Awaited<ReturnType<typeof materialize>>,
-    enable: boolean
+    enable: boolean,
+    overrides: Partial<Pick<InstalledPluginRow, 'provenance' | 'catalogMarketplace' | 'catalogEntryId'>> = {},
+    expectedId?: string,
+    expectedEpoch?: number
   ): Promise<InstalledPluginRow> {
-    const manifest = loadManifestFromDir(materialized.rootDir);
-    assertEngines(manifest, hostVersion, sdkVersion);
+    return promotionQueue.run(() => promoteMaterialized(materialized, enable, overrides, expectedId, expectedEpoch));
+  }
+
+  async function promoteMaterialized(
+    materialized: Awaited<ReturnType<typeof materialize>>,
+    enable: boolean,
+    overrides: Partial<Pick<InstalledPluginRow, 'provenance' | 'catalogMarketplace' | 'catalogEntryId'>>,
+    expectedId?: string,
+    expectedEpoch?: number
+  ): Promise<InstalledPluginRow> {
+    let manifest: PluginManifest;
+    try {
+      manifest = loadManifestFromDir(materialized.rootDir);
+      assertEngines(manifest, hostVersion, sdkVersion);
+      if (expectedId && manifest.id !== expectedId) {
+        throw new Error(`plugin identity changed during update: expected ${expectedId}, received ${manifest.id}`);
+      }
+      if (expectedId && expectedEpoch !== undefined && lifecycleEpoch(expectedId) !== expectedEpoch) {
+        throw new Error(`plugin lifecycle changed during update: ${expectedId}`);
+      }
+    } catch (error) {
+      removeManagedGeneration(opts.dataDir, materialized.rootDir);
+      throw error;
+    }
     const ts = now();
     const existing = store.get(manifest.id);
     const row: InstalledPluginRow = {
@@ -1170,11 +1208,21 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       catalogMarketplace: materialized.catalogMarketplace,
       catalogEntryId: materialized.catalogEntryId,
       installedAt: existing?.installedAt ?? ts,
-      updatedAt: ts
+      updatedAt: ts,
+      ...overrides
     };
     await uninstalled.forget(manifest.id);
-    await store.upsert(row);
-    await loadOne(row);
+    try {
+      await loadOne(row);
+    } catch (error) {
+      if (existing && resolve(existing.rootDir) !== resolve(row.rootDir)) {
+        removeManagedGeneration(opts.dataDir, row.rootDir);
+      }
+      throw error;
+    }
+    if (existing && resolve(existing.rootDir) !== resolve(row.rootDir)) {
+      removeManagedGeneration(opts.dataDir, existing.rootDir);
+    }
     await emitCapabilities();
     await syncCliSkill();
     return store.get(manifest.id) ?? row;
@@ -1441,18 +1489,15 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           marketplaces.list(),
           fetchJson
         );
-        const row = await installFromMaterialized(
+        const stamped = await installFromMaterialized(
           await materializeMarketplaceEntry(entry),
-          options?.enable !== false
-        );
-        const stamped = {
-          ...row,
+          options?.enable !== false,
+          {
           provenance: 'catalog' as const,
           catalogMarketplace: parsed.marketplace,
-          catalogEntryId: parsed.entryId,
-          updatedAt: now()
-        };
-        await store.upsert(stamped);
+            catalogEntryId: parsed.entryId
+          }
+        );
         await emitAppsChanged();
         return stamped;
       }
@@ -1461,6 +1506,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return row;
     },
     async enable(id) {
+      bumpLifecycleEpoch(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
       const next = { ...row, enabled: true, updatedAt: now() };
@@ -1473,6 +1519,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return updated;
     },
     async disable(id) {
+      bumpLifecycleEpoch(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
       await disposeOne(id);
@@ -1486,12 +1533,17 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return next;
     },
     async remove(id) {
+      bumpLifecycleEpoch(id);
       availableUpdates.delete(id);
       await disposeOne(id);
       const row = await store.remove(id);
       await uninstalled.add(id);
-      if (row && row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
-        rmSync(row.rootDir, { recursive: true, force: true });
+      if (row) {
+        if (isManagedGeneration(opts.dataDir, row.rootDir)) {
+          removeManagedGeneration(opts.dataDir, row.rootDir);
+        } else if (row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
+          rmSync(row.rootDir, { recursive: true, force: true });
+        }
       }
       removeLeftoverSidecar(opts.dataDir, id);
       await applyMissingRequiredPluginStatus();
@@ -1502,16 +1554,36 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async reload(id) {
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
-      // A reload must change the app URL too: browsers cache ESM modules by URL,
-      // so a stable URL would keep evaluating the old renderer bundle.
-      const next = { ...row, updatedAt: now() };
-      await store.upsert(next);
-      await loadOne(next);
+      const epoch = lifecycleEpoch(id);
+      const overrides = {
+        provenance: row.provenance,
+        catalogMarketplace: row.catalogMarketplace,
+        catalogEntryId: row.catalogEntryId
+      };
+      const next = row.catalogMarketplace && row.catalogEntryId
+        ? await installFromMaterialized(
+            await materializeMarketplaceEntry(await resolveCatalogEntry(
+              row.catalogMarketplace,
+              row.catalogEntryId,
+              marketplaces.list(),
+              fetchJson
+            )),
+            row.enabled,
+            overrides,
+            id,
+            epoch
+          )
+        : await installFromMaterialized(
+            await materialize(parsePluginSource(row.source)),
+            row.enabled,
+            overrides,
+            id,
+            epoch
+          );
       await emitCapabilities();
       await syncCliSkill();
-      const updated = store.get(id) ?? next;
       await emitAppsChanged();
-      return updated;
+      return next;
     },
     async reconcileBuiltins() {
       for (const id of RECLAIM_UNINSTALLED_AUTOINSTALL_IDS) {
@@ -1733,26 +1805,24 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       availableUpdates.delete(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
+      const epoch = lifecycleEpoch(id);
       if (row.catalogMarketplace && row.catalogEntryId) {
-        const resolved = await resolveCatalogSource(
+        const entry = await resolveCatalogEntry(
           row.catalogMarketplace,
           row.catalogEntryId,
           marketplaces.list(),
           fetchJson
         );
-        const next = await installParsed(parsePluginSource(resolved), row.enabled);
-        const stamped = {
-          ...next,
+        const stamped = await installFromMaterialized(await materializeMarketplaceEntry(entry), row.enabled, {
           provenance: 'catalog' as const,
           catalogMarketplace: row.catalogMarketplace,
-          catalogEntryId: row.catalogEntryId,
-          updatedAt: now()
-        };
-        await store.upsert(stamped);
+          catalogEntryId: row.catalogEntryId
+        }, id, epoch);
         await emitAppsChanged();
         return stamped;
       }
-      const next = await installParsed(parsePluginSource(row.source), row.enabled);
+      const materialized = await materialize(parsePluginSource(row.source));
+      const next = await installFromMaterialized(materialized, row.enabled, {}, id, epoch);
       await emitAppsChanged();
       return next;
     }
@@ -1765,6 +1835,21 @@ function removeInstalledPluginCopy(dataDir: string, id: string): void {
   const copy = join(dataDir, 'plugins', id);
   if (!existsSync(copy) || !statSync(copy).isDirectory()) return;
   rmSync(copy, { recursive: true, force: true });
+}
+
+function removeManagedGeneration(dataDir: string, rootDir: string): void {
+  const generationsRoot = resolve(dataDir, 'plugins', 'generations');
+  const candidate = resolve(rootDir);
+  if (!candidate.startsWith(`${generationsRoot}${sep}`)) return;
+  const relativePath = relative(generationsRoot, candidate);
+  const generation = relativePath.split(sep)[0];
+  if (!generation) return;
+  rmSync(join(generationsRoot, generation), { recursive: true, force: true });
+}
+
+function isManagedGeneration(dataDir: string, rootDir: string): boolean {
+  const generationsRoot = resolve(dataDir, 'plugins', 'generations');
+  return resolve(rootDir).startsWith(`${generationsRoot}${sep}`);
 }
 
 function isLocalSidecar(dataDir: string, id: string): boolean {

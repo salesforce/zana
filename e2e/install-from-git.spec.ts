@@ -209,11 +209,23 @@ test.describe('install from git — live app flow', () => {
       id: string;
       name: string;
       enabled: boolean;
+      status: string;
+      statusDetail: string | null;
+      appUrl: string | null;
     }>;
-    expect(plugins.find((p) => p.id === 'git-hello')).toMatchObject({
+    const plugin = plugins.find((p) => p.id === 'git-hello');
+    expect(plugin, JSON.stringify(plugin)).toMatchObject({
       id: 'git-hello',
       name: 'git-hello',
-      enabled: true
+      enabled: true,
+      status: 'running'
     });
+    expect(plugin?.appUrl, JSON.stringify(plugin)).toMatch(/\/plugins\/git-hello\/assets\/app\.js\?v=/);
+    expect(await win.evaluate(async (url) => (await fetch(url!)).status, plugin?.appUrl)).toBe(200);
+
+    const nav = win.locator('.nav-item', { hasText: 'Git Hello' }).first();
+    await expect(nav).toBeVisible();
+    await nav.click();
+    await expect(win.getByTestId('git-hello-panel')).toHaveText('Git Hello renderer loaded');
   });
 });

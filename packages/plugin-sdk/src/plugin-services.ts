@@ -69,7 +69,7 @@ export function createLiveServiceProxy<T extends object>(
 }
 
 export function createPluginServicesRegistry(): PluginServicesRegistry {
-  const entries = new Map<string, RegistryEntry>();
+  const entries = new Map<string, RegistryEntry[]>();
   let generation = 0;
   return {
     provide(pluginId, implementation) {
@@ -78,16 +78,21 @@ export function createPluginServicesRegistry(): PluginServicesRegistry {
         throw new Error('plugin service implementation must be an object');
       }
       const nextGeneration = (generation += 1);
-      entries.set(pluginId, { implementation, generation: nextGeneration });
+      const stack = entries.get(pluginId) ?? [];
+      stack.push({ implementation, generation: nextGeneration });
+      entries.set(pluginId, stack);
       return () => {
         const current = entries.get(pluginId);
-        if (current?.generation === nextGeneration) entries.delete(pluginId);
+        if (!current) return;
+        const next = current.filter((entry) => entry.generation !== nextGeneration);
+        if (next.length > 0) entries.set(pluginId, next);
+        else entries.delete(pluginId);
       };
     },
     use<T extends object>(pluginId: string): T {
       const id = pluginId.trim();
       if (!id) throw new Error('plugin service id is required');
-      return createLiveServiceProxy(() => entries.get(id)?.implementation as T | undefined, id);
+      return createLiveServiceProxy(() => entries.get(id)?.at(-1)?.implementation as T | undefined, id);
     },
     has(pluginId) {
       return entries.has(pluginId.trim());

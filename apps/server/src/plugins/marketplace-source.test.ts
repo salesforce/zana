@@ -324,4 +324,21 @@ describe('materializeMarketplaceIndex', () => {
       server.close();
     }
   }, 10_000);
+
+  it('disables credential helpers only for background noninteractive clones', async () => {
+    const seen: string[][] = [];
+    const runGit = async (args: string[]) => {
+      seen.push(args);
+      const destination = args.at(-1)!;
+      writeFileSync(join(destination, 'marketplace.json'), JSON.stringify(SAMPLE_INDEX));
+      return '';
+    };
+    const source = { kind: 'git' as const, url: 'https://example.test/catalog.git', ref: 'HEAD' };
+
+    await materializeMarketplaceIndex(source, undefined, { runGit, nonInteractive: true });
+    await materializeMarketplaceIndex(source, undefined, { runGit });
+
+    expect(seen[0]).toEqual(expect.arrayContaining(['credential.helper=', 'core.askPass=']));
+    expect(seen[1]).not.toEqual(expect.arrayContaining(['credential.helper=', 'core.askPass=']));
+  });
 });

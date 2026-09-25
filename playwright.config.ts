@@ -11,9 +11,9 @@ export default defineConfig({
   // Marketplace specs stay in the suite so Plugins browse/install is covered.
   // install-from-git remains opt-in: leftover UI plus the modern `package.json`
   // `zcc` path.
-  testIgnore: [
-    '**/install-from-git.spec.ts',
-  ],
+  testIgnore: process.env.ZCC_E2E_INSTALL_FROM_GIT === '1'
+    ? []
+    : ['**/install-from-git.spec.ts'],
   // One Electron app at a time; specs within a file still run in order.
   workers: 1,
   fullyParallel: false,

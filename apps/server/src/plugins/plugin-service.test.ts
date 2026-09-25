@@ -19,6 +19,10 @@ const marketplaceMaterializer = vi.hoisted(() => ({
   resolve: null as null | ((...args: Parameters<typeof import('./marketplace-source.js').materializeMarketplaceSource>) => ReturnType<typeof import('./marketplace-source.js').materializeMarketplaceSource>)
 }));
 
+const pluginBuilder = vi.hoisted(() => ({
+  buildApp: null as null | ((...args: unknown[]) => Promise<void>)
+}));
+
 vi.mock('./marketplace-source.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./marketplace-source.js')>();
   return {
@@ -26,6 +30,15 @@ vi.mock('./marketplace-source.js', async (importOriginal) => {
     materializeMarketplaceSource: (...args: Parameters<typeof actual.materializeMarketplaceSource>) => (
       marketplaceMaterializer.resolve?.(...args) ?? actual.materializeMarketplaceSource(...args)
     )
+  };
+});
+
+vi.mock('@zana-ai/zcc-plugin-build', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-plugin-build')>();
+  return {
+    ...actual,
+    buildPluginApp: (...args: Parameters<typeof actual.buildPluginApp>) =>
+      pluginBuilder.buildApp?.(...args) ?? actual.buildPluginApp(...args)
   };
 });
 
@@ -40,6 +53,7 @@ function root(): string {
 afterEach(() => {
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
   marketplaceMaterializer.resolve = null;
+  pluginBuilder.buildApp = null;
 });
 
 function writePlugin(
@@ -149,9 +163,8 @@ describe('PluginService', () => {
       join(pluginDir, 'server.ts'),
       'export default function plugin() { throw new Error("reload-boom"); }\n'
     );
-    const kept = await service.reload('typed');
-    expect(kept.status).toBe('running');
-    expect(kept.statusDetail).toMatch(/reload-boom/);
+    await expect(service.reload('typed')).rejects.toThrow(/reload-boom/);
+    expect(service.get('typed')).toMatchObject({ status: 'running', statusDetail: null });
     await expect(service.callRpc('typed', 'ping', {})).resolves.toEqual({ ok: true, id: 'typed', n: 2 });
   });
 
@@ -366,10 +379,48 @@ describe('PluginService', () => {
       join(pluginDir, 'server.mjs'),
       'export default function plugin() { throw new Error("reload-boom"); }\n'
     );
-    const reloaded = await service.reload('sticky');
-    expect(reloaded.status).toBe('running');
-    expect(reloaded.statusDetail).toMatch(/reload-boom/);
+    await expect(service.reload('sticky')).rejects.toThrow(/reload-boom/);
+    expect(service.get('sticky')).toMatchObject({ status: 'running', statusDetail: null });
     await expect(service.callRpc('sticky', 'ping', {})).resolves.toEqual({ ok: true, id: 'sticky' });
+  });
+
+  it('rejects a reload whose manifest changes plugin identity', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(join(root(), 'stable-id'), 'stable-id');
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8')) as {
+      name: string;
+    };
+    pkg.name = 'zcc-plugin-changed-id';
+    writeFileSync(join(pluginDir, 'package.json'), JSON.stringify(pkg));
+
+    await expect(service.reload('stable-id')).rejects.toThrow(/identity changed/);
+    expect(service.get('changed-id')).toBeUndefined();
+    await expect(service.callRpc('stable-id', 'ping', {})).resolves.toEqual({ ok: true, id: 'stable-id' });
+  });
+
+  it('degrades a fresh plugin when its renderer cannot compile without activating its server', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(join(root(), 'broken-app'), 'broken-app');
+    const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8')) as {
+      zcc: { app: string };
+    };
+    pkg.zcc.app = './app.tsx';
+    writeFileSync(join(pluginDir, 'package.json'), JSON.stringify(pkg));
+    rmSync(join(pluginDir, 'app.js'));
+    writeFileSync(join(pluginDir, 'app.tsx'), 'export default {}\n');
+    pluginBuilder.buildApp = async () => {
+      throw new Error('missing lucide-react');
+    };
+
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    const row = await service.install(pluginDir);
+
+    expect(row).toMatchObject({ status: 'degraded' });
+    expect(row.statusDetail).toMatch(/renderer build failed.*missing lucide-react/i);
+    expect(service.snapshot()[0]?.appUrl).toBeNull();
+    await expect(service.callRpc('broken-app', 'ping', {})).rejects.toThrow(/unknown rpc/);
   });
 
   it('keeps a registered thread provider after a successful reload', async () => {
@@ -421,6 +472,38 @@ describe('PluginService', () => {
       expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode reloaded');
     } finally {
       await service.remove('provider-acp').catch(() => undefined);
+    }
+  });
+
+  it('restores the active thread provider when a candidate fails after registration', async () => {
+    const { getThreadProvider } = await import('../services/threads/thread-provider-catalog.js');
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'provider-rollback'),
+      'provider-rollback',
+      `export default function plugin(zcc) {
+        zcc.agents.experimental_registerProvider({
+          id: 'rollback-provider', displayName: 'Active', capabilities: { fork: 'tip', permissionModes: ['full'] }, composerActions: []
+        });
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    try {
+      await service.install(pluginDir);
+      writeFileSync(
+        join(pluginDir, 'server.mjs'),
+        `export default function plugin(zcc) {
+          zcc.agents.experimental_registerProvider({
+            id: 'rollback-provider', displayName: 'Candidate', capabilities: { fork: 'tip', permissionModes: ['full'] }, composerActions: []
+          });
+          throw new Error('candidate-provider-boom');
+        }\n`
+      );
+
+      await expect(service.reload('provider-rollback')).rejects.toThrow(/candidate-provider-boom/);
+      expect(getThreadProvider('rollback-provider')?.displayName).toBe('Active');
+    } finally {
+      await service.remove('provider-rollback').catch(() => undefined);
     }
   });
 
@@ -574,6 +657,47 @@ describe('PluginService', () => {
     expect(row.rootDir).toMatch(/plugins[\\/]notes$/);
     expect(row.gitResolvedCommit).toBe('abc1234');
     await expect(service.install('evil@official')).rejects.toThrow(/not contained/);
+  });
+
+  it('keeps the active catalog generation when an update fails activation', async () => {
+    const dataDir = root();
+    let generation = 0;
+    const service = createPluginService({
+      dataDir,
+      bundledRoot: root(),
+      fetchJson: async () => ({
+        schemaVersion: 1,
+        name: 'official',
+        displayName: 'Official',
+        plugins: [{
+          id: 'notes',
+          displayName: 'Notes',
+          description: 'notes plugin',
+          author: { name: 'zana' },
+          source: { git: { url: 'https://example.test/notes.git', ref: 'HEAD' } }
+        }]
+      }),
+      cloneGit: async (_url, dest) => {
+        generation += 1;
+        writePlugin(
+          dest,
+          'notes',
+          generation === 1
+            ? `export default function plugin(zcc) { zcc.rpc.method('version', () => 1); }\n`
+            : `export default function plugin() { throw new Error('candidate-boom'); }\n`
+        );
+        return { commit: `commit-${generation}` };
+      }
+    });
+    await service.addMarketplace('https://example.test/marketplace.json');
+    await service.install('notes@official');
+    const active = service.get('notes')!;
+
+    await expect(service.applyUpdate('notes')).rejects.toThrow(/candidate-boom/);
+
+    expect(service.get('notes')).toEqual(active);
+    expect(existsSync(active.rootDir)).toBe(true);
+    await expect(service.callRpc('notes', 'version', {})).resolves.toBe(1);
   });
 
   it('seeds an official marketplace from ZCC_OFFICIAL_MARKETPLACE_URL and stays up if fetch fails', async () => {

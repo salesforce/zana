@@ -45,6 +45,16 @@ describe('plugin services registry', () => {
     expect(registry.use<{ ping: () => string }>('alpha').ping()).toBe('v2');
   });
 
+  it('reveals the previous implementation when a candidate generation rolls back', () => {
+    const registry = createPluginServicesRegistry();
+    const handle = registry.use<{ ping: () => string }>('alpha');
+    registry.provide('alpha', { ping: () => 'v1' });
+    const rollback = registry.provide('alpha', { ping: () => 'candidate' });
+    expect(handle.ping()).toBe('candidate');
+    rollback();
+    expect(handle.ping()).toBe('v1');
+  });
+
   it('keys provide() to the calling plugin, so another plugin cannot impersonate it', () => {
     const registry = createPluginServicesRegistry();
     const disposeHooks: Array<() => void> = [];
