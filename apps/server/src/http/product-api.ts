@@ -80,6 +80,7 @@ import {
 } from '../services/threads/conversation-plugin-metadata.js';
 import { openThreadFilePreview, previewFileDepsFromContext } from '../services/threads/preview-file.js';
 import { openThreadTerminal, openThreadTerminalDepsFromContext } from '../services/threads/open-thread-terminal.js';
+import { createMenubarThreadSource, MENUBAR_THREAD_LIMIT } from '../services/threads/menubar-thread-source.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
 import { resolveHarnessWorkspacePath } from '../services/threads/remote-tool-proxy.js';
 import { toRemoteStartPathHost } from '../services/hosts/host-public.js';
@@ -1132,6 +1133,41 @@ export async function handleProductHttp(
         ? listConversationThreadsByProject(ctx.db, projectId)
         : listVisibleConversationThreads(ctx.db);
       sendJson(response, 200, { threads: conversationThreadViews(ctx, threads) });
+      return true;
+    }
+
+    if (path === '/api/v1/menubar/threads' && method === 'GET') {
+      const source = createMenubarThreadSource({
+        db: ctx.db,
+        projects: ctx.projects,
+        hub: ctx.hub,
+        viewContext: ctx
+      });
+      const requestedLimit = Number(requestUrl.searchParams.get('limit') ?? MENUBAR_THREAD_LIMIT);
+      const agents = source.list(Number.isFinite(requestedLimit) ? requestedLimit : MENUBAR_THREAD_LIMIT);
+      sendJson(response, 200, {
+        agents,
+        needsYou: agents.filter((agent) => agent.state === 'blocked').length,
+        working: agents.filter((agent) => agent.state === 'working').length
+      });
+      return true;
+    }
+
+    const menubarThreadOpen = routeParams(path, '/api/v1/menubar/threads/:id/open');
+    if (menubarThreadOpen && method === 'POST') {
+      const body = (await readJsonBody(request)) as { projectId?: unknown };
+      if (typeof body.projectId !== 'string' || !body.projectId) {
+        sendJson(response, 400, { ok: false, reason: 'projectId is required' });
+        return true;
+      }
+      const source = createMenubarThreadSource({
+        db: ctx.db,
+        projects: ctx.projects,
+        hub: ctx.hub,
+        viewContext: ctx
+      });
+      const result = source.open(menubarThreadOpen.id, body.projectId);
+      sendJson(response, result.ok ? 200 : 404, result);
       return true;
     }
 

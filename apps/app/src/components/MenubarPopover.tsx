@@ -167,7 +167,7 @@ export function MenubarPopover() {
           ) : (
             rows.map((a, i) => (
               <Row
-                key={a.sessionId}
+                key={a.rowKey}
                 agent={a}
                 index={i}
                 // Divider between the attention group and the running group.
@@ -216,7 +216,7 @@ function Row({
         <button
           className="mbp-row-main"
           title={`${agent.title} — ${agent.projectName}`}
-          onClick={() => product.menubar.focusSession(agent.sessionId, agent.projectId)}
+          onClick={() => product.menubar.focusAgent(agent.kind, agent.agentId, agent.projectId)}
         >
           <span className="mbp-row-title">{agent.title}</span>
           <span className="mbp-row-subline">
@@ -229,7 +229,7 @@ function Row({
         {/* Star + open stacked vertically in one narrow column so the two
             actions claim a single column of row width instead of two. */}
         <span className="mbp-row-actions">
-          <button
+          {agent.canFavorite && agent.kind === 'cli' && <button
             className={`mbp-icon-btn mbp-fav ${agent.favorite ? 'is-fav' : ''}`}
             title={agent.favorite ? 'Following — click to unfollow' : 'Follow this agent'}
             aria-label={agent.favorite ? 'Unfollow agent' : 'Follow agent'}
@@ -237,12 +237,12 @@ function Row({
             onClick={() => product.menubar.setFavorite(agent.sessionId, !agent.favorite)}
           >
             <Star size={13} fill={agent.favorite ? 'currentColor' : 'none'} />
-          </button>
+          </button>}
           <button
             className="mbp-icon-btn mbp-open"
             title="Open in project"
             aria-label="Open in project"
-            onClick={() => product.menubar.focusSession(agent.sessionId, agent.projectId)}
+            onClick={() => product.menubar.focusAgent(agent.kind, agent.agentId, agent.projectId)}
           >
             <ArrowRight size={14} />
           </button>

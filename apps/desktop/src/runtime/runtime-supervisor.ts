@@ -12,6 +12,8 @@ import { TerminalSessionService } from '@zana-ai/zcc-server/terminal-session-ser
 import { defaultBundledRoot } from '@zana-ai/zcc-server/plugins/plugin-service';
 import {
   PluginAppSnapshotSchema,
+  MenubarThreadOpenResultSchema,
+  MenubarThreadsListResultSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   type ProjectMutationPatchSchema,
@@ -23,6 +25,7 @@ import type { TerminalHostEvent } from '@zana-ai/zcc-contracts/terminal-executio
 import type { TerminalRequestCommand } from '@zana-ai/zcc-contracts/terminal-execution';
 import type { z } from 'zod';
 import { z as zod } from 'zod';
+import type { MenubarThreadAgent } from '@zana-ai/zcc-domain';
 
 export type RuntimeProject = z.infer<typeof ProjectRecordSchema>;
 export type RuntimeProjectPatch = z.infer<typeof ProjectMutationPatchSchema>;
@@ -50,6 +53,13 @@ export interface RuntimeSupervisor {
    * Never rejects for a dead/unknown thread; resolves `false`.
    */
   isThreadLive(threadId: string, projectId: string): Promise<boolean>;
+  listMenubarThreads(limit?: number): Promise<{
+    agents: MenubarThreadAgent[];
+    needsYou: number;
+    working: number;
+  }>;
+  openMenubarThread(threadId: string, projectId: string): Promise<{ ok: boolean; reason?: string }>;
+  onMenubarThreadsChanged(listener: () => void): () => void;
   relaunchEnrolledHost(): Promise<{ ok: true } | { ok: false; message: string }>;
   appVersion(): Promise<string>;
   listProjects(): Promise<RuntimeProject[]>;
@@ -182,6 +192,9 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     // No packaged server-runtime child in this fallback; nothing to notify.
     setMcpBaseUrl: () => {},
     isThreadLive: async () => false,
+    listMenubarThreads: async () => ({ agents: [], needsYou: 0, working: 0 }),
+    openMenubarThread: async () => ({ ok: false, reason: 'thread service unavailable' }),
+    onMenubarThreadsChanged: () => () => {},
     async relaunchEnrolledHost() {
       return {
         ok: false as const,
@@ -248,6 +261,8 @@ interface UtilityRuntime {
   url: string;
   request(operation: 'app-version' | 'projects-list'): Promise<unknown>;
   request(operation: 'thread-live', threadId: string, projectId: string): Promise<unknown>;
+  request(operation: 'menubar-threads-list', limit: number): Promise<unknown>;
+  request(operation: 'menubar-thread-open', threadId: string, projectId: string): Promise<unknown>;
   request(operation: 'projects-add', path: string): Promise<unknown>;
   request(operation: 'projects-update', projectId: string, patch: RuntimeProjectPatch): Promise<unknown>;
   request(operation: 'projects-reorder', orderedIds: string[]): Promise<unknown>;
@@ -448,6 +463,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
   const projectSettingsListeners = new Set<(projectId: string) => void>();
   const pluginCapabilitiesListeners = new Set<(contributors: RuntimePluginContribution[]) => void>();
   const pluginAppsListeners = new Set<(apps: RuntimePluginApp[]) => void>();
+  const menubarThreadListeners = new Set<() => void>();
   let terminalEventChain = Promise.resolve();
   host.child.on('message', (message: unknown) => {
     const parsed = RuntimeOutboundSchema.safeParse(message);
@@ -468,6 +484,10 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     if (!parsed.success) return;
     if (parsed.data.type === 'project-settings-changed') {
       for (const listener of projectSettingsListeners) listener(parsed.data.projectId);
+      return;
+    }
+    if (parsed.data.type === 'menubar-threads-changed') {
+      for (const listener of menubarThreadListeners) listener();
       return;
     }
     if (parsed.data.type === 'plugin-capabilities') {
@@ -495,6 +515,24 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     },
     isThreadLive: async (threadId, projectId) =>
       (await server.request('thread-live', threadId, projectId)) === true,
+    listMenubarThreads: async (limit = 100) => {
+      const parsed = MenubarThreadsListResultSchema.safeParse(
+        await server.request('menubar-threads-list', Math.max(1, Math.min(limit, 100)))
+      );
+      return parsed.success
+        ? parsed.data as { agents: MenubarThreadAgent[]; needsYou: number; working: number }
+        : { agents: [], needsYou: 0, working: 0 };
+    },
+    openMenubarThread: async (threadId, projectId) => {
+      const parsed = MenubarThreadOpenResultSchema.safeParse(
+        await server.request('menubar-thread-open', threadId, projectId)
+      );
+      return parsed.success ? parsed.data : { ok: false, reason: 'invalid thread response' };
+    },
+    onMenubarThreadsChanged(listener) {
+      menubarThreadListeners.add(listener);
+      return () => menubarThreadListeners.delete(listener);
+    },
     appVersion: async () => {
       const value = await server.request('app-version');
       return typeof value === 'string' ? value : '';
@@ -633,8 +671,8 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
   return {
     ...runtime,
     request(
-      operation: 'app-version' | 'thread-live' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-       ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
+      operation: 'app-version' | 'thread-live' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+       ...args: [number] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       const id = randomUUID();
       return new Promise<unknown>((resolveResult, rejectResult) => {
@@ -646,6 +684,8 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
         runtime.child.postMessage({
           type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id, operation, deadlineAt: new Date(Date.now() + 20_000).toISOString(),
           ...(operation === 'thread-live' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
+          ...(operation === 'menubar-threads-list' ? { limit: args[0] as number } : {}),
+          ...(operation === 'menubar-thread-open' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
           ...(operation === 'terminal-execute' ? { command: args[0] as TerminalRequestCommand } : {}),
           ...(operation === 'terminal-record' ? { event: args[0] as TerminalHostEvent } : {}),
           ...(operation === 'terminal-events-since' ? {

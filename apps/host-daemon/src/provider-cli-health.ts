@@ -1025,7 +1025,9 @@ export async function getProviderCliStatus(args: {
   resolvePath?: ProviderCliPathResolver;
   readFileHead?: ProviderCliFileHead;
 } = {}): Promise<ProviderCliStatusResponse> {
-  const runner = args.runner ?? createSpawnProviderCliCommandRunner(args.env);
+  const env = args.env ?? process.env;
+  if (env.ZCC_E2E_HOME) return {};
+  const runner = args.runner ?? createSpawnProviderCliCommandRunner(env);
   const nodePlatform = args.nodePlatform ?? process.platform;
   const entries = await Promise.all(
     providerCliKeyValues.map(async (key) => [

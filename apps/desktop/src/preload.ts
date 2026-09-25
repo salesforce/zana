@@ -1246,8 +1246,8 @@ const api: CcApi = {
       ipcRenderer.on(IPC.menubar.onSnapshot, handler);
       return () => ipcRenderer.off(IPC.menubar.onSnapshot, handler);
     },
-    focusSession: (sessionId: string, projectId: string) =>
-      ipcRenderer.invoke(IPC.menubar.focusSession, sessionId, projectId),
+    focusAgent: (kind: 'cli' | 'thread', agentId: string, projectId: string) =>
+      ipcRenderer.invoke(IPC.menubar.focusAgent, kind, agentId, projectId),
     setFavorite: (sessionId: string, favorite: boolean) =>
       ipcRenderer.invoke(IPC.menubar.setFavorite, sessionId, favorite),
     reply: (sessionId: string, text: string) =>

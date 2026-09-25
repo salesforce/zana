@@ -352,8 +352,8 @@ export function registerTerminalsIpc(): void {
   // failed to construct.
   ctx.safeHandle(
     IPC.menubar.request,
-    () =>
-      ctx.menubar?.buildSnapshot() ?? {
+    async () =>
+      await ctx.menubar?.refreshData() ?? {
         agents: [],
         needsYou: 0,
         working: 0,
@@ -371,15 +371,23 @@ export function registerTerminalsIpc(): void {
     })
   );
   ctx.safeHandle(
-    IPC.menubar.focusSession,
-    (sessionId: string, projectId: string) => {
+    IPC.menubar.focusAgent,
+    async (kind: 'cli' | 'thread', agentId: string, projectId: string) => {
+      if (kind === 'thread') {
+        ctx.showMainWindow();
+        await ctx.ensureMainWindowReady();
+        const result = await ctx.openMenubarThread(agentId, projectId);
+        if (!result?.ok) return;
+        ctx.menubar?.hide();
+        return;
+      }
       // Authorize from main's OWN session record — a forged pair that doesn't
       // match a live session is dropped rather than focused (Rule 1).
-      const s = ctx.ptys.getSession(sessionId);
+      const s = ctx.ptys.getSession(agentId);
       if (!s || s.projectId !== projectId) return;
       ctx.menubar?.hide();
       ctx.showMainWindow();
-      ctx.safeSend('app:focusSession', sessionId, projectId);
+      ctx.safeSend('app:focusSession', agentId, projectId);
     },
     () => undefined
   );
@@ -513,4 +521,3 @@ export function registerTerminalsIpc(): void {
     () => undefined
   );
 }
-

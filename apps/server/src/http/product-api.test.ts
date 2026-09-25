@@ -858,6 +858,55 @@ describe('product HTTP', () => {
     ]);
   });
 
+  it('serves and authorizes menubar threads for the dev Electron client', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-menubar-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-project-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
+      version: 1,
+      projects: [{ id: 'proj-1', name: 'Alpha', path: projectRoot, createdAt: 1, lastActiveAt: 1 }]
+    }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: projectRoot
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Dev popover agent'
+    });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'active');
+
+    const list = await fetch(`${server.url}api/v1/menubar/threads`).then((response) => response.json()) as {
+      agents: Array<{ agentId: string; projectName: string }>;
+      working: number;
+    };
+    expect(list).toMatchObject({ working: 1 });
+    expect(list.agents).toEqual([
+      expect.objectContaining({ agentId: thread.id, projectName: 'Alpha' })
+    ]);
+
+    const opened: unknown[] = [];
+    const dispose = server.ctx.hub.subscribe('threads:open', (payload) => opened.push(payload));
+    const forged = await fetch(`${server.url}api/v1/menubar/threads/${thread.id}/open`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: 'wrong' })
+    });
+    expect(forged.status).toBe(404);
+    const valid = await fetch(`${server.url}api/v1/menubar/threads/${thread.id}/open`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: 'proj-1' })
+    });
+    expect(valid.status).toBe(200);
+    expect(opened).toEqual([expect.objectContaining({ threadId: thread.id, projectId: 'proj-1' })]);
+    dispose();
+  });
+
   it('reports Modern/ACP owner-session liveness via /threads/:id/live', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-thread-live-'));
     server = await startTestProductServer({

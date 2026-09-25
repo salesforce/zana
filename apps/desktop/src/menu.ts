@@ -13,6 +13,7 @@ import type {
   MenubarSnapshot,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
+import { menubarAgentRowKey, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 
 /**
  * The frameless-card menu-bar popover (macOS) — the styled alternative to the
@@ -45,6 +46,8 @@ export interface MenubarDeps {
    * on the hot buildSnapshot path (Rule 5). Absent add-on / uncached ⇒ null.
    */
   triage: (sessionId: string) => IdleTriageResult | null;
+  listThreads?: () => Promise<MenubarThreadAgent[]>;
+  onThreadsChanged?: (listener: () => void) => () => void;
   /** Active app theme, so the popover matches without its own config read. */
   theme: () => 'dark' | 'light';
   /** Preload script path (same CJS preload the main window uses). */
@@ -71,9 +74,17 @@ export class MenubarController {
   private deps: MenubarDeps;
   private win: BrowserWindow | null = null;
   private tray: Tray | null = null;
+  private threads: MenubarThreadAgent[] = [];
+  private threadRefreshTimer: NodeJS.Timeout | null = null;
+  private threadRefreshInFlight = false;
+  private threadRefreshDirty = false;
+  private generation = 0;
+  private disposeThreadsChanged: (() => void) | null = null;
 
   constructor(deps: MenubarDeps) {
     this.deps = deps;
+    this.disposeThreadsChanged = deps.onThreadsChanged?.(() => this.scheduleThreadRefresh()) ?? null;
+    void this.refreshThreads();
   }
 
   /** Bind the tray so the controller can anchor the popover under its icon. */
@@ -97,6 +108,9 @@ export class MenubarController {
     this.pushSnapshot();
     win.show();
     win.focus();
+    // Dev uses the standalone product server and has no utility-process change
+    // subscription. Refresh on every open so a reused popover cannot stay stale.
+    void this.refreshThreads();
   }
 
   hide() {
@@ -114,7 +128,19 @@ export class MenubarController {
     if (this.isVisible()) this.pushSnapshot();
   }
 
+  /** Explicit refresh path used when renderer requests a current snapshot. */
+  async refreshData(): Promise<MenubarSnapshot> {
+    await this.refreshThreads();
+    return this.buildSnapshot();
+  }
+
   stop() {
+    this.generation++;
+    if (this.threadRefreshTimer) clearTimeout(this.threadRefreshTimer);
+    this.threadRefreshTimer = null;
+    this.disposeThreadsChanged?.();
+    this.disposeThreadsChanged = null;
+    this.threads = [];
     if (this.win && !this.win.isDestroyed()) {
       this.win.destroy();
     }
@@ -142,6 +168,9 @@ export class MenubarController {
       // working/done never carry a question.
       const verdict = state === 'blocked' ? this.deps.triage(session.id) : null;
       agents.push({
+        kind: 'cli',
+        agentId: session.id,
+        rowKey: menubarAgentRowKey({ kind: 'cli', agentId: session.id, projectId: session.projectId }),
         sessionId: session.id,
         projectId: session.projectId,
         projectName: this.deps.projectName(session.projectId),
@@ -149,11 +178,19 @@ export class MenubarController {
         title: session.title,
         state,
         favorite: this.deps.isFavorite(session.id),
+        canFavorite: true,
+        canReply: isRepliable(session),
         createdAt: session.createdAt,
         question: verdict?.summary || undefined,
         resolution: verdict?.resolution,
         repliable: isRepliable(session)
       });
+    }
+
+    for (const thread of this.threads) {
+      agents.push(thread);
+      if (thread.state === 'blocked') needsYou++;
+      else if (thread.state === 'working') working++;
     }
 
     // Attention-first, then by title so ordering is stable across pushes.
@@ -182,7 +219,42 @@ export class MenubarController {
       if (state === 'blocked') needsYou++;
       else if (state === 'working') working++;
     }
+    for (const thread of this.threads) {
+      if (thread.state === 'blocked') needsYou++;
+      else if (thread.state === 'working') working++;
+    }
     return { needsYou, working };
+  }
+
+  private scheduleThreadRefresh() {
+    this.threadRefreshDirty = true;
+    if (this.threadRefreshTimer) clearTimeout(this.threadRefreshTimer);
+    this.threadRefreshTimer = setTimeout(() => {
+      this.threadRefreshTimer = null;
+      void this.refreshThreads();
+    }, 100);
+  }
+
+  private async refreshThreads() {
+    if (!this.deps.listThreads) return;
+    if (this.threadRefreshInFlight) {
+      this.threadRefreshDirty = true;
+      return;
+    }
+    const generation = this.generation;
+    this.threadRefreshInFlight = true;
+    this.threadRefreshDirty = false;
+    try {
+      const threads = await this.deps.listThreads();
+      if (generation !== this.generation) return;
+      this.threads = threads.slice(0, 100);
+      this.refresh();
+    } catch (err) {
+      this.log('refreshThreads', err);
+    } finally {
+      this.threadRefreshInFlight = false;
+      if (generation === this.generation && this.threadRefreshDirty) void this.refreshThreads();
+    }
   }
 
   private pushSnapshot() {

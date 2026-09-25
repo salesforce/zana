@@ -530,7 +530,7 @@ export const IPC = {
   menubar: {
     request: 'menubar:request',
     onSnapshot: 'menubar:onSnapshot',
-    focusSession: 'menubar:focusSession',
+    focusAgent: 'menubar:focusAgent',
     setFavorite: 'menubar:setFavorite',
     /**
      * Light-interaction WRITE path: reply to a blocked agent's parked question

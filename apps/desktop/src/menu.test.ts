@@ -3,12 +3,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // The controller imports electron for the popover window, but buildSnapshot /
 // badgeCount never touch it — mock the surface so the module loads under vitest.
 vi.mock('electron', () => ({
-  BrowserWindow: class {},
-  screen: {},
+  BrowserWindow: class {
+    webContents = { isDestroyed: () => false, send: vi.fn() };
+    isVisible = () => true;
+    isDestroyed = () => false;
+    getBounds = () => ({ width: 380, height: 520 });
+    setVisibleOnAllWorkspaces = vi.fn();
+    setPosition = vi.fn();
+    loadURL = vi.fn();
+    loadFile = vi.fn();
+    show = vi.fn();
+    focus = vi.fn();
+    hide = vi.fn();
+    destroy = vi.fn();
+    on = vi.fn();
+  },
+  screen: { getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
   Tray: class {}
 }));
 import { MenubarController, isRepliable, type MenubarDeps } from './menu.js';
 import type { AgentState, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { MenubarThreadAgent } from '@zana-ai/zcc-domain';
 
 function session(over: Partial<TerminalSession> & { id: string }): TerminalSession {
   return {
@@ -28,6 +43,9 @@ function makeController(opts: {
   favorites?: Set<string>;
   schedules?: Array<{ projectId: string; enabled: boolean; nextRunAt?: string }>;
   triage?: Record<string, IdleTriageResult>;
+  threads?: MenubarThreadAgent[];
+  listThreads?: () => Promise<MenubarThreadAgent[]>;
+  onThreadsChanged?: (listener: () => void) => () => void;
 }) {
   const deps: MenubarDeps = {
     ptys: {
@@ -50,6 +68,8 @@ function makeController(opts: {
     projectColor: (id) => (id === 'p1' ? '#abc' : undefined),
     isFavorite: (id) => opts.favorites?.has(id) ?? false,
     triage: (id) => opts.triage?.[id] ?? null,
+    listThreads: opts.listThreads ?? (opts.threads ? async () => opts.threads! : undefined),
+    onThreadsChanged: opts.onThreadsChanged,
     theme: () => 'dark',
     preloadPath: '/preload.js'
   };
@@ -68,7 +88,7 @@ describe('MenubarController.buildSnapshot', () => {
       states: { w: 'working', b: 'blocked', idle: 'idle', d: 'done' }
     });
     const snap = c.buildSnapshot();
-    expect(snap.agents.map((a) => a.sessionId)).toEqual(['b', 'w', 'd']);
+    expect(snap.agents.map((a) => a.agentId)).toEqual(['b', 'w', 'd']);
     expect(snap.needsYou).toBe(1);
     expect(snap.working).toBe(1);
   });
@@ -79,7 +99,7 @@ describe('MenubarController.buildSnapshot', () => {
       states: { x: 'blocked', w: 'working' }
     });
     const snap = c.buildSnapshot();
-    expect(snap.agents.map((a) => a.sessionId)).toEqual(['w']);
+    expect(snap.agents.map((a) => a.agentId)).toEqual(['w']);
     expect(snap.needsYou).toBe(0);
   });
 
@@ -116,8 +136,8 @@ describe('MenubarController.buildSnapshot', () => {
       triage
     });
     const rows = c.buildSnapshot().agents;
-    const b = rows.find((r) => r.sessionId === 'b')!;
-    const w = rows.find((r) => r.sessionId === 'w')!;
+    const b = rows.find((r) => r.agentId === 'b')!;
+    const w = rows.find((r) => r.agentId === 'w')!;
     expect(b.question).toBe('Apply the migration to prod?');
     expect(b.resolution).toBe('awaiting-reply');
     // A working agent never carries a question, even if a stale verdict is cached.
@@ -142,9 +162,9 @@ describe('MenubarController.buildSnapshot', () => {
       states: { fg: 'blocked', sched: 'blocked', hidden: 'blocked' }
     });
     const rows = c.buildSnapshot().agents;
-    expect(rows.find((r) => r.sessionId === 'fg')!.repliable).toBe(true);
-    expect(rows.find((r) => r.sessionId === 'sched')!.repliable).toBe(false);
-    expect(rows.find((r) => r.sessionId === 'hidden')!.repliable).toBe(false);
+    expect(rows.find((r) => r.agentId === 'fg' && r.kind === 'cli')!.repliable).toBe(true);
+    expect(rows.find((r) => r.agentId === 'sched' && r.kind === 'cli')!.repliable).toBe(false);
+    expect(rows.find((r) => r.agentId === 'hidden' && r.kind === 'cli')!.repliable).toBe(false);
   });
 
   it('does not count a blocked scheduled or headless session as Needs you', () => {
@@ -159,9 +179,9 @@ describe('MenubarController.buildSnapshot', () => {
     const snap = c.buildSnapshot();
     expect(snap.needsYou).toBe(1);
     expect(snap.working).toBe(2);
-    expect(snap.agents.find((r) => r.sessionId === 'fg')!.state).toBe('blocked');
-    expect(snap.agents.find((r) => r.sessionId === 'sched')!.state).toBe('working');
-    expect(snap.agents.find((r) => r.sessionId === 'hidden')!.state).toBe('working');
+    expect(snap.agents.find((r) => r.agentId === 'fg')!.state).toBe('blocked');
+    expect(snap.agents.find((r) => r.agentId === 'sched')!.state).toBe('working');
+    expect(snap.agents.find((r) => r.agentId === 'hidden')!.state).toBe('working');
   });
 
   it('reports the soonest ENABLED next run, ignoring paused schedules', () => {
@@ -177,6 +197,54 @@ describe('MenubarController.buildSnapshot', () => {
     const snap = c.buildSnapshot();
     expect(snap.scheduleCount).toBe(3);
     expect(snap.nextRunAt).toBe('2030-01-01T10:00:00.000Z');
+  });
+});
+
+describe('MenubarController modern threads', () => {
+  it('merges cached modern rows without colliding with CLI ids', async () => {
+    const thread: MenubarThreadAgent = {
+      kind: 'thread', agentId: 'same', threadId: 'same', projectId: 'p1', rowKey: 'thread:same',
+      projectName: 'name-p1', title: 'Modern', state: 'blocked', favorite: false,
+      canFavorite: false, canReply: false, createdAt: 2_000, status: 'active', hasPendingInteraction: true
+    };
+    const c = makeController({
+      sessions: [session({ id: 'same', title: 'CLI' })],
+      states: { same: 'working' },
+      threads: [thread]
+    });
+    await vi.waitFor(() => expect(c.buildSnapshot().agents).toHaveLength(2));
+    expect(c.buildSnapshot().agents.map((row) => row.rowKey)).toEqual(['thread:same', 'cli:same']);
+    expect(c.badgeCount()).toEqual({ needsYou: 1, working: 1 });
+    c.stop();
+  });
+
+  it('disposes the thread hint subscription on stop', () => {
+    const dispose = vi.fn();
+    const c = makeController({
+      sessions: [], states: {}, threads: [],
+      onThreadsChanged: () => dispose
+    });
+    c.stop();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes modern rows whenever a reused popover opens', async () => {
+    const thread: MenubarThreadAgent = {
+      kind: 'thread', agentId: 'modern', threadId: 'modern', projectId: 'p1', rowKey: 'thread:modern',
+      projectName: 'name-p1', title: 'Modern', state: 'working', favorite: false,
+      canFavorite: false, canReply: false, createdAt: 2_000, status: 'active', hasPendingInteraction: false
+    };
+    const listThreads = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([thread]);
+    const c = makeController({ sessions: [], states: {}, listThreads });
+    await vi.waitFor(() => expect(listThreads).toHaveBeenCalledOnce());
+
+    c.show();
+
+    await vi.waitFor(() => expect(c.buildSnapshot().agents.map((row) => row.rowKey)).toEqual(['thread:modern']));
+    expect(listThreads).toHaveBeenCalledTimes(2);
+    c.stop();
   });
 });
 

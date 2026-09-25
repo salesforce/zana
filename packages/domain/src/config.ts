@@ -2,10 +2,10 @@
 
 export type {
   AppConfig,
-  MenubarAgent,
   MenubarSnapshot,
   MenubarReplyResult
 } from './product.js';
+export type { MenubarAgent } from './menubar-agent.js';
 
 export {
   SESSION_MEMORY_DEFAULTS,

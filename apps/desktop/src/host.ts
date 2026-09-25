@@ -41,6 +41,7 @@ import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
 import { registerDesktopBrowserIpc } from './desktop-browser-main-ipc.js';
 import {
@@ -56,7 +57,7 @@ import { setDesktopBrowserBroker } from '@zana-ai/zcc-server/services/threads/de
 import { registerIpcFamilies } from './ipc/register.js';
 import type { IpcCtx } from './ipc/ctx.js';
 import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
-import { titleFromObjective, MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME } from '@zana-ai/zcc-domain';
+import { titleFromObjective, MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
@@ -2848,6 +2849,39 @@ async function probeConversationThreadLive(threadId: string, projectId: string):
   }
 }
 
+async function listMenubarThreads(): Promise<MenubarThreadAgent[]> {
+  if (runtimeSupervisor) return (await runtimeSupervisor.listMenubarThreads(100)).agents;
+  try {
+    const response = await fetch(new URL('api/v1/menubar/threads?limit=100', productServerUrl()), {
+      signal: AbortSignal.timeout(2000)
+    });
+    if (!response.ok) return [];
+    const parsed = MenubarThreadsListResultSchema.safeParse(await response.json());
+    return parsed.success ? parsed.data.agents.filter((agent) => agent.kind === 'thread') : [];
+  } catch {
+    return [];
+  }
+}
+
+async function openMenubarThread(threadId: string, projectId: string): Promise<{ ok: boolean; reason?: string }> {
+  if (runtimeSupervisor) return runtimeSupervisor.openMenubarThread(threadId, projectId);
+  try {
+    const response = await fetch(
+      new URL(`api/v1/menubar/threads/${encodeURIComponent(threadId)}/open`, productServerUrl()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId }),
+        signal: AbortSignal.timeout(2000)
+      }
+    );
+    const parsed = MenubarThreadOpenResultSchema.safeParse(await response.json());
+    return parsed.success ? parsed.data : { ok: false, reason: 'invalid thread response' };
+  } catch {
+    return { ok: false, reason: 'thread service unavailable' };
+  }
+}
+
 function resolvedAppVersion(): string {
   const version = app.getVersion();
   const e2eVersion = process.env.ZCC_E2E_APP_VERSION;
@@ -3009,6 +3043,16 @@ function showMainWindow() {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+}
+
+async function ensureMainWindowReady(): Promise<void> {
+  let win = unscopedWindow();
+  if (!win) {
+    createWindow(undefined, startupState.mode === 'repair-required');
+    win = unscopedWindow();
+  }
+  if (!win || win.webContents.isDestroyed() || !win.webContents.isLoading()) return;
+  await new Promise<void>((resolve) => win!.webContents.once('did-finish-load', () => resolve()));
 }
 
 /**
@@ -6518,6 +6562,7 @@ function registerIpc() {
     get mainWindow() { return mainWindow; },
     get menubar() { return menubar; },
     get menubarPopoverEnabled() { return menubarPopoverEnabled; },
+    get openMenubarThread() { return openMenubarThread; },
     get mobileGateway() { return mobileGateway; },
     get moduleRouter() { return moduleRouter; },
     get offLoudInboxAppended() { return offLoudInboxAppended; },
@@ -6544,6 +6589,7 @@ function registerIpc() {
     get restorePrincipal() { return restorePrincipal; },
     get runDiskSync() { return runDiskSync; },
     get runtimeSupervisor() { return runtimeSupervisor; },
+    ensureMainWindowReady,
     get safeHandle() { return safeHandle; },
     get safeHandleFromWindow() { return safeHandleFromWindow; },
     get safeSend() { return safeSend; },
@@ -7059,6 +7105,8 @@ async function bootstrapNormal() {
       // agent is waiting for), for the popover's light-interaction rows. No LLM/
       // fs cost on the hot snapshot path (Rule 5).
       triage: (sessionId) => lastTriageBySession.get(sessionId) ?? null,
+      listThreads: listMenubarThreads,
+      onThreadsChanged: (listener) => runtimeSupervisor?.onMenubarThreadsChanged(listener) ?? (() => {}),
       theme: () => resolveTheme(),
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
@@ -8121,9 +8169,15 @@ async function bootstrapNormal() {
       store.setConfig({ setupDismissed: dismissed });
     }
   });
-  doctor
-    .check()
-    .catch((err) => logMainError('dependencyDoctor.check', err));
+  // Startup discovery executes installed provider CLIs. Claude's `doctor`
+  // invokes `/usr/bin/security -i` on macOS, which escapes the isolated HOME
+  // and raises a real login-Keychain prompt. Keep manual dependency checks
+  // available, but never probe host credentials during an isolated E2E boot.
+  if (!E2E_LAUNCH) {
+    doctor
+      .check()
+      .catch((err) => logMainError('dependencyDoctor.check', err));
+  }
   // Boot the CLI control plane (UDS at ~/.zcc/control.sock). Errors are logged
   // but non-fatal — the GUI works without the CLI. Started once here (CLAUDE.md
   // #3), torn down in before-quit. All op handlers reuse main's existing

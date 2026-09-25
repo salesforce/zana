@@ -76,6 +76,7 @@ export interface IpcCtx {
   mainWindow: any;
   menubar: any;
   menubarPopoverEnabled: any;
+  openMenubarThread: any;
   mobileGateway: any;
   moduleRouter: any;
   offLoudInboxAppended: any;
@@ -109,6 +110,7 @@ export interface IpcCtx {
   scheduler: any;
   setActiveProjectSkillsWatcher: any;
   showMainWindow: any;
+  ensureMainWindowReady: any;
   skillBundles: any;
   squadExecutionService: any;
   sshHostProviderRegistry: any;

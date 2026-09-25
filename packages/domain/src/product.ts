@@ -6,6 +6,7 @@ import type { ProjectIcon } from './project-icons.js';
  */
 import type { TerminalThemeId } from './terminal-themes.js';
 import type { WorkflowArgument } from './workflow-args.js';
+import type { MenubarAgent } from './menubar-agent.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
 export type { TerminalThemeId } from './terminal-themes.js';
@@ -2686,44 +2687,7 @@ export interface AppConfig {
  * the pty session record + the debounced agent state + transcript cost — the
  * popover renderer never derives it, so it stays a thin view (Rule 1).
  */
-export interface MenubarAgent {
-  sessionId: string;
-  projectId: string;
-  projectName: string;
-  /** Project accent color, for the row's project chip tint (may be absent). */
-  projectColor?: string;
-  /** Session title (renderer-authoritative name is not known to main, so this
-   *  is the pty/OSC title — good enough for a glance). */
-  title: string;
-  /** Debounced agent state from the OSC-title detector. */
-  state: AgentState;
-  /** Whether the user has starred this agent (favorite = pinned in the popover). */
-  favorite: boolean;
-  /** Wall-clock ms (epoch) the session started, for a "working · 2m40s" elapsed. */
-  createdAt: number;
-  /**
-   * One-line gloss of what a `blocked` agent is waiting for, sourced from the
-   * cached idle-triage verdict (`IdleTriageResult.summary`, ≤80 chars). Present
-   * only for `blocked` agents that have a cached verdict — absent otherwise, so
-   * the popover degrades to a plain "needs you" (Rule 5: no per-push LLM/fs read,
-   * it's a straight in-memory cache lookup in main). Never set for working/done.
-   */
-  question?: string;
-  /**
-   * The triage `resolution` for a `blocked` agent (`awaiting-reply`/`done`/…),
-   * used by the popover to decide whether to offer the Yes/No quick-actions
-   * (only when we actually have a sense of what's being asked). Absent when no
-   * verdict is cached.
-   */
-  resolution?: IdleResolution;
-  /**
-   * Whether this session accepts a "light" menubar reply. False for background
-   * work — scheduled / headless sessions — which the glance surface must not
-   * inject input into (a user replying from the menu bar can't see the terminal).
-   * Main is authoritative; the popover only uses this to enable/disable the UI.
-   */
-  repliable: boolean;
-}
+export type { MenubarAgent, MenubarCliAgent, MenubarThreadAgent } from './menubar-agent.js';
 
 /**
  * The full menu-bar popover snapshot main pushes to the popover window. Includes

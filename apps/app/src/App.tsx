@@ -530,6 +530,14 @@ export function App() {
       // page when Classic session view is on.
       inspectAgentSession(sessionId, projectId, navigateRef.current);
     });
+    const offOpenThread = product.threads.onOpen((payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      const event = payload as { type?: unknown; threadId?: unknown; projectId?: unknown; file?: unknown; terminal?: unknown };
+      if (event.type !== 'thread-open' || event.file || event.terminal) return;
+      if (typeof event.threadId !== 'string' || typeof event.projectId !== 'string') return;
+      useUi.getState().enterProjectFocus(event.projectId);
+      navigateRef.current(`/projects/${event.projectId}/threads/${event.threadId}`);
+    });
     // Tray "Open Scheduler" / per-schedule "Show in Scheduler". With a task id
     // we jump to that schedule's scope and reveal the row; without one we land
     // on the overview (matching the plain menu item).
@@ -565,6 +573,7 @@ export function App() {
       offData();
       offMenu();
       offFocusSession();
+      offOpenThread();
       offOpenScheduler();
       offOpenAgents();
       offFocusInboxEntry();

@@ -1245,8 +1245,8 @@ export interface CcApi {
     request(): Promise<MenubarSnapshot>;
     /** Live fleet snapshots pushed on any fleet/state/schedule change. */
     onSnapshot(cb: (snapshot: MenubarSnapshot) => void): () => void;
-    /** Show the main window and focus a session (row click). */
-    focusSession(sessionId: string, projectId: string): Promise<void>;
+    /** Show the main window and focus a main-authorized agent identity. */
+    focusAgent(kind: 'cli' | 'thread', agentId: string, projectId: string): Promise<void>;
     /** Toggle a session's favorite/pin (the row pin affordance). */
     setFavorite(sessionId: string, favorite: boolean): Promise<void>;
     /**
