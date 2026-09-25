@@ -12,7 +12,6 @@ import {
 import type { AgentCard, LaneKey } from './AgentBoard.js';
 import type { ThreadListItem } from '../thread-store.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
-import { menubarAgentState } from '@zana-ai/zcc-domain';
 
 export type FleetKind = 'agent' | 'thread' | 'schedule';
 
@@ -83,7 +82,7 @@ export function threadFleetItem(
   return {
     kind: 'thread',
     id: thread.id,
-    state: menubarAgentState(thread.status, thread.hasPendingInteraction, thread.activity?.activeBackgroundCommandCount ?? 0),
+    state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity),
     title: threadTitle(thread),
     projectId: thread.projectId,
     projectName: project?.name ?? 'Unknown',
