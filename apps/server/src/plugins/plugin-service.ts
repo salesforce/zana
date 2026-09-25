@@ -363,7 +363,7 @@ export interface PluginServiceOptions {
     remove: readonly string[];
   }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
   pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
-  listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
+  listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon }>>;
   productContext?: import('../http/product-context.js').ProductHttpContext;
   /** Shared live host-artifact map; omitted tests get a private registry. */
   pluginHostArtifacts?: PluginHostArtifactRegistry;

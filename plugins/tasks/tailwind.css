@@ -33,12 +33,12 @@
   --radius: 0.5rem;
 }
 .bb-tasks, [data-bb-plugin='tasks'] { font-size: 13px; color: var(--text-primary); --background: var(--bg-panel); --popover: var(--bg-elevated); --radius: .5rem; }
-:where(.bb-tasks, [data-bb-plugin='tasks']) :where(*) { box-sizing: border-box; border-color: var(--border); border-style: solid; border-width: 0; }
+:where(.bb-tasks, [data-bb-plugin='tasks'], .bb-tasks *, [data-bb-plugin='tasks'] *) { box-sizing: border-box; border-color: var(--border); border-style: solid; border-width: 0; }
 :where(.bb-tasks, [data-bb-plugin='tasks']) :where(button, input, select, textarea) { font: inherit; color: inherit; }
 :where(.bb-tasks, [data-bb-plugin='tasks']) :where(button) { background-color: transparent; cursor: pointer; }
 :where(.bb-tasks, [data-bb-plugin='tasks']) :where(select) { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px; }
-.bb-tasks .ProseMirror { outline: none; min-height: 5rem; }
-.bb-tasks .ProseMirror p { margin: .5em 0; }
-.bb-tasks .ProseMirror ul { list-style: disc; padding-left: 1.5em; }
-.bb-tasks .ProseMirror ol { list-style: decimal; padding-left: 1.5em; }
-.bb-tasks .ProseMirror img { max-width: 100%; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) .ProseMirror { outline: none; min-height: 5rem; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) .ProseMirror p { margin: .5em 0; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) .ProseMirror ul { list-style: disc; padding-left: 1.5em; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) .ProseMirror ol { list-style: decimal; padding-left: 1.5em; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) .ProseMirror img { max-width: 100%; }

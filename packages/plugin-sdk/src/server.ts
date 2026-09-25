@@ -1,3 +1,5 @@
+import type { ProjectIcon } from '@zana-ai/zcc-domain';
+export { PROJECT_ICONS, type ProjectIcon } from '@zana-ai/zcc-domain';
 /**
  * Server-side plugin API — the `zcc` object handed to a plugin's server factory:
  * `export default function plugin(zcc: ZccPluginApi)`.
@@ -464,6 +466,7 @@ export interface PluginSdkInbox {
 }
 
 export interface PluginSdkProject {
+  icon?: ProjectIcon;
   id: string;
   name: string;
   path?: string;
@@ -471,6 +474,8 @@ export interface PluginSdkProject {
 
 export interface PluginSdkProjects {
   list(): Promise<PluginSdkProject[]>;
+  /** Persist a project glyph from PROJECT_ICONS. Circle restores the ordinary dot. */
+  setIcon(args: { projectId: string; icon: ProjectIcon }): Promise<void>;
 }
 
 export interface PluginSdk {

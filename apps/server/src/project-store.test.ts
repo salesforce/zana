@@ -17,6 +17,21 @@ afterEach(() => {
 });
 
 describe('createProjectStore', () => {
+  it('persists icons across reloads and concurrent updates, and rejects invalid icons', async () => {
+    const home = makeDir();
+    const options = { projectsFile: join(home, '.zcc', 'projects.json') };
+    const store = createProjectStore(options);
+    const project = await store.add(home);
+    await Promise.all([store.update(project.id, { icon: 'Cloud' }), store.update(project.id, { name: 'CRM' })]);
+    expect(createProjectStore(options).list()[0]).toMatchObject({ icon: 'Cloud', name: 'CRM', color: project.color });
+    for (const icon of ['invalid', '<svg/>', null, 123]) {
+      await expect(store.update(project.id, { icon } as never)).rejects.toThrow('unsupported project icon');
+    }
+    expect(store.list()[0].icon).toBe('Cloud');
+    expect(await store.update('unknown', { icon: 'Cloud' })).toBeNull();
+    await store.update(project.id, { icon: 'Circle' });
+    expect(createProjectStore(options).list()[0].icon).toBe('Circle');
+  });
   it('rejects a path that does not exist or is not a directory', async () => {
     const home = makeDir();
     const store = createProjectStore({ projectsFile: join(home, '.zcc', 'projects.json') });

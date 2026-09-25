@@ -647,6 +647,16 @@ describe('project color assignment', () => {
   // updateProject is the untrusted-renderer boundary (rule 1): unlike backfill,
   // which preserves whatever is already on disk, it must reject any color that
   // isn't a known palette member before it reaches projects.json / the DOM.
+  it('updateProject persists validated icons without changing the color', () => {
+    const dir = join(h.home, 'icon-project');
+    mkdirSync(dir, { recursive: true });
+    const p = store.addProject(dir);
+    expect(store.updateProject(p.id, { icon: 'Cloud' })).toMatchObject({ icon: 'Cloud', color: p.color });
+    expect(store.listProjects().find(row => row.id === p.id)?.icon).toBe('Cloud');
+    expect(() => store.updateProject(p.id, { icon: '<svg/>' } as never)).toThrow('unsupported project icon');
+    expect(store.updateProject(p.id, { icon: 'Circle' })?.icon).toBe('Circle');
+  });
+
   it('updateProject accepts a palette color', () => {
     const dir = join(h.home, 'proj-u1');
     mkdirSync(dir, { recursive: true });

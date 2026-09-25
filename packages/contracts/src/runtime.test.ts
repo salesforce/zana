@@ -13,6 +13,11 @@ const request = {
 };
 
 describe('server runtime contract', () => {
+  it('validates project icon changes at the runtime boundary', () => {
+    for (const [icon, expected] of [['Cloud', true], ['Circle', true], ['unknown', false], [null, false], [4, false]] as const) {
+      expect(ServerRuntimeInboundSchema.safeParse({ ...request, operation: 'projects-update', projectId: 'p1', patch: { icon } }).success).toBe(expected);
+    }
+  });
   it('accepts only bounded local project mutations', () => {
     expect(ServerRuntimeInboundSchema.safeParse({
       ...request,

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ProjectIdSchema, SessionIdSchema } from '@zana-ai/zcc-domain';
+import { ProjectIdSchema, SessionIdSchema, PROJECT_ICONS } from '@zana-ai/zcc-domain';
 import { TerminalRequestCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
 import { ProjectSettingsPatchSchema } from './project-settings.js';
 
@@ -24,6 +24,7 @@ const PluginIdSchema = z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(128);
 export const ProjectMutationPatchSchema = z.object({
   name: ProjectNameSchema.optional(),
   color: ProjectColorSchema.optional(),
+  icon: z.enum(PROJECT_ICONS).optional(),
   category: z.literal('Extensions').optional()
 }).strict().refine((patch) => Object.keys(patch).length > 0, 'project patch must not be empty');
 
@@ -32,6 +33,7 @@ export const ProjectRecordSchema = z.object({
   name: ProjectNameSchema,
   path: ProjectPathSchema,
   color: ProjectColorSchema.optional(),
+  icon: z.enum(PROJECT_ICONS).optional(),
   createdAt: z.number().int().nonnegative(),
   lastActiveAt: z.number().int().nonnegative(),
   tag: z.string().min(1).max(33).optional(),

@@ -24,6 +24,18 @@ V1 slots: `navPanel`, `settingsSection`, `homepageSection`, `projectTab`,
 `experimental_projectMenuAction` (Organize / row overflow). Open **Plugin Guide**
 for the full surface map.
 
+Plugins can assign a saved project icon after creating or connecting a project:
+
+```ts
+await zcc.sdk.projects.setIcon({ projectId, icon: 'Cloud' });
+```
+
+Import `PROJECT_ICONS` and `ProjectIcon` from `@zana-ai/zcc-plugin-sdk` for the
+supported names. `sdk.projects.list()` includes each project's saved `icon`.
+The icon uses the project color, and users can change it from the project menu.
+`Circle` restores the ordinary dot; the default project always displays Home.
+Set the icon during setup rather than overwriting the user's choice on refresh.
+
 `package.json` `zcc` also declares `skills` (directory roots, default `["skills"]`),
 `mcpServers` (Claude CLI map), and `extra` (opaque bag — not executed).
 

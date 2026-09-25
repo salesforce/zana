@@ -40,13 +40,22 @@ adds the connection and lets you choose whether to set it as the shared default.
 Project login preserves other project targets and the CLI/shared defaults.
 The browser and `sf` run on the Zana host; no password or token is entered in Zana.
 
+To start a new project, choose **Add project → Salesforce project**. Log in first
+(or choose **Use a connected org**), then confirm the project name and parent
+folder. Zana creates the DX folder, registers the project with a cloud icon, sets its local CLI
+`target-org`, and opens the Salesforce tab with that org selected. No folder is
+created before sign-in succeeds and you choose **Create project**. If registration
+or org configuration fails, **Finish setup** reuses the folder already created.
+To change the icon later (or give an existing project a cloud), open the project
+menu and choose an **Icon**. The project color is preserved.
+
 ## Using this plugin
 
 | Surface | What it does |
 | --- | --- |
 | Plugins → Salesforce | CLI-connected org list, default alias, API version, DX root |
 | Salesforce tab | Overview, Data, Apex & logs, Deployments, and Agentforce workbench |
-| New Project | Salesforce DX project (`sf project generate`) |
+| Add project → Salesforce project | Browser login → create a connected Salesforce DX project |
 | Salesforce → Data | Schema, SOQL queries, saved history, retained drafts, and record inspectors |
 | Agent side panels | Org, SOQL, object, record, Apex/logs, deployments, and operation history |
 | Agentforce workspace | Salesforce AgentScript editor with configurable tool tabs on the right |

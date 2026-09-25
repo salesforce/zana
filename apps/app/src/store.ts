@@ -1715,6 +1715,7 @@ interface DataState {
     patch: {
       name?: string;
       color?: string;
+      icon?: Project['icon'];
       defaultAgents?: string[];
       defaultPersonas?: string[];
       launchDefault?: Project['launchDefault'];
@@ -2320,6 +2321,11 @@ export const useData = create<DataState>((set, get) => ({
       // can't diverge — every gate is listed in exactly one place
       // (`mirroredConfigFlags`). Only `projects` is init-specific.
       set({ projects, ...mirroredConfigFlags(config), configLoaded: true });
+      // Project rows are interactive now. Subscribe before slower session/plugin
+      // hydration so SDK and IPC changes cannot be missed during startup.
+      product.projects.onChanged((next) => {
+        set({ projects: next });
+      });
       applyTheme(config.theme);
       // Repaint live when the OS appearance flips and the app is on 'system'.
       bindSystemThemeListener();
@@ -2755,14 +2761,6 @@ export const useData = create<DataState>((set, get) => ({
     }
     product.autonomousRuns.onChanged((runs) => {
       useAutonomousRuns.setState({ runs });
-    });
-
-    // Projects: live refresh when the list changes out-of-band — notably when
-    // an agent adds a cloned repo via the `register_project` MCP tool. The
-    // renderer's own add/remove/reorder still drive `loadProjects()` directly;
-    // this push covers mutations the renderer didn't initiate.
-    product.projects.onChanged((projects) => {
-      set({ projects });
     });
 
     // Library: one-shot list + full-list push (like saved). Reconciled on read:

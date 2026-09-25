@@ -165,6 +165,8 @@ describe('product plugin sdk confinement', () => {
     const inbox = createInboxStore({ filePath: join(dir, '.zcc', 'inbox', 'entries.jsonl') });
     const ctx = { projects, inbox };
     expect(productListProjects(ctx)).toEqual([{ id: project.id, name: project.name, path: project.path }]);
+    await projects.update(project.id, { icon: 'Cloud' });
+    expect(productListProjects(ctx)[0].icon).toBe('Cloud');
     await expect(
       productPushInbox(ctx, { pluginId: 'pr-monitor', projectId: 'missing', comments: 'nope' })
     ).rejects.toThrow(/unrecognized projectId/);

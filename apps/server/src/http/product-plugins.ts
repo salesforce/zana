@@ -31,7 +31,7 @@ import { listThreadProviders } from '../services/threads/thread-provider-catalog
 import type { ProductHttpContext } from './product-context.js';
 import { conversationThreadOutput } from '../plugins/thread-events.js';
 import { readHostFile } from './files-via-host.js';
-import type { PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
+import type { PluginSdkProject, PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
 import { pluginHostModelCatalog, resolvePluginDefaultExecutionOptions, classifyModelListError, modelListErrorDetail } from '../services/threads/thread-execution-options.js';
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 
@@ -52,8 +52,8 @@ export async function productPushInbox(
 
 export function productListProjects(
   ctx: Pick<ProductHttpContext, 'projects'>
-): Array<{ id: string; name: string; path?: string }> {
-  return ctx.projects.list().map((row) => ({ id: row.id, name: row.name, path: row.path }));
+): PluginSdkProject[] {
+  return ctx.projects.list().map((row) => ({ id: row.id, name: row.name, path: row.path, ...(row.icon ? { icon: row.icon } : {}) }));
 }
 
 function toPluginThreadSummary(row: {

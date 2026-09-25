@@ -196,9 +196,10 @@ export interface FakePluginHostOptions {
     remove?: readonly string[];
   }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
   pushInbox?: (args: { projectId: string; comments: string }) => Promise<{ id: string }>;
+  setProjectIcon?: ZccPluginApi['sdk']['projects']['setIcon'];
   listProjects?: () =>
-    | Array<{ id: string; name: string; path?: string }>
-    | Promise<Array<{ id: string; name: string; path?: string }>>;
+    | Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon }>
+    | Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon }>>;
   database?: PluginDatabase;
   experimental_callHostRpc?: (call: {
     method: string;
@@ -477,6 +478,10 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
             throw new Error('zcc.sdk is not available in this runtime');
           }
           return options.listProjects();
+        },
+        async setIcon(args) {
+          if (!options?.setProjectIcon) throw new Error('zcc.sdk is not available in this runtime');
+          await options.setProjectIcon(args);
         }
       },
       environments: {

@@ -1,3 +1,4 @@
+import { isProjectIcon } from '@zana-ai/zcc-domain';
 import { app } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync, renameSync, rmSync } from 'node:fs';
 import { join, basename, dirname, isAbsolute } from 'node:path';
@@ -1683,7 +1684,7 @@ export const store = {
   },
   updateProject(
     id: string,
-    patch: Partial<Pick<Project, 'name' | 'color' | 'defaultAgents' | 'defaultPersonas' | 'launchDefault' | 'favorite'>> & {
+    patch: Partial<Pick<Project, 'name' | 'color' | 'icon' | 'defaultAgents' | 'defaultPersonas' | 'launchDefault' | 'favorite'>> & {
       remotePath?: string;
     }
   ): Project | null {
@@ -1699,6 +1700,9 @@ export const store = {
     // value — a hand-crafted hex, a control-char string — is dropped from the
     // patch so it can never reach projects.json or the DOM.
     const safePatch = { ...rest };
+    if (safePatch.icon !== undefined && !isProjectIcon(safePatch.icon)) {
+      throw new Error('unsupported project icon');
+    }
     if ('color' in safePatch && safePatch.color !== undefined) {
       if (!(PROJECT_COLORS as readonly string[]).includes(safePatch.color)) {
         delete safePatch.color;

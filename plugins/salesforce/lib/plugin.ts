@@ -53,6 +53,7 @@ import { ProjectContexts, ProjectContextError } from './project-context.js';
 import type { SalesforceSdk } from './sdk-contract.js';
 import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-project.js';
 import { generatedOutputPath, parseGenerateInput } from './project-generate.js';
+import { connectDxProject } from './project-connect.js';
 import {
   AgentFilesError,
   createAgentFile,
@@ -189,6 +190,14 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     const orgs = await sdk.listOrgs();
     await contexts.select(args, orgs.flatMap(org => [org.alias, org.username]));
     zcc.realtime.publish('context.changed', { projectId: contexts.current()?.projectId });
+    return { ok: true };
+  });
+  registerRpc('project.connect', async (args) => {
+    const aliases = (await sdk.listOrgs()).flatMap(org => [org.alias, org.username]);
+    await connectDxProject(contexts.current()!, rpcString(args, 'selectedAlias'), deps, aliases);
+    await contexts.select(args, aliases);
+    await zcc.sdk.projects.setIcon({ projectId: contexts.current()!.projectId!, icon: 'Cloud' });
+    zcc.realtime.publish('context.changed', { projectId: contexts.current()!.projectId });
     return { ok: true };
   });
 

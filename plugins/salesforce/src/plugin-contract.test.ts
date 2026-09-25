@@ -166,16 +166,13 @@ describe('salesforce plugin contract', () => {
     ]);
     expect(set.createProjectActions[0]).toMatchObject({
       id: 'dx-project',
-      title: 'Salesforce DX project',
+      title: 'Salesforce project',
       icon: 'Cloud'
     });
     expect(typeof set.createProjectActions[0]?.component).toBe('function');
-    const appSource = readFileSync(join(root, 'app.tsx'), 'utf8');
-    expect(appSource).toContain("className: 'modal-hint'");
-    expect(appSource).toContain("className: 'remote-form-row local-path-row'");
-    expect(appSource).toContain("className: 'local-path-input-group'");
-    expect(appSource).toContain("className: 'plugin-create-project-actions'");
-    expect(appSource).toContain("className: 'btn primary'");
+    const openDialog = vi.fn();
+    set.createProjectActions[0].run({ openDialog } as never);
+    expect(openDialog).toHaveBeenCalledWith({ title: 'Create Salesforce project' });
   });
 
   it('packages the Agentforce playground under playground/dist', () => {
@@ -293,6 +290,27 @@ describe('salesforce plugin behavior', () => {
       ok: false,
       code: 'invalid_input'
     });
+  });
+
+  it('connects only a registered project and persists its target after CLI configuration succeeds', async () => {
+    const setProjectIcon = vi.fn();
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', setProjectIcon, listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
+    const deps = mockDeps();
+    const original = deps.execSf;
+    const configure = vi.fn<SalesforceDeps['execSf']>(async () => ({ code: 0, stdout: '{"status":0}', stderr: '' }));
+    deps.execSf = (args, options) => args[0] === 'config' ? configure(args, options) : original(args, options);
+    await createSalesforcePlugin(zcc, deps);
+    await expect(harness.callRpc('project.connect', { projectId: 'missing', selectedAlias: 'dev' })).resolves.toMatchObject({ ok: false });
+    await expect(harness.callRpc('project.connect', { selectedAlias: 'dev' })).resolves.toMatchObject({ ok: false });
+    expect(configure).not.toHaveBeenCalled();
+    await expect(harness.callRpc('project.connect', { projectId: 'p1', projectRoot: '/untrusted', selectedAlias: 'dev' })).resolves.toEqual({ ok: true });
+    expect(configure).toHaveBeenCalledWith(['config', 'set', 'target-org=dev', '--json'], { cwd: '/tmp/dx', timeoutMs: 30_000 });
+    expect(await zcc.storage.kv.get('sf:project:p1:org')).toBe('dev');
+    expect(setProjectIcon).toHaveBeenCalledWith({ projectId: 'p1', icon: 'Cloud' });
+    await zcc.storage.kv.set('sf:project:p1:org', 'previous');
+    configure.mockResolvedValue({ code: 1, stdout: '', stderr: 'denied' });
+    await expect(harness.callRpc('project.connect', { projectId: 'p1', selectedAlias: 'dev' })).resolves.toMatchObject({ ok: false });
+    expect(await zcc.storage.kv.get('sf:project:p1:org')).toBe('previous');
   });
 
   it('starts Salesforce CLI web login and refreshes the org roster', async () => {
