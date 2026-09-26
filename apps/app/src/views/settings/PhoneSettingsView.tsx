@@ -3,6 +3,9 @@ import QRCode from 'qrcode';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { Section, CheckboxField, SettingsActionRow } from '@/components/settings/FormFields';
+import { AgentLauncher } from '../../components/AgentLauncher.js';
+import { MOBILE_INSTALL_PROMPT } from './mobile-install-prompt.js';
+import './phone-settings.css';
 
 interface PhoneViewProps {
   config: AppConfig;
@@ -39,6 +42,7 @@ export function PhoneView({ config, onUpdate }: PhoneViewProps) {
   const [pairing, setPairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [installComposerOpen, setInstallComposerOpen] = useState(false);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -135,8 +139,29 @@ export function PhoneView({ config, onUpdate }: PhoneViewProps) {
     <Section
       anchorId="phone"
       title="Phone"
-      help="Pair the Zana Mobile app with this computer. Turn on phone access, then scan the QR code below with your phone's camera while both are on the same network."
+      help="Install Zana on your phone, then pair it with this computer to use your projects and agents on the go."
     >
+      <div className="phone-install-guide">
+        <SettingsActionRow
+          label="Install the mobile app"
+          help="Let an AI agent check your setup, build the app, and install it on your connected phone. Review the prepared prompt and press Send to begin."
+        >
+          <button type="button" className="btn primary" onClick={() => setInstallComposerOpen(true)}>
+            Install with AI
+          </button>
+        </SettingsActionRow>
+        <ol className="phone-install-steps" aria-label="Mobile installation steps">
+          <li><strong>Connect your phone.</strong> Plug it into this computer with a USB cable and unlock it.</li>
+          <li><strong>Install with AI.</strong> Open the prepared prompt above and press Send. The agent handles the build and installation, and guides you through any phone confirmations.</li>
+          <li><strong>Pair and connect.</strong> Keep both devices on the same Wi-Fi. Enable phone access below and show the pairing QR. In Zana on your phone, choose Add server → Scan pairing QR, then Connect. Allow local-network access if asked and keep Zana running on this computer.</li>
+        </ol>
+        <details className="phone-install-device-help">
+          <summary>iPhone and Android setup</summary>
+          <p><strong>iPhone:</strong> Installation requires a Mac with Xcode and an Apple account for signing. Tap Trust on the phone if asked. In Settings → Privacy &amp; Security → Developer Mode, turn it on, restart the phone, then confirm Turn On and unlock it.</p>
+          <p><strong>Android:</strong> Installation requires the Android SDK tools. In Developer options, enable USB debugging and accept the authorization prompt when you connect the phone. The agent can help you prepare the tools.</p>
+        </details>
+      </div>
+
       <CheckboxField
         label="Enable phone access"
         help="Start a local, authenticated gateway so the Zana Mobile app can connect to this computer. Off by default. Each phone pairs with a one-time code and its own credential; you can revoke a phone at any time below."
@@ -237,6 +262,12 @@ export function PhoneView({ config, onUpdate }: PhoneViewProps) {
             </ul>
           )}
         </div>
+      )}
+      {installComposerOpen && (
+        <AgentLauncher
+          initialPrompt={MOBILE_INSTALL_PROMPT}
+          onClose={() => setInstallComposerOpen(false)}
+        />
       )}
     </Section>
   );

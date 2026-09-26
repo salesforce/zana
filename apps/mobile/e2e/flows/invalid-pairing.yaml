@@ -4,7 +4,7 @@ name: Invalid pairing is recoverable
 ---
 - launchApp
 - extendedWaitUntil:
-    visible: 'This device|Scan pairing QR'
+    visible: 'Connection options|Scan pairing QR'
     timeout: 30000
 - openLink:
     link: 'zana://connect?payload=%7B%22version%22%3A1%2C%22serverUrl%22%3A%22https%3A%2F%2Fmac.example%22%2C%22code%22%3A%22aaaaaaaaaaaaaaaaaaaaaa%22%2C%22expiresAt%22%3A1%7D'

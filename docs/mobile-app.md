@@ -24,6 +24,16 @@ BB's **current implementation** is its WebView shell (#2515). Its older `plans/b
 
 ZCC's existing Connect plugin is a host-tunnel status surface; it does not implement BB's hosted accounts, machine-code redemption or cloud gateway. This change does not point Zana at BB's production services, copy its EAS project, or reuse its signing identities.
 
+## Install on your phone with AI
+
+In the desktop app, open **Settings → Phone → Install with AI**. The button opens the standard agent composer with an editable installation prompt; press **Send** to start. The agent identifies the connected physical phone, checks the tools and source, builds and installs the app, and helps pair it with the running desktop. Opening the composer does not start an agent or enable phone access.
+
+1. Connect and unlock your phone over USB.
+2. On iPhone, trust the Mac and enable **Settings → Privacy & Security → Developer Mode**, restart, then confirm **Turn On**. Local installation requires macOS, Xcode and an Apple signing account. On Android, enable **Developer options → USB debugging** and accept the computer's authorization prompt; the agent can help prepare the Android SDK tools.
+3. Keep both devices on the same trusted network. In desktop **Settings → Phone**, enable phone access and show the pairing QR. In the installed app, select **Add server → Scan pairing QR → Connect**, and allow local-network access if requested. Keep Zana desktop running.
+
+The agent asks for phone-only confirmations as needed and preserves existing app data when updating. It verifies launch and pairing before reporting success. Platform setup references: [Apple Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device), [Android USB debugging](https://developer.android.com/studio/debug/dev-options).
+
 ## Start on an iOS simulator
 
 Prerequisites: pnpm, Xcode with an iOS simulator, CocoaPods.
@@ -72,7 +82,11 @@ HTTP is permitted by the native app only for private IPv4 addresses, localhost/l
 
 ## Notifications and device features
 
-This device → Enable notifications opts a paired profile into Expo push. The gateway observes live thread transitions independently of the foreground page, so it can deliver completion and pending-input alerts while the app is suspended. Payloads contain only generic status text plus a server URL/thread route; no prompts, code, paths or model output are sent to Expo. Disabling notifications removes the token from the server. Revoking a device also removes its push registration.
+The **…** button in the phone header opens **Share**, **Reload**, and **This device**. On iPhone these appear in a native action sheet. The server name appears in that sheet instead of a second toolbar. Reload renews the native session and restores the current page. If the desktop serves an older interface, or the page cannot load, a compact native header keeps these actions accessible. The integrated menu requires mobile bridge v3 on the phone and the updated desktop renderer.
+
+The phone navigation drawer fills the screen. **New Chat** and **Agents** stay pinned above the scrolling menu, followed by **Inbox**, **History**, and a collapsed **More** section for Scheduler, Plugins, and plugin-contributed destinations. **Projects** opens expanded, including projects with sessions, and **Filter projects** sticks below the pinned actions while you scroll. A project's menu provides **New agent**. The drawer's disclosure state is local to the phone and does not change the saved desktop sidebar layout.
+
+**… → This device → Enable notifications** opts a paired profile into Expo push. The gateway observes live thread transitions independently of the foreground page, so it can deliver completion and pending-input alerts while the app is suspended. Payloads contain only generic status text plus a server URL/thread route; no prompts, code, paths or model output are sent to Expo. Disabling notifications removes the token from the server. Revoking a device also removes its push registration.
 
 Before enabling push on a signed physical device:
 

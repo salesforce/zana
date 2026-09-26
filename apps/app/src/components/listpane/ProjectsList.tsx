@@ -40,7 +40,9 @@ import { AddGitProjectDialog } from '../AddGitProjectDialog.js';
 import { AddLocalProjectDialog } from '../AddLocalProjectDialog.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
-import { isProjectRailExpanded, pinDefaultProjectFirst, pinFavoriteProjectsFirst } from './project-rail.js';
+import { pinDefaultProjectFirst, pinFavoriteProjectsFirst } from './project-rail.js';
+import { useProjectRailDisclosure } from './useProjectRailDisclosure.js';
+import { useMobileNavDismiss } from '../mobile-nav-context.js';
 import { ProjectAgentRailRow, ProjectThreadRailRow } from './project-session-rail-rows.js';
 import { projectNavigationSessions } from '../../lib/teamRunOrganization.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
@@ -162,6 +164,8 @@ export function ProjectsList({
   onNavigate?: (event: { preventDefault: () => void }) => void;
 }) {
   const inSidebar = placement === 'sidebar';
+  const dismissMobileNav = useMobileNavDismiss();
+  const mobile = inSidebar && !!dismissMobileNav;
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
   const projectNavigationOrganization = useData((s) => s.projectNavigationOrganization);
@@ -185,11 +189,14 @@ export function ProjectsList({
   const unread = useUi((s) => s.unread);
   const projectExpanded = useUi((s) => s.projectExpanded);
   const setProjectExpanded = useUi((s) => s.setProjectExpanded);
+  const disclosure = useProjectRailDisclosure(mobile, projectExpanded, setProjectExpanded);
   const hideIdleProjects = useUi((s) => s.hideIdleProjects);
   const toggleHideIdleProjects = useUi((s) => s.toggleHideIdleProjects);
   const sidebarProjectsCollapsed = useUi(
     (s) => inSidebar && !!s.collapsedSections[SIDEBAR_PROJECTS_SECTION_KEY]
   );
+  const [mobileProjectsOpen, setMobileProjectsOpen] = useState(true);
+  const projectsCollapsed = mobile ? !mobileProjectsOpen : sidebarProjectsCollapsed;
   const toggleSection = useUi((s) => s.toggleSection);
   // Non-null in a per-project window: the rail is locked to this one project.
   const scopedProjectId = getScopedProjectId();
@@ -375,6 +382,7 @@ export function ProjectsList({
   const spawnDefaultAgent = (p: Project) => {
     selectProject(p.id);
     setLauncherOpen(true);
+    dismissMobileNav?.();
   };
 
   const sortedProjects = useMemo(() => {
@@ -406,7 +414,7 @@ export function ProjectsList({
   // that has something to nest so those sessions are visible without a click.
   // An explicit collapse still wins.
   const isProjectExpanded = (p: Project) =>
-    isProjectRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p));
+    disclosure.isExpanded(p.id, projectHasNestableSessions(p));
 
   const visibleProjects = useMemo(() => {
     // A per-project window locks the rail to its one project — no other projects
@@ -605,7 +613,7 @@ export function ProjectsList({
   };
 
   const renderProject = (group: RailGroup, p: Project) => {
-    const sortable = canReorder && renamingId !== p.id && !isScratchWorkspaceProject(p);
+    const sortable = !mobile && canReorder && renamingId !== p.id && !isScratchWorkspaceProject(p);
     const labelClass = sortable ? 'project-label project-label--sortable' : 'project-label';
     const liveList = projectNavigationSessions(
       projectRailTerminals(terminals[p.id]),
@@ -697,7 +705,7 @@ export function ProjectsList({
                     aria-expanded={expanded}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setProjectExpanded(p.id, !expanded);
+                      disclosure.setExpanded(p.id, !expanded);
                     }}
                   >
                     <ChevronRight size={14} />
@@ -733,7 +741,7 @@ export function ProjectsList({
                   <button
                     type="button"
                     className="project-select"
-                    draggable
+                    draggable={!mobile}
                     onDragStart={(event) => {
                       beginProjectDrag(event.dataTransfer, p);
                       suppressClickRef.current = true;
@@ -841,7 +849,7 @@ export function ProjectsList({
 
   return (
     <section
-      className={`${inSidebar ? 'sidebar-projects' : 'list-pane'} ${sidebarProjectsCollapsed ? 'sidebar-projects--collapsed' : ''} ${dropOver ? 'drop-over' : ''}`}
+      className={`${inSidebar ? 'sidebar-projects' : 'list-pane'} ${projectsCollapsed ? 'sidebar-projects--collapsed' : ''} ${dropOver ? 'drop-over' : ''}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -856,18 +864,19 @@ export function ProjectsList({
             onClick={(event) => {
               onNavigate?.(event);
               if (event.defaultPrevented) return;
-              toggleSection(SIDEBAR_PROJECTS_SECTION_KEY);
+              if (mobile) setMobileProjectsOpen((open) => !open);
+              else toggleSection(SIDEBAR_PROJECTS_SECTION_KEY);
             }}
-            aria-label={`${sidebarProjectsCollapsed ? 'Expand' : 'Collapse'} Projects section`}
+            aria-label={`${projectsCollapsed ? 'Expand' : 'Collapse'} Projects section`}
             aria-controls={SIDEBAR_PROJECTS_TREE_ID}
-            aria-expanded={!sidebarProjectsCollapsed}
-            title={`${sidebarProjectsCollapsed ? 'Expand' : 'Collapse'} Projects`}
+            aria-expanded={!projectsCollapsed}
+            title={`${projectsCollapsed ? 'Expand' : 'Collapse'} Projects`}
           >
             <span>Projects</span>
             <ChevronRight
               size={14}
               aria-hidden="true"
-              className={`sidebar-projects-chevron ${sidebarProjectsCollapsed ? '' : 'open'}`}
+              className={`sidebar-projects-chevron ${projectsCollapsed ? '' : 'open'}`}
             />
           </button>
         ) : (
@@ -1073,31 +1082,33 @@ export function ProjectsList({
           );
         })}
       </div>
-      {projects.length > 0 && !scopedProjectId && !sidebarProjectsCollapsed && (
-        <div className={inSidebar ? 'sidebar-projects-filter list-filter' : 'list-filter'}>
-          <Search size={14} className="list-filter-icon" aria-hidden="true" />
-          <input
-            placeholder="Filter projects"
-            aria-label="Filter projects"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape' && filter) {
-                event.preventDefault();
-                event.stopPropagation();
-                setFilter('');
-              }
-            }}
-          />
-          {filter && (
-            <button
-              className="list-filter-clear"
-              aria-label="Clear filter"
-              onClick={() => setFilter('')}
-            >
-              <X size={12} />
-            </button>
-          )}
+      {projects.length > 0 && !scopedProjectId && !projectsCollapsed && (
+        <div className="mobile-sticky-search">
+          <div className={inSidebar ? 'sidebar-projects-filter list-filter' : 'list-filter'}>
+            <Search size={14} className="list-filter-icon" aria-hidden="true" />
+            <input
+              placeholder="Filter projects"
+              aria-label="Filter projects"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && filter) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setFilter('');
+                }
+              }}
+            />
+            {filter && (
+              <button
+                className="list-filter-clear"
+                aria-label="Clear filter"
+                onClick={() => setFilter('')}
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
         </div>
       )}
       {!inSidebar && (
@@ -1118,7 +1129,7 @@ export function ProjectsList({
       <div
         id={inSidebar ? SIDEBAR_PROJECTS_TREE_ID : undefined}
         className={inSidebar ? 'sidebar-projects-body' : 'list-body'}
-        hidden={sidebarProjectsCollapsed}
+        hidden={projectsCollapsed}
       >
         {projects.length === 0 ? (
           <div className="list-empty">
@@ -1186,6 +1197,12 @@ export function ProjectsList({
           )}
           {p && (
             <>
+              {mobile && (
+                <button className="project-menu-item" onClick={() => { setMenu(null); spawnDefaultAgent(p); }}>
+                  <MessageCirclePlus size={16} />
+                  <span>New agent</span>
+                </button>
+              )}
               <button
                 className="project-menu-item"
                 disabled={!canReorder || !menuGroup || pinnedFirst || prevPinned || menuIndex <= 0}

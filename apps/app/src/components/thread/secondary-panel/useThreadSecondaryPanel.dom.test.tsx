@@ -1,22 +1,110 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
-import { useThreadSecondaryPanel } from './useThreadSecondaryPanel.js';
+import { useSecondaryPanel, useThreadSecondaryPanel } from './useThreadSecondaryPanel.js';
 import { closableTabsToContract } from './threadTabsContract.js';
 import { persistSecondaryPanel, emptySecondaryPanelState } from './threadSecondaryPanelState.js';
 
-const { tabs, updateTabs, onTabs } = vi.hoisted(() => ({
-  tabs: vi.fn(), updateTabs: vi.fn(), onTabs: vi.fn(),
+const { tabs, updateTabs, onTabs, useCompactLayout } = vi.hoisted(() => ({
+  tabs: vi.fn(), updateTabs: vi.fn(), onTabs: vi.fn(), useCompactLayout: vi.fn(),
 }));
 vi.mock('../../../lib/product-client.js', () => ({ product: { threads: { tabs, updateTabs, onTabs } } }));
+vi.mock('../../../hooks/useCompactLayout.js', () => ({ useCompactLayout }));
 beforeEach(() => {
   localStorage.clear();
+  useCompactLayout.mockReset().mockReturnValue(false);
   vi.useFakeTimers();
   tabs.mockReset().mockResolvedValue({ revision: 0, tabs: [] });
   updateTabs.mockReset().mockResolvedValue({ revision: 1, tabs: [] });
   onTabs.mockReset().mockReturnValue(() => {});
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+it.each([false, true])('restores saved tabs but only restores open/maximized on desktop (compact=%s)', async (compact) => {
+  useCompactLayout.mockReturnValue(compact);
+  persistSecondaryPanel('thread-a', {
+    ...emptySecondaryPanelState(), isOpen: true, isMaximized: true,
+    activeId: 'saved', tabs: [{ id: 'saved', kind: 'new-tab', title: 'New Tab' }],
+  });
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  await act(async () => {});
+  expect(view.result.current.state).toMatchObject({
+    isOpen: !compact, isMaximized: !compact, activeId: 'saved', tabs: [{ id: 'saved' }],
+  });
+});
+
+it('lets the user open and hide the mobile panel, but closes it when revisiting a thread', async () => {
+  useCompactLayout.mockReturnValue(true);
+  const view = renderHook(({ owner }) => useThreadSecondaryPanel(owner), { initialProps: { owner: 'thread-a' } });
+  await act(async () => {});
+  act(() => view.result.current.openNewTab());
+  const tabId = view.result.current.state.tabs[0].id;
+  expect(view.result.current.state.isOpen).toBe(true);
+  act(() => view.result.current.close());
+  expect(view.result.current.state.isOpen).toBe(false);
+  act(() => view.result.current.open());
+  expect(view.result.current.state.isOpen).toBe(true);
+  view.rerender({ owner: 'thread-b' });
+  await act(async () => {});
+  expect(view.result.current.state.isOpen).toBe(false);
+  view.rerender({ owner: 'thread-a' });
+  await act(async () => {});
+  expect(view.result.current.state).toMatchObject({ isOpen: false, tabs: [{ id: tabId }] });
+  act(() => view.result.current.open());
+  view.unmount();
+  const revisited = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  await act(async () => {});
+  expect(revisited.result.current.state).toMatchObject({ isOpen: false, tabs: [{ id: tabId }] });
+});
+
+it.each([false, true])('keeps mobile closed during server hydration and SSE updates (compact=%s)', async (compact) => {
+  useCompactLayout.mockReturnValue(compact);
+  tabs.mockResolvedValue({ revision: 1, tabs: [{ id: 'hydrated', kind: 'new-tab' }] });
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  await act(async () => {});
+  expect(view.result.current.state).toMatchObject({ isOpen: !compact, tabs: [{ id: 'hydrated' }] });
+  act(() => onTabs.mock.calls[0][0]({ threadId: 'thread-a', revision: 2, tabs: [{ id: 'remote', kind: 'new-tab' }] }));
+  expect(view.result.current.state).toMatchObject({ isOpen: !compact, tabs: [{ id: 'remote' }] });
+  act(() => view.result.current.open());
+  await act(async () => vi.advanceTimersByTime(300));
+  act(() => onTabs.mock.calls[0][0]({ threadId: 'thread-a', revision: 3, tabs: [{ id: 'open-update', kind: 'new-tab' }] }));
+  expect(view.result.current.state).toMatchObject({ isOpen: true, tabs: [{ id: 'open-update' }] });
+  act(() => view.result.current.close());
+  await act(async () => vi.advanceTimersByTime(300));
+  act(() => onTabs.mock.calls[0][0]({ threadId: 'thread-a', revision: 4, tabs: [{ id: 'closed-update', kind: 'new-tab' }] }));
+  expect(view.result.current.state).toMatchObject({ isOpen: !compact, tabs: [{ id: 'closed-update' }] });
+  await act(async () => vi.advanceTimersByTime(300));
+  expect(updateTabs).not.toHaveBeenCalled();
+});
+
+it('closes on entry to compact layout without rehydrating or losing tabs', async () => {
+  const pending = Promise.withResolvers<unknown>();
+  tabs.mockReturnValueOnce(pending.promise);
+  const view = renderHook(() => useThreadSecondaryPanel('thread-a'));
+  useCompactLayout.mockReturnValue(true);
+  view.rerender();
+  await act(async () => pending.resolve({ revision: 1, tabs: [{ id: 'delayed', kind: 'new-tab' }] }));
+  expect(view.result.current.state).toMatchObject({ isOpen: false, tabs: [{ id: 'delayed' }] });
+  useCompactLayout.mockReturnValue(false);
+  view.rerender();
+  act(() => view.result.current.toggleMaximized());
+  expect(view.result.current.state.isOpen).toBe(true);
+  useCompactLayout.mockReturnValue(true);
+  view.rerender();
+  expect(view.result.current.state).toMatchObject({ isOpen: false, isMaximized: false, tabs: [{ id: 'delayed' }] });
+  act(() => view.result.current.open());
+  view.rerender();
+  expect(view.result.current.state.isOpen).toBe(true);
+  expect(tabs).toHaveBeenCalledOnce();
+});
+
+it('keeps default-open agent panels closed on mobile', () => {
+  useCompactLayout.mockReturnValue(true);
+  const view = renderHook(() => useSecondaryPanel('agent-a', { defaultOpen: true }));
+  expect(view.result.current.state.isOpen).toBe(false);
+  act(() => view.result.current.open());
+  expect(view.result.current.state.isOpen).toBe(true);
+});
 
 it('hydrates the revision for cached tabs without overwriting local navigation', async () => {
   persistSecondaryPanel('thread-a', { ...emptySecondaryPanelState(), tabs: [{ id: 'local', kind: 'new-tab', title: 'New Tab' }] });

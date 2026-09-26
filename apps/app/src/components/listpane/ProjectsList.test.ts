@@ -285,7 +285,7 @@ describe('nested live threads', () => {
     expect(source).toContain('railThreadsByProject.get(p.id)');
     expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
     expect(source).toContain('projectRailTerminals(terminals[p.id]).length > 0');
-    expect(source).toContain('isProjectRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p))');
+    expect(source).toContain('disclosure.isExpanded(p.id, projectHasNestableSessions(p))');
     expect(rows).toContain('!session.scheduled && <AgentDeleteQuickAction');
     expect(source).toContain('pinDefaultProjectFirst(pinFavoriteProjectsFirst(sorted))');
     expect(source).not.toContain('p.id === selectedId && projectHasNestableSessions(p)');

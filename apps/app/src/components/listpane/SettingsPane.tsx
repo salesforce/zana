@@ -7,6 +7,7 @@ import { SidebarResizer } from '../SidebarResizer.js';
 import { useAppSettingsRouteMemory } from '../../hooks/useAppSettingsRouteMemory.js';
 import { getSettingsTabRoutePath } from '../../lib/route-paths.js';
 import { appSettingsNavCatalog, filterSettingsNav } from '../../lib/settings-nav-search.js';
+import { useMobileNavDismiss } from '../mobile-nav-context.js';
 
 /**
  * Focused Settings rail. Each Settings section (Global · Prompts · Personas ·
@@ -19,6 +20,7 @@ import { appSettingsNavCatalog, filterSettingsNav } from '../../lib/settings-nav
  * `SETTINGS_SECTIONS` is the shared source of truth for labels/icons/descs.
  */
 export function SettingsPane() {
+  const dismissMobileNav = useMobileNavDismiss();
   const settingsTab = useUi((s) => s.settingsTab);
   const setSettingsAnchor = useUi((s) => s.setSettingsAnchor);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
@@ -48,7 +50,7 @@ export function SettingsPane() {
           data-testid={`settings-nav-${section.id}`}
           className={`settings-section-item ${settingsTab === section.id ? 'active' : ''}`}
           aria-current={settingsTab === section.id ? 'page' : undefined}
-          onClick={() => setSettingsAnchor(null)}
+          onClick={() => { setSettingsAnchor(null); dismissMobileNav?.(); }}
         >
           <Icon size={16} strokeWidth={1.7} aria-hidden="true" />
           <span className="settings-section-copy">
@@ -63,7 +65,7 @@ export function SettingsPane() {
                 to={getSettingsTabRoutePath(section.id, projectId)}
                 className="settings-subsection-item"
                 data-testid={`settings-nav-${section.id}-${sub.id}`}
-                onClick={() => setSettingsAnchor(sub.id)}
+                onClick={() => { setSettingsAnchor(sub.id); dismissMobileNav?.(); }}
               >
                 {sub.label}
               </Link>
@@ -76,7 +78,7 @@ export function SettingsPane() {
 
   return (
     <aside className="sidebar settings-pane">
-      <Link to={routeMemory.appRoutePath} className="settings-app-back">
+      <Link to={routeMemory.appRoutePath} className="settings-app-back" onClick={() => dismissMobileNav?.()}>
         <ArrowLeft size={16} strokeWidth={1.7} aria-hidden="true" />
         Back to app
       </Link>

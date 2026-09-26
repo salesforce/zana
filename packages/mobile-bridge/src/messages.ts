@@ -39,13 +39,14 @@ const bridgeRequestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('share'), payload: sharePayloadSchema }).strict()
 ]);
 
-export const NATIVE_SCREENS = ['device-settings'] as const;
+export const NATIVE_SCREENS = ['device-settings', 'connection-menu'] as const;
 export const nativeScreenSchema = z.enum(NATIVE_SCREENS);
 export type NativeScreen = z.infer<typeof nativeScreenSchema>;
 
 export const pageToShellMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('auth-required') }).strict(),
   z.object({ type: z.literal('ready'), path: z.string() }).strict(),
+  z.object({ type: z.literal('shell-chrome'), visible: z.boolean() }).strict(),
   z
     .object({
       type: z.literal('title'),

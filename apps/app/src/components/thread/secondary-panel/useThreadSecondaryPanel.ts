@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { product } from '../../../lib/product-client.js';
+import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
 import { createSecondaryPanelCommands } from './threadSecondaryPanelLogic.js';
 import {
   applySecondaryPanelOpenWidth,
+  closeSecondaryPanel,
   hasStoredSecondaryPanel,
   persistSecondaryPanel,
   restoreSecondaryPanel,
@@ -45,21 +47,35 @@ export function useSecondaryPanel(
     getContainerWidthPx?: () => number;
   }
 ) {
+  const compact = useCompactLayout();
   const defaultOpen = options?.defaultOpen === true;
   const syncServer = options?.syncServer === true;
   const layoutRef = useRef({
+    compact,
     modal: options?.modal === true,
     getContainerWidthPx: options?.getContainerWidthPx
   });
   layoutRef.current = {
+    compact,
     modal: options?.modal === true,
     getContainerWidthPx: options?.getContainerWidthPx
   };
   const ownerRef = useRef({ id: ownerId });
   if (ownerRef.current.id !== ownerId) ownerRef.current = { id: ownerId };
-  const [state, setState] = useState<ThreadSecondaryPanelState>(() => (
-    restoreSecondaryPanel(ownerId, { defaultOpen })
-  ));
+  const [state, setState] = useState<ThreadSecondaryPanelState>(() => {
+    const restored = restoreSecondaryPanel(ownerId, { defaultOpen });
+    return compact ? closeSecondaryPanel(restored) : restored;
+  });
+  const applyRemoteTabs = useCallback((tabs: ThreadTab[]) => {
+    setState((current) => {
+      const next = applyContractTabs(current, tabs);
+      // Remote tabs must not take over the phone's conversation surface.
+      return layoutRef.current.compact ? { ...next, isOpen: current.isOpen } : next;
+    });
+  }, []);
+  useEffect(() => {
+    if (compact) setState((current) => closeSecondaryPanel(current));
+  }, [compact]);
   const [hydratedOwner, setHydratedOwner] = useState<{ id: string | undefined } | null>(null);
   const serverHydrated = !syncServer || hydratedOwner === ownerRef.current;
   const revisionRef = useRef(0);
@@ -89,7 +105,8 @@ export function useSecondaryPanel(
     serverTabsRef.current = null;
     localVersionRef.current = 0;
     savedVersionRef.current = 0;
-    const next = restoreSecondaryPanel(ownerId, { defaultOpen });
+    const restored = restoreSecondaryPanel(ownerId, { defaultOpen });
+    const next = layoutRef.current.compact ? closeSecondaryPanel(restored) : restored;
     setState((current) => (secondaryPanelStatesEqual(current, next) ? current : next));
   }, [defaultOpen, ownerId]);
 
@@ -110,7 +127,7 @@ export function useSecondaryPanel(
         revisionRef.current = revisionFromTabsResponse(body);
         serverTabsRef.current = tabsSignature(body.tabs);
         if (!hasLocalTabs && body.tabs.length > 0 && localVersionRef.current === initialVersion) {
-          setState((current) => applyContractTabs(current, body.tabs));
+          applyRemoteTabs(body.tabs);
         }
       } catch {
         /* stay local */
@@ -122,7 +139,7 @@ export function useSecondaryPanel(
     return () => {
       cancelled = true;
     };
-  }, [ownerId, syncServer]);
+  }, [applyRemoteTabs, ownerId, syncServer]);
 
   useEffect(() => {
     if (!ownerId) return;
@@ -203,9 +220,9 @@ export function useSecondaryPanel(
       revisionRef.current = payload.revision;
       serverTabsRef.current = tabsSignature(payload.tabs);
       if (localVersionRef.current > savedVersionRef.current) return;
-      setState((current) => applyContractTabs(current, payload.tabs));
+      applyRemoteTabs(payload.tabs);
     });
-  }, [ownerId, syncServer]);
+  }, [applyRemoteTabs, ownerId, syncServer]);
 
   const update = useCallback((recipe: (current: ThreadSecondaryPanelState) => ThreadSecondaryPanelState) => {
     setState((current) => {

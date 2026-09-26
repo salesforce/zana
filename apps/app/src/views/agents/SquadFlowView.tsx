@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { hasDesktopBridge } from '@/lib/app-surface';
 import { ChevronRight, GitPullRequest, Hash, Workflow } from 'lucide-react';
 import type { ExecutionBoardProjection, SquadFlowGraph, SquadFlowNode } from '@zana-ai/zcc-domain/product';
 import {
@@ -737,6 +738,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
 
   useEffect(() => {
     let cancelled = false;
+    if (!hasDesktopBridge()) return;
     const refresh = () => {
       const targets = projectId ? [projectId] : projects.map((project) => project.id);
       // allSettled: one project's rejection must not blank out every other

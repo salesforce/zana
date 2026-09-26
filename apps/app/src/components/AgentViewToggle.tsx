@@ -1,6 +1,7 @@
 import { Calendar, LayoutGrid, List, Workflow } from 'lucide-react';
 import { useData, useUi, useRunningSchedulerCount } from '../store.js';
 import type { AgentsBoardView } from '../store.js';
+import { useCompactLayout } from '../hooks/useCompactLayout.js';
 
 /**
  * Segmented kanban/list switch for the Agents boards. Flips the single global
@@ -15,13 +16,20 @@ const OPTIONS: Array<{ view: AgentsBoardView; icon: typeof LayoutGrid; label: st
   { view: 'flow', icon: Workflow, label: 'Flow' }
 ];
 
+/** Mobile has two views; keep a desktop Flow preference intact when resizing. */
+export function useAgentsBoardView() {
+  const preferred = useUi((s) => s.agentsBoardView);
+  const compact = useCompactLayout();
+  return { view: compact && preferred === 'flow' ? 'board' : preferred, compact };
+}
+
 export function AgentViewToggle() {
-  const view = useUi((s) => s.agentsBoardView);
+  const { view, compact } = useAgentsBoardView();
   const setView = useUi((s) => s.setAgentsBoardView);
 
   return (
     <div className="agents-view-toggle" role="group" aria-label="Agents view">
-      {OPTIONS.map(({ view: v, icon: Icon, label }) => (
+      {OPTIONS.filter((option) => !compact || option.view !== 'flow').map(({ view: v, icon: Icon, label }) => (
         <button
           key={v}
           type="button"

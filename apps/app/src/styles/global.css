@@ -36211,7 +36211,6 @@ textarea.thread-command-editor {
     inset: 0 0 0 auto;
     width: min(var(--thread-secondary-width, 22rem), 70%);
     z-index: 6;
-    background: var(--bg, var(--surface, #111));
     box-shadow: -8px 0 24px rgb(0 0 0 / 0.2);
   }
 }
@@ -36225,7 +36224,7 @@ textarea.thread-command-editor {
   min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--border);
-  background: var(--bg, inherit);
+  background: var(--bg-panel);
 }
 
 .thread-detail-view.is-secondary-maximized .thread-secondary-panel {

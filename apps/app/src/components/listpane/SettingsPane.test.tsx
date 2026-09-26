@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
+  dismiss: null as (() => void) | null,
   ui: {
     settingsTab: 'global',
     setSettingsAnchor: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('../../hooks/useAppSettingsRouteMemory.js', () => ({
   useAppSettingsRouteMemory: () => ({ appRoutePath: '/inbox' })
 }));
 vi.mock('../SidebarResizer.js', () => ({ SidebarResizer: () => null }));
+vi.mock('../mobile-nav-context.js', () => ({ useMobileNavDismiss: () => h.dismiss }));
 
 import { SettingsPane } from './SettingsPane.js';
 
@@ -33,6 +35,7 @@ function mount() {
 }
 
 beforeEach(() => {
+  h.dismiss = null;
   h.ui.settingsTab = 'global';
   h.ui.selectedProjectId = 'selected';
   h.ui.focusedProjectId = null;
@@ -41,6 +44,19 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('focused Settings navigation', () => {
+  it('dismisses the mobile drawer even when the selected section or anchor keeps the same route', () => {
+    h.dismiss = vi.fn();
+    mount();
+    fireEvent.click(screen.getByRole('link', { name: 'Preferences' }));
+    expect(h.dismiss).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search settings' }), { target: { value: 'dark' } });
+    fireEvent.click(screen.getByRole('link', { name: 'Appearance' }));
+    expect(h.dismiss).toHaveBeenCalledTimes(2);
+    expect(h.ui.setSettingsAnchor).toHaveBeenLastCalledWith('appearance');
+    fireEvent.click(screen.getByRole('link', { name: 'Back to app' }));
+    expect(h.dismiss).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId('location').textContent).toBe('/inbox');
+  });
   it('announces the current page, keeps other sections reachable, and returns to the prior app route', () => {
     mount();
     expect(screen.getByRole('link', { name: 'Preferences' }).getAttribute('aria-current')).toBe('page');

@@ -23,7 +23,8 @@ vi.mock('../../plugins/plugin-slots.js', () => ({
   listNewThreadPanelActions: () => emptyActions
 }));
 vi.mock('../../lib/app-surface.js', () => ({
-  hasDesktopBridge: () => desktop.api !== null
+  hasDesktopBridge: () => desktop.api !== null,
+  getAppSurface: () => 'desktop'
 }));
 
 import { pluginPanelBrowserOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';

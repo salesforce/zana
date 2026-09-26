@@ -8,6 +8,7 @@ import {
   type ThreadSecondaryPanelState
 } from './threadSecondaryPanelState.js';
 import { startColumnResize } from './threadSecondaryPanelLogic.js';
+import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
 
 export function ThreadSecondaryPanel({
   state,
@@ -42,6 +43,7 @@ export function ThreadSecondaryPanel({
   onHide: () => void;
   onResize: (widthPx: number, containerWidthPx: number) => void;
 }) {
+  const compact = useCompactLayout();
   const panelRef = useRef<HTMLElement>(null);
   const activeTabRef = useRef<HTMLSpanElement>(null);
   const pin = activePinnedView(state);
@@ -159,11 +161,11 @@ export function ThreadSecondaryPanel({
           <button
             type="button"
             className="thread-secondary-pin"
-            aria-label="Hide right panel"
+            aria-label={compact ? 'Close panel' : 'Hide right panel'}
             data-testid="thread-secondary-hide"
             onClick={onHide}
           >
-            <PanelRight size={15} />
+            {compact ? <X size={18} /> : <PanelRight size={15} />}
           </button>
         </div>
       </div>

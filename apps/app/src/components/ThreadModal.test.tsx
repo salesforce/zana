@@ -93,8 +93,8 @@ describe('ThreadModal', () => {
     expect(inspect).not.toContain('getThreadRoutePath');
     expect(app).toContain('<ThreadModalHost />');
     expect(app).toContain('<ThreadModal threadId={threadModal.threadId} onClose={close} />');
-    expect(app).toContain('if (classicSessionViewEnabled || !threadModal) return null');
-    expect(app).toContain('if (classicSessionViewEnabled || !agentModal) return null');
+    expect(app).toContain('if (fullPageView || !threadModal) return null');
+    expect(app).toContain('if (fullPageView || !agentModal) return null');
     expect(app).toContain('inspectRouteProjectId(agentModal.projectId)');
     expect(app).toContain('inspectRouteProjectId(null)');
     expect(app).not.toContain('getAgentSessionRoutePath(agentModal.sessionId, agentModal.projectId)');

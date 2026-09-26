@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { PhoneTab } from './PhoneSettingsView.js';
@@ -24,6 +24,15 @@ vi.mock('../../lib/product-client.js', () => ({
 // happy-dom has no canvas — stub the QR renderer to a deterministic data URL.
 vi.mock('qrcode', () => ({
   default: { toDataURL: vi.fn(async () => 'data:image/png;base64,QRSTUB') }
+}));
+
+vi.mock('../../components/AgentLauncher.js', () => ({
+  AgentLauncher: ({ initialPrompt, onClose }: { initialPrompt: string; onClose(): void }) => (
+    <div role="dialog" aria-label="New agent">
+      <textarea aria-label="Message" defaultValue={initialPrompt} />
+      <button onClick={onClose}>Close composer</button>
+    </div>
+  )
 }));
 
 const baseConfig = (patch: Partial<AppConfig> = {}): AppConfig => ({
@@ -63,6 +72,41 @@ afterEach(() => {
 });
 
 describe('PhoneTab', () => {
+  it('explains installation and phone setup before phone access is enabled', async () => {
+    await act(async () => {
+      render(<PhoneTab config={baseConfig()} onConfigDraft={vi.fn()} onUpdate={vi.fn()} />);
+    });
+    expect(within(screen.getByRole('list', { name: 'Mobile installation steps' })).getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.getByText(/Developer Mode, turn it on, restart/)).toBeTruthy();
+    expect(screen.getByText(/enable USB debugging/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Install with AI' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(mobile.pair).not.toHaveBeenCalled();
+  });
+
+  it('opens an editable installation prompt without enabling access or starting pairing', async () => {
+    const onUpdate = vi.fn();
+    await act(async () => {
+      render(<PhoneTab config={baseConfig()} onConfigDraft={vi.fn()} onUpdate={onUpdate} />);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Install with AI' }));
+    const input = within(screen.getByRole('dialog', { name: 'New agent' })).getByLabelText('Message') as HTMLTextAreaElement;
+    expect(input.value).toContain('Install or update the Zana mobile app on my connected physical phone');
+    expect(input.value).toContain('If the target is ambiguous, ask me which phone');
+    expect(input.value).toContain('docs/mobile-app.md');
+    expect(input.value).toContain('existing Apple signing account');
+    expect(input.value).toContain('Preserve existing app data');
+    expect(input.value).toContain('Verify the installed app launches');
+    fireEvent.change(input, { target: { value: 'Install Zana on my Android phone.' } });
+    expect(input.value).toBe('Install Zana on my Android phone.');
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(mobile.pair).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Close composer' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Install with AI' }));
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).value).toContain('Install or update the Zana mobile app');
+  });
+
   it('persists the enable toggle through onUpdate', async () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     await act(async () => {

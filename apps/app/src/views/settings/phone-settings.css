@@ -1,0 +1,44 @@
+.phone-install-guide {
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.phone-install-steps {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding-left: 22px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.phone-install-steps li::marker {
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.phone-install-steps strong {
+  color: var(--text-primary);
+}
+
+.phone-install-device-help {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.phone-install-device-help summary {
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.phone-install-device-help summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.phone-install-guide .settings-action-row {
+  flex-wrap: wrap;
+}

@@ -28,6 +28,7 @@ import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { ProjectsList } from './listpane/ProjectsList.js';
+import { useMobileNavDismiss } from './mobile-nav-context.js';
 import { PINNED_SIDEBAR_NAV_IDS, PROJECTS_SECTION_SORT_ID } from './sidebarNavOrder.js';
 import {
   GLOBAL_NAV_ORDER_KEY
@@ -81,7 +82,9 @@ const NON_SPLITTABLE_NAV_IDS = new Set<string>([
 export function Sidebar() {
   const route = useRouteState();
   const { nav, pluginPanelPath } = route;
-  const collapsed = useUi((s) => s.sidebarCollapsed);
+  const savedCollapsed = useUi((s) => s.sidebarCollapsed);
+  const mobile = !!useMobileNavDismiss();
+  const collapsed = savedCollapsed && !mobile;
   const unreadInbox = useUnreadInboxCount();
   const enabledSchedules = useEnabledSchedulerCount();
   const runningSchedules = useRunningSchedulerCount();
@@ -122,7 +125,7 @@ export function Sidebar() {
       icon: resolveIcon(module.icon)
     }));
 
-  const toRow = (item: NavEntry): SidebarRailItem => {
+  const toRow = (item: NavEntry, mobileGroup?: 'featured' | 'tools'): SidebarRailItem => {
     const Icon = item.icon;
     const showBadge = item.id === 'inbox' && unreadInbox > 0;
     // Scheduler badge only appears when a scheduled agent is running right now;
@@ -186,6 +189,7 @@ export function Sidebar() {
       kind: 'row',
       id: item.id,
       label: item.label,
+      mobileGroup,
       icon: <Icon size={16} strokeWidth={1.7} aria-hidden="true" />,
       to: item.id === 'extensions' ? routeMemory.toolsRoutePath : getNavRoutePath(item.id),
       testId: `nav-${item.id}`,
@@ -205,13 +209,13 @@ export function Sidebar() {
     { kind: 'row', id: 'conversation-history', label: 'History', icon: <History size={16} />,
       to: '#', testId: 'nav-conversation-history', active: false,
       onClick: (event) => { event.preventDefault(); useConversationHistory.getState().open(undefined); } },
-    toRow(homeNavItem),
+    toRow(homeNavItem, 'featured'),
     toRow(inboxNavItem),
-    ...extraItems.map(toRow),
-    toRow(agentsNavItem),
-    toRow(schedulerNavItem),
-    toRow(extensionsNavItem),
-    ...moduleNavItems.map(toRow),
+    ...extraItems.map((item) => toRow(item, 'tools')),
+    toRow(agentsNavItem, 'featured'),
+    toRow(schedulerNavItem, 'tools'),
+    toRow(extensionsNavItem, 'tools'),
+    ...moduleNavItems.map((item) => toRow(item, 'tools')),
     ...pluginPanels.map((panel): SidebarRailItem => {
       const path = panel.path ?? panel.id;
       const Icon = resolveIcon(panel.icon);
@@ -222,6 +226,7 @@ export function Sidebar() {
         kind: 'row',
         id,
         label: panel.title,
+        mobileGroup: 'tools',
         icon: <Icon size={16} strokeWidth={1.7} aria-hidden="true" />,
         to: hrefForPluginNavPanel(panel.pluginId, path),
         testId: `nav-${id}`,

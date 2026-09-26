@@ -5,13 +5,19 @@ import { chromium, type Page } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 
-test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({ initialConfig: { sponsorPromptDismissed: true, agentsBoardView: 'flow', classicSessionViewEnabled: false }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
 test.beforeEach(async ({ home }) => {
   const project = join(home, 'responsive-project');
   mkdirSync(join(project, 'docs'), { recursive: true });
   mkdirSync(join(home, '.zcc', 'inbox'), { recursive: true });
   mkdirSync(join(home, '.zcc', 'saved'), { recursive: true });
+  writeFileSync(join(project, 'mobile-agent.cjs'), `#!${process.execPath}
+if (process.argv.includes('--version')) { console.log('2.1.220 (Claude Code)'); process.exit(0); }
+process.stdout.write('\\x1b]2;✳ Mobile terminal\\x07MOBILE_TERMINAL_READY\\r\\n');
+process.stdin.resume();
+setInterval(() => {}, 1000);
+`, { mode: 0o755 });
   const comments = 'A report with a long reference: ' + 'mobile-layout-'.repeat(16) +
     '\n\n' + Array.from({ length: 18 }, (_, i) => `Paragraph ${i + 1}: This report should remain readable on a phone, with all actions reachable.`).join('\n\n');
   writeFileSync(join(project, 'docs', 'report.md'), '# Responsive report\n\n' + comments);
@@ -35,7 +41,7 @@ async function capture(page: Page) {
   return page.locator('.shell-main').evaluate((root) => {
     const viewport = innerWidth;
     return [...root.querySelectorAll<HTMLElement>('*')].filter((el) => {
-      if (el.closest('.aurora-grid, .zcc-kanban')) return false;
+      if (el.closest('.aurora-grid, .zcc-kanban, .mobile-agent-lanes')) return false;
       const box = el.getBoundingClientRect();
       const style = getComputedStyle(el);
       return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' &&
@@ -48,16 +54,36 @@ async function capture(page: Page) {
 
 test('Main views and populated Inbox fit phone and tablet screens', async ({ app }, testInfo) => {
   test.setTimeout(240_000);
-  await app.window.evaluate(async () => {
+  const seed = await app.window.evaluate(async () => {
     const response = await fetch('/api/v1/threads', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ projectId: 'responsive-project', providerId: 'fake', input: 'Responsive agent delay:500' })
+      body: JSON.stringify({ projectId: 'responsive-project', providerId: 'fake', input: 'Responsive agent 1 delay:500' })
     });
     if (!response.ok) throw new Error(await response.text());
+    return (await response.json()).thread as { id: string; environmentId: string };
+  });
+  await expect.poll(() => app.window.evaluate(async (id) => {
+    return (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status;
+  }, seed.id)).toBe('idle');
+  await app.window.evaluate(async (environmentId) => {
+    for (let i = 1; i < 8; i++) {
+      const response = await fetch('/api/v1/threads', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: 'responsive-project', providerId: 'fake', environment: { kind: 'reuse', environmentId }, input: `Responsive agent ${i + 1} reviewing a longer task title on a small phone screen delay:500` })
+      });
+      if (!response.ok) throw new Error(await response.text());
+    }
     for (const name of ['Responsive daily review', 'Responsive weekly summary']) {
       const result = await window.cc.scheduler.create({ name, projectId: 'responsive-project', profile: 'shell', every: '1d', enabled: false, inboxLevel: 'silent' });
       if (!result.ok) throw new Error(result.message);
     }
+  }, seed.environmentId);
+  await app.window.evaluate(async () => {
+    const response = await fetch('/api/v1/terminals', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'responsive-project', profile: 'claude', title: 'Mobile terminal', command: './mobile-agent.cjs', cols: 80, rows: 24 })
+    });
+    if (!response.ok) throw new Error(await response.text());
   });
   const reservation = createServer();
   await new Promise<void>((r) => reservation.listen(0, '127.0.0.1', r));
@@ -144,20 +170,92 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
           expect(await page.locator('.inbox-list-pane .list-body').evaluate(el => el.scrollTop)).toBeCloseTo(listScroll, 0);
         }
         if (name === 'agents') {
+          await expect(page.getByRole('button', { name: 'Flow view', exact: true })).toHaveCount(0);
+          if (width === 320) {
+            await expect(page.getByRole('button', { name: 'Board view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+          }
           await page.getByRole('button', { name: 'List view', exact: true }).click();
           await expect(page.locator('.agent-monitor-row').first()).toBeVisible();
           await page.screenshot({ path: testInfo.outputPath(`${width}-agents-list.png`) });
           audit[`${width}-agents-list`] = await capture(page);
-          const list = await page.locator('.agent-monitor-list').boundingBox();
-          const detail = await page.locator('.agent-monitor-main').boundingBox();
-          expect(detail!.width).toBeGreaterThanOrEqual(width - 32);
-          expect(detail!.y).toBeGreaterThanOrEqual(list!.y + list!.height - 1);
+          await expect(page.locator('.agent-monitor-main')).toHaveCount(0);
+          await expect(page.getByTestId('agent-monitor-thread')).toHaveCount(0);
+          await expect(page.getByTestId('agent-session-view')).toHaveCount(0);
+          const list = page.locator('.agent-monitor-list');
+          expect((await list.boundingBox())!.height).toBeGreaterThan(600);
+          const lastThread = list.locator('[data-kind="thread"]').last();
+          await lastThread.scrollIntoViewIfNeeded();
+          const listScroll = await list.evaluate(el => el.scrollTop);
+          await lastThread.click();
+          await expect(list).toBeHidden();
+          await expect(page.getByTestId('agent-monitor-thread')).toBeVisible();
+          await expect(page.getByTestId('thread-timeline')).toContainText('Response to:');
+          expect((await page.locator('.agent-monitor-main').boundingBox())!.width).toBeGreaterThanOrEqual(width - 32);
+          await page.screenshot({ path: testInfo.outputPath(`${width}-agents-list-thread.png`) });
+          await page.getByRole('button', { name: 'Back to agents', exact: true }).click();
+          await expect(list).toBeVisible();
+          await expect(page.getByTestId('agent-monitor-thread')).toHaveCount(0);
+          expect(await list.evaluate(el => el.scrollTop)).toBeCloseTo(listScroll, 0);
+          const terminalRow = list.locator('.agent-monitor-row').filter({ hasText: 'Mobile terminal' });
+          await expect(terminalRow).toHaveCount(1);
+          await expect(terminalRow).toBeVisible();
+          await terminalRow.click();
+          await expect(list).toBeHidden();
+          await expect(page.getByTestId('agent-session-view')).toBeVisible();
+          await expect(page.locator('#cc-terminal-anchor-agent-monitor .xterm')).toBeVisible();
+          await page.screenshot({ path: testInfo.outputPath(`${width}-agents-list-terminal.png`) });
+          await page.getByRole('button', { name: 'Back to agents', exact: true }).click();
+          await expect(page.locator('.agent-monitor-main')).toHaveCount(0);
+          await expect(list).toBeVisible();
           await page.getByRole('button', { name: 'Board view', exact: true }).click();
-          const board = page.locator('.zcc-kanban');
+          const board = page.getByTestId('mobile-agent-board');
           await expect(board).toBeVisible();
-          await board.hover();
-          await page.mouse.wheel(600, 0);
-          await expect.poll(() => board.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+          await expect(page.locator('.zcc-kanban')).toHaveCount(0);
+          await expect(board.getByRole('tabpanel')).toHaveCount(1);
+          await expect(board.locator('.agent-card').first()).toBeVisible();
+          const card = board.locator('.agent-card').first();
+          expect((await card.boundingBox())!.width).toBeGreaterThanOrEqual(width - 32);
+          await expect(card).toHaveAttribute('draggable', 'false');
+          const populatedTab = await board.getByRole('tab', { selected: true }).getAttribute('id');
+          for (const tab of await board.getByRole('tab').all()) {
+            await tab.scrollIntoViewIfNeeded();
+            expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+            await tab.click();
+            await expect(tab).toHaveAttribute('aria-selected', 'true');
+            await expect(board.getByRole('tabpanel')).toHaveCount(1);
+          }
+          await board.getByRole('tab', { name: /^Needs you/ }).click();
+          await expect(board.getByText('No agents in this column')).toBeVisible();
+          await page.locator(`[id="${populatedTab}"]`).click();
+          await page.screenshot({ path: testInfo.outputPath(`${width}-agents-board.png`) });
+          expect.soft(await capture(page), `${width}px agents board`).toEqual([]);
+          const panel = board.getByRole('tabpanel');
+          await panel.hover();
+          await page.mouse.wheel(0, 600);
+          await expect.poll(() => panel.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+          expect((await board.getByRole('tab', { selected: true }).boundingBox())!.y).toBeLessThan(300);
+          // Even when desktop prefers inspectors, mobile cards open the page.
+          for (const kind of ['thread', 'terminal'] as const) {
+            const agentCard = kind === 'thread'
+              ? board.locator('.agent-card[data-kind="thread"]').first()
+              : board.locator('.agent-card').filter({ hasText: 'Mobile terminal' });
+            for (const tab of await board.getByRole('tab').all()) {
+              await tab.click();
+              await expect(tab).toHaveAttribute('aria-selected', 'true');
+              if (await agentCard.count()) break;
+            }
+            await agentCard.click();
+            await expect(page).toHaveURL(kind === 'thread' ? /\/threads\/[^/]+$/ : /\/sessions\/[^/]+$/);
+            await expect(page.locator('.agent-terminal-modal, .modal-backdrop')).toHaveCount(0);
+            const detail = page.getByTestId(kind === 'thread' ? 'thread-detail' : 'agent-session-view');
+            await expect(detail).toBeVisible();
+            expect((await detail.boundingBox())!.width).toBeGreaterThanOrEqual(width - 32);
+            await expect(page.getByRole('button', { name: 'Full screen', exact: true })).toHaveCount(0);
+            await page.screenshot({ path: testInfo.outputPath(`${width}-agents-board-${kind}-page.png`) });
+            await page.goBack();
+            await expect(page).toHaveURL(serverUrl + '/agents');
+            await expect(board).toBeVisible();
+          }
         }
         if (name === 'scheduler') {
           await page.getByRole('region', { name: 'All schedules' }).scrollIntoViewIfNeeded();
@@ -171,6 +269,41 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
     await expect(page.locator('.app-shell')).toHaveAttribute('data-mobile', 'false');
     await expect(page.locator('.inbox-list-pane')).toBeVisible();
     await expect(page.locator('.inbox-view-detail')).toBeVisible();
+    await page.goto(serverUrl + '/agents');
+    await page.getByRole('button', { name: 'Board view', exact: true }).click();
+    await expect(page.locator('.zcc-kanban')).toBeVisible();
+    await expect(page.getByTestId('mobile-agent-board')).toHaveCount(0);
+    // Desktop keeps its inspector preference. Crossing the mobile breakpoint
+    // promotes an already-open inspector and clears it before returning.
+    for (const kind of ['thread', 'terminal'] as const) {
+      const card = kind === 'thread'
+        ? page.locator('.zcc-kanban .agent-card[data-kind="thread"]').first()
+        : page.locator('.zcc-kanban .agent-card').filter({ hasText: 'Mobile terminal' });
+      await card.click();
+      await expect(page.getByTestId(kind === 'thread' ? 'thread-modal' : 'agent-terminal-modal')).toBeVisible();
+      await expect(page).toHaveURL(serverUrl + '/agents');
+      await page.setViewportSize({ width: 390, height: 900 });
+      await expect(page).toHaveURL(kind === 'thread' ? /\/threads\/[^/]+$/ : /\/sessions\/[^/]+$/);
+      await expect(page.locator('.agent-terminal-modal, .modal-backdrop')).toHaveCount(0);
+      await page.goBack();
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await expect(page.locator('.zcc-kanban')).toBeVisible();
+      await expect(page.locator('.agent-terminal-modal')).toHaveCount(0);
+    }
+    await page.getByRole('button', { name: 'List view', exact: true }).click();
+    await expect(page.locator('.agent-monitor-list')).toBeVisible();
+    await expect(page.locator('.agent-monitor-main')).toBeVisible();
+    const desktopList = await page.locator('.agent-monitor-list').boundingBox();
+    const desktopDetail = await page.locator('.agent-monitor-main').boundingBox();
+    expect(desktopDetail!.x).toBeGreaterThanOrEqual(desktopList!.x + desktopList!.width - 1);
+    await expect(page.getByRole('button', { name: 'Back to agents', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Flow view', exact: true }).click();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await expect(page.getByRole('button', { name: 'Flow view', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('mobile-agent-board')).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expect(page.getByRole('button', { name: 'Flow view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.squad-flow, .squad-flow-empty').first()).toBeVisible();
     writeFileSync(testInfo.outputPath('responsive-audit.json'), JSON.stringify(audit, null, 2));
   } finally {
     await browser.close();

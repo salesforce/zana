@@ -7,7 +7,7 @@ export const DEFAULT_VOICE_MODEL = 'gpt-transcribe';
 export const VOICE_COMMAND_TIMEOUT_MS = 10_000;
 export const VOICE_RPC_TIMEOUT_MS = 25_000;
 export const CODEX_VOICE_LOGIN_MESSAGE =
-  'Sign in with Codex (`codex login`) or set OPENAI_API_KEY.';
+  'Voice input needs a Codex login on the connected computer. Sign in there, then try again.';
 
 export class VoiceTranscriptionError extends Error {
   constructor(
@@ -25,6 +25,7 @@ function hostErrorStatus(code: string): number {
     return 501;
   }
   if (code === 'invalid_request') return 400;
+  if (code === 'codex_keyring_unavailable') return 503;
   if (code === 'codex_request_timeout') return 504;
   if (code === 'codex_rate_limited' || code === 'codex_service_unavailable') return 503;
   return 502;

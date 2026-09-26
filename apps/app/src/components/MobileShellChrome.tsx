@@ -1,8 +1,36 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
+import { Ellipsis, X } from 'lucide-react';
+import { SHELL_MENU_BRIDGE_VERSION } from '@zana-ai/zcc-mobile-bridge';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { getNativeShell, installNativeShellEvents } from '../lib/native-shell.js';
+import zanaIcon from '../assets/zana-favicon.svg';
+import { MobileNavDismiss } from './mobile-nav-context.js';
 import '../styles/mobile-shell.css';
+
+export function MobileConnectionMenu() {
+  const shell = getNativeShell();
+  // Keep v1/v2 phones and ordinary mobile browsers on their existing controls.
+  const supported = !!shell && shell.bridgeVersion >= SHELL_MENU_BRIDGE_VERSION
+    && shell.capabilities.includes('open-native');
+  useEffect(() => {
+    if (!supported || !shell) return;
+    shell.post({ type: 'shell-chrome', visible: true });
+    return () => shell.post({ type: 'shell-chrome', visible: false });
+  }, [shell, supported]);
+  if (!supported) return null;
+  return (
+    <button
+      type="button"
+      className="mobile-connection-menu"
+      aria-label="Connection options"
+      title="Connection options"
+      onClick={() => shell.post({ type: 'open-native', screen: 'connection-menu' })}
+    >
+      <Ellipsis size={20} aria-hidden="true" />
+    </button>
+  );
+}
 
 export function useMobileNavigation() {
   const location = useLocation();
@@ -34,11 +62,13 @@ export function MobileNavDrawer({
   enabled,
   open,
   onClose,
+  headerStart,
   children
 }: {
   enabled: boolean;
   open: boolean;
   onClose(): void;
+  headerStart?: ReactNode;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -51,7 +81,16 @@ export function MobileNavDrawer({
         ...(panel?.querySelectorAll<HTMLElement>(
           'button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]'
         ) ?? [])
-      ].filter((el) => !el.closest('[hidden]'));
+      ].filter((el) => {
+        if (el.closest('[hidden]')) return false;
+        // Mobile also hides desktop-only controls through CSS. Exclude their
+        // ancestors too so tabbing wraps to an actually visible destination.
+        for (let node: HTMLElement | null = el; node && node !== panel; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+        }
+        return true;
+      });
     (focusable()[0] ?? panel)?.focus();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -100,10 +139,13 @@ export function MobileNavDrawer({
         aria-label="Navigation"
         tabIndex={-1}
       >
-        <button type="button" className="mobile-nav-close" onClick={onClose}>
-          Close navigation
-        </button>
-        {children}
+        <header className="mobile-nav-header">
+          {headerStart ?? <span className="mobile-nav-brand"><img src={zanaIcon} width={28} height={28} alt="" draggable={false} />Zana</span>}
+          <button type="button" className="mobile-nav-close" aria-label="Close navigation" onClick={onClose}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </header>
+        <MobileNavDismiss.Provider value={onClose}>{children}</MobileNavDismiss.Provider>
       </div>
     </>
   );

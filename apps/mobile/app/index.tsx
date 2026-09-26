@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Linking,
   Platform,
+  Pressable,
   Share,
   Text,
   View
@@ -27,6 +28,7 @@ import { PairingRequired } from '../src/lib/client';
 import { externalUrl, isSameServer, safePath } from '../src/lib/urls';
 import { resolveShellLoadPath, shellPathFromUrl } from '../src/lib/shell-path';
 import { handleBridgeMessage } from '../src/lib/bridge-handler';
+import { showConnectionMenu } from '../src/lib/connection-menu';
 
 export default function Home() {
   const { state, ready, error: storageError, update } = useProfiles();
@@ -51,6 +53,8 @@ export default function Home() {
   const [error, setError] = useState('');
   const [authError, setAuthError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [pageHasMenu, setPageHasMenu] = useState(false);
+  useEffect(() => setPageHasMenu(false), [profile?.id, profile?.serverUrl, params.path, revision]);
   const unknownServer =
     !!params.server && !state.profiles.some((p) => p.serverUrl === params.server);
   useEffect(() => {
@@ -137,47 +141,52 @@ export default function Home() {
     requestedPath: params.path
   });
   const sourceUrl = profile.serverUrl + safePath(loadPath);
+  const openMenu = () =>
+    showConnectionMenu({
+      label: profile.label,
+      share: () => {
+        const url = currentUrl.current || sourceUrl;
+        void Share.share({ message: url, ...(Platform.OS === 'ios' ? { url } : {}) }).catch(() => {});
+      },
+      reload: () => {
+        setLoading(true);
+        reconnect();
+      },
+      settings: () => router.push('/settings')
+    });
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="height">
       <SafeAreaView
         style={{ flex: 1, backgroundColor: c.background }}
         edges={['top', 'left', 'right', 'bottom']}
       >
-        <View
-          style={{
-            minHeight: 52,
-            paddingHorizontal: 12,
-            flexDirection: 'row',
-            gap: 10,
-            alignItems: 'center'
-          }}
-        >
-          <Text
-            numberOfLines={1}
-            style={{ flex: 1, color: c.text, fontWeight: '600', fontSize: 16 }}
+        {/* Older pages and connection failures still need a native way out. */}
+        {!pageHasMenu || error || !sessionReady ? (
+          <View
+            style={{
+              minHeight: 44,
+              paddingHorizontal: 12,
+              flexDirection: 'row',
+              gap: 10,
+              alignItems: 'center'
+            }}
           >
-            {profile.label}
-          </Text>
-          <Action
-            secondary
-            title="Share"
-            onPress={() => {
-              void Share.share({
-                message: currentUrl.current || sourceUrl,
-                ...(Platform.OS === 'ios' ? { url: currentUrl.current || sourceUrl } : {})
-              }).catch(() => {});
-            }}
-          />
-          <Action
-            secondary
-            title="Reload"
-            onPress={() => {
-              setLoading(true);
-              reconnect();
-            }}
-          />
-          <Action secondary title="This device" onPress={() => router.push('/settings')} />
-        </View>
+            <Text
+              numberOfLines={1}
+              style={{ flex: 1, color: c.text, fontWeight: '600', fontSize: 16 }}
+            >
+              {profile.label}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Connection options"
+              onPress={openMenu}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Text style={{ color: c.text, fontSize: 28 }} aria-hidden>⋯</Text>
+            </Pressable>
+          </View>
+        ) : null}
         {error ? (
           <Screen>
             <Label>{error}</Label>
@@ -245,6 +254,8 @@ export default function Home() {
                   {
                     inject: (script) => web.current?.injectJavaScript(script),
                     ready: () => setLoading(false),
+                    openMenu,
+                    shellChrome: setPageHasMenu,
                     openSettings: () => router.push('/settings'),
                     authRequired: () => {
                       setAuthError(true);
@@ -285,6 +296,7 @@ export default function Home() {
                   }
                 );
               }}
+              onLoadStart={() => setPageHasMenu(false)}
               onLoadEnd={() => setLoading(false)}
               onError={(event) => setError(event.nativeEvent.description || 'Zana is unreachable.')}
               onHttpError={(event) => {

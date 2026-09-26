@@ -385,9 +385,9 @@ function httpProduct(): Pick<
       verifyTmux: async () => ({ installed: false, installHint: 'tmux requires the desktop app' }),
       listTmuxRestoreCandidates: async () => [],
       listRememberedSessions: async () => [],
-      list: async () => {
+      list: async (projectId: string) => {
         const body = await apiJson<{ sessions: TerminalSession[] }>('/terminals');
-        return body.sessions;
+        return body.sessions.filter((session) => session.projectId === projectId);
       },
       restore: async () => ({
         ok: false,
@@ -1114,7 +1114,8 @@ function httpProduct(): Pick<
           const bytes = new Uint8Array(binary.length);
           for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
           const form = new FormData();
-          form.set('file', new Blob([bytes], { type: mimeType }), 'recording.webm');
+          const extension = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+          form.set('file', new Blob([bytes], { type: mimeType }), `recording.${extension}`);
           const response = await fetchWithAppSurface('/api/v1/system/voice-transcription', {
             method: 'POST',
             body: form

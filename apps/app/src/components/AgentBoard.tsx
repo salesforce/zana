@@ -17,6 +17,8 @@ import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { shortRunId } from '../lib/executionIdentity.js';
 import { boardDropAction, boardItemKey } from '../lib/agent-board-moves.js';
 import { agentBoardMoves, useAgentBoardMoves } from '../stores/agent-board-moves.js';
+import { useCompactLayout } from '../hooks/useCompactLayout.js';
+import { MobileAgentBoard } from './MobileAgentBoard.js';
 import {
   agentCardRuntimeLabel,
   agentFleetItem,
@@ -720,6 +722,7 @@ interface AgentBoardLanesProps {
  * tick doesn't rebuild the world (render-storm guard).
  */
 export function AgentBoardLanes({ cards, activeId, onInspect, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
+  const compact = useCompactLayout();
   const personas = usePersonas((s) => s.personas);
   // Idle-attention sensitivity (mirror of AppConfig, hydrated in the data
   // store): governs which triaged idle agents the "Needs you" lane pulls up.
@@ -867,9 +870,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     setDropLane(null);
   };
   const dragProps = (item: FleetItem, lane: LaneKey) => ({
-    draggable: boardDropAction(item, lane, 'done') !== null && !moving.has(boardItemKey(item)),
+    draggable: !compact && boardDropAction(item, lane, 'done') !== null && !moving.has(boardItemKey(item)),
     onDragStart: (event: DragEvent<HTMLButtonElement>) => {
-      if (!boardDropAction(item, lane, 'done') || moving.has(boardItemKey(item))) {
+      if (compact || !boardDropAction(item, lane, 'done') || moving.has(boardItemKey(item))) {
         event.preventDefault();
         return;
       }
@@ -1310,9 +1313,31 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     return renderCard(item.card, laneKey, grouped);
   };
 
+  const renderLane = (key: string) => {
+    const lane = lanes.find((candidate) => candidate.key === key);
+    if (!lane) return null;
+    if (lane.cards.length === 0) return <div className="agents-lane-empty" aria-hidden="true" />;
+    if (!showProject) return lane.cards.map((item) => renderItem(item, lane.key));
+    return groupFleetByProject(lane.cards).map((group) => (
+      <div key={group.projectId} className="agents-lane-group">
+        <div className="agents-lane-group-head" title={group.projectName}>
+          <span className="agents-lane-group-dot" style={group.projectColor ? { background: group.projectColor } : undefined} aria-hidden="true" />
+          <span className="agents-lane-group-name">{group.projectName}</span>
+          <span className="agents-lane-group-count">{group.cards.length}</span>
+        </div>
+        {group.cards.map((item) => renderItem(item, lane.key, true))}
+      </div>
+    ));
+  };
+
   return (
     <>
-      <Kanban label="Agents board. Drag agents to Idle to stop, or Done to close after one minute. Drag empty space to pan; two-finger scroll also pans.">
+      {compact ? (
+        <MobileAgentBoard
+          lanes={lanes.map((lane) => ({ key: lane.key, label: lane.label, count: lane.cards.length, icon: <lane.icon size={16} /> }))}
+          renderLane={renderLane}
+        />
+      ) : <Kanban label="Agents board. Drag agents to Idle to stop, or Done to close after one minute. Drag empty space to pan; two-finger scroll also pans.">
         {lanes.map((lane) => {
           const Icon = lane.icon;
           return (
@@ -1354,30 +1379,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
                 });
               }}
             >
-              {lane.cards.length === 0 ? (
-                <div className="agents-lane-empty" aria-hidden="true" />
-              ) : showProject ? (
-                groupFleetByProject(lane.cards).map((group) => (
-                  <div key={group.projectId} className="agents-lane-group">
-                    <div className="agents-lane-group-head" title={group.projectName}>
-                      <span
-                        className="agents-lane-group-dot"
-                        style={group.projectColor ? { background: group.projectColor } : undefined}
-                        aria-hidden="true"
-                      />
-                      <span className="agents-lane-group-name">{group.projectName}</span>
-                      <span className="agents-lane-group-count">{group.cards.length}</span>
-                    </div>
-                    {group.cards.map((item) => renderItem(item, lane.key, true))}
-                  </div>
-                ))
-              ) : (
-                lane.cards.map((item) => renderItem(item, lane.key))
-              )}
+              {renderLane(lane.key)}
             </KanbanColumn>
           );
         })}
-      </Kanban>
+      </Kanban>}
       {menu && (
         <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} />
       )}

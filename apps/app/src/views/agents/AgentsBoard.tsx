@@ -19,7 +19,7 @@ import { useEnsureThreads } from '@/hooks/useEnsureThreads';
 import { threadIdFromPath } from '@/lib/route-paths';
 import { inspectAgentSession, inspectThread } from '@/lib/inspect-session';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
-import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
+import { AgentViewToggle, ScheduledColumnToggle, useAgentsBoardView } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
 import { AgentMonitor } from '@/components/AgentMonitor';
 import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
@@ -38,6 +38,7 @@ import { invokeAgentsBoardAction } from '@/plugins/plugin-agent-actions';
 import { listAgentsBoardActions, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { openScheduleFromAgents } from '@/components/scheduler/openScheduledLive';
 import { PaneEmptyState } from '@/components/PaneEmptyState';
+import { hasDesktopBridge } from '@/lib/app-surface';
 
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
@@ -121,7 +122,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const scheduledTasks = useScheduler((s) => s.tasks);
   const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
-  const boardView = useUi((s) => s.agentsBoardView);
+  const { view: boardView } = useAgentsBoardView();
   const threads = useThreads((s) => s.threads);
   useEnsureThreads();
   const location = useLocation();
@@ -158,6 +159,9 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   };
 
   useEffect(() => {
+    // Durable execution-board queries are currently an Electron capability.
+    // Browser/mobile fleet cards already come from the product HTTP stores.
+    if (!hasDesktopBridge()) return;
     let cancelled = false;
     // Single-flight guard: an interval tick that fires while the previous
     // refresh is still in flight is skipped rather than starting an

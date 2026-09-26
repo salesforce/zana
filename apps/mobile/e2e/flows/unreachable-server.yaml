@@ -3,7 +3,7 @@ name: Unreachable server is recoverable
 ---
 - launchApp
 - extendedWaitUntil:
-    visible: 'This device|Scan pairing QR'
+    visible: 'Connection options|Scan pairing QR'
     timeout: 30000
 - openLink:
     link: zana://connect

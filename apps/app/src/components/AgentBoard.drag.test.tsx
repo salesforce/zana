@@ -6,6 +6,8 @@ import type { AgentCard } from './AgentBoard.js';
 import type { ThreadListItem } from '../thread-store.js';
 
 const api = vi.hoisted(() => ({ write: vi.fn(), clearAgentBlocked: vi.fn(), stop: vi.fn(), archive: vi.fn(), close: vi.fn() }));
+const layout = vi.hoisted(() => ({ compact: false }));
+vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => layout.compact }));
 vi.mock('../lib/product-client.js', () => ({ product: {
   terminals: { write: api.write, clearAgentBlocked: api.clearAgentBlocked },
   threads: { stop: api.stop, archive: api.archive }
@@ -39,6 +41,7 @@ async function drop(title: string, to: string) {
 }
 
 beforeEach(() => {
+  layout.compact = false;
   vi.useFakeTimers();
   vi.clearAllMocks();
   api.write.mockResolvedValue(undefined);
@@ -57,6 +60,24 @@ afterEach(() => {
 });
 
 describe('agent board drag/drop', () => {
+  it('uses a single readable phone lane and opens cards without allowing touch drag moves', () => {
+    layout.compact = true;
+    const inspect = vi.fn();
+    render(<MemoryRouter><AgentBoardLanes cards={[agentFleetItem(agent), threadFleetItem({ ...thread, status: 'idle' })]} showProject onInspect={inspect} /></MemoryRouter>);
+    expect(screen.getByTestId('mobile-agent-board')).toBeTruthy();
+    expect(document.querySelector('.zcc-kanban')).toBeNull();
+    expect(card('CLI probe').getAttribute('draggable')).toBe('false');
+    const dataTransfer = transfer();
+    fireEvent.dragStart(card('CLI probe'), { dataTransfer });
+    expect(dataTransfer.setData).not.toHaveBeenCalled();
+    fireEvent.click(card('CLI probe'));
+    expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ id: 'cli' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Idle 1' }));
+    fireEvent.click(card('Thread probe'));
+    expect(inspect).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'thread' }));
+    expect(api.stop).not.toHaveBeenCalled();
+    expect(api.write).not.toHaveBeenCalled();
+  });
   it('highlights only a valid drop, interrupts CLI agents and clears triage for Idle', async () => {
     const clearTriage = vi.spyOn(useIdleTriage.getState(), 'clear');
     setup([agentFleetItem(agent)]);

@@ -6,6 +6,8 @@ export interface NativeActions {
   share(payload: { title?: string; text?: string; url?: string }): Promise<unknown>;
   openExternal(url: string): Promise<void>;
   openSettings(): void;
+  openMenu(): void;
+  shellChrome(visible: boolean): void;
   authRequired(): void;
   ready(path: string): void;
   inject(script: string): void;
@@ -28,6 +30,9 @@ export async function handleBridgeMessage(
       case 'ready':
         actions.ready(safePath(message.path));
         break;
+      case 'shell-chrome':
+        actions.shellChrome(message.visible);
+        break;
       case 'title':
         break;
       case 'haptic':
@@ -40,7 +45,8 @@ export async function handleBridgeMessage(
         if (externalUrl(message.url)) await actions.openExternal(message.url);
         break;
       case 'open-native':
-        actions.openSettings();
+        if (message.screen === 'connection-menu') actions.openMenu();
+        else actions.openSettings();
         break;
       case 'request':
         try {

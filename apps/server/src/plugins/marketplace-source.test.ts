@@ -265,20 +265,25 @@ describe('materializeMarketplaceIndex', () => {
   });
 
   it('releases Git materialization slot after clone error', async () => {
+    const firstStarted = deferred();
     const secondStarted = deferred();
     const thirdStarted = deferred();
     const failFirst = deferred();
     const releases = [deferred(), deferred()];
     let started = 0;
     const runGit = async (args: string[]) => {
-      const index = started++;
-      if (index === 0) {
+      started++;
+      // Temporary-directory creation can reorder the first two clones.
+      const url = args.at(-2)!;
+      if (url.endsWith('/fail')) {
+        firstStarted.resolve();
         await failFirst.promise;
         throw new Error('clone failed');
       }
-      if (index === 1) secondStarted.resolve();
-      if (index === 2) thirdStarted.resolve();
-      await releases[index - 1]!.promise;
+      const index = url.endsWith('/blocked') ? 0 : 1;
+      if (index === 0) secondStarted.resolve();
+      if (index === 1) thirdStarted.resolve();
+      await releases[index]!.promise;
       writeFileSync(join(args.at(-1)!, 'marketplace.json'), JSON.stringify(SAMPLE_INDEX));
       return '';
     };
@@ -290,7 +295,7 @@ describe('materializeMarketplaceIndex', () => {
     const second = materializeMarketplaceIndex(source('blocked'), undefined, { runGit, withGitMaterializationSlot });
     const third = materializeMarketplaceIndex(source('queued'), undefined, { runGit, withGitMaterializationSlot });
 
-    await secondStarted.promise;
+    await Promise.all([firstStarted.promise, secondStarted.promise]);
     expect(started).toBe(2);
     failFirst.resolve();
     await firstHandled;

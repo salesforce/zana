@@ -28,6 +28,9 @@ describe('parsePageToShellMessage', () => {
       { type: 'badge', count: 0 },
       { type: 'open-external', url: 'https://example.com/docs' },
       { type: 'open-native', screen: 'device-settings' },
+      { type: 'open-native', screen: 'connection-menu' },
+      { type: 'shell-chrome', visible: true },
+      { type: 'shell-chrome', visible: false },
       {
         type: 'request',
         id: 'r1-2',
@@ -66,6 +69,8 @@ describe('parsePageToShellMessage', () => {
   it('rejects extra fields so a typo never travels silently', () => {
     const parsed = parsePageToShellMessage(json({ type: 'badge', count: 3, colour: 'red' }));
     expect(parsed.ok).toBe(false);
+    expect(parsePageToShellMessage(json({ type: 'shell-chrome', visible: 'true' })).ok).toBe(false);
+    expect(parsePageToShellMessage(json({ type: 'shell-chrome' })).ok).toBe(false);
   });
 
   it('rejects a badge count that is negative or fractional', () => {

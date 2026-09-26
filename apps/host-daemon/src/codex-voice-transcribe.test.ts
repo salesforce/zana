@@ -87,11 +87,13 @@ describe('codex voice transcribe', () => {
     }));
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ text: 'hello openai' }), { status: 200 }));
     await expect(transcribeCodexVoice(command({ prompt: 'context' }), { homeDir, fetchImpl })).resolves.toEqual({
-      model: 'gpt-transcribe',
+      model: 'gpt-4o-mini-transcribe',
       text: 'hello openai'
     });
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe('https://api.openai.com/v1/audio/transcriptions');
+    expect((init!.body as FormData).get('model')).toBe('gpt-4o-mini-transcribe');
+    expect((init!.body as FormData).get('prompt')).toBe('context');
     expect(new Headers((init as RequestInit).headers).get('authorization')).toBe('Bearer sk-codex-api-key');
   });
 
@@ -105,6 +107,23 @@ describe('codex voice transcribe', () => {
       code: 'codex_rate_limited',
       message: expect.stringContaining('try again later')
     });
+  });
+
+  it('uses Keychain credentials and preserves an explicit model and iPhone recording metadata', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-voice-keyring-'));
+    mkdirSync(join(homeDir, '.codex'));
+    writeFileSync(join(homeDir, '.codex', 'config.toml'), 'cli_auth_credentials_store = "keyring"');
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ text: 'iPhone transcript' }));
+    await expect(transcribeCodexVoice(command({ model: 'whisper-1', mimeType: 'audio/mp4', filename: 'recording.mp4' }), {
+      homeDir, env: {}, fetchImpl,
+      readKeyring: async () => JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic-keyring-key' })
+    })).resolves.toEqual({ model: 'whisper-1', text: 'iPhone transcript' });
+    const form = fetchImpl.mock.calls[0]![1]!.body as FormData;
+    expect(form.get('model')).toBe('whisper-1');
+    const file = form.get('file') as File;
+    expect(file.name).toBe('recording.mp4');
+    expect(file.type).toBe('audio/mp4');
+    expect(await file.text()).toBe('audio');
   });
 
   it('maps unauthorized ChatGPT responses', async () => {
