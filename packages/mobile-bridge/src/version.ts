@@ -1,4 +1,7 @@
-export const MOBILE_BRIDGE_VERSION = 2;
+export const MOBILE_BRIDGE_VERSION = 3;
+
+/** A page can host the connection menu and retire the shell's fallback header. */
+export const SHELL_MENU_BRIDGE_VERSION = 3;
 
 export const MINIMUM_MOBILE_BRIDGE_VERSION = 1;
 

@@ -26,6 +26,14 @@ function ctx(overrides: {
 }
 
 describe('voice transcription service', () => {
+  it('preserves Keychain access guidance instead of asking an already signed-in user to sign in', async () => {
+    const rpc = vi.fn(async () => {
+      throw Object.assign(new Error('Unlock Keychain on your Mac, then try again.'), { code: 'codex_keyring_unavailable' });
+    });
+    await expect(transcribeVoiceOnHost(ctx({ rpc }), {
+      bytes: Buffer.from('audio'), mimeType: 'audio/mp4', filename: 'recording.mp4'
+    })).rejects.toMatchObject({ status: 503, code: 'codex_keyring_unavailable', message: 'Unlock Keychain on your Mac, then try again.' });
+  });
   it('reports enabled only when a host is connected', () => {
     expect(voiceTranscriptionEnabled(ctx({ connected: [] }))).toBe(false);
     expect(voiceTranscriptionEnabled(ctx({ connected: ['h1'] }))).toBe(true);

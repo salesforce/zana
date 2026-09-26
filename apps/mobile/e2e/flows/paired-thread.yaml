@@ -4,7 +4,7 @@ name: Pair native shell and send to the production thread
 ---
 - launchApp
 - extendedWaitUntil:
-    visible: 'This device|Scan pairing QR'
+    visible: 'Connection options|Scan pairing QR'
     timeout: 30000
 - openLink:
     link: ${PAIR_LINK}
@@ -17,7 +17,7 @@ name: Pair native shell and send to the production thread
 - tapOn:
     id: connect-server
 - extendedWaitUntil:
-    visible: This device
+    visible: Connection options
     timeout: 30000
 - openLink:
     link: ${THREAD_LINK}
@@ -80,6 +80,7 @@ name: Pair native shell and send to the production thread
       above: Message
     direction: DOWN
 - takeScreenshot: zana-native-scrolled-thread
+- tapOn: Connection options
 - tapOn: This device
 - assertVisible: Saved servers
 - scrollUntilVisible:

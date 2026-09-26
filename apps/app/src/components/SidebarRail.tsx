@@ -32,11 +32,15 @@ import { usePaneContentSplitIndicator } from './sidebar/paneContentSplitIndicato
 import { SplitPaneMiniMap } from './sidebar/SplitPaneMiniMap.js';
 import type { PaneContent } from '../lib/split-layout/types.js';
 import './sidebar/sidebar-appearance.css';
+import { useMobileNavDismiss } from './mobile-nav-context.js';
+import { MobileSidebarNav } from './MobileSidebarNav.js';
 
 export interface SidebarRailRow {
   kind: 'row';
   id: string;
   label: string;
+  /** Mobile promotes featured destinations and groups tools behind a disclosure. */
+  mobileGroup?: 'featured' | 'tools';
   icon: ReactNode;
   to: string;
   testId: string;
@@ -85,7 +89,9 @@ export function SidebarRail({
   /** Overrides remembered global settings for a project-scoped rail. */
   settingsRoutePath?: string;
 }): ReactElement {
-  const collapsed = useUi((s) => s.sidebarCollapsed);
+  const savedCollapsed = useUi((s) => s.sidebarCollapsed);
+  const dismissMobileNav = useMobileNavDismiss();
+  const collapsed = savedCollapsed && !dismissMobileNav;
   const { nav } = useRouteState();
   const routeMemory = useAppSettingsRouteMemory();
   const footerActions = useSyncExternalStore(
@@ -139,7 +145,7 @@ export function SidebarRail({
         </SortableSidebarSection>
       );
     }
-    const row = item.splitContent ? (
+    const row = item.splitContent && !dismissMobileNav ? (
       <SplitEnabledNavRow
         item={item}
         collapsed={collapsed}
@@ -162,6 +168,7 @@ export function SidebarRail({
             return;
           }
           item.onClick?.(event);
+          dismissMobileNav?.();
         }}
       />
     );
@@ -176,7 +183,13 @@ export function SidebarRail({
   return (
     <aside className={className}>
       {header}
-      <DndContext
+      {dismissMobileNav ? (
+        <MobileSidebarNav
+          items={[...pinnedNavIds, ...sortableNavIds, ...trailingNavIds].map((id) => itemsById.get(id)!)}
+          navAriaLabel={navAriaLabel}
+          renderItem={(id) => renderItem(id, false)}
+        />
+      ) : <DndContext
         sensors={sensors}
         collisionDetection={collisionDetection}
         onDragStart={onDragStart}
@@ -196,7 +209,7 @@ export function SidebarRail({
             {trailingNavIds.map((id) => renderItem(id, false))}
           </nav>
         </div>
-      </DndContext>
+      </DndContext>}
       <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
         {utilityStart}
         <Link
@@ -205,6 +218,7 @@ export function SidebarRail({
           aria-label="Settings"
           aria-current={nav === 'settings' ? 'page' : undefined}
           title="Settings"
+          onClick={() => dismissMobileNav?.()}
         >
           <Settings size={16} strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Settings</span>}
@@ -247,7 +261,7 @@ export function SidebarRail({
           );
         })}
       </div>
-      <SidebarResizer />
+      {!dismissMobileNav && <SidebarResizer />}
     </aside>
   );
 }

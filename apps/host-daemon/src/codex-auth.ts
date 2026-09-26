@@ -1,9 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { HostCommandError } from './host-command-error.js';
+import { readStoredCodexAuth, type CodexKeyringReader } from './codex-auth-storage.js';
 
-const CODEX_AUTH_FILE_NAME = 'auth.json';
 const CHATGPT_AUTH_CLAIM_PATH = 'https://api.openai.com/auth';
 
 export interface CodexChatGptAuthCredentials {
@@ -24,6 +23,7 @@ export type CodexAuthCredentials = CodexChatGptAuthCredentials | CodexOpenAiApiK
 export interface CodexAuthReadOptions {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
+  readKeyring?: CodexKeyringReader;
 }
 
 interface CodexAuthJson {
@@ -105,28 +105,7 @@ function shouldUseOpenAiApiKeyAuth(auth: CodexAuthJson): boolean {
 }
 
 async function readCodexAuthJson(options: CodexAuthReadOptions): Promise<CodexAuthJson> {
-  const authPath = join(resolveCodexHome(options), CODEX_AUTH_FILE_NAME);
-  let raw: string;
-  try {
-    raw = await readFile(authPath, 'utf8');
-  } catch {
-    throw new HostCommandError(
-      'codex_auth_missing',
-      `Codex auth file not found at ${authPath}. Run \`codex login\` on this host or set OPENAI_API_KEY.`
-    );
-  }
-  let parsed: Record<string, unknown> | null;
-  try {
-    parsed = jsonObject(JSON.parse(raw));
-  } catch {
-    parsed = null;
-  }
-  if (!parsed) {
-    throw new HostCommandError(
-      'codex_auth_invalid',
-      `Codex auth file at ${authPath} is not valid JSON. Run \`codex login\` on this host.`
-    );
-  }
+  const parsed = await readStoredCodexAuth(resolveCodexHome(options), options.readKeyring);
   const tokens = jsonObject(parsed.tokens);
   return {
     authMode: optionalString(parsed.auth_mode),
@@ -136,21 +115,21 @@ async function readCodexAuthJson(options: CodexAuthReadOptions): Promise<CodexAu
   };
 }
 
-function buildOpenAiApiKeyCredentials(auth: CodexAuthJson, authPath: string): CodexOpenAiApiKeyCredentials {
+function buildOpenAiApiKeyCredentials(auth: CodexAuthJson): CodexOpenAiApiKeyCredentials {
   if (!auth.openAiApiKey) {
     throw new HostCommandError(
       'codex_auth_invalid',
-      `Codex auth file at ${authPath} does not contain a usable API key. Run \`codex login\` on this host.`
+      `The saved Codex login does not contain a usable API key. Run \`codex login\` on this host.`
     );
   }
   return { type: 'apiKey', apiKey: auth.openAiApiKey };
 }
 
-function buildChatGptCredentials(auth: CodexAuthJson, authPath: string): CodexChatGptAuthCredentials {
+function buildChatGptCredentials(auth: CodexAuthJson): CodexChatGptAuthCredentials {
   if (!auth.tokens || !auth.accessToken) {
     throw new HostCommandError(
       'codex_auth_invalid',
-      `Codex auth file at ${authPath} does not contain a usable access token. Run \`codex login\` on this host.`
+      `The saved Codex login does not contain a usable access token. Run \`codex login\` on this host.`
     );
   }
   const accountId =
@@ -179,11 +158,10 @@ export async function readCodexAuthCredentials(
   options: CodexAuthReadOptions = {}
 ): Promise<CodexAuthCredentials> {
   const auth = await readCodexAuthJson(options);
-  const authPath = join(resolveCodexHome(options), CODEX_AUTH_FILE_NAME);
   if (shouldUseOpenAiApiKeyAuth(auth)) {
-    return buildOpenAiApiKeyCredentials(auth, authPath);
+    return buildOpenAiApiKeyCredentials(auth);
   }
-  return buildChatGptCredentials(auth, authPath);
+  return buildChatGptCredentials(auth);
 }
 
 export async function resolveVoiceAuth(options: CodexAuthReadOptions = {}): Promise<CodexAuthCredentials> {
@@ -192,7 +170,7 @@ export async function resolveVoiceAuth(options: CodexAuthReadOptions = {}): Prom
   } catch (error) {
     const code = error instanceof HostCommandError ? error.code : '';
     const key = (options.env ?? process.env).OPENAI_API_KEY?.trim();
-    if (key && (code === 'codex_auth_missing' || code === 'codex_auth_invalid')) {
+    if (key && (code === 'codex_auth_missing' || code === 'codex_auth_invalid' || code === 'codex_keyring_unavailable')) {
       return { type: 'apiKey', apiKey: key };
     }
     throw error;

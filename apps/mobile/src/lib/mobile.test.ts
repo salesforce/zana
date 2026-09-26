@@ -282,6 +282,8 @@ describe('native bridge dispatcher', () => {
       share: vi.fn().mockResolvedValue('shared'),
       openExternal: vi.fn().mockResolvedValue(undefined),
       openSettings: vi.fn(),
+      openMenu: vi.fn(),
+      shellChrome: vi.fn(),
       authRequired: vi.fn(),
       ready: vi.fn(),
       inject: vi.fn()
@@ -292,6 +294,16 @@ describe('native bridge dispatcher', () => {
     expect(actions.openSettings).not.toHaveBeenCalled();
     await send({ type: 'open-native', screen: 'device-settings' });
     expect(actions.openSettings).toHaveBeenCalledOnce();
+    await send({ type: 'open-native', screen: 'connection-menu' }, 'https://evil.example');
+    await send({ type: 'shell-chrome', visible: true }, 'https://evil.example');
+    expect(actions.openMenu).not.toHaveBeenCalled();
+    expect(actions.shellChrome).not.toHaveBeenCalled();
+    await send({ type: 'open-native', screen: 'connection-menu' });
+    expect(actions.openMenu).toHaveBeenCalledOnce();
+    expect(actions.openSettings).toHaveBeenCalledOnce();
+    await send({ type: 'shell-chrome', visible: true });
+    await send({ type: 'shell-chrome', visible: false });
+    expect(actions.shellChrome.mock.calls).toEqual([[true], [false]]);
     await send({ type: 'auth-required' });
     expect(actions.authRequired).toHaveBeenCalledOnce();
     await send({ type: 'ready', path: '//evil' });

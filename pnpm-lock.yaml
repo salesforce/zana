@@ -393,6 +393,9 @@ importers:
       node-pty:
         specifier: 1.2.0-beta.15
         version: 1.2.0-beta.15
+      smol-toml:
+        specifier: ^1.7.0
+        version: 1.8.0
       ws:
         specifier: ^8.21.3
         version: 8.21.3

@@ -3,6 +3,38 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+test('Settings → Phone prepares an editable mobile installation composer', async ({ app }, testInfo) => {
+  const win = app.window;
+  const threadsBefore = await win.evaluate(() => window.cc.threads.list());
+  await win.getByRole('link', { name: 'Settings', exact: true }).click();
+  await win.getByTestId('settings-nav-phone').click();
+  const panel = win.locator('.settings-panel--preferences');
+  await expect(panel.getByRole('list', { name: 'Mobile installation steps' }).getByRole('listitem')).toHaveCount(3);
+  await panel.getByText('iPhone and Android setup', { exact: true }).click();
+  await expect(panel.getByText(/Developer Mode, turn it on, restart/)).toBeVisible();
+  await expect(panel.getByText(/enable USB debugging/)).toBeVisible();
+  await win.screenshot({ path: testInfo.outputPath('phone-installation-guide.png') });
+
+  await panel.getByRole('button', { name: 'Install with AI', exact: true }).click();
+  const composer = win.getByTestId('launch-modal');
+  await expect(composer).toBeVisible();
+  const prompt = composer.locator('[contenteditable="true"]');
+  await expect(prompt).toContainText('Install or update the Zana mobile app on my connected physical phone');
+  await expect(prompt).toContainText('existing Apple signing account');
+  await expect(prompt).toContainText('authenticated mobile gateway');
+  await expect(composer.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+  await win.screenshot({ path: testInfo.outputPath('phone-installation-composer.png') });
+  await prompt.fill('Install Zana on my connected iPhone.');
+  await expect(prompt).toHaveText('Install Zana on my connected iPhone.');
+  await win.keyboard.press('Escape');
+  await expect(composer).toHaveCount(0);
+  await expect(panel.getByRole('switch', { name: 'Enable phone access' })).toHaveAttribute('aria-checked', 'false');
+  await panel.getByRole('button', { name: 'Install with AI', exact: true }).click();
+  await expect(prompt).toContainText('Install or update the Zana mobile app');
+  await win.keyboard.press('Escape');
+  expect(await win.evaluate(() => window.cc.threads.list())).toEqual(threadsBefore);
+});
+
 /**
  * Production-boundary check for the Settings → Phone pairing surface (the
  * main-process mobile gateway is a live network listener, so the coupling note

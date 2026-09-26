@@ -79,6 +79,7 @@ vi.mock('../../plugins/plugin-slots', () => ({
 }));
 
 import { Sidebar } from '../Sidebar.js';
+import { MobileNavDrawer } from '../MobileShellChrome.js';
 
 function renderSidebar() {
   return renderToStaticMarkup(
@@ -89,6 +90,21 @@ function renderSidebar() {
 }
 
 describe('Sidebar structure and compact accessibility', () => {
+  it('renders labelled phone destinations even when the desktop rail is collapsed', () => {
+    h.state.sidebarCollapsed = true;
+    try {
+      const markup = renderToStaticMarkup(
+        <MemoryRouter><MobileNavDrawer enabled open onClose={() => {}}><Sidebar /></MobileNavDrawer></MemoryRouter>
+      );
+      expect(markup).toContain('data-testid="nav-home"');
+      expect(markup).toContain('>Inbox<');
+      expect(markup).toContain('>Settings<');
+      expect(markup).toContain('>More<');
+      expect(h.state.sidebarCollapsed).toBe(true);
+    } finally {
+      h.state.sidebarCollapsed = false;
+    }
+  });
   it('keeps threads inside Projects when a thread-list plugin is active', () => {
     h.state.sidebarCollapsed = false;
     const markup = renderSidebar();

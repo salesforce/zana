@@ -28,6 +28,7 @@ vi.mock('../../lib/resolveIcon', () => ({
 }));
 
 import { SidebarRail, type SidebarRailItem } from '../SidebarRail.js';
+import { MobileNavDrawer } from '../MobileShellChrome.js';
 
 function AgentsSectionStub({ dragHandle }: { dragHandle?: HTMLAttributes<HTMLElement> }) {
   return (
@@ -68,6 +69,20 @@ function renderRail(node: ReactElement) {
 }
 
 describe('SidebarRail', () => {
+  it('uses touch navigation inside a mobile drawer without desktop drag or resize controls', () => {
+    h.state.sidebarCollapsed = false;
+    const markup = renderRail(
+      <MobileNavDrawer enabled open onClose={() => {}}>
+        <SidebarRail className="sidebar" navAriaLabel="Nav" storageKey="zcc.testSidebarNavOrder" pinnedIds={['inbox']} items={[...items, { ...items[0], kind: 'row', id: 'tool', label: 'Tool', icon: null, to: '/tool', testId: 'nav-tool', active: false, mobileGroup: 'tools' }]} />
+      </MobileNavDrawer>
+    );
+    expect(markup).toContain('mobile-nav-primary');
+    expect(markup).toContain('>More<');
+    expect(markup).toContain('aria-label="Close navigation"');
+    expect(markup).not.toContain('data-sortable-nav-id');
+    expect(markup).not.toContain('class="sidebar-resizer"');
+    expect(markup).toContain('aria-label="Settings"');
+  });
   it('keeps Settings accessible by name when a compact rail omits the visible label', () => {
     h.state.sidebarCollapsed = true;
     try {

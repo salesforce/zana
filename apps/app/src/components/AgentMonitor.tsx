@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEve
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
+  ArrowLeft,
   Bot,
   Calendar,
   ExternalLink,
@@ -49,6 +50,7 @@ import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
 import { openScheduleFromAgents } from './scheduler/openScheduledLive.js';
 import { groupSessionsByTeamRun } from '../lib/teamRunOrganization.js';
 import { PaneEmptyState } from './PaneEmptyState.js';
+import { useCompactLayout } from '../hooks/useCompactLayout.js';
 
 /**
  * The Agents "List" view: a live monitor — item list (left), the selected
@@ -61,6 +63,9 @@ import { PaneEmptyState } from './PaneEmptyState.js';
  * held in the UI store (`agentMonitor`); this component owns that selection's
  * lifecycle and CLEARS it on unmount, so a stale selection can never steal the
  * live terminal from the Projects workspace once the List view is off screen.
+ * Compact layouts start with the list alone. An explicit row tap replaces it
+ * with the session; Back unmounts the detail and restores the list's scroll and
+ * keyboard focus. No terminal is selected while the mobile list is showing.
  *
  * Fed a flat {@link AgentCard}[] by whichever board hosts it (global or
  * per-project), so it honors the same filter/scope the board already applied.
@@ -98,6 +103,7 @@ function openAgentSession(navigate: (to: string) => void, card: AgentCard): void
 }
 
 export function AgentMonitor({ cards, executions = [], showProject = false, onInspectExecution }: AgentMonitorProps) {
+  const compact = useCompactLayout();
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const organization = useData((s) => s.agentsListOrganization);
@@ -105,6 +111,8 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
   const selectMonitorAgent = useUi((s) => s.selectMonitorAgent);
   const clearMonitorAgent = useUi((s) => s.clearMonitorAgent);
   const [pickedId, setPickedId] = useState<string | null>(null);
+  const [mobileDetailId, setMobileDetailId] = useState<string | null>(null);
+  const pickedRow = useRef<HTMLButtonElement | null>(null);
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
@@ -158,14 +166,23 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
   }, [jobCards, sensitivity, includeScheduled, organization]);
 
   const selected = useMemo(
-    () =>
-      resolveMonitorSelection(
+    () => compact
+      ? jobCards.find((item) => item.id === mobileDetailId) ?? null
+      : resolveMonitorSelection(
         jobCards,
         selection ? { sessionId: selection.sessionId, projectId: selection.projectId } : null,
         pickedId
       ),
-    [jobCards, selection, pickedId]
+    [jobCards, selection, pickedId, compact, mobileDetailId]
   );
+
+  useEffect(() => {
+    if (!compact) setMobileDetailId(null);
+    else if (!selected) {
+      setMobileDetailId(null);
+      pickedRow.current?.focus({ preventScroll: true });
+    }
+  }, [compact, selected?.id]);
 
   useEffect(() => {
     if (!selected) {
@@ -198,7 +215,7 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
         selected?.kind === 'thread' ? 'is-thread' : selected?.kind === 'agent' ? 'is-agent-session' : ''
       }`}
     >
-      <nav className="agent-monitor-list" aria-label="Agents">
+      <nav className="agent-monitor-list" aria-label="Agents" hidden={compact && !!selected}>
         {grouped.map((g) => (
           <div key={g.key} className="agent-monitor-group">
             <div className={`agent-monitor-group-head ${organization === 'status' ? `group-${g.key}` : 'group-team-run'}`}>
@@ -212,7 +229,13 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
                 laneKey={laneOf(item, sensitivity)}
                 active={item.id === selected?.id}
                 showProject={showProject}
-                onSelect={() => setPickedId(item.id)}
+                onSelect={(event) => {
+                  setPickedId(item.id);
+                  if (compact) {
+                    pickedRow.current = event.currentTarget;
+                    setMobileDetailId(item.id);
+                  }
+                }}
                 onContextMenu={(e) => {
                   if (item.kind === 'schedule') {
                     e.preventDefault();
@@ -234,12 +257,13 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
         ))}
       </nav>
 
-      <AgentMonitorTerminal
+      {(!compact || selected) && <AgentMonitorTerminal
         selected={selected}
         showProject={showProject}
         executions={executions}
         onInspectExecution={onInspectExecution}
-      />
+        onBack={compact ? () => setMobileDetailId(null) : undefined}
+      />}
 
       {typeof document !== 'undefined' &&
         menu &&
@@ -278,7 +302,7 @@ interface RowProps {
   laneKey: LaneKey;
   active: boolean;
   showProject: boolean;
-  onSelect: () => void;
+  onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
   onContextMenu: (e: MouseEvent) => void;
 }
 
@@ -404,17 +428,25 @@ function AgentMonitorTerminal({
   selected,
   showProject,
   executions,
-  onInspectExecution
+  onInspectExecution,
+  onBack
 }: {
   selected: FleetItem | null;
   showProject: boolean;
   executions: readonly ExecutionBoardProjection[];
   onInspectExecution?: (projectId: string, executionId: string) => void;
+  onBack?: () => void;
 }) {
   const agent = selected?.kind === 'agent' ? selected : null;
   const thread = selected?.kind === 'thread' ? selected : null;
   return (
     <section className="agent-monitor-main">
+      {onBack && (
+        <button type="button" className="agent-monitor-back" onClick={onBack} autoFocus>
+          <ArrowLeft size={18} aria-hidden="true" />
+          Back to agents
+        </button>
+      )}
       {!thread && !agent && (
         <header className="agent-monitor-main-head">
           <TerminalIcon size={13} aria-hidden="true" />

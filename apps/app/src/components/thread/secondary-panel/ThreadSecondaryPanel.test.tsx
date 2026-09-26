@@ -5,16 +5,20 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ThreadSecondaryPanel } from './ThreadSecondaryPanel.js';
 import { emptySecondaryPanelState, openNewTab, openSecondaryPanel, selectPinnedView } from './threadSecondaryPanelState.js';
 
+const layout = vi.hoisted(() => ({ compact: false }));
+vi.mock('../../../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => layout.compact }));
 
 const noop = () => undefined;
 
 afterEach(() => {
   cleanup();
+  layout.compact = false;
   vi.restoreAllMocks();
 });
 
 describe('ThreadSecondaryPanel chrome', () => {
-  it('reveals the active tab and keeps pin and panel actions outside the scrolling tabs', () => {
+  it.each([false, true])('reveals the active tab and keeps panel actions reachable (compact=%s)', (compact) => {
+    layout.compact = compact;
     const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
     const handlers = {
       onSelectInfo: vi.fn(), onSelectDiff: vi.fn(), onSelectPlan: vi.fn(),
@@ -35,7 +39,7 @@ describe('ThreadSecondaryPanel chrome', () => {
     for (const [label, handler] of [
       ['Show info', handlers.onSelectInfo], ['Show workspace diff', handlers.onSelectDiff],
       ['Show plan', handlers.onSelectPlan], ['New tab', handlers.onNewTab],
-      ['Maximize panel', handlers.onToggleMaximized], ['Hide right panel', handlers.onHide]
+      ['Maximize panel', handlers.onToggleMaximized], [compact ? 'Close panel' : 'Hide right panel', handlers.onHide]
     ] as const) {
       const button = view.getByRole('button', { name: label });
       expect(button.closest('.thread-secondary-tabs')).toBeNull();

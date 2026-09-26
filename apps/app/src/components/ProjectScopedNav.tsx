@@ -178,7 +178,8 @@ export function ProjectScopedNav({
             to: getSuggestionsRoutePath(),
             testId: 'project-nav-suggestions',
             active: nav === 'suggestions',
-            title: 'Next Steps for this project'
+            title: 'Next Steps for this project',
+            mobileGroup: 'tools' as const
           } satisfies SidebarRailItem
         ]
       : []),
@@ -248,6 +249,7 @@ export function ProjectScopedNav({
         to: getProjectModeRoutePath(project.id, item.mode),
         testId: `project-nav-${item.mode}`,
         active,
+        mobileGroup: item.mode === 'agents' ? undefined : 'tools',
         running: agentsLive || goalsActive || followupsOpen || terminalsRunning,
         badge,
         splitContent: { kind: 'project-view', projectId: project.id, mode: item.mode }
@@ -265,6 +267,7 @@ export function ProjectScopedNav({
         to: getProjectModeRoutePath(project.id, m.id),
         testId: `project-nav-${m.id}`,
         active: onProjects && (mode === m.id || extActive),
+        mobileGroup: 'tools',
         splitContent: { kind: 'project-view', projectId: project.id, mode: m.id }
       };
     }),
@@ -279,6 +282,7 @@ export function ProjectScopedNav({
         to: getProjectModeRoutePath(project.id, railId),
         testId: `project-nav-${railId}`,
         active: onProjects && mode === railId,
+        mobileGroup: 'tools',
         splitContent: { kind: 'project-view', projectId: project.id, mode: railId }
       };
     }),

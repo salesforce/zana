@@ -256,6 +256,10 @@ export async function transcribeCodexVoice(
   const fetchImpl = deps.fetchImpl ?? fetch;
   const audio = decodeAudio(command);
   const auth = await resolveVoiceAuth(deps);
+  // gpt-transcribe is ChatGPT's internal alias, not a public API model id.
+  if (auth.type === 'apiKey' && command.model === 'gpt-transcribe') {
+    command = { ...command, model: 'gpt-4o-mini-transcribe' };
+  }
   const deadline = createDeadline(command.timeoutMs, now);
   const response = await transcribeWithAuth(command, auth, audio, fetchImpl, deadline, now);
   if (!response.ok) {

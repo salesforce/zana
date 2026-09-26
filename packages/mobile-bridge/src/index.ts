@@ -1,5 +1,6 @@
 export {
   MOBILE_BRIDGE_VERSION,
+  SHELL_MENU_BRIDGE_VERSION,
   NATIVE_BRIDGE_GLOBAL,
   compareBridgeVersions,
   isBridgeUsable

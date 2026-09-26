@@ -54,6 +54,7 @@
     "@zcc/harness-sdk": "workspace:*",
     "esbuild": "^0.25.0",
     "node-pty": "1.2.0-beta.15",
+    "smol-toml": "^1.7.0",
     "ws": "^8.21.3",
     "@zana-ai/zcc-db": "workspace:*"
   },
