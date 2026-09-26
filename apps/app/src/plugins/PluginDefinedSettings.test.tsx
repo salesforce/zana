@@ -130,7 +130,9 @@ describe('PluginDefinedSettings', () => {
       ']'
     ].join('\n');
     fireEvent.change(agents, { target: { value: edited } });
-    expect(Number(agents.rows)).toBe(9);
+    await waitFor(() => {
+      expect(Number(agents.rows)).toBe(9);
+    });
     expect(setSettings).not.toHaveBeenCalled();
     fireEvent.blur(agents);
     await waitFor(() => {
