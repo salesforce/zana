@@ -81,6 +81,14 @@ vi.mock('@zana-ai/zcc-llm', async (importOriginal) => {
   return { ...actual, resolveModelAlias: (model: string) => model };
 });
 
+// resolveGenuineClaudeFromPath scans real PATH + spawns `--version` to prefer
+// a genuine Claude Code CLI over an ambient shim. Pin to pass-through so this
+// snapshot suite's `command: 'claude'` stays independent of whatever
+// `claude`-named executables sit on the machine running the suite.
+vi.mock('../harness/claude/binary-identity.js', () => ({
+  resolveGenuineClaudeFromPath: (fallback: string) => fallback
+}));
+
 import { PtyManager, applyHeapCeiling } from '../pty.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

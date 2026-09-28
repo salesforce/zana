@@ -20,6 +20,15 @@ vi.mock('@zana-ai/zcc-llm', async () => {
   return { ...actual, resolveModelAlias: (model: string) => model };
 });
 
+// resolveGenuineClaudeFromPath does a real PATH scan + `--version` spawn to
+// prefer a genuine Claude Code CLI over an ambient shim. Pin it to plain
+// pass-through here so these argv assertions stay independent of whatever
+// `claude`-named executables happen to sit on the machine running the suite
+// (its own dedicated coverage lives in binary-identity.test.ts).
+vi.mock('../claude/binary-identity.js', () => ({
+  resolveGenuineClaudeFromPath: (fallback: string) => fallback
+}));
+
 import { providerFor, registrationFor } from '../registry.js';
 import { ClaudeCodeProvider } from '../claude/provider.js';
 import { ShellProvider } from '../shell/provider.js';
@@ -142,6 +151,40 @@ describe('ClaudeCodeProvider.resolveLaunch', () => {
     });
   });
 
+  it('honors harnesses.byId.claude.binary over claudeBinary (parity with afcode)', () => {
+    const config: AppConfig = {
+      ...CONFIG,
+      claudeBinary: 'claude',
+      harnesses: { byId: { claude: { binary: '/custom/path/claude' } } }
+    };
+    expect(p.resolveLaunch('claude', config, false)).toEqual({
+      command: '/custom/path/claude',
+      args: []
+    });
+  });
+
+  it('falls back to claudeBinary when no byId override is configured', () => {
+    expect(p.resolveLaunch('claude', CONFIG, false)).toEqual({ command: 'claude', args: [] });
+  });
+
+});
+
+describe('ClaudeCodeProvider.explainUnexpectedExit', () => {
+  const p = new ClaudeCodeProvider();
+
+  it('maps an unknown-command wrong-binary exit to an actionable message', () => {
+    const explanation = p.explainUnexpectedExit('claude', 1, 'unknown command: --allowedTools\n');
+    expect(explanation).toMatch(/does not look like the genuine Claude Code CLI/);
+  });
+
+  it('maps an unknown-option wrong-binary exit to an actionable message', () => {
+    const explanation = p.explainUnexpectedExit('claude', 1, "error: unknown option '--allowedTools'\n");
+    expect(explanation).toMatch(/wrong binary or a PATH shim/);
+  });
+
+  it('returns undefined for an unrelated failure', () => {
+    expect(p.explainUnexpectedExit('claude', 1, 'some other error\n')).toBeUndefined();
+  });
 });
 
 describe('ClaudeCodeProvider.computeAutoModeActive', () => {

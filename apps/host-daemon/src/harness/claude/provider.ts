@@ -38,6 +38,7 @@ import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 import { claudeLegacyRouting } from './legacy-routing.js';
+import { resolveGenuineClaudeFromPath } from './binary-identity.js';
 
 const CLAUDE_EVIDENCE_VERSION = '2.1.220';
 const claudeEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -253,6 +254,27 @@ function buildProjectSettingsArgs(s: ProjectSettings, profile: LaunchProfileId):
   return args;
 }
 
+/**
+ * Resolve the claude binary path with the same override precedence afcode
+ * already honors (`afcode/provider.ts:55`): `harnesses.byId.claude.binary` >
+ * `config.claudeBinary` > the `'claude'` default.
+ *
+ * An explicit override (byId binary, or a `claudeBinary` containing a path
+ * separator) is operator intent and is honored as-is. Otherwise the bare
+ * command name is a PATH lookup — and PATH can carry an unrelated `claude`
+ * shim (e.g. an AI Suite install dir) ahead of the genuine CLI, which the
+ * downstream spawn-time resolver (`resolveHarnessCommand`) would take as the
+ * first match. Prefer a PATH entry that identifies as genuine Claude Code
+ * over that first match; fall back to the plain name, unchanged, if none do.
+ */
+function resolveClaudeBinary(config: AppConfig): string {
+  const override = config.harnesses?.byId?.claude?.binary;
+  if (override) return override;
+  const configured = config.claudeBinary || 'claude';
+  if (configured.includes('/')) return configured;
+  return resolveGenuineClaudeFromPath(configured);
+}
+
 /** Preserve the remote CLI's legacy model placement within each settings layer. */
 function withLayerModel(args: string[], model: string | undefined, trailingArgs = 0): string[] {
   if (!model) return args;
@@ -303,20 +325,21 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
   }
 
   resolveLaunch(profile: LaunchProfileId, config: AppConfig, autoModeActive: boolean): ResolvedLaunch {
+    const command = resolveClaudeBinary(config);
     switch (profile) {
       case 'claude':
-        return { command: config.claudeBinary, args: globalClaudeArgs(config, autoModeActive) };
+        return { command, args: globalClaudeArgs(config, autoModeActive) };
       case 'claude-resume':
         return {
-          command: config.claudeBinary,
+          command,
           args: ['--resume', ...globalClaudeArgs(config, autoModeActive)]
         };
       case 'claude-yolo':
         // --dangerously-skip-permissions takes precedence; do NOT inject --permission-mode.
-        return { command: config.claudeBinary, args: ['--dangerously-skip-permissions'] };
+        return { command, args: ['--dangerously-skip-permissions'] };
       default:
         // Unreachable: the registry only routes claude-family profiles here.
-        return { command: config.claudeBinary, args: [] };
+        return { command, args: [] };
     }
   }
 
@@ -348,6 +371,19 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
 
   personaArgs(persona: Persona, profile: LaunchProfileId): string[] {
     return personaArgs_build(persona, profile);
+  }
+
+  /**
+   * A resolved `claudeBinary` that isn't actually the Claude Code CLI (a
+   * commander-style wrapper/shim on PATH, e.g. `afcode`) rejects our
+   * claude-only flags (`--allowedTools`, …) with `unknown command`/`unknown
+   * option` and exits non-zero, which otherwise surfaces as an opaque
+   * `[exited code 1]`. Mirrors opencode's exit-64 model-gone mapping
+   * (`opencode/provider.ts`).
+   */
+  explainUnexpectedExit(_profile: LaunchProfileId, _exitCode: number, recentText: string): string | undefined {
+    if (!/unknown (command|option)/i.test(recentText)) return undefined;
+    return 'Claude launch failed: the resolved claude binary does not look like the genuine Claude Code CLI (wrong binary or a PATH shim). Check config.claudeBinary and config.harnesses.byId.claude.binary.';
   }
 
   projectSettingsArgs(settings: ProjectSettings, profile: LaunchProfileId): string[] {
