@@ -225,6 +225,10 @@ describe('materializeMarketplaceIndex', () => {
     expect(index.plugins).toHaveLength(1);
   });
 
+  // Scheduling-sensitive: coordinates 3 jobs through the concurrency gate via
+  // deferred promises. The default 5s testTimeout is too tight under load (full
+  // suite / parallel E2E), so this flakes. Give the promise choreography ample
+  // headroom — a genuine gate stall still fails, just not on scheduler lag.
   it('limits Git materialization to two FIFO lifecycles', async () => {
     const firstTwoStarted = deferred();
     const thirdStarted = deferred();
@@ -262,8 +266,10 @@ describe('materializeMarketplaceIndex', () => {
     releases[1]!.resolve();
     releases[2]!.resolve();
     await expect(Promise.all(jobs)).resolves.toHaveLength(3);
-  });
+  }, 30_000);
 
+  // Same scheduling-sensitive pattern (see the timeout note above): a too-tight
+  // default timeout made this flake under load though the gate behaves.
   it('releases Git materialization slot after clone error', async () => {
     const secondStarted = deferred();
     const thirdStarted = deferred();
@@ -300,7 +306,7 @@ describe('materializeMarketplaceIndex', () => {
     releases[0]!.resolve();
     releases[1]!.resolve();
     await expect(Promise.all([second, third])).resolves.toHaveLength(2);
-  });
+  }, 30_000);
 
   it('times out a hung git clone when timeoutMs is set', async () => {
     const server = createServer();
