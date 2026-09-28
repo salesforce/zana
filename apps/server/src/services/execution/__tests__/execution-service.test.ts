@@ -95,6 +95,27 @@ describe('execution admission', () => {
     expect(authorizeTeamLaunch).not.toHaveBeenCalled();
   }));
 
+  it('rejects an unregistered owner project before any durable claim or spawn', async () => fixture(async (filePath) => {
+    const authorizeTeamLaunch = vi.fn();
+    const launchTeam = vi.fn();
+    const d = deps(filePath, { isRegisteredProject: () => false, authorizeTeamLaunch, launchTeam });
+    const service = new ExecutionService(d);
+    await expect(service.start('owner', 'unregistered-project', request)).resolves.toEqual({
+      ok: false, code: 'UNKNOWN_PROJECT', message: 'owner project is not registered'
+    });
+    // Fail-fast: guard runs before authorization AND before the durable claim,
+    // so no worker is spawned and no execution row is persisted.
+    expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+    expect(launchTeam).not.toHaveBeenCalled();
+    await expect(d.store.list('owner', 'unregistered-project')).resolves.toEqual([]);
+  }));
+
+  it('allows a registered owner project (guard opt-in, absent = unchanged)', async () => fixture(async (filePath) => {
+    const service = new ExecutionService(deps(filePath, { isRegisteredProject: () => true }));
+    const started = await service.start('owner', 'project-1', request);
+    expect(started.ok).toBe(true);
+  }));
+
   it('revalidates admission digest after authorization and before spawn', async () => fixture(async (filePath) => {
     let generation = 0;
     const launchTeam = vi.fn();
@@ -170,6 +191,58 @@ describe('execution claim recovery', () => {
     expect(logError).toHaveBeenCalled();
     const enforce = new ExecutionService({ ...base, claimRecoveryEnforceEnabled: () => true });
     await enforce.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
+  }));
+
+  it('force-reclaims a stopped worker before its fresh claim lease expires', async () => fixture(async (filePath) => {
+    const now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    expect(record.workUnits![0].leaseExpiresAt).toBeGreaterThan(now);
+    const service = new ExecutionService(deps(filePath, {
+      store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true,
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'exited' }] })
+    }));
+
+    await service.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
+  }));
+
+  it('reclaims a stopped worker immediately when periodic recovery is already in flight', async () => fixture(async (filePath) => {
+    const now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    const service = new ExecutionService(deps(filePath, {
+      store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true,
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'exited' }] })
+    }));
+
+    await service.recoverExitedWorker(record.id, 'slot-1');
+    expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
+  }));
+
+  it('reclaims a user-stopped worker even when periodic claim recovery is observe-only', async () => fixture(async (filePath) => {
+    const now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    const service = new ExecutionService(deps(filePath, {
+      store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => false,
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'exited' }] })
+    }));
+
+    await service.recoverExitedWorker(record.id, 'slot-1');
     expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
   }));
 
@@ -1096,7 +1169,7 @@ describe('SquadExecutionService', () => {
     await service.dispatchReady(coordinator);
   }
 
-  it('redispatchStalled reclaims a stranded CLAIMED unit (no output progress, PARKED coordinator) and re-dispatches it', async () => fixture(async (filePath) => {
+  it('redispatchStalled escalates a stranded CLAIMED unit when no fresh healthy worker exists', async () => fixture(async (filePath) => {
     const clock = { t: 1_000 };
     const now = () => clock.t;
     const replyToSession = vi.fn(() => true);
@@ -1105,17 +1178,17 @@ describe('SquadExecutionService', () => {
     const claimed = await service.status('owner', 'project-1', 'execution-1');
     expect(claimed?.coordinatorState).toBe('PARKED');
     expect(claimed?.workUnits?.[0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1', claimGeneration: 1 });
-    // Worker never produced OUTPUT → progressAt frozen at claim time. After the stall
-    // window the sweep reclaims the stranded claim and re-dispatches (fresh generation).
+    // Worker never produced OUTPUT → progressAt frozen at claim time. With no peer,
+    // the first typed no-progress reclaim quarantines its only slot and escalates.
     clock.t += 700_000; // >= default job-team maxClaimStallMs (600_000)
     replyToSession.mockClear();
     await service.redispatchStalled();
     const recovered = await service.status('owner', 'project-1', 'execution-1');
-    expect(recovered?.workUnits?.[0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1', claimGeneration: 2 });
-    expect(replyToSession).toHaveBeenCalledWith('worker-1', expect.stringContaining('assigned work unit `a`'));
+    expect(recovered?.workUnits?.[0]).toMatchObject({ state: 'BLOCKED', noProgressSlots: [expect.objectContaining({ slotId: 'slot-1' })] });
+    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('NO_PROGRESS_EXHAUSTED'));
   }));
 
-  it('redispatchStalled reclaims a claim whose output progressed ONCE then went stale (un-mask; run 47823553)', async () => fixture(async (filePath) => {
+  it('redispatchStalled escalates a claim whose output progressed ONCE then went stale when no peer exists', async () => fixture(async (filePath) => {
     // The masking bug: a bare OpenCode worker ECHOES the injected paste once (a single
     // real-output heartbeat), advancing progressAt past claimedAt, then goes silent.
     // The old `progressed = progressAt > claimedAt` short-circuit then treated the dead
@@ -1138,11 +1211,11 @@ describe('SquadExecutionService', () => {
     replyToSession.mockClear();
     await service.redispatchStalled();
     const recovered = (await store.get('execution-1'))!.workUnits![0];
-    expect(recovered).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1', claimGeneration: 2 });
-    expect(replyToSession).toHaveBeenCalledWith('worker-1', expect.stringContaining('assigned work unit `a`'));
+    expect(recovered).toMatchObject({ state: 'BLOCKED', noProgressSlots: [expect.objectContaining({ slotId: 'slot-1' })] });
+    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('NO_PROGRESS_EXHAUSTED'));
   }));
 
-  it('blocks a churning unit to a human after KICKOFF_FAILURE_BLOCK_THRESHOLD never-turned reclaims (self-heal escape hatch)', async () => fixture(async (filePath) => {
+  it('blocks a no-progress unit to a human after its only worker slot is quarantined', async () => fixture(async (filePath) => {
     // A worker that accepts each dispatch but NEVER starts a turn would otherwise be
     // reclaimed → re-dispatched down the same broken delivery path forever (a silently
     // wedged run). At the threshold the engine STOPS churning and surfaces an actionable
@@ -1153,19 +1226,17 @@ describe('SquadExecutionService', () => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
     const service = new SquadExecutionService(wedgedClaimDeps(filePath, now, replyToSession, { store }));
     await startWedgedClaim(service);
-    for (let sweep = 0; sweep < KICKOFF_FAILURE_BLOCK_THRESHOLD; sweep++) {
-      clock.t += 700_000; // past job-team maxClaimStallMs each pass → reclaim + re-dispatch
-      await service.redispatchStalled();
-    }
+    clock.t += 700_000;
+    await service.redispatchStalled();
     const blocked = (await store.get('execution-1'))!;
     expect(blocked.workUnits![0]).toMatchObject({ state: 'BLOCKED' });
     expect(blocked.workUnits![0].assignedSlotId).toBeUndefined();
     expect(blocked.state).toBe('BLOCKED');
     const blocker = blocked.blockers?.find((entry) => entry.workUnitId === 'a');
     expect(blocker).toMatchObject({ audience: 'human', resolved: false });
-    expect(blocker?.question).toContain('never started a turn');
+    expect(blocker?.question).toContain('made no progress');
     // Coordinator woken with the actionable blocker (not a silent spin).
-    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('HUMAN_BLOCKER'));
+    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('NO_PROGRESS_EXHAUSTED'));
     // Churn has stopped: a further sweep finds no CLAIMED unit and re-dispatches nothing.
     replyToSession.mockClear();
     clock.t += 700_000;
@@ -1206,18 +1277,16 @@ describe('SquadExecutionService', () => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
     const service = new SquadExecutionService(twoWorkerWedgedDeps(filePath, now, replyToSession, { store }));
     await startWedgedClaim(service);
-    for (let sweep = 0; sweep < KICKOFF_FAILURE_BLOCK_THRESHOLD; sweep++) {
-      clock.t += 700_000; // past job-team maxClaimStallMs each pass → reclaim + re-dispatch
-      replyToSession.mockClear();
-      await service.redispatchStalled();
-    }
+    clock.t += 700_000;
+    replyToSession.mockClear();
+    await service.redispatchStalled();
     const record = (await store.get('execution-1'))!;
     // Reassigned + re-dispatched onto the untried slot-2 worker; not blocked, no blocker.
     expect(record.workUnits![0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-2' });
     expect(record.state).not.toBe('BLOCKED');
     expect(record.blockers ?? []).toHaveLength(0);
     expect(replyToSession).toHaveBeenCalledWith('worker-2', expect.stringContaining('assigned work unit `a`'));
-    expect(replyToSession).not.toHaveBeenCalledWith('coordinator', expect.stringContaining('HUMAN_BLOCKER'));
+    expect(replyToSession).not.toHaveBeenCalledWith('coordinator', expect.stringContaining('NO_PROGRESS_EXHAUSTED'));
   }));
 
   it('blocks to a human with a linked inbox entry only after EVERY worker slot is exhausted', async () => fixture(async (filePath) => {
@@ -1232,8 +1301,8 @@ describe('SquadExecutionService', () => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
     const service = new SquadExecutionService(twoWorkerWedgedDeps(filePath, now, replyToSession, { store, inbox }));
     await startWedgedClaim(service);
-    // slot-1 exhausts (3) → reassign to slot-2 → slot-2 exhausts (3) → both tried → block.
-    for (let sweep = 0; sweep < KICKOFF_FAILURE_BLOCK_THRESHOLD * 2; sweep++) {
+    // slot-1 no-progress reclaim rotates to slot-2; slot-2 no-progress reclaim blocks.
+    for (let sweep = 0; sweep < 2; sweep++) {
       clock.t += 700_000;
       await service.redispatchStalled();
     }
@@ -1243,7 +1312,7 @@ describe('SquadExecutionService', () => {
     expect(blocked.workUnits![0].assignedSlotId).toBeUndefined();
     const blocker = blocked.blockers?.find((entry) => entry.workUnitId === 'a');
     expect(blocker).toMatchObject({ audience: 'human', resolved: false });
-    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('HUMAN_BLOCKER'));
+    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('NO_PROGRESS_EXHAUSTED'));
     expect(inbox.append).toHaveBeenCalledWith(expect.objectContaining({
       executionId: 'execution-1', projectId: 'project-1', blockerId: blocker!.id, comments: blocker!.question
     }));
@@ -3868,7 +3937,7 @@ describe('execution DAG robustness (Plan 3: generic synthetic DAGs)', () => {
     replyToSession.mockClear();
     await service.redispatchStalled();
     const status = await service.status('owner', 'project-1', 'execution-1');
-    expect(status?.workUnits?.find((u) => u.id === 'a')).toMatchObject({ state: 'CLAIMED', claimGeneration: 2 }); // reclaimed + re-dispatched
+    expect(status?.workUnits?.find((u) => u.id === 'a')).toMatchObject({ state: 'BLOCKED', noProgressSlots: [expect.objectContaining({ slotId: 'slot-1' })] });
     expect(status?.workUnits?.find((u) => u.id === 'b')?.state).toBe('PENDING'); // dependent must NOT advance while 'a' is unfinished
     expect(pushesFor(replyToSession, 'b')).toBe(0);
   }));

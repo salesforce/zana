@@ -157,6 +157,18 @@ describe('projectExecutionProjection', () => {
     expect(pending).not.toHaveProperty('leaseExpiresAt');
   });
 
+  it('projects bounded unit-local no-progress health without free-text recovery evidence', () => {
+    const input = record();
+    input.workUnits = [{
+      id: 'claimed', title: 'Claimed', task: 'Work', dependencies: [], state: 'READY', attempt: 2,
+      history: [{ action: 'claimed', slotId: 'slot-a', attempt: 1, at: 1 }],
+      noProgressSlots: [{ slotId: 'slot-a', executionAttempt: 2, unitAttempt: 1, claimGeneration: 1, reason: 'Claim reclaimed: worker alive but produced no output progress within the stall limit', reclaimedAt: 2 }]
+    }];
+    const assignment = projectExecutionProjection([input], [])[0].work!.assignments[0];
+    expect(assignment).toMatchObject({ healthState: 'NO_PROGRESS', reclaimCount: 1, attemptedSlots: ['slot-a'], quarantinedSlots: ['slot-a'] });
+    expect(JSON.stringify(assignment)).not.toContain('worker alive');
+  });
+
   it('does not claim an exited orchestrator as live', () => {
     const session = { id: 'orch', status: 'exited', cohort: { executionId: 'execution-1', role: 'orchestrator' } } as TerminalSession;
     expect(projectExecutionProjection([record()], [session])[0].orchestratorSessionId).toBeUndefined();

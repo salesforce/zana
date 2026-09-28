@@ -105,6 +105,8 @@ describe('jobCoordinatorPrompt — shared invariants (both flows)', () => {
     expect(prompt).toContain('Worker A');
     expect(prompt).toContain('Objective: Ship the thing');
     expect(prompt).toContain('Do not call execution.status during normal kickoff.');
+    expect(prompt).toContain('On an explicit health or escalation wake, call `execution.snapshot` once');
+    expect(prompt).toContain('return `WRONG_AUTHORITY` for a bound cohort');
     expect(prompt).toContain('Do not call `list_agents` during normal kickoff.');
   });
 });

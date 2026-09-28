@@ -26,4 +26,35 @@ describe('HarnessIntegrationAdapter compatibility bridge', () => {
       mcp: { 'zcc-inbox': { type: 'remote', url: 'http://127.0.0.1/mcp/p/s', enabled: true } }
     });
   });
+
+  it('exposes the clobber-proof OpenCode MCP FILE channel alongside the env channel', () => {
+    const result = providerFor('opencode').integration.configure({
+      profile: 'opencode',
+      mcp: { url: 'http://127.0.0.1/mcp/p/s' }
+    });
+    expect(result.mcpConfigFile?.envVar).toBe('OPENCODE_CONFIG');
+    // Same zcc-inbox block as the env channel — a shim that clobbers
+    // OPENCODE_CONFIG_CONTENT can't touch OPENCODE_CONFIG, and OpenCode
+    // deep-merges the file back in.
+    expect(JSON.parse(result.mcpConfigFile!.contents)).toEqual({
+      mcp: { 'zcc-inbox': { type: 'remote', url: 'http://127.0.0.1/mcp/p/s', enabled: true } }
+    });
+  });
+
+  it('does not emit an MCP file channel for providers that carry MCP another way', () => {
+    // codex uses `-c` args, claude uses a --mcp-config file arg → no OPENCODE_CONFIG.
+    expect(providerFor('codex').integration.configure({
+      profile: 'codex',
+      mcp: { url: 'http://127.0.0.1/mcp/p/s' }
+    }).mcpConfigFile).toBeUndefined();
+    expect(providerFor('claude').integration.configure({
+      profile: 'claude',
+      mcp: { url: 'http://127.0.0.1/mcp/p/s' }
+    }).mcpConfigFile).toBeUndefined();
+  });
+
+  it('omits the MCP file channel when no MCP connection is requested', () => {
+    expect(providerFor('opencode').integration.configure({ profile: 'opencode' }).mcpConfigFile)
+      .toBeUndefined();
+  });
 });

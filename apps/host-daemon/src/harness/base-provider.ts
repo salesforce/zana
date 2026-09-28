@@ -71,7 +71,10 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
         hookArgs: lifecycle ? this.hookArgs(profile as LaunchProfileId, hookUrls) : [],
         authArgs: injection.args ?? [],
         authEnv: injection.env,
-        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url) : {}
+        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url) : {},
+        mcpConfigFile: mcp
+          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url) ?? undefined)
+          : undefined
       };
     }
   };
@@ -143,6 +146,22 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     _mcpUrl: string
   ): Record<string, string> {
     return {};
+  }
+
+  /**
+   * No MCP-via-FILE injection by default: only a provider whose CLI reads MCP
+   * config from a DISCOVERED file (OpenCode's `OPENCODE_CONFIG` file-path env
+   * var) overrides this to return the env-var name + file contents. The host
+   * writes a per-session temp file and points that var at it — a clobber-proof
+   * complement to {@link mcpEnv} that an env-overwriting wrapper can't destroy.
+   * Every other provider returns `null` (they use the file-arg, env, `-c`-arg,
+   * or no MCP surface). See the interface doc for the rationale.
+   */
+  mcpConfigFile(
+    _profile: LaunchProfileId,
+    _mcpUrl: string
+  ): { envVar: string; contents: string } | null {
+    return null;
   }
 
   guidanceArgs(_profile: LaunchProfileId, _guidance: string): string[] {

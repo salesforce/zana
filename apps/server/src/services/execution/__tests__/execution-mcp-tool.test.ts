@@ -423,8 +423,24 @@ describe('execution MCP tools', () => {
     execution.snapshot.mockResolvedValueOnce(undefined as never);
     const denied = await tools.get('execution.snapshot')!({ executionId: 'execution-2' });
     expect(denied.isError).toBe(true);
+    expect(JSON.parse(text(denied))).toMatchObject({ code: 'WRONG_AUTHORITY', remediation: expect.stringContaining('execution.snapshot') });
     expect(execution.snapshotBound).toHaveBeenCalledTimes(1);
     expect(execution.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('returns typed cohort remediation instead of owner-scoped status or list', async () => {
+    const execution = service();
+    const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'coordinator', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
+
+    for (const [tool, input] of [['execution.status', { executionId: 'execution-1' }], ['execution.list', {}]] as const) {
+      const result = await tools.get(tool)!(input);
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(text(result))).toMatchObject({ code: 'WRONG_AUTHORITY', remediation: 'Use execution.snapshot for bound cohort execution' });
+    }
+    expect(execution.status).not.toHaveBeenCalled();
+    expect(execution.list).not.toHaveBeenCalled();
   });
 
   it('projects bound snapshot to coordinator-safe execution fields', async () => {

@@ -39,6 +39,18 @@ export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'B
 export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
 export type ExecutionCohortAuthority = { role: 'worker' | 'orchestrator'; slotId: string };
 export type ExecutionLaunchKind = 'team';
+export const NO_PROGRESS_CLAIM_REASONS = [
+  'Work claim exceeded main-observable wall-clock limit',
+  'Claim lease expired and assigned Team worker is proven dead',
+  'Claim reclaimed: worker shell/wrapper is alive but its inner agent is dead',
+  'Claim lease expired with no worker output for a full lease window',
+  'Claim reclaimed: worker alive but produced no output progress within the stall limit'
+] as const;
+export type NoProgressReason = typeof NO_PROGRESS_CLAIM_REASONS[number];
+
+function isNoProgressReason(reason: string): reason is NoProgressReason {
+  return (NO_PROGRESS_CLAIM_REASONS as readonly string[]).includes(reason);
+}
 
 /**
  * A no-op *guard* rejection from a background recovery mutation (kickoff reassign /
@@ -106,6 +118,9 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
    * to a human ({@link blockKickoffFailure}) instead of silently re-dispatched.
    */
   kickoffFailures?: number;
+  /** Bounded per-attempt no-progress evidence. A listed slot is excluded from
+   * automatic redispatch until an explicit retry resets this unit. */
+  noProgressSlots?: Array<{ slotId: string; executionAttempt: number; unitAttempt: number; claimGeneration: number; reason: NoProgressReason; reclaimedAt: number }>;
   /**
    * The exact claim an engine sweep reclaimed while the unit was still CLAIMED,
    * retained ONLY while the unit stays READY (still unclaimed). It authorizes a
@@ -512,6 +527,10 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.progressAt === undefined || typeof unit.progressAt === 'number' && Number.isFinite(unit.progressAt))
     && (unit.turnCount === undefined || validNonNegativeInteger(unit.turnCount))
     && (unit.kickoffFailures === undefined || validNonNegativeInteger(unit.kickoffFailures))
+    && (unit.noProgressSlots === undefined || Array.isArray(unit.noProgressSlots) && unit.noProgressSlots.length <= MAX_WORK_UNITS
+      && unit.noProgressSlots.every((entry) => validString(entry.slotId) && validNonNegativeInteger(entry.executionAttempt)
+        && validNonNegativeInteger(entry.unitAttempt) && validNonNegativeInteger(entry.claimGeneration)
+        && isNoProgressReason(entry.reason) && typeof entry.reclaimedAt === 'number' && Number.isFinite(entry.reclaimedAt)))
     && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
     && (unit.failure === undefined || validString(unit.failure)) && (unit.result === undefined || validString(unit.result))
     && (unit.structuredResult === undefined || validStructuredJson(unit.structuredResult))
@@ -668,7 +687,7 @@ function validCoordinatorWake(value: unknown): value is CoordinatorWakeV1 {
   if (!value || typeof value !== 'object') return false;
   const wake = value as Partial<CoordinatorWakeV1>;
   return wake.version === 1 && validString(wake.id) && validString(wake.key)
-    && ['HUMAN_BLOCKER', 'SEMANTIC_CONFLICT', 'POLICY_ESCALATION', 'TYPED_OUTPUT_REPAIR', 'TERMINAL_SYNTHESIS'].includes(wake.cause ?? '')
+    && ['HUMAN_BLOCKER', 'NO_PROGRESS_EXHAUSTED', 'SEMANTIC_CONFLICT', 'POLICY_ESCALATION', 'TYPED_OUTPUT_REPAIR', 'TERMINAL_SYNTHESIS'].includes(wake.cause ?? '')
     && validString(wake.message) && (wake.workUnitId === undefined || validString(wake.workUnitId))
     && validString(wake.stateOrClaimGeneration) && typeof wake.createdAt === 'number' && Number.isFinite(wake.createdAt);
 }
@@ -1356,6 +1375,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         let decisionsChanged = false;
         for (const unit of record.workUnits ?? []) {
           if (unit.state !== 'READY') continue;
+          const excludedSlots = new Set((unit.noProgressSlots ?? [])
+            .filter((entry) => entry.executionAttempt === record.attempt)
+            .map((entry) => entry.slotId));
           let recommendation: string | undefined;
           let routeImpossible = false;
           if (unit.routing) {
@@ -1447,8 +1469,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             index = freeSlots.findIndex((slot) => slot.slotId === recommendation);
             if (index < 0) continue;
           }
-          if (index < 0 && unit.preferredRole) index = freeSlots.findIndex((slot) => slot.personaId === unit.preferredRole);
-          if (index < 0) index = 0;
+          if (index < 0 && unit.preferredRole) index = freeSlots.findIndex((slot) => slot.personaId === unit.preferredRole && !excludedSlots.has(slot.slotId));
+          if (index < 0) index = freeSlots.findIndex((slot) => !excludedSlots.has(slot.slotId));
+          if (index < 0) continue;
           const slot = freeSlots[index];
            unit.state = 'CLAIMED';
            unit.assignedSlotId = slot.slotId;
@@ -1718,13 +1741,22 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         // repeatedly accepts the unit but never starts a turn is not making
         // progress, it is stuck at delivery.
         if ((unit.turnCount ?? 0) === 0) unit.kickoffFailures = (unit.kickoffFailures ?? 0) + 1;
+        const holderSlotId = unit.assignedSlotId ?? unit.claimedBy?.slotId;
+        if (holderSlotId && isNoProgressReason(claim.reason)) {
+          const evidence = unit.noProgressSlots ?? [];
+          if (!evidence.some((entry) => entry.slotId === holderSlotId && entry.executionAttempt === record.attempt)) {
+            unit.noProgressSlots = [...evidence, {
+              slotId: holderSlotId, executionAttempt: record.attempt, unitAttempt: unit.attempt,
+              claimGeneration: unit.claimGeneration ?? 0, reason: claim.reason as NoProgressReason, reclaimedAt: timestamp
+            }].slice(-MAX_WORK_UNITS);
+          }
+        }
         unit.state = 'READY';
         unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(claim.reason, 'claim recovery reason') });
         // Durable evidence of the EXACT claim we just reclaimed. A worker that was
         // mid-flight when we reclaimed its silent claim may still finish; completeWork
         // accepts that late result ONLY from this recorded claim, and only while the
         // unit stays READY (no newer claim/assignment supersedes it).
-        const holderSlotId = unit.assignedSlotId ?? unit.claimedBy?.slotId;
         unit.reclaimedClaim = holderSlotId !== undefined && unit.claimId !== undefined && unit.claimGeneration !== undefined
           ? { slotId: holderSlotId, claimId: unit.claimId, claimGeneration: unit.claimGeneration }
           : undefined;
@@ -1761,8 +1793,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED') throw new WorkUnitRecoveryGuardError('work unit is not blockable for kickoff failure');
-      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new WorkUnitRecoveryGuardError('kickoff failures below block threshold');
-      const blockerId = `kickoff:${unit.id}:${unit.attempt}`;
+      if (!(unit.noProgressSlots ?? []).some((entry) => entry.executionAttempt === record.attempt)
+        && (unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new WorkUnitRecoveryGuardError('kickoff failures below block threshold');
+      const blockerId = `no-progress:${record.attempt}:${unit.id}:${unit.attempt}`;
       if (record.blockers?.some((blocker) => blocker.id === blockerId)) throw new WorkUnitRecoveryGuardError('duplicate kickoff blocker');
       const slotId = unit.assignedSlotId ?? 'engine';
       unit.state = 'BLOCKED';
@@ -1772,7 +1805,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.blockers ??= [];
       record.blockers.push({
         id: blockerId, workUnitId: unit.id, slotId,
-        question: `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} was dispatched ${unit.kickoffFailures} times but its worker never started a turn — the assignment likely never reached or submitted in the worker. Check the worker terminal, then retry the unit or restart the run.`,
+        question: `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress on every eligible worker slot; its worker never started a turn. Check the worker terminal, then retry the unit or restart the run.`,
         audience: 'human', resolved: false, createdAt: timestamp
       });
       record.state = 'BLOCKED';
@@ -1798,11 +1831,15 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (unit.state !== 'READY') throw new WorkUnitRecoveryGuardError('work unit is not reassignable for kickoff failure');
-      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new WorkUnitRecoveryGuardError('kickoff failures below block threshold');
+      if (!(unit.noProgressSlots ?? []).some((entry) => entry.executionAttempt === record.attempt)
+        && (unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new WorkUnitRecoveryGuardError('kickoff failures below block threshold');
       const workerSlots = (record.authorizationContext?.slots ?? []).filter(
         (slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:')
       );
-      const tried = new Set(unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!));
+      const tried = new Set([...
+        unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!),
+        ...(unit.noProgressSlots ?? []).filter((entry) => entry.executionAttempt === record.attempt).map((entry) => entry.slotId)
+      ]);
       const fresh = workerSlots.find((slot) => !tried.has(slot.slotId));
       if (!fresh) throw new WorkUnitRecoveryGuardError('no untried worker slot for kickoff reassignment');
       unit.assignedSlotId = fresh.slotId;
@@ -1840,6 +1877,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       // A human retry gives a fresh kickoff budget: they have (or will) fix the
       // worker, so a prior kickoff-churn block must not immediately re-block.
       unit.kickoffFailures = undefined;
+      unit.noProgressSlots = undefined;
       unit.history.push({ action: 'retried', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
       for (const blocker of record.blockers ?? []) {
         if (blocker.workUnitId === unit.id && !blocker.resolved) {

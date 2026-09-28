@@ -302,6 +302,14 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     return resolved;
   };
   const boundDenied = (name: string) => ({ isError: true as const, content: [{ type: 'text' as const, text: `${name} failed: session is not bound to this execution.` }] });
+  const wrongAuthority = (name: string) => ({
+    isError: true as const,
+    content: [{ type: 'text' as const, text: JSON.stringify({
+      code: 'WRONG_AUTHORITY',
+      tool: name,
+      remediation: 'Use execution.snapshot for bound cohort execution'
+    }) }]
+  });
   const boundResult = (name: string, value: { ok: boolean; value?: unknown; message?: string }) => value.ok
     ? { content: [{ type: 'text' as const, text: JSON.stringify(value.value && typeof value.value === 'object' && 'id' in value.value ? toMcpSafeExecution(value.value as ExecutionRecord) : value.value) }] }
     : { isError: true, content: [{ type: 'text' as const, text: `${name} failed: ${value.message}` }] };
@@ -436,6 +444,8 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     description: 'Read one project-scoped execution.', inputSchema: executionIdSchema
   }, async ({ executionId }) => {
     if (!authorized()) return denied('execution.status');
+    const cohort = await binding(executionId);
+    if (cohort) return wrongAuthority('execution.status');
     const record = await options.service.status(options.sessionId!, options.projectId, executionId);
     return record
       ? { content: [{ type: 'text' as const, text: JSON.stringify(toMcpSafeExecution(record)) }] }
@@ -476,6 +486,8 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     description: 'List recent project-scoped executions started by this session identity.', inputSchema: {}
   }, async () => {
     if (!authorized()) return denied('execution.list');
+    const cohort = await binding();
+    if (cohort) return wrongAuthority('execution.list');
     const records = await options.service.list(options.sessionId!, options.projectId);
     return { content: [{ type: 'text' as const, text: JSON.stringify(records.map(toMcpSafeExecution)) }] };
   });
@@ -495,7 +507,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     try {
       const hostBinding = options.sessionId ? options.resolveCohortBinding?.(options.sessionId, options.projectId) : undefined;
       const bound = await binding(executionId);
-      if (hostBinding && !bound) return boundDenied('execution.snapshot');
+      if (hostBinding && !bound) return wrongAuthority('execution.snapshot');
       const snapshot = bound
         ? await options.service.snapshotBound(bound, after ?? 0)
         : await options.service.snapshot(options.sessionId!, options.projectId, executionId, after ?? 0);

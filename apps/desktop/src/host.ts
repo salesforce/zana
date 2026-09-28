@@ -4431,7 +4431,7 @@ export function jobWorkerPrompt(input: {
   return [
     `Team worker standby. You are ${input.label} (${input.personaName}), slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}.`,
     'Your working directory is the trusted project workspace. Wait for an assignment for this slot; each assignment carries a fully-specified work unit — its task is the complete instruction. When it arrives, EXECUTE it: do the task using the file scope, the upstream results included in the assignment, and your own reading of the project workspace. Do the work yourself; do not wait for extra "source context" to be pushed to you and do not ask the coordinator to re-explain a task you can carry out. Do not, however, start the overall job or units not assigned to this slot.',
-    'Do not poll `agent_inbox`. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Do not use `agent_send` for routine progress or results.',
+    'Do not poll `agent_inbox`. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not an AI Suite Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
     'Use `execution.work.block` ONLY when you genuinely cannot proceed, and pick the audience: `audience: "coordinator"` when you need ONE specific, decidable plan/spec choice from the coordinator (e.g. which of two interfaces to target, an ambiguous path) — phrase it as a single concrete question the coordinator can answer, and the worker resumes automatically once answered; `audience: "human"` (the default) only when a real human decision or credential is required. Do not block just because a task looks large or under-detailed — attempt it. Do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.'
   ].join('\n\n');
 }
@@ -5471,6 +5471,7 @@ const squadExecutionService = new SquadExecutionService({
     const owners = new Set(ownerPrincipalIds);
     return ptys.list(projectId).some((session) => session.status !== 'exited' && owners.has(session.id));
   },
+  isRegisteredProject: (projectId) => store.listProjects().some((project) => project.id === projectId),
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
   preflightWorkflow: (teamId, workflow) => {
@@ -6139,7 +6140,10 @@ function wireBridgeListeners() {
         logMainError(`launch ledger exit ${sessionId}`, error)
       );
     }
-    const exitedSession = ptys.getSession(sessionId);
+    // PTY finalization removes the live entry before this listener runs. The
+    // bounded tombstone preserves the cohort stamp needed to recover a stopped
+    // worker's fresh durable claim.
+    const exitedSession = ptys.getRememberedSession(sessionId);
     // Capture final counters before lifecycle reconciliation can make execution
     // terminal. Then forward exit detail so FAILED settlement includes provider cause.
     void (async () => {
@@ -6153,6 +6157,13 @@ function wireBridgeListeners() {
         signal: typeof signal === 'number' ? signal : undefined,
         reason: typeof reason === 'string' && reason.length > 0 ? reason : undefined
       }).catch((error) => logMainError(`team lifecycle exit ${sessionId}`, error));
+      if (exitedSession?.cohort?.executionId && exitedSession.cohort.role === 'worker' && exitedSession.cohort.slotId) {
+        // Target this terminal worker directly. A generic sweep may already be in
+        // flight and skip, stranding a fresh claim until its next timer tick.
+        await squadExecutionService.recoverExitedWorker(exitedSession.cohort.executionId, exitedSession.cohort.slotId).catch((error) =>
+          logMainError(`execution worker-exit recovery ${sessionId}`, error)
+        );
+      }
       if (exitedSession?.cohort?.executionId && exitedSession.cohort.role === 'orchestrator') {
         await squadExecutionService.handleCoordinatorExit(exitedSession.projectId, exitedSession.cohort.executionId, sessionId).catch((error) =>
           logMainError(`execution coordinator exit ${sessionId}`, error)

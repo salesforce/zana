@@ -524,6 +524,16 @@ describe('OpenCodeProvider', () => {
     expect(env.OPENCODE_CONFIG_CONTENT).not.toContain('${');
   });
 
+  it('mcpConfigFile wires the SAME zcc-inbox block via the clobber-proof OPENCODE_CONFIG file', () => {
+    const file = p.mcpConfigFile('opencode', 'http://127.0.0.1:8765/mcp/proj/sess');
+    expect(file.envVar).toBe('OPENCODE_CONFIG');
+    // Byte-identical to the env channel: OpenCode deep-merges the file back in, so a
+    // shim that overwrites OPENCODE_CONFIG_CONTENT can't drop zcc-inbox.
+    expect(JSON.parse(file.contents)).toEqual(
+      JSON.parse(p.mcpEnv('opencode', 'http://127.0.0.1:8765/mcp/proj/sess').OPENCODE_CONFIG_CONTENT)
+    );
+  });
+
   it('arg builders are no-ops (OpenCode reads MCP/agents/hooks from its own config)', () => {
     expect(p.personaArgs({ id: 'p', name: 'P', appendSystemPrompt: 'x' }, 'opencode')).toEqual([]);
     expect(p.projectSettingsArgs({ model: 'opus' }, 'opencode')).toEqual([]);

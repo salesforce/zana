@@ -106,7 +106,7 @@ export interface ExecutionAssembledResultV1 {
   digest: string;
 }
 
-export type CoordinatorWakeCause = 'HUMAN_BLOCKER' | 'SEMANTIC_CONFLICT' | 'POLICY_ESCALATION' | 'TYPED_OUTPUT_REPAIR' | 'TERMINAL_SYNTHESIS';
+export type CoordinatorWakeCause = 'HUMAN_BLOCKER' | 'NO_PROGRESS_EXHAUSTED' | 'SEMANTIC_CONFLICT' | 'POLICY_ESCALATION' | 'TYPED_OUTPUT_REPAIR' | 'TERMINAL_SYNTHESIS';
 export interface CoordinatorWakeV1 {
   version: 1;
   id: string;

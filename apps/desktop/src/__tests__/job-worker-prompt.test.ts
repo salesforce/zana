@@ -124,6 +124,8 @@ describe('jobWorkerPrompt — delivery instructions', () => {
     expect(withExecution).toContain('execution.work.fail');
     expect(withExecution).toContain('execution.work.block');
     expect(withExecution).toContain('execution.work.release');
+    expect(withExecution).toContain('zcc-inbox_execution_work_complete');
+    expect(withExecution).toContain('not an AI Suite Python bridge or a colon-form tool name');
     expect(withExecution).toContain('Do not use `agent_send` for routine progress or results');
   });
 

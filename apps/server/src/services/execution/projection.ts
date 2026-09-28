@@ -56,6 +56,10 @@ function workProjection(record: ExecutionRecord): WorkProjection {
       ...(unit.turnCount !== undefined ? { turnCount: unit.turnCount } : {}),
       ...(unit.claimId !== undefined ? { claimId: unit.claimId } : {}),
       ...(unit.claimGeneration !== undefined ? { claimGeneration: unit.claimGeneration } : {})
+      , healthState: (unit.noProgressSlots?.some((entry) => entry.executionAttempt === record.attempt) ? 'NO_PROGRESS' : 'HEALTHY') as 'NO_PROGRESS' | 'HEALTHY'
+      , reclaimCount: (unit.noProgressSlots ?? []).filter((entry) => entry.executionAttempt === record.attempt).length
+      , attemptedSlots: [...new Set(unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!))]
+      , quarantinedSlots: [...new Set((unit.noProgressSlots ?? []).filter((entry) => entry.executionAttempt === record.attempt).map((entry) => entry.slotId))]
     })),
     rosterSlotIds: record.authorizationContext?.slots.map((slot) => slot.slotId) ?? []
   };

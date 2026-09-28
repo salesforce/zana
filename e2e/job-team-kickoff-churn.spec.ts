@@ -71,13 +71,13 @@ test('Job Team self-heals kickoff churn: reassign to a fresh slot (WS1), then bl
         typeof event.summary === 'string' && event.summary.includes(needle));
     }, { projectId, executionId, needle });
 
-    // WS1: the unit exhausts worker-1's kickoff budget and is reassigned to the
+    // WS1: first no-progress reclaim quarantines worker-1 and reassigns to the
     // untried worker-2 (self-heal before asking a person).
     await expect.poll(eventSeen('reassigned to fresh slot'), { timeout: 90_000, intervals: [500] }).toBe(true);
 
-    // WS3: worker-2 also exhausts its budget → every slot tried → the run surfaces
+    // WS3: worker-2 also makes no progress → every slot tried → the run surfaces
     // a HUMAN_BLOCKER instead of looping forever.
-    await expect.poll(eventSeen('blocked after repeated kickoff failure'), { timeout: 90_000, intervals: [500] }).toBe(true);
+    await expect.poll(eventSeen('blocked after repeated kickoff failure'), { timeout: 30_000, intervals: [500] }).toBe(true);
 
     // WS3 twin: the human block ALSO produces an actionable Inbox entry (a
     // kickoff-blocker row bound to this execution). A block that only woke the
@@ -85,7 +85,7 @@ test('Job Team self-heals kickoff churn: reassign to a fresh slot (WS1), then bl
     await expect.poll(async () => window.evaluate(async (executionId) => {
       const page = await window.cc.inbox.history({ limit: 200 });
       return (page?.entries ?? []).some((entry: { executionId?: string; blockerId?: string }) =>
-        entry.executionId === executionId && typeof entry.blockerId === 'string' && entry.blockerId.startsWith('kickoff:'));
+        entry.executionId === executionId && typeof entry.blockerId === 'string' && entry.blockerId.startsWith('no-progress:'));
     }, executionId), { timeout: 30_000, intervals: [500] }).toBe(true);
   } catch (error) {
     throw jobTeamFailure(ctx, error);

@@ -58,6 +58,7 @@ function workUnitLines(work: ExecutionProjection['work']): string[] {
     lines.push(`      state: ${assignment.state} · assignedSlotId: ${assignment.slotId ?? 'unassigned'}${assignment.failureCode ? ` · failureCode: ${assignment.failureCode}` : ''}`);
     lines.push(`      claimedAt: ${formatTimestamp(assignment.claimedAt)} · heartbeatAt: ${formatTimestamp(assignment.heartbeatAt)} · progressAt: ${formatTimestamp(assignment.progressAt)} · leaseExpiresAt: ${formatTimestamp(assignment.leaseExpiresAt)}`);
     lines.push(`      attempt: ${assignment.attempt ?? '—'} · turnCount: ${assignment.turnCount ?? '—'} · claimGeneration: ${assignment.claimGeneration ?? '—'} · claimId: ${assignment.claimId ?? '—'}`);
+    lines.push(`      health: ${assignment.healthState ?? 'HEALTHY'} · reclaims: ${assignment.reclaimCount ?? 0} · attemptedSlots: ${assignment.attemptedSlots?.join(', ') || '—'} · quarantinedSlots: ${assignment.quarantinedSlots?.join(', ') || '—'}`);
     if (assignment.dependencies?.length) lines.push(`      dependencies: ${assignment.dependencies.join(', ')}`);
     if (assignment.result) lines.push(`      result: ${assignment.result}`);
   }

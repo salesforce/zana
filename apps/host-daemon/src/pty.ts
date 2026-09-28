@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree, HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
 import { SESSION_MEMORY_DEFAULTS, isDurableCoordination } from '@zana-ai/zcc-domain/product';
@@ -78,6 +79,33 @@ function sweepStaleDiagnosticCaptures(dir: string): void {
       const path = join(dir, name);
       try {
         if (now - statSync(path).mtimeMs > DIAGNOSTIC_CAPTURE_MAX_AGE_MS) unlinkSync(path);
+      } catch {
+        /* best-effort per-file */
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Host-owned dir for per-session provider MCP config files (OpenCode's
+ * `OPENCODE_CONFIG` file). A file the CLI deep-merges survives an env-clobbering
+ * wrapper that would destroy the inline-config env var. One file per session
+ * (the URL is session-scoped); unlinked on exit, and swept for crash orphans.
+ */
+const SESSION_MCP_CONFIG_DIR = join(tmpdir(), 'zcc-session-mcp');
+/** Bound crash-orphaned session MCP config files on a long-lived box. */
+const SESSION_MCP_CONFIG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function sweepStaleSessionMcpConfigs(dir: string): void {
+  try {
+    const now = Date.now();
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.json')) continue;
+      const path = join(dir, name);
+      try {
+        if (now - statSync(path).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) unlinkSync(path);
       } catch {
         /* best-effort per-file */
       }
@@ -427,6 +455,10 @@ export class PtyManager extends EventEmitter {
   private stdinOpeningPromptCleanup = new Map<string, () => void>();
   /** Opt-in diagnostic files retained past exit; never populated in normal runs. */
   private diagnosticFiles = new Map<string, string>();
+  /** Per-session provider MCP config file path (OpenCode's `OPENCODE_CONFIG`),
+   *  written on spawn and unlinked in {@link finalizeExit}. Absent for providers
+   *  that carry MCP another way (claude file-arg, codex `-c`, shell none). */
+  private sessionMcpConfigFiles = new Map<string, string>();
 
   /** Run scheduled commands through a native supervisor with stable child PID ownership. */
   private scheduledSupervisor(command: string, args: string[]): { command: string; args: string[] } {
@@ -715,6 +747,28 @@ export class PtyManager extends EventEmitter {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[pty] ensureMcpConfigForProjectSync(${projectId}) failed:`, err);
+      return null;
+    }
+  }
+
+  /**
+   * Write a provider's per-session MCP config to a host-owned `0600` file and
+   * return its path (null on failure → caller falls back to the env channel).
+   * Used for OpenCode's `OPENCODE_CONFIG` file, whose deep-merge survives a
+   * wrapper that clobbers the inline-config env var. Swept for crash orphans on
+   * every call; unlinked on session exit ({@link finalizeExit}).
+   */
+  private writeSessionMcpConfigFile(sessionId: string, contents: string): string | null {
+    try {
+      mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
+      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR);
+      const path = join(SESSION_MCP_CONFIG_DIR, `${sessionId}.json`);
+      writeFileSync(path, contents, { mode: 0o600 });
+      this.sessionMcpConfigFiles.set(sessionId, path);
+      return path;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] writeSessionMcpConfigFile(${sessionId}) failed:`, err);
       return null;
     }
   }
@@ -1165,6 +1219,22 @@ export class PtyManager extends EventEmitter {
       } : {}),
       ...(authFamily ? { auth: getHarnessAuth(authFamily) } : {})
     });
+    // MCP-via-FILE hardening (OpenCode). A provider that reads MCP from a
+    // DISCOVERED config file returns the env-var name + file contents; we write a
+    // per-session `0600` temp file and point that var at it below. This is the
+    // clobber-proof twin of `providerIntegration.mcpEnv`: a telemetry/wrapper shim
+    // on PATH that OVERWRITES the inline-config env var (`OPENCODE_CONFIG_CONTENT`)
+    // can't touch a SEPARATE env var, and OpenCode deep-merges the file's
+    // `mcp.zcc-inbox` back into the resolved config regardless. LOCAL spawns only —
+    // the remote path carries MCP in its own inline env (buildRemoteCommand), where
+    // this host-local file wouldn't exist. Best-effort: a write failure just leaves
+    // the env channel (byte-identical to before for every non-file provider, which
+    // returns no `mcpConfigFile`). Rule 6: the concrete env-var name lives only in
+    // the provider — core reads it generically off the contribution.
+    const mcpConfigFileEnvVar = providerIntegration.mcpConfigFile?.envVar;
+    const mcpConfigFilePath = providerIntegration.mcpConfigFile
+      ? this.writeSessionMcpConfigFile(sessionId, providerIntegration.mcpConfigFile.contents)
+      : null;
     // Persona flags: inserted AFTER claudeMcpArgs so the persona's
     // append-system-prompt layers on TOP of the inbox guidance (personas can
     // build on the baseline inbox behavior), and BEFORE projectSettings so
@@ -1512,6 +1582,13 @@ export class PtyManager extends EventEmitter {
     // env-substitutes into its `--mcp-config` file) — OpenCode instead reads the
     // whole zcc-inbox server block from this var, deep-merged over its own config.
     Object.assign(env, providerIntegration.mcpEnv);
+    // Point the provider's MCP-config file env var (OpenCode's `OPENCODE_CONFIG`)
+    // at the per-session file we wrote above — the clobber-proof channel. Set
+    // AFTER mcpEnv (disjoint var), and only when the file actually landed. The
+    // key name comes from the provider (Rule 6), so core stays literal-free.
+    if (mcpConfigFileEnvVar && mcpConfigFilePath) {
+      env[mcpConfigFileEnvVar] = mcpConfigFilePath;
+    }
     if (launchEnv) Object.assign(env, launchEnv);
     // Per-session V8 heap ceiling: bound a runaway claude (and its subagent
     // node subtree, which inherits NODE_OPTIONS) so it aborts its own turn at
@@ -1579,6 +1656,15 @@ export class PtyManager extends EventEmitter {
       // launch. See providerMcpEnv above.
       OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT
     };
+    // The provider MCP-config-file env var (OpenCode's `OPENCODE_CONFIG`) is
+    // session-scoped exactly like the vars above — its file carries this session's
+    // own baked-in URL — so a tmux-backed 2nd+ agent needs the `-e` override too, or
+    // it inherits the server-global (1st agent's) value and mis-routes. Absent
+    // (unset key) for every non-file provider. The file itself is host-global on
+    // disk, reachable by the tmux pane; only the path var needs forwarding.
+    if (mcpConfigFileEnvVar) {
+      sessionEnv[mcpConfigFileEnvVar] = env[mcpConfigFileEnvVar];
+    }
     // Execution environment (WHERE it runs) — resolve, then wrap the inner launch
     // and rewrite the per-session callback env. `local` is the identity (both
     // no-ops), so a launch without `environment` is byte-identical to before this
@@ -1657,7 +1743,12 @@ export class PtyManager extends EventEmitter {
             HOME: env.HOME,
             TERM: env.TERM,
             ZCC_SESSION_ID: env.ZCC_SESSION_ID,
-            OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT
+            OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT,
+            // The MCP-config-file channel (OpenCode's `OPENCODE_CONFIG`): the path
+            // var + the file we wrote, so a capture proves the clobber-proof channel
+            // landed even when a shim has overwritten OPENCODE_CONFIG_CONTENT.
+            ...(mcpConfigFileEnvVar ? { [mcpConfigFileEnvVar]: env[mcpConfigFileEnvVar] } : {}),
+            mcpConfigFilePath
           }
         })}\n`, { mode: 0o600 });
         this.diagnosticFiles.set(sessionId, file);
@@ -1965,6 +2056,17 @@ export class PtyManager extends EventEmitter {
     }
     this.clearDataBuffer(sessionId);
     this.diagnosticFiles.delete(sessionId);
+    // Unlink this session's provider MCP config file (OpenCode's `OPENCODE_CONFIG`),
+    // if we wrote one. Best-effort; a crash orphan is swept by age on next write.
+    const mcpConfigFile = this.sessionMcpConfigFiles.get(sessionId);
+    if (mcpConfigFile) {
+      this.sessionMcpConfigFiles.delete(sessionId);
+      try {
+        unlinkSync(mcpConfigFile);
+      } catch {
+        /* best-effort — already gone or swept */
+      }
+    }
     if (!live) return;
     if (live.session.status === 'running') this.startupFailures.delete(sessionId);
     live.session.status = 'exited';

@@ -9,6 +9,8 @@ process.exitCode = await main([
   'e2e/modern-owner-job-team-run.spec.ts',
   'e2e/job-team-stuck-worker-reclaim.spec.ts',
   'e2e/job-team-kickoff-churn.spec.ts',
+  'e2e/job-team-stopped-worker-recovery.spec.ts',
+  'e2e/job-team-peer-handoff.spec.ts',
   'e2e/job-team-wedge-recovery.spec.ts',
   'e2e/job-team-streaming-worker-no-reclaim.spec.ts',
   'e2e/job-team-flow-activity-indicator.spec.ts',

@@ -264,14 +264,15 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn';
+export type JobTeamScenario = 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff';
 
-/** The four boolean gates the generated coordinator script keys its behavior off. */
+/** The behavior gates the generated coordinator script keys its behavior off. */
 interface JobTeamScenarioFlags {
   failedDag: boolean;
   stalled: boolean;
   streaming: boolean;
   churn: boolean;
+  handoff: boolean;
 }
 
 /** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
@@ -280,7 +281,8 @@ function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags 
     failedDag: scenario === 'failed-dag',
     stalled: scenario === 'stalled-worker',
     streaming: scenario === 'streaming-worker',
-    churn: scenario === 'kickoff-churn'
+    churn: scenario === 'kickoff-churn',
+    handoff: scenario === 'peer-handoff'
   };
 }
 
@@ -342,6 +344,15 @@ const STREAMING = ${JSON.stringify(flags.streaming)};
 // path forever. Reuses stalledWorker(); the only differences from STALLED are the
 // 2-worker slot count (so a fresh peer exists) and the distinct jobTitle.
 const CHURN = ${JSON.stringify(flags.churn)};
+// Peer-handoff repro (workflow-testing manual test): a TWO-worker team with ONE
+// unit. Whichever worker takes the FIRST claim (claimGeneration 1) holds it
+// NON-restful forever — no wall-clock ceiling and the lease far outlasts the
+// test, so ONLY a manual Stop of that session can release the claim. The test
+// stops that worker; the engine's PTY-exit recovery force-reclaims, quarantines
+// the dead slot, and re-dispatches the unit to the surviving peer at a HIGHER
+// claimGeneration. The peer (gen >= 2) COMPLETES it — proving live squad work
+// rotates off a stopped worker onto its peer, not merely that a claim reclaims.
+const HANDOFF = ${JSON.stringify(flags.handoff)};
 
 const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : 'UNKN';
 // Progress goes to stderr (Playwright captures it on failure) and a per-process
@@ -423,7 +434,10 @@ const STALLED_PLAN = [
 const STREAMING_PLAN = [
   { id: 'stream-unit', title: 'Stream Unit', task: 'Claim this unit and emit output forever (never completes) to exercise the output-activity lease heartbeat', dependencies: [], readOnly: true, verification: ['claim NOT reclaimed while streaming'] }
 ];
-const PLAN = FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : SUCCESS_PLAN;
+const HANDOFF_PLAN = [
+  { id: 'handoff-unit', title: 'Handoff Unit', task: 'Claim this unit; the first holder is stopped, so a surviving peer completes it', dependencies: [], files: ['handoff.txt'], verification: ['handoff.txt present'] }
+];
+const PLAN = FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : HANDOFF ? HANDOFF_PLAN : SUCCESS_PLAN;
 
 async function owner() {
   log('owner start');
@@ -431,7 +445,7 @@ async function owner() {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : 'CLI Agent durable job',
+    jobTitle: CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
     // Stalled repro shrinks the wall-clock ceiling so the backstop reclaims the
@@ -443,8 +457,9 @@ async function owner() {
     // that the output-activity lease heartbeat keeps a live worker from being reclaimed,
     // so no wall-clock ceiling may pre-empt it during the test window.
     ...((STALLED || CHURN) ? { maxClaimWallClockMs: 1000 } : {}),
-    // CHURN deliberately falls to the else branch below (1 coordinator + 2 WORKER
-    // slots): the second worker slot is the untried peer WS1 reassigns onto.
+    // CHURN and HANDOFF deliberately fall to the else branch below (1 coordinator
+    // + 2 WORKER slots): the second worker slot is the untried peer that WS1
+    // reassigns onto (CHURN) or that completes the re-dispatched unit (HANDOFF).
     slots: STALLED || STREAMING
       ? [
           { initialTask: 'Coordinate the durable execution.' },
@@ -649,7 +664,64 @@ async function streamingWorker() {
   await new Promise(function () {}); // hold forever (interval keeps emitting)
 }
 
+// Peer-handoff worker (workflow-testing manual test, automated): TWO workers, ONE
+// unit. The FIRST claim (claimGeneration 1) lands on one worker, which goes ✻
+// working (NON-restful) and HOLDS forever — no wall-clock ceiling and the lease
+// far outlasts the test, so only a manual Stop of that session releases the claim.
+// The test stops that worker; the engine's PTY-exit recovery force-reclaims the
+// claim, quarantines the dead slot, and re-dispatches the unit to the surviving
+// peer at a HIGHER claimGeneration. The peer (gen >= 2) COMPLETES the unit. Both
+// slots run THIS same code — the claimGeneration in the injected assignment fence
+// is the sole discriminator, so no per-slot special-casing is needed.
+async function handoffWorker() {
+  log('handoff worker start', EXECUTION_ID);
+  const ASSIGN_RE = new RegExp('assigned work unit ' + BT + '([^' + BT + ']+)' + BT);
+  const END = 'coordinator.';
+  let buf = '';
+  let done = false;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function (chunk) {
+    buf += String(chunk);
+    let m;
+    while ((m = buf.match(ASSIGN_RE)) !== null) {
+      const endIdx = buf.indexOf(END, m.index);
+      if (endIdx === -1) break; // message still arriving; wait for more chunks
+      const end = endIdx + END.length;
+      const id = m[1];
+      const text = buf.slice(m.index, end);
+      buf = buf.slice(end);
+      if (done) continue;
+      const fence = text.match(/Claim fence: claimId=([^;\n]+); claimGeneration=(\d+)/);
+      const gen = fence ? Number(fence[2]) : 0;
+      if (gen <= 1) {
+        // First claim holder: go NON-restful and hold. This is the worker the
+        // test STOPS; never complete, block, or idle. Ignore any re-push.
+        setWorking();
+        log('handoff: holding claimGeneration ' + gen + ' — awaiting manual stop');
+        continue;
+      }
+      // Surviving peer picked up the re-dispatched unit. Complete it (writes its
+      // output file into the shared project cwd) so the run auto-finalizes.
+      done = true;
+      setWorking();
+      (async function () {
+        try {
+          fs.writeFileSync(path.join(CWD, 'handoff.txt'), 'HANDOFF: completed by peer\n');
+          await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: id, result: 'handoff completed by peer', claimId: fence[1], claimGeneration: gen });
+          log('handoff: peer completed ' + id + ' gen ' + gen);
+        } catch (e) {
+          log('handoff peer complete error', String((e && e.message) || e));
+        }
+      })();
+    }
+  });
+  process.stdin.resume();
+  setIdle(); // announce ready-idle so the kickoff dispatch delivers immediately
+  await new Promise(function () {}); // stay alive; work is push-driven
+}
+
 async function worker() {
+  if (HANDOFF) return handoffWorker();
   if (STALLED || CHURN) return stalledWorker();
   if (STREAMING) return streamingWorker();
   log('worker start', EXECUTION_ID);

@@ -732,7 +732,32 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * matching the zcc-inbox streamable-http server the claude path points at.
    */
   mcpEnv(_profile: LaunchProfileId, mcpUrl: string): Record<string, string> {
-    const config = {
+    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(this.zccInboxConfig(mcpUrl)) };
+  }
+
+  /**
+   * MCP-via-FILE hardening. `OPENCODE_CONFIG_CONTENT` (mcpEnv) is inline config
+   * in a single env var — and a wrapper on PATH that OVERWRITES that var (an
+   * observed telemetry shim exports its own `OPENCODE_CONFIG_CONTENT` before
+   * exec'ing the real binary) silently destroys the zcc-inbox block, so squad
+   * workers lose the completion tool. `OPENCODE_CONFIG` is a SEPARATE env var
+   * naming a config FILE that OpenCode ADDS to its merge chain (between global
+   * and project config) and deep-merges — verified against the binary + source
+   * (`config.ts` `mergeDeep`). We write the SAME zcc-inbox block to a host-owned
+   * per-session file and point `OPENCODE_CONFIG` at it: the shim's inline var
+   * (no `mcp` key) can't drop the file's `mcp.zcc-inbox`, and the deep merge
+   * preserves the user's own discovered MCP servers. Both channels carry the
+   * identical block, so the merge is idempotent when neither is clobbered.
+   * Local spawns only — the remote path carries MCP in its own inline env
+   * (buildRemoteCommand), where a host-local file wouldn't exist.
+   */
+  mcpConfigFile(_profile: LaunchProfileId, mcpUrl: string): { envVar: string; contents: string } {
+    return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl)) };
+  }
+
+  /** The zcc-inbox `mcp` config block — shared by the env and file channels. */
+  private zccInboxConfig(mcpUrl: string) {
+    return {
       mcp: {
         'zcc-inbox': {
           type: 'remote',
@@ -741,7 +766,6 @@ export class OpenCodeProvider extends BaseLaunchProvider {
         }
       }
     };
-    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) };
   }
 
   baseArgsPinSession(profile: LaunchProfileId): boolean {
