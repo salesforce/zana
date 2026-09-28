@@ -1,7 +1,7 @@
 import { isDurableCoordination, isRestfulAgentState, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASONS, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -24,7 +24,7 @@ const AUTO_FINALIZE_RETRY_MS = 1_000;
 const ROUTE_FACTS_TIMEOUT_MS = 15_000;
 const ROUTE_FACTS_CIRCUIT_RESET_MS = 30_000;
 const ACTIVE_CLAIM_PAGE_SIZE = 50;
-const PROVEN_DEAD_CLAIM_REASON = NO_PROGRESS_CLAIM_REASONS[1];
+const PROVEN_DEAD_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.PROVEN_DEAD;
 /**
  * How long a `'coordinator'` self-heal blocker may sit unanswered before the
  * sweep escalates it to a human (inbox + `audience` flip). Generous on purpose:
@@ -42,9 +42,9 @@ const COORDINATOR_BLOCKER_ESCALATE_MS = 5 * 60_000;
  * {@link SquadExecutionService.drainCoordinatorWake}.
  */
 const COORDINATOR_WAKE_UNKNOWN_STALE_MS = 20_000;
-const AGENT_DEAD_CLAIM_REASON = NO_PROGRESS_CLAIM_REASONS[2];
-const SILENT_WORKER_CLAIM_REASON = NO_PROGRESS_CLAIM_REASONS[3];
-const STALLED_WORKER_CLAIM_REASON = NO_PROGRESS_CLAIM_REASONS[4];
+const AGENT_DEAD_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.AGENT_DEAD;
+const SILENT_WORKER_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.SILENT;
+const STALLED_WORKER_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.STALLED;
 const DEAD_WORKER_PROCESSES = new Set(['exited', 'spawn-failed', 'canceled']);
 const TELEMETRY_GAP_GRACE_SAMPLES = 3;
 
@@ -814,7 +814,7 @@ export class ExecutionService {
     const maxWallClock = record.request.policy?.maxClaimWallClockMs;
     const lastWallClockProgressAt = unit.progressAt ?? unit.claimedAt;
     if (maxWallClock !== undefined && lastWallClockProgressAt !== undefined && now - lastWallClockProgressAt >= maxWallClock) {
-      return { claim: claimOf(NO_PROGRESS_CLAIM_REASONS[0], true) };
+      return { claim: claimOf(NO_PROGRESS_CLAIM_REASON.WALL_CLOCK, true) };
     }
     const worker = lifecycle.workers!.find((candidate) => candidate.slotId === unit.assignedSlotId && candidate.projectId === record.projectId);
     const proc = worker?.process ?? '';

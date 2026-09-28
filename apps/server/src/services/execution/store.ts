@@ -39,14 +39,22 @@ export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'B
 export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
 export type ExecutionCohortAuthority = { role: 'worker' | 'orchestrator'; slotId: string };
 export type ExecutionLaunchKind = 'team';
-export const NO_PROGRESS_CLAIM_REASONS = [
-  'Work claim exceeded main-observable wall-clock limit',
-  'Claim lease expired and assigned Team worker is proven dead',
-  'Claim reclaimed: worker shell/wrapper is alive but its inner agent is dead',
-  'Claim lease expired with no worker output for a full lease window',
-  'Claim reclaimed: worker alive but produced no output progress within the stall limit'
-] as const;
-export type NoProgressReason = typeof NO_PROGRESS_CLAIM_REASONS[number];
+/**
+ * No-progress reclaim reasons keyed by name. Consumers reference a NAMED key
+ * (`NO_PROGRESS_CLAIM_REASON.PROVEN_DEAD`) so reordering can't silently rewire
+ * which reason a call site means — the positional-index coupling this replaced
+ * was fragile. {@link NO_PROGRESS_CLAIM_REASONS} is the derived value list for
+ * membership tests + projection (stable insertion order).
+ */
+export const NO_PROGRESS_CLAIM_REASON = {
+  WALL_CLOCK: 'Work claim exceeded main-observable wall-clock limit',
+  PROVEN_DEAD: 'Claim lease expired and assigned Team worker is proven dead',
+  AGENT_DEAD: 'Claim reclaimed: worker shell/wrapper is alive but its inner agent is dead',
+  SILENT: 'Claim lease expired with no worker output for a full lease window',
+  STALLED: 'Claim reclaimed: worker alive but produced no output progress within the stall limit'
+} as const;
+export const NO_PROGRESS_CLAIM_REASONS = Object.values(NO_PROGRESS_CLAIM_REASON);
+export type NoProgressReason = typeof NO_PROGRESS_CLAIM_REASON[keyof typeof NO_PROGRESS_CLAIM_REASON];
 
 function isNoProgressReason(reason: string): reason is NoProgressReason {
   return (NO_PROGRESS_CLAIM_REASONS as readonly string[]).includes(reason);

@@ -5,6 +5,7 @@ import { controlCredentialForSession } from './control-credential.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readdir as readdirAsync, stat as statAsync, unlink as unlinkAsync } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isWithin } from '@zana-ai/zcc-path-confine';
@@ -97,22 +98,41 @@ function sweepStaleDiagnosticCaptures(dir: string): void {
 const SESSION_MCP_CONFIG_DIR = join(tmpdir(), 'zcc-session-mcp');
 /** Bound crash-orphaned session MCP config files on a long-lived box. */
 const SESSION_MCP_CONFIG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/**
+ * Throttle the orphan sweep so a burst of session creates doesn't re-scan the
+ * dir on every spawn. Module-scoped: the sweep is a whole-dir janitor, not
+ * per-manager work.
+ */
+const SESSION_MCP_SWEEP_MIN_INTERVAL_MS = 60_000;
+let lastSessionMcpSweepAt = 0;
 
+/**
+ * Fire-and-forget async sweep of crash-orphaned session MCP config files. Never
+ * awaited on the spawn path — `create()` must not block the event loop on a
+ * growing dir scan (Rule 5) — and throttled so concurrent creates don't each
+ * re-scan. A live session's own file is fresh, so a concurrent sweep never
+ * removes it (age gate); unlink-on-exit ({@link PtyManager.finalizeExit}) is the
+ * primary reclaim, this only mops crash orphans.
+ */
 function sweepStaleSessionMcpConfigs(dir: string): void {
-  try {
-    const now = Date.now();
-    for (const name of readdirSync(dir)) {
-      if (!name.endsWith('.json')) continue;
-      const path = join(dir, name);
-      try {
-        if (now - statSync(path).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) unlinkSync(path);
-      } catch {
-        /* best-effort per-file */
+  const now = Date.now();
+  if (now - lastSessionMcpSweepAt < SESSION_MCP_SWEEP_MIN_INTERVAL_MS) return;
+  lastSessionMcpSweepAt = now;
+  void (async () => {
+    try {
+      for (const name of await readdirAsync(dir)) {
+        if (!name.endsWith('.json')) continue;
+        const path = join(dir, name);
+        try {
+          if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await unlinkAsync(path);
+        } catch {
+          /* best-effort per-file */
+        }
       }
+    } catch {
+      /* best-effort */
     }
-  } catch {
-    /* best-effort */
-  }
+  })();
 }
 
 interface Live {
