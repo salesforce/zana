@@ -1,47 +1,68 @@
 .thread-command-project, .composer-run-setting { display: contents; }
 .thread-command-project-label, .composer-run-setting-label { display: none; }
 
+/* The launcher is portalled to body, outside .app-shell. Both composer surfaces
+   share the mobile rules below, including the touch targets and disclosure. */
+body:has(.app-shell[data-mobile='true']) .palette-backdrop:has(.launch-modal) {
+  top: var(--mobile-viewport-top, 0px);
+  bottom: auto;
+  height: var(--mobile-viewport-height, 100dvh);
+  padding: 8px;
+  align-items: flex-end;
+}
+body:has(.app-shell[data-mobile='true']) .palette.launch-modal {
+  width: min(680px, 100%);
+  max-height: 100%;
+  align-self: auto;
+  padding: 12px;
+}
+body:has(.app-shell[data-mobile='true']) .launch-modal .launch-panel { gap: 8px; }
+body:has(.app-shell[data-mobile='true']) .launch-modal .launch-scroll { overflow-y: auto; }
+
 /* Leave room for the phone header and keep actions inside the keyboard viewport.
    Settings can scroll; attaching several screenshots must not grow the card. */
-.app-shell[data-mobile='true'] .thread-command-card {
+body:has(.app-shell[data-mobile='true']) .thread-command-card {
   max-height: calc(var(--mobile-viewport-height, 100dvh) - var(--titlebar-h) - 24px);
 }
-.app-shell[data-mobile='true'] .thread-command-card > .composer-image-thumbs {
+body:has(.app-shell[data-mobile='true']) .thread-command-card > .composer-image-thumbs {
   flex-wrap: nowrap;
   flex-shrink: 0;
   overflow-x: auto;
 }
-.app-shell[data-mobile='true'] .thread-command-editor-slot { flex-shrink: 0; }
-.app-shell[data-mobile='true'] .thread-command-toolbar { min-height: 0; }
-.app-shell[data-mobile='true'] .thread-command-toolbar[data-options-expanded='true'] {
+body:has(.app-shell[data-mobile='true']) .thread-command-editor-slot { flex-shrink: 0; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar { min-height: 0; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar[data-options-expanded='true'] {
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
-.app-shell[data-mobile='true'] .thread-command-options { min-height: 0; align-self: stretch; }
+body:has(.app-shell[data-mobile='true']) .thread-command-options { min-height: 0; align-self: stretch; }
 
 /* A quiet, thumb-reachable create surface. The editor stays in its original tree. */
-.app-shell[data-mobile='true'] .new-thread-view {
+body:has(.app-shell[data-mobile='true']) :is(.new-thread-view, .home-panel) {
   padding: 24px 16px max(16px, env(safe-area-inset-bottom));
   padding-top: clamp(8px, calc(var(--mobile-viewport-height, 100dvh) - 460px), 24px);
   background: var(--bg-panel);
 }
-.app-shell[data-mobile='true'] .new-thread-view > .aurora-grid { display: none; }
-.app-shell[data-mobile='true'] .new-thread-view-inner {
+body:has(.app-shell[data-mobile='true']) .new-thread-view > .aurora-grid { display: none; }
+body:has(.app-shell[data-mobile='true']) .home-panel { justify-content: flex-start; }
+/* Home already has outer gutters; the shared Settings inset doubles them. */
+body:has(.app-shell[data-mobile='true']) .home-panel .settings-inner { padding: 0; }
+body:has(.app-shell[data-mobile='true']) :is(.new-thread-view-inner, .home-panel .settings-inner) {
   flex: 1 0 auto;
   justify-content: flex-end;
 }
-.app-shell[data-mobile='true'] .new-thread-view-heading {
+body:has(.app-shell[data-mobile='true']) .new-thread-view-heading {
   margin-bottom: clamp(8px, calc(var(--mobile-viewport-height, 100dvh) - 460px), 20px);
   font-size: 28px;
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-composer {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-composer {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.app-shell[data-mobile='true'] .new-thread-view :is(.thread-command-composer-meta, .thread-command-composer-meta-start) {
+body:has(.app-shell[data-mobile='true']) .new-thread-view :is(.thread-command-composer-meta, .thread-command-composer-meta-start) {
   display: contents;
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-project {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-project {
   order: -1;
   display: flex;
   flex-direction: column;
@@ -49,17 +70,17 @@
   padding: 0 2px 6px;
   min-width: 0;
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-project-label {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-project-label {
   display: block;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-project .thread-command-chip {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-project .thread-command-chip {
   gap: 8px;
   color: var(--text-primary);
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-project .launch-model-picker-trigger {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-project .launch-model-picker-trigger {
   min-height: 44px;
   max-width: calc(100% - 22px);
   flex: 1;
@@ -67,76 +88,91 @@
   font-size: 16px;
   text-align: left;
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-project .launch-model-picker-trigger span {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-project .launch-model-picker-trigger span {
   flex: 1;
   min-width: 0;
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-card {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-card {
   border-radius: 18px;
   box-shadow: 0 4px 20px rgb(0 0 0 / 5%);
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-editor {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-editor {
   min-height: clamp(40px, calc(var(--mobile-viewport-height, 100dvh) - 440px), 92px);
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-editor p.is-editor-empty:first-child::before {
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-editor p.is-editor-empty:first-child::before {
   content: 'What would you like the agent to do?';
 }
-.app-shell[data-mobile='true'] .new-thread-view .thread-command-composer-meta-end:empty { display: none; }
-.app-shell[data-mobile='true'] .new-thread-view [data-testid='composer-create-plugin'] { display: none; }
-.app-shell[data-mobile='true'] .new-thread-view .plugin-composer-actions:has(> [data-testid='composer-create-plugin']:only-child) { display: none; }
+body:has(.app-shell[data-mobile='true']) .new-thread-view .thread-command-composer-meta-end:empty { display: none; }
+body:has(.app-shell[data-mobile='true']) :is(.new-thread-view, .home-panel, .launch-modal) [data-testid='composer-create-plugin'] { display: none; }
+body:has(.app-shell[data-mobile='true']) :is(.new-thread-view, .home-panel, .launch-modal) .plugin-composer-actions:has(> [data-testid='composer-create-plugin']:only-child) { display: none; }
 
 /* Permission changes remain next to the model, outside the options disclosure. */
-.app-shell[data-mobile='true'] .thread-command-composer .thread-command-toolbar:has(.thread-command-permission) {
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+body:has(.app-shell[data-mobile='true']) .thread-command-composer .thread-command-toolbar:has(.thread-command-permission) {
+  grid-template-columns: minmax(0, max-content) auto minmax(44px, 1fr) auto auto;
 }
-.app-shell[data-mobile='true'] .thread-command-toolbar .thread-command-permission {
+body:has(.app-shell[data-mobile='true']) .thread-command-composer .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-primary-actions) {
+  grid-template-columns: minmax(0, max-content) auto auto minmax(44px, 1fr) auto auto;
+}
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar .thread-command-permission {
   grid-row: 1;
   grid-column: 2;
 }
-.app-shell[data-mobile='true'] .thread-command-permission .launch-model-picker-trigger {
+body:has(.app-shell[data-mobile='true']) .thread-command-permission .launch-model-picker-trigger {
   min-height: 44px;
   padding: 0 8px;
   font-size: 13px;
   border-radius: 10px;
   background: var(--bg-hover);
 }
-.app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) .thread-command-options-toggle { grid-column: 3; }
-.app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) .thread-command-stop { grid-column: 4; }
-.app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) .thread-command-send { grid-column: 5; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission) .thread-command-options-toggle { grid-column: 3; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission) .thread-command-stop { grid-column: 4; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission) .thread-command-send { grid-column: 5; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-primary-actions) .thread-command-primary-actions .composer-control-tooltip { grid-column: 3; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-primary-actions) .thread-command-options-toggle { grid-column: 4; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-primary-actions) .thread-command-stop { grid-column: 5; }
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-primary-actions) .thread-command-send { grid-column: 6; }
 @media (max-width: 379px) {
-  /* Both disclosure sections move together when the primary controls wrap. */
-  .app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) {
+  /* Only a running agent needs a second row on the smallest phones.
+     Both disclosure sections move together when the primary controls wrap. */
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop) {
     --composer-options-row: 3;
     --composer-actions-row: 4;
   }
-  .app-shell[data-mobile='true'] .thread-command-toolbar[data-options-expanded='true']:has(.thread-command-permission) {
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar[data-options-expanded='true']:has(.thread-command-permission):has(.thread-command-stop) {
     grid-template-rows: auto auto minmax(0, 1fr) auto;
   }
-  .app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) .thread-command-model { grid-column: 1 / 4; }
-  .app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) .thread-command-permission { grid-column: 4 / -1; }
-  .app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) .thread-command-options-toggle { grid-row: 2; grid-column: 1; }
-  .app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) :is(.thread-command-stop, .thread-command-send) { grid-row: 2; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop) .thread-command-model { grid-column: 1 / 4; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop) .thread-command-permission { grid-column: 4 / -1; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop) .thread-command-options-toggle { grid-row: 2; grid-column: 1; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop) :is(.thread-command-stop, .thread-command-send) { grid-row: 2; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop):has(.thread-command-primary-actions) .thread-command-model { grid-column: 1 / 4; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop):has(.thread-command-primary-actions) .thread-command-permission { grid-column: 4 / -1; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop):has(.thread-command-primary-actions) .thread-command-primary-actions .composer-control-tooltip { grid-row: 2; grid-column: 1; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop):has(.thread-command-primary-actions) .thread-command-options-toggle { grid-row: 2; grid-column: 2; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop):has(.thread-command-primary-actions) :is(.thread-command-stop, .thread-command-send) { grid-row: 2; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop):has(.thread-command-primary-actions) .thread-command-stop { grid-column: 3; }
+  body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission):has(.thread-command-stop):has(.thread-command-primary-actions) .thread-command-send { grid-column: 4; }
 }
 
 /* Fit the everyday phone toolbar on one line; small phones keep a roomy wrap. */
-.app-shell[data-mobile='true'] .thread-command-toolbar:has(.thread-command-permission) {
+body:has(.app-shell[data-mobile='true']) .thread-command-toolbar:has(.thread-command-permission) {
   gap: 2px;
 }
-.app-shell[data-mobile='true'] .thread-command-model .model-reasoning-picker-trigger {
+body:has(.app-shell[data-mobile='true']) .thread-command-model .model-reasoning-picker-trigger {
   gap: 4px;
   padding: 0 4px;
 }
-.app-shell[data-mobile='true'] .thread-command-permission .launch-model-picker-trigger {
+body:has(.app-shell[data-mobile='true']) .thread-command-permission .launch-model-picker-trigger {
   padding: 0 6px;
   font-size: 12px;
 }
-.app-shell[data-mobile='true'] .thread-command-option.thread-command-option--location {
+body:has(.app-shell[data-mobile='true']) .thread-command-option.thread-command-option--location {
   display: flex;
 }
 .thread-command-location { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; }
-.app-shell[data-mobile='true'] .thread-command-composer-meta:has(> .thread-command-composer-meta-start:empty):has(> .thread-command-composer-meta-end:empty) { display: none; }
+body:has(.app-shell[data-mobile='true']) .thread-command-composer-meta:has(> .thread-command-composer-meta-start:empty):has(> .thread-command-composer-meta-end:empty) { display: none; }
 
 .mobile-run-settings-trigger {
   display: flex;
@@ -200,19 +236,19 @@
 .mobile-run-settings-trigger:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
 
 /* Expand in place: no second editor, no draft remount, and no desktop height cap. */
-.app-shell[data-mobile='true'] .split-workspace:has([data-mobile-expanded='true']) { z-index: 120; }
+body:has(.app-shell[data-mobile='true']) .split-workspace:has([data-mobile-expanded='true']) { z-index: 120; }
 /* WebKit clips fixed descendants at scrolling pane boundaries. Release only
    the editor's ancestor chain while its opaque full-screen surface is open. */
-.app-shell[data-mobile='true'] :has(.thread-command-composer[data-mobile-expanded='true']) {
+body:has(.app-shell[data-mobile='true']) :has(.thread-command-composer[data-mobile-expanded='true']) {
   overflow: visible;
 }
-.app-shell[data-mobile='true'] :is(.new-thread-view, .home-panel, .thread-detail-view):has([data-mobile-expanded='true']) {
+body:has(.app-shell[data-mobile='true']) :is(.new-thread-view, .home-panel, .thread-detail-view):has([data-mobile-expanded='true']) {
   position: relative;
   z-index: 120;
   isolation: auto;
   overflow: visible;
 }
-.app-shell[data-mobile='true'] .thread-command-composer[data-mobile-expanded='true'] {
+body:has(.app-shell[data-mobile='true']) .thread-command-composer[data-mobile-expanded='true'] {
   position: fixed;
   inset: 0 0 auto;
   z-index: 120;
@@ -248,8 +284,8 @@
   font-size: 14px;
 }
 .mobile-composer-expanded-done:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
-.app-shell[data-mobile='true'] [data-mobile-expanded='true'] > :is(.thread-command-composer-meta, .plugin-composer-advanced) { display: none; }
-.app-shell[data-mobile='true'] .thread-command-composer[data-mobile-expanded='true'] > .thread-command-card {
+body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] > :is(.thread-command-composer-meta, .plugin-composer-advanced) { display: none; }
+body:has(.app-shell[data-mobile='true']) .thread-command-composer[data-mobile-expanded='true'] > .thread-command-card {
   flex: 1;
   min-height: 0;
   max-height: none;
@@ -258,24 +294,24 @@
   box-shadow: none;
   background: transparent;
 }
-.app-shell[data-mobile='true'] [data-mobile-expanded='true'] .thread-command-editor-slot {
+body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] .thread-command-editor-slot {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 16px;
 }
-.app-shell[data-mobile='true'] [data-mobile-expanded='true'] .thread-command-editor-slot > div {
+body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] .thread-command-editor-slot > div {
   display: flex;
   flex: 1;
   min-height: 0;
 }
-.app-shell[data-mobile='true'] .thread-command-composer.is-expanded[data-mobile-expanded='true'] .thread-command-editor {
+body:has(.app-shell[data-mobile='true']) .thread-command-composer.is-expanded[data-mobile-expanded='true'] .thread-command-editor {
   flex: 1;
   min-height: 0;
   max-height: none;
   overflow-y: auto;
 }
-.app-shell[data-mobile='true'] [data-mobile-expanded='true'] .thread-command-expand { display: none; }
-.app-shell[data-mobile='true'] [data-mobile-expanded='true'] :is(.thread-command-toolbar, .ui-command-composer-toolbar, .composer-image-thumbs) { flex-shrink: 0; }
-.app-shell[data-mobile='true'] [data-mobile-expanded='true'] .mention-popover { top: 72px; bottom: auto; max-height: 45%; }
+body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] .thread-command-expand { display: none; }
+body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] :is(.thread-command-toolbar, .ui-command-composer-toolbar, .composer-image-thumbs) { flex-shrink: 0; }
+body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] .mention-popover { top: 72px; bottom: auto; max-height: 45%; }

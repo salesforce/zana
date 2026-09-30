@@ -9,6 +9,7 @@ export function ThreadComposerToolbar({
   location,
   reasoning,
   sendMode,
+  primaryActions,
   secondaryActions,
   stop,
   send
@@ -19,6 +20,7 @@ export function ThreadComposerToolbar({
   location?: ReactNode;
   reasoning: ReactNode;
   sendMode: ReactNode;
+  primaryActions?: ReactNode;
   secondaryActions: ReactNode;
   stop: ReactNode;
   send: ReactNode;
@@ -79,6 +81,11 @@ export function ThreadComposerToolbar({
         {permission && <div className="thread-command-permission">{permission}</div>}
       </div>
       <div className="thread-command-footer-end">
+        {primaryActions ? (
+          <div className="thread-command-primary-actions">
+            {primaryActions}
+          </div>
+        ) : null}
         <div id={`${id}-actions`} className="thread-command-secondary-actions">
           {secondaryActions}
         </div>

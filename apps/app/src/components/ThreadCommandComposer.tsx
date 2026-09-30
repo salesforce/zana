@@ -830,6 +830,26 @@ export function ThreadCommandComposer({
                 }}
               />
             }
+            primaryActions={
+              <span
+                className="composer-control-tooltip"
+                data-tooltip={
+                  field.canAttach ? 'Attach files' : 'Attachments are unavailable while sending'
+                }
+              >
+                <ComposerIconButton
+                  className="thread-command-attach"
+                  onClick={() => {
+                    if (!field.canAttach) return;
+                    field.attachPickedFiles();
+                  }}
+                  disabled={!field.canAttach}
+                  aria-label="Attach files"
+                >
+                  <Paperclip size={14} aria-hidden="true" />
+                </ComposerIconButton>
+              </span>
+            }
             secondaryActions={
               <>
                 <ThreadContextMeter
@@ -844,24 +864,6 @@ export function ThreadCommandComposer({
                       : undefined
                   }
                 />
-                <span
-                  className="composer-control-tooltip"
-                  data-tooltip={
-                    field.canAttach ? 'Attach files' : 'Attachments are unavailable while sending'
-                  }
-                >
-                  <ComposerIconButton
-                    onClick={() => {
-                      if (!field.canAttach) return;
-                      field.attachPickedFiles();
-                    }}
-                    disabled={!field.canAttach}
-                    aria-label="Attach files"
-                  >
-                    <Paperclip size={14} aria-hidden="true" />
-                    <span className="thread-command-action-label" aria-hidden="true">Attach files</span>
-                  </ComposerIconButton>
-                </span>
                 <span
                   className="composer-control-tooltip"
                   data-tooltip={

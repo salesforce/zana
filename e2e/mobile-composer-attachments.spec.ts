@@ -61,7 +61,8 @@ test('phone composer picks, previews, removes and sends screenshots through mobi
     await editor.fill('Draft survives image selection');
     for (const width of [320, 390]) {
       await phone.setViewportSize({ width, height: 460 });
-      await options.click();
+      await expect(options).toHaveAttribute('aria-expanded', 'false');
+      await expect(attach).toBeVisible();
       await expect(attach).toBeEnabled();
       const chooserPromise = phone.waitForEvent('filechooser');
       await attach.click();
@@ -72,6 +73,7 @@ test('phone composer picks, previews, removes and sends screenshots through mobi
       await expect(thumb).toBeVisible();
       await expect.poll(() => thumb.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
       await expect(editor).toHaveText('Draft survives image selection');
+      await options.click();
       await phone.screenshot({ path: testInfo.outputPath(`phone-options-with-image-${width}.png`) });
       for (const control of [attach, options, send]) {
         const box = (await control.boundingBox())!;
@@ -100,7 +102,7 @@ test('phone composer picks, previews, removes and sends screenshots through mobi
     await phone.getByTestId('thread-command-expand').click();
     const expanded = phone.getByRole('dialog', { name: 'Write a message', exact: true });
     await expect(expanded).toBeVisible();
-    await options.click();
+    await expect(attach).toBeVisible();
     const chooserPromise = phone.waitForEvent('filechooser');
     await attach.click();
     await (await chooserPromise).setFiles([screenshot]);
