@@ -29,7 +29,9 @@ function runVersion(
   cmd: string,
   args: readonly string[],
   searchPath: string,
-  timeoutMs = 8_000
+  // Settings probes all installed harnesses concurrently. Leave enough headroom
+  // for real CLI startup while the app or test suite is under CPU contention.
+  timeoutMs = 20_000
 ): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
     execFile(cmd, [...args], {
