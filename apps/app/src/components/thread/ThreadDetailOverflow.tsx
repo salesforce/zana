@@ -6,6 +6,7 @@ import { product } from '../../lib/product-client.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { useThreads } from '../../thread-store.js';
+import { errorMessage, useUi } from '../../store.js';
 import { MobileActionSheet } from '../MobilePageHeader.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { PromptModal } from '../PromptModal.js';
@@ -156,6 +157,9 @@ export function ThreadDetailOverflow({
   const [menuPos, setMenuPos] = useState<CSSProperties>({});
   const canStop = shouldShowThreadStop(threadId, status, inFlightRetry);
   const scopedProjectId = projectId && route.isProjectFocused ? projectId : null;
+  const reportFailure = (error: unknown, fallback: string) => {
+    useUi.getState().pushToast(errorMessage(error, fallback), 'error');
+  };
 
   useEffect(() => {
     if (!open || compact) return;
@@ -185,7 +189,7 @@ export function ThreadDetailOverflow({
       canStop={canStop}
       onUnread={() => {
         close();
-        void product.threads.unread(threadId).then(() => onUnread?.()).catch(() => undefined);
+        void product.threads.unread(threadId).then(() => onUnread?.()).catch((error) => reportFailure(error, 'Failed to mark agent unread'));
       }}
       onRename={() => {
         close();
@@ -197,12 +201,12 @@ export function ThreadDetailOverflow({
           if (forked.ok && forked.value?.id) {
             navigate(getThreadRoutePath(forked.value.id, scopedProjectId));
           }
-        });
+        }).catch((error) => reportFailure(error, 'Failed to fork agent'));
       }}
       onStop={() => {
         close();
         dispatchThreadStopRequested(threadId);
-        void product.threads.stop(threadId);
+        void product.threads.stop(threadId).catch((error) => reportFailure(error, 'Failed to stop agent'));
       }}
       onCloseFollowup={() => {
         close();
@@ -211,7 +215,7 @@ export function ThreadDetailOverflow({
           if (result && result.ok === false) return;
           remove(threadId);
           navigate(scopedProjectId ? getProjectRoutePath(scopedProjectId) : getAgentsRoutePath());
-        });
+        }).catch((error) => reportFailure(error, 'Failed to close agent'));
       }}
       onArchive={() => {
         close();
@@ -220,7 +224,7 @@ export function ThreadDetailOverflow({
           if (result && result.ok === false) return;
           remove(threadId);
           navigate(scopedProjectId ? getProjectRoutePath(scopedProjectId) : getAgentsRoutePath());
-        });
+        }).catch((error) => reportFailure(error, 'Failed to archive agent'));
       }}
     />
   );
@@ -254,7 +258,7 @@ export function ThreadDetailOverflow({
           onSubmit={(next) => {
             setRenaming(false);
             onRenamed?.(next);
-            void product.threads.rename(threadId, next).catch(() => undefined);
+            void product.threads.rename(threadId, next).catch((error) => reportFailure(error, 'Failed to rename agent'));
           }}
         />
       ) : null}

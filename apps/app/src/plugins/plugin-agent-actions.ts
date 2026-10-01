@@ -1,6 +1,8 @@
 import type {
   PluginAgentCardActionContext,
   PluginAgentCardActionRegistration,
+  PluginThreadCardActionContext,
+  PluginThreadCardActionRegistration,
   PluginAgentsBoardActionContext,
   PluginAgentsBoardActionRegistration
 } from '@zana-ai/zcc-plugin-sdk';
@@ -52,6 +54,34 @@ export function invokeAgentCardAction(
   ctx: PluginAgentCardActionContext
 ): void {
   invokePluginSlotRun(slot.pluginId, slot.id, 'experimental_agentCardAction', () => slot.run(ctx));
+}
+
+export function availableThreadCardActions(
+  slots: readonly PluginThreadCardActionRegistration[],
+  ctx: PluginThreadCardActionContext
+): PluginThreadCardActionRegistration[] {
+  const visible: PluginThreadCardActionRegistration[] = [];
+  for (const slot of slots) {
+    if (slot.isAvailable === undefined) {
+      visible.push(slot);
+      continue;
+    }
+    try {
+      if (slot.isAvailable(ctx)) visible.push(slot);
+    } catch (error) {
+      console.warn(
+        `[plugin:${slot.pluginId}] experimental_threadCardAction "${slot.id}" isAvailable failed: ${describePluginSlotError(error)}`
+      );
+    }
+  }
+  return visible;
+}
+
+export function invokeThreadCardAction(
+  slot: PluginThreadCardActionRegistration,
+  ctx: PluginThreadCardActionContext
+): void {
+  invokePluginSlotRun(slot.pluginId, slot.id, 'experimental_threadCardAction', () => slot.run(ctx));
 }
 
 export function invokeAgentsBoardAction(

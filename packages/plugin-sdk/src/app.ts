@@ -38,6 +38,8 @@ export type {
   PluginMessageActionRegistration,
   PluginAgentCardActionContext,
   PluginAgentCardActionRegistration,
+  PluginThreadCardActionContext,
+  PluginThreadCardActionRegistration,
   PluginAgentsBoardActionContext,
   PluginAgentsBoardActionRegistration,
   PluginTimelineRendererProps,

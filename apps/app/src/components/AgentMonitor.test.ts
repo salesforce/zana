@@ -70,4 +70,18 @@ describe('AgentMonitor thread selection', () => {
     expect(source).toContain('openScheduleFromAgents');
     expect(source).not.toContain('revealSchedule(item.task.id)');
   });
+
+  it('places pinned Modern threads above runtime groups', () => {
+    const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("item.kind === 'thread' && item.thread.pinnedAt != null");
+    expect(source).toContain("{ key: 'pinned', label: 'Pinned', cards: pinnedThreads }");
+    expect(source).toContain("if (item.kind === 'thread' && item.thread.pinnedAt != null) continue;");
+  });
+
+  it('marks unread Modern rows with an accessible activity dot', () => {
+    const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('isUnreadThread(item.thread)');
+    expect(source).toContain('className="thread-unread-dot"');
+    expect(source).toContain('aria-label="New activity"');
+  });
 });

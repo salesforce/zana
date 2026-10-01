@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Archive } from 'lucide-react';
+import { Archive, Puzzle } from 'lucide-react';
 import { product } from '../lib/product-client.js';
+import { errorMessage, useUi } from '../store.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath, projectIdFromThreadPath, threadIdFromPath } from '../lib/route-paths.js';
 import { openThreadInSplit } from '../lib/split-layout/openThreadInSplit.js';
 import { useSplitWorkspace } from '../lib/split-layout/store.js';
@@ -13,15 +14,24 @@ import { useThreads, type ThreadListItem } from '../thread-store.js';
 import { SHOW_THREAD_FORK } from './thread/ThreadDetailOverflow.js';
 import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { clampMenuAnchor } from './agentCardActions.js';
+import { PromptModal } from './PromptModal.js';
+import { isUnreadThread } from '../lib/unread-threads.js';
+import { resolveIcon } from '../lib/resolveIcon.js';
+import {
+  availableThreadCardActions,
+  invokeThreadCardAction
+} from '../plugins/plugin-agent-actions.js';
+import { listThreadCardActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 
 /** Open right-click menu: which thread + where to anchor it (viewport coords). */
 export interface ThreadMenu {
   thread: ThreadListItem;
   x: number;
   y: number;
+  renaming?: boolean;
 }
 
-export type ThreadMenuAction = 'open' | 'open-split' | 'stop' | 'fork' | 'archive' | 'close-followup';
+export type ThreadMenuAction = 'open' | 'open-split' | 'stop' | 'fork' | 'archive' | 'close-followup' | 'pin' | 'unpin' | 'read' | 'unread';
 
 export interface ThreadMenuContext {
   navigate: (path: string) => void;
@@ -32,7 +42,31 @@ export interface ThreadMenuContext {
   fork: (id: string) => Promise<{ ok: boolean; value?: { id: string } }>;
   archive: (id: string) => Promise<{ ok?: boolean }>;
   closeFollowup: (id: string) => Promise<{ ok?: boolean; summarized?: number; followedUp?: number }>;
+  pin: (id: string) => Promise<unknown>;
+  unpin: (id: string) => Promise<unknown>;
+  read: (id: string) => Promise<unknown>;
+  unread: (id: string) => Promise<unknown>;
+  rename: (id: string, title: string) => Promise<unknown>;
   remove: (id: string) => void;
+}
+
+function upsertReturnedThread(value: unknown): void {
+  if (!value || typeof value !== 'object' || !('thread' in value)) return;
+  const thread = value.thread;
+  if (!thread || typeof thread !== 'object' || !('id' in thread) || typeof thread.id !== 'string') return;
+  useThreads.getState().upsert(thread as ThreadListItem);
+}
+
+export async function renameThread(
+  thread: Pick<ThreadListItem, 'id' | 'title'>,
+  title: string,
+  ctx: Pick<ThreadMenuContext, 'rename'>
+): Promise<boolean> {
+  const next = title.trim();
+  if (!next || next === thread.title?.trim()) return false;
+  const result = await ctx.rename(thread.id, next);
+  upsertReturnedThread(result);
+  return true;
 }
 
 export function threadTitle(thread: Pick<ThreadListItem, 'title'>): string {
@@ -70,6 +104,11 @@ export async function runThreadMenuAction(
   if (action === 'fork') {
     const forked = await ctx.fork(thread.id);
     if (forked.ok && forked.value?.id) ctx.navigate(getThreadRoutePath(forked.value.id, projectId));
+    return;
+  }
+  if (action === 'pin' || action === 'unpin' || action === 'read' || action === 'unread') {
+    const result = await ctx[action](thread.id);
+    upsertReturnedThread(result);
     return;
   }
   const title = threadTitle(thread);
@@ -139,15 +178,19 @@ export function useThreadCardActions(): {
   const [menu, setMenu] = useState<ThreadMenu | null>(null);
 
   useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
+    if (!menu || menu.renaming) return;
+    const close = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest('[data-testid="thread-context-menu"]')) return;
+      setMenu(null);
+    };
+    const onKeyDown = () => setMenu(null);
     window.addEventListener('mousedown', close);
     window.addEventListener('blur', close);
-    window.addEventListener('keydown', close);
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('mousedown', close);
       window.removeEventListener('blur', close);
-      window.removeEventListener('keydown', close);
+      window.removeEventListener('keydown', onKeyDown);
     };
   }, [menu]);
 
@@ -174,20 +217,38 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   const { thread } = menu;
   const canStop = shouldShowThreadStop(thread.id, thread.status);
   const projectId = route.isProjectFocused ? route.focusedProjectId : null;
+  const [busy, setBusy] = useState(false);
+  const pluginSlots = useSyncExternalStore(subscribePluginSlots, listThreadCardActions, listThreadCardActions);
+  const pluginCtx = { threadId: thread.id, projectId: thread.projectId };
+  const pluginActions = availableThreadCardActions(pluginSlots, pluginCtx);
+  const unread = isUnreadThread(thread);
 
-  const run = (action: ThreadMenuAction) => {
+  const run = async (action: ThreadMenuAction) => {
+    if (busy) return;
     setMenu(null);
-    void runThreadMenuAction(action, thread, {
-      navigate,
-      pathname: location.pathname,
-      projectId,
-      confirm: (message) => window.confirm(message),
-      stop: (id) => product.threads.stop(id),
-      fork: (id) => product.threads.fork(id),
-      archive: (id) => product.threads.archive(id),
-      closeFollowup: (id) => product.threads.closeFollowup(id),
-      remove: (id) => useThreads.getState().remove(id)
-    });
+    setBusy(true);
+    try {
+      await runThreadMenuAction(action, thread, {
+        navigate,
+        pathname: location.pathname,
+        projectId,
+        confirm: (message) => window.confirm(message),
+        stop: (id) => product.threads.stop(id),
+        fork: (id) => product.threads.fork(id),
+        archive: (id) => product.threads.archive(id),
+        closeFollowup: (id) => product.threads.closeFollowup(id),
+        pin: (id) => product.threads.pin(id),
+        unpin: (id) => product.threads.unpin(id),
+        read: (id) => product.threads.read(id),
+        unread: (id) => product.threads.unread(id),
+        rename: (id, title) => product.threads.rename(id, title),
+        remove: (id) => useThreads.getState().remove(id)
+      });
+    } catch (error) {
+      useUi.getState().pushToast(errorMessage(error, `Failed to ${action} agent`), 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const node = (
@@ -197,16 +258,17 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
       style={{ top: menu.y, left: menu.x }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <button type="button" onClick={() => run('open')}>
+      <button type="button" disabled={busy} onClick={() => void run('open')}>
         Open
       </button>
-      <button type="button" onClick={() => run('open-split')}>
+      <button type="button" disabled={busy} onClick={() => void run('open-split')}>
         Open in split
       </button>
       {canStop && (
         <button
           type="button"
-          onClick={() => run('stop')}
+          disabled={busy}
+          onClick={() => void run('stop')}
           title="Stop this agent. The conversation stays in the list."
         >
           Stop
@@ -215,7 +277,8 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
       {SHOW_THREAD_FORK ? (
         <button
           type="button"
-          onClick={() => run('fork')}
+          disabled={busy}
+          onClick={() => void run('fork')}
           title="Start a new agent from this conversation"
         >
           Fork
@@ -224,24 +287,81 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
       {!thread.archivedAt && (
         <button
           type="button"
-          onClick={() => run('close-followup')}
+          disabled={busy}
+          onClick={() => void run('close-followup')}
           title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
         >
           Close with follow-up
         </button>
       )}
       <div className="tab-context-sep" />
+      <button type="button" disabled={busy} onClick={() => void run(thread.pinnedAt ? 'unpin' : 'pin')}>
+        {thread.pinnedAt ? 'Unpin' : 'Pin'}
+      </button>
+      <button type="button" disabled={busy} onClick={() => void run(unread ? 'read' : 'unread')}>
+        {unread ? 'Mark read' : 'Mark unread'}
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setMenu({ ...menu, renaming: true });
+        }}
+      >
+        Rename
+      </button>
+      {pluginActions.length > 0 ? <div className="tab-context-sep" /> : null}
+      {pluginActions.map((slot) => {
+        const Icon = slot.icon ? resolveIcon(slot.icon) : Puzzle;
+        return (
+          <button
+            key={`${slot.pluginId}/${slot.id}`}
+            type="button"
+            data-testid={`thread-card-plugin-${slot.pluginId}-${slot.id}`}
+            onClick={() => {
+              setMenu(null);
+              invokeThreadCardAction(slot, pluginCtx);
+            }}
+          >
+            <Icon size={14} aria-hidden="true" />
+            {slot.title}
+          </button>
+        );
+      })}
+      <div className="tab-context-sep" />
       <button
         type="button"
         className="tab-context-danger"
-        onClick={() => run('archive')}
+        disabled={busy}
+        onClick={() => void run('archive')}
         title="Archive this agent and remove it from the list"
       >
         Archive
       </button>
     </div>
   );
-  return typeof document === 'undefined' ? node : createPortal(node, document.body);
+  return (
+    <>
+      {typeof document === 'undefined' ? node : createPortal(node, document.body)}
+      {menu.renaming ? (
+        <PromptModal
+          title="Rename agent"
+          label="Title"
+          initialValue={threadTitle(thread)}
+          confirmLabel="Rename"
+          onClose={() => {
+            setMenu(null);
+          }}
+          onSubmit={(title) => {
+            setMenu(null);
+            void renameThread(thread, title, { rename: (id, next) => product.threads.rename(id, next) }).catch((error) => {
+              useUi.getState().pushToast(errorMessage(error, 'Failed to rename agent'), 'error');
+            });
+          }}
+        />
+      ) : null}
+    </>
+  );
 }
 
 /** Hover-revealed one-click archive. Same lifecycle as the menu, without a confirm dialog. */
@@ -270,6 +390,11 @@ export function ThreadArchiveQuickAction({ thread }: { thread: ThreadListItem })
           fork: (id) => product.threads.fork(id),
           archive: (id) => product.threads.archive(id),
           closeFollowup: (id) => product.threads.closeFollowup(id),
+          pin: (id) => product.threads.pin(id),
+          unpin: (id) => product.threads.unpin(id),
+          read: (id) => product.threads.read(id),
+          unread: (id) => product.threads.unread(id),
+          rename: (id, title) => product.threads.rename(id, title),
           remove: (id) => useThreads.getState().remove(id)
         });
       }}

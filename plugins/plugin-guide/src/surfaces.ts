@@ -109,6 +109,14 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         experimental: true
       },
       {
+        id: 'experimental_threadCardAction',
+        title: 'Modern agent card action',
+        summary: 'A right-click item on a Modern conversation card.',
+        apiSymbols: ['PluginAppSlots.experimental_threadCardAction'],
+        bullets: ['Optional `isAvailable` gate receives host-derived `threadId` and `projectId`.'],
+        experimental: true
+      },
+      {
         id: 'projectStatusbarItem',
         title: 'Project statusbar',
         summary: 'A compact chip on the project statusbar, beside path and git.',

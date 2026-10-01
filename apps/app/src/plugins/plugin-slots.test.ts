@@ -15,6 +15,7 @@ import {
   listProjectMenuActions,
   listCreateProjectActions,
   listAgentCardActions,
+  listThreadCardActions,
   listAgentsBoardActions,
   listProjectTabs,
   listProjectStatusbarItems,
@@ -64,6 +65,11 @@ describe('plugin slot registry', () => {
           title: 'Card',
           run: () => undefined
         });
+        app.slots.experimental_threadCardAction({
+          id: 'modern-card',
+          title: 'Modern card',
+          run: () => undefined
+        });
         app.slots.experimental_agentsBoardAction({
           id: 'board',
           title: 'Board',
@@ -84,6 +90,7 @@ describe('plugin slot registry', () => {
     expect(listCreateProjectActions()).toHaveLength(1);
     expect(listCreateProjectActions()).toBe(listCreateProjectActions());
     expect(listAgentCardActions()).toHaveLength(1);
+    expect(listThreadCardActions()).toHaveLength(1);
     expect(listAgentsBoardActions()).toHaveLength(1);
     expect(listProjectStatusbarItems()).toHaveLength(1);
     expect(listProjectStatusbarItems()).toBe(listProjectStatusbarItems());

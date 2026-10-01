@@ -51,10 +51,10 @@ describe('thread reads', () => {
     expect(markThreadRead(dir, 't1', 4)).toBe(4);
     expect(getThreadReadSeq(dir, 't1')).toBe(4);
     expect(peekThreadReadSeq(dir, 't1')).toBe(4);
-    expect(markThreadRead(dir, 't1', 0)).toBe(0);
-    expect(peekThreadReadSeq(dir, 't1')).toBe(0);
+    expect(markThreadRead(dir, 't1', -1)).toBe(-1);
+    expect(peekThreadReadSeq(dir, 't1')).toBe(-1);
     const body = JSON.parse(readFileSync(join(dir, 'thread-reads.json'), 'utf8')) as { t1: number };
-    expect(body.t1).toBe(0);
+    expect(body.t1).toBe(-1);
   });
 });
 

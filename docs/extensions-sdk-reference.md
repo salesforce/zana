@@ -75,6 +75,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 - `projectTab` — per-project rail tab (`global: false` hides the sidebar entry). Use `header: 'custom'` when the component supplies its own toolbar; render its `headerActions` prop there to retain the host split-pane controls without an extra title row.
 - `experimental_agentsBoardAction` — toolbar control on the Agents board (`projectId` is `null` on the cross-project Agents nav)
 - `experimental_agentCardAction` — right-click item on an Agents board card
+- `experimental_threadCardAction` — right-click item on a Modern conversation card. `isAvailable` and `run` receive host-derived `threadId` and `projectId`
 - `projectStatusbarItem` — project statusbar chip (`align` left/right; `run` may `toProject` / `toPluginPanel` / `openDialog` / `openMenu`)
 
 ### Home

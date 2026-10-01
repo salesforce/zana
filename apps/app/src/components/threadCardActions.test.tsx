@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
 import {
   archiveThreadWithoutConfirm,
+  renameThread,
   runThreadMenuAction,
   threadTitle,
   viewingThread,
@@ -11,7 +12,7 @@ import {
   ThreadCardMenu,
   type ThreadMenuContext
 } from './threadCardActions.js';
-import type { ThreadListItem } from '../thread-store.js';
+import { useThreads, type ThreadListItem } from '../thread-store.js';
 import { countPanes, findPaneByThread, listPanes } from '../lib/split-layout/ops.js';
 import { createSinglePaneLayout, threadPaneContent } from '../lib/split-layout/splitThreadNavigation.js';
 import { useSplitWorkspace } from '../lib/split-layout/store.js';
@@ -39,6 +40,11 @@ function ctx(overrides: Partial<ThreadMenuContext> = {}): ThreadMenuContext {
     fork: vi.fn(async () => ({ ok: true, value: { id: 'fork-1' } })),
     archive: vi.fn(async () => ({ ok: true })),
     closeFollowup: vi.fn(async () => ({ ok: true, summarized: 1, followedUp: 1 })),
+    pin: vi.fn(async () => ({ thread: { ...thread, pinnedAt: 1 } })),
+    unpin: vi.fn(async () => ({ thread: { ...thread, pinnedAt: null } })),
+    read: vi.fn(async () => ({ thread: { ...thread, lastReadSeq: 2, maxSeq: 2 } })),
+    unread: vi.fn(async () => ({ thread: { ...thread, lastReadSeq: 0, maxSeq: 2 } })),
+    rename: vi.fn(async () => ({ thread: { ...thread, title: 'Renamed' } })),
     remove: vi.fn(),
     ...overrides
   };
@@ -133,6 +139,31 @@ describe('runThreadMenuAction', () => {
     expect(c.navigate).not.toHaveBeenCalled();
   });
 
+  it('upserts returned thread views for pin and read actions', async () => {
+    useThreads.setState({ threads: [thread] });
+    const c = ctx();
+    await runThreadMenuAction('pin', thread, c);
+    await runThreadMenuAction('read', thread, c);
+    expect(c.pin).toHaveBeenCalledWith(thread.id);
+    expect(c.read).toHaveBeenCalledWith(thread.id);
+    expect(useThreads.getState().threads[0]).toMatchObject({ pinnedAt: 1, lastReadSeq: 2, maxSeq: 2 });
+  });
+
+  it('does not send blank or unchanged renames', async () => {
+    const c = ctx();
+    await expect(renameThread(thread, '  ', c)).resolves.toBe(false);
+    await expect(renameThread(thread, ' hello ', c)).resolves.toBe(false);
+    expect(c.rename).not.toHaveBeenCalled();
+  });
+
+  it('renames with trimmed input and immediately upserts returned thread', async () => {
+    useThreads.setState({ threads: [thread] });
+    const c = ctx();
+    await expect(renameThread(thread, ' Renamed ', c)).resolves.toBe(true);
+    expect(c.rename).toHaveBeenCalledWith(thread.id, 'Renamed');
+    expect(useThreads.getState().threads[0]?.title).toBe('Renamed');
+  });
+
   it('does not archive when the user cancels', async () => {
     const c = ctx({ confirm: vi.fn(() => false) });
     await runThreadMenuAction('archive', thread, c);
@@ -214,6 +245,9 @@ describe('ThreadCardMenu', () => {
     expect(idle).toContain('Open in split');
     expect(idle).toContain('Fork');
     expect(idle).toContain('Close with follow-up');
+    expect(idle).toContain('Pin');
+    expect(idle).toContain('Mark unread');
+    expect(idle).toContain('Rename');
     expect(idle).toContain('Archive');
     expect(idle).not.toContain('Stop');
 

@@ -14340,6 +14340,15 @@ body.resizing-col .explorer-resizer::after {
   margin: 0;
 }
 
+.thread-unread-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 18%, transparent);
+}
+
 .agent-card-meta {
   display: flex;
   align-items: center;
@@ -27771,6 +27780,7 @@ body.resizing-col .library-split-resizer::after {
 }
 .agent-monitor-group-head.group-blocked { color: var(--danger); }
 .agent-monitor-group-head.group-working { color: var(--accent-gold); }
+.agent-monitor-group-head.group-pinned { color: var(--accent-blue); }
 .agent-monitor-group-head.group-done { color: var(--success); }
 .agent-monitor-group-count {
   margin-left: auto;

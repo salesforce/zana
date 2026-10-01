@@ -16,7 +16,7 @@ function loadReads(dataDir: string): ThreadReadMap {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const out: ThreadReadMap = {};
     for (const [id, seq] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof seq === 'number' && Number.isFinite(seq) && seq >= 0) out[id] = Math.floor(seq);
+      if (typeof seq === 'number' && Number.isFinite(seq) && seq >= -1) out[id] = Math.floor(seq);
     }
     return out;
   } catch {
@@ -47,7 +47,8 @@ export function getThreadReadSeq(dataDir: string, threadId: string): number {
 }
 
 export function markThreadRead(dataDir: string, threadId: string, lastReadSeq: number): number {
-  const seq = Math.max(0, Math.floor(lastReadSeq));
+  // `-1` means explicitly unread even when the thread has no timeline events.
+  const seq = Math.max(-1, Math.floor(lastReadSeq));
   const map = loadReads(dataDir);
   map[threadId] = seq;
   saveReads(dataDir, map);

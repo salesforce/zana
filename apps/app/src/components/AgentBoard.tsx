@@ -19,6 +19,7 @@ import { boardDropAction, boardItemKey } from '../lib/agent-board-moves.js';
 import { agentBoardMoves, useAgentBoardMoves } from '../stores/agent-board-moves.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { MobileAgentBoard } from './MobileAgentBoard.js';
+import { isUnreadThread } from '../lib/unread-threads.js';
 import {
   agentCardRuntimeLabel,
   agentFleetItem,
@@ -1206,6 +1207,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
       Boolean(project?.remote && project.hostId && item.thread.hostId === project.hostId)
     );
     const showProjectChip = threadCardShowsProject(Boolean(showProject), grouped);
+    const unread = isUnreadThread(item.thread);
     return (
       <button
         key={item.id}
@@ -1233,6 +1235,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           </span>
           <span className="agent-card-title">{item.title}</span>
           <FleetKindChip kind="thread" />
+          {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" aria-label="New activity" /> : null}
           <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
           <FavoriteStar session={{ id: item.thread.id, kind: 'thread' }} className="agent-card-fav" />
         </span>

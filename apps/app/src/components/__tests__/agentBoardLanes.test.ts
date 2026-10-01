@@ -123,6 +123,13 @@ describe('AgentBoard thread cards', () => {
     expect(threadHead).not.toContain('idle for');
   });
 
+  it('marks unread Modern cards with an accessible activity dot', () => {
+    const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('isUnreadThread(item.thread)');
+    expect(source).toContain('className="thread-unread-dot"');
+    expect(source).toContain('aria-label="New activity"');
+  });
+
   it('renders schedule jobs as board cards in the Scheduled lane', () => {
     const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
     expect(source).toContain('renderScheduleCard');

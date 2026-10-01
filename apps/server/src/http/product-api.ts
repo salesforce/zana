@@ -1415,7 +1415,7 @@ export async function handleProductHttp(
         sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
         return true;
       }
-      markThreadRead(ctx.dataDir, thread.id, 0);
+      markThreadRead(ctx.dataDir, thread.id, -1);
       const view = conversationThreadView(ctx, thread);
       ctx.hub.emit('threads:updated', view);
       sendJson(response, 200, { thread: view });

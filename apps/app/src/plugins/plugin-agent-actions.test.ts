@@ -3,6 +3,8 @@ import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
 import {
   availableAgentCardActions,
   invokeAgentCardAction,
+  availableThreadCardActions,
+  invokeThreadCardAction,
   invokeAgentsBoardAction
 } from './plugin-agent-actions.js';
 import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
@@ -112,5 +114,29 @@ describe('plugin agent actions', () => {
     );
     invokeAgentsBoardAction(set.agentsBoardActions[0]!, { projectId: 'p1' });
     expect(warn.mock.calls[0]?.[0]).toContain('nope');
+  });
+
+  it('uses host-derived Modern thread context and isolates plugin failures', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const run = vi.fn(() => Promise.reject(new Error('nope')));
+    const set = interpretPluginApp(
+      'hello',
+      definePluginApp((app) => {
+        app.slots.experimental_threadCardAction({
+          id: 'thread',
+          title: 'Thread',
+          isAvailable: ({ threadId, projectId }) => threadId === 't1' && projectId === 'p1',
+          run
+        });
+      })
+    );
+    const context = { threadId: 't1', projectId: 'p1' };
+    const visible = availableThreadCardActions(set.threadCardActions, context);
+    expect(visible).toHaveLength(1);
+    invokeThreadCardAction(visible[0]!, context);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(run).toHaveBeenCalledWith(context);
+    expect(warn).toHaveBeenCalled();
   });
 });

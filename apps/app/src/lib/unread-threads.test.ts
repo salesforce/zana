@@ -38,6 +38,7 @@ describe('isUnreadThread', () => {
   });
 
   it('counts explicit unread and caught-up records', () => {
+    expect(isUnreadThread(thread({ id: 'empty-marked', lastReadSeq: -1, maxSeq: 0 }))).toBe(true);
     expect(isUnreadThread(thread({ id: 'marked', lastReadSeq: 0, maxSeq: 4 }))).toBe(true);
     expect(isUnreadThread(thread({ id: 'caught', lastReadSeq: 4, maxSeq: 4 }))).toBe(false);
     expect(isUnreadThread(thread({ id: 'behind', lastReadSeq: 2, maxSeq: 5 }))).toBe(true);

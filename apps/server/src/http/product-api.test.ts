@@ -1139,10 +1139,10 @@ describe('product HTTP', () => {
       body: '{}'
     });
     expect(unread.status).toBe(200);
-    await expect(unread.json()).resolves.toMatchObject({ thread: { id: thread.id, lastReadSeq: 0 } });
+    await expect(unread.json()).resolves.toMatchObject({ thread: { id: thread.id, lastReadSeq: -1 } });
     expect(emit).toHaveBeenCalledWith('threads:updated', expect.objectContaining({
       id: thread.id,
-      lastReadSeq: 0
+      lastReadSeq: -1
     }));
 
     const missingRename = await fetch(`${server.url}api/v1/threads/missing/`, {

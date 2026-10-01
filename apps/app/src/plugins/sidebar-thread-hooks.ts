@@ -41,6 +41,9 @@ export const useSidebarThreadActions: PluginSdkApp['experimental_useSidebarThrea
       navigate, pathname, projectId, confirm: message => window.confirm(message),
       stop: product.threads.stop, fork: product.threads.fork,
       archive: product.threads.archive, closeFollowup: product.threads.closeFollowup,
+      pin: product.threads.pin, unpin: product.threads.unpin,
+      read: product.threads.read, unread: product.threads.unread,
+      rename: product.threads.rename,
       remove: id => useThreads.getState().remove(id)
     });
   };

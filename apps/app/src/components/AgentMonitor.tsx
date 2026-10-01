@@ -52,6 +52,7 @@ import { groupSessionsByTeamRun } from '../lib/teamRunOrganization.js';
 import { PaneEmptyState } from './PaneEmptyState.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { useMobileThreadControlsTarget } from './useMobileThreadTitleTarget.js';
+import { isUnreadThread } from '../lib/unread-threads.js';
 
 /**
  * The Agents "List" view: a live monitor — item list (left), the selected
@@ -154,15 +155,21 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
         ? [...agentGroups, { key: 'other-fleet', label: 'Threads and schedules', cards: other }]
         : agentGroups;
     }
+    const pinnedThreads = jobCards.filter(
+      (item): item is Extract<FleetItem, { kind: 'thread' }> => item.kind === 'thread' && item.thread.pinnedAt != null
+    );
     const byLane = new Map<LaneKey, FleetItem[]>();
     for (const item of jobCards) {
+      if (item.kind === 'thread' && item.thread.pinnedAt != null) continue;
       const key = laneOf(item, sensitivity);
       const list = byLane.get(key) ?? [];
       list.push(item);
       byLane.set(key, list);
     }
-    return visibleAgentLanes(includeScheduled)
-      .map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] }))
+    return [
+      { key: 'pinned', label: 'Pinned', cards: pinnedThreads },
+      ...visibleAgentLanes(includeScheduled).map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] }))
+    ]
       .filter((g) => g.cards.length > 0);
   }, [jobCards, sensitivity, includeScheduled, organization]);
 
@@ -342,6 +349,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
     );
   }
   if (item.kind === 'thread') {
+    const unread = isUnreadThread(item.thread);
     return (
       <button
         type="button"
@@ -359,6 +367,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
           <span className="agent-monitor-row-title-line">
             <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
             <span className="agent-monitor-row-title">{item.title}</span>
+            {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" aria-label="New activity" /> : null}
             <FleetKindChip kind="thread" />
           </span>
           <span className="agent-monitor-row-meta">

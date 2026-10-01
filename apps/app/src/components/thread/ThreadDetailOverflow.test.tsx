@@ -71,6 +71,7 @@ describe('ThreadDetailOverflow wiring', () => {
     expect(source).toContain('product.threads.archive');
     expect(source).toContain('product.threads.closeFollowup');
     expect(source).toContain('product.threads.stop');
+    expect(source).toContain('reportFailure(error');
     expect(source).toContain('<PromptModal');
     expect(source).toContain('shouldShowThreadStop');
     expect(source).toContain('inFlightRetry');
