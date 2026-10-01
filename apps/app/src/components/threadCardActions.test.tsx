@@ -232,6 +232,7 @@ describe('ThreadCardMenu', () => {
     const body = source.slice(start, end);
     expect(body).toContain('createPortal(node, document.body)');
     expect(body).toContain("typeof document === 'undefined'");
+    expect(body).toContain('!menu.renaming &&');
   });
 
   it('offers Stop only while the thread is busy', () => {

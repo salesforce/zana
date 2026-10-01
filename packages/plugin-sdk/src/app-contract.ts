@@ -370,7 +370,8 @@ export interface PluginAgentCardActionRegistration extends PluginSlotBase {
 /** Context for a right-click item on a Modern conversation card. */
 export interface PluginThreadCardActionContext {
   threadId: string;
-  projectId: string;
+  /** `null` when the thread is not associated with a registered project. */
+  projectId: string | null;
 }
 
 export interface PluginThreadCardActionRegistration extends PluginSlotBase {

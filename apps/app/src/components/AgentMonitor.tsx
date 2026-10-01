@@ -367,7 +367,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
           <span className="agent-monitor-row-title-line">
             <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
             <span className="agent-monitor-row-title">{item.title}</span>
-            {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" aria-label="New activity" /> : null}
+             {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" role="img" aria-label="New activity" /> : null}
             <FleetKindChip kind="thread" />
           </span>
           <span className="agent-monitor-row-meta">

@@ -139,4 +139,17 @@ describe('plugin agent actions', () => {
     expect(run).toHaveBeenCalledWith(context);
     expect(warn).toHaveBeenCalled();
   });
+
+  it('passes null project context for threads outside a registered project', () => {
+    const run = vi.fn();
+    const set = interpretPluginApp(
+      'hello',
+      definePluginApp((app) => {
+        app.slots.experimental_threadCardAction({ id: 'thread', title: 'Thread', run });
+      })
+    );
+    const context = { threadId: 't1', projectId: null };
+    invokeThreadCardAction(set.threadCardActions[0]!, context);
+    expect(run).toHaveBeenCalledWith(context);
+  });
 });

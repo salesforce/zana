@@ -26,22 +26,6 @@ const CONFIG: AppConfig = {
   lastProjectId: null
 };
 
-const baseTestTmp = join(__dirname, '.test-tmp');
-let globalOcModelsDir: string;
-let globalOcModelsPath: string;
-
-beforeAll(() => {
-  if (!require('node:fs').existsSync(baseTestTmp)) require('node:fs').mkdirSync(baseTestTmp, { recursive: true });
-  globalOcModelsDir = mkdtempSync(join(baseTestTmp, 'zcc-oc-global-'));
-  globalOcModelsPath = join(globalOcModelsDir, 'opencode');
-  writeFileSync(globalOcModelsPath, `#!/bin/sh\neval "$ZCC_TEST_OC_MODELS_BODY"\n`, { mode: 0o755 });
-  chmodSync(globalOcModelsPath, 0o755);
-});
-
-afterAll(() => {
-  rmSync(globalOcModelsDir, { recursive: true, force: true });
-});
-
 describe('parseOpenCodeAgentDescriptors', () => {
   it('returns renderer-safe mode-aware descriptors and dedupes by id', () => {
     expect(parseOpenCodeAgentDescriptors([
@@ -843,8 +827,12 @@ describe('OpenCodeProvider.discoverModelTargets', () => {
   const scripts: string[] = [];
 
   const fakeBinary = (body: string): string => {
-    process.env.ZCC_TEST_OC_MODELS_BODY = body;
-    return globalOcModelsPath;
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-oc-models-'));
+    const path = join(dir, 'opencode');
+    writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    chmodSync(path, 0o755);
+    scripts.push(dir);
+    return path;
   };
 
   afterAll(() => {

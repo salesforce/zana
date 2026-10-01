@@ -69,6 +69,13 @@ test('Modern thread actions work from Kanban and list hosts', async ({ app }) =>
   }, threadId)).toBe(-1);
   await expect(window.locator('.agent-card.is-thread', { hasText: renamedTitle }).getByTestId('thread-unread-indicator')).toBeVisible();
 
+  await window.locator('.agent-card.is-thread', { hasText: renamedTitle }).click({ button: 'right' });
+  await window.getByTestId('thread-context-menu').getByRole('button', { name: 'Mark read' }).click();
+  await expect.poll(async () => window.evaluate(async (id) => {
+    const thread = (await (await fetch(`/api/v1/threads/${id}`)).json()).thread;
+    return thread.lastReadSeq === thread.maxSeq;
+  }, threadId)).toBe(true);
+
   await window.getByLabel('List view').click();
   const listRow = window.locator('.agent-monitor-row.is-thread', { hasText: renamedTitle });
   await expect(listRow).toBeVisible({ timeout: 15_000 });

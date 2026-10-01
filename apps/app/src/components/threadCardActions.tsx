@@ -219,33 +219,47 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   const projectId = route.isProjectFocused ? route.focusedProjectId : null;
   const [busy, setBusy] = useState(false);
   const pluginSlots = useSyncExternalStore(subscribePluginSlots, listThreadCardActions, listThreadCardActions);
-  const pluginCtx = { threadId: thread.id, projectId: thread.projectId };
+  const pluginCtx = { threadId: thread.id, projectId: thread.projectId ?? null };
   const pluginActions = availableThreadCardActions(pluginSlots, pluginCtx);
   const unread = isUnreadThread(thread);
+  const ctx: ThreadMenuContext = {
+    navigate,
+    pathname: location.pathname,
+    projectId,
+    confirm: (message) => window.confirm(message),
+    stop: (id) => product.threads.stop(id),
+    fork: (id) => product.threads.fork(id),
+    archive: (id) => product.threads.archive(id),
+    closeFollowup: (id) => product.threads.closeFollowup(id),
+    pin: (id) => product.threads.pin(id),
+    unpin: (id) => product.threads.unpin(id),
+    read: (id) => product.threads.read(id),
+    unread: (id) => product.threads.unread(id),
+    rename: (id, title) => product.threads.rename(id, title),
+    remove: (id) => useThreads.getState().remove(id)
+  };
 
   const run = async (action: ThreadMenuAction) => {
     if (busy) return;
     setMenu(null);
     setBusy(true);
     try {
-      await runThreadMenuAction(action, thread, {
-        navigate,
-        pathname: location.pathname,
-        projectId,
-        confirm: (message) => window.confirm(message),
-        stop: (id) => product.threads.stop(id),
-        fork: (id) => product.threads.fork(id),
-        archive: (id) => product.threads.archive(id),
-        closeFollowup: (id) => product.threads.closeFollowup(id),
-        pin: (id) => product.threads.pin(id),
-        unpin: (id) => product.threads.unpin(id),
-        read: (id) => product.threads.read(id),
-        unread: (id) => product.threads.unread(id),
-        rename: (id, title) => product.threads.rename(id, title),
-        remove: (id) => useThreads.getState().remove(id)
-      });
+      await runThreadMenuAction(action, thread, ctx);
     } catch (error) {
       useUi.getState().pushToast(errorMessage(error, `Failed to ${action} agent`), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rename = async (title: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await renameThread(thread, title, ctx);
+      setMenu(null);
+    } catch (error) {
+      useUi.getState().pushToast(errorMessage(error, 'Failed to rename agent'), 'error');
     } finally {
       setBusy(false);
     }
@@ -342,7 +356,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   );
   return (
     <>
-      {typeof document === 'undefined' ? node : createPortal(node, document.body)}
+       {!menu.renaming && (typeof document === 'undefined' ? node : createPortal(node, document.body))}
       {menu.renaming ? (
         <PromptModal
           title="Rename agent"
@@ -352,12 +366,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
           onClose={() => {
             setMenu(null);
           }}
-          onSubmit={(title) => {
-            setMenu(null);
-            void renameThread(thread, title, { rename: (id, next) => product.threads.rename(id, next) }).catch((error) => {
-              useUi.getState().pushToast(errorMessage(error, 'Failed to rename agent'), 'error');
-            });
-          }}
+           onSubmit={(title) => void rename(title)}
         />
       ) : null}
     </>

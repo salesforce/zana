@@ -18,28 +18,6 @@ import {
   versionFloorDecision
 } from '../harness-verify.js';
 
-
-const baseTestTmp = join(__dirname, '.test-tmp');
-let globalProbeDir: string;
-let globalLogPath: string;
-const globalBinaries: Record<string, string> = {};
-
-beforeAll(() => {
-  if (!require('node:fs').existsSync(baseTestTmp)) require('node:fs').mkdirSync(baseTestTmp, { recursive: true });
-  globalProbeDir = mkdtempSync(join(baseTestTmp, 'zcc-harness-probe-global-'));
-  globalLogPath = join(globalProbeDir, 'probes.log');
-  for (const family of VERIFIED_FAMILIES) {
-    const binary = join(globalProbeDir, family);
-    writeFileSync(binary, `#!/bin/sh\nprintf '%s\\n' '${family}' >> "$ZCC_TEST_LOG_PATH"\necho '9.9.9'\n`);
-    chmodSync(binary, 0o755);
-    globalBinaries[family] = binary;
-  }
-});
-
-afterAll(() => {
-  rmSync(globalProbeDir, { recursive: true, force: true });
-});
-
 describe('harnessEnabledFromProbe', () => {
   it('keeps always-on families available regardless of install or config', () => {
     expect(harnessEnabledFromProbe({ alwaysEnabled: true, installed: false })).toBe(true);
@@ -311,25 +289,30 @@ describe('installedHarnessVersion probes one family', () => {
   });
 
   function probeHarnesses(): { config: AppConfig; logPath: string } {
-    const dir = mkdtempSync(join(baseTestTmp, 'zcc-harness-log-'));
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-harness-probe-'));
     tmpDirs.push(dir);
     const logPath = join(dir, 'probes.log');
-    process.env.ZCC_TEST_LOG_PATH = logPath;
-    
+    const binaries: Record<string, string> = {};
+    for (const family of VERIFIED_FAMILIES) {
+      const binary = join(dir, family);
+      writeFileSync(binary, `#!/bin/sh\nprintf '%s\\n' '${family}' >> '${logPath}'\necho '9.9.9'\n`);
+      chmodSync(binary, 0o755);
+      binaries[family] = binary;
+    }
     return {
       logPath,
       config: {
         version: 1,
         theme: 'dark',
         shell: '/bin/sh',
-        claudeBinary: globalBinaries.claude,
-        cursorBinary: globalBinaries.cursor,
-        codexBinary: globalBinaries.codex,
-        piBinary: globalBinaries.pi,
-        opencodeBinary: globalBinaries.opencode,
-        grokBinary: globalBinaries.grok,
-        mastracodeBinary: globalBinaries.mastracode,
-        afcodeBinary: globalBinaries.afcode,
+        claudeBinary: binaries.claude,
+        cursorBinary: binaries.cursor,
+        codexBinary: binaries.codex,
+        piBinary: binaries.pi,
+        opencodeBinary: binaries.opencode,
+        grokBinary: binaries.grok,
+        mastracodeBinary: binaries.mastracode,
+        afcodeBinary: binaries.afcode,
         fontSize: 13,
         lastProjectId: null
       } as AppConfig
@@ -343,9 +326,7 @@ describe('installedHarnessVersion probes one family', () => {
   });
 
   it('returns undefined when the selected binary is missing', async () => {
-    const base = join(__dirname, '.test-tmp');
-    if (!require('node:fs').existsSync(base)) require('node:fs').mkdirSync(base, { recursive: true });
-    const dir = mkdtempSync(join(base, 'zcc-harness-missing-'));
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-harness-missing-'));
     tmpDirs.push(dir);
     const config = {
       version: 1,

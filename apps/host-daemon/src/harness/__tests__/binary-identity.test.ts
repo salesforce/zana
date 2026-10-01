@@ -11,20 +11,8 @@ import {
 
 const tmpDirs: string[] = [];
 
-const baseTestTmp = join(__dirname, '.test-tmp');
-let globalBinIdentityDir: string;
-
-beforeAll(() => {
-  if (!require('node:fs').existsSync(baseTestTmp)) require('node:fs').mkdirSync(baseTestTmp, { recursive: true });
-  globalBinIdentityDir = mkdtempSync(join(baseTestTmp, 'zcc-bin-identity-global-'));
-});
-
-afterAll(() => {
-  rmSync(globalBinIdentityDir, { recursive: true, force: true });
-});
-
 function makeDir(prefix: string): string {
-  const dir = mkdtempSync(join(baseTestTmp, prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   tmpDirs.push(dir);
   return dir;
 }
