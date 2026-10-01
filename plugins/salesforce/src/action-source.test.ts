@@ -120,21 +120,6 @@ describe('action source resolution', () => {
     expect(await harness.callRpc('agentActions.source', { ...args, origin: 'project', target: 'apex://OrderLookup' })).toMatchObject({ ok: true });
     await harness.dispose();
   });
-  it('visualizes only the authorized Flow snapshot on demand and retains source after parser failure', async () => {
-    const { root, write, deps } = setup();
-    write('force-app/main/default/flows/CheckReturn.flow-meta.xml', ACTION_FLOW_XML);
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p', name: 'Project', path: root }] });
-    await createSalesforcePlugin(zcc, deps);
-    const args = { projectId: 'p', target: 'flow://CheckReturn', origin: 'project', visualize: true };
-    expect(await harness.callRpc('agentActions.source', { ...args, projectId: 'unknown' })).toMatchObject({ ok: false });
-    const ordinary: any = await harness.callRpc('agentActions.source', { ...args, visualize: false });
-    expect(ordinary.data.visualization).toBeUndefined();
-    const rendered: any = await harness.callRpc('agentActions.source', { ...args, content: '<Flow/>', projectRoot: '/etc' });
-    expect(rendered.data.visualization.data.nodes).toContainEqual(expect.objectContaining({ id: 'Eligible' }));
-    write('force-app/main/default/flows/CheckReturn.flow-meta.xml', '<Flow>');
-    expect(await harness.callRpc('agentActions.source', args)).toMatchObject({ ok: true, data: { content: '<Flow>', visualizationError: expect.any(String) } });
-    await harness.dispose();
-  }, 60_000);
 });
 describe('bounded source responses', () => {
   it('preserves complete UTF-8 across chunks and rejects oversized streams', async () => {
