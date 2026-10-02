@@ -1,9 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '@zana-ai/zcc-domain/product';
+import { GlobalAgentLauncher } from './components/GlobalAgentLauncher.js';
 import { resolveFocusedProject } from './lib/focusedProject.js';
 
-const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+const launcher = vi.hoisted(() => ({ projects: [] as Array<Project | undefined> }));
+
+vi.mock('./components/AgentLauncher.js', () => ({
+  AgentLauncher: ({ project }: { project?: Project }) => {
+    launcher.projects.push(project);
+    return null;
+  }
+}));
 
 const localProject = { id: 'local', name: 'Local', path: '/work/local' } as Project;
 const remoteProject = {
@@ -14,8 +22,21 @@ const remoteProject = {
 } as Project;
 
 describe('App launcher project context', () => {
+  beforeEach(() => {
+    launcher.projects = [];
+  });
+
   it('passes the focused project into the shared launcher host', () => {
-    expect(app).toContain('<AgentLauncher\n          project={focusedProject}');
+    renderToStaticMarkup(
+      <GlobalAgentLauncher
+        open
+        project={remoteProject}
+        onClose={() => {}}
+        onLaunched={() => {}}
+      />
+    );
+
+    expect(launcher.projects).toEqual([remoteProject]);
   });
 
   it('returns exact registered local and remote projects', () => {
@@ -28,5 +49,10 @@ describe('App launcher project context', () => {
   it('leaves scratch/global fallback available without a current registered project', () => {
     expect(resolveFocusedProject(null, [localProject])).toBeUndefined();
     expect(resolveFocusedProject('removed-project', [localProject])).toBeUndefined();
+
+    renderToStaticMarkup(
+      <GlobalAgentLauncher open onClose={() => {}} onLaunched={() => {}} />
+    );
+    expect(launcher.projects).toEqual([undefined]);
   });
 });

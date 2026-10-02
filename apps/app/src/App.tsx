@@ -17,7 +17,7 @@ import {
 import { SidebarTriggerOverlay } from './components/SidebarTriggerOverlay.js';
 import { MobileSettingsBack } from './components/MobileSettingsBack.js';
 import { MOBILE_THREAD_ACTIONS_ID, MOBILE_THREAD_CONTROLS_ID, MOBILE_THREAD_TITLE_ID } from './components/useMobileThreadTitleTarget.js';
-import { AgentLauncher } from './components/AgentLauncher.js';
+import { GlobalAgentLauncher } from './components/GlobalAgentLauncher.js';
 import { SettingsPane } from './components/listpane/SettingsPane.js';
 import { ExtensionsPane } from './components/listpane/ExtensionsPane.js';
 import { ProjectView } from '@/views/project/ProjectView';
@@ -833,7 +833,8 @@ export function App() {
           that slot is shown, so a CSS-hidden workspace cannot portal a second
           dialog on top of this one. */}
       {launcherOpen && (nav !== 'projects' || !focusedProjectId || splitWorkspaceShowing) && (
-        <AgentLauncher
+        <GlobalAgentLauncher
+          open
           project={focusedProject}
           onClose={() => useUi.getState().setLauncherOpen(false)}
           onLaunched={(session, projectId) => stayOnAgentsBoard(session, projectId, navigate)}
