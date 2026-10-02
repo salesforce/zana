@@ -134,6 +134,7 @@ import {
   getThreadRoutePath
 } from './lib/route-paths.js';
 import { inspectAgentSession, inspectRouteProjectId } from './lib/inspect-session.js';
+import { resolveFocusedProject } from './lib/focusedProject.js';
 
 function stayOnAgentsBoard(
   session: { id: string },
@@ -710,9 +711,7 @@ export function App() {
   // The shell is always nav + one full content track. Settings/Extensions
   // swap the left rail; a focused project keeps ProjectScopedNav so workspace
   // modes live in the side panel instead of a horizontal tab strip.
-  const focusedProject = focusedProjectId
-    ? projects.find((project) => project.id === focusedProjectId) ?? null
-    : null;
+  const focusedProject = resolveFocusedProject(focusedProjectId, projects);
   const projectRailLocked =
     !!scopedProject || keepsProjectFocusRail(nav, focusedProjectId);
   const shellLayout = resolveShellLayout(nav, projectRailLocked);
@@ -835,6 +834,7 @@ export function App() {
           dialog on top of this one. */}
       {launcherOpen && (nav !== 'projects' || !focusedProjectId || splitWorkspaceShowing) && (
         <AgentLauncher
+          project={focusedProject}
           onClose={() => useUi.getState().setLauncherOpen(false)}
           onLaunched={(session, projectId) => stayOnAgentsBoard(session, projectId, navigate)}
         />
