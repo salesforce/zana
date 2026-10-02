@@ -387,12 +387,37 @@ describe('SquadFlowView modern thread integration', () => {
     expect(mobile.inspectThread).toHaveBeenCalledWith('modern-1', 'p1', expect.any(Function));
     expect(mobile.inspectAgent).not.toHaveBeenCalled();
 
+    expect(node.title).toBe('Modern (Click to open thread)');
+
     mobile.inspectThread.mockClear();
     mobile.compact = true;
     rerender(<SquadGraph graph={graph} />);
     node = container.querySelector<HTMLButtonElement>('.squad-flow-node')!;
     fireEvent.click(node);
     expect(mobile.inspectThread).toHaveBeenCalledOnce();
+  });
+
+  it('clears thread double-click suppression when the graph changes', () => {
+    const threadNode = flowNode({
+      sessionId: 'thread:modern-1', label: 'Modern',
+      inspectionTarget: { type: 'thread', id: 'modern-1' }
+    });
+    const graph = (builtAt: number): SquadFlowGraph => ({
+      projectId: 'p1', nodes: [threadNode], edges: [],
+      summary: { total: 1, working: 0, blocked: 0, idle: 1, exited: 0 }, builtAt
+    });
+    const { container, rerender } = render(<SquadGraph graph={graph(1)} />);
+    const click = () => {
+      const node = container.querySelector<HTMLButtonElement>('.squad-flow-node')!;
+      node.setPointerCapture = vi.fn();
+      node.releasePointerCapture = vi.fn();
+      fireEvent.pointerDown(node, { pointerId: 1, button: 0, timeStamp: 100 });
+      fireEvent.pointerUp(node, { pointerId: 1, button: 0, timeStamp: 100 });
+    };
+    click();
+    rerender(<SquadGraph graph={graph(2)} />);
+    click();
+    expect(mobile.inspectThread).toHaveBeenCalledTimes(2);
   });
 
   it('preserves terminal job single-click precedence and terminal double-click inspection', () => {

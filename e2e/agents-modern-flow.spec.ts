@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
+import type { Page } from '@playwright/test';
 
 test.use({
   e2e: true,
@@ -8,28 +9,33 @@ test.use({
   initialConfig: { classicSessionViewEnabled: false }
 });
 
-test('Modern-only project renders in Agents Flow and opens thread inspector', async ({ app }) => {
-  const { window } = app;
+async function createProjectWithModernThread(app: { home: string; window: Page }) {
   const projectPath = join(app.home, 'modern-flow-project');
   mkdirSync(projectPath, { recursive: true });
-  const project = await window.evaluate((path) => window.cc.projects.add(path), projectPath);
+  const project = await app.window.evaluate((path) => window.cc.projects.add(path), projectPath);
   if (!project.ok) throw new Error(`Project registration failed: ${project.error}`);
-
-  const thread = await window.evaluate(async (projectId) => {
+  const thread = await app.window.evaluate(async (projectId) => {
     const response = await fetch('/api/v1/threads', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        providerId: 'fake',
-        title: 'Modern Flow E2E',
-        input: 'Complete this turn'
-      })
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId, providerId: 'fake', title: 'Modern Flow E2E', input: 'Complete this turn' })
     });
     if (!response.ok) throw new Error(await response.text());
-    const body = await response.json();
-    return body.value;
+    return (await response.json()).value;
   }, project.value.id);
+  return { project, thread };
+}
+
+async function archiveThread(window: Page, threadId: string) {
+  await window.evaluate(async (id) => {
+    await fetch(`/api/v1/threads/${id}/archive`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+    });
+  }, threadId);
+}
+
+test('Modern-only project renders in Agents Flow and opens thread inspector', async ({ app }) => {
+  const { window } = app;
+  const { thread } = await createProjectWithModernThread(app);
 
   try {
     await expect.poll(() => window.evaluate(async (id) => {
@@ -53,12 +59,6 @@ test('Modern-only project renders in Agents Flow and opens thread inspector', as
     await expect(inspector).toContainText('Modern Flow E2E');
     await expect(window).not.toHaveURL(new RegExp(`/sessions/${thread.id}$`));
   } finally {
-    await window.evaluate(async (id) => {
-      await fetch(`/api/v1/threads/${id}/archive`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}'
-      });
-    }, thread.id);
+    await archiveThread(window, thread.id);
   }
 });

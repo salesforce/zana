@@ -426,6 +426,18 @@ function SelfLoopArc({ cx, topY, animate, variant = 'streaming' }: { cx: number;
 const DRAG_THRESHOLD = 4;
 const DOUBLE_CLICK_MS = 350;
 
+function flowNodeTitle(node: SquadFlowNode, compact: boolean): string {
+  const label = node.inspectionTarget.type === 'thread'
+    ? node.label
+    : node.handle ?? node.displayName ?? node.sessionId;
+  const action = node.inspectionTarget.type === 'thread'
+    ? compact ? 'Tap to open thread' : 'Click to open thread'
+    : compact ? 'Tap to open agent' : node.job?.executionId
+      ? 'Click to inspect job details, double-click to open terminal'
+      : 'Click to open terminal';
+  return `${label} (${action})`;
+}
+
 export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
   graph: SquadFlowGraph;
   onInspectExecution?: (projectId: string, executionId: string) => void;
@@ -464,6 +476,9 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
     moved: boolean;
   } | null>(null);
   const lastThreadOpenRef = useRef<{ sessionId: string; at: number } | null>(null);
+  useEffect(() => {
+    lastThreadOpenRef.current = null;
+  }, [graph]);
 
   // Resolve final position: layout + any drag offset.
   const resolvedPlaced = useMemo(() => {
@@ -676,7 +691,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                 onPointerUp={compact ? undefined : handlePointerUp}
                 onClick={compact ? () => inspectFlowNode(node) : undefined}
                 onDoubleClick={compact || node.inspectionTarget.type === 'thread' ? undefined : () => inspectFlowNode(node)}
-                title={`${node.handle ?? node.displayName ?? node.sessionId} (${compact ? 'Tap to open agent' : node.job?.executionId ? 'Click to inspect job details, double-click to open terminal' : 'Click to open terminal'})`}
+                title={flowNodeTitle(node, compact)}
               >
                 <span className="squad-flow-node-main">
                   <span className="squad-flow-node-icon" aria-hidden="true">

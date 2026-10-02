@@ -42,6 +42,27 @@ export interface SquadFlowThreadParticipant {
   createdAt: number;
 }
 
+/** Add renderer-projected Modern threads as isolated Solo flow nodes. */
+function addThreadParticipants(
+  bySession: Map<string, SquadFlowNode>,
+  participants: readonly SquadFlowThreadParticipant[] | undefined,
+  include: boolean
+): void {
+  if (!include) return;
+  for (const thread of participants ?? []) {
+    const sessionId = `thread:${thread.id}`;
+    bySession.set(sessionId, {
+      sessionId,
+      inspectionTarget: { type: 'thread', id: thread.id },
+      label: thread.label,
+      state: thread.state,
+      liveSubagents: 0,
+      exited: false,
+      isOrchestrator: false
+    });
+  }
+}
+
 /**
  * A squad is QUIESCENT when it has members and EVERY one has exited — the whole
  * team is done. The Flow view uses this to render a finished squad as a static,
@@ -332,20 +353,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     if (!inScope(s.cohort?.cohortId)) continue;
     bySession.set(s.id, makeNode(s.id, s.cohort?.slotLabel, s.cohort?.slotLabel ?? s.title, undefined, undefined));
   }
-  if (inScope(undefined)) {
-    for (const thread of input.threadParticipants ?? []) {
-      const sessionId = `thread:${thread.id}`;
-      bySession.set(sessionId, {
-        sessionId,
-        inspectionTarget: { type: 'thread', id: thread.id },
-        label: thread.label,
-        state: thread.state,
-        liveSubagents: 0,
-        exited: false,
-        isOrchestrator: false
-      });
-    }
-  }
+  addThreadParticipants(bySession, input.threadParticipants, inScope(undefined));
 
   // Detached CLAIMED workers: synthesize a node straight from the durable board
   // for any CLAIMED slot no live session covers (see synthesizeDetachedClaimedNodes).
