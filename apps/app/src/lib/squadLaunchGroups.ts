@@ -12,7 +12,7 @@
  * be re-derived on every render behind a memo, like the rest of the Flow view.
  */
 import type { AgentRecord, TerminalSession } from '@zana-ai/zcc-domain/product';
-import { SOLO_LAUNCH_ID } from './squadFlow.js';
+import { SOLO_LAUNCH_ID, type SquadFlowThreadParticipant } from './squadFlow.js';
 
 /** Sentinel selection for the "All squads" chip — the merged, unfiltered graph. */
 export const ALL_SQUADS = '__all__';
@@ -38,7 +38,8 @@ export interface SquadLaunchGroup {
  */
 export function squadLaunchGroups(
   agents: AgentRecord[],
-  sessions: TerminalSession[]
+  sessions: TerminalSession[],
+  threadParticipants: readonly SquadFlowThreadParticipant[] = []
 ): SquadLaunchGroup[] {
   const acc = new Map<string, { launchedAt: number; nodeCount: number }>();
   const agentSessionIds = new Set<string>();
@@ -63,6 +64,9 @@ export function squadLaunchGroups(
     if (s.profile === 'shell') continue;
     if (agentSessionIds.has(s.id)) continue;
     add(s.cohort?.cohortId ?? SOLO_LAUNCH_ID, s.createdAt);
+  }
+  for (const thread of threadParticipants) {
+    add(SOLO_LAUNCH_ID, thread.createdAt);
   }
 
   const groups: SquadLaunchGroup[] = [...acc.entries()].map(([launchId, v]) => ({

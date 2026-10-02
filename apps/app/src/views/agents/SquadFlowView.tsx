@@ -11,11 +11,14 @@ import {
   useSubagentChildren,
   agentViewTerminals
 } from '@/store';
-import { inspectAgentSession } from '@/lib/inspect-session';
+import { inspectAgentSession, inspectThread } from '@/lib/inspect-session';
+import { useThreads } from '@/thread-store';
+import { isVisibleThread, threadTitle } from '@/components/fleet-item';
+import { threadStatusToAgentState } from '@/components/thread/thread-timeline-model';
 import { useCanvasPan } from '@/hooks/useCanvasPan';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import './mobile-canvas.css';
-import { buildSquadFlow, isQuiescentSquad } from '@/lib/squadFlow';
+import { buildSquadFlow, isQuiescentSquad, type SquadFlowThreadParticipant } from '@/lib/squadFlow';
 import { squadFlowBounds, type FlowPoint } from '@/lib/squadFlowBounds';
 import {
   ALL_SQUADS,
@@ -421,6 +424,7 @@ function SelfLoopArc({ cx, topY, animate, variant = 'streaming' }: { cx: number;
 }
 
 const DRAG_THRESHOLD = 4;
+const DOUBLE_CLICK_MS = 350;
 
 export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
   graph: SquadFlowGraph;
@@ -428,6 +432,13 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
   pannable?: boolean;
 }) {
   const navigate = useNavigate();
+  const inspectFlowNode = useCallback((node: SquadFlowNode) => {
+    if (node.inspectionTarget.type === 'thread') {
+      inspectThread(node.inspectionTarget.id, graph.projectId, navigate);
+      return;
+    }
+    inspectAgentSession(node.inspectionTarget.id, graph.projectId, navigate);
+  }, [graph.projectId, navigate]);
   const width = 1100;
   const now = graph.builtAt;
   const { placed, height: layoutHeight } = useMemo(() => layout(graph, width), [graph, width]);
@@ -452,6 +463,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
     origY: number;
     moved: boolean;
   } | null>(null);
+  const lastThreadOpenRef = useRef<{ sessionId: string; at: number } | null>(null);
 
   // Resolve final position: layout + any drag offset.
   const resolvedPlaced = useMemo(() => {
@@ -549,10 +561,15 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
           onInspectExecution(graph.projectId, node.job.executionId);
           return;
         }
-        inspectAgentSession(drag.sessionId, graph.projectId, navigate);
+        if (node?.inspectionTarget.type === 'thread') {
+          const previous = lastThreadOpenRef.current;
+          lastThreadOpenRef.current = { sessionId: node.sessionId, at: e.timeStamp };
+          if (previous?.sessionId === node.sessionId && e.timeStamp - previous.at <= DOUBLE_CLICK_MS) return;
+        }
+        if (node) inspectFlowNode(node);
       }
     },
-    [graph, onInspectExecution, navigate]
+    [graph, onInspectExecution, inspectFlowNode]
   );
 
   return (
@@ -657,8 +674,8 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                 onPointerDown={compact ? undefined : (e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={compact ? undefined : handlePointerMove}
                 onPointerUp={compact ? undefined : handlePointerUp}
-                onClick={compact ? () => inspectAgentSession(node.sessionId, graph.projectId, navigate) : undefined}
-                onDoubleClick={compact ? undefined : () => inspectAgentSession(node.sessionId, graph.projectId, navigate)}
+                onClick={compact ? () => inspectFlowNode(node) : undefined}
+                onDoubleClick={compact || node.inspectionTarget.type === 'thread' ? undefined : () => inspectFlowNode(node)}
                 title={`${node.handle ?? node.displayName ?? node.sessionId} (${compact ? 'Tap to open agent' : node.job?.executionId ? 'Click to inspect job details, double-click to open terminal' : 'Click to open terminal'})`}
               >
                 <span className="squad-flow-node-main">
@@ -742,6 +759,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   const compact = useCompactLayout();
   const terminals = useData((s) => s.terminals);
   const projects = useData((s) => s.projects);
+  const threads = useThreads((s) => s.threads);
   const agents = useAgentMesh((s) => s.agents);
   const messages = useAgentMesh((s) => s.messages);
   const statusById = useAgentStatus((s) => s.byId);
@@ -752,6 +770,22 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   const flowAllOrganization = useData((s) => s.flowAllOrganization);
   const { isPanning: isStackPanning, canvasPanProps: stackPanProps } = useCanvasPan();
   const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+
+  const threadParticipantsByProject = useMemo(() => {
+    const byProject = new Map<string, SquadFlowThreadParticipant[]>();
+    for (const thread of threads) {
+      if (!isVisibleThread(thread)) continue;
+      const list = byProject.get(thread.projectId) ?? [];
+      list.push({
+        id: thread.id,
+        label: threadTitle(thread),
+        state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity),
+        createdAt: thread.createdAt
+      });
+      byProject.set(thread.projectId, list);
+    }
+    return byProject;
+  }, [threads]);
 
   useEffect(() => {
     let cancelled = false;
@@ -792,13 +826,16 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     const builtAt = Date.now();
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     const out: SquadFlowGraph[] = [];
-    for (const [pid, list] of Object.entries(terminals)) {
+    const projectIds = new Set([...Object.keys(terminals), ...threadParticipantsByProject.keys()]);
+    for (const pid of projectIds) {
       if (projectId && pid !== projectId) continue;
       if (!byProjectId.has(pid)) continue;
+      const list = terminals[pid];
       const graph = buildSquadFlow({
         projectId: pid,
         sessions: agentViewTerminals(list, includeScheduled),
         agents: agents.filter((a) => a.projectId === pid),
+        threadParticipants: threadParticipantsByProject.get(pid),
         messages: messages.filter((m) => m.projectId === pid),
         statusById,
         sinceById,
@@ -821,7 +858,8 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     subagentChildrenById,
     executions,
     projectId,
-    includeScheduled
+    includeScheduled,
+    threadParticipantsByProject
   ]);
 
   const byProjectId = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
@@ -855,14 +893,16 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     const list = terminals[pid];
     const sessions = agentViewTerminals(list, includeScheduled);
     const projAgents = agents.filter((a) => a.projectId === pid);
+    const threadParticipants = threadParticipantsByProject.get(pid) ?? [];
     const projMessages = messages.filter((m) => m.projectId === pid);
-    const groups = squadLaunchGroups(projAgents, sessions);
+    const groups = squadLaunchGroups(projAgents, sessions, threadParticipants);
     const byLaunch = new Map<string, SquadFlowGraph>();
     for (const grp of groups) {
       const g = buildSquadFlow({
         projectId: pid,
         sessions,
         agents: projAgents,
+        threadParticipants,
         messages: projMessages,
         statusById,
         sinceById,
@@ -875,7 +915,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
       if (g) byLaunch.set(grp.launchId, g);
     }
     return { groups, byLaunch };
-  }, [selected, terminals, agents, messages, statusById, sinceById, subagentsById, subagentChildrenById, executions, includeScheduled]);
+  }, [selected, terminals, agents, messages, statusById, sinceById, subagentsById, subagentChildrenById, executions, includeScheduled, threadParticipantsByProject]);
 
   const groupIds = squadDerived.groups.map((g) => g.launchId);
 

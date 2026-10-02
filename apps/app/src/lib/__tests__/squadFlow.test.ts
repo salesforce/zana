@@ -111,6 +111,34 @@ describe('buildSquadFlow — node membership', () => {
     );
     expect(g!.nodes).toHaveLength(1);
   });
+
+  it('adds isolated modern thread participants with source-qualified graph keys', () => {
+    const g = buildSquadFlow(inputs({
+      sessions: [session({ id: 'same' })],
+      threadParticipants: [{ id: 'same', label: 'Modern', state: 'blocked', createdAt: 123 }]
+    }));
+
+    expect(g!.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sessionId: 'same',
+        inspectionTarget: { type: 'terminal', id: 'same' }
+      }),
+      expect.objectContaining({
+        sessionId: 'thread:same',
+        label: 'Modern',
+        state: 'blocked',
+        inspectionTarget: { type: 'thread', id: 'same' }
+      })
+    ]));
+    expect(g!.edges).toEqual([]);
+  });
+
+  it('includes modern threads only in the Solo launch filter', () => {
+    const participant = { id: 'modern', label: 'Modern', state: 'idle' as const, createdAt: 123 };
+    expect(buildSquadFlow(inputs({ threadParticipants: [participant], launchFilter: 'team-run' }))).toBeNull();
+    expect(buildSquadFlow(inputs({ threadParticipants: [participant], launchFilter: SOLO_LAUNCH_ID }))!.nodes)
+      .toEqual([expect.objectContaining({ sessionId: 'thread:modern' })]);
+  });
 });
 
 // ---- identity & fused fields ------------------------------------------------
@@ -152,6 +180,11 @@ describe('buildSquadFlow — node fields', () => {
     const n = nodeMap(g!).get('a')!;
     expect(n.state).toBe('unknown');
     expect(n.liveSubagents).toBe(0);
+  });
+
+  it('marks every terminal-backed node with its terminal inspection target', () => {
+    const g = buildSquadFlow(inputs({ agents: [agent({ sessionId: 'a' })] }));
+    expect(nodeMap(g!).get('a')!.inspectionTarget).toEqual({ type: 'terminal', id: 'a' });
   });
 
   it('marks a node exited when its backing session has exited', () => {
@@ -456,6 +489,10 @@ describe('buildSquadFlow — detached CLAIMED workers', () => {
     expect(detached!.state).toBe('unknown');
     expect(detached!.claim).toEqual({ claimedAt: 2_000, heartbeatAt: 3_000, progressAt: 3_500, leaseExpiresAt: 6_000 });
     expect(detached!.job).toEqual({ executionId: 'execution-1', needsAttention: false });
+    expect(detached!.inspectionTarget).toEqual({
+      type: 'terminal',
+      id: 'detached:execution-1:slot-w'
+    });
   });
 
   it('does NOT inflate summary.working for a synthesized node — the summary tracks mesh state, liveness rides the claim', () => {

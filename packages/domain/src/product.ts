@@ -4303,8 +4303,10 @@ export interface SubagentChild {
  * persisted — rebuilt from live signals on every read (see `buildSquadFlow`).
  */
 export interface SquadFlowNode {
-  /** Un-forgeable session id — the stable graph-node key (= {@link AgentRecord.sessionId}). */
+  /** Stable graph-node key. Terminal ids remain unchanged; other runtimes use a source-qualified key. */
   sessionId: string;
+  /** Runtime-specific target used when opening this node for inspection. */
+  inspectionTarget: { type: 'terminal' | 'thread'; id: string };
   /** Best human label: `handle ?? displayName ?? sessionId` (matches `agentLabel()`). */
   label: string;
   /** Authoritative handle if the agent registered one; else undefined. */

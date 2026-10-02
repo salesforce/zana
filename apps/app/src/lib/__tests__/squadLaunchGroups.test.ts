@@ -51,6 +51,33 @@ describe('squadLaunchGroups', () => {
     expect(groups[0].isSolo).toBe(true);
   });
 
+  it('puts modern thread participants in Solo with count and earliest timestamp', () => {
+    const groups = squadLaunchGroups([], [], [
+      { id: 'newer', label: 'Newer', state: 'working', createdAt: 200 },
+      { id: 'older', label: 'Older', state: 'idle', createdAt: 100 }
+    ]);
+
+    expect(groups).toEqual([{
+      launchId: SOLO_LAUNCH_ID,
+      isSolo: true,
+      launchedAt: 100,
+      nodeCount: 2
+    }]);
+  });
+
+  it('preserves terminal launch groups while adding modern threads to Solo', () => {
+    const groups = squadLaunchGroups(
+      [agent({ sessionId: 'team', teamLaunchId: 'L1', registeredAt: 10 })],
+      [],
+      [{ id: 'modern', label: 'Modern', state: 'idle', createdAt: 20 }]
+    );
+
+    expect(groups.map((group) => [group.launchId, group.nodeCount])).toEqual([
+      ['L1', 1],
+      [SOLO_LAUNCH_ID, 1]
+    ]);
+  });
+
   it('counts unregistered non-shell sessions in the SOLO bucket; skips shells and registered dups', () => {
     const groups = squadLaunchGroups(
       [agent({ sessionId: 'reg', teamLaunchId: 'L1' })],

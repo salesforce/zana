@@ -4,29 +4,60 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { SquadFlowGraph, SquadFlowNode } from '@zana-ai/zcc-domain/product';
 
 // The view pulls in the live store + canvas-pan hook + router at import; stub them
 // so the pure `nodeActivity` export and the `SquadGraph` render can be tested
 // without a running app or a Router provider.
+const stores = vi.hoisted(() => ({
+  data: {
+    terminals: {} as Record<string, unknown[]>,
+    projects: [] as Array<{ id: string; name: string; color?: string }>,
+    includeScheduledAgentsInAgentView: true,
+    flowAllOrganization: 'merged'
+  },
+  mesh: { agents: [] as unknown[], messages: [] as unknown[] },
+  status: { byId: {} as Record<string, string>, since: {} as Record<string, number> },
+  subagents: { byId: {} as Record<string, number> },
+  children: { byId: {} as Record<string, unknown[]> },
+  threads: [] as unknown[]
+}));
 vi.mock('@/store', () => ({
-  useData: () => undefined,
-  useAgentMesh: () => undefined,
-  useAgentStatus: () => undefined,
-  useSubagents: () => undefined,
-  useSubagentChildren: () => undefined,
-  agentViewTerminals: () => []
+  useData: (selector: (state: typeof stores.data) => unknown) => selector(stores.data),
+  useAgentMesh: (selector: (state: typeof stores.mesh) => unknown) => selector(stores.mesh),
+  useAgentStatus: (selector: (state: typeof stores.status) => unknown) => selector(stores.status),
+  useSubagents: (selector: (state: typeof stores.subagents) => unknown) => selector(stores.subagents),
+  useSubagentChildren: (selector: (state: typeof stores.children) => unknown) => selector(stores.children),
+  agentViewTerminals: (sessions: unknown[] | undefined) => sessions ?? []
+}));
+vi.mock('@/thread-store', () => ({
+  useThreads: (selector: (state: { threads: unknown[] }) => unknown) => selector({ threads: stores.threads })
 }));
 vi.mock('@/hooks/useCanvasPan', () => ({ useCanvasPan: () => ({ isPanning: false, canvasPanProps: {} }) }));
-const mobile = vi.hoisted(() => ({ compact: false, inspect: vi.fn() }));
+const mobile = vi.hoisted(() => ({ compact: false, inspectAgent: vi.fn(), inspectThread: vi.fn() }));
 vi.mock('@/hooks/useCompactLayout', () => ({ useCompactLayout: () => mobile.compact }));
-vi.mock('@/lib/inspect-session', () => ({ inspectAgentSession: mobile.inspect }));
-afterEach(() => { mobile.compact = false; mobile.inspect.mockClear(); });
+vi.mock('@/lib/inspect-session', () => ({
+  inspectAgentSession: mobile.inspectAgent,
+  inspectThread: mobile.inspectThread
+}));
+afterEach(() => {
+  cleanup();
+  mobile.compact = false;
+  mobile.inspectAgent.mockClear();
+  mobile.inspectThread.mockClear();
+  stores.data.terminals = {};
+  stores.data.projects = [];
+  stores.mesh.agents = [];
+  stores.mesh.messages = [];
+  stores.status.byId = {};
+  stores.status.since = {};
+  stores.threads = [];
+});
 vi.mock('@/components/SquadSwitcher', () => ({ SquadSwitcher: () => null }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 
-import { nodeActivity, SquadGraph, STREAMING_FRESH_MS } from './SquadFlowView';
+import { nodeActivity, SquadFlowView, SquadGraph, STREAMING_FRESH_MS } from './SquadFlowView';
 
 // happy-dom rewrites import.meta.url to a non-file scheme, so resolve source
 // files from the repo root (vitest cwd) instead of a relative file URL.
@@ -34,8 +65,11 @@ const view = readFileSync(join(process.cwd(), 'apps/app/src/views/agents/SquadFl
 const css = readFileSync(join(process.cwd(), 'apps/app/src/styles/global.css'), 'utf8');
 
 function flowNode(over: Partial<SquadFlowNode>): SquadFlowNode {
+  const sessionId = over.sessionId ?? 's';
   return {
-    sessionId: 's', label: 's', state: 'idle', liveSubagents: 0, exited: false, isOrchestrator: false, ...over
+    sessionId,
+    inspectionTarget: over.inspectionTarget ?? { type: 'terminal', id: sessionId },
+    label: 's', state: 'idle', liveSubagents: 0, exited: false, isOrchestrator: false, ...over
   };
 }
 
@@ -267,7 +301,7 @@ describe('mobile canvas interaction', () => {
     fireEvent.pointerMove(node, { pointerId: 1, pointerType: 'touch', clientX: 90 });
     fireEvent.pointerCancel(node, { pointerId: 1 });
     expect(node.setPointerCapture).not.toHaveBeenCalled();
-    expect(mobile.inspect).not.toHaveBeenCalled();
+    expect(mobile.inspectAgent).not.toHaveBeenCalled();
     expect(node.classList.contains('squad-flow-node--dragging')).toBe(false);
     const canvas = getByLabelText('Agent canvas. Swipe to explore.');
     expect(canvas.scrollLeft).toBe(Number.parseFloat(node.style.left) + 244 / 2 - canvas.clientWidth / 2);
@@ -275,8 +309,108 @@ describe('mobile canvas interaction', () => {
     rerender(<SquadGraph graph={{ ...graph, builtAt: graph.builtAt + 1 }} onInspectExecution={inspectJob} />);
     expect(canvas.scrollLeft).toBe(17);
     fireEvent.click(node);
-    expect(mobile.inspect).toHaveBeenCalledTimes(1);
-    expect(mobile.inspect).toHaveBeenCalledWith('phone-agent', 'p1', expect.any(Function));
+    expect(mobile.inspectAgent).toHaveBeenCalledTimes(1);
+    expect(mobile.inspectAgent).toHaveBeenCalledWith('phone-agent', 'p1', expect.any(Function));
     expect(inspectJob).not.toHaveBeenCalled();
+  });
+});
+
+function modernThread(over: Record<string, unknown> = {}) {
+  return {
+    id: 'modern-1', projectId: 'p1', hostId: 'host', environmentId: null,
+    providerId: 'fake', status: 'idle', title: 'Modern agent', createdAt: 100,
+    cwd: '/work/p1', branchName: null, isWorktree: false, ...over
+  };
+}
+
+describe('SquadFlowView modern thread integration', () => {
+  it('renders a modern-only registered project and maps pending interaction state', () => {
+    stores.data.projects = [{ id: 'p1', name: 'Modern project' }];
+    stores.threads = [modernThread({ title: 'Needs review', hasPendingInteraction: true })];
+
+    const { container } = render(<SquadFlowView />);
+
+    expect(screen.getByText('Needs review')).toBeTruthy();
+    expect(container.querySelector('.squad-flow-node .agent-blocked')).toBeTruthy();
+  });
+
+  it('renders mixed terminal and modern participants with colliding raw ids as separate nodes', () => {
+    stores.data.projects = [{ id: 'p1', name: 'Mixed project' }];
+    stores.data.terminals = { p1: [{
+      id: 'same', projectId: 'p1', title: 'CLI agent', profile: 'claude', cwd: '/work/p1',
+      status: 'running', createdAt: 1
+    }] };
+    stores.threads = [modernThread({ id: 'same', title: 'Modern same id', activity: { activeBackgroundCommandCount: 1 } })];
+
+    const { container } = render(<SquadFlowView projectId="p1" />);
+
+    expect(screen.getByText('CLI agent')).toBeTruthy();
+    expect(screen.getByText('Modern same id')).toBeTruthy();
+    expect(container.querySelectorAll('.squad-flow-node')).toHaveLength(2);
+    expect(container.querySelectorAll('.squad-flow-node--working')).toHaveLength(1);
+  });
+
+  it('excludes archived threads and threads belonging to unregistered projects', () => {
+    stores.data.projects = [{ id: 'p1', name: 'Visible project' }];
+    stores.threads = [
+      modernThread({ id: 'archived', title: 'Archived modern', archivedAt: 123 }),
+      modernThread({ id: 'unknown-project', projectId: 'missing', title: 'Unknown project modern' }),
+      modernThread({ id: 'visible', title: 'Visible modern' })
+    ];
+
+    render(<SquadFlowView />);
+
+    expect(screen.getByText('Visible modern')).toBeTruthy();
+    expect(screen.queryByText('Archived modern')).toBeNull();
+    expect(screen.queryByText('Unknown project modern')).toBeNull();
+  });
+
+  it('routes desktop single-click and compact click to thread inspection without double-click reopening', () => {
+    const graph: SquadFlowGraph = {
+      projectId: 'p1',
+      nodes: [flowNode({
+        sessionId: 'thread:modern-1', label: 'Modern',
+        inspectionTarget: { type: 'thread', id: 'modern-1' }
+      })],
+      edges: [], summary: { total: 1, working: 0, blocked: 0, idle: 1, exited: 0 }, builtAt: Date.now()
+    };
+    const { container, rerender } = render(<SquadGraph graph={graph} />);
+    let node = container.querySelector<HTMLButtonElement>('.squad-flow-node')!;
+    node.setPointerCapture = vi.fn();
+    node.releasePointerCapture = vi.fn();
+    fireEvent.pointerDown(node, { pointerId: 1, button: 0, timeStamp: 100 });
+    fireEvent.pointerUp(node, { pointerId: 1, button: 0, timeStamp: 100 });
+    fireEvent.pointerDown(node, { pointerId: 2, button: 0, timeStamp: 200 });
+    fireEvent.pointerUp(node, { pointerId: 2, button: 0, timeStamp: 200 });
+    fireEvent.doubleClick(node);
+    expect(mobile.inspectThread).toHaveBeenCalledTimes(1);
+    expect(mobile.inspectThread).toHaveBeenCalledWith('modern-1', 'p1', expect.any(Function));
+    expect(mobile.inspectAgent).not.toHaveBeenCalled();
+
+    mobile.inspectThread.mockClear();
+    mobile.compact = true;
+    rerender(<SquadGraph graph={graph} />);
+    node = container.querySelector<HTMLButtonElement>('.squad-flow-node')!;
+    fireEvent.click(node);
+    expect(mobile.inspectThread).toHaveBeenCalledOnce();
+  });
+
+  it('preserves terminal job single-click precedence and terminal double-click inspection', () => {
+    const inspectJob = vi.fn();
+    const graph: SquadFlowGraph = {
+      projectId: 'p1',
+      nodes: [flowNode({ sessionId: 'cli-1', inspectionTarget: { type: 'terminal', id: 'cli-1' }, job: { executionId: 'job-1', needsAttention: false } })],
+      edges: [], summary: { total: 1, working: 0, blocked: 0, idle: 1, exited: 0 }, builtAt: Date.now()
+    };
+    const { container } = render(<SquadGraph graph={graph} onInspectExecution={inspectJob} />);
+    const node = container.querySelector<HTMLButtonElement>('.squad-flow-node')!;
+    node.setPointerCapture = vi.fn();
+    node.releasePointerCapture = vi.fn();
+    fireEvent.pointerDown(node, { pointerId: 1, button: 0 });
+    fireEvent.pointerUp(node, { pointerId: 1, button: 0 });
+    expect(inspectJob).toHaveBeenCalledWith('p1', 'job-1');
+    expect(mobile.inspectAgent).not.toHaveBeenCalled();
+    fireEvent.doubleClick(node);
+    expect(mobile.inspectAgent).toHaveBeenCalledWith('cli-1', 'p1', expect.any(Function));
   });
 });

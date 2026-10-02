@@ -34,6 +34,14 @@ export const SQUAD_FLOW_EDGE_MESSAGE_CAP = 200;
  */
 export const SOLO_LAUNCH_ID = '__solo__';
 
+/** Renderer-neutral Modern thread projection. */
+export interface SquadFlowThreadParticipant {
+  id: string;
+  label: string;
+  state: AgentState;
+  createdAt: number;
+}
+
 /**
  * A squad is QUIESCENT when it has members and EVERY one has exited — the whole
  * team is done. The Flow view uses this to render a finished squad as a static,
@@ -53,6 +61,8 @@ export interface SquadFlowInputs {
   sessions: TerminalSession[];
   /** Registry agents for the project (authoritative identity). */
   agents: AgentRecord[];
+  /** Visible Modern threads for the project. They are isolated Solo nodes. */
+  threadParticipants?: readonly SquadFlowThreadParticipant[];
   /** Agent→agent messages for the project (edge source). */
   messages: AgentMessage[];
   /** Live state per sessionId (from the status slice). */
@@ -139,6 +149,7 @@ function synthesizeDetachedClaimedNodes(
       const claim = pickClaim(assignment);
       bySession.set(syntheticId, {
         sessionId: syntheticId,
+        inspectionTarget: { type: 'terminal', id: syntheticId },
         // The slot id is the only identity a detached node has, so surface it directly.
         label: assignment.slotId,
         role: 'worker',
@@ -268,6 +279,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     const claim = claimAssignment ? pickClaim(claimAssignment) : undefined;
     return {
       sessionId,
+      inspectionTarget: { type: 'terminal', id: sessionId },
       label: labelFor(handle, displayName, sessionId),
       handle,
       displayName,
@@ -319,6 +331,20 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     if (agentSessionIds.has(s.id)) continue; // a registry agent — handled (or scoped out) above
     if (!inScope(s.cohort?.cohortId)) continue;
     bySession.set(s.id, makeNode(s.id, s.cohort?.slotLabel, s.cohort?.slotLabel ?? s.title, undefined, undefined));
+  }
+  if (inScope(undefined)) {
+    for (const thread of input.threadParticipants ?? []) {
+      const sessionId = `thread:${thread.id}`;
+      bySession.set(sessionId, {
+        sessionId,
+        inspectionTarget: { type: 'thread', id: thread.id },
+        label: thread.label,
+        state: thread.state,
+        liveSubagents: 0,
+        exited: false,
+        isOrchestrator: false
+      });
+    }
   }
 
   // Detached CLAIMED workers: synthesize a node straight from the durable board
@@ -410,6 +436,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     let orchestrator: string | undefined;
     let best = { out: -1, reg: Number.POSITIVE_INFINITY, sid: '' };
     for (const node of bySession.values()) {
+      if (node.inspectionTarget.type !== 'terminal') continue;
       const out = outDegree.get(node.sessionId) ?? 0;
       const reg = registeredAt.get(node.sessionId) ?? Number.POSITIVE_INFINITY;
       const better =
