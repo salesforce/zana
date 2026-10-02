@@ -258,7 +258,7 @@ createServer((_req, res) => {
       const timer = setTimeout(() => {
         killTree();
         resolve({ status: null, stdout, stderr: `${stderr}\ntimeout` });
-      }, 30_000);
+      }, 15_000);
       child.on('close', () => {
         clearTimeout(timer);
         resolve({
@@ -271,7 +271,7 @@ createServer((_req, res) => {
     delete process.env.ZCC_HOST_ARTIFACT;
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('Connected (service install skipped).');
-  }, 35_000);
+  }, 20_000);
 
   it('proxies provider CLI status and install through host RPC', async () => {
     await start();
