@@ -153,7 +153,7 @@ describe('peer-daemon commands', () => {
     writeFileSync(selected, '#!/bin/sh\nif [ "$1" = -p ]; then echo 22; else /usr/bin/env node -p version; fi\n', { mode: 0o700 });
     try {
       const result = execFileSync('/bin/sh', ['-c', peerRestartCommand('fixture.test')], {
-        env: { HOME: home, PATH: `${oldBin}:/usr/bin:/bin`, ZCC_NODE: selected }, encoding: 'utf8', timeout: 30_000
+        env: { HOME: home, PATH: `${oldBin}:/usr/bin:/bin`, ZCC_NODE: selected }, encoding: 'utf8', timeout: 10000
       });
       expect(result.trim()).toBe('22');
     } catch (error) {
