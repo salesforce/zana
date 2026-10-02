@@ -95,7 +95,7 @@ function AutosavingPluginSetting({
       void commit('x');
       return;
     }
-    void commit(draft);
+    void commit(event.currentTarget.value);
   };
 
   const placement = pluginSettingControlPlacement(descriptor);
