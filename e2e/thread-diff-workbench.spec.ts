@@ -15,7 +15,7 @@ async function expectReadableControl(control: Locator) {
   expect(foreground).not.toBe(background);
 }
 
-test('Changes workbench renders real Git diffs, navigates files and commits from the side panel', async ({ app }, testInfo) => {
+test('Changes workbench renders real Git diffs, navigates files and commits from the side panel', async ({ app }) => {
   const { window, home } = app;
   await app.electron.evaluate(({ BrowserWindow }) => {
     const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.webContents.getURL().startsWith('devtools:'))!;
@@ -69,13 +69,12 @@ test('Changes workbench renders real Git diffs, navigates files and commits from
   const panel = window.getByTestId('thread-diff-panel');
   await expect(panel.getByTestId('thread-diff-card')).toHaveCount(5);
   await expect(panel.getByTitle('On branch feature/changes-workbench')).toBeVisible();
-  const checkThemeSurfaces = async (theme: string) => {
+  const checkThemeSurfaces = async () => {
     const commit = panel.getByRole('button', { name: 'Commit', exact: true });
     await expectReadableControl(commit);
     await commit.click();
     await expectReadableControl(panel.getByRole('form', { name: 'Commit changes' }));
     await expectReadableControl(panel.getByLabel('Commit message'));
-    await panel.screenshot({ path: testInfo.outputPath(`changes-commit-${theme}.png`), animations: 'disabled' });
     await panel.getByRole('button', { name: 'Cancel commit' }).click();
     await panel.getByLabel('Diff display options').click();
     await expectReadableControl(panel.locator('.thread-diff-options-menu'));
@@ -84,12 +83,10 @@ test('Changes workbench renders real Git diffs, navigates files and commits from
   await window.getByTestId('thread-secondary-maximize').click();
   await window.evaluate(() => window.cc.config.set({ theme: 'light' }));
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'light');
-  await checkThemeSurfaces('light');
-  await panel.screenshot({ path: testInfo.outputPath('changes-full-light.png'), animations: 'disabled' });
+  await checkThemeSurfaces();
   await panel.getByRole('button', { name: 'Show changed files' }).click();
   const nav = panel.getByRole('navigation', { name: 'Changed files' });
   await expect(nav.getByText('5 files changed')).toBeVisible();
-  await panel.screenshot({ path: testInfo.outputPath('changes-tree-light.png'), animations: 'disabled' });
   const search = nav.getByRole('searchbox');
   await search.fill('global.css');
   await expect(panel.getByTestId('thread-diff-card')).toHaveCount(1);
@@ -114,8 +111,7 @@ test('Changes workbench renders real Git diffs, navigates files and commits from
   await panel.getByLabel('Diff display options').press('Escape');
   await window.evaluate(() => window.cc.config.set({ theme: 'dark' }));
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await checkThemeSurfaces('dark');
-  await panel.screenshot({ path: testInfo.outputPath('changes-tree-dark.png'), animations: 'disabled' });
+  await checkThemeSurfaces();
 
   await window.getByTestId('thread-secondary-maximize').click();
   // Drive the real splitter down to its minimum width.
@@ -139,7 +135,6 @@ test('Changes workbench renders real Git diffs, navigates files and commits from
       return rect.left >= bounds.left && rect.right <= bounds.right;
     });
   })).toBe(true);
-  await panel.screenshot({ path: testInfo.outputPath('changes-narrow-dark.png'), animations: 'disabled' });
   await panel.getByRole('button', { name: 'Hide changed files' }).click();
   await expect(nav).toHaveCount(0);
   await panel.getByRole('button', { name: 'Commit', exact: true }).click();

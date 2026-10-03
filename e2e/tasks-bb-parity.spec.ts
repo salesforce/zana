@@ -18,7 +18,7 @@ const test = base.extend({
 });
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true } });
 
-test('Tasks dialogs and property menus stay styled in body portals', async ({ app }, testInfo) => {
+test('Tasks dialogs and property menus stay styled in body portals', async ({ app }) => {
   const win = app.window;
   await win.setViewportSize({ width: 1440, height: 1000 });
   // Electron's configured zoom makes CSS viewport pixels differ from window pixels.
@@ -60,7 +60,6 @@ test('Tasks dialogs and property menus stay styled in body portals', async ({ ap
   expect(await options.evaluate(node => parseFloat(getComputedStyle(node).borderTopWidth))).toBeGreaterThan(0);
   await win.getByRole('option', { name: 'Done', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'Task title', exact: true }).fill('Portal layout regression');
-  await testInfo.attach('new-task-dialog', { body: await win.screenshot({ path: testInfo.outputPath('new-task-dialog.png') }), contentType: 'image/png' });
   await dialog.getByRole('button', { name: 'Create task', exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(win.getByText('Portal layout regression', { exact: true })).toBeVisible();
@@ -77,7 +76,6 @@ test('Tasks dialogs and property menus stay styled in body portals', async ({ ap
   const urgentBounds = await urgent.boundingBox();
   expect(urgentBounds!.x).toBeGreaterThan(menuBounds!.x);
   expect(urgentBounds!.x + urgentBounds!.width).toBeLessThan(menuBounds!.x + menuBounds!.width);
-  await testInfo.attach('priority-menu', { body: await win.screenshot({ path: testInfo.outputPath('priority-menu.png') }), contentType: 'image/png' });
   await urgent.click();
   await expect(menu).toBeHidden();
   await expect(win.getByRole('button', { name: 'Urgent', exact: true })).toBeVisible();

@@ -84,7 +84,16 @@ export async function fetchBinary({ arch, pkg, binary }, {
   const pendingBin = join(outDir, `.${basename(stage)}.tmp`);
   const pendingMarker = `${pendingBin}.version`;
   try {
-    await pipeline(res.body, createWriteStream(tmpTarball));
+    const download = createWriteStream(tmpTarball);
+    const closed = new Promise(resolve => download.once('close', resolve));
+    try {
+      await pipeline(res.body, download);
+    } finally {
+      // An already-failed web stream can reject pipeline while the destination
+      // is still opening its file. Wait for close before removing the stage.
+      download.destroy();
+      await closed;
+    }
     mkdirSync(extractDir);
     extract('tar', ['-xzf', tmpTarball, '-C', extractDir]);
     const extractedBin = join(extractDir, 'package', 'bin', binary);

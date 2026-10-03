@@ -20,9 +20,11 @@ async function createLoadingThread(window: Page, home: string) {
     if (!response.ok) throw new Error(JSON.stringify(body));
     return body.thread.id as string;
   }, realpathSync(projectPath));
+  // Cold provider-worker startup on a shared CI runner can exceed the normal
+  // UI assertion budget. Keep the setup bounded and require actual completion.
   await expect.poll(() => window.evaluate(async (id) => {
     return (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status;
-  }, threadId)).toBe('idle');
+  }, threadId), { timeout: 45_000 }).toBe('idle');
   return threadId;
 }
 
