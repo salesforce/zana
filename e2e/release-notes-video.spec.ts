@@ -1,14 +1,32 @@
 import { test, expect } from './fixtures/app.js';
+import { readFileSync } from 'node:fs';
+
+const releaseVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 test.use({ e2e: true, initialConfig: { lastSeenVersion: '2.2.0' } });
 
-test('updated users can play and seek the bundled release video with captions', async ({ app }) => {
+test('updated users see current notes and can play older bundled release videos with captions', async ({ app }) => {
   const page = app.window;
   // Unpackaged Electron reports its own version here; shipped builds report
   // Zana's version. Both use the same main-owned update notification path.
   const runningVersion = await app.electron.evaluate(({ app: electronApp }) => electronApp.getVersion());
   const dialogTitle = `What’s new in v${runningVersion}`;
-  const dialog = page.getByRole('dialog', { name: dialogTitle });
+  let dialog = page.getByRole('dialog', { name: dialogTitle });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: `What's new in ${releaseVersion}`, exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Got it' }).click();
+  await page.reload();
+  await expect(page.locator('.app-shell')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: dialogTitle })).toHaveCount(0);
+
+  // The update card shows only the newest release. Media stays attached to its
+  // original version and remains accessible through the full release history.
+  const support = page.getByRole('dialog', { name: 'Support Zana' });
+  if (await support.isVisible()) await support.getByRole('button', { name: 'Dismiss' }).click();
+  await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await page.getByTestId('settings-nav-about').click();
+  await page.getByRole('button', { name: 'What’s new', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: `What’s new in v${releaseVersion}`, exact: true });
   await expect(dialog).toBeVisible();
   const video = dialog.getByLabel('Use Zana everywhere walkthrough');
   await expect(video).toBeVisible();
@@ -46,7 +64,4 @@ test('updated users can play and seek the bundled release video with captions', 
   expect(await video.evaluate((node: HTMLVideoElement) => node.error)).toBeNull();
   await dialog.getByRole('button', { name: 'Got it' }).click();
   await expect(video).toHaveCount(0);
-  await page.reload();
-  await expect(page.locator('.app-shell')).toBeVisible();
-  await expect(page.getByRole('dialog', { name: dialogTitle })).toHaveCount(0);
 });

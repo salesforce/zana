@@ -2,7 +2,7 @@
   "expo": {
     "name": "Zana",
     "slug": "zana-mobile",
-    "version": "2.3.0",
+    "version": "2.4.0",
     "scheme": "zana",
     "orientation": "default",
     "icon": "./assets/icon.png",
