@@ -11,6 +11,8 @@ export function boundarySpecs(paths) {
   const specs = new Set();
   const add = (...names) => names.forEach(name => specs.add(`e2e/${name}.spec.ts`));
   for (const path of paths) {
+    // A changed test must verify itself, including CI-only regression repairs.
+    if (/^e2e\/[^/]+\.spec\.ts$/.test(path) && existsSync(path)) specs.add(path);
     if (/^(apps\/|packages\/|plugins\/|e2e\/|scripts\/.*(electron|e2e|build)|electron\.vite|package\.json|pnpm-lock)/.test(path)) add('smoke');
     if (/threads|thread-view|agent-runtime|provider-bridge|provider-(acp|codex)|host-hub|control-sdk/.test(path)) add('thread-plan-ux', 'thread-refresh-progress', 'provider-bridge-framing', 'thread-loading');
     if (/conversation-(pruning|output|history-maintenance)/.test(path)) add('thread-history-pruning');

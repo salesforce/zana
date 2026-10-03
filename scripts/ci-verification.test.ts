@@ -16,6 +16,13 @@ it('selects required ownership boundaries, deduplicates specs and leaves docs al
   expect(boundarySpecs(['apps/app/src/App.tsx'])).toEqual([...new Set(boundarySpecs(['apps/app/src/App.tsx']))].sort());
 });
 
+it('runs changed Electron specs themselves and ignores helpers and removed specs', () => {
+  expect(boundarySpecs(['e2e/tasks-bb-parity.spec.ts', 'e2e/tasks-bb-parity.spec.ts'])).toEqual([
+    'e2e/smoke.spec.ts', 'e2e/tasks-bb-parity.spec.ts'
+  ]);
+  expect(boundarySpecs(['e2e/fixtures/app.ts', 'e2e/removed-regression.spec.ts'])).toEqual(['e2e/smoke.spec.ts']);
+});
+
 it('handles added, replaced, and deletion-only hunks', () => {
   const result = changedLines('+++ b/a.ts\n@@ -1,2 +1,3 @@\n+++ b/b.ts\n@@ -4 +4 @@\n+++ b/c.ts\n@@ -2,2 +1,0 @@');
   expect([...result.get('a.ts')!]).toEqual([1, 2, 3]);
