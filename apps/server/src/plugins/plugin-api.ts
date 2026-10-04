@@ -1,7 +1,16 @@
 import { validatePluginHostValue } from './plugin-host-rpc.js';
 import { searchPluginInbox, readPluginInbox } from './plugin-inbox.js';
 import { completePluginAssistant } from './plugin-assistant.js';
-import { isProjectIcon, spawnEnvironmentChoiceSchema, type ProjectIcon } from '@zana-ai/zcc-domain';
+import {
+  isProjectIcon,
+  spawnEnvironmentChoiceSchema,
+  type CapabilityDescriptor,
+  type ContractJson,
+  type InteractionAcknowledgement,
+  type InteractionContract,
+  type ProjectIcon
+} from '@zana-ai/zcc-domain';
+import { threadProviderFamily } from '../services/threads/thread-execution-options.js';
 import { readHostFile, writeHostFile } from '../http/files-via-host.js';
 import { readPluginProjectFile, writePluginProjectFile } from '../http/plugin-project-files.js';
 import { environmentPullRequest } from '../services/environments/environment-actions.js';
@@ -45,6 +54,10 @@ import type {
   PluginSdkThreadOutput,
   PluginSdkThreadSpawnArgs,
   PluginSdkThreadSummary,
+  PluginDispatchAdmissionRequest,
+  PluginHooks,
+  PluginToolPolicyRequest,
+  PluginToolPolicyDecision,
   PluginThreadEvent,
   PluginThreadEventName,
   ZccPluginApi,
@@ -53,7 +66,8 @@ import type {
 import {
   PLUGIN_MENTION_TRIGGERS,
   enforcePluginCliOutputLimit,
-  isPluginHostEntryDefinition
+  isPluginHostEntryDefinition,
+  type PluginProjectTabAvailabilityRegistration
 } from '@zana-ai/zcc-plugin-sdk/server';
 import { normalizeRegisteredAgentTool } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import {
@@ -151,9 +165,12 @@ export interface PluginHandle {
     ) => PluginAgentConfigureResult | void | Promise<PluginAgentConfigureResult | void>
   >;
   mentionProviders: Array<PluginMentionProviderRegistration & { pluginId: string }>;
+  projectTabAvailability: Array<PluginProjectTabAvailabilityRegistration & { pluginId: string }>;
   cli: { registration: PluginCliRegistration | null };
   httpRoutes: PluginHttpRouteRecord[];
   agentTools: PluginAgentToolRecord[];
+  dispatchAdmissionHandlers: Array<(request: PluginDispatchAdmissionRequest) => import('@zana-ai/zcc-domain').DispatchAdmissionDecision | Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>>;
+  toolPolicyHandlers: Array<(request: PluginToolPolicyRequest) => PluginToolPolicyDecision | Promise<PluginToolPolicyDecision>>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
   getSettings(): {
     descriptors: Record<string, PluginSettingDescriptor>;
@@ -230,6 +247,16 @@ export function createPluginApi(
       signal?: AbortSignal;
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
+    getInteraction?: (args: { pluginId: string; interactionId: string }) => Promise<InteractionContract | null>;
+    upsertInteraction?: (args: {
+      pluginId: string;
+      projectId: string;
+      correlationId: string;
+      kind: string;
+      payload: ContractJson;
+    }) => Promise<InteractionContract>;
+    acknowledgeInteraction?: (args: { pluginId: string } & InteractionAcknowledgement) => Promise<InteractionContract>;
+    cancelInteraction?: (args: { pluginId: string } & InteractionAcknowledgement) => Promise<InteractionContract>;
     onNeedsConfiguration?: (message: string) => void;
     spawnThread?: (args: PluginSdkThreadSpawnArgs & { pluginId: string }) => Promise<{ id: string }>;
     getThread?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadSummary | null>;
@@ -302,10 +329,12 @@ export function createPluginApi(
     productContext?: import('../http/product-context.js').ProductHttpContext;
     hostEntryPath?: string | null;
     providerUnavailableReason?: string;
-    hostCall?: (method: string, input?: unknown, hostId?: string, signal?: AbortSignal, timeoutMs?: number) => Promise<unknown>;
+    hostCall?: (method: string, input?: unknown, hostId?: string, signal?: AbortSignal, timeoutMs?: number, projectId?: string) => Promise<unknown>;
     dataDir?: string;
     services?: PluginServicesRegistry;
-    isAgentToolNameTaken?: (name: string) => string | undefined;
+     isAgentToolNameTaken?: (name: string) => string | undefined;
+     registerPersonas?: (pluginId: string, personas: readonly import('@zana-ai/zcc-domain/product').PersonaInput[]) => void;
+     registerTeams?: (pluginId: string, teams: readonly import('@zana-ai/zcc-domain/product').TeamInput[]) => void;
   }
 ): PluginHandle {
   mkdirSync(kvDir, { recursive: true });
@@ -318,6 +347,7 @@ export function createPluginApi(
   const extraInstructionProviders: PluginHandle['extraInstructionProviders'] = [];
   const agentConfigurers: PluginHandle['agentConfigurers'] = [];
   const mentionProviders: PluginHandle['mentionProviders'] = [];
+  const projectTabAvailability: PluginHandle['projectTabAvailability'] = [];
   const hostMethods = new Map<string, (input: unknown) => unknown | Promise<unknown>>();
   const hostSignalHandlers = new Map<string, Set<(event: { hostId: string; payload: unknown }) => void | Promise<void>>>();
   const hostWorkerExitHandlers: Array<(event: { readonly hostId: string }) => void | Promise<void>> = [];
@@ -331,6 +361,8 @@ export function createPluginApi(
   const cliRecord: { registration: PluginCliRegistration | null } = { registration: null };
   const httpRoutes: PluginHttpRouteRecord[] = [];
   const agentTools: PluginAgentToolRecord[] = [];
+  const dispatchAdmissionHandlers: PluginHandle['dispatchAdmissionHandlers'] = [];
+  const toolPolicyHandlers: PluginHandle['toolPolicyHandlers'] = [];
   const threadEventHandlers: Array<{
     name: PluginThreadEventName;
     handler: (event: PluginThreadEvent) => void | Promise<void>;
@@ -398,6 +430,33 @@ export function createPluginApi(
     else if (level === 'warn') console.warn(line);
     else console.error(line);
     if (options?.dataDir) appendPluginLogLine(options.dataDir, pluginId, level, message);
+  }
+
+  /**
+   * Every descriptor is derived from this handle's own `options` wiring (real
+   * registered host state), never from the `providerId` the caller passes in —
+   * a plugin/renderer can pick WHICH thread to ask about but cannot make a
+   * capability answer `available: true` that main's wiring doesn't back.
+   */
+  function capabilityDescriptors(providerId: string | null): CapabilityDescriptor[] {
+    const family = providerId ? threadProviderFamily(providerId) : null;
+    const nativeToolCapable = family === 'claude' || family === 'codex';
+    return [
+      { id: 'message-admission', available: Boolean(options?.productContext) },
+      { id: 'lifecycle-delivery', available: Boolean(options?.productContext) },
+      {
+        id: 'tool-before-native',
+        available: nativeToolCapable,
+        ...(nativeToolCapable ? {} : { reason: providerId ? `provider "${providerId}" has no native tool hook adapter` : 'no thread resolved' })
+      },
+      {
+        id: 'tool-after-native',
+        available: nativeToolCapable,
+        ...(nativeToolCapable ? {} : { reason: providerId ? `provider "${providerId}" has no native tool hook adapter` : 'no thread resolved' })
+      },
+      { id: 'project-rpc', available: Boolean(options?.hostCall) },
+      { id: 'interactions', available: Boolean(options?.upsertInteraction) }
+    ];
   }
 
   const api: ZccPluginApi = {
@@ -520,6 +579,20 @@ export function createPluginApi(
         threadEventHandlers.push({ name, handler });
       }
     },
+    hooks: {
+      on: (handler) => {
+        assertLive();
+        if (typeof handler !== 'function') throw new Error('dispatch admission handler must be a function');
+        if (dispatchAdmissionHandlers.length > 0) throw new Error('only one dispatch admission handler is allowed per plugin');
+        dispatchAdmissionHandlers.push(handler);
+      },
+      onToolPolicy: (handler) => {
+        assertLive();
+        if (typeof handler !== 'function') throw new Error('tool policy handler must be a function');
+        if (toolPolicyHandlers.length > 0) throw new Error('only one tool policy handler is allowed per plugin');
+        toolPolicyHandlers.push(handler);
+      }
+    } satisfies PluginHooks,
     sdk: {
       assistant: {
         complete: async (args) => {
@@ -1095,9 +1168,35 @@ export function createPluginApi(
             }
           };
         }
+      },
+      capabilities: {
+        forThread: async ({ threadId }) => {
+          assertLive();
+          const id = typeof threadId === 'string' ? threadId.trim() : '';
+          if (!id) throw new Error('threadId is required');
+          const thread = options?.productContext ? getConversationThread(options.productContext.db, id) : null;
+          return { capabilities: capabilityDescriptors(thread?.providerId ?? null) };
+        },
+        forExecution: async ({ executionId }) => {
+          assertLive();
+          if (typeof executionId !== 'string' || !executionId.trim()) {
+            throw new Error('executionId is required');
+          }
+          // An execution can span multiple provider slots, so there is no single
+          // resolved provider to gate provider-specific descriptors on.
+          return { capabilities: capabilityDescriptors(null) };
+        }
       }
     },
     host: {
+      projectCall: async (request) => {
+        assertLive();
+        const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : '';
+        const method = typeof request?.method === 'string' ? request.method.trim() : '';
+        if (!projectId || !method || !options?.hostCall) throw new Error('invalid project host call');
+        const result = await options.hostCall(method, request.input, request.hostId, undefined, undefined, projectId);
+        return { result: (result ?? null) as import('@zana-ai/zcc-domain').ContractJson };
+      },
       experimental_call: async (method, input) => {
         assertLive();
         if (options?.hostCall) return options.hostCall(method, input);
@@ -1235,6 +1334,14 @@ export function createPluginApi(
         }
         agentTools.push(record);
       },
+      registerPersonas: (personas) => {
+        assertLive();
+        options?.registerPersonas?.(pluginId, personas);
+      },
+      registerTeams: (teams) => {
+        assertLive();
+        options?.registerTeams?.(pluginId, teams);
+      },
       experimental_registerProvider: (declaration) => {
         assertLive();
         providerDeclarations.push(declaration);
@@ -1298,6 +1405,83 @@ export function createPluginApi(
             return { json: { items } };
           }
         });
+      },
+      registerProjectTabAvailability: (registration) => {
+        assertLive();
+        if (
+          !registration
+          || typeof registration.tabId !== 'string'
+          || !registration.tabId.trim()
+          || typeof registration.evaluate !== 'function'
+        ) {
+          throw new Error('ui.registerProjectTabAvailability requires tabId and evaluate');
+        }
+        const index = projectTabAvailability.findIndex((row) => row.tabId === registration.tabId);
+        const next = { ...registration, pluginId };
+        if (index >= 0) projectTabAvailability[index] = next;
+        else projectTabAvailability.push(next);
+      },
+      interactions: {
+        get: async (interactionId) => {
+          assertLive();
+          if (typeof interactionId !== 'string' || !interactionId.trim()) {
+            throw new Error('ui.interactions.get requires interactionId');
+          }
+          if (!options?.getInteraction) {
+            throw new Error('ui.interactions.get is not available in this runtime');
+          }
+          return options.getInteraction({ pluginId, interactionId });
+        },
+        upsert: async (input) => {
+          assertLive();
+          if (!input || typeof input.projectId !== 'string' || !input.projectId.trim()) {
+            throw new Error('ui.interactions.upsert requires projectId');
+          }
+          if (typeof input.correlationId !== 'string' || !input.correlationId.trim()) {
+            throw new Error('ui.interactions.upsert requires correlationId');
+          }
+          if (typeof input.kind !== 'string' || !input.kind.trim()) {
+            throw new Error('ui.interactions.upsert requires kind');
+          }
+          if (!options?.upsertInteraction) {
+            throw new Error('ui.interactions.upsert is not available in this runtime');
+          }
+          return options.upsertInteraction({
+            pluginId,
+            projectId: input.projectId,
+            correlationId: input.correlationId,
+            kind: input.kind,
+            payload: input.payload
+          });
+        },
+        acknowledge: async (request) => {
+          assertLive();
+          if (!request || typeof request.interactionId !== 'string' || !request.interactionId.trim()) {
+            throw new Error('ui.interactions.acknowledge requires interactionId');
+          }
+          if (!options?.acknowledgeInteraction) {
+            throw new Error('ui.interactions.acknowledge is not available in this runtime');
+          }
+          return options.acknowledgeInteraction({
+            pluginId,
+            interactionId: request.interactionId,
+            generation: request.generation
+          });
+        },
+        cancel: async (request) => {
+          assertLive();
+          if (!request || typeof request.interactionId !== 'string' || !request.interactionId.trim()) {
+            throw new Error('ui.interactions.cancel requires interactionId');
+          }
+          if (!options?.cancelInteraction) {
+            throw new Error('ui.interactions.cancel is not available in this runtime');
+          }
+          return options.cancelInteraction({
+            pluginId,
+            interactionId: request.interactionId,
+            generation: request.generation
+          });
+        }
       }
     },
     status: {
@@ -1318,9 +1502,12 @@ export function createPluginApi(
     extraInstructionProviders,
     agentConfigurers,
     mentionProviders,
+    projectTabAvailability,
     cli: cliRecord,
     httpRoutes,
     agentTools,
+    dispatchAdmissionHandlers,
+    toolPolicyHandlers,
     async emitHostEvent(event) {
       if (stale) return;
       const handlers = event.kind === 'plugin.host.worker-exited'

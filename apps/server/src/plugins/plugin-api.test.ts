@@ -1,7 +1,7 @@
 import { ClaudeCliProvider } from '@zana-ai/zcc-llm';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { openDatabase, upsertHost } from '@zana-ai/zcc-db';
+import { createConversationThread, openDatabase, upsertHost } from '@zana-ai/zcc-db';
 import { createCommandRuntime, dispatchHostCommand } from '../../../host-daemon/src/command-dispatch.js';
 import { HostRpcCommandSchema } from '@zana-ai/zcc-contracts/host-rpc';
 import { tmpdir } from 'node:os';
@@ -202,6 +202,11 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
     try {
       const spawnThread = vi.fn(async () => ({ id: 'thr-spawned' }));
       const handle = createPluginApi('demo', dir, { spawnThread });
+      const admission = vi.fn(() => ({ action: 'proceed' as const }));
+      handle.api.hooks.on(admission);
+      expect(handle.dispatchAdmissionHandlers).toHaveLength(1);
+      expect(handle.dispatchAdmissionHandlers[0]).toBe(admission);
+      expect(() => handle.api.hooks.on(admission)).toThrow('only one dispatch admission handler');
       handle.api.http.route('GET', '/ping', () => ({ json: { ok: true } }));
       expect(handle.httpRoutes[0]?.path).toBe('/ping');
       handle.api.agents.registerTool({
@@ -649,6 +654,36 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
     }
   });
 
+  it('registers project tab availability with replace-by-tabId semantics', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-api-tabavail-'));
+    try {
+      const handle = createPluginApi('demo', dir);
+      handle.api.ui.registerProjectTabAvailability({
+        tabId: 'soql',
+        evaluate: () => ({ available: true })
+      });
+      expect(handle.projectTabAvailability).toHaveLength(1);
+      expect(handle.projectTabAvailability[0]).toMatchObject({ tabId: 'soql', pluginId: 'demo' });
+
+      handle.api.ui.registerProjectTabAvailability({
+        tabId: 'soql',
+        evaluate: () => ({ available: false, reason: 'no org connected' })
+      });
+      expect(handle.projectTabAvailability).toHaveLength(1);
+      expect(await handle.projectTabAvailability[0]!.evaluate({ projectId: 'p1' })).toEqual({
+        available: false,
+        reason: 'no org connected'
+      });
+
+      expect(() =>
+        handle.api.ui.registerProjectTabAvailability({ tabId: '' } as never)
+      ).toThrow(/tabId and evaluate/);
+      await handle.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('named schedules persist last-fired minute and host entries register methods', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 7, 26, 12, 0, 0));
@@ -945,6 +980,77 @@ describe('agents.registerTool', () => {
         description: 'Missing schema',
         execute: async () => undefined
       })).toThrow(/parameters must be a zod schema or a JSON-schema object/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sdk.capabilities', () => {
+  it('reports native-tool descriptors as available only for a Claude-family thread, and reports project-rpc/interactions/message-admission/lifecycle-delivery as available when wired', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-sdk-capabilities-'));
+    const db = openDatabase(join(dir, 'data/zcc.sqlite'));
+    upsertHost(db, { id: 'h1', name: 'Primary', hostKeyHash: 'hash', isPrimary: true });
+    const claudeThread = createConversationThread(db, {
+      projectId: 'p1',
+      hostId: 'h1',
+      providerId: 'claude-code'
+    });
+    const cursorThread = createConversationThread(db, {
+      projectId: 'p1',
+      hostId: 'h1',
+      providerId: 'acp-cursor'
+    });
+    try {
+      const handle = createPluginApi('demo', dir, {
+        productContext: { db, hub: { emit: vi.fn() } } as never,
+        hostCall: vi.fn(),
+        upsertInteraction: vi.fn()
+      });
+      const claudeResult = await handle.api.sdk.capabilities.forThread({ threadId: claudeThread.id });
+      expect(claudeResult.capabilities).toEqual(
+        expect.arrayContaining([
+          { id: 'message-admission', available: true },
+          { id: 'lifecycle-delivery', available: true },
+          { id: 'tool-before-native', available: true },
+          { id: 'tool-after-native', available: true },
+          { id: 'project-rpc', available: true },
+          { id: 'interactions', available: true }
+        ])
+      );
+
+      const cursorResult = await handle.api.sdk.capabilities.forThread({ threadId: cursorThread.id });
+      const cursorNativeTool = cursorResult.capabilities.find((c) => c.id === 'tool-before-native');
+      expect(cursorNativeTool).toMatchObject({ available: false });
+      expect(cursorNativeTool?.reason).toMatch(/acp-cursor/);
+
+      const executionResult = await handle.api.sdk.capabilities.forExecution({ executionId: 'exec-1' });
+      expect(executionResult.capabilities.find((c) => c.id === 'tool-before-native')).toMatchObject({ available: false });
+      expect(executionResult.capabilities.find((c) => c.id === 'tool-after-native')).toMatchObject({ available: false });
+
+      await expect(handle.api.sdk.capabilities.forThread({ threadId: '' })).rejects.toThrow(/threadId is required/);
+      await expect(handle.api.sdk.capabilities.forExecution({ executionId: '' })).rejects.toThrow(/executionId is required/);
+      await handle.dispose();
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports project-rpc/interactions as unavailable when no host wiring is provided', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-sdk-capabilities-bare-'));
+    try {
+      const bare = createPluginApi('bare', dir);
+      const result = await bare.api.sdk.capabilities.forExecution({ executionId: 'exec-1' });
+      expect(result.capabilities).toEqual(
+        expect.arrayContaining([
+          { id: 'message-admission', available: false },
+          { id: 'lifecycle-delivery', available: false },
+          { id: 'project-rpc', available: false },
+          { id: 'interactions', available: false }
+        ])
+      );
+      await bare.dispose();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

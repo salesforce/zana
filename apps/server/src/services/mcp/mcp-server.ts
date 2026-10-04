@@ -176,6 +176,30 @@ export interface McpServerOptions {
    */
   contentScreenDecisionTimeoutMs?: number | (() => number);
   /**
+   * Called when a session's SYNCHRONOUS PreToolUse Native Tool Policy hook posts
+   * a tool call (OBL-004 — plugin-governed native-provider tool gating). Like
+   * {@link onOverseerHook} the agent BLOCKS on this response, but the contract is
+   * INVERTED: this route is FAIL-CLOSED. Any error, timeout, missing handler, or
+   * null decision denies the tool call rather than letting it through — a plugin
+   * tool-policy decision is a security control, not an advisory auto-approval, so
+   * silence must never be mistaken for permission. `body` is the raw PreToolUse
+   * event JSON from the hook's stdin. The url path carries identity:
+   * `/hook/nativetool/:projectId/:sessionId`.
+   */
+  onNativeToolPolicyHook?: (
+    projectId: string,
+    sessionId: string,
+    body: string
+  ) => Promise<{ decision: 'allow' | 'deny'; reason: string } | null>;
+  /**
+   * Upper bound (ms) on the whole Native Tool Policy exchange, after which we
+   * fail CLOSED (deny) regardless of whether `onNativeToolPolicyHook` has
+   * returned — the inverse of {@link overseerDecisionTimeoutMs}'s fail-open
+   * guard. Defaults to 8_000, kept just under the hook's own `curl -m 10`.
+   * Injectable for tests.
+   */
+  nativeToolPolicyDecisionTimeoutMs?: number | (() => number);
+  /**
    * Called when a session's UserPromptSubmit hook forwards the prompt text.
    * Fires on EVERY prompt; the handler is responsible for acting at most once
    * per session (e.g. naming the tab from the first instruction). `text` is the
@@ -1046,6 +1070,30 @@ export function matchContentScreenHookRoute(
   return { projectId, sessionId };
 }
 
+/**
+ * Match `/hook/nativetool/:projectId/:sessionId` — the SYNCHRONOUS PreToolUse
+ * native-tool-policy callback (OBL-004). Like the overseer route this reads
+ * the event body and blocks the agent on the reply, but the route is
+ * fail-CLOSED rather than fail-open. Exported for unit tests.
+ */
+export function matchNativeToolHookRoute(
+  rawUrl: string | undefined
+): { projectId: string; sessionId: string } | null {
+  if (!rawUrl) return null;
+  let pathname: string;
+  try {
+    pathname = new URL(rawUrl, 'http://127.0.0.1').pathname;
+  } catch {
+    return null;
+  }
+  const m = /^\/hook\/nativetool\/([^/]+)\/([^/]+)$/.exec(pathname);
+  if (!m) return null;
+  const projectId = safeDecode(m[1]);
+  const sessionId = safeDecode(m[2]);
+  if (projectId === null || sessionId === null) return null;
+  return { projectId, sessionId };
+}
+
 
 /**
  * Match `/hook/subagent/:projectId/:sessionId/:action` where action is `start`
@@ -1507,6 +1555,100 @@ async function handleRequest(
     });
     req.on('end', () => void finish(Buffer.concat(chunks).toString('utf8')));
     req.on('error', answerEmpty);
+    return;
+  }
+
+  // Native Tool Policy callback (OBL-004 — plugin-governed native-provider
+  // tool gating). SYNCHRONOUS like the overseer route, but FAIL-CLOSED: any
+  // error, timeout, missing handler, or null decision DENIES the tool call —
+  // the inverse of the overseer/content-screen "no opinion" fail-open
+  // contract, because a tool-policy decision is a security control, not an
+  // advisory auto-approval.
+  const nativeToolRoute = matchNativeToolHookRoute(req.url);
+  if (nativeToolRoute) {
+    if (req.method !== 'POST') {
+      req.resume();
+      res.statusCode = 405;
+      res.setHeader('content-type', 'text/plain; charset=utf-8');
+      res.end('method not allowed');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let done = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const CAP = 256 * 1024; // tool inputs (e.g. a big Write) can be sizeable
+    // Answer with a DENY decision — the universal fail-closed. Clears the
+    // guard timer on every exit path so a fired-and-forgotten timer can't
+    // linger after we've replied.
+    const answerDenied = (reason: string) => {
+      if (done) return;
+      done = true;
+      if (timeout) clearTimeout(timeout);
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.end(
+        JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny',
+            permissionDecisionReason: reason
+          }
+        })
+      );
+    };
+    // Slow-loris / hung-handler guard, same rationale as the overseer route's
+    // — bounds the whole exchange so a stuck decision can't pin the agent.
+    const decisionTimeoutMs =
+      typeof opts.nativeToolPolicyDecisionTimeoutMs === 'function'
+        ? opts.nativeToolPolicyDecisionTimeoutMs()
+        : opts.nativeToolPolicyDecisionTimeoutMs ?? 8_000;
+    timeout = setTimeout(() => answerDenied('native tool policy decision timed out'), decisionTimeoutMs);
+    const finish = async (body: string) => {
+      if (done) return;
+      // NB: do NOT clear `timeout` here — see the overseer route's identical
+      // note; the decision below is awaited under the same guard.
+      try {
+        const decision = opts.onNativeToolPolicyHook
+          ? await opts.onNativeToolPolicyHook(nativeToolRoute.projectId, nativeToolRoute.sessionId, body)
+          : null;
+        if (done) return; // the timeout fired during the await → already answered
+        if (!decision || decision.decision === 'deny') {
+          answerDenied(decision?.reason ?? 'no native tool policy decision');
+          return;
+        }
+        done = true;
+        clearTimeout(timeout);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json; charset=utf-8');
+        res.end(
+          JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'allow',
+              permissionDecisionReason: decision.reason
+            }
+          })
+        );
+      } catch (err) {
+        log(
+          `[mcp] native-tool-policy-hook handler failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+        answerDenied('native tool policy handler failed');
+      }
+    };
+    req.on('data', (c: Buffer) => {
+      if (done) return;
+      total += c.length;
+      if (total <= CAP) {
+        chunks.push(c);
+      } else {
+        req.destroy();
+        answerDenied('native tool policy request body too large');
+      }
+    });
+    req.on('end', () => void finish(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', () => answerDenied('native tool policy request errored'));
     return;
   }
 

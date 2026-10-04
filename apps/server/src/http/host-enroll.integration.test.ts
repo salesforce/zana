@@ -1141,7 +1141,8 @@ describe('host enroll hub and thread create', () => {
           type: 'inputText',
           text: JSON.stringify({ name, input, threadId: ctx.threadId, projectId: ctx.projectId })
         }]
-      })
+      }),
+      decideToolPolicy: async () => ({ action: 'allow' })
     } as ProductHttpContext['plugins'];
 
     const invoked = await fetch(`${server!.url}internal/hosts/tool-call`, {

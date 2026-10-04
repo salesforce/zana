@@ -66,6 +66,20 @@ export function registerPersonasIpc(): void {
       }
     }
   );
+  // Plugin-contributed personas, forwarded from the product-server process via
+  // the control-plane (plugins never run in main). `pluginId` here is the
+  // AUTHENTICATED id the server process's own createPluginApi closure stamped
+  // — never a value the plugin itself could spoof over the wire (Rule 1/6).
+  productHandle(
+    IPC.personas.contribute,
+    async (pluginId: string, raw: PersonaInput[]): Promise<Result<true>> => {
+      if (typeof pluginId !== 'string' || !pluginId.trim()) {
+        return { ok: false, code: 'INVALID', message: 'pluginId is required' };
+      }
+      ctx.personaTeamRegistry.setPersonas(pluginId, Array.isArray(raw) ? raw : []);
+      return { ok: true, value: true };
+    }
+  );
   ctx.personas.on('changed', () => {
     ctx.safeSend(IPC.personas.onChanged, ctx.personas.list());
   });
@@ -228,6 +242,17 @@ export function registerPersonasIpc(): void {
       } catch (err) {
         return { ok: false, code: 'BUNDLE_IMPORT_FAILED', message: String(err) };
       }
+    }
+  );
+  // Plugin-contributed teams — same cross-process bridge as personas.contribute above.
+  productHandle(
+    IPC.teams.contribute,
+    async (pluginId: string, raw: TeamInput[]): Promise<Result<true>> => {
+      if (typeof pluginId !== 'string' || !pluginId.trim()) {
+        return { ok: false, code: 'INVALID', message: 'pluginId is required' };
+      }
+      ctx.personaTeamRegistry.setTeams(pluginId, Array.isArray(raw) ? raw : []);
+      return { ok: true, value: true };
     }
   );
   ctx.teams.on('changed', () => {

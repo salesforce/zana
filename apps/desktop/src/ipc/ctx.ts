@@ -89,6 +89,7 @@ export interface IpcCtx {
   pendingWhatsNew: any;
   permissionBroker: any;
   personas: any;
+  personaTeamRegistry: any;
   projectPathToOptions: any;
   promptRegistry: any;
   ptys: any;

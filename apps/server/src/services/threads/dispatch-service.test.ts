@@ -1,0 +1,137 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createConversationThread, createEnvironment, openDatabase, upsertHost } from '@zana-ai/zcc-db';
+import { describe, expect, it, vi } from 'vitest';
+import { admitDispatch } from './dispatch-service.js';
+
+function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-dispatch-service-'));
+  const db = openDatabase(join(dir, 'runtime.sqlite'));
+  const host = upsertHost(db, { name: 'host', hostKeyHash: 'hash' });
+  const environment = createEnvironment(db, { projectId: 'project', hostId: host.id });
+  const thread = createConversationThread(db, {
+    projectId: 'project',
+    hostId: host.id,
+    environmentId: environment.id,
+    providerId: 'claude-code'
+  });
+  const request = { threadId: thread.id, projectId: 'project' };
+  return {
+    db,
+    request,
+    ctx(admit: ReturnType<typeof vi.fn>) {
+      return { db, plugins: { admitDispatch: admit } } as never;
+    },
+    cleanup() {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+}
+
+describe('admitDispatch', () => {
+  it('forwards a wait decision and mints generation 1 for a fresh thread', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockResolvedValue({ action: 'wait', reason: 'capacity', overrideable: true });
+      await expect(admitDispatch(f.ctx(admit), f.request)).resolves.toEqual({
+        decision: { action: 'wait', reason: 'capacity', overrideable: true },
+        generation: 1,
+        pluginId: undefined
+      });
+      expect(admit).toHaveBeenCalledWith({ ...f.request, generation: 1, dispatchId: expect.any(String) });
+    } finally { f.cleanup(); }
+  });
+
+  it('increments the generation across successive waits on the same thread', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockResolvedValue({ action: 'wait', reason: 'capacity', overrideable: true });
+      await admitDispatch(f.ctx(admit), f.request);
+      const second = await admitDispatch(f.ctx(admit), f.request);
+      expect(second.generation).toBe(2);
+      // The plugin sees the generation in effect *before* this wait is recorded.
+      expect(admit).toHaveBeenLastCalledWith({ ...f.request, generation: 1, dispatchId: expect.any(String) });
+    } finally { f.cleanup(); }
+  });
+
+  it('clears the recorded generation on proceed so the next wait starts fresh', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn()
+        .mockResolvedValueOnce({ action: 'wait', reason: 'capacity', overrideable: true })
+        .mockResolvedValueOnce({ action: 'proceed' })
+        .mockResolvedValueOnce({ action: 'wait', reason: 'capacity again', overrideable: true });
+      await admitDispatch(f.ctx(admit), f.request);
+      await admitDispatch(f.ctx(admit), f.request);
+      const third = await admitDispatch(f.ctx(admit), f.request);
+      expect(third.generation).toBe(1);
+    } finally { f.cleanup(); }
+  });
+
+  it('forwards a reject decision without recording a generation', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockResolvedValue({ action: 'reject', message: 'blocked' });
+      await expect(admitDispatch(f.ctx(admit), f.request)).resolves.toEqual({
+        decision: { action: 'reject', message: 'blocked' },
+        generation: 1
+      });
+    } finally { f.cleanup(); }
+  });
+
+  it('a reject clears an earlier overrideable wait so it cannot be Send-now\'d through after the reject', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn()
+        .mockResolvedValueOnce({ action: 'wait', reason: 'capacity', overrideable: true })
+        .mockResolvedValueOnce({ action: 'reject', message: 'blocked' });
+      const waited = await admitDispatch(f.ctx(admit), f.request);
+      expect(waited.decision.action).toBe('wait');
+      await admitDispatch(f.ctx(admit), f.request);
+      // The stale generation from the pre-reject wait must be gone, not just superseded in memory.
+      const { getDispatchAdmissionGeneration } = await import('@zana-ai/zcc-db');
+      expect(getDispatchAdmissionGeneration(f.db, f.request.threadId)).toBeNull();
+    } finally { f.cleanup(); }
+  });
+
+  it('a non-overrideable wait reports overrideable: false for the queued caller to enforce', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockResolvedValue({ action: 'wait', reason: 'policy', overrideable: false });
+      const outcome = await admitDispatch(f.ctx(admit), f.request);
+      expect(outcome.decision).toMatchObject({ action: 'wait', overrideable: false });
+    } finally { f.cleanup(); }
+  });
+
+  it('attributes a wait to the plugin id supplied by the admission handler', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockResolvedValue({ action: 'wait', reason: 'capacity', overrideable: true, pluginId: 'platform-hooks-probe' });
+      const outcome = await admitDispatch(f.ctx(admit), f.request);
+      expect(outcome.pluginId).toBe('platform-hooks-probe');
+    } finally { f.cleanup(); }
+  });
+
+  it('fails open when plugin admission throws', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockRejectedValue(new Error('plugin died'));
+      await expect(admitDispatch(f.ctx(admit), f.request)).resolves.toEqual({
+        decision: { action: 'proceed' },
+        generation: 1
+      });
+    } finally { f.cleanup(); }
+  });
+
+  it('fails open (no plugin host at all) without touching the db', async () => {
+    const f = fixture();
+    try {
+      await expect(admitDispatch({ db: f.db, plugins: undefined } as never, f.request)).resolves.toEqual({
+        decision: { action: 'proceed' },
+        generation: 1
+      });
+    } finally { f.cleanup(); }
+  });
+});

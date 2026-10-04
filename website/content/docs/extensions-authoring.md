@@ -160,6 +160,33 @@ export default definePluginApp((app) => {
 Fill the host `.module-panel-slot` (height 100%, own overflow). Shared `gus-*` /
 `zana-*` CSS classes live in core `global.css` and cascade into plugin panels.
 
+## Plugin migration: generic platform hooks
+
+Existing plugins keep working unchanged — the surfaces below are additive.
+Migrate to them when a plugin currently works around a missing generic hook:
+
+- Replace any ad hoc host call with `zcc.host.projectCall({ projectId, method, input })`
+  instead of inventing a project-root-sensitive RPC of your own; main resolves
+  the project's root/host, so the plugin never handles a raw path or token.
+- Replace a plugin-owned "pending action" table with `zcc.ui.interactions`
+  (`upsert`/`acknowledge`/`cancel`) to get free restart-safe resumption,
+  quota enforcement, and tombstone cleanup instead of reimplementing them.
+- If a plugin currently blocks/vetoes dispatch by racing a thread event
+  handler, switch to `zcc.hooks.on(...)` — it is the one supported admission
+  checkpoint, and only it can set `overrideable: false` to make a wait
+  non-bypassable even by a human Send-now click.
+- A plugin that intercepts a Claude or Codex tool call outside the native
+  `before`/`after` hook is not actually synchronous with the provider turn.
+  Move to the registered agent tool (`agents.registerTool`) for Modern
+  threads and `zcc.mcpServers` for PTY/CLI Agent sessions — see
+  [Platform hooks](./extensions-sdk-reference.md#platform-hooks) for the
+  full conformance matrix. Other providers (Cursor, OpenCode) have no native
+  hook; `zcc.sdk.capabilities.forThread` reports that honestly rather than a
+  plugin assuming parity.
+- A `projectTab` that can be unavailable for some projects should register
+  `ui.registerProjectTabAvailability` instead of hiding the tab outright —
+  users should see a disabled tab with a reason, not a tab that vanishes.
+
 ## Marketplace
 
 Marketplace JSON is **provenance pointers** (`npm:` / `git:` + range), not

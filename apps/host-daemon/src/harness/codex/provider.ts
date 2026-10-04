@@ -185,6 +185,22 @@ function codexHookOverride(event: string, command: string, matcher = '*'): strin
   return ['-c', `hooks.${event}=[{matcher="${matcher}",hooks=[{type="command",command="${tomlBasic(command)}"}]}]`];
 }
 
+/**
+ * Build one `-c hooks.<Event>=[…]` override with MULTIPLE matcher entries.
+ * Codex takes exactly one hooks list per event key — a second `-c
+ * hooks.<Event>=…` for the same event OVERWRITES the first rather than
+ * merging (verified live) — so two independent features that both need
+ * `PreToolUse` (native tool policy's `*` matcher, notify's
+ * `request_user_input` matcher) must fold into ONE override, same as the
+ * existing `UserPromptSubmit` folding below.
+ */
+function codexHookOverrideMulti(event: string, entries: ReadonlyArray<{ matcher: string; command: string }>): string[] {
+  const tables = entries
+    .map(({ matcher, command }) => `{matcher="${matcher}",hooks=[{type="command",command="${tomlBasic(command)}"}]}`)
+    .join(',');
+  return ['-c', `hooks.${event}=[${tables}]`];
+}
+
 export class CodexProvider extends BaseLaunchProvider {
   readonly id = 'codex';
   /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`gpt-5.5`, …). */
@@ -406,6 +422,39 @@ export class CodexProvider extends BaseLaunchProvider {
     //     reason.
     const args: string[] = [];
 
+    // PreToolUse carries two independent jobs with DIFFERENT matchers — native
+    // tool policy's `*` (every tool call) and notify's `request_user_input`
+    // (only the ask-user-question tool). Verified live these matchers are
+    // mutually exclusive per call (a plain Bash call never fires the
+    // `request_user_input`-matched hook), so no stdout collision; but codex
+    // takes exactly one hooks list per event key — a second `-c
+    // hooks.PreToolUse=…` OVERWRITES rather than merges — so both entries fold
+    // into ONE override, same as the `UserPromptSubmit` folding below.
+    const preToolUseEntries: Array<{ matcher: string; command: string }> = [];
+    if (urls.nativeTool) {
+      // OBL-004: this hook must actually BLOCK, not fire-and-forget — verified
+      // live against codex 0.154.0 that a hook's stdout IS parsed as a
+      // blocking `hookSpecificOutput.permissionDecision` directive, the
+      // identical contract Claude's PreToolUse hooks use
+      // (`codex_core::tools::router` logs "Command blocked by PreToolUse
+      // hook: <reason>" and the tool never runs). So we pipe stdin straight
+      // into `/hook/nativetool/…` (which already replies in that exact
+      // shape, see mcp-server.ts) and relay its body verbatim to stdout.
+      // FAIL CLOSED: an empty curl reply (timeout, connection refused,
+      // non-2xx) emits an explicit `deny` JSON ourselves — verified live that
+      // codex otherwise fails OPEN (empty hook stdout → tool proceeds
+      // unmodified), the opposite of OBL-004's "transport failure fails
+      // closed" requirement.
+      preToolUseEntries.push({
+        matcher: '*',
+        command:
+          `OUT=$(curl -s -m 5 -X POST --data-binary @- "${urls.nativeTool}"); ` +
+          `if [ -z "$OUT" ]; then ` +
+          `echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"native tool policy unreachable"}}'; ` +
+          `else printf '%s' "$OUT"; fi; exit 0`
+      });
+    }
+
     if (urls.stop) {
       // Turn END → auto-close / scheduler stamp / goal loop. `/hook/stop` ignores
       // the body, so just drain stdin and ping.
@@ -419,12 +468,16 @@ export class CodexProvider extends BaseLaunchProvider {
       // another concurrent tool's completion cannot dismiss this request.
       const post = (action: string) =>
         `curl -sS -m 5 -o /dev/null -X POST --data-binary @- "${urls.notify}/${action}"`;
+      preToolUseEntries.push({ matcher: 'request_user_input', command: post('blocked') });
       args.push(
         ...codexHookOverride('PermissionRequest', post('blocked')),
-        ...codexHookOverride('PreToolUse', post('blocked'), 'request_user_input'),
         ...codexHookOverride('PostToolUse', post('unblocked')),
         ...codexHookOverride('Interrupt', post('unblocked'))
       );
+    }
+
+    if (preToolUseEntries.length > 0) {
+      args.push(...codexHookOverrideMulti('PreToolUse', preToolUseEntries));
     }
 
     // UserPromptSubmit carries two independent jobs; codex takes ONE hooks list per

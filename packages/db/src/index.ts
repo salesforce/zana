@@ -174,6 +174,13 @@ export {
   type NextTurnSendStatus
 } from './data/deferred-thread-messages.js';
 export {
+  clearDispatchAdmissionGeneration,
+  consumeDispatchAdmissionOverride,
+  getDispatchAdmissionGeneration,
+  recordDispatchAdmissionWait,
+  type DispatchAdmissionGenerationRow
+} from './data/dispatch-admission-generations.js';
+export {
   addThreadPlanReference,
   appendThreadPlanRevision,
   createThreadPlan,

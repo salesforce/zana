@@ -11,6 +11,8 @@ export interface HarnessLifecycleEndpoints {
   readonly firstPrompt?: string;
   readonly subagentStart?: string;
   readonly subagentStop?: string;
+  /** Synchronous PreToolUse native-tool-policy callback (OBL-004), when the provider supports it. */
+  readonly nativeTool?: string;
 }
 
 export interface HarnessIntegrationRequest {

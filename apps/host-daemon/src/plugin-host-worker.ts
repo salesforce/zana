@@ -108,6 +108,7 @@ interface HostContext {
   readonly experimental_paths: {
     readonly dataDir: string;
     readonly tempDir: string;
+    readonly projectRoot: string | null;
   };
   experimental_emitSignal(signal: string, payload: unknown): Promise<void>;
   experimental_watch(
@@ -134,6 +135,7 @@ type ParentMessage =
       readonly method: string;
       readonly input: unknown;
       readonly envVars: Record<string, string>;
+      readonly projectRoot?: string;
     }
   | { readonly type: "cancel"; readonly callId: string }
   | { readonly type: "dispose" }
@@ -298,12 +300,19 @@ function parseParentMessage(value: unknown): ParentMessage | null {
       .record(z.string().regex(/^[^=\x00]+$/u), z.string())
       .safeParse(value.envVars ?? {});
     if (!envVars.success) return null;
+    if (
+      value.projectRoot !== undefined &&
+      (typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot))
+    ) {
+      return null;
+    }
     return {
       type: "call",
       callId: value.callId,
       method: value.method,
       input: value.input,
       envVars: envVars.data,
+      projectRoot: value.projectRoot,
     };
   }
   return null;
@@ -563,7 +572,11 @@ async function handleCall(
     const result = await handler(input, {
       signal: controller.signal,
       lifecycle: { signal: lifecycleController.signal },
-      experimental_paths: { dataDir, tempDir },
+      experimental_paths: {
+        dataDir,
+        tempDir,
+        projectRoot: message.projectRoot ?? null,
+      },
       async experimental_emitSignal(signalName, payload) {
         const signal = currentEntry.experimental_signals?.[signalName];
         if (signal === undefined) {

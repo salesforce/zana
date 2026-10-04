@@ -1,8 +1,16 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { attachProductPluginService, bundledPluginsRootFromDataDir, pluginAssetRootFromService, productListProjects, productPushInbox } from './product-plugins.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  attachProductPluginService,
+  bundledPluginsRootFromDataDir,
+  pluginAssetRootFromService,
+  productListProjects,
+  productPushInbox,
+  productRegisterPersonas,
+  productRegisterTeams
+} from './product-plugins.js';
 import { createInboxStore } from '../services/inbox/inbox-store.js';
 import { createProjectStore } from '../project-store.js';
 import { startProductServer, type ProductServer } from './product-server.js';
@@ -212,4 +220,124 @@ it('awaits the shared queue store through the live plugin SDK callback', async (
   const plugins = await attachProductPluginService(server.ctx, { bundledRoot });
   await plugins.install(pluginRoot);
   await expect(plugins.callRpc('queue-reader', 'queue', { threadId: 'thread' })).resolves.toEqual([{ id: queued.id }]);
+});
+
+function writeInteractionsPlugin(dir: string, pluginId: string): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({
+      name: `zcc-plugin-${pluginId}`,
+      version: '0.1.0',
+      engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+      zcc: {
+        name: 'Interactions demo',
+        description: 'Interactions demo',
+        branding: { icon: 'Puzzle' },
+        server: './server.mjs'
+      }
+    })
+  );
+  writeFileSync(
+    join(dir, 'server.mjs'),
+    `export default function plugin(zcc) {
+      zcc.rpc.method('upsert', (input) => zcc.ui.interactions.upsert(input));
+      zcc.rpc.method('get', (id) => zcc.ui.interactions.get(id));
+      zcc.rpc.method('acknowledge', (req) => zcc.ui.interactions.acknowledge(req));
+      zcc.rpc.method('cancel', (req) => zcc.ui.interactions.cancel(req));
+    }\n`
+  );
+}
+
+describe('plugin ui.interactions bridge', () => {
+  it('upserts, gets, acknowledges, and cancels through InteractionService, scoped by pluginId', async () => {
+    const dataDir = tempDir();
+    const bundled = tempDir();
+    writeInteractionsPlugin(join(bundled, 'interactions-demo'), 'interactions-demo');
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const plugins = await attachProductPluginService(server.ctx, { bundledRoot: bundled });
+    await plugins.install(join(bundled, 'interactions-demo'));
+
+    const created = await plugins.callRpc('interactions-demo', 'upsert', {
+      projectId: 'proj-1',
+      correlationId: 'corr-1',
+      kind: 'confirm',
+      payload: { message: 'hi' }
+    });
+    expect(created).toMatchObject({
+      pluginId: 'interactions-demo',
+      projectId: 'proj-1',
+      correlationId: 'corr-1',
+      kind: 'confirm',
+      status: 'pending',
+      generation: 1
+    });
+
+    await expect(plugins.callRpc('interactions-demo', 'get', created.id)).resolves.toMatchObject({
+      id: created.id,
+      status: 'pending'
+    });
+
+    const acknowledged = await plugins.callRpc('interactions-demo', 'acknowledge', {
+      interactionId: created.id,
+      generation: created.generation
+    });
+    expect(acknowledged).toMatchObject({ id: created.id, status: 'acknowledged', generation: 2 });
+
+    const cancelled = await plugins.callRpc('interactions-demo', 'cancel', {
+      interactionId: created.id,
+      generation: acknowledged.generation
+    });
+    expect(cancelled).toMatchObject({ id: created.id, status: 'cancelled', generation: 3 });
+  });
+
+  it('does not let one plugin see or act on another plugin interaction', async () => {
+    const dataDir = tempDir();
+    const bundled = tempDir();
+    writeInteractionsPlugin(join(bundled, 'owner'), 'owner');
+    writeInteractionsPlugin(join(bundled, 'intruder'), 'intruder');
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const plugins = await attachProductPluginService(server.ctx, { bundledRoot: bundled });
+    await plugins.install(join(bundled, 'owner'));
+    await plugins.install(join(bundled, 'intruder'));
+
+    const created = await plugins.callRpc('owner', 'upsert', {
+      projectId: 'proj-1',
+      correlationId: 'corr-owned',
+      kind: 'confirm',
+      payload: {}
+    });
+
+    await expect(plugins.callRpc('intruder', 'get', created.id)).resolves.toBeNull();
+    await expect(
+      plugins.callRpc('intruder', 'acknowledge', { interactionId: created.id, generation: created.generation })
+    ).rejects.toThrow(/no interaction/);
+    await expect(
+      plugins.callRpc('intruder', 'cancel', { interactionId: created.id, generation: created.generation })
+    ).rejects.toThrow(/no interaction/);
+  });
+});
+
+describe('plugin persona/team registration bridge', () => {
+  it('logs when no control-plane is reachable, without throwing', async () => {
+    const dir = tempDir();
+    const ctx = { dataDir: dir };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    productRegisterPersonas(ctx, 'pr-monitor', [{ id: 'reviewer', name: 'Reviewer' } as any]);
+    productRegisterTeams(ctx, 'pr-monitor', [{ id: 'squad', name: 'Squad', slots: [] } as any]);
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(2));
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[plugin:pr-monitor] registerPersonas failed:')
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[plugin:pr-monitor] registerTeams failed:')
+    );
+    errorSpy.mockRestore();
+});
 });

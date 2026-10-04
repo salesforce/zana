@@ -36,6 +36,7 @@ export interface ExperimentalCreateHostEntryHarnessOptions {
   readonly experimental_paths?: {
     readonly dataDir: string;
     readonly tempDir: string;
+    readonly projectRoot?: string | null;
   };
   readonly experimental_watch?: (
     options: ExperimentalHostWatchOptions,
@@ -109,9 +110,11 @@ export function experimental_createHostEntryHarness<
   const capturedSignals: Array<{ signal: string; payload: unknown }> = [];
   const watchSubscriptions = new Set<ExperimentalHostWatchSubscription>();
   const retainedWorkerLeases = new Set<ExperimentalHostWorkerLease>();
-  const paths = harnessOptions.experimental_paths ?? {
+  const paths = {
     dataDir: "/test/plugin-data",
     tempDir: "/test/plugin-temp",
+    projectRoot: null,
+    ...harnessOptions.experimental_paths,
   };
   let disposePromise: Promise<void> | null = null;
 

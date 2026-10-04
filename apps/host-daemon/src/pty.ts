@@ -1225,7 +1225,8 @@ export class PtyManager extends EventEmitter {
           firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
             ? undefined
             : `${providerHookBase}/firstprompt/${opts.projectId}/${sessionId}`,
-          subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`
+          subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`,
+          nativeTool: `${providerHookBase}/nativetool/${opts.projectId}/${sessionId}`
         }
       : {};
     // Per-harness AUTH override (Settings → Harness): a stored base URL + token
@@ -1249,7 +1250,8 @@ export class PtyManager extends EventEmitter {
           unblocked: providerHookUrls.notify ? `${providerHookUrls.notify}/unblocked` : undefined,
           firstPrompt: providerHookUrls.firstPrompt,
           subagentStart: providerHookUrls.subagent ? `${providerHookUrls.subagent}/start` : undefined,
-          subagentStop: providerHookUrls.subagent ? `${providerHookUrls.subagent}/stop` : undefined
+          subagentStop: providerHookUrls.subagent ? `${providerHookUrls.subagent}/stop` : undefined,
+          nativeTool: providerHookUrls.nativeTool
         }
       } : {}),
       ...(authFamily ? { auth: this.hostServices.resolveHarnessAuth?.(authFamily) ?? {} } : {})
@@ -1306,7 +1308,8 @@ export class PtyManager extends EventEmitter {
         subagent: `${lifecycleBase}/subagent/${opts.projectId}/${sessionId}`,
         toolActivity: `${lifecycleBase}/toolactivity/${opts.projectId}/${sessionId}`,
         overseer: `${lifecycleBase}/overseer/${opts.projectId}/${sessionId}`,
-        contentScreen: `${lifecycleBase}/contentscreen/${opts.projectId}/${sessionId}`
+        contentScreen: `${lifecycleBase}/contentscreen/${opts.projectId}/${sessionId}`,
+        nativeTool: `${lifecycleBase}/nativetool/${opts.projectId}/${sessionId}`
       } : {},
       scope: 'local'
     }) ?? { args: [], env: {} };
@@ -2438,6 +2441,7 @@ export class PtyManager extends EventEmitter {
           notify: `${base}/hook/notify/${opts.projectId}/${sessionId}`,
           subagent: `${base}/hook/subagent/${opts.projectId}/${sessionId}`,
           stop: `${base}/hook/stop/${opts.projectId}/${sessionId}`,
+          nativeTool: `${base}/hook/nativetool/${opts.projectId}/${sessionId}`,
           ...(opts.scheduled ? {} : { firstPrompt: `${base}/hook/firstprompt/${opts.projectId}/${sessionId}` })
         };
         // MCP over the same reverse tunnel (opt-in). Same identity-in-URL
@@ -2488,7 +2492,8 @@ export class PtyManager extends EventEmitter {
         stop: remoteHookUrls.stop,
         notify: remoteHookUrls.notify,
         firstPrompt: remoteHookUrls.firstPrompt,
-        subagent: remoteHookUrls.subagent
+        subagent: remoteHookUrls.subagent,
+        nativeTool: remoteHookUrls.nativeTool
       } : {},
       scope: 'remote'
     });

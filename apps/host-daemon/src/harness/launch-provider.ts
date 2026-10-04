@@ -207,6 +207,8 @@ export interface ProviderHookUrls {
    * and `SubagentStop` → `/stop` for the live sub-agent-count badge.
    */
   subagent?: string;
+  /** Native tool policy bridge callback, when provider supports it. */
+  nativeTool?: string;
 }
 
 /**

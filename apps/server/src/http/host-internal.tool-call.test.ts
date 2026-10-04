@@ -130,10 +130,11 @@ describe('host internal plugin tool-call', () => {
       success: true,
       contentItems: [{ type: 'inputText', text: '{"ok":true}' }]
     }));
+    const decideToolPolicy = vi.fn(async () => ({ action: 'allow' as const }));
     const ctx = {
       config: { getConfig: () => ({}) },
       db: {},
-      plugins: { invokeAgentTool }
+      plugins: { invokeAgentTool, decideToolPolicy }
     } as unknown as ProductHttpContext;
     const captured = captureResponse();
     const handled = await handleHostInternalHttp(
@@ -375,6 +376,7 @@ describe('host internal plugin tool-call', () => {
     const invokeAgentTool = vi.fn(async () => {
       throw new Error('apex timeout');
     });
+    const decideToolPolicy = vi.fn(async () => ({ action: 'allow' as const }));
     const failed = captureResponse();
     await handleHostInternalHttp(
       request({
@@ -389,7 +391,7 @@ describe('host internal plugin tool-call', () => {
       {
         config: { getConfig: () => ({}) },
         db: {},
-        plugins: { invokeAgentTool }
+        plugins: { invokeAgentTool, decideToolPolicy }
       } as unknown as ProductHttpContext
     );
     expect(failed.status).toBe(200);
@@ -408,6 +410,7 @@ describe('host internal plugin tool-call', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       return { success: true, contentItems: [] };
     });
+    const decideToolPolicy = vi.fn(async () => ({ action: 'allow' as const }));
     const req = request({
       sessionId: 'inst-1',
       threadId: thread.id,
@@ -421,7 +424,7 @@ describe('host internal plugin tool-call', () => {
     const pending = handleHostInternalHttp(req, captured.response, {
       config: { getConfig: () => ({}) },
       db: {},
-      plugins: { invokeAgentTool }
+      plugins: { invokeAgentTool, decideToolPolicy }
     } as unknown as ProductHttpContext);
     await vi.waitFor(() => expect(invokeAgentTool).toHaveBeenCalled());
     req.emit('close');

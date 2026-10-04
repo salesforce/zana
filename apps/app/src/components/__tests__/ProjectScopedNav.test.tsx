@@ -46,7 +46,8 @@ const h = vi.hoisted(() => {
     }>,
     unreadInbox: 15,
     agentCounts: { active: 0, blocked: 0 },
-    scheduleCount: 6
+    scheduleCount: 6,
+    tabAvailability: {} as Record<string, { available: boolean; reason?: string }>
   };
 });
 
@@ -86,6 +87,9 @@ vi.mock('../../plugins/plugin-slots', () => ({
 }));
 vi.mock('../../lib/resolveIcon', () => ({
   resolveIcon: () => () => null
+}));
+vi.mock('../../hooks/useProjectTabAvailability', () => ({
+  useProjectTabAvailability: () => h.tabAvailability
 }));
 vi.mock('../../lib/libraryPlugin', () => ({
   resolveProjectTabModule: () => undefined
@@ -265,6 +269,36 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('href="/projects/proj-1/salesforce%3Asoql"');
     expect(markup).toContain('>SOQL<');
     expect(markup).not.toContain('data-testid="nav-salesforce/soql"');
+    h.slotTabs = [];
+  });
+
+  it('keeps a plugin tab visible but disabled with its reason when availability says no', () => {
+    h.slotTabs = [
+      {
+        pluginId: 'salesforce',
+        id: 'salesforce',
+        label: 'Salesforce',
+        icon: 'Cloud',
+        generation: 1,
+        global: false,
+        component: () => null
+      }
+    ];
+    h.tabAvailability = {
+      salesforce: { available: false, reason: 'no org connected' }
+    };
+
+    const markup = renderNav(
+      <ProjectScopedNav project={project} variant="focus" onBack={() => undefined} />
+    );
+
+    expect(markup).toContain('data-testid="project-nav-salesforce"');
+    expect(markup).toContain('href="/projects/proj-1/salesforce"');
+    expect(markup).toContain('>Salesforce<');
+    expect(markup).toContain('nav-item--disabled');
+    expect(markup).toContain('aria-disabled="true"');
+    expect(markup).toContain('title="no org connected"');
+    h.tabAvailability = {};
     h.slotTabs = [];
   });
 

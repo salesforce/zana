@@ -82,6 +82,8 @@ import {
 // 39: acknowledged heartbeats, two-phase readiness and runtime inventory on reconnect.
 // 40: expiring preview declarations, bound to an acknowledged owner session.
 // 41: provider-declared host environment passthrough on bridge launches.
+// 41: plugin.host.call carries a server-realpath-confined projectRoot for
+// project-bound host RPC (OBL-001); worker trusts it, never re-resolves it.
 export const HOST_RPC_PROTOCOL_VERSION = 41;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
@@ -854,7 +856,9 @@ export const PluginHostCallCommandSchema = z.object({
   artifact: z.object({ digest: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().positive().max(HOST_ARTIFACT_MAX_BYTES) }).strict(),
   callId: z.string().min(1).max(200), method: z.string().min(1).max(200), input: jsonValueSchema,
   timeoutMs: z.number().int().positive().max(300_000),
-  contributedEnv: z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), value: z.union([z.string(), z.object({ serverPath: z.string().startsWith('/') }).strict()]) }).strict()).max(128).optional()
+  contributedEnv: z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), value: z.union([z.string(), z.object({ serverPath: z.string().startsWith('/') }).strict()]) }).strict()).max(128).optional(),
+  /** Server-realpath-confined project root for a project-bound call. Never re-resolved by the daemon/worker. */
+  projectRoot: PathSchema.optional()
 }).strict();
 export const PluginHostCancelCommandSchema = z.object({ type: z.literal('plugin.host.cancel'), ...pluginHostIdentity, callId: z.string().min(1).max(200) }).strict();
 export const PluginHostDisposeCommandSchema = z.object({ type: z.literal('plugin.host.dispose'), ...pluginHostIdentity }).strict();

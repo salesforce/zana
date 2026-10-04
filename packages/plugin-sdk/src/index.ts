@@ -56,7 +56,12 @@ export type {
   PluginAgentToolPresentation,
   PluginAgentToolContext,
   PluginEvents,
+  PluginHooks,
+  PluginDispatchAdmissionRequest,
+  PluginToolPolicyRequest,
+  PluginToolPolicyDecision,
   PluginThreadEvent,
+  PluginThreadEventInput,
   PluginThreadEventName,
   PluginSdk,
   PluginSdkDesktopBrowsers,
@@ -113,6 +118,8 @@ export type {
   PluginPtyHarnessDeclaration,
   PluginPtyHarnessProfile,
   PluginUi,
+  PluginProjectTabAvailabilityContext,
+  PluginProjectTabAvailabilityRegistration,
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginInteractionCancelReason,
@@ -125,6 +132,24 @@ export type {
 } from './server.js';
 
 export type { JsonValue } from './json-value.js';
+export type {
+  CapabilityIntrospectionContract,
+  DispatchAdmissionContract,
+  DispatchAdmissionDecision,
+  HostRpcContract,
+  HostRpcResultContract,
+  InteractionAcknowledgement,
+  InteractionContract,
+  LifecycleEventContract,
+  NativeToolLifecycleContract,
+  PersonaContributionContract,
+  PluginCapabilityIntrospection,
+  PluginHostRpc,
+  PluginInteractions,
+  PluginInteractionUpsertInput,
+  ProjectTabAvailabilityContract,
+  TeamContributionContract
+} from './contracts.js';
 export { defineRpcContract } from './rpc-contract.js';
 export type {
   PluginRpcContract,
@@ -144,6 +169,7 @@ export {
   PLUGIN_CLI_OUTPUT_MAX_BYTES,
   PLUGIN_MENTION_TRIGGERS,
   PLUGIN_AGENT_STATUS_LABEL_MAX_CHARS,
+  PLUGIN_THREAD_EVENT_SCHEMA_VERSION,
   enforcePluginCliOutputLimit,
   parsePluginAgentToolPresentation,
   experimental_defineHostEntry,

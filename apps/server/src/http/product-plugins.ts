@@ -33,6 +33,10 @@ import { readHostFile } from './files-via-host.js';
 import type { PluginSdkProject, PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
 import { resolvePluginDefaultExecutionOptions, overlayCustomModels } from '../services/threads/thread-execution-options.js';
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
+import { asControlResult, callControlAsProductServer } from './cli-agent-ops.js';
+import type { PersonaInput, TeamInput } from '@zana-ai/zcc-domain/product';
+import { InteractionService } from '../services/interactions/interaction-service.js';
+import { startInteractionMaintenance } from '../services/interactions/interaction-maintenance.js';
 
 export async function productPushInbox(
   ctx: Pick<ProductHttpContext, 'projects' | 'inbox'>,
@@ -53,6 +57,59 @@ export function productListProjects(
   ctx: Pick<ProductHttpContext, 'projects'>
 ): PluginSdkProject[] {
   return ctx.projects.list().map((row) => ({ id: row.id, name: row.name, path: row.path, ...(row.icon ? { icon: row.icon } : {}), ...(row.quickAgent === true ? { quickAgent: true } : {}) }));
+}
+
+/**
+ * Forward a plugin's declarative persona/team roster to Electron main's
+ * `PersonaTeamRegistry` over the control-plane (plugins run in this separate
+ * server process, never in main — Rule 1: main re-authorizes/re-namespaces by
+ * `pluginId` on receipt, this call carries no authority of its own). Fire-and-
+ * forget to match the synchronous `void` SDK surface; a failure is logged, not
+ * thrown, so one bad contribution never crashes plugin load.
+ */
+export function productRegisterPersonas(
+  ctx: Pick<ProductHttpContext, 'dataDir'>,
+  pluginId: string,
+  personas: readonly PersonaInput[]
+): void {
+  void callControlAsProductServer(ctx.dataDir, 'product.invoke', {
+    method: 'personas.contribute',
+    args: [pluginId, personas]
+  }).then((value) => {
+    const result = asControlResult(value);
+    if (!result.ok) console.error(`[plugin:${pluginId}] registerPersonas failed: ${result.message}`);
+  });
+}
+
+export function productRegisterTeams(
+  ctx: Pick<ProductHttpContext, 'dataDir'>,
+  pluginId: string,
+  teams: readonly TeamInput[]
+): void {
+  void callControlAsProductServer(ctx.dataDir, 'product.invoke', {
+    method: 'teams.contribute',
+    args: [pluginId, teams]
+  }).then((value) => {
+    const result = asControlResult(value);
+    if (!result.ok) console.error(`[plugin:${pluginId}] registerTeams failed: ${result.message}`);
+  });
+}
+
+/**
+ * `InteractionService` is keyed by interaction id alone — ownership is
+ * enforced here, one level up, so a plugin can only see/ack/cancel its own
+ * rows (Rule 1: the service trusts its caller; this is the authorization
+ * boundary). A mismatched or missing row reads as NOT_FOUND rather than
+ * leaking another plugin's existence.
+ */
+function ownedInteractionOrThrow(
+  service: InteractionService,
+  pluginId: string,
+  interactionId: string
+): import('@zana-ai/zcc-domain').InteractionContract {
+  const row = service.get(interactionId);
+  if (!row || row.pluginId !== pluginId) throw new Error(`no interaction: ${interactionId}`);
+  return row;
 }
 
 function toPluginThreadSummary(row: {
@@ -99,6 +156,7 @@ export async function attachProductPluginService(
   >
     & { bundledRoot?: string }
 ): Promise<PluginService> {
+  const interactions = new InteractionService(ctx.db);
   const plugins = createPluginService({
     dataDir: ctx.dataDir,
     bundledRoot: opts?.bundledRoot ?? defaultBundledRoot(),
@@ -108,6 +166,20 @@ export async function attachProductPluginService(
     interruptPluginInteractions: (pluginId) => {
       ctx.pendingInteractions.interruptPluginInteractions(pluginId);
     },
+    getInteraction: async ({ pluginId, interactionId }) => {
+      const row = interactions.get(interactionId);
+      return row && row.pluginId === pluginId ? row : null;
+    },
+    upsertInteraction: async ({ pluginId, projectId, correlationId, kind, payload }) =>
+      interactions.upsertInteraction({ pluginId, projectId, correlationId, kind, payload }),
+    acknowledgeInteraction: async ({ pluginId, interactionId, generation }) => {
+      ownedInteractionOrThrow(interactions, pluginId, interactionId);
+      return interactions.acknowledge({ interactionId, generation });
+    },
+    cancelInteraction: async ({ pluginId, interactionId, generation }) => {
+      ownedInteractionOrThrow(interactions, pluginId, interactionId);
+      return interactions.resolve(interactionId, generation, 'cancelled');
+    },
     onAgentCapabilitiesChanged: opts?.onAgentCapabilitiesChanged,
     onAppsChanged: opts?.onAppsChanged,
     getAppConfig: () => ctx.config.getConfig(),
@@ -115,6 +187,8 @@ export async function attachProductPluginService(
       opts?.watchBuiltinPluginSources ?? process.env.ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD === '1',
     pushInbox: (args) => productPushInbox(ctx, args),
     listProjects: async () => productListProjects(ctx),
+    registerPersonas: (pluginId, personas) => productRegisterPersonas(ctx, pluginId, personas),
+    registerTeams: (pluginId, teams) => productRegisterTeams(ctx, pluginId, teams),
     productContext: ctx,
     getThread: async ({ threadId }) => {
       const row = getConversationThread(ctx.db, threadId);
@@ -305,6 +379,12 @@ export async function attachProductPluginService(
     }
   });
   ctx.plugins = plugins;
+  const stopInteractionMaintenance = startInteractionMaintenance(ctx.db);
+  const originalStop = plugins.stop.bind(plugins);
+  plugins.stop = () => {
+    stopInteractionMaintenance();
+    originalStop();
+  };
   await plugins.start();
   for (const hostId of ctx.hostHub.connectedHostIds()) {
     for (const provider of listThreadProviders().filter((row) => row.models?.scope === 'host')) {

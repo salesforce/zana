@@ -1,10 +1,38 @@
 import {
+  appendConversationThreadEvent,
   getConversationThread,
   listConversationThreadEventsWindow,
   type ConversationThreadRow
 } from '@zana-ai/zcc-db';
-import type { PluginSdkThreadSummary, PluginThreadEvent } from '@zana-ai/zcc-plugin-sdk/server';
+import { randomUUID } from 'node:crypto';
+import {
+  PLUGIN_THREAD_EVENT_SCHEMA_VERSION,
+  type PluginSdkThreadSummary,
+  type PluginThreadEvent,
+  type PluginThreadEventInput
+} from '@zana-ai/zcc-plugin-sdk/server';
 import type { ProductHttpContext } from '../http/product-context.js';
+
+export const DISPATCH_OVERRIDE_AUDIT_EVENT_TYPE = 'dispatch/override/audited';
+
+/**
+ * Redacted record of a human "send now" override of a non-overrideable-false
+ * dispatch wait. No prompt/args/results — only identity, lineage, and outcome.
+ */
+export interface DispatchOverrideAuditEvent {
+  dispatchId: string;
+  threadId: string;
+  projectId: string;
+  overriddenBy: string;
+  pluginId?: string;
+  reason?: string;
+  priorGeneration: number;
+  timestamp: number;
+  outcome: 'accepted' | 'stale';
+}
+
+export const PLUGIN_LIFECYCLE_TEXT_MAX_CHARS = 4_096;
+let lifecycleSequence = 0;
 
 export function threadSummary(row: ConversationThreadRow): PluginSdkThreadSummary {
   return {
@@ -99,8 +127,8 @@ export function conversationThreadOutput(
 
 export function enrichPluginThreadEvent(
   ctx: Pick<ProductHttpContext, 'db'>,
-  event: PluginThreadEvent
-): PluginThreadEvent {
+  event: PluginThreadEventInput
+): PluginThreadEventInput {
   try {
     const row = getConversationThread(ctx.db, event.threadId);
     const thread = row ? threadSummary(row) : event.thread;
@@ -129,12 +157,74 @@ export function enrichPluginThreadEvent(
   }
 }
 
+function redactAndBoundLifecycleText(value: string | null | undefined): string | null | undefined {
+  if (value == null) return value;
+  const redacted = value
+    .replace(/\b(?:api[_-]?key|token|secret|password|authorization|cookie)\b\s*[:=]\s*(?:bearer\s+)?[^\s,;]+/gi, '[redacted]')
+    .replace(/\bhttps?:\/\/[^\s/@]+:[^\s/@]+@/gi, 'https://[redacted]@');
+  return redacted.length <= PLUGIN_LIFECYCLE_TEXT_MAX_CHARS
+    ? redacted
+    : `${redacted.slice(0, PLUGIN_LIFECYCLE_TEXT_MAX_CHARS)}…`;
+}
+
+/**
+ * Build the only lifecycle shape delivered to plugins. This intentionally
+ * projects known fields so callers cannot smuggle unbounded or secret payloads
+ * through an object cast.
+ */
+export function emitHardenedLifecycle(event: PluginThreadEventInput): PluginThreadEvent {
+  lifecycleSequence += 1;
+  return {
+    id: randomUUID(),
+    schemaVersion: PLUGIN_THREAD_EVENT_SCHEMA_VERSION,
+    sequence: lifecycleSequence,
+    timestamp: Date.now(),
+    name: event.name,
+    threadId: event.threadId,
+    ...(event.projectId !== undefined ? { projectId: event.projectId } : {}),
+    ...(event.thread !== undefined ? { thread: event.thread } : {}),
+    ...(event.lastAssistantText !== undefined
+      ? { lastAssistantText: redactAndBoundLifecycleText(event.lastAssistantText) }
+      : {}),
+    ...(event.error !== undefined ? { error: redactAndBoundLifecycleText(event.error) } : {}),
+    ...(event.providerId !== undefined ? { providerId: event.providerId } : {}),
+    ...(event.model !== undefined ? { model: event.model } : {}),
+    ...(event.reasoningLevel !== undefined ? { reasoningLevel: event.reasoningLevel } : {}),
+    ...(event.executionState !== undefined ? { executionState: event.executionState } : {}),
+    ...(event.hadAttachments !== undefined ? { hadAttachments: event.hadAttachments } : {})
+  };
+}
+
 /** Fan thread lifecycle out to live plugins. Failures must not wedge the thread. */
-export function emitPluginThreadEvent(ctx: ProductHttpContext, event: PluginThreadEvent): void {
+export function emitPluginThreadEvent(ctx: ProductHttpContext, event: PluginThreadEventInput): void {
   const enriched = ctx.db ? enrichPluginThreadEvent(ctx, event) : event;
-  void ctx.plugins?.emitThreadEvent(enriched).catch((error) => {
+  const hardened = emitHardenedLifecycle(enriched);
+  void ctx.plugins?.emitThreadEvent(hardened).catch((error) => {
     console.error('[plugins] emitThreadEvent failed', error);
   });
+}
+
+/** Persist + fan out a redacted audit trail entry for a dispatch-admission override. Never throws. */
+export function emitDispatchOverrideAudit(
+  ctx: ProductHttpContext,
+  event: DispatchOverrideAuditEvent
+): void {
+  try {
+    const stored = appendConversationThreadEvent(ctx.db, {
+      threadId: event.threadId,
+      type: DISPATCH_OVERRIDE_AUDIT_EVENT_TYPE,
+      payload: event
+    });
+    ctx.hub.emit('threads:event', {
+      threadId: event.threadId,
+      sequence: stored.sequence,
+      kind: 'thread.event',
+      type: stored.type,
+      payload: stored.payload
+    });
+  } catch (error) {
+    console.error('[plugins] dispatch override audit emit failed', error);
+  }
 }
 
 /** Applied root-turn transitions from the host must reach the same plugin bus as UI actions. */

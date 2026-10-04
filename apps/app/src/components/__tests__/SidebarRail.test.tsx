@@ -203,6 +203,37 @@ describe('SidebarRail', () => {
     );
   });
 
+  it('renders a disabled row with aria-disabled and the disabled-reason tooltip', () => {
+    const markup = renderRail(
+      <SidebarRail
+        className="sidebar"
+        navAriaLabel="Nav"
+        storageKey="zcc.testSidebarNavOrder"
+        pinnedIds={['inbox']}
+        items={[
+          ...items,
+          {
+            kind: 'row',
+            id: 'locked',
+            label: 'Locked',
+            icon: <span data-icon="locked" />,
+            to: '/locked',
+            testId: 'nav-locked',
+            active: false,
+            disabled: true,
+            disabledReason: 'Plugin not configured'
+          }
+        ]}
+      />
+    );
+
+    const anchorStart = markup.lastIndexOf('<a ', markup.indexOf('data-testid="nav-locked"'));
+    const tag = markup.slice(anchorStart, markup.indexOf('</a>', anchorStart));
+    expect(tag).toContain('nav-item--disabled');
+    expect(tag).toContain('aria-disabled="true"');
+    expect(tag).toContain('title="Plugin not configured"');
+  });
+
   it('puts dnd-kit listeners on the Link itself and consumes post-drag clicks', () => {
     const source = readFileSync(new URL('../SidebarRail.tsx', import.meta.url), 'utf8');
 

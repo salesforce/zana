@@ -1502,6 +1502,16 @@ body.resizing-col .sidebar-resizer::after {
   outline-offset: -2px;
 }
 
+.nav-item--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nav-item--disabled:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
 /* The sidebar has one scroll owner. Header and AgentTray remain fixed, so a
    long extension list or a burst of agents never displaces either surface. */
 .sidebar-nav {

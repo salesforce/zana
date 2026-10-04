@@ -1676,6 +1676,11 @@ const overseer = new Overseer({
  */
 const CONTENT_SCREEN_DECISION_TIMEOUT_MS = 8_000;
 
+// OBL-004: fail-CLOSED ceiling on the whole native-tool-policy exchange — the
+// inverse of Overseer/ContentScreen's fail-OPEN guards above, since a denied
+// tool call degrades safely but a silently-allowed one does not.
+const NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS = 8_000;
+
 const contentScreen = new ContentScreen({
   getConfig: () => ({ mode: store.getConfig().contentScreenMode ?? 'off' }),
   runClassify: (event: ContentScreenEvent, dedupeKey: string) => {
@@ -6782,6 +6787,7 @@ function registerIpc() {
     set pendingWhatsNew(value) { pendingWhatsNew = value; },
     get permissionBroker() { return permissionBroker; },
     get personas() { return personas; },
+    get personaTeamRegistry() { return personaTeamRegistry; },
     get projectPathToOptions() { return projectPathToOptions; },
     get promptRegistry() { return promptRegistry; },
     get ptys() { return ptys; },
@@ -7701,6 +7707,50 @@ async function bootstrapNormal() {
     // Server-side fail-open guard on the whole Content Screen exchange. Fixed
     // (unlike the Overseer's live-widened bound) — there is no deep tier here.
     contentScreenDecisionTimeoutMs: CONTENT_SCREEN_DECISION_TIMEOUT_MS,
+    // Native Tool Policy callback (OBL-004 — plugin-governed native-provider tool
+    // gating). The agent BLOCKS on this, but UNLIKE Overseer/ContentScreen the
+    // route (mcp-server.ts) is FAIL-CLOSED: null/throw here denies the tool call.
+    // The actual Allow/Deny decision lives in a plugin running inside
+    // product-server, so — unlike onOverseerHook's local resolve — this is a
+    // Pattern B hook: it fetches into the new terminal-scoped product-server
+    // route rather than deciding in-process. cwd/projectId are resolved from the
+    // LIVE session (rule 1), never the agent-supplied body.
+    onNativeToolPolicyHook: async (_projectId: string, sessionId: string, body: string) => {
+      const session = ptys.getSession(sessionId);
+      if (!session || session.status === 'exited') return null;
+      let toolName: string;
+      let input: Record<string, unknown>;
+      try {
+        const raw = JSON.parse(body) as { tool_name?: unknown; tool_input?: unknown };
+        if (typeof raw.tool_name !== 'string' || !raw.tool_name) return null;
+        toolName = raw.tool_name;
+        input = raw.tool_input && typeof raw.tool_input === 'object' ? (raw.tool_input as Record<string, unknown>) : {};
+      } catch {
+        return null;
+      }
+      const invocationId = randomUUID();
+      try {
+        const response = await fetch(
+          new URL(`api/v1/terminals/${encodeURIComponent(sessionId)}/tool-policy`, productServerUrl()),
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ invocationId, toolName, input })
+          }
+        );
+        if (!response.ok) return null;
+        const policy = (await response.json()) as { action?: unknown; reason?: unknown };
+        if (policy.action === 'deny') {
+          return { decision: 'deny', reason: typeof policy.reason === 'string' ? policy.reason : 'denied by plugin tool policy' };
+        }
+        return { decision: 'allow', reason: typeof policy.reason === 'string' ? policy.reason : 'allowed' };
+      } catch {
+        return null;
+      }
+    },
+    // Upper bound on the whole exchange; mcp-server.ts fails CLOSED (deny) if
+    // this elapses, the inverse of overseerDecisionTimeoutMs's fail-open guard.
+    nativeToolPolicyDecisionTimeoutMs: NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS,
     // First-prompt callback: name the tab from its first instruction. Fires
     // once per session (the hook POSTs on every prompt; fireTabNamer gates on
     // llmNamedSessions). OpenCode sessions never reach this route (no hook

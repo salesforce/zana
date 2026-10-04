@@ -3,7 +3,7 @@ import { getThreadProvider, registerThreadProvider } from './thread-provider-cat
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { archiveConversation, cancelConversationPlan, forkConversation, resumeConversation, sendConversationTurn, stopConversation, unarchiveConversation } from './conversation-lifecycle.js';
+import { archiveConversation, cancelConversationPlan, forkConversation, resumeConversation, sendConversationTurn, sendHeldConversationMessage, stopConversation, unarchiveConversation } from './conversation-lifecycle.js';
 import { conversationTimeline } from './conversation-timeline.js';
 import {
   hasLatestRootTurnCompleted,
@@ -123,6 +123,7 @@ vi.mock('@zana-ai/zcc-db', () => {
   markDeferredThreadMessageFailed: vi.fn(() => true),
   listDeferredThreadMessages: vi.fn(() => []),
   deleteDeferredThreadMessage: vi.fn(() => false),
+  getDeferredThreadMessage: vi.fn(() => null),
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
   getThreadPlanByRootThread: vi.fn(() => null),
   getThreadExecutionState: vi.fn(() => null),
@@ -151,7 +152,11 @@ vi.mock('@zana-ai/zcc-db', () => {
   listConversationThreadsForHost: vi.fn(() => []),
   listConversationThreadsByProject: vi.fn(() => []),
   getHost: vi.fn(() => ({ id: 'host-1', maxPermissionMode: 'full' })),
-  listConversationThreadEvents
+  listConversationThreadEvents,
+  getDispatchAdmissionGeneration: vi.fn(() => null),
+  recordDispatchAdmissionWait: vi.fn(() => ({ generation: 1 })),
+  clearDispatchAdmissionGeneration: vi.fn(),
+  consumeDispatchAdmissionOverride: vi.fn(() => true)
   };
 });
 
@@ -174,7 +179,12 @@ import {
   unarchiveConversationThread,
   applyConversationThreadLifecycleEvent,
   getThreadExecutionState,
-  upsertThreadExecutionState
+  upsertThreadExecutionState,
+  getDispatchAdmissionGeneration,
+  recordDispatchAdmissionWait,
+  clearDispatchAdmissionGeneration,
+  consumeDispatchAdmissionOverride,
+  getDeferredThreadMessage
 } from '@zana-ai/zcc-db';
 
 function lifecycleCall(type: 'run.started' | 'run.failed' | 'stop.requested' | 'stop.settled' | 'run.succeeded') {
@@ -2024,6 +2034,112 @@ describe('conversation lifecycle', () => {
   });
 });
 
+
+describe('dispatch admission override (OBL-003)', () => {
+  function queuedAdmissionRow(admission: { generation: number; overrideable: boolean; reason: string; pluginId?: string }) {
+    return {
+      id: 'dmsg_1',
+      threadId: thread.id,
+      kind: 'send',
+      payload: JSON.stringify({ kind: 'send', input: 'queued prompt', mode: 'auto', admission }),
+      createdAt: 1,
+      status: 'queued' as const,
+      paused: false,
+      sendAfter: null,
+      failureReason: null,
+      failureCount: 0,
+      retryAt: null,
+      groupBoundaryId: null,
+      updatedAt: 1
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(getConversationThread).mockReturnValue(thread);
+    vi.mocked(consumeDispatchAdmissionOverride).mockReset().mockReturnValue(true);
+    vi.mocked(getDeferredThreadMessage).mockReset();
+    vi.mocked(appendConversationThreadEvent).mockClear();
+  });
+
+  it('a plugin wait decision defers the send with a minted generation', async () => {
+    vi.mocked(getDispatchAdmissionGeneration).mockReturnValueOnce(null);
+    vi.mocked(recordDispatchAdmissionWait).mockReturnValueOnce({
+      threadId: thread.id, generation: 1, overrideable: true, reason: 'capacity', updatedAt: 1
+    });
+    const admit = vi.fn().mockResolvedValue({ action: 'wait', reason: 'capacity', overrideable: true, pluginId: 'platform-hooks-probe' });
+    const rpc = vi.fn();
+    const context = { ...ctx(rpc), plugins: { admitDispatch: admit } } as unknown as ProductHttpContext;
+    await sendConversationTurn(context, thread.id, 'queued prompt');
+    expect(rpc).not.toHaveBeenCalled();
+    const stored = vi.mocked(createDeferredThreadMessage).mock.calls.at(-1)![1];
+    expect(JSON.parse(stored.payload).admission).toEqual({
+      generation: 1, overrideable: true, reason: 'capacity', pluginId: 'platform-hooks-probe'
+    });
+  });
+
+  it('a plugin reject decision throws dispatch_rejected and never dispatches', async () => {
+    vi.mocked(getDispatchAdmissionGeneration).mockReturnValueOnce(null);
+    const admit = vi.fn().mockResolvedValue({ action: 'reject', message: 'blocked by policy' });
+    const rpc = vi.fn();
+    const context = { ...ctx(rpc), plugins: { admitDispatch: admit } } as unknown as ProductHttpContext;
+    await expect(sendConversationTurn(context, thread.id, 'queued prompt')).rejects.toMatchObject({
+      status: 409,
+      code: 'dispatch_rejected',
+      message: 'blocked by policy'
+    });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(createDeferredThreadMessage).not.toHaveBeenCalled();
+  });
+
+  it('Send-now override with the matching generation succeeds and audits outcome accepted', async () => {
+    const row = queuedAdmissionRow({ generation: 3, overrideable: true, reason: 'capacity', pluginId: 'platform-hooks-probe' });
+    vi.mocked(getDeferredThreadMessage).mockReturnValue(row);
+    vi.mocked(consumeDispatchAdmissionOverride).mockReturnValue(true);
+    const rpc = vi.fn().mockResolvedValue({ threadId: thread.id, accepted: true });
+    await sendHeldConversationMessage(ctx(rpc), thread.id, row.id, 'cli-session-1');
+    expect(consumeDispatchAdmissionOverride).toHaveBeenCalledWith(expect.anything(), { threadId: thread.id, generation: 3 });
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      threadId: thread.id,
+      type: 'dispatch/override/audited',
+      payload: expect.objectContaining({
+        overriddenBy: 'cli-session-1',
+        pluginId: 'platform-hooks-probe',
+        priorGeneration: 3,
+        outcome: 'accepted'
+      })
+    }));
+    expect(rpc).toHaveBeenCalled();
+  });
+
+  it('a duplicate Send-now click on an already-consumed generation is rejected as stale and audited', async () => {
+    const row = queuedAdmissionRow({ generation: 3, overrideable: true, reason: 'capacity' });
+    vi.mocked(getDeferredThreadMessage).mockReturnValue(row);
+    vi.mocked(consumeDispatchAdmissionOverride).mockReturnValue(false);
+    const rpc = vi.fn();
+    await expect(sendHeldConversationMessage(ctx(rpc), thread.id, row.id)).rejects.toMatchObject({
+      code: 'dispatch_generation_stale'
+    });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      type: 'dispatch/override/audited',
+      payload: expect.objectContaining({ overriddenBy: 'desktop-ui', outcome: 'stale' })
+    }));
+  });
+
+  it('a non-overrideable wait rejects Send-now without touching CAS or emitting audit telemetry', async () => {
+    const row = queuedAdmissionRow({ generation: 1, overrideable: false, reason: 'policy' });
+    vi.mocked(getDeferredThreadMessage).mockReturnValue(row);
+    const rpc = vi.fn();
+    await expect(sendHeldConversationMessage(ctx(rpc), thread.id, row.id)).rejects.toMatchObject({
+      code: 'dispatch_not_overrideable'
+    });
+    expect(consumeDispatchAdmissionOverride).not.toHaveBeenCalled();
+    expect(appendConversationThreadEvent).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      type: 'dispatch/override/audited'
+    }));
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
 
 describe('reviewed plan send admission', () => {
   it.each([2, 3])('rejects a revision changed at validation pass %s', async changedAt => {

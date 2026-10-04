@@ -60,6 +60,11 @@ export interface ExperimentalHostPaths {
   readonly dataDir: string;
   /** Temporary directory scoped to this worker process. */
   readonly tempDir: string;
+  /**
+   * Server-realpath-confined root of the project this call is bound to, or
+   * null for a call made without zcc.host.projectCall's projectId.
+   */
+  readonly projectRoot: string | null;
 }
 
 export type ExperimentalHostWatchChangeType = "create" | "update" | "delete";

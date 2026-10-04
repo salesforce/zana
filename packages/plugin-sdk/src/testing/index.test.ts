@@ -259,3 +259,57 @@ it('records assistant and scoped inbox calls, with unavailable defaults', async 
   expect(await zcc.sdk.inbox.read({ projectIds: ['p1'], entryId: 'r' })).toEqual({ content: 'report', truncated: false });
   expect(harness.sdk.callsTo('inbox.read')).toEqual([[{ projectIds: ['p1'], entryId: 'r' }], [{ projectIds: ['p1'], entryId: 'r' }]]);
 });
+
+describe('createFakePluginHost personas, teams, and admission/tool-policy hooks', () => {
+  it('exposes registered personas and teams on the harness', () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    zcc.agents.registerPersonas([{ id: 'notes:reviewer', name: 'Reviewer' }]);
+    zcc.agents.registerTeams([{ id: 'notes:squad', name: 'Squad', slots: [{ personaId: 'notes:reviewer' }] }]);
+    expect(harness.registeredPersonas).toMatchObject([{ id: 'notes:reviewer' }]);
+    expect(harness.registeredTeams).toMatchObject([{ id: 'notes:squad' }]);
+  });
+
+  it('invokes the registered dispatch-admission handler via the harness', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    expect(await harness.evaluateDispatchAdmission({
+      dispatchId: 'd1',
+      threadId: 't1',
+      projectId: 'p1',
+      generation: 1
+    })).toBeNull();
+    zcc.hooks.on(async (request) => ({
+      action: 'wait',
+      reason: `waiting on ${request.dispatchId}`,
+      overrideable: true
+    }));
+    await expect(harness.evaluateDispatchAdmission({
+      dispatchId: 'd1',
+      threadId: 't1',
+      projectId: 'p1',
+      generation: 1
+    })).resolves.toEqual({ action: 'wait', reason: 'waiting on d1', overrideable: true });
+  });
+
+  it('invokes the registered native-tool-policy handler via the harness', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    expect(await harness.evaluateToolPolicy({
+      invocationId: 'i1',
+      threadId: 't1',
+      projectId: 'p1',
+      providerId: 'claude-code',
+      toolName: 'bash',
+      input: {}
+    })).toBeNull();
+    zcc.hooks.onToolPolicy(async (request) => (
+      request.toolName === 'bash' ? { action: 'deny', reason: 'no shells' } : { action: 'allow' }
+    ));
+    await expect(harness.evaluateToolPolicy({
+      invocationId: 'i1',
+      threadId: 't1',
+      projectId: 'p1',
+      providerId: 'claude-code',
+      toolName: 'bash',
+      input: {}
+    })).resolves.toEqual({ action: 'deny', reason: 'no shells' });
+});
+});

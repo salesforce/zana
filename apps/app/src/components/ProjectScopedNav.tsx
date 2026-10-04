@@ -33,6 +33,7 @@ import { resolveIcon } from '../lib/resolveIcon.js';
 import { resolveProjectTabModule } from '../lib/libraryPlugin.js';
 import { listProjectTabs, projectTabView, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
+import { useProjectTabAvailability } from '../hooks/useProjectTabAvailability.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
   getInboxRoutePath,
@@ -123,6 +124,9 @@ export function ProjectScopedNav({
   const projectTabModules = useProjectTabModules();
   const slotTabs = useSyncExternalStore(subscribePluginSlots, listProjectTabs, listProjectTabs);
   const slotPluginIds = new Set(slotTabs.map((tab) => tab.pluginId));
+  const tabAvailability = useProjectTabAvailability(project.id, slotTabs, (tab) =>
+    projectTabView(tab, slotTabs)
+  );
   const diskProjectTabModules = projectTabModules.filter((module) => !slotPluginIds.has(module.id));
   const onProjects = nav === 'projects';
 
@@ -274,6 +278,7 @@ export function ProjectScopedNav({
     ...slotTabs.map((tab): SidebarRailItem => {
       const railId = projectTabView(tab, slotTabs);
       const Icon = resolveIcon(tab.icon);
+      const availability = tabAvailability[railId];
       return {
         kind: 'row',
         id: railId,
@@ -283,7 +288,9 @@ export function ProjectScopedNav({
         testId: `project-nav-${railId}`,
         active: onProjects && mode === railId,
         mobileGroup: 'tools',
-        splitContent: { kind: 'project-view', projectId: project.id, mode: railId }
+        splitContent: { kind: 'project-view', projectId: project.id, mode: railId },
+        disabled: availability?.available === false,
+        disabledReason: availability?.reason
       };
     }),
     {

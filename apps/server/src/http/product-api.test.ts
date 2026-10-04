@@ -1987,6 +1987,50 @@ describe('product HTTP plugins', () => {
     await expect(http.json()).resolves.toEqual({ path: '/ping' });
   });
 
+  it('evaluates project-tab availability through the real HTTP route (OBL-006)', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-tab-availability-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const evaluateProjectTabAvailability = vi.fn(async (args: { pluginId: string; tabId: string; projectId: string }) =>
+      args.projectId === 'enabled-project' ? { available: true } : { available: false, reason: 'not enabled for this project' }
+    );
+    server.ctx.plugins = { evaluateProjectTabAvailability } as never;
+
+    const available = await fetch(`${server.url}api/v1/plugins/hello/project-tab-availability`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tabId: 'main', projectId: 'enabled-project' })
+    });
+    await expect(available.json()).resolves.toEqual({ available: true });
+    expect(evaluateProjectTabAvailability).toHaveBeenCalledWith({ pluginId: 'hello', tabId: 'main', projectId: 'enabled-project' });
+
+    const unavailable = await fetch(`${server.url}api/v1/plugins/hello/project-tab-availability`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tabId: 'main', projectId: 'other-project' })
+    });
+    await expect(unavailable.json()).resolves.toEqual({ available: false, reason: 'not enabled for this project' });
+
+    const missingField = await fetch(`${server.url}api/v1/plugins/hello/project-tab-availability`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tabId: 'main' })
+    });
+    expect(missingField.status).toBe(400);
+    await expect(missingField.json()).resolves.toMatchObject({ ok: false, code: 'invalid-request' });
+
+    server.ctx.plugins = undefined as never;
+    const noPluginHost = await fetch(`${server.url}api/v1/plugins/hello/project-tab-availability`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tabId: 'main', projectId: 'enabled-project' })
+    });
+    expect(noPluginHost.status).toBe(503);
+    await expect(noPluginHost.json()).resolves.toMatchObject({ ok: false, code: 'plugin-host-unavailable' });
+  });
+
   it('lists enabled plugin skills on contributions and the project command catalog', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-skills-'));
     server = await startTestProductServer({

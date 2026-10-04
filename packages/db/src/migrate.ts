@@ -421,6 +421,37 @@ export function migrate(database: SqliteDatabase): void {
     )`,
     'CREATE INDEX provider_model_catalogs_fetched_idx ON provider_model_catalogs(fetched_at)'
   ]);
+  if (!applied.has(27)) applyVersion(database, 27, [
+    `CREATE TABLE plugin_interactions (
+      id TEXT PRIMARY KEY,
+      plugin_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      thread_id TEXT REFERENCES threads(id) ON DELETE SET NULL,
+      correlation_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'acknowledged', 'ack-timeout', 'resolved', 'cancelled')),
+      generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      acknowledged_at INTEGER,
+      terminal_at INTEGER,
+      expires_at INTEGER,
+      UNIQUE (plugin_id, project_id, correlation_id)
+    )`,
+    'CREATE INDEX plugin_interactions_pending_expiry_idx ON plugin_interactions(status, expires_at, created_at)',
+    'CREATE INDEX plugin_interactions_plugin_project_status_idx ON plugin_interactions(plugin_id, project_id, status, updated_at)',
+    'CREATE INDEX plugin_interactions_terminal_retention_idx ON plugin_interactions(terminal_at) WHERE terminal_at IS NOT NULL'
+  ]);
+  if (!applied.has(28)) applyVersion(database, 28, [
+    `CREATE TABLE dispatch_admission_generations (
+      thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+      generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0),
+      overrideable INTEGER NOT NULL DEFAULT 1,
+      reason TEXT,
+      updated_at INTEGER NOT NULL
+    )`
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

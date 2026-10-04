@@ -32,6 +32,7 @@ export interface DeferredSendPayload {
   mode: ThreadSendMode;
   execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: 'default' | 'fast'; acpMode?: string };
   senderThreadId?: string;
+  admission?: { generation: number; overrideable: boolean; reason: string; pluginId?: string };
 }
 
 function isDeferredSendPayload(value: unknown): value is DeferredSendPayload {
@@ -59,6 +60,7 @@ export function deferConversationSend(
     sendAfter?: number | null;
     paused?: boolean;
     groupBoundaryId?: string | null;
+    admission?: DeferredSendPayload['admission'];
   }
 ): DeferredThreadMessageRow {
   if (countDeferredThreadMessages(ctx.db, args.threadId) >= DEFERRED_THREAD_MESSAGE_CAP) {
@@ -77,6 +79,7 @@ export function deferConversationSend(
       mode: args.mode,
       ...(args.execution ? { execution: args.execution } : {}),
       ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {})
+      , ...(args.admission ? { admission: args.admission } : {})
     } satisfies DeferredSendPayload),
     sendAfter: args.sendAfter ?? null,
     paused: args.paused === true || isThreadQueueAutoSendPaused(ctx.db, args.threadId),

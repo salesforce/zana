@@ -61,7 +61,8 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
         stop: lifecycle.stop,
         notify: lifecycle.blocked?.replace(/\/blocked$/, ''),
         firstPrompt: lifecycle.firstPrompt,
-        subagent: lifecycle.subagentStart?.replace(/\/start$/, '')
+        subagent: lifecycle.subagentStart?.replace(/\/start$/, ''),
+        nativeTool: lifecycle.nativeTool
       } : {};
       const injection = auth
         ? this.authInjection(profile as LaunchProfileId, auth)

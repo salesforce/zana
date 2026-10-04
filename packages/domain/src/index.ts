@@ -97,6 +97,7 @@ export {
 
 
 export type * from './harness.js';
+export type * from './contracts.js';
 export * from './project.js';
 export * from './inbox.js';
 export type * from './library.js';

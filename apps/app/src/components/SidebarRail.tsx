@@ -51,6 +51,9 @@ export interface SidebarRailRow {
   onClick?: (event: { preventDefault: () => void; metaKey?: boolean; ctrlKey?: boolean }) => void;
   /** When set, cmd-click and drag-to-edge open this content in the split workspace. */
   splitContent?: PaneContent;
+  /** Row stays visible with navigation suppressed; `disabledReason` replaces the title tooltip. */
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export interface SidebarRailSection {
@@ -162,7 +165,13 @@ export function SidebarRail({
         badge={item.badge}
         running={item.running}
         to={item.to}
+        disabled={item.disabled}
+        disabledReason={item.disabledReason}
         onClick={(event) => {
+          if (item.disabled) {
+            event.preventDefault();
+            return;
+          }
           if (consumeNavClick()) {
             event.preventDefault();
             return;
@@ -307,6 +316,8 @@ function SplitEnabledNavRow({
       badge={item.badge}
       running={item.running}
       to={item.to}
+      disabled={item.disabled}
+      disabledReason={item.disabledReason}
       accessory={
         indicator.miniMap ? (
           <SplitPaneMiniMap slots={indicator.miniMap} label={`${item.label} split layout`} />
@@ -315,6 +326,10 @@ function SplitEnabledNavRow({
       onPointerDown={onPointerDown}
       onSplitPointerDown={splitContent ? onSplitPointerDown : undefined}
       onClick={(event) => {
+        if (item.disabled) {
+          event.preventDefault();
+          return;
+        }
         if (consumeNavClick()) {
           event.preventDefault();
           return;
@@ -345,6 +360,8 @@ function SidebarNavRow({
   running,
   to,
   accessory,
+  disabled,
+  disabledReason,
   onClick,
   onPointerDown,
   onSplitPointerDown,
@@ -360,6 +377,8 @@ function SidebarNavRow({
   running?: boolean;
   to: string;
   accessory?: ReactNode;
+  disabled?: boolean;
+  disabledReason?: string;
   onClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
   onPointerDown?: (event: ReactPointerEvent<HTMLAnchorElement>) => void;
   onSplitPointerDown?: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -372,15 +391,16 @@ function SidebarNavRow({
       to={to}
       {...rest}
       data-testid={testId}
-      className={`nav-item ${active ? 'active' : ''}`}
+      className={`nav-item ${active ? 'active' : ''} ${disabled ? 'nav-item--disabled' : ''}`}
       onClick={onClick}
       onPointerDown={(event) => {
         onPointerDown?.(event);
         onSplitPointerDown?.(event);
       }}
       aria-current={active ? 'page' : undefined}
+      aria-disabled={disabled || undefined}
       aria-label={collapsed ? label : undefined}
-      title={title ?? label}
+      title={disabled && disabledReason ? disabledReason : title ?? label}
     >
       <span className="nav-item-icon">
         {icon}

@@ -1,5 +1,5 @@
 import { remoteInteractionSurface } from '../services/threads/interaction-surface.js';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { CliCallbackRequestSchema, CLI_CALLBACK_MAX_BODY_BYTES } from '@zana-ai/zcc-contracts/cli-callbacks';
 import { CliCallbackError } from '../services/launch/cli-callback-authority.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -361,6 +361,21 @@ async function handleHostToolCall(
   const onClose = () => ac.abort();
   response.on('close', onClose);
   try {
+    const policy = await ctx.plugins.decideToolPolicy({
+      invocationId: randomUUID(),
+      threadId: thread.id,
+      projectId: thread.projectId,
+      providerId: thread.providerId,
+      toolName: parsed.data.tool,
+      input: (parsed.data.arguments ?? {}) as Record<string, unknown>
+    });
+    if (policy.action === 'deny') {
+      sendJson(response, 200, hostDaemonToolCallResponseSchema.parse({
+        success: false,
+        contentItems: [{ type: 'inputText', text: `Tool "${parsed.data.tool}" denied: ${policy.reason}` }]
+      }));
+      return true;
+    }
     const result = await ctx.plugins.invokeAgentTool({
       name: parsed.data.tool,
       input: parsed.data.arguments,

@@ -6,7 +6,7 @@ const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 
 export async function callPluginHostRpc(ctx: ProductHttpContext, args: {
   pluginId: string; artifact: PluginHostArtifactSnapshot; method: string; input: unknown;
-  hostId?: string; signal?: AbortSignal; timeoutMs?: number;
+  hostId?: string; signal?: AbortSignal; timeoutMs?: number; projectRoot?: string;
 }): Promise<unknown> {
   if (args.signal?.aborted) throw Object.assign(new Error('Host plugin call was cancelled'), { name: 'AbortError' });
   const encoded = JSON.stringify(args.input ?? null);
@@ -20,7 +20,8 @@ export async function callPluginHostRpc(ctx: ProductHttpContext, args: {
   try {
     const result = await ctx.hostHub.callHostOnlineRpc<{ output: unknown }>({ hostId, timeoutMs: timeoutMs + 6_000,
       command: { type: 'plugin.host.call', ...identity, method: args.method, input: JSON.parse(encoded), timeoutMs,
-        artifact: { digest: args.artifact.digest, byteLength: args.artifact.byteLength } }
+        artifact: { digest: args.artifact.digest, byteLength: args.artifact.byteLength },
+        ...(args.projectRoot ? { projectRoot: args.projectRoot } : {}) }
     });
     if (args.signal?.aborted) throw Object.assign(new Error('Host plugin call was cancelled'), { name: 'AbortError' });
     return result.output;

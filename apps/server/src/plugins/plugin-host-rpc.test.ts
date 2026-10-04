@@ -15,6 +15,13 @@ it('uses the selected host and server artifact generation, without leaking paths
   ctx.hostHub.resolveHostId.mockImplementation(() => { throw new Error('offline'); });
   await expect(callPluginHostRpc(ctx, args)).rejects.toThrow('offline'); expect(call).toHaveBeenCalledTimes(1);
 });
+it('forwards a server-resolved projectRoot, and omits it entirely when absent', async () => {
+  const { ctx, args, call } = fixture();
+  await callPluginHostRpc(ctx, { ...args, projectRoot: '/confined/project-root' });
+  expect(call.mock.calls[0][0]).toMatchObject({ command: { projectRoot: '/confined/project-root' } });
+  await callPluginHostRpc(ctx, args);
+  expect(call.mock.calls[1][0].command).not.toHaveProperty('projectRoot');
+});
 it('bounds inputs and deadlines and never sends an already-aborted call', async () => {
   const { ctx, args, call } = fixture();
   await expect(callPluginHostRpc(ctx, { ...args, signal: AbortSignal.abort() })).rejects.toMatchObject({ name: 'AbortError' });

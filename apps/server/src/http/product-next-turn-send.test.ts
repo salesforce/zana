@@ -8,6 +8,7 @@ import {
 } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import { controlCredentialForSession } from '@zana-ai/zcc-host-daemon/control-credential';
 
 let server: ProductServer;
 let dir: string;
@@ -46,9 +47,9 @@ function queue(target = threadId) {
     payload: JSON.stringify({ kind: 'send', mode: 'queue-if-active', input: 'selected message' })
   });
 }
-function send(id: string) {
+function send(id: string, callerHeaders?: Record<string, string>) {
   return fetch(`${server.url}api/v1/threads/${threadId}/next-turn/${id}/send`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+    method: 'POST', headers: { 'content-type': 'application/json', ...callerHeaders }, body: '{}'
   });
 }
 
@@ -87,4 +88,27 @@ it('surfaces host-offline errors without losing the selected message', async () 
   expect(response.status).toBe(502);
   await expect(response.json()).resolves.toMatchObject({ error: 'host_unavailable' });
   expect(getDeferredThreadMessage(server.ctx.db, { threadId, id: selected.id })).toEqual(selected);
+});
+
+it('rejects a forged caller-session credential (OBL-003) without sending or dropping the queued message', async () => {
+  const selected = queue();
+  const response = await send(selected.id, {
+    'x-zcc-caller-session-id': 'session-not-real',
+    'x-zcc-caller-credential': 'not-the-real-hmac'
+  });
+  expect(response.status).toBe(403);
+  await expect(response.json()).resolves.toMatchObject({ error: 'invalid_caller_credential' });
+  expect(server.ctx.hostHub.callHostOnlineRpc).not.toHaveBeenCalled();
+  expect(getDeferredThreadMessage(server.ctx.db, { threadId, id: selected.id })).toEqual(selected);
+});
+
+it('accepts a caller-session credential that verifies against the control-signing HMAC', async () => {
+  const selected = queue();
+  const sessionId = 'session-real-1';
+  const response = await send(selected.id, {
+    'x-zcc-caller-session-id': sessionId,
+    'x-zcc-caller-credential': controlCredentialForSession(sessionId)
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+  expect(server.ctx.hostHub.callHostOnlineRpc).toHaveBeenCalled();
 });

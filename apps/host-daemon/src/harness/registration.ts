@@ -83,6 +83,7 @@ export interface HarnessRegistration extends SdkHarnessRegistration<LaunchProfil
       readonly toolActivity?: string;
       readonly overseer?: string;
       readonly contentScreen?: string;
+      readonly nativeTool?: string;
     };
     readonly scope: 'local' | 'remote';
   }) => { readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> };

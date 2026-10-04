@@ -332,6 +332,40 @@ describe('PluginService', () => {
     expect(existsSync(pluginDir)).toBe(true);
   });
 
+  it('clears contributed personas/teams on disable and on remove', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'contrib'),
+      'contrib',
+      `export default function plugin(zcc) {
+        zcc.agents.registerPersonas([{ id: 'reviewer', name: 'Reviewer', baseProfile: 'claude' }]);
+        zcc.agents.registerTeams([{ name: 'Pair', slots: [] }]);
+      }\n`
+    );
+    const personaCalls: Array<[string, readonly unknown[]]> = [];
+    const teamCalls: Array<[string, readonly unknown[]]> = [];
+    const service = createPluginService({
+      dataDir,
+      bundledRoot: root(),
+      registerPersonas: (pluginId, personas) => personaCalls.push([pluginId, personas]),
+      registerTeams: (pluginId, teams) => teamCalls.push([pluginId, teams])
+    });
+    await service.install(pluginDir);
+    expect(personaCalls.at(-1)).toEqual(['contrib', [{ id: 'reviewer', name: 'Reviewer', baseProfile: 'claude' }]]);
+    expect(teamCalls.at(-1)).toEqual(['contrib', [{ name: 'Pair', slots: [] }]]);
+
+    await service.disable('contrib');
+    expect(personaCalls.at(-1)).toEqual(['contrib', []]);
+    expect(teamCalls.at(-1)).toEqual(['contrib', []]);
+
+    await service.enable('contrib');
+    expect(personaCalls.at(-1)).toEqual(['contrib', [{ id: 'reviewer', name: 'Reviewer', baseProfile: 'claude' }]]);
+
+    await service.remove('contrib');
+    expect(personaCalls.at(-1)).toEqual(['contrib', []]);
+    expect(teamCalls.at(-1)).toEqual(['contrib', []]);
+  });
+
   it('resolves mention providers and stamps contributions with label and triggers', async () => {
     const dataDir = root();
     const pluginDir = writePlugin(
@@ -361,6 +395,138 @@ describe('PluginService', () => {
     await expect(
       service.resolveMention({ pluginId: 'gone', itemId: 'note:1' })
     ).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/not running/) });
+  });
+
+  it('evaluates project tab availability: fail-open when unregistered, fail-closed with reason on error', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'soql-tab'),
+      'soql-tab',
+      `export default function plugin(zcc) {
+        zcc.ui.registerProjectTabAvailability({
+          tabId: 'soql',
+          evaluate: () => { throw new Error('no org connected'); }
+        });
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    await expect(
+      service.evaluateProjectTabAvailability({ pluginId: 'soql-tab', tabId: 'soql', projectId: 'p1' })
+    ).resolves.toEqual({ available: false, reason: 'no org connected' });
+    await expect(
+      service.evaluateProjectTabAvailability({ pluginId: 'soql-tab', tabId: 'other', projectId: 'p1' })
+    ).resolves.toEqual({ available: true });
+    await expect(
+      service.evaluateProjectTabAvailability({ pluginId: 'gone', tabId: 'soql', projectId: 'p1' })
+    ).resolves.toEqual({ available: true });
+  });
+
+  it('admitDispatch: a later plugin\'s reject wins even after an earlier plugin returns wait', async () => {
+    const dataDir = root();
+    const waiter = writePlugin(
+      join(root(), 'waiter'),
+      'waiter',
+      `export default function plugin(zcc) {
+        zcc.hooks.on(() => ({ action: 'wait', reason: 'queued', overrideable: true }));
+      }\n`
+    );
+    const rejecter = writePlugin(
+      join(root(), 'rejecter'),
+      'rejecter',
+      `export default function plugin(zcc) {
+        zcc.hooks.on(() => ({ action: 'reject', message: 'blocked' }));
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(waiter);
+    await service.install(rejecter);
+    await expect(
+      service.admitDispatch({ dispatchId: 'd1', threadId: 't1', projectId: 'p1', generation: 1 })
+    ).resolves.toEqual({ action: 'reject', message: 'blocked' });
+  });
+
+  it('admitDispatch: returns the first plugin\'s wait when no plugin rejects', async () => {
+    const dataDir = root();
+    const first = writePlugin(
+      join(root(), 'first-waiter'),
+      'first-waiter',
+      `export default function plugin(zcc) {
+        zcc.hooks.on(() => ({ action: 'wait', reason: 'queued-first', overrideable: true }));
+      }\n`
+    );
+    const second = writePlugin(
+      join(root(), 'second-waiter'),
+      'second-waiter',
+      `export default function plugin(zcc) {
+        zcc.hooks.on(() => ({ action: 'wait', reason: 'queued-second', overrideable: false }));
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(first);
+    await service.install(second);
+    await expect(
+      service.admitDispatch({ dispatchId: 'd1', threadId: 't1', projectId: 'p1', generation: 1 })
+    ).resolves.toEqual({ action: 'wait', reason: 'queued-first', overrideable: true, pluginId: 'first-waiter' });
+  });
+
+  it('decideToolPolicy: any plugin denying wins (deny-wins fan-out)', async () => {
+    const dataDir = root();
+    const allower = writePlugin(
+      join(root(), 'allower'),
+      'allower',
+      `export default function plugin(zcc) {
+        zcc.hooks.onToolPolicy(() => ({ action: 'allow' }));
+      }\n`
+    );
+    const denier = writePlugin(
+      join(root(), 'denier'),
+      'denier',
+      `export default function plugin(zcc) {
+        zcc.hooks.onToolPolicy(() => ({ action: 'deny', reason: 'policy' }));
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(allower);
+    await service.install(denier);
+    await expect(
+      service.decideToolPolicy({
+        invocationId: 'inv-1',
+        threadId: 't1',
+        projectId: 'p1',
+        providerId: 'claude-code',
+        toolName: 'bash',
+        input: {}
+      })
+    ).resolves.toEqual({ action: 'deny', reason: 'policy' });
+  });
+
+  it('decideToolPolicy: caches a decision per invocationId instead of re-invoking handlers', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'counter'),
+      'counter',
+      `export default function plugin(zcc) {
+        zcc.rpc.method('callCount', () => globalThis.__callCount ?? 0);
+        zcc.hooks.onToolPolicy(() => {
+          globalThis.__callCount = (globalThis.__callCount ?? 0) + 1;
+          return { action: 'allow' };
+        });
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    const request = {
+      invocationId: 'inv-shared',
+      threadId: 't1',
+      projectId: 'p1',
+      providerId: 'claude-code',
+      toolName: 'bash',
+      input: {}
+    };
+    await service.decideToolPolicy(request);
+    await service.decideToolPolicy(request);
+    await expect(service.callRpc('counter', 'callCount', {})).resolves.toBe(1);
   });
 
   it('rejects native addons and npm installs without ignore-scripts would be the spawn contract', async () => {

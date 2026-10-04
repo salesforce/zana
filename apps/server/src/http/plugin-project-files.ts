@@ -46,5 +46,5 @@ export async function writePluginProjectFile(ctx: ProductHttpContext, input: unk
   const args = write.parse(input);
   const target = resolveTarget(ctx, args);
   return ctx.hostHub.callHostOnlineRpc({ hostId: target.hostId, command: { type: 'host.write_file',
-    path: target.path, rootPath: target.rootPath, content: args.content, contentEncoding: 'utf8', expectedSha256: args.expectedSha256, createParents: false } });
+    path: target.path, rootPath: target.rootPath, content: args.content, contentEncoding: 'utf8', expectedSha256: args.expectedSha256, createParents: true } });
 }

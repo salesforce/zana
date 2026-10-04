@@ -213,3 +213,58 @@ Durable skills belong in `zcc.skills`. `agents.contributeSkills` is a runtime ex
 Do not put secrets in `extra`. Env values on `mcpServers` are written to `.mcp.json` only — the hub sees `envKeys`.
 
 Legacy `extension.json` is shimmed for one release via `shimLegacyExtensionManifest`.
+
+## Platform hooks
+
+Generic, provider-agnostic contracts a plugin can use without naming a
+specific host, provider, or extension (`@zana-ai/zcc-domain` /
+`@zana-ai/zcc-plugin-sdk/server`). Main resolves every id/path to local
+authority; a plugin only ever supplies identifiers and bounded JSON.
+
+| Surface | Purpose |
+| --- | --- |
+| `zcc.host.projectCall({ projectId, hostId?, method, input? })` | Project-bound host RPC. Main resolves `projectId` → host/root before the call reaches the host daemon; a plugin cannot forge a root path or a token. Returns `{ result }`. |
+| `zcc.ui.interactions.get/upsert/acknowledge/cancel` | Resumable, correlation-keyed interactions. `upsert({ projectId, correlationId, kind, payload })` is idempotent per correlation id. Bounded per plugin+project (100) and globally (10,000); exceeding the quota throws `INTERACTION_CAPACITY_EXCEEDED`. Ack/cancel free capacity; active rows are never evicted. Unacknowledged rows age out to `ack-timeout` after 30 days and are retained as a terminal tombstone for 7 more days. |
+| `zcc.hooks.on(handler)` | One message-dispatch admission handler per plugin. `handler({ dispatchId, threadId, projectId, generation })` returns `{ action: 'proceed' }`, `{ action: 'wait', reason, overrideable }`, or `{ action: 'reject', message }`. A `reject` is terminal and cannot be bypassed. A `wait` can only be overridden by an explicit, authenticated human Send-now action in the UI — a plugin, agent, or programmatic caller can never invoke the override itself. `overrideable: false` additionally blocks even the human override (force-flush included). |
+| `zcc.sdk.capabilities.forThread({ threadId })` / `forExecution({ executionId })` | Live capability descriptors (`{ id, available, reason? }`) derived from main's own registered host/provider state — never from a caller-supplied provider id, so a spoofed id cannot report a capability as available that main did not actually wire. `forExecution` always reports provider-specific descriptors (native tool hooks) as unavailable, since an execution can span more than one provider slot. |
+| `zcc.ui.registerProjectTabAvailability({ tabId, evaluate })` | `evaluate({ projectId })` returns `{ available, reason? }` for a `projectTab` registered by the same plugin. An unavailable tab stays visible, disabled, with the bounded `reason` shown to the user — it never silently disappears. A throwing/erroring `evaluate` degrades to unavailable rather than crashing the tab. |
+| `zcc.agents.registerPersonas(personas)` / `registerTeams(teams)` | Namespaced persona/team contributions (`ext:<pluginId>:<slug>` ids), host-stamped provenance. Replaces this plugin's own prior generation wholesale on each call; cannot override a user or built-in record. Cleared automatically on uninstall, disable, or crash. |
+
+Lifecycle events (`PluginThreadEvent` from `zcc.events.on`) now always carry a
+host-generated `id`, a process-local `sequence`, and a `timestamp` — do not
+derive identity from event content, and do not expect a durable replay stream;
+delivery is best-effort.
+
+### Native tool policy (Claude / Codex only)
+
+A native pre/post tool hook is capability-gated per provider family and only
+exists for Claude and Codex today (`zcc.sdk.capabilities.forThread` reports
+`tool-before-native` / `tool-after-native` availability per thread). Every
+other provider reports those two capabilities unavailable — there is no
+native hook to register against. The lifecycle for an intercepted invocation
+is strictly ordered and exactly-once-terminal:
+
+```
+announced -> awaiting-decision -> allowed|denied -> executing -> succeeded|failed|cancelled
+```
+
+A `denied` decision blocks the tool's side effect before it starts; a
+transport failure or decision timeout fails closed (denied), never open. Each
+`invocationId` is unique per provider turn/tool call and deduplicated at the
+server boundary, so a retried request with the same id replays the same
+decision rather than re-deciding.
+
+| Provider | Native before/after | Delivery surface |
+| --- | --- | --- |
+| Claude (Modern) | native | `agents.registerTool` |
+| Claude (PTY / CLI Agent) | native | `zcc.mcpServers` |
+| Codex (Modern) | native | `agents.registerTool` |
+| Codex (PTY / CLI Agent) | native | `zcc.mcpServers` |
+| Cursor | unsupported | — |
+| OpenCode | unsupported | — |
+
+A registered agent tool (`agents.registerTool`) is reachable from Modern
+Claude/Codex threads; `zcc.mcpServers` is the matching path for Claude/Codex
+PTY and CLI Agent sessions. Declare both if a tool must work on every
+surface listed as native above — Threads do not read `zcc.mcpServers`, and
+PTY/CLI sessions do not read `agents.registerTool`.

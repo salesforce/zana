@@ -13,6 +13,12 @@ import {
   parsePluginAgentToolPresentation,
   type PluginAgentToolPresentation
 } from './plugin-agent-tool-presentation.js';
+import type {
+  DispatchAdmissionContract,
+  PluginCapabilityIntrospection,
+  PluginInteractions,
+  ProjectTabAvailabilityContract
+} from './contracts.js';
 
 export {
   PLUGIN_AGENT_STATUS_LABEL_MAX_CHARS,
@@ -195,7 +201,18 @@ export type PluginThreadEventName =
   | 'thread.archived'
   | 'thread.deleted';
 
+/** Bump when a breaking shape change lands on {@link PluginThreadEvent}; additive fields do not require a bump. */
+export const PLUGIN_THREAD_EVENT_SCHEMA_VERSION = 1;
+
 export interface PluginThreadEvent {
+  /** Host-generated event id. Do not derive identity from event content. */
+  id: string;
+  /** {@link PLUGIN_THREAD_EVENT_SCHEMA_VERSION} at emission time, so a consumer can detect a future breaking shape change. */
+  schemaVersion: number;
+  /** Host-assigned, process-local ordering sequence. */
+  sequence: number;
+  /** Host clock timestamp in epoch milliseconds. */
+  timestamp: number;
   name: PluginThreadEventName;
   threadId: string;
   projectId?: string;
@@ -214,9 +231,44 @@ export interface PluginThreadEvent {
   hadAttachments?: boolean;
 }
 
+/** Input accepted by core before it adds trusted lifecycle metadata. */
+export type PluginThreadEventInput = Omit<PluginThreadEvent, 'id' | 'schemaVersion' | 'sequence' | 'timestamp'>;
+
 export interface PluginEvents {
   on(name: PluginThreadEventName, handler: (event: PluginThreadEvent) => void | Promise<void>): void;
 }
+
+/** Host-owned dispatch identity exposed to admission handlers. Never includes prompt content. */
+export type PluginDispatchAdmissionRequest = DispatchAdmissionContract;
+
+export interface PluginHooks {
+  on(handler: (
+    request: PluginDispatchAdmissionRequest
+  ) => import('@zana-ai/zcc-domain').DispatchAdmissionDecision | Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>): void;
+  /**
+   * Register this plugin's native-tool-policy decision handler (OBL-004). Fires
+   * for every native-provider (Claude/Codex) tool invocation on a thread this
+   * plugin can see, before the tool's side effect starts. Only one handler per
+   * plugin — same single-handler contract as {@link on}.
+   */
+  onToolPolicy(handler: (
+    request: PluginToolPolicyRequest
+  ) => PluginToolPolicyDecision | Promise<PluginToolPolicyDecision>): void;
+}
+
+/** Host-owned native-tool invocation identity exposed to policy handlers. Input is redacted (secrets stripped) before it ever reaches a plugin. */
+export interface PluginToolPolicyRequest {
+  invocationId: string;
+  threadId: string;
+  projectId: string;
+  providerId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+}
+
+export type PluginToolPolicyDecision =
+  | { action: 'allow' }
+  | { action: 'deny'; reason: string };
 
 export interface PluginSdkThreadSummary {
   id: string;
@@ -538,6 +590,7 @@ export interface PluginSdk {
   library: PluginSdkLibrary;
   providers: PluginSdkProviders;
   experimental_desktopBrowsers: PluginSdkDesktopBrowsers;
+  capabilities: PluginCapabilityIntrospection;
 }
 
 export interface PluginSdkDesktopBrowserScope {
@@ -623,6 +676,7 @@ export interface PluginHostClient {
 
 export interface PluginHostApi {
   experimental_call(method: string, input?: unknown): Promise<unknown>;
+  projectCall(request: import('@zana-ai/zcc-domain').HostRpcContract): Promise<import('@zana-ai/zcc-domain').HostRpcResultContract>;
   experimental_client(args?: { contract?: unknown }): PluginHostClient;
 }
 
@@ -835,6 +889,8 @@ export interface PluginAgents {
   ): void;
   contributeSkills(rootPaths: string[]): void;
   registerTool(registration: PluginAgentToolRegistration): void;
+  registerPersonas(personas: readonly import('@zana-ai/zcc-domain/product').PersonaInput[]): void;
+  registerTeams(teams: readonly import('@zana-ai/zcc-domain/product').TeamInput[]): void;
   experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
   experimental_registerPtyHarness(declaration: PluginPtyHarnessDeclaration): PluginProviderHandle;
   configure(
@@ -919,12 +975,27 @@ export interface PluginMentionProviderRegistration {
   resolve(itemId: string): PluginMentionResolveResult | Promise<PluginMentionResolveResult>;
 }
 
+/** Main supplies `projectId`; the plugin's own `tabId` is never ambiguous across plugins. */
+export interface PluginProjectTabAvailabilityContext {
+  projectId: string;
+}
+
+export interface PluginProjectTabAvailabilityRegistration {
+  /** Must match the `id` of a tab registered via a project-tab slot. */
+  tabId: string;
+  evaluate(
+    ctx: PluginProjectTabAvailabilityContext
+  ): ProjectTabAvailabilityContract | Promise<ProjectTabAvailabilityContract>;
+}
+
 export interface PluginUi {
   requestInput(
     request: PluginInteractionRequest,
     options?: { signal?: AbortSignal }
   ): Promise<PluginInteractionResult>;
   registerMentionProvider(registration: PluginMentionProviderRegistration): void;
+  registerProjectTabAvailability(registration: PluginProjectTabAvailabilityRegistration): void;
+  readonly interactions: PluginInteractions;
 }
 
 export interface PluginStatusApi {
@@ -943,6 +1014,8 @@ export interface ZccPluginApi {
   readonly cli: PluginCli;
   readonly agents: PluginAgents;
   readonly events: PluginEvents;
+  /** Server-owned dispatch checkpoint. Only an explicit human Send-now bypasses a wait. */
+  readonly hooks: PluginHooks;
   readonly ui: PluginUi;
   readonly status: PluginStatusApi;
   readonly sdk: PluginSdk;

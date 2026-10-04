@@ -54,6 +54,7 @@ export interface FakePluginHarness {
     agentTools: import('../server.js').PluginAgentToolRecord[];
   };
   mentionProviders: import('../server.js').PluginMentionProviderRegistration[];
+  projectTabAvailability: import('../server.js').PluginProjectTabAvailabilityRegistration[];
   agentConfigurers: Array<
     (
       ctx: import('../server.js').PluginAgentConfigureContext
@@ -64,6 +65,14 @@ export interface FakePluginHarness {
   >;
   cli: import('../server.js').PluginCliRegistration | null;
   agentTools: import('../server.js').PluginAgentToolRecord[];
+  registeredPersonas: import('@zana-ai/zcc-domain/product').PersonaInput[];
+  registeredTeams: import('@zana-ai/zcc-domain/product').TeamInput[];
+  evaluateDispatchAdmission(
+    request: import('../server.js').PluginDispatchAdmissionRequest
+  ): Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision | null>;
+  evaluateToolPolicy(
+    request: import('../server.js').PluginToolPolicyRequest
+  ): Promise<import('../server.js').PluginToolPolicyDecision | null>;
   httpRoutes: Array<{
     method: import('../server.js').PluginHttpMethod;
     path: string;
@@ -227,10 +236,24 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const providers: FakePluginHarness['providers'] = [];
   const ptyHarnesses: FakePluginHarness['ptyHarnesses'] = [];
   const mentionProviders: FakePluginHarness['mentionProviders'] = [];
+  const projectTabAvailability: FakePluginHarness['projectTabAvailability'] = [];
   const agentConfigurers: FakePluginHarness['agentConfigurers'] = [];
   const agentTools: import('../server.js').PluginAgentToolRecord[] = [];
+  const registeredPersonas: import('@zana-ai/zcc-domain/product').PersonaInput[] = [];
+  const registeredTeams: import('@zana-ai/zcc-domain/product').TeamInput[] = [];
+  const interactions = new Map<string, import('@zana-ai/zcc-domain').InteractionContract>();
   const httpRoutes: FakePluginHarness['httpRoutes'] = [];
   const events: FakePluginHarness['events'] = [];
+  const dispatchAdmissionHandlers: Array<
+    (
+      request: import('../server.js').PluginDispatchAdmissionRequest
+    ) => import('@zana-ai/zcc-domain').DispatchAdmissionDecision | Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>
+  > = [];
+  const toolPolicyHandlers: Array<
+    (
+      request: import('../server.js').PluginToolPolicyRequest
+    ) => import('../server.js').PluginToolPolicyDecision | Promise<import('../server.js').PluginToolPolicyDecision>
+  > = [];
   let cliRegistration: import('../server.js').PluginCliRegistration | null = null;
   const disposeHooks: Array<() => void | Promise<void>> = [];
   let needsConfiguration: string | null = null;
@@ -339,9 +362,29 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         events.push({ name, handler });
       }
     },
+    hooks: {
+      on(handler) {
+        assertLive();
+        if (dispatchAdmissionHandlers.length > 0) throw new Error('only one dispatch admission handler is allowed per plugin');
+        dispatchAdmissionHandlers.push(handler);
+      },
+      onToolPolicy(handler) {
+        assertLive();
+        if (toolPolicyHandlers.length > 0) throw new Error('only one tool policy handler is allowed per plugin');
+        toolPolicyHandlers.push(handler);
+      }
+    },
     sdk: {
       assistant: {
         complete: async (args) => invokeSdk('assistant.complete', async () => { throw new Error('zcc.sdk is not available in this runtime'); }, args) as ReturnType<ZccPluginApi['sdk']['assistant']['complete']>
+      },
+      capabilities: {
+        async forThread() {
+          return { capabilities: [] };
+        },
+        async forExecution() {
+          return { capabilities: [] };
+        }
       },
       system: { defaultHost: async () => invokeSdk('system.defaultHost', async () => null, undefined) as Promise<{ id: string } | null> },
       hosts: {
@@ -560,6 +603,19 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     host: {
+      async projectCall(request) {
+        const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : '';
+        const method = typeof request?.method === 'string' ? request.method.trim() : '';
+        if (!projectId || !method || !options?.experimental_callHostRpc) {
+          throw new Error('invalid project host call');
+        }
+        const result = await options.experimental_callHostRpc({
+          method,
+          input: request.input,
+          hostId: request.hostId ?? 'test'
+        });
+        return { result: (result ?? null) as import('@zana-ai/zcc-domain').ContractJson };
+      },
       async experimental_call(method, input) {
         if (!options?.experimental_callHostRpc) {
           throw new Error('zcc.host is not available in this runtime');
@@ -676,6 +732,16 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       },
       configure(provider) {
         agentConfigurers.push(provider);
+      },
+      registerPersonas(personas) {
+        assertLive();
+        registeredPersonas.length = 0;
+        registeredPersonas.push(...personas);
+      },
+      registerTeams(teams) {
+        assertLive();
+        registeredTeams.length = 0;
+        registeredTeams.push(...teams);
       }
     },
     ui: {
@@ -688,6 +754,63 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       registerMentionProvider(registration) {
         assertLive();
         mentionProviders.push(registration);
+      },
+      registerProjectTabAvailability(registration) {
+        assertLive();
+        const index = projectTabAvailability.findIndex((row) => row.tabId === registration.tabId);
+        if (index >= 0) projectTabAvailability[index] = registration;
+        else projectTabAvailability.push(registration);
+      },
+      interactions: {
+        async get(interactionId) {
+          assertLive();
+          return interactions.get(interactionId) ?? null;
+        },
+        async upsert(input) {
+          assertLive();
+          const existing = [...interactions.values()].find(
+            (row) => row.projectId === input.projectId && row.correlationId === input.correlationId
+          );
+          if (existing) return existing;
+          const now = Date.now();
+          const row: import('@zana-ai/zcc-domain').InteractionContract = {
+            id: `interaction_${interactions.size + 1}`,
+            pluginId,
+            projectId: input.projectId,
+            correlationId: input.correlationId,
+            kind: input.kind,
+            payload: input.payload,
+            status: 'pending',
+            generation: 1,
+            createdAt: now,
+            updatedAt: now,
+            acknowledgedAt: null,
+            terminalAt: null,
+            expiresAt: null
+          };
+          interactions.set(row.id, row);
+          return row;
+        },
+        async acknowledge(request) {
+          assertLive();
+          const existing = interactions.get(request.interactionId);
+          if (!existing || existing.generation !== request.generation) {
+            throw new Error('Interaction acknowledgement is stale or no longer pending');
+          }
+          const next = { ...existing, status: 'acknowledged' as const, generation: existing.generation + 1, acknowledgedAt: Date.now(), updatedAt: Date.now() };
+          interactions.set(next.id, next);
+          return next;
+        },
+        async cancel(request) {
+          assertLive();
+          const existing = interactions.get(request.interactionId);
+          if (!existing || existing.generation !== request.generation) {
+            throw new Error('Interaction cancellation is stale or already terminal');
+          }
+          const next = { ...existing, status: 'cancelled' as const, generation: existing.generation + 1, terminalAt: Date.now(), updatedAt: Date.now() };
+          interactions.set(next.id, next);
+          return next;
+        }
       }
     },
     status: {
@@ -716,11 +839,22 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       return { providerRegistrations: providers, agentTools };
     },
     mentionProviders,
+    projectTabAvailability,
     agentConfigurers,
     get cli() {
       return cliRegistration;
     },
     agentTools,
+    registeredPersonas,
+    registeredTeams,
+    async evaluateDispatchAdmission(request) {
+      const handler = dispatchAdmissionHandlers[0];
+      return handler ? handler(request) : null;
+    },
+    async evaluateToolPolicy(request) {
+      const handler = toolPolicyHandlers[0];
+      return handler ? handler(request) : null;
+    },
     httpRoutes,
     events,
     sdk: {
@@ -765,6 +899,10 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     async emitThreadEvent(name, payload) {
       const thread = payload.thread;
       const event: import('../server.js').PluginThreadEvent = {
+        id: `test-event-${Date.now()}`,
+        schemaVersion: 1,
+        sequence: 1,
+        timestamp: Date.now(),
         name,
         threadId: thread?.id ?? '',
         ...(thread?.projectId ? { projectId: thread.projectId } : {}),
