@@ -114,7 +114,10 @@ describe('host internal plugin tool-call', () => {
       turnId: 'turn-1', callId: 'call-1', tool: 'plugin_query',
       arguments: { desktopPresentation: true, threadId: 'forged-thread' }
     }), captured.response, {
-      config: { getConfig: () => ({}) }, db: {}, plugins: { invokeAgentTool }
+      config: { getConfig: () => ({}) }, db: {}, plugins: {
+        invokeAgentTool,
+        decideToolPolicy: vi.fn(async () => ({ action: 'allow' }))
+      }
     } as unknown as ProductHttpContext);
     expect(captured.status).toBe(200);
     expect(invokeAgentTool).toHaveBeenCalledWith(expect.objectContaining({
