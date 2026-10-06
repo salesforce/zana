@@ -124,6 +124,10 @@ const identityConfig = {
   harnessEnabled: (_input: AppConfig, id: NonNullable<AppConfig['defaultHarness']>) => id === 'claude'
 };
 
+function rejectUiSend(): boolean {
+  return false;
+}
+
 export function createProductHttpContext(
   options: CreateProductHttpContextOptions
 ): ProductHttpContext {
@@ -337,6 +341,11 @@ export function createProductHttpContext(
     }
   });
 
+  let verifyUiSend: ProductHttpContext['verifyUiSend'] = rejectUiSend;
+  if (options.uiSendSecret && options.uiSendSecret.length >= 32) {
+    verifyUiSend = createUiSendVerifier(options.uiSendSecret);
+  }
+
   ctx = {
     productInstanceId: readProductInstanceId(dataDir),
     origins: options.origins,
@@ -358,8 +367,7 @@ export function createProductHttpContext(
     closeSummary,
     terminalSessions,
     pluginHostArtifacts: new PluginHostArtifactRegistry(),
-    verifyUiSend: options.uiSendSecret && options.uiSendSecret.length >= 32
-      ? createUiSendVerifier(options.uiSendSecret) : () => false,
+    verifyUiSend,
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);

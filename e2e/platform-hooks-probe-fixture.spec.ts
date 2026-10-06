@@ -226,7 +226,9 @@ test('platform-hooks-probe fixture exercises project-tab availability and the ag
       catch (error) { return { message: error instanceof Error ? error.message : String(error) }; }
     }, { id: dispatchThread.id, itemId: lockedItemId });
     const lockedSendNow = await lockedSendNowPending;
-    expect(lockedSendNow).toMatchObject({ ok: false });
+    expect(lockedSendNow).toMatchObject({ message: expect.stringContaining('This queued message cannot be sent now') });
+    const stillQueued = await win.evaluate(async (id) => (await fetch(`/api/v1/threads/${id}/next-turn`)).json(), dispatchThread.id);
+    expect(stillQueued.items).toContainEqual(expect.objectContaining({ id: lockedItemId }));
     await win.evaluate(async ({ id, itemId }) => {
       await fetch(`/api/v1/threads/${id}/next-turn/${itemId}`, {
         method: 'DELETE',
