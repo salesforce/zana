@@ -36,7 +36,7 @@
     "@zana-ai/zcc-provider-bridge-protocol": "workspace:*",
     "@earendil-works/pi-ai": "0.84.0",
     "@earendil-works/pi-coding-agent": "0.84.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

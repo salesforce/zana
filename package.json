@@ -65,7 +65,7 @@
     "mobile:test": "vitest run packages/mobile-bridge/test apps/mobile/src apps/server/src/mobile apps/app/src/lib/native-shell.test.ts apps/app/src/components/MobileShellChrome.test.tsx apps/app/src/components/composer/ThreadComposerToolbar.test.tsx apps/app/src/components/thread/ThreadTimeline.scroll.test.tsx apps/app/src/components/thread/timeline/thread-message-sent.test.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "better-sqlite3": "^12.11.1",
     "croner": "^10.0.1",
     "electron-updater": "^6.8.9",

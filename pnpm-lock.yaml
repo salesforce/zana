@@ -18,8 +18,8 @@ importers:
   .:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.30.0
-        version: 1.30.0(supports-color@8.1.1)(zod@4.6.5)
+        specifier: ^1.31.0
+        version: 1.31.0(supports-color@8.1.1)(zod@4.6.5)
       better-sqlite3:
         specifier: ^12.11.1
         version: 12.11.1
@@ -609,19 +609,19 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.197
-        version: 0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(zod@4.6.5)
+        version: 0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(zod@4.6.5)
       '@anthropic-ai/sdk':
         specifier: ^0.93.0
         version: 0.93.0(zod@4.6.5)
       '@earendil-works/pi-ai':
         specifier: 0.84.0
-        version: 0.84.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
+        version: 0.84.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
       '@earendil-works/pi-coding-agent':
         specifier: 0.84.0
-        version: 0.84.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
+        version: 0.84.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
       '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.30.0(supports-color@8.1.1)(zod@4.6.5)
+        specifier: ^1.31.0
+        version: 1.31.0(supports-color@8.1.1)(zod@4.6.5)
       '@zana-ai/zcc-agent-process-utils':
         specifier: workspace:*
         version: link:../agent-process-utils
@@ -1104,8 +1104,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.30.0(supports-color@8.1.1)(zod@4.6.5)
+        specifier: ^1.31.0
+        version: 1.31.0(supports-color@8.1.1)(zod@4.6.5)
       '@types/node':
         specifier: ^26.2.0
         version: 26.6.1
@@ -1506,10 +1506,10 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.245
-        version: 0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(zod@4.6.5)
+        version: 0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(zod@4.6.5)
       '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.30.0(supports-color@8.1.1)(zod@4.6.5)
+        specifier: ^1.31.0
+        version: 1.31.0(supports-color@8.1.1)(zod@4.6.5)
       '@zana-ai/zcc-plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -1577,10 +1577,10 @@ importers:
     dependencies:
       '@earendil-works/pi-ai':
         specifier: 0.84.0
-        version: 0.84.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
+        version: 0.84.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
       '@earendil-works/pi-coding-agent':
         specifier: 0.84.0
-        version: 0.84.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
+        version: 0.84.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
     devDependencies:
       '@types/react':
         specifier: ^19.0.0
@@ -3892,8 +3892,8 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@modelcontextprotocol/sdk@1.30.0':
-    resolution: {integrity: sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==}
+  '@modelcontextprotocol/sdk@1.31.0':
+    resolution: {integrity: sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@cfworker/json-schema': ^4.1.1
@@ -11398,10 +11398,10 @@ snapshots:
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.276':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(zod@4.6.5)':
+  '@anthropic-ai/claude-agent-sdk@0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@anthropic-ai/sdk': 0.93.0(zod@4.6.5)
-      '@modelcontextprotocol/sdk': 1.30.0(supports-color@8.1.1)(zod@4.6.5)
+      '@modelcontextprotocol/sdk': 1.31.0(supports-color@8.1.1)(zod@4.6.5)
       zod: 4.6.5
     optionalDependencies:
       '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.276
@@ -12188,9 +12188,9 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
-  '@earendil-works/pi-agent-core@0.84.4(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)':
+  '@earendil-works/pi-agent-core@0.84.4(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)':
     dependencies:
-      '@earendil-works/pi-ai': 0.84.4(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
+      '@earendil-works/pi-ai': 0.84.4(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
       '@earendil-works/pi-telemetry': 0.84.4
       diff: 8.0.4
       ignore: 7.0.5
@@ -12204,12 +12204,12 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.84.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)':
+  '@earendil-works/pi-ai@0.84.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.6.5)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
       '@earendil-works/pi-telemetry': 0.84.4
-      '@google/genai': 1.52.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)
+      '@google/genai': 1.52.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)
       '@mistralai/mistralai': 2.2.6(@opentelemetry/api@1.9.0)
       '@opentelemetry/api': 1.9.0
       '@smithy/node-http-handler': 4.7.3
@@ -12226,12 +12226,12 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.84.4(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)':
+  '@earendil-works/pi-ai@0.84.4(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.6.5)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
       '@earendil-works/pi-telemetry': 0.84.4
-      '@google/genai': 1.52.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)
+      '@google/genai': 1.52.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)
       '@smithy/node-http-handler': 4.7.3
       http-proxy-agent: 7.0.2(supports-color@8.1.1)
       https-proxy-agent: 7.0.6(supports-color@8.1.1)
@@ -12250,10 +12250,10 @@ snapshots:
     dependencies:
       '@earendil-works/pi-protocol': 0.84.4
 
-  '@earendil-works/pi-coding-agent@0.84.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)':
+  '@earendil-works/pi-coding-agent@0.84.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)':
     dependencies:
-      '@earendil-works/pi-agent-core': 0.84.4(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
-      '@earendil-works/pi-ai': 0.84.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
+      '@earendil-works/pi-agent-core': 0.84.4(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
+      '@earendil-works/pi-ai': 0.84.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.5)
       '@earendil-works/pi-client': 0.84.4
       '@earendil-works/pi-protocol': 0.84.4
       '@earendil-works/pi-tui': 0.84.4
@@ -13224,14 +13224,14 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)':
+  '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5))(supports-color@8.1.1)':
     dependencies:
       google-auth-library: 10.9.1(supports-color@8.1.1)
       p-retry: 4.6.2
       protobufjs: 7.6.6
       ws: 8.21.3
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.30.0(supports-color@8.1.1)(zod@4.6.5)
+      '@modelcontextprotocol/sdk': 1.31.0(supports-color@8.1.1)(zod@4.6.5)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -13494,7 +13494,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@modelcontextprotocol/sdk@1.30.0(supports-color@8.1.1)(zod@4.6.5)':
+  '@modelcontextprotocol/sdk@1.31.0(supports-color@8.1.1)(zod@4.6.5)':
     dependencies:
       '@hono/node-server': 2.1.1(hono@4.13.8)
       ajv: 8.20.0
