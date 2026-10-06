@@ -45,6 +45,7 @@ export default function plugin(zcc: ZccPluginApi) {
   zcc.log.info('platform-hooks-probe loaded');
 
   let dispatchSelection: DispatchSelection = { kind: 'proceed' };
+  let dispatchEvents: Array<{ dispatchId: string; generation: number; decision: DispatchAdmissionDecision }> = [];
   let toolPolicySelection: ToolPolicySelection = 'allow';
   let toolPolicyEvents: ToolPolicyEventRow[] = [];
 
@@ -109,14 +110,18 @@ export default function plugin(zcc: ZccPluginApi) {
     const delayMs = typeof record?.delayMs === 'number' ? record.delayMs : 2000;
     const probeId = typeof record?.probeId === 'string' ? record.probeId : '';
     if (!probeId) throw new Error('probeId is required');
-    const defaultHost = await zcc.sdk.system.defaultHost();
-    if (!defaultHost) throw new Error('no enrolled host is available for this probe');
-    const client = zcc.host.experimental_client();
     const controller = new AbortController();
     slowProbeControllers.set(probeId, controller);
     try {
+      const defaultHost = await zcc.sdk.system.defaultHost();
+      if (!defaultHost) throw new Error('no enrolled host is available for this probe');
+      // The isolated plugin worker proxies this factory asynchronously.
+      const client = await zcc.host.experimental_client();
       const result = await client.call('slowProbe', { delayMs }, { hostId: defaultHost.id, signal: controller.signal });
       return result;
+    } catch (error) {
+      if (controller.signal.aborted) return { cancelled: true };
+      throw error;
     } finally {
       slowProbeControllers.delete(probeId);
     }
@@ -178,6 +183,7 @@ export default function plugin(zcc: ZccPluginApi) {
     return { ok: true };
   });
   zcc.rpc.method('getDispatchSelection', () => dispatchSelection);
+  zcc.rpc.method('dispatchEventsList', () => dispatchEvents);
 
   zcc.hooks.on((request) => {
     const selection = dispatchSelection;
@@ -186,11 +192,13 @@ export default function plugin(zcc: ZccPluginApi) {
       : selection.kind === 'wait'
         ? { action: 'wait', reason: selection.reason, overrideable: selection.overrideable }
         : { action: 'reject', message: selection.message };
-    zcc.realtime.publish('hooks-probe-dispatch-event', {
+    const event = {
       dispatchId: request.dispatchId,
       generation: request.generation,
       decision
-    });
+    };
+    dispatchEvents = [...dispatchEvents, event].slice(-20);
+    zcc.realtime.publish('hooks-probe-dispatch-event', event);
     return decision;
   });
 
@@ -369,6 +377,9 @@ export default function plugin(zcc: ZccPluginApi) {
     }
     await zcc.storage.kv.set(LIFECYCLE_KEY, []);
     dispatchSelection = { kind: 'proceed' };
+    dispatchEvents = [];
+    toolPolicySelection = 'allow';
+    toolPolicyEvents = [];
     return { ok: true };
   });
 }

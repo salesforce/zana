@@ -92,15 +92,39 @@ describe('platform-hooks-probe server', () => {
     await expect(harness.callRpc('setDispatchSelection', { foo: 'bar' })).rejects.toThrow('invalid dispatch selection');
   });
 
+  it('lists observed dispatches and clears them on reset', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'platform-hooks-probe' });
+    let admission!: (request: { dispatchId: string; threadId: string; projectId: string; generation: number }) => unknown;
+    zcc.hooks.on = ((handler: typeof admission) => { admission = handler; }) as never;
+    harness.sdk.stub('files.readProject', () => { throw new Error('not found'); });
+    harness.sdk.stub('files.writeProject', () => ({ outcome: 'written' as const, sha256: 'sha-1' }));
+    await plugin(zcc);
+    await harness.callRpc('setDispatchSelection', { kind: 'wait', overrideable: true, reason: 'test wait' });
+    await admission({ dispatchId: 'dispatch-1', threadId: 'thread-1', projectId: PROJECT_ID, generation: 1 });
+    await expect(harness.callRpc('dispatchEventsList', undefined)).resolves.toEqual([{
+      dispatchId: 'dispatch-1', generation: 1, decision: { action: 'wait', overrideable: true, reason: 'test wait' }
+    }]);
+    for (let index = 2; index <= 23; index++) {
+      await admission({ dispatchId: `dispatch-${index}`, threadId: 'thread-1', projectId: PROJECT_ID, generation: index });
+    }
+    const recent = await harness.callRpc('dispatchEventsList', undefined) as Array<{ dispatchId: string }>;
+    expect(recent).toHaveLength(20);
+    expect(recent[0]?.dispatchId).toBe('dispatch-4');
+    await harness.callRpc('resetProbeState', { projectId: PROJECT_ID });
+    await expect(harness.callRpc('dispatchEventsList', undefined)).resolves.toEqual([]);
+  });
+
   it('resetProbeState clears the marker and lifecycle log and restores proceed', async () => {
     const { harness } = await loaded();
     await harness.callAgentTool('platform_hooks_probe_marker', {}, { projectId: PROJECT_ID, threadId: 'thread-1' });
     await harness.callRpc('setDispatchSelection', { kind: 'reject', message: 'no' });
+    await harness.callRpc('setToolPolicySelection', { selection: 'deny' });
 
     await harness.callRpc('resetProbeState', { projectId: PROJECT_ID });
 
     await expect(harness.callRpc('markerGet', { projectId: PROJECT_ID })).resolves.toEqual(emptyMarkerFile());
     await expect(harness.callRpc('getDispatchSelection', undefined)).resolves.toEqual({ kind: 'proceed' });
+    await expect(harness.callRpc('getToolPolicySelection', undefined)).resolves.toBe('allow');
     await expect(harness.callRpc('lifecycleList', undefined)).resolves.toEqual([]);
   });
 
@@ -152,6 +176,28 @@ describe('platform-hooks-probe server', () => {
   it('hostCancelSlowProbe reports cancelled:false for an unknown probeId', async () => {
     const { harness } = await loaded();
     await expect(harness.callRpc('hostCancelSlowProbe', { probeId: 'does-not-exist' })).resolves.toEqual({ cancelled: false });
+  });
+
+  it('cancels an in-flight slow probe before the host responds', async () => {
+    const spy = vi.fn((_call: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      _call.signal?.addEventListener('abort', () => reject(new Error('slowProbe cancelled')));
+    }));
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'platform-hooks-probe', experimental_callHostRpc: spy });
+    harness.sdk.stub('system.defaultHost', () => ({ id: 'host-1' }));
+    await plugin(zcc);
+    const pending = harness.callRpc('hostSlowProbe', { delayMs: 3000, probeId: 'p1' });
+    await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce());
+    await expect(harness.callRpc('hostCancelSlowProbe', { probeId: 'p1' })).resolves.toEqual({ cancelled: true });
+    await expect(pending).resolves.toEqual({ cancelled: true });
+  });
+
+  it('does not report genuine host failures as cancellation', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'platform-hooks-probe' });
+    harness.sdk.stub('system.defaultHost', () => ({ id: 'host-1' }));
+    zcc.host.experimental_client = (() => Promise.resolve({ call: () => Promise.reject(new Error('host unavailable')) })) as never;
+    await plugin(zcc);
+    await expect(harness.callRpc('hostSlowProbe', { delayMs: 10, probeId: 'p1' })).rejects.toThrow('host unavailable');
+    await expect(harness.callRpc('hostCancelSlowProbe', { probeId: 'p1' })).resolves.toEqual({ cancelled: false });
   });
 
   it('hostSlowProbe requires a probeId and a default host', async () => {

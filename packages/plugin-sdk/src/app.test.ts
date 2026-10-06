@@ -338,6 +338,21 @@ describe('definePluginApp', () => {
     ).toThrow(/duplicate id/);
   });
 
+  it('collects a project-specific menu title and rejects non-functions', async () => {
+    const titleForProject = async (projectId: string) => `Enable ${projectId}`;
+    const set = collectPluginApp('probe', 1, definePluginApp((app) => {
+      app.slots.experimental_projectMenuAction({
+        id: 'toggle', title: 'Probe', placement: 'project', titleForProject, run: () => undefined
+      });
+    }));
+    await expect(set.projectMenuActions[0]?.titleForProject?.('project-1')).resolves.toBe('Enable project-1');
+    expect(() => collectPluginApp('probe', 2, definePluginApp((app) => {
+      app.slots.experimental_projectMenuAction({
+        id: 'toggle', title: 'Probe', placement: 'project', titleForProject: 'bad' as never, run: () => undefined
+      });
+    }))).toThrow(/titleForProject.*function/);
+  });
+
   it('collects unlisted navPanels and footer toPluginPanel registrations', () => {
     const def = definePluginApp((app) => {
       app.slots.navPanel({

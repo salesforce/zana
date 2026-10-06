@@ -77,6 +77,8 @@ export interface PluginProjectMenuActionContext {
 
 export interface PluginProjectMenuActionRegistration extends PluginSlotBase {
   title: string;
+  /** Resolve a project-specific label when its menu opens. Failure retains title. */
+  titleForProject?: (projectId: string) => string | Promise<string>;
   icon?: string;
   /** `project` = row overflow; `workspace` = Projects list-header organize menu (legacy name kept) */
   placement: 'project' | 'workspace';
@@ -1104,10 +1106,14 @@ export function collectPluginApp(
         if (typeof registration.run !== 'function') {
           throw new Error(`${kind}: "run" must be a function`);
         }
+        if (registration.titleForProject !== undefined && typeof registration.titleForProject !== 'function') {
+          throw new Error(`${kind}: "titleForProject" must be a function`);
+        }
         set.projectMenuActions.push(
           stamp({
             id,
             title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(registration.titleForProject ? { titleForProject: registration.titleForProject } : {}),
             ...(registration.icon !== undefined
               ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
               : {}),

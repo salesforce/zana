@@ -209,7 +209,7 @@ export function ProjectsList({
     listCreateProjectActions
   );
   const headerMenuActions = projectMenuActions.filter((row) => row.placement === 'workspace');
-  const rowMenuActions = projectMenuActions.filter((row) => row.placement === 'project');
+  const rowMenuActions = useMemo(() => projectMenuActions.filter((row) => row.placement === 'project'), [projectMenuActions]);
   const threads = useThreads((s) => s.threads);
   useEnsureThreads();
   const navigate = useNavigate();
@@ -240,7 +240,26 @@ export function ProjectsList({
 
   const [dropOver, setDropOver] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [projectActionTitles, setProjectActionTitles] = useState<Record<string, string | null>>({});
   const menuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!menu?.projectId) return;
+    let current = true;
+    setProjectActionTitles({});
+    for (const action of rowMenuActions) {
+      if (!action.titleForProject) continue;
+      const key = `${menu.projectId}:${action.pluginId}:${action.id}:${action.generation}`;
+      void Promise.resolve().then(() => action.titleForProject!(menu.projectId)).then(
+        (title) => {
+          if (current) setProjectActionTitles((titles) => ({ ...titles, [key]: title.trim().slice(0, 100) || null }));
+        },
+        () => {
+          if (current) setProjectActionTitles((titles) => ({ ...titles, [key]: null }));
+        }
+      );
+    }
+    return () => { current = false; };
+  }, [menu, rowMenuActions]);
   const [filter, setFilter] = useState('');
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -1246,10 +1265,13 @@ export function ProjectsList({
                   <div className="project-menu-sep" />
                   {rowMenuActions.map((action) => {
                     const Icon = resolveIcon(action.icon ?? 'Puzzle');
+                    const key = `${action.pluginId}:${action.id}:${action.generation}`;
+                    const resolvedTitle = projectActionTitles[`${p.id}:${key}`];
                     return (
                       <button
-                        key={`${action.pluginId}:${action.id}:${action.generation}`}
+                        key={key}
                         className="project-menu-item"
+                        disabled={Boolean(action.titleForProject) && !resolvedTitle}
                         onClick={() => {
                           setMenu(null);
                           void action.run(projectMenuNavigateContext(action.pluginId, p.id, (to) => {
@@ -1258,7 +1280,7 @@ export function ProjectsList({
                         }}
                       >
                         <Icon size={12} />
-                        <span>{action.title}</span>
+                        <span>{action.titleForProject ? (resolvedTitle ?? (resolvedTitle === null ? 'Action unavailable' : 'Checking…')) : action.title}</span>
                       </button>
                     );
                   })}

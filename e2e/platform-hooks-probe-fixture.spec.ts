@@ -115,7 +115,7 @@ test('platform-hooks-probe fixture exercises project-tab availability and the ag
     // process boundary rather than only locally.
     const slowProbePromise = rpc('hostSlowProbe', { delayMs: 5000, probeId: 'probe-e2e-1' });
     await expect(rpc('hostCancelSlowProbe', { probeId: 'probe-e2e-1' })).resolves.toEqual({ cancelled: true });
-    await expect(slowProbePromise).rejects.toThrow();
+    await expect(slowProbePromise).resolves.toEqual({ cancelled: true });
 
     // Drive a real thread through the fake provider's deterministic tool-call
     // control token, routed through the production tool-call HTTP boundary into
@@ -213,6 +213,9 @@ test('platform-hooks-probe fixture exercises project-tab availability and the ag
       return { status: response.status, body: await response.json() };
     }, dispatchThread.id);
     expect(waitedLocked.status).toBe(200);
+    await expect(rpc('dispatchEventsList', undefined)).resolves.toContainEqual(expect.objectContaining({
+      decision: expect.objectContaining({ action: 'wait', overrideable: false })
+    }));
     const lockedNextTurn = await win.evaluate(async (id) => (await fetch(`/api/v1/threads/${id}/next-turn`)).json(), dispatchThread.id);
     expect(lockedNextTurn.items).toHaveLength(1);
     const lockedItemId = lockedNextTurn.items[0].id as string;

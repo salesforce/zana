@@ -48,6 +48,31 @@ mechanism that lets the Tool Policy panel observe either kind of invocation.
 ## Enabling on a project
 
 Install the plugin, open the project, then use the project overflow menu's
-"Enable/Disable Hooks Probe" action (`experimental_projectMenuAction`,
+"Enable Hooks Probe" or "Disable Hooks Probe" action (`experimental_projectMenuAction`,
 `toggle-hooks-probe`). The panel's Availability section reflects the current
-enabled state for the scoped project.
+enabled state for the scoped project. Enabling opens the Hooks Probe tab;
+disabling leaves the current view unchanged and the tab unavailable.
+
+## Dispatch Policy
+
+Select Wait and click Apply, then keep the Hooks Probe panel open. In another
+Zana window, use New Chat, select Modern and the same project, and send the
+first message to create a thread. Once it settles, send a second message in
+that same thread. Only the follow-up passes through dispatch admission; the
+first New Chat message does not. The live table shows a row for that follow-up
+and the message is held when Wait is active. Apply confirms success or failure
+with a toast. Use Refresh dispatches to retrieve the latest 20 events if a
+live update was missed (for example after reopening the panel); the panel
+also refreshes automatically every five seconds while open.
+
+Manual Refresh marker/dispatches/events, Clear marker/events/lifecycle, Apply,
+and Tool policy Allow/Deny selection confirm success or failure with a toast.
+Automatic refreshes stay silent. Read-only host, interaction, and capability
+actions show their result or error in their section instead.
+
+## Slow probe cancellation
+
+In the Project Host RPC section, start the slow probe and click "Cancel slow
+probe" before it completes. The status should change from `running` to
+`cancelling` to `cancelled` without a red error. Genuine host failures still
+show `failed` with an error message.
