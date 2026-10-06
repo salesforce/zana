@@ -1865,7 +1865,7 @@ export class Bridge {
     });
     this.changed();
   }
-  async event(e: ThreadEvent): Promise<void> {
+  async event(e: Pick<ThreadEvent, "name" | "threadId">): Promise<void> {
     if (this.disposed) return;
     let b = this.store.list("binding").find((b) => b.threadId === e.threadId);
     if (!b || !ownsBinding(this.config, b)) return;
