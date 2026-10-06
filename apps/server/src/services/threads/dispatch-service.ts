@@ -23,11 +23,12 @@ export async function admitDispatch(
   if (!ctx.plugins) return { decision: { action: 'proceed' }, generation: 1 };
   const current = getDispatchAdmissionGeneration(ctx.db, request.threadId);
   const generation = current?.generation ?? 1;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const decision = await Promise.race([
       ctx.plugins.admitDispatch({ ...request, generation, dispatchId: randomUUID() }),
       new Promise<DispatchAdmissionDecision>((resolve) => {
-        setTimeout(() => resolve({ action: 'proceed' }), DISPATCH_ADMISSION_TIMEOUT_MS);
+        timer = setTimeout(() => resolve({ action: 'reject', message: 'Plugin dispatch admission timed out' }), DISPATCH_ADMISSION_TIMEOUT_MS);
       })
     ]);
     if (decision.action === 'wait') {
@@ -46,7 +47,11 @@ export async function admitDispatch(
     }
     return { decision, generation };
   } catch {
-    // An unavailable plugin must never wedge a user prompt.
-    return { decision: { action: 'proceed' }, generation };
+    // A failed admission cannot prove that all plugin vetoes were reviewed.
+    clearDispatchAdmissionGeneration(ctx.db, request.threadId);
+    return { decision: { action: 'reject', message: 'Plugin dispatch admission unavailable' }, generation };
+  } finally {
+    // Timeout wins over any late plugin response; it cannot record a wait.
+    if (timer) clearTimeout(timer);
   }
 }

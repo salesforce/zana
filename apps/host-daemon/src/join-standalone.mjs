@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Keep in lockstep with `HOST_RPC_PROTOCOL_VERSION` in `@zana-ai/zcc-contracts/host-rpc`. */
-const PROTOCOL_VERSION = 41;
+const PROTOCOL_VERSION = 42;
 
 function joinServerUrl(serverUrl, path) {
   const base = serverUrl.endsWith('/') ? serverUrl : `${serverUrl}/`;

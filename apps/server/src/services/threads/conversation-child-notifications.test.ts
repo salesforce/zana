@@ -442,7 +442,7 @@ describe('parent system message delivery', () => {
       hub: { emit: vi.fn() },
       hostHub: { callHostOnlineRpc, connectedHostIds: () => [hostId] },
       pluginHostArtifacts,
-      plugins: { emitThreadEvent: vi.fn().mockResolvedValue(undefined) },
+      plugins: { admitDispatch: vi.fn(async () => ({ action: 'proceed' })), emitThreadEvent: vi.fn().mockResolvedValue(undefined) },
       pendingInteractions: {
         hasPendingThreadInteraction: (threadId: string) => threadId === pendingThreadId
       }

@@ -223,6 +223,7 @@ function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHt
     })) },
     pluginHostArtifacts,
     plugins: {
+      admitDispatch: vi.fn(async () => ({ action: 'proceed' })),
       emitThreadEvent: vi.fn().mockResolvedValue(undefined)
     },
     pendingInteractions: pendingInteractionsStub()
@@ -414,7 +415,7 @@ describe('conversation lifecycle', () => {
     const resolveMention = vi.fn(async () => ({ ok: true as const, context: 'Issue body' }));
     const context = {
       ...ctx(callHostOnlineRpc),
-      plugins: { resolveMention, emitThreadEvent: vi.fn(async () => undefined) }
+      plugins: { ...ctx(callHostOnlineRpc).plugins, resolveMention, emitThreadEvent: vi.fn(async () => undefined) }
     } as unknown as ProductHttpContext;
     await sendConversationTurn(context, thread.id, [{
       type: 'text',
@@ -445,7 +446,7 @@ describe('conversation lifecycle', () => {
     let resolve!: (value: { ok: true; context: string }) => void;
     const resolveMention = vi.fn(() => new Promise<{ ok: true; context: string }>(done => { resolve = done; }));
     const rpc = vi.fn(async (_input: { command: { type: string } }) => ({ threadId: thread.id }));
-    const context = { ...ctx(rpc), plugins: { resolveMention, emitThreadEvent: vi.fn(async () => {}) } } as unknown as ProductHttpContext;
+    const context = { ...ctx(rpc), plugins: { ...ctx(rpc).plugins, resolveMention, emitThreadEvent: vi.fn(async () => {}) } } as unknown as ProductHttpContext;
     const pending = sendConversationTurn(context, thread.id, [{ type: 'text', text: '@slow', mentions: [{
       start: 0, end: 5, resource: { kind: 'plugin', pluginId: 'test', itemId: 'slow', label: 'slow' }
     }] }]);
@@ -462,7 +463,7 @@ describe('conversation lifecycle', () => {
     let resolve!: (value: { ok: true; context: string }) => void;
     const resolveMention = vi.fn(() => new Promise<{ ok: true; context: string }>(done => { resolve = done; }));
     const rpc = vi.fn(async () => ({}));
-    const context = { ...ctx(rpc), plugins: { resolveMention, emitThreadEvent: vi.fn(async () => {}) } } as unknown as ProductHttpContext;
+    const context = { ...ctx(rpc), plugins: { ...ctx(rpc).plugins, resolveMention, emitThreadEvent: vi.fn(async () => {}) } } as unknown as ProductHttpContext;
     const pending = sendConversationTurn(context, thread.id, [{ type: 'text', text: '@slow', mentions: [{
       start: 0, end: 5, resource: { kind: 'plugin', pluginId: 'test', itemId: 'slow', label: 'slow' }
     }] }], 'queue-if-active');
@@ -696,6 +697,7 @@ describe('conversation lifecycle', () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, resumed: true, providerThreadId: 'prov-1' }));
     const product = ctx(callHostOnlineRpc);
     product.plugins = {
+      ...product.plugins,
       sessionTools: async () => ({
         tools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: { type: 'object' } }],
         instructions: 'Use sf_soql.'

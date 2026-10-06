@@ -9,6 +9,7 @@ import {
 } from '@zana-ai/zcc-plugin-sdk/app';
 
 const PLUGIN_ID = 'platform-hooks-probe';
+const DISPATCH_EVENTS_MAX = 20;
 const fieldStyle: React.CSSProperties = {
   background: 'var(--bg-input, var(--bg-base, #202020))',
   color: 'var(--text)',
@@ -176,7 +177,7 @@ function DispatchPolicySection() {
         setEvents((current) => {
           const byId = new Map((value as typeof events).map((event) => [event.dispatchId, event]));
           for (const event of current) byId.set(event.dispatchId, event);
-          return [...byId.values()].slice(-20);
+           return [...byId.values()].slice(-DISPATCH_EVENTS_MAX);
         });
         if (notify) setToast({ message: 'Dispatches refreshed', error: false });
       },
@@ -201,7 +202,7 @@ function DispatchPolicySection() {
   }, [rpc]);
 
   useRealtime('hooks-probe-dispatch-event', (payload) => {
-    setEvents((current) => [...current.filter((event) => event.dispatchId !== (payload as { dispatchId: string }).dispatchId), payload as { dispatchId: string; generation: number; decision: unknown }].slice(-20));
+     setEvents((current) => [...current.filter((event) => event.dispatchId !== (payload as { dispatchId: string }).dispatchId), payload as { dispatchId: string; generation: number; decision: unknown }].slice(-DISPATCH_EVENTS_MAX));
   });
 
   const apply = () => {
@@ -341,8 +342,8 @@ function ToolPolicySection() {
   return (
     <Section title="Tool Policy">
       <p>
-        Agent tool <code>platform_hooks_probe_marker</code> and MCP tool <code>platform-hooks-probe</code> both record a
-        bounded marker at <code>.zcc-hooks-probe/tool-marker.json</code> in this project. Invoke either from a thread, then refresh.
+        Agent tool <code>platform_hooks_probe_marker</code> writes a CAS marker and MCP tool <code>platform-hooks-probe</code> appends
+        invocation records to a project journal. Both appear in the bounded history below. Invoke either from a thread, then refresh.
       </p>
       <div style={{ display: 'flex', gap: 8 }}>
         <button className="btn" type="button" onClick={() => refetch(true)}>Refresh marker</button>

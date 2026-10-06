@@ -6,13 +6,24 @@ function statesOf(calls: unknown[][]): NativeToolHookState[] {
 }
 
 describe('executeNativeToolHook', () => {
-  it('skips the decision gate and emits only announced when the bridge is disabled', async () => {
+  it('skips the decision gate and lifecycle when the bridge is disabled', async () => {
     const emit = vi.fn();
+    const before = vi.fn();
+    const after = vi.fn();
     const execute = vi.fn().mockResolvedValue('ok');
-    const result = await executeNativeToolHook('Bash', { cmd: 'ls' }, execute, { enabled: false, emit });
+    const result = await executeNativeToolHook('Bash', { cmd: 'ls' }, execute, { enabled: false, before, after, emit });
     expect(result).toBe('ok');
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(statesOf(emit.mock.calls)).toEqual(['announced']);
+    expect(before).not.toHaveBeenCalled();
+    expect(after).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('rethrows execution failures without lifecycle events when disabled', async () => {
+    const emit = vi.fn();
+    const error = new Error('tool failed');
+    await expect(executeNativeToolHook('Bash', {}, () => Promise.reject(error), { enabled: false, emit })).rejects.toBe(error);
+    expect(emit).not.toHaveBeenCalled();
   });
 
   it('runs the full allowed lifecycle in order and calls after on success', async () => {
@@ -101,6 +112,39 @@ describe('executeNativeToolHook', () => {
       expect(event.input.command).toBe('curl');
       expect(event.input.note).toBe('kept');
     }
+  });
+
+  it('redacts nested objects and arrays for every callback without changing execution input', async () => {
+    const emit = vi.fn();
+    const before = vi.fn().mockReturnValue(true);
+    const after = vi.fn();
+    const input = { args: [{ headers: { authorizationToken: 'private', label: 'safe' } }], secret: 'top' };
+    await executeNativeToolHook('Bash', input, async () => {
+      expect(input.args[0].headers.authorizationToken).toBe('private');
+      return 'ok';
+    }, { enabled: true, emit, before, after });
+    const expected = { args: [{ headers: { authorizationToken: '[REDACTED]', label: 'safe' } }], secret: '[REDACTED]' };
+    for (const callback of [emit, before, after]) {
+      for (const [event] of callback.mock.calls) expect((event as NativeToolHookEvent).input).toEqual(expected);
+    }
+  });
+
+  it('bounds cyclic and deeply nested input without leaking secrets', async () => {
+    const input: Record<string, unknown> = { apiKey: 'private' };
+    input.self = input;
+    let current = input;
+    for (let i = 0; i < 25; i++) {
+      const next: Record<string, unknown> = {};
+      current.child = next;
+      current = next;
+    }
+    current.password = 'deep-private';
+    const emit = vi.fn();
+    await executeNativeToolHook('Bash', input, async () => 'ok', { enabled: true, emit });
+    const payload = (emit.mock.calls[0][0] as NativeToolHookEvent).input;
+    expect(payload.apiKey).toBe('[REDACTED]');
+    expect(payload.self).toBe('[REDACTED]');
+    expect(JSON.stringify(payload)).not.toContain('deep-private');
   });
 
   it('mints a stable invocation ID shared across every emitted lifecycle event', async () => {

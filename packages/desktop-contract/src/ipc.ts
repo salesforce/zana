@@ -1,4 +1,5 @@
 export const IPC = {
+  uiSend: 'threads:sendNextTurnFromUi',
   sharedClient: { list: 'sharedClient:list', signIn: 'sharedClient:signIn', select: 'sharedClient:select', local: 'sharedClient:local', signOut: 'sharedClient:signOut' },
   startup: {
     state: 'startup:state',

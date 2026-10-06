@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './fixtures/app.js';
+import { stubNativeDialogs } from './sdk/native-dialog.js';
 
 // Exceed Electron's historical 8192-byte pipe truncation boundary and assert
 // the entire response reaches the UI both before and after writer recovery.
@@ -105,6 +106,7 @@ test('Codex writer contention retries through the built provider and composer', 
 
 
 test('Codex Send now and Stop translate the active turn id through the built bridge', async ({ app }) => {
+  await stubNativeDialogs(app.electron, [1]);
   const { window, home } = app;
   const root = join(home, 'queued-codex-project');
   mkdirSync(root);
@@ -119,6 +121,11 @@ test('Codex Send now and Stop translate the active turn id through the built bri
     if (!response.ok) throw new Error(JSON.stringify(body));
     return body.thread.id as string;
   }, root);
+  await expect.poll(() => window.evaluate(async id => {
+    const response = await fetch(`/api/v1/threads/${id}`);
+    const body = await response.json();
+    return body.thread?.providerThreadId ?? null;
+  }, threadId)).not.toBeNull();
   await window.evaluate(id => {
     history.pushState({}, '', `/threads/${id}`);
     dispatchEvent(new PopStateEvent('popstate'));
@@ -134,11 +141,17 @@ test('Codex Send now and Stop translate the active turn id through the built bri
     await expect(queued).toContainText(message);
   }
   const selected = queued.locator('.thread-queued-ghost').filter({ hasText: 'Send this into the active Codex turn' });
-  const sent = window.waitForResponse(response => response.request().method() === 'POST'
-    && /\/next-turn\/[^/]+\/send$/.test(response.url()));
+  const forged = await window.evaluate(async id => {
+    const queue = await fetch(`/api/v1/threads/${id}/next-turn`).then(response => response.json());
+    const item = queue.items.find((row: { text?: string }) =>
+      row.text === 'Send this into the active Codex turn');
+    if (!item) throw new Error('Selected queued message missing');
+    return fetch(`/api/v1/threads/${id}/next-turn/${item.id}/send`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-zcc-app-surface': 'desktop' }, body: '{}'
+    }).then(response => response.status);
+  }, threadId);
+  expect(forged).toBe(403);
   await selected.getByRole('button', { name: 'Send now', exact: true }).click();
-  const response = await sent;
-  expect(response.status(), await response.text()).toBe(200);
   await expect(queued.locator('.thread-queued-item-text')).toHaveText(['Keep this queued']);
   await expect(detail.getByTestId('thread-timeline').getByTestId('thread-user-text')
     .filter({ hasText: 'Send this into the active Codex turn' })).toBeVisible();

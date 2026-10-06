@@ -220,6 +220,19 @@ describe("PluginHostManager", () => {
     expect(fetchArtifact).toHaveBeenCalledOnce();
   });
 
+  it("rejects a call when the worker cannot accept its IPC message", async () => {
+    const manager = await createManager();
+    await manager.call(callCommand());
+    const worker = (manager as unknown as { workers: Map<string, { child: { send: (...args: unknown[]) => boolean } }> }).workers.get("fixture")!;
+    const send = vi.spyOn(worker.child, "send").mockImplementation(() => { throw new Error("IPC unavailable"); });
+    try {
+      await expect(manager.call(callCommand())).rejects.toThrow("worker is unavailable");
+    } finally {
+      send.mockRestore();
+    }
+    await expect(manager.call(callCommand())).resolves.toMatchObject({ output: { input: { value: "hello" } } });
+  });
+
   it("scopes setup env, rotates while idle, and returns worker output as-is", async () => {
     const manager = await createManager({
       shellEnv: () => ({ npm_config_user_agent: "test" }),
@@ -892,9 +905,11 @@ describe("PluginHostManager", () => {
     const manager = await createManager({ onSignal });
     const command = callCommand({ method: "pathsAndSignal" });
     const result = await manager.call(command);
-    const paths = result.output as { dataDir: string; tempDir: string };
+    const paths = result.output as { dataDir: string; tempDir: string; projectRoot: string | null };
+    expect(paths.projectRoot).toBeNull();
+    expect((await manager.call(callCommand({ method: 'pathsAndSignal', projectRoot: '/registered/project' }))).output).toMatchObject({ projectRoot: '/registered/project' });
 
-    await vi.waitFor(() => expect(onSignal).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(onSignal).toHaveBeenCalledTimes(2));
     expect(onSignal).toHaveBeenCalledWith({
       pluginId: "fixture",
       generation: "generation-1",

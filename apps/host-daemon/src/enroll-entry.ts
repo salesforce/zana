@@ -2,6 +2,9 @@ import { readEnrollToken, startEnrolledHostDaemon } from './enroll-runtime.js';
 import { resolveZccDataDir } from './host-config.js';
 import { joinServerUrl } from './server-url.js';
 
+// Dev launcher shares this with desktop and server only, not spawned agents.
+delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
+
 const dataDir = resolveZccDataDir();
 const serverUrl = process.env.ZCC_SERVER_URL ?? `http://127.0.0.1:${process.env.ZCC_SERVER_PORT ?? '8780'}/`;
 

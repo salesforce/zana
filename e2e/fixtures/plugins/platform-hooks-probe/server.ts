@@ -3,12 +3,11 @@ import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import type { DispatchAdmissionDecision, PluginToolPolicyDecision, PluginToolPolicyRequest } from '@zana-ai/zcc-plugin-sdk';
 
 const ENABLE_MARKER_PATH = '.zcc-hooks-probe-enabled';
-// Same relative path the MCP child (mcp-server.ts) writes to directly via plain
-// fs — it inherits the project root as its cwd and has no RPC-callback path
-// into this process, so the project file is the only shared surface between
-// the Modern/ACP tool and the MCP tool.
 const TOOL_MARKER_PATH = '.zcc-hooks-probe/tool-marker.json';
+const MCP_JOURNAL_PATH = '.zcc-hooks-probe/mcp-invocations.jsonl';
 const TOOL_MARKER_HISTORY_MAX = 20;
+const MCP_JOURNAL_MAX_BYTES = 1024 * 1024;
+const DISPATCH_EVENTS_MAX = 20;
 const LIFECYCLE_KEY = 'lifecycleEvents';
 const LIFECYCLE_MAX = 50;
 
@@ -29,8 +28,26 @@ type ToolPolicyEventRow = {
 const TOOL_POLICY_EVENTS_MAX = 50;
 
 type ToolMarkerEntry = { source: 'modern-tool' | 'mcp-tool'; invocationId: string; at: number };
-type ToolMarkerFile = { count: number; history: ToolMarkerEntry[] };
-const EMPTY_TOOL_MARKER: ToolMarkerFile = { count: 0, history: [] };
+type ToolMarkerFile = { count: number; history: ToolMarkerEntry[]; mcpOffset: number };
+const EMPTY_TOOL_MARKER: ToolMarkerFile = { count: 0, history: [], mcpOffset: 0 };
+
+function parseToolMarker(value: unknown): ToolMarkerFile {
+  if (!value || typeof value !== 'object') throw new Error('tool marker is corrupt');
+  const row = value as Partial<ToolMarkerFile>;
+  if (!Number.isSafeInteger(row.count) || row.count! < 0 ||
+    !Array.isArray(row.history) || row.history.length > TOOL_MARKER_HISTORY_MAX ||
+    !row.history.every((entry) => entry && (entry.source === 'modern-tool' || entry.source === 'mcp-tool') &&
+      typeof entry.invocationId === 'string' && Number.isFinite(entry.at)) ||
+    (row.mcpOffset !== undefined && (!Number.isSafeInteger(row.mcpOffset) || row.mcpOffset < 0))) {
+    throw new Error('tool marker is corrupt');
+  }
+  return { count: row.count!, history: row.history, mcpOffset: row.mcpOffset ?? 0 };
+}
+
+function isMissingFile(error: unknown): boolean {
+  return (error as { code?: string })?.code === 'path_not_found' &&
+    (error as Error)?.message?.startsWith('Path does not exist:');
+}
 
 type LifecycleRow = {
   eventId: string;
@@ -197,7 +214,7 @@ export default function plugin(zcc: ZccPluginApi) {
       generation: request.generation,
       decision
     };
-    dispatchEvents = [...dispatchEvents, event].slice(-20);
+    dispatchEvents = [...dispatchEvents, event].slice(-DISPATCH_EVENTS_MAX);
     zcc.realtime.publish('hooks-probe-dispatch-event', event);
     return decision;
   });
@@ -231,28 +248,63 @@ export default function plugin(zcc: ZccPluginApi) {
   });
 
   async function readToolMarker(projectId: string): Promise<{ marker: ToolMarkerFile; sha256: string | null }> {
+    let result;
     try {
-      const result = await zcc.sdk.files.readProject({ path: TOOL_MARKER_PATH, source: markerSource(projectId) });
-      const parsed = JSON.parse(result.content) as ToolMarkerFile;
-      return { marker: parsed, sha256: result.sha256 };
-    } catch {
-      return { marker: EMPTY_TOOL_MARKER, sha256: null };
+      result = await zcc.sdk.files.readProject({ path: TOOL_MARKER_PATH, source: markerSource(projectId) });
+    } catch (error) {
+      if (isMissingFile(error)) return { marker: EMPTY_TOOL_MARKER, sha256: null };
+      throw error;
     }
+    try {
+      return { marker: parseToolMarker(JSON.parse(result.content)), sha256: result.sha256 };
+    } catch { throw new Error('tool marker is corrupt'); }
   }
 
-  // Confined project-file write, retried on a concurrent-writer conflict (Rule 4) —
-  // the MCP child writes the same file via plain fs from a separate process, so a
-  // CAS race here is expected, not exceptional.
+  async function readMcpJournal(projectId: string): Promise<ToolMarkerEntry[]> {
+    let result;
+    try {
+      result = await zcc.sdk.files.readProject({ path: MCP_JOURNAL_PATH, source: markerSource(projectId) });
+    } catch (error) {
+      if (isMissingFile(error)) return [];
+      throw error;
+    }
+    if (Buffer.byteLength(result.content) > MCP_JOURNAL_MAX_BYTES) throw new Error('MCP marker journal is full');
+    try {
+      if (result.content && !result.content.endsWith('\n')) throw new Error('incomplete journal');
+      return result.content.trimEnd().split('\n').filter(Boolean).map((line) => {
+        const entry = JSON.parse(line) as ToolMarkerEntry;
+        if (entry.source !== 'mcp-tool' || typeof entry.invocationId !== 'string' || !Number.isFinite(entry.at)) {
+          throw new Error('invalid entry');
+        }
+        return entry;
+      });
+    } catch { throw new Error('MCP marker journal is corrupt'); }
+  }
+
+  async function visibleToolMarker(projectId: string): Promise<{ count: number; history: ToolMarkerEntry[] }> {
+    const { marker } = await readToolMarker(projectId);
+    const journal = await readMcpJournal(projectId);
+    if (marker.mcpOffset > journal.length) throw new Error('MCP marker journal is corrupt');
+    const entries = journal.slice(marker.mcpOffset);
+    return {
+      count: marker.count + entries.length,
+      history: [...marker.history, ...entries].sort((a, b) => a.at - b.at).slice(-TOOL_MARKER_HISTORY_MAX)
+    };
+  }
+
+  // Only the server writes this file. MCP appends to a separate journal so
+  // cross-process invocations cannot overwrite a CAS-protected update.
   async function recordToolMarker(
     projectId: string,
     source: ToolMarkerEntry['source'],
     invocationId: string
-  ): Promise<ToolMarkerFile> {
+  ): Promise<{ count: number; history: ToolMarkerEntry[] }> {
     for (let attempt = 0; attempt < 5; attempt++) {
       const current = await readToolMarker(projectId);
       const next: ToolMarkerFile = {
         count: current.marker.count + 1,
-        history: [...current.marker.history, { source, invocationId, at: Date.now() }].slice(-TOOL_MARKER_HISTORY_MAX)
+        history: [...current.marker.history, { source, invocationId, at: Date.now() }].slice(-TOOL_MARKER_HISTORY_MAX),
+        mcpOffset: current.marker.mcpOffset
       };
       const outcome = await zcc.sdk.files.writeProject({
         path: TOOL_MARKER_PATH,
@@ -262,10 +314,28 @@ export default function plugin(zcc: ZccPluginApi) {
       });
       if (outcome.outcome === 'written') {
         zcc.realtime.publish('hooks-probe-tool-marker-changed', { projectId });
-        return next;
+        return visibleToolMarker(projectId);
       }
     }
     throw new Error('tool marker write did not converge after retries');
+  }
+
+  async function clearToolMarker(projectId: string): Promise<void> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const journal = await readMcpJournal(projectId);
+      const current = await readToolMarker(projectId);
+      const outcome = await zcc.sdk.files.writeProject({
+        path: TOOL_MARKER_PATH,
+        source: markerSource(projectId),
+        content: JSON.stringify({ ...EMPTY_TOOL_MARKER, mcpOffset: journal.length }),
+        expectedSha256: current.sha256
+      });
+      if (outcome.outcome === 'written') {
+        zcc.realtime.publish('hooks-probe-tool-marker-changed', { projectId });
+        return;
+      }
+    }
+    throw new Error('tool marker clear did not converge after retries');
   }
 
   zcc.rpc.method('markerClear', async (args) => {
@@ -273,14 +343,7 @@ export default function plugin(zcc: ZccPluginApi) {
       ? (args as { projectId: string }).projectId
       : '';
     if (!projectId) throw new Error('projectId is required');
-    const current = await readToolMarker(projectId);
-    await zcc.sdk.files.writeProject({
-      path: TOOL_MARKER_PATH,
-      source: markerSource(projectId),
-      content: JSON.stringify(EMPTY_TOOL_MARKER),
-      expectedSha256: current.sha256
-    });
-    zcc.realtime.publish('hooks-probe-tool-marker-changed', { projectId });
+    await clearToolMarker(projectId);
     return { ok: true };
   });
   zcc.rpc.method('markerGet', async (args) => {
@@ -288,7 +351,7 @@ export default function plugin(zcc: ZccPluginApi) {
       ? (args as { projectId: string }).projectId
       : '';
     if (!projectId) throw new Error('projectId is required');
-    return (await readToolMarker(projectId)).marker;
+    return visibleToolMarker(projectId);
   });
 
   zcc.agents.registerTool({
@@ -366,14 +429,7 @@ export default function plugin(zcc: ZccPluginApi) {
       ? (args as { projectId: string }).projectId
       : '';
     if (projectId) {
-      const current = await readToolMarker(projectId);
-      await zcc.sdk.files.writeProject({
-        path: TOOL_MARKER_PATH,
-        source: markerSource(projectId),
-        content: JSON.stringify(EMPTY_TOOL_MARKER),
-        expectedSha256: current.sha256
-      });
-      zcc.realtime.publish('hooks-probe-tool-marker-changed', { projectId });
+      await clearToolMarker(projectId);
     }
     await zcc.storage.kv.set(LIFECYCLE_KEY, []);
     dispatchSelection = { kind: 'proceed' };

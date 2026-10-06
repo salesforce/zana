@@ -78,6 +78,8 @@ export function productRegisterPersonas(
   }).then((value) => {
     const result = asControlResult(value);
     if (!result.ok) console.error(`[plugin:${pluginId}] registerPersonas failed: ${result.message}`);
+  }).catch((error: unknown) => {
+    console.error(`[plugin:${pluginId}] registerPersonas failed:`, error);
   });
 }
 
@@ -92,6 +94,8 @@ export function productRegisterTeams(
   }).then((value) => {
     const result = asControlResult(value);
     if (!result.ok) console.error(`[plugin:${pluginId}] registerTeams failed: ${result.message}`);
+  }).catch((error: unknown) => {
+    console.error(`[plugin:${pluginId}] registerTeams failed:`, error);
   });
 }
 

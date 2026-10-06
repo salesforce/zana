@@ -82,9 +82,9 @@ import {
 // 39: acknowledged heartbeats, two-phase readiness and runtime inventory on reconnect.
 // 40: expiring preview declarations, bound to an acknowledged owner session.
 // 41: provider-declared host environment passthrough on bridge launches.
-// 41: plugin.host.call carries a server-realpath-confined projectRoot for
+// 42: plugin.host.call carries a server-realpath-confined projectRoot for
 // project-bound host RPC (OBL-001); worker trusts it, never re-resolves it.
-export const HOST_RPC_PROTOCOL_VERSION = 41;
+export const HOST_RPC_PROTOCOL_VERSION = 42;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);

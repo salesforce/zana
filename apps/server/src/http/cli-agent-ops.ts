@@ -6,6 +6,16 @@ import type { Result, TerminalSession } from '@zana-ai/zcc-domain/product';
 const CONTROL_TIMEOUT_MS = 20_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 export const PRODUCT_SERVER_CREDENTIAL_ENV = 'ZCC_PRODUCT_SERVER_CREDENTIAL';
+let bootCredential: string | undefined;
+export function retainProductServerCredential(credential: string | undefined): void {
+  bootCredential = credential;
+}
+function productServerCredential(): string | undefined {
+  return bootCredential ?? process.env[PRODUCT_SERVER_CREDENTIAL_ENV];
+}
+export function productServerHasDesktopCredential(): boolean {
+  return Boolean(productServerCredential());
+}
 
 interface ControlToken {
   token: string;
@@ -36,7 +46,7 @@ export async function callControlAsProductServer(
 ): Promise<unknown> {
   const token = await readControlToken(dataDir);
   if (!token) return disconnected();
-  const callerCredential = process.env[PRODUCT_SERVER_CREDENTIAL_ENV];
+  const callerCredential = productServerCredential();
   return new Promise((resolve) => {
     const socket = connect(token.socket);
     const chunks: Buffer[] = [];
@@ -128,7 +138,7 @@ export function createCliAgentOpsViaControl(dataDir: string): ProductCliAgentOps
     invalidateModelCatalog: async (providerId) => {
       // Standalone servers have no desktop cache. The boot-only credential
       // identifies the desktop-attached case without exposing it to renderers.
-      if (!process.env[PRODUCT_SERVER_CREDENTIAL_ENV]) return;
+      if (!productServerCredential()) return;
       const result = asControlResult(await callControlAsProductServer(dataDir, 'harness.models.invalidate', { providerId }, 5_000));
       if (!result.ok) throw new Error(`Desktop model cache could not be refreshed: ${result.message}`);
     },

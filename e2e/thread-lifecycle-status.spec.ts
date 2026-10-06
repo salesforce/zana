@@ -5,6 +5,7 @@
  */
 import type { Locator } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
+import { stubNativeDialogs } from './sdk/native-dialog.js';
 
 test.use({
   launchEnv: {
@@ -325,10 +326,8 @@ test('Send now sends the selected message from active and paused queues', async 
   const during = queued.locator('.thread-queued-ghost').filter({ hasText: 'Send this during the job' });
   await expect(during.getByRole('button', { name: 'Send now', exact: true })).toBeVisible();
   await queued.screenshot({ path: testInfo.outputPath('queue-send-now.png') });
-  const sent = window.waitForResponse((response) => response.request().method() === 'POST'
-    && /\/next-turn\/[^/]+\/send$/.test(response.url()));
+  await stubNativeDialogs(app.electron, [1, 1]);
   await during.getByRole('button', { name: 'Send now', exact: true }).click();
-  expect((await sent).status()).toBe(200);
   await expect(timeline.getByTestId('thread-user-text').filter({ hasText: 'Send this during the job' })).toBeVisible();
   await expect(queued.locator('.thread-queued-item-text')).toHaveText(['Keep this queued', 'Send this after stop']);
   await expect(timeline).not.toContainText('Response to: delay:60000 keep the original job running');

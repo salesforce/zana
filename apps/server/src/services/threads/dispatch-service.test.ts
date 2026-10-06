@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createConversationThread, createEnvironment, openDatabase, upsertHost } from '@zana-ai/zcc-db';
+import { createConversationThread, createEnvironment, getDispatchAdmissionGeneration, openDatabase, upsertHost } from '@zana-ai/zcc-db';
 import { describe, expect, it, vi } from 'vitest';
 import { admitDispatch } from './dispatch-service.js';
 
@@ -114,15 +114,46 @@ describe('admitDispatch', () => {
     } finally { f.cleanup(); }
   });
 
-  it('fails open when plugin admission throws', async () => {
+  it('rejects when plugin admission throws', async () => {
     const f = fixture();
     try {
       const admit = vi.fn().mockRejectedValue(new Error('plugin died'));
       await expect(admitDispatch(f.ctx(admit), f.request)).resolves.toEqual({
-        decision: { action: 'proceed' },
+        decision: { action: 'reject', message: 'Plugin dispatch admission unavailable' },
         generation: 1
       });
     } finally { f.cleanup(); }
+  });
+
+  it('clears a previous wait after plugin failure', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn()
+        .mockResolvedValueOnce({ action: 'wait', reason: 'capacity', overrideable: true })
+        .mockRejectedValueOnce(new Error('plugin died'));
+      await admitDispatch(f.ctx(admit), f.request);
+      expect(getDispatchAdmissionGeneration(f.db, f.request.threadId)).not.toBeNull();
+      await expect(admitDispatch(f.ctx(admit), f.request)).resolves.toMatchObject({ decision: { action: 'reject' } });
+      expect(getDispatchAdmissionGeneration(f.db, f.request.threadId)).toBeNull();
+    } finally { f.cleanup(); }
+  });
+
+  it('clears the timer when admission resolves and ignores late waits after timeout', async () => {
+    const f = fixture();
+    vi.useFakeTimers();
+    try {
+      await admitDispatch(f.ctx(vi.fn().mockResolvedValue({ action: 'proceed' })), f.request);
+      expect(vi.getTimerCount()).toBe(0);
+      let finish!: (decision: { action: 'wait'; reason: string; overrideable: boolean }) => void;
+      const admit = vi.fn().mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      const pending = admitDispatch(f.ctx(admit), f.request);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(pending).resolves.toMatchObject({ decision: { action: 'reject', message: 'Plugin dispatch admission timed out' } });
+      finish({ action: 'wait', reason: 'late', overrideable: true });
+      await Promise.resolve();
+      expect(getDispatchAdmissionGeneration(f.db, f.request.threadId)).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); f.cleanup(); }
   });
 
   it('fails open (no plugin host at all) without touching the db', async () => {

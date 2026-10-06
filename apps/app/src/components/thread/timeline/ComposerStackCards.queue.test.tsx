@@ -7,7 +7,9 @@ const api = vi.hoisted(() => ({
   nextTurn: vi.fn(), sendNextTurn: vi.fn(), flushNextTurn: vi.fn(),
   deleteNextTurn: vi.fn(), onUpdated: vi.fn(), unsubscribe: vi.fn()
 }));
+const surface = vi.hoisted(() => ({ hasDesktopBridge: vi.fn() }));
 vi.mock('../../../lib/product-client.js', () => ({ product: { threads: api } }));
+vi.mock('../../../lib/app-surface.js', () => surface);
 vi.mock('../../../lib/in-app-browser-link-preference.js', () => ({ handleHttpLinkClick: vi.fn() }));
 vi.mock('../secondary-panel/threadSecondaryPanelLogic.js', () => ({ loadWorkspaceMeta: vi.fn() }));
 
@@ -15,6 +17,7 @@ let items: Array<{ id: string; text: string; status: string; failureReason?: str
 let paused: boolean;
 beforeEach(() => {
   vi.resetAllMocks();
+  surface.hasDesktopBridge.mockReturnValue(true);
   items = [
     { id: 'one', text: 'First queued message', status: 'queued' },
     { id: 'two', text: 'Second queued message', status: 'queued' }
@@ -33,11 +36,29 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it.each([false, true])('disables browser Send now with an explanation (paused=%s)', async (isPaused) => {
+  surface.hasDesktopBridge.mockReturnValue(false);
+  paused = isPaused;
+  items[1]!.status = 'failed';
+  render(<QueuedMessagesCard threadId="thread-1" />);
+  const sends = await screen.findAllByRole('button', { name: 'Send now' });
+  const explanation = screen.getByText('Send now requires the desktop app; browser approval is unavailable.');
+  for (const button of sends) {
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.getAttribute('aria-describedby')).toBe(explanation.id);
+    fireEvent.click(button);
+  }
+  expect(api.sendNextTurn).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: 'Send all' }) !== null).toBe(isPaused);
+});
+
 it.each([false, true])('shows a send action on every message (paused=%s) and sends only the clicked row', async (isPaused) => {
   paused = isPaused;
   const { unmount } = render(<QueuedMessagesCard threadId="thread-1" />);
   const sends = await screen.findAllByRole('button', { name: 'Send now' });
   expect(sends).toHaveLength(2);
+  expect((sends[0] as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.queryByText('Send now requires the desktop app; browser approval is unavailable.')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Send all' }) !== null).toBe(isPaused);
   fireEvent.click(sends[1]!);
   await waitFor(() => expect(screen.queryByText('Second queued message')).toBeNull());

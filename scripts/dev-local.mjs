@@ -146,6 +146,7 @@ export function prepareLocalDevEnv(processEnv = process.env, options = {}) {
     ZCC_SERVER_PORT: serverPort,
     ZCC_DATA_DIR: dataDir,
     ZCC_HOST_ENROLL_TOKEN: enrollToken,
+    ZCC_PRODUCT_SERVER_CREDENTIAL: processEnv.ZCC_PRODUCT_SERVER_CREDENTIAL ?? randomBytes(32).toString('hex'),
     ZCC_SERVER_URL: `http://127.0.0.1:${serverPort}/`
   };
   if (!processEnv.ZCC_EXTENSIONS_DIR) {

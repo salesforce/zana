@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import plugin from './server.ts';
 
 const PROJECT_ID = 'project-1';
+const MARKER_PATH = '.zcc-hooks-probe/tool-marker.json';
+const JOURNAL_PATH = '.zcc-hooks-probe/mcp-invocations.jsonl';
 
 function emptyMarkerFile() {
   return { count: 0, history: [] };
@@ -17,7 +25,7 @@ async function loaded(stubFiles?: Record<string, { content: string; sha256: stri
   harness.sdk.stub('files.readProject', (args: unknown) => {
     const { path } = args as { path: string };
     const row = store.get(path);
-    if (!row) throw new Error('not found');
+    if (!row) throw Object.assign(new Error(`Path does not exist: ${path}`), { code: 'path_not_found' });
     return { content: row.content, sha256: row.sha256 };
   });
   harness.sdk.stub('files.writeProject', (args: unknown) => {
@@ -62,6 +70,101 @@ describe('platform-hooks-probe server', () => {
     await expect(harness.callRpc('markerGet', { projectId: PROJECT_ID })).resolves.toEqual(emptyMarkerFile());
   });
 
+  it('merges MCP journal entries without losing modern tool writes, then clears at the journal offset', async () => {
+    const { harness, store } = await loaded();
+    const mcpEntry = (id: string) => JSON.stringify({ source: 'mcp-tool', invocationId: id, at: Date.now() }) + '\n';
+    store.set(JOURNAL_PATH, { content: mcpEntry('mcp-1'), sha256: 'sha-j1' });
+    await harness.callAgentTool('platform_hooks_probe_marker', {}, { projectId: PROJECT_ID, threadId: 'thread-1' });
+    store.set(JOURNAL_PATH, { content: mcpEntry('mcp-1') + mcpEntry('mcp-2'), sha256: 'sha-j2' });
+    await expect(harness.callRpc('markerGet', { projectId: PROJECT_ID })).resolves.toMatchObject({ count: 3 });
+    await harness.callRpc('markerClear', { projectId: PROJECT_ID });
+    await expect(harness.callRpc('markerGet', { projectId: PROJECT_ID })).resolves.toEqual(emptyMarkerFile());
+    store.set(JOURNAL_PATH, { content: mcpEntry('mcp-1') + mcpEntry('mcp-2') + mcpEntry('mcp-3'), sha256: 'sha-j3' });
+    await expect(harness.callRpc('markerGet', { projectId: PROJECT_ID })).resolves.toMatchObject({
+      count: 1, history: [expect.objectContaining({ invocationId: 'mcp-3' })]
+    });
+  });
+
+  it.each(['markerClear', 'resetProbeState'])('%s retries a conflict and reports failure without publishing when retries exhaust', async (method) => {
+    const { harness, store } = await loaded();
+    store.set(MARKER_PATH, { content: JSON.stringify({ count: 2, history: [] }), sha256: 'sha-current' });
+    const write = vi.fn(() => ({ outcome: 'conflict' as const }));
+    harness.sdk.stub('files.writeProject', write);
+    await harness.callRpc('setDispatchSelection', { kind: 'reject', message: 'still set' });
+    await expect(harness.callRpc(method, { projectId: PROJECT_ID })).rejects.toThrow('tool marker clear did not converge after retries');
+    expect(write).toHaveBeenCalledTimes(5);
+    expect(harness.published.filter((row) => row.event === 'hooks-probe-tool-marker-changed')).toHaveLength(0);
+    expect(store.get(MARKER_PATH)?.content).toContain('"count":2');
+    await expect(harness.callRpc('getDispatchSelection', undefined)).resolves.toMatchObject({ kind: 'reject' });
+  });
+
+  it('retries a clear against refreshed state before claiming success', async () => {
+    const { harness, store } = await loaded();
+    store.set(MARKER_PATH, { content: JSON.stringify({ count: 1, history: [] }), sha256: 'sha-first' });
+    let calls = 0;
+    harness.sdk.stub('files.writeProject', (args: unknown) => {
+      const { content, expectedSha256 } = args as { content: string; expectedSha256: string };
+      calls++;
+      if (calls === 1) {
+        store.set(MARKER_PATH, { content: JSON.stringify({ count: 2, history: [] }), sha256: 'sha-second' });
+        return { outcome: 'conflict' as const };
+      }
+      expect(expectedSha256).toBe('sha-second');
+      store.set(MARKER_PATH, { content, sha256: 'sha-cleared' });
+      return { outcome: 'written' as const, sha256: 'sha-cleared' };
+    });
+    await expect(harness.callRpc('markerClear', { projectId: PROJECT_ID })).resolves.toEqual({ ok: true });
+    expect(calls).toBe(2);
+    expect(harness.published.filter((row) => row.event === 'hooks-probe-tool-marker-changed')).toHaveLength(1);
+  });
+
+  it.each(['not json', '{"count":"wrong","history":[]}', '{"count":1,"history":{}}'])(
+    'rejects corrupt marker %s rather than resetting count', async (content) => {
+      const { harness, store } = await loaded({ [MARKER_PATH]: { content, sha256: 'sha-corrupt' } });
+      await expect(harness.callRpc('markerGet', { projectId: PROJECT_ID })).rejects.toThrow('tool marker is corrupt');
+      await expect(harness.callRpc('markerClear', { projectId: PROJECT_ID })).rejects.toThrow('tool marker is corrupt');
+      await expect(harness.callAgentTool('platform_hooks_probe_marker', {}, { projectId: PROJECT_ID, threadId: 'thread-1' })).rejects.toThrow('tool marker is corrupt');
+      expect(store.get(MARKER_PATH)?.content).toBe(content);
+    }
+  );
+
+  it('does not mistake a non-missing read failure for an empty marker', async () => {
+    const { harness } = await loaded();
+    harness.sdk.stub('files.readProject', () => { throw new Error('host offline'); });
+    await expect(harness.callRpc('markerClear', { projectId: PROJECT_ID })).rejects.toThrow('host offline');
+  });
+
+  it('rejects corrupt MCP journal instead of clearing or hiding its records', async () => {
+    const { harness, store } = await loaded({ [JOURNAL_PATH]: { content: '{bad json}\n', sha256: 'sha-bad' } });
+    await expect(harness.callRpc('markerGet', { projectId: PROJECT_ID })).rejects.toThrow('MCP marker journal is corrupt');
+    await expect(harness.callRpc('markerClear', { projectId: PROJECT_ID })).rejects.toThrow('MCP marker journal is corrupt');
+    expect(store.has(MARKER_PATH)).toBe(false);
+  });
+
+  it('records simultaneous calls from separate MCP processes without losing journal lines', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'hooks-probe-mcp-'));
+    const transports = Array.from({ length: 2 }, () => new StdioClientTransport({
+      command: process.execPath,
+      args: [fileURLToPath(new URL('./mcp-server.js', import.meta.url))],
+      cwd
+    }));
+    const clients = transports.map(() => new Client({ name: 'probe-test', version: '1.0.0' }));
+    try {
+      await Promise.all(clients.map((client, index) => client.connect(transports[index])));
+      const results = await Promise.all(Array.from({ length: 24 }, (_, index) =>
+        clients[index % clients.length].callTool({ name: 'platform-hooks-probe', arguments: {} })
+      ));
+      expect(results.every((result) => !result.isError)).toBe(true);
+      const lines = (await readFile(join(cwd, JOURNAL_PATH), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      expect(lines).toHaveLength(24);
+      expect(new Set(lines.map((entry) => entry.invocationId)).size).toBe(24);
+      expect(lines.every((entry) => entry.source === 'mcp-tool')).toBe(true);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it('registers the platform_hooks_probe_marker agent tool and records a modern-tool entry', async () => {
     const { harness } = await loaded();
     const result = await harness.callAgentTool('platform_hooks_probe_marker', {}, { projectId: PROJECT_ID, threadId: 'thread-1' }) as {
@@ -96,7 +199,7 @@ describe('platform-hooks-probe server', () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'platform-hooks-probe' });
     let admission!: (request: { dispatchId: string; threadId: string; projectId: string; generation: number }) => unknown;
     zcc.hooks.on = ((handler: typeof admission) => { admission = handler; }) as never;
-    harness.sdk.stub('files.readProject', () => { throw new Error('not found'); });
+    harness.sdk.stub('files.readProject', () => { throw Object.assign(new Error('Path does not exist: marker'), { code: 'path_not_found' }); });
     harness.sdk.stub('files.writeProject', () => ({ outcome: 'written' as const, sha256: 'sha-1' }));
     await plugin(zcc);
     await harness.callRpc('setDispatchSelection', { kind: 'wait', overrideable: true, reason: 'test wait' });
@@ -264,7 +367,7 @@ describe('platform-hooks-probe server', () => {
       pluginId: 'platform-hooks-probe',
       experimental_callHostRpc: spy
     });
-    harness.sdk.stub('files.readProject', () => { throw new Error('not found'); });
+    harness.sdk.stub('files.readProject', () => { throw Object.assign(new Error('Path does not exist: marker'), { code: 'path_not_found' }); });
     harness.sdk.stub('files.writeProject', () => ({ outcome: 'written' as const, sha256: 'sha-1' }));
     harness.sdk.stub('system.defaultHost', () => ({ id: 'host-1' }));
     await plugin(zcc);

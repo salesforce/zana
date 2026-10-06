@@ -37,7 +37,7 @@ import {
   type MessageBoxOptions
 } from 'electron';
 import { join, isAbsolute, resolve, sep, basename } from 'node:path';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, relative } from 'node:path';
@@ -53,6 +53,7 @@ import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
 import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
 import { registerDesktopBrowserIpc } from './desktop-browser-main-ipc.js';
@@ -503,6 +504,43 @@ export function logMainError(context: string, err: unknown) {
   const message = err instanceof Error ? err.stack || err.message : String(err);
   testTap.recordLog('error', context, message);
   console.error(`[main] ${context}: ${message}`);
+}
+
+export async function decideNativeToolPolicy(sessionId: string, body: string): Promise<{ decision: 'allow' | 'deny'; reason: string } | null> {
+  try {
+    const raw = JSON.parse(body) as Record<string, unknown> | null;
+    const validId = (value: unknown): value is string =>
+      typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+      || !validId(raw.turn_id) || !validId(raw.tool_use_id)
+      || typeof raw.tool_name !== 'string' || !raw.tool_name) return null;
+    // Hash provider identities to keep input out of the wire key and bound its size.
+    const invocationId = createHash('sha256')
+      .update(JSON.stringify([sessionId, raw.turn_id, raw.tool_use_id]))
+      .digest('hex');
+    const input = raw.tool_input && typeof raw.tool_input === 'object' && !Array.isArray(raw.tool_input)
+      ? raw.tool_input as Record<string, unknown> : {};
+    const response = await fetch(
+      new URL(`api/v1/terminals/${encodeURIComponent(sessionId)}/tool-policy`, productServerUrl()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ invocationId, toolName: raw.tool_name, input })
+      }
+    );
+    if (!response.ok) return null;
+    const policy: unknown = await response.json();
+    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return null;
+    const { action, reason } = policy as Record<string, unknown>;
+    if (action !== 'allow' && action !== 'deny') return null;
+    return {
+      decision: action,
+      reason: typeof reason === 'string' ? reason
+        : action === 'deny' ? 'denied by plugin tool policy' : 'allowed'
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -2892,6 +2930,10 @@ function ensureProductServerCredential(): string {
   }
   return productServerCredential;
 }
+
+// In development the launcher supplies this to multiple processes. Remove it
+// before any main-owned agent/utility can be spawned, not on the first UI click.
+ensureProductServerCredential();
 
 function verifyProductServerCredential(credential: unknown): boolean {
   const expected = productServerCredential;
@@ -6696,7 +6738,84 @@ async function cloneAndRegisterProject(
   }
 }
 
+export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown, itemId: unknown): Promise<{ ok: true }> {
+  if (typeof threadId !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(threadId)
+    || typeof itemId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(itemId)) {
+    throw new Error('Invalid queued send');
+  }
+  const base = productServerUrl();
+  async function readBounded(path: string): Promise<unknown> {
+    const response = await fetch(new URL(path, base), { signal: AbortSignal.timeout(5_000) });
+    if (!response.ok || !response.body) throw new Error('Queued send is unavailable');
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 128 * 1024) throw new Error('Queued send details are too large');
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+      if (size > 128 * 1024) await response.body.cancel().catch(() => {});
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  }
+  const threadPath = `api/v1/threads/${encodeURIComponent(threadId)}`;
+  const queuePath = `${threadPath}/next-turn`;
+  async function selectedItem(): Promise<{ id: string; text: string; updatedAt: number }> {
+    const result = await readBounded(queuePath);
+    if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true
+      || !('items' in result) || !Array.isArray(result.items)) throw new Error('Queued send is unavailable');
+    const item: unknown = result.items.find((entry: unknown) =>
+      entry !== null && typeof entry === 'object' && 'id' in entry && entry.id === itemId);
+    if (!item || typeof item !== 'object' || !('id' in item) || item.id !== itemId
+      || !('status' in item) || item.status !== 'queued'
+      || !('text' in item) || typeof item.text !== 'string'
+      || !('updatedAt' in item) || typeof item.updatedAt !== 'number') {
+      throw new Error('Queued message no longer exists');
+    }
+    return { id: item.id as string, text: item.text as string, updatedAt: item.updatedAt as number };
+  }
+  const thread = await readBounded(threadPath);
+  if (!thread || typeof thread !== 'object' || !('thread' in thread)
+    || !thread.thread || typeof thread.thread !== 'object'
+    || !('id' in thread.thread) || thread.thread.id !== threadId
+    || !('title' in thread.thread) || typeof thread.thread.title !== 'string') {
+    throw new Error('Queued send thread is unavailable');
+  }
+  const item = await selectedItem();
+  const preview = (value: string, max: number) => {
+    const clean = value.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+    return clean.length > max ? `${clean.slice(0, max)}...` : clean;
+  };
+  const confirmation = await dialog.showMessageBox(win, {
+    type: 'question', title: 'Send queued message now?',
+    message: `Send queued message to ${preview(thread.thread.title, 80) || 'Untitled thread'}?`,
+    detail: `Message: ${preview(item.text, 240) || '(no text)'}\n\nThis can override a plugin dispatch wait.`,
+    buttons: ['Cancel', 'Send now'], defaultId: 0, cancelId: 0, noLink: true
+  });
+  if (confirmation.response !== 1 || win.isDestroyed()) throw new Error('Send now was cancelled');
+  const current = await selectedItem();
+  if (current.id !== item.id || current.updatedAt !== item.updatedAt || current.text !== item.text) {
+    throw new Error('Queued message changed; confirm again');
+  }
+  const proof = signUiSend(ensureProductServerCredential(), threadId, item.id);
+  const response = await fetch(new URL(`${queuePath}/${encodeURIComponent(item.id)}/send`, base), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-zcc-ui-send-proof': proof },
+    body: '{}', signal: AbortSignal.timeout(15_000)
+  });
+  const result = await response.json() as { ok?: boolean; error?: string; message?: string };
+  if (!response.ok || result.ok !== true) throw new Error(result.message ?? result.error ?? 'Send now failed');
+  return { ok: true };
+}
+
 function registerIpc() {
+  safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.list, () => sharedClient.instances(), err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.signIn, () => sharedClient.signIn(), err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.select, (_win, id: unknown) => sharedClient.select(id), err => { throw err; });
@@ -7718,35 +7837,7 @@ async function bootstrapNormal() {
     onNativeToolPolicyHook: async (_projectId: string, sessionId: string, body: string) => {
       const session = ptys.getSession(sessionId);
       if (!session || session.status === 'exited') return null;
-      let toolName: string;
-      let input: Record<string, unknown>;
-      try {
-        const raw = JSON.parse(body) as { tool_name?: unknown; tool_input?: unknown };
-        if (typeof raw.tool_name !== 'string' || !raw.tool_name) return null;
-        toolName = raw.tool_name;
-        input = raw.tool_input && typeof raw.tool_input === 'object' ? (raw.tool_input as Record<string, unknown>) : {};
-      } catch {
-        return null;
-      }
-      const invocationId = randomUUID();
-      try {
-        const response = await fetch(
-          new URL(`api/v1/terminals/${encodeURIComponent(sessionId)}/tool-policy`, productServerUrl()),
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ invocationId, toolName, input })
-          }
-        );
-        if (!response.ok) return null;
-        const policy = (await response.json()) as { action?: unknown; reason?: unknown };
-        if (policy.action === 'deny') {
-          return { decision: 'deny', reason: typeof policy.reason === 'string' ? policy.reason : 'denied by plugin tool policy' };
-        }
-        return { decision: 'allow', reason: typeof policy.reason === 'string' ? policy.reason : 'allowed' };
-      } catch {
-        return null;
-      }
+      return decideNativeToolPolicy(sessionId, body);
     },
     // Upper bound on the whole exchange; mcp-server.ts fails CLOSED (deny) if
     // this elapses, the inverse of overseerDecisionTimeoutMs's fail-open guard.

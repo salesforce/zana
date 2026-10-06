@@ -324,7 +324,7 @@ function SplitEnabledNavRow({
         ) : undefined
       }
       onPointerDown={onPointerDown}
-      onSplitPointerDown={splitContent ? onSplitPointerDown : undefined}
+      onSplitPointerDown={splitContent && !item.disabled ? onSplitPointerDown : undefined}
       onClick={(event) => {
         if (item.disabled) {
           event.preventDefault();
@@ -394,8 +394,10 @@ function SidebarNavRow({
       className={`nav-item ${active ? 'active' : ''} ${disabled ? 'nav-item--disabled' : ''}`}
       onClick={onClick}
       onPointerDown={(event) => {
-        onPointerDown?.(event);
-        onSplitPointerDown?.(event);
+        if (!disabled) {
+          onPointerDown?.(event);
+          onSplitPointerDown?.(event);
+        }
       }}
       aria-current={active ? 'page' : undefined}
       aria-disabled={disabled || undefined}

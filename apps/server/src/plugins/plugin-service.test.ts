@@ -443,7 +443,63 @@ describe('PluginService', () => {
     await service.install(rejecter);
     await expect(
       service.admitDispatch({ dispatchId: 'd1', threadId: 't1', projectId: 'p1', generation: 1 })
-    ).resolves.toEqual({ action: 'reject', message: 'blocked' });
+    ).resolves.toEqual({ action: 'reject', message: 'blocked', pluginId: 'rejecter' });
+  });
+
+  it('admitDispatch: failure rejects even when other plugins proceed or wait', async () => {
+    const dataDir = root();
+    const sources = [
+      `zcc.hooks.on(() => { throw new Error('broken'); });`,
+      `zcc.hooks.on(() => null);`,
+      `zcc.hooks.on(() => ({ action: 'wait', reason: 'queued', overrideable: true }));`,
+      `zcc.hooks.on(() => ({ action: 'proceed' }));`
+    ];
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    for (const [index, source] of sources.entries()) {
+      await service.install(writePlugin(join(root(), `admission-${index}`), `admission-${index}`, `export default function plugin(zcc) { ${source} }\n`));
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(service.admitDispatch({ dispatchId: 'd', threadId: 't', projectId: 'p', generation: 1 }))
+        .resolves.toEqual({ action: 'reject', message: 'Plugin dispatch admission unavailable: admission-0' });
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls.map((call) => call[0]).sort()).toEqual([
+        '[plugins] dispatch admission admission-0 failed',
+        '[plugins] dispatch admission admission-1 failed'
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('admitDispatch: a pending handler cannot bypass a later reject or the deadline', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(writePlugin(join(root(), 'pending-admission'), 'pending-admission',
+      `export default function plugin(zcc) { zcc.hooks.on(() => new Promise(() => {})); }\n`));
+    await service.install(writePlugin(join(root(), 'late-reject'), 'late-reject',
+      `export default function plugin(zcc) { zcc.hooks.on(() => ({ action: 'reject', message: 'blocked' })); }\n`));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const pending = service.admitDispatch({ dispatchId: 'd', threadId: 't', projectId: 'p', generation: 1 });
+      await vi.advanceTimersByTimeAsync(9_000);
+      await expect(pending).resolves.toEqual({ action: 'reject', message: 'Plugin dispatch admission timed out' });
+    } finally { vi.useRealTimers(); warn.mockRestore(); }
+  });
+
+  it('admitDispatch: all handlers share one deadline, not serial per-handler waits', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    for (const id of ['pending-first', 'pending-second']) {
+      await service.install(writePlugin(join(root(), id), id,
+        `export default function plugin(zcc) { zcc.hooks.on(() => new Promise(() => {})); }\n`));
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const pending = service.admitDispatch({ dispatchId: 'd', threadId: 't', projectId: 'p', generation: 1 });
+      await vi.advanceTimersByTimeAsync(9_000);
+      await expect(pending).resolves.toEqual({ action: 'reject', message: 'Plugin dispatch admission timed out' });
+    } finally { vi.useRealTimers(); warn.mockRestore(); }
   });
 
   it('admitDispatch: returns the first plugin\'s wait when no plugin rejects', async () => {
@@ -527,6 +583,29 @@ describe('PluginService', () => {
     await service.decideToolPolicy(request);
     await service.decideToolPolicy(request);
     await expect(service.callRpc('counter', 'callCount', {})).resolves.toBe(1);
+  });
+
+  it.each([
+    [`throw new Error('broken')`, 'throw'],
+    [`return null`, 'malformed'],
+    [`return new Promise(() => {})`, 'timeout']
+  ])('decideToolPolicy: denies and caches %s handler failures', async (body) => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(writePlugin(join(root(), 'broken-policy'), 'broken-policy',
+      `export default function plugin(zcc) { zcc.hooks.onToolPolicy(() => { ${body}; }); }\n`));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const request = { invocationId: 'inv-broken', threadId: 't', projectId: 'p', providerId: 'claude-code', toolName: 'bash', input: {} };
+      const pending = service.decideToolPolicy(request);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(pending).resolves.toEqual({ action: 'deny', reason: 'Plugin tool policy unavailable: broken-policy' });
+      await expect(service.decideToolPolicy(request)).resolves.toEqual({ action: 'deny', reason: 'Plugin tool policy unavailable: broken-policy' });
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      warn.mockRestore();
+    }
   });
 
   it('rejects native addons and npm installs without ignore-scripts would be the spawn contract', async () => {

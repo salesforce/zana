@@ -517,7 +517,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const promotionQueue = createSerializedTransactionQueue();
   const lifecycleEpochs = new Map<string, number>();
   // OBL-004: retry with the same invocationId must return the same decision rather
-  // than re-invoking plugin handlers. Bounded like push.ts's state map (Rule 5).
+  // than re-invoking plugin handlers. Map insertion order supplies bounded FIFO eviction.
   const toolPolicyDecisions = new Map<string, Promise<PluginToolPolicyDecision>>();
   const TOOL_POLICY_DECISIONS_MAX = 500;
 
@@ -1813,17 +1813,36 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       );
     },
     async admitDispatch(request) {
-      // Reject always wins regardless of plugin order: don't short-circuit on
-      // the first plugin's wait, or a later plugin's reject is never seen.
-      let firstWait: import('@zana-ai/zcc-domain').DispatchAdmissionDecision | undefined;
-      for (const current of live.values()) {
-        for (const handler of current.handle?.dispatchAdmissionHandlers ?? []) {
-          const decision = await Promise.resolve(handler(request));
-          if (decision.action === 'reject') return decision;
-          if (decision.action === 'wait' && !firstWait) firstWait = { ...decision, pluginId: current.row.id };
-        }
+      const reviews = [...live.values()].flatMap((current) =>
+        (current.handle?.dispatchAdmissionHandlers ?? []).map(async (handler) => {
+          try {
+            const decision: unknown = await handler(request);
+            if (!decision || typeof decision !== 'object') throw new Error('invalid dispatch admission decision');
+            const result = decision as Record<string, unknown>;
+            if (result.action === 'reject' && typeof result.message === 'string') {
+              return { action: 'reject', message: result.message, pluginId: current.row.id } as const;
+            }
+            if (result.action === 'wait' && typeof result.reason === 'string' && typeof result.overrideable === 'boolean') {
+              return { action: 'wait', reason: result.reason, overrideable: result.overrideable, pluginId: current.row.id } as const;
+            }
+            if (result.action === 'proceed') return { action: 'proceed' } as const;
+            throw new Error('invalid dispatch admission decision');
+          } catch (error) {
+            console.warn(`[plugins] dispatch admission ${current.row.id} failed`, error);
+            return { action: 'reject', message: `Plugin dispatch admission unavailable: ${current.row.id}` } as const;
+          }
+        })
+      );
+      try {
+        // One deadline covers the whole fan-out, including any handler that never settles.
+        // Never proceed or return an overrideable wait without every veto reviewed.
+        const decisions = await withDeadline(Promise.all(reviews), 9_000, 'dispatch admission');
+        return decisions.find((decision) => decision.action === 'reject')
+          ?? decisions.find((decision) => decision.action === 'wait')
+          ?? { action: 'proceed' };
+      } catch {
+        return { action: 'reject', message: 'Plugin dispatch admission timed out' };
       }
-      return firstWait ?? { action: 'proceed' };
     },
     async decideToolPolicy(request) {
       const cached = toolPolicyDecisions.get(request.invocationId);
@@ -1831,8 +1850,22 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const decision = (async () => {
         for (const current of live.values()) {
           for (const handler of current.handle?.toolPolicyHandlers ?? []) {
-            const decision = await Promise.resolve(handler(request));
-            if (decision.action === 'deny') return decision;
+            try {
+              const decision: unknown = await withDeadline(
+                Promise.resolve().then(() => handler(request)),
+                PLUGIN_MENTION_RESOLVE_TIMEOUT_MS,
+                `tool policy ${current.row.id}`
+              );
+              if (!decision || typeof decision !== 'object') throw new Error('invalid tool policy decision');
+              const result = decision as Record<string, unknown>;
+              if (result.action === 'deny' && typeof result.reason === 'string') {
+                return { action: 'deny', reason: result.reason } as const;
+              }
+              if (result.action !== 'allow') throw new Error('invalid tool policy decision');
+            } catch (error) {
+              console.warn(`[plugins] tool policy ${current.row.id} failed`, error);
+              return { action: 'deny', reason: `Plugin tool policy unavailable: ${current.row.id}` } as const;
+            }
           }
         }
         return { action: 'allow' } as const;

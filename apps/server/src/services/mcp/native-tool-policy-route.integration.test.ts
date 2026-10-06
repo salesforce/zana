@@ -168,4 +168,28 @@ describe('Native Tool Policy PreToolUse route (end-to-end, fail-closed)', () => 
     });
     expect(seen).toEqual([{ projectId: 'proj-1', sessionId: 'sess-A' }]);
   });
+
+  it('uses a configured timeout function and never invokes a late handler after deadline', async () => {
+    let release!: (decision: { decision: 'allow'; reason: string }) => void;
+    const pending = new Promise<{ decision: 'allow'; reason: string }>(resolve => { release = resolve; });
+    let called = false;
+    const h = await boot(async () => { called = true; return pending; }, () => 40);
+    const { json } = await postHook(h.url, 'proj-1/sess-A', { tool_name: 'Write' });
+    expect(called).toBe(true);
+    expect((json as { hookSpecificOutput: { permissionDecisionReason: string } }).hookSpecificOutput.permissionDecisionReason).toBe('native tool policy decision timed out');
+    release({ decision: 'allow', reason: 'late allow' });
+  });
+
+  it('decodes URL identity and rejects malformed URL-encoded segments', async () => {
+    const seen: string[] = [];
+    const h = await boot(async (projectId, sessionId) => {
+      seen.push(`${projectId}:${sessionId}`);
+      return { decision: 'deny', reason: 'not allowed' };
+    });
+    await postHook(h.url, 'project%20one/session%20two', {});
+    expect(seen).toEqual(['project one:session two']);
+    const response = await fetch(`${h.url}/hook/nativetool/%ZZ/session`, { method: 'POST', body: '{}' });
+    expect(response.status).not.toBe(200);
+    expect(seen).toHaveLength(1);
+  });
 });

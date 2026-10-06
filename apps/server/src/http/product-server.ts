@@ -27,6 +27,8 @@ export interface StartProductServerOptions {
   dataDir?: string;
   origins: LocalAppOriginArgs;
   enrollToken?: string;
+  /** Boot-only secret shared with trusted Electron main, never exposed by HTTP. */
+  uiSendSecret?: string;
   /**
    * Optional extra handler used when this listener also serves renderer
    * assets. Return true when the request was fully handled.
@@ -44,7 +46,8 @@ export async function startProductServer(options: StartProductServerOptions): Pr
   const ctx = createProductHttpContext({
     dataDir: options.dataDir,
     origins: { ...options.origins, serverPort: options.port ?? options.origins.serverPort },
-    enrollToken: options.enrollToken
+    enrollToken: options.enrollToken,
+    uiSendSecret: options.uiSendSecret
   });
   const wss = createProductWebSocketServer(ctx);
   const hostWss = createHostDaemonWebSocketServer();

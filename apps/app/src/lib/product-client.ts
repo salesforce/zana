@@ -734,10 +734,10 @@ function httpProduct(): Pick<
           method: 'POST',
           body: JSON.stringify({ force })
         }),
-      sendNextTurn: async (threadId: string, itemId: string) =>
-        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}/send`, {
-          method: 'POST', body: '{}'
-        }),
+      sendNextTurn: async (threadId: string, itemId: string) => {
+        if (!hasDesktopBridge()) throw new Error('Send now requires the desktop app');
+        return window.cc.threads.sendNextTurn(threadId, itemId);
+      },
       deleteNextTurn: async (threadId: string, itemId: string) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}`, {
           method: 'DELETE'

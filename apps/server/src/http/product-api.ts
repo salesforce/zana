@@ -13,6 +13,8 @@ import { handleProjectSourcesApi } from './project-sources-api.js';
 import { resolveProjectHost } from './project-host.js';
 import { mutateProjectFile } from './project-file-mutations.js';
 import { invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { redactToolInput } from '@zana-ai/zcc-host-daemon/harness/claude/hooks';
+import { productServerHasDesktopCredential } from './cli-agent-ops.js';
 import { assertPlanRevision, planImplementationMode, planImplementationPrompt } from '../services/threads/conversation-plan-implementation.js';
 import { readPluginHttpBody, PluginHttpBodyTooLarge } from './plugin-http-body.js';
 import { conversationHistoryAsync } from '../services/threads/conversation-history.js';
@@ -32,7 +34,6 @@ import type {
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
-import { verifySessionControlCredential } from '@zana-ai/zcc-host-daemon/control-credential';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson, beginNdjson } from './json.js';
 import {
@@ -493,7 +494,7 @@ export async function handleProductHttp(
       return true;
     }
     if (path === '/api/v1/system/instance' && method === 'GET') {
-      sendJson(response, 200, { instanceId: ctx.productInstanceId, sharedProductServices: Boolean(process.env.ZCC_PRODUCT_SERVER_CREDENTIAL), projectSources: true, connectMachines: usesConnect(ctx) });
+      sendJson(response, 200, { instanceId: ctx.productInstanceId, sharedProductServices: productServerHasDesktopCredential(), projectSources: true, connectMachines: usesConnect(ctx) });
       return true;
     }
     if (path === '/api/v1/health' && (method === 'GET' || method === 'HEAD')) {
@@ -1899,9 +1900,11 @@ export async function handleProductHttp(
 
     const nextTurnSend = routeParams(path, '/api/v1/threads/:id/next-turn/:itemId/send');
     if (nextTurnSend && method === 'POST') {
-      const overriddenBy = verifiedOverrideCaller(request);
+      const overriddenBy = ctx.verifyUiSend(
+        headerValue(request.headers, 'x-zcc-ui-send-proof'), nextTurnSend.id, nextTurnSend.itemId
+      ) ? 'desktop-ui' : null;
       if (overriddenBy === null) {
-        sendJson(response, 403, { error: 'invalid_caller_credential', message: 'Caller session credential did not verify' });
+        sendJson(response, 403, { error: 'invalid_caller_credential', message: 'Send now requires a verified desktop UI action' });
         return true;
       }
       try {
@@ -3417,7 +3420,7 @@ export async function handleProductHttp(
         sendJson(response, 200, { action: 'deny', reason: 'plugin service is unavailable' });
         return true;
       }
-      const body = (await readJsonBody(request)) as { invocationId?: unknown; toolName?: unknown; input?: unknown };
+      const body = (await readJsonBody(request, 256 * 1024)) as { invocationId?: unknown; toolName?: unknown; input?: unknown };
       if (typeof body?.invocationId !== 'string' || !body.invocationId || typeof body?.toolName !== 'string' || !body.toolName) {
         sendJson(response, 400, { ok: false, code: 'invalid-tool-policy-request', message: 'invocationId and toolName are required' });
         return true;
@@ -3428,7 +3431,7 @@ export async function handleProductHttp(
         projectId: session.projectId,
         providerId: canonicalThreadProviderId(session.profile),
         toolName: body.toolName,
-        input: body.input && typeof body.input === 'object' ? (body.input as Record<string, unknown>) : {}
+        input: redactToolInput(body.input)
       });
       sendJson(response, 200, policy);
       return true;
@@ -3641,26 +3644,6 @@ function boundedHeader(request: IncomingMessage, name: string, maxChars: number)
   if (typeof value !== 'string' || value.length === 0) return undefined;
   // Presence always keeps caller on non-operator path, even when malformed.
   return value.length <= maxChars ? value : '__invalid_caller__';
-}
-
-/**
- * Send-now dispatch-admission override (OBL-003) is the one route where the
- * caller-identity headers must be cryptographically checked rather than
- * trusted at face value: unlike team launch/status/answer/stop, this route
- * both authorizes a privileged action (bypassing a plugin's wait) and stamps
- * the audit trail's `overriddenBy`. A caller with no identity headers is the
- * same-origin desktop-UI click (no formal session system — Rule 1); a caller
- * that supplies them must present a session id whose HMAC
- * (`verifySessionControlCredential`, the same primitive the control-plane and
- * MCP route gates use) matches, or the request is rejected rather than
- * silently falling back to an unverified label.
- */
-function verifiedOverrideCaller(request: IncomingMessage): string | null {
-  const caller = teamCaller(request);
-  if (!caller) return 'desktop-ui';
-  if (!caller.callerSessionId) return null;
-  if (!verifySessionControlCredential(caller.callerSessionId, caller.callerCredential)) return null;
-  return caller.callerSessionId;
 }
 
 function sendHostFailure(response: ServerResponse, error: unknown): void {

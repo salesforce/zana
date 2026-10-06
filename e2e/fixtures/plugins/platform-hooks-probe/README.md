@@ -36,14 +36,15 @@ in `package.json`.
 
 ## Tool Policy marker
 
-Both the agent tool (`server.ts`, via `zcc.sdk.files.*Project`, CAS-retried)
-and the MCP tool (`mcp-server.js`, via plain `node:fs`, tmp+rename atomic
-write) record invocations into the same bounded project file,
-`.zcc-hooks-probe/tool-marker.json`. There is no RPC/HTTP callback channel
-from a plugin-contributed MCP child back into its own plugin process, so the
-shared project file — written independently by each side, confined to a
-fixed relative path with no caller-supplied path and no shell — is the only
-mechanism that lets the Tool Policy panel observe either kind of invocation.
+The agent tool writes `.zcc-hooks-probe/tool-marker.json` with CAS retries.
+The MCP tool appends one line per invocation to
+`.zcc-hooks-probe/mcp-invocations.jsonl`; it never overwrites the server's
+marker. The server merges both on reads and stores the journal offset on
+clear/reset, preserving invocations appended after a clear. The journal is
+capped at 1 MiB and fails rather than silently losing records once full.
+Corrupt marker or journal data fails reads/writes instead of resetting count.
+Both paths are fixed inside the project with no caller-supplied path or shell.
+There is no RPC/HTTP callback from the MCP child to the plugin process.
 
 ## Enabling on a project
 

@@ -1,11 +1,18 @@
+// @vitest-environment happy-dom
 import { renderToStaticMarkup } from 'react-dom/server';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { URL as NodeURL } from 'node:url';
 import type { HTMLAttributes, ReactElement } from 'react';
 
 const h = vi.hoisted(() => ({
-  state: { sidebarCollapsed: false }
+  state: { sidebarCollapsed: false },
+  footer: [],
+  splitPointer: vi.fn(),
+  openInSplit: vi.fn(),
+  consumeSplitClick: vi.fn(() => false)
 }));
 
 vi.mock('../../store', () => ({
@@ -21,10 +28,20 @@ vi.mock('../../plugins/plugin-slots', () => ({
     listener();
     return () => undefined;
   },
-  listSidebarFooterActions: () => []
+  listSidebarFooterActions: () => h.footer
 }));
 vi.mock('../../lib/resolveIcon', () => ({
   resolveIcon: () => () => null
+}));
+vi.mock('../sidebar/useThreadRowSplitDrag.js', () => ({
+  usePaneContentSplitDrag: () => ({
+    onPointerDown: h.splitPointer,
+    openInSplit: h.openInSplit,
+    consumeClick: h.consumeSplitClick
+  })
+}));
+vi.mock('../sidebar/paneContentSplitIndicator.js', () => ({
+  usePaneContentSplitIndicator: () => ({ miniMap: null })
 }));
 
 import { SidebarRail, type SidebarRailItem } from '../SidebarRail.js';
@@ -67,6 +84,11 @@ const items: SidebarRailItem[] = [
 function renderRail(node: ReactElement) {
   return renderToStaticMarkup(<MemoryRouter>{node}</MemoryRouter>);
 }
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 describe('SidebarRail', () => {
   it('uses touch navigation inside a mobile drawer without desktop drag or resize controls', () => {
@@ -234,8 +256,55 @@ describe('SidebarRail', () => {
     expect(tag).toContain('title="Plugin not configured"');
   });
 
+  it('blocks disabled split navigation and pointer drags while keeping enabled split navigation', () => {
+    const onDisabledClick = vi.fn();
+    const onEnabledClick = vi.fn();
+    const splitRows: SidebarRailItem[] = [
+      { kind: 'row', id: 'locked', label: 'Locked', icon: null, to: '/locked', testId: 'locked', active: false,
+        splitContent: { kind: 'agents' }, disabled: true, disabledReason: 'Unavailable', onClick: onDisabledClick },
+      { kind: 'row', id: 'ready', label: 'Ready', icon: null, to: '/ready', testId: 'ready', active: false,
+        splitContent: { kind: 'agents' }, onClick: onEnabledClick }
+    ];
+    render(<MemoryRouter><SidebarRail className="sidebar" navAriaLabel="Nav" storageKey="split-test"
+      pinnedIds={['locked', 'ready']} items={splitRows} /></MemoryRouter>);
+
+    const locked = screen.getByTestId('locked');
+    expect(locked.getAttribute('aria-disabled')).toBe('true');
+    expect(locked.getAttribute('title')).toBe('Unavailable');
+    fireEvent.pointerDown(locked);
+    fireEvent.click(locked, { metaKey: true });
+    fireEvent.click(locked);
+    expect(h.splitPointer).not.toHaveBeenCalled();
+    expect(h.openInSplit).not.toHaveBeenCalled();
+    expect(onDisabledClick).not.toHaveBeenCalled();
+
+    const ready = screen.getByTestId('ready');
+    fireEvent.pointerDown(ready);
+    expect(h.splitPointer).toHaveBeenCalledOnce();
+    fireEvent.click(ready, { metaKey: true });
+    expect(h.openInSplit).toHaveBeenCalledOnce();
+    expect(onEnabledClick).not.toHaveBeenCalled();
+    fireEvent.click(ready);
+    expect(onEnabledClick).toHaveBeenCalledOnce();
+  });
+
+  it('does not invoke a disabled ordinary destination or close mobile navigation', () => {
+    const onClick = vi.fn();
+    render(<MemoryRouter><SidebarRail className="sidebar" navAriaLabel="Nav" storageKey="ordinary-test"
+      pinnedIds={['locked']} items={[{
+        kind: 'row', id: 'locked', label: 'Locked', icon: null, to: '/locked', testId: 'ordinary-locked',
+        active: false, disabled: true, onClick
+      }]} /></MemoryRouter>);
+    const locked = screen.getByTestId('ordinary-locked');
+    expect(locked.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.pointerDown(locked);
+    fireEvent.click(locked);
+    expect(onClick).not.toHaveBeenCalled();
+    expect(h.splitPointer).not.toHaveBeenCalled();
+  });
+
   it('puts dnd-kit listeners on the Link itself and consumes post-drag clicks', () => {
-    const source = readFileSync(new URL('../SidebarRail.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new NodeURL('../SidebarRail.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('{...rest}');
     expect(source).toContain('consumeNavClick()');

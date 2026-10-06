@@ -52,6 +52,7 @@ import { disposeLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 import { startConversationHistoryMaintenance } from '../services/threads/conversation-history-maintenance.js';
 import { PersistentTerminalSessions } from './persistent-terminal-sessions.js';
 import { ProviderModelCatalogStore } from '../services/threads/provider-model-catalog-store.js';
+import { createUiSendVerifier } from './ui-send-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
@@ -99,6 +100,7 @@ export interface ProductHttpContext {
   cliAgentOps?: import('./cli-agent-ops.js').ProductCliAgentOps;
   /** Main-only session grants; absent on a server without a CLI coordinator. */
   cliCallbacks?: import('../services/launch/cli-callback-authority.js').CliCallbackAuthority;
+  verifyUiSend: (proof: unknown, threadId: string, itemId: string) => boolean;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;
@@ -108,6 +110,7 @@ export interface CreateProductHttpContextOptions {
   dataDir?: string;
   origins: LocalAppOriginArgs;
   enrollToken?: string;
+  uiSendSecret?: string;
   /** Reuse a process-local project store when one already exists. */
   projects?: ProjectStore;
   onLibraryChanged?: () => void;
@@ -355,6 +358,8 @@ export function createProductHttpContext(
     closeSummary,
     terminalSessions,
     pluginHostArtifacts: new PluginHostArtifactRegistry(),
+    verifyUiSend: options.uiSendSecret && options.uiSendSecret.length >= 32
+      ? createUiSendVerifier(options.uiSendSecret) : () => false,
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);

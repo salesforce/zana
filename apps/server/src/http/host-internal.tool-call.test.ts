@@ -169,6 +169,25 @@ describe('host internal plugin tool-call', () => {
     });
   });
 
+  it('fails closed when a partial plugin service lacks tool policy support', async () => {
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getConversationThread).mockReturnValue(thread as never);
+    const invokeAgentTool = vi.fn();
+    const captured = captureResponse();
+    await handleHostInternalHttp(request({
+      sessionId: 'inst-1', threadId: thread.id, providerThreadId: 'prov-1',
+      turnId: 'turn-1', callId: 'call-1', tool: 'sf_soql'
+    }), captured.response, {
+      config: { getConfig: () => ({}) }, db: {}, plugins: { invokeAgentTool }
+    } as unknown as ProductHttpContext);
+    expect(captured.status).toBe(200);
+    expect(captured.body).toMatchObject({
+      success: false,
+      contentItems: [{ type: 'inputText', text: expect.stringContaining('decideToolPolicy') }]
+    });
+    expect(invokeAgentTool).not.toHaveBeenCalled();
+  });
+
   it('rejects a browser Origin and a thread owned by another host', async () => {
     vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
     vi.mocked(getConversationThread).mockReturnValue({ ...thread, hostId: 'other-host' } as never);

@@ -43,7 +43,7 @@ beforeEach(() => {
     db, dataDir: dir, toProjects: () => [project], projects: { list: () => [project] },
     config: { getConfig: () => ({}) }, hub: { emit: vi.fn() },
     pluginHostArtifacts: artifacts,
-    plugins: { sessionTools: () => sessionTools(), emitThreadEvent: vi.fn(async () => {}) },
+    plugins: { admitDispatch: vi.fn(async () => ({ action: 'proceed' })), sessionTools: () => sessionTools(), emitThreadEvent: vi.fn(async () => {}) },
     pendingInteractions: { interruptPendingInteractionsForThreadIds: vi.fn(), hasPendingThreadInteraction: () => false },
     hostHub: {
       resolveHostId: () => hostId, ensureHostSessionReady: () => {}, connectedHostIds: () => [hostId],

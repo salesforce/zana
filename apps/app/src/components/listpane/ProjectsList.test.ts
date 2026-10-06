@@ -37,6 +37,14 @@ describe('project-row workspace actions', () => {
     expect(source).toContain('void action.run(projectMenuNavigateContext(action.pluginId, p.id');
   });
 
+  it('falls back to the static title after a resolver failure without disabling the action', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('titles: { ...state.titles, [key]: action.title }');
+    expect(source).toContain('disabled={Boolean(action.titleForProject) && !resolvedTitle}');
+    expect(source).not.toContain('Action unavailable');
+    expect(source).toContain('projectActionTitles.menu === menu');
+  });
+
   it('opens a workspace directly from its project row', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('if (consumeProjectClick()) return;');

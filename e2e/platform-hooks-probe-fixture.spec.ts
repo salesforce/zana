@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect, launchApp } from './fixtures/app.js';
+import { stubNativeDialogs } from './sdk/native-dialog.js';
 import { buildPluginHost } from '../packages/plugin-build/src/build-plugin-host.js';
 
 // The real, checked-in fixture plugin dir (never copied — its mcp-server.js
@@ -56,6 +57,7 @@ test('platform-hooks-probe fixture exercises project-tab availability and the ag
     initialConfig: { sponsorPromptDismissed: true }
   });
   try {
+    await stubNativeDialogs(app.electron, [1, 1]);
     const win = app.window;
     win.on('console', (msg) => console.log(`[renderer:${msg.type()}]`, msg.text()));
     let appStderr = '';
@@ -219,16 +221,12 @@ test('platform-hooks-probe fixture exercises project-tab availability and the ag
     const lockedNextTurn = await win.evaluate(async (id) => (await fetch(`/api/v1/threads/${id}/next-turn`)).json(), dispatchThread.id);
     expect(lockedNextTurn.items).toHaveLength(1);
     const lockedItemId = lockedNextTurn.items[0].id as string;
-    const lockedSendNow = await win.evaluate(async ({ id, itemId }) => {
-      const response = await fetch(`/api/v1/threads/${id}/next-turn/${itemId}/send`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}'
-      });
-      return { status: response.status, body: await response.json() };
+    const lockedSendNowPending = win.evaluate(async ({ id, itemId }) => {
+      try { return await window.cc.threads.sendNextTurn(id, itemId); }
+      catch (error) { return { message: error instanceof Error ? error.message : String(error) }; }
     }, { id: dispatchThread.id, itemId: lockedItemId });
-    expect(lockedSendNow.status).toBe(409);
-    expect(lockedSendNow.body).toMatchObject({ error: 'dispatch_not_overrideable' });
+    const lockedSendNow = await lockedSendNowPending;
+    expect(lockedSendNow).toMatchObject({ ok: false });
     await win.evaluate(async ({ id, itemId }) => {
       await fetch(`/api/v1/threads/${id}/next-turn/${itemId}`, {
         method: 'DELETE',
@@ -258,16 +256,17 @@ test('platform-hooks-probe fixture exercises project-tab availability and the ag
     // Flip back to proceed before the override send actually dispatches, so
     // the drained turn is not itself re-admitted into another wait.
     await expect(rpc('setDispatchSelection', { kind: 'proceed' })).resolves.toEqual({ ok: true });
-    const sentNow = await win.evaluate(async ({ id, itemId }) => {
+    const forged = await win.evaluate(async ({ id, itemId }) => {
       const response = await fetch(`/api/v1/threads/${id}/next-turn/${itemId}/send`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}'
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-zcc-app-surface': 'desktop' }, body: '{}'
       });
-      return { status: response.status, body: await response.json() };
+      return response.status;
     }, { id: dispatchThread.id, itemId: overrideableItemId });
-    expect(sentNow.status).toBe(200);
-    expect(sentNow.body).toEqual({ ok: true });
+    expect(forged).toBe(403);
+    const sentNowPending = win.evaluate(({ id, itemId }) => window.cc.threads.sendNextTurn(id, itemId),
+      { id: dispatchThread.id, itemId: overrideableItemId });
+    const sentNow = await sentNowPending;
+    expect(sentNow).toMatchObject({ ok: true });
 
     await expect
       .poll(

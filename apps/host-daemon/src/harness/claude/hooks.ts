@@ -20,13 +20,23 @@ export interface NativeToolHookBridge {
   emit?: (event: NativeToolHookEvent) => void | Promise<void>;
 }
 
-function redactToolInput(input: unknown): Record<string, unknown> {
+export function redactToolInput(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    out[key] = /token|secret|password|key|credential/i.test(key) ? '[REDACTED]' : value;
-  }
-  return out;
+  const seen = new WeakSet<object>();
+  let visited = 0;
+  const redact = (value: unknown, depth: number): unknown => {
+    if (typeof value === 'string') return value.length > 16_384 ? '[REDACTED]' : value;
+    if (!value || typeof value !== 'object') return value;
+    if (seen.has(value) || depth > 20 || ++visited > 1_000) return '[REDACTED]';
+    seen.add(value);
+    if (Array.isArray(value)) return value.slice(0, 1_000).map((item) => redact(item, depth + 1));
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value).slice(0, 1_000)) {
+      out[key] = /token|secret|password|key|credential/i.test(key) ? '[REDACTED]' : redact(item, depth + 1);
+    }
+    return out;
+  };
+  return redact(input, 0) as Record<string, unknown>;
 }
 
 /** Execute a capability-gated native tool with one ordered, terminal lifecycle. */
@@ -36,13 +46,13 @@ export async function executeNativeToolHook<T>(
   execute: () => Promise<T>,
   bridge: NativeToolHookBridge = {}
 ): Promise<T> {
+  if (!bridge.enabled) return execute();
   const invocationId = randomUUID();
   const payload = redactToolInput(input);
   const emit = async (state: NativeToolHookState) => {
     await bridge.emit?.({ invocationId, state, toolName, input: payload, timestamp: Date.now() });
   };
   await emit('announced');
-  if (!bridge.enabled) return execute();
   await emit('awaiting-decision');
   let allowed = true;
   try { allowed = bridge.before ? await bridge.before({ invocationId, state: 'awaiting-decision', toolName, input: payload, timestamp: Date.now() }) : true; }

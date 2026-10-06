@@ -38,6 +38,24 @@ it('edits the selected machine through real confined host handlers and preserves
   await expect(readPluginProjectFile(ctx, { ...args, path: 'escape/file.ts' })).rejects.toThrow();
   await expect(writePluginProjectFile(ctx, { ...args, path: 'escape/file.ts', content: 'bad', expectedSha256: file.sha256 })).rejects.toThrow();
 });
+it('confines writes even when creating missing parents', async () => {
+  const { root, a, b, ctx, source } = setup();
+  const selected = { ...source, hostId: 'b' };
+  const created = await writePluginProjectFile(ctx, {
+    path: 'new/nested/file.ts', source: selected, content: 'new', expectedSha256: null
+  });
+  expect(created.outcome).toBe('written');
+  expect(readFileSync(join(b, 'new/nested/file.ts'), 'utf8')).toBe('new');
+  for (const path of ['../outside/file.ts', '/tmp/outside/file.ts']) {
+    await expect(writePluginProjectFile(ctx, { path, source: selected, content: 'bad', expectedSha256: null })).rejects.toThrow();
+  }
+  symlinkSync(a, join(b, 'linked'));
+  await expect(writePluginProjectFile(ctx, {
+    path: 'linked/new/file.ts', source: selected, content: 'bad', expectedSha256: null
+  })).rejects.toThrow();
+  expect(() => readFileSync(join(root, 'outside/file.ts'))).toThrow();
+  expect(() => readFileSync(join(a, 'new/file.ts'))).toThrow();
+});
 it('pins thread files to the saved environment and rejects forged associations', async () => {
   const { b, ctx, source } = setup();
   const env = createEnvironment(ctx.db, { projectId: 'p', hostId: 'b', path: b, status: 'ready' });

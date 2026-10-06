@@ -20,7 +20,7 @@ import { SERVER_RUNTIME_PROTOCOL_VERSION, type ServerRuntimeInbound } from '@zan
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createTeamOpsViaControl } from './http/team-ops-via-control.js';
-import { createCliAgentOpsViaControl } from './http/cli-agent-ops.js';
+import { createCliAgentOpsViaControl, retainProductServerCredential } from './http/cli-agent-ops.js';
 import { createProjectStore, type ProjectStore } from './project-store.js';
 import { createProjectSettingsStore, type ProjectSettingsStore } from './project-settings-store.js';
 import { createTerminalExecutionService, type TerminalExecutionService } from './terminal-execution-service.js';
@@ -49,6 +49,9 @@ interface ParentPortLike {
 const utilityParentPort = (process as unknown as { parentPort?: ParentPortLike }).parentPort;
 if (!utilityParentPort) throw new Error('server utility entry requires an Electron utility process');
 const parentPort: ParentPortLike = utilityParentPort;
+const uiSendSecret = process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
+retainProductServerCredential(uiSendSecret);
+delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
 
 let close: (() => Promise<void>) | null = null;
 let version = '';
@@ -92,6 +95,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       await prepareThreadReads(message.dataDir);
       const product = createProductHttpContext({
         dataDir: message.dataDir,
+        uiSendSecret,
         origins: { serverPort: preferredPort, devAppPort: DEFAULT_DEV_APP_PORT },
         onLibraryChanged: () => parentPort.postMessage({ type: 'library-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION }),
         onProjectsChanged: () => parentPort.postMessage({ type: 'projects-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION }),

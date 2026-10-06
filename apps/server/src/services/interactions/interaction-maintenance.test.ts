@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { openDatabase } from '@zana-ai/zcc-db';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startInteractionMaintenance } from './interaction-maintenance.js';
-import { INTERACTION_ACK_TIMEOUT_MS } from './interaction-service.js';
+import { InteractionService, INTERACTION_ACK_TIMEOUT_MS } from './interaction-service.js';
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
@@ -52,6 +52,40 @@ describe('startInteractionMaintenance', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const stop = startInteractionMaintenance(db);
       expect(warn).toHaveBeenCalledWith('[interactions] global quota utilization high:', expect.objectContaining({ activeGlobal: 8_001 }));
+      stop();
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('defers maintenance when the database closes, including subsequent scheduled sweeps', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-interaction-maintenance-'));
+    const db = openDatabase(join(dir, 'runtime.sqlite'));
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.useFakeTimers();
+      db.close();
+      const stop = startInteractionMaintenance(db);
+      expect(warn).toHaveBeenCalledWith('[interactions] maintenance deferred:', expect.any(String));
+      vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+      expect(warn).toHaveBeenCalledTimes(2);
+      stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      if (db.sqlite.open) db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports an unavailable database when maintenance rejects with a non-Error value', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-interaction-maintenance-'));
+    const db = openDatabase(join(dir, 'runtime.sqlite'));
+    try {
+      vi.spyOn(InteractionService.prototype, 'prune').mockImplementation(() => { throw 'connection lost'; });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const stop = startInteractionMaintenance(db);
+      expect(warn).toHaveBeenCalledWith('[interactions] maintenance deferred:', 'database unavailable');
       stop();
     } finally {
       db.close();

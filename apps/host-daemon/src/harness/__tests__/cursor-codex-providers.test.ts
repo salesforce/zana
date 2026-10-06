@@ -1,4 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
+import { mkdtemp, access, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { providerFor } from '../registry.js';
 import { CursorProvider } from '../cursor/provider.js';
@@ -431,6 +436,69 @@ describe('CodexProvider — the three -c bridges (exact argv + TOML escaping)', 
   });
 
   describe('hookArgs (A6/C9 — lifecycle hooks over -c + trust bypass)', () => {
+    it('quotes native-tool URLs and denies failed HTTP or invalid decisions', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'codex-hook-'));
+      const marker = join(dir, 'injected');
+      let status = 200;
+      let body = '';
+      let received = '';
+      const server = createServer((req, res) => {
+        received = req.url ?? '';
+        req.resume();
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(body);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('missing test port');
+        const maliciousUrl = `http://127.0.0.1:${address.port}/hook/nativetool/p/s?x=$(touch${'{IFS}'}${marker})`;
+        const args = p.hookArgs('codex', { nativeTool: maliciousUrl });
+        const override = args.find((arg) => arg.startsWith('hooks.PreToolUse='));
+        expect(override).toBeDefined();
+        const hooks = (parse(`hook=${override!.slice('hooks.PreToolUse='.length)}`) as unknown as { hook: Array<{ hooks: Array<{ command: string }> }> }).hook;
+        const command = hooks[0].hooks[0].command;
+        expect(command).toContain('permissionDecision');
+        const invoke = () => new Promise<string>((resolve, reject) => {
+          const child = spawn('sh', ['-c', command]);
+          let stdout = '';
+          child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+          child.on('error', reject);
+          child.on('close', (code) => code === 0 ? resolve(stdout) : reject(new Error(`hook exited ${code}`)));
+          child.stdin.end('{}');
+        });
+        const deny = '"permissionDecision":"deny"';
+
+        body = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'safe' } });
+        expect(await invoke()).toBe(body);
+        await expect(access(marker)).rejects.toThrow();
+
+        const safeOverride = p.hookArgs('codex', { nativeTool: `http://127.0.0.1:${address.port}/hook/nativetool/p/s` }).find((arg) => arg.startsWith('hooks.PreToolUse='))!;
+        const safeHooks = (parse(`hook=${safeOverride.slice('hooks.PreToolUse='.length)}`) as unknown as { hook: Array<{ hooks: Array<{ command: string }> }> }).hook;
+        const safeCommand = safeHooks[0].hooks[0].command;
+        const invokeSafe = () => new Promise<string>((resolve, reject) => {
+          const child = spawn('sh', ['-c', safeCommand]);
+          let stdout = '';
+          child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+          child.on('error', reject);
+          child.on('close', (code) => code === 0 ? resolve(stdout) : reject(new Error(`hook exited ${code}`)));
+          child.stdin.end('{}');
+        });
+        expect(await invokeSafe()).toBe(body);
+        expect(received).toBe('/hook/nativetool/p/s');
+
+        status = 503;
+        expect(await invokeSafe()).toContain(deny);
+        status = 200;
+        body = '{"error":"not a decision"}';
+        expect(await invokeSafe()).toContain(deny);
+        body = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'blocked' } });
+        expect(await invokeSafe()).toBe(body);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(dir, { recursive: true, force: true });
+      }
+    }, 15_000);
     it('returns [] with no hook urls (nothing to wire, no bypass flag)', () => {
       expect(p.hookArgs('codex', {})).toEqual([]);
     });

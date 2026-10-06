@@ -7,7 +7,7 @@ import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './ports.js';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { standaloneModernTeamLaunchSource } from '../services/agents/modern-team-launch-config.js';
 import { createTeamOpsViaControl } from './team-ops-via-control.js';
-import { createCliAgentOpsViaControl } from './cli-agent-ops.js';
+import { createCliAgentOpsViaControl, retainProductServerCredential } from './cli-agent-ops.js';
 
 const port = serverPortFromEnv();
 const dataDir = resolveZccDataDir();
@@ -16,6 +16,10 @@ const devAppPortRaw = process.env.ZCC_DEV_APP_PORT;
 const devAppPort = devAppPortRaw && /^\d+$/.test(devAppPortRaw)
   ? Number(devAppPortRaw)
   : DEFAULT_DEV_APP_PORT;
+const uiSendSecret = process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
+retainProductServerCredential(uiSendSecret);
+// Plugin workers and other server children must never inherit the UI signing key.
+delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
 
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const enrollToken = process.env.ZCC_HOST_ENROLL_TOKEN && process.env.ZCC_HOST_ENROLL_TOKEN.length >= 16
@@ -28,6 +32,7 @@ const host = await startProductServer({
   port,
   dataDir,
   enrollToken,
+  uiSendSecret,
   origins: {
     serverPort: port,
     devAppPort,

@@ -62,6 +62,7 @@ import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js
 import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { codexLegacyRouting } from './legacy-routing.js';
 import { codexInteractionHook } from './interaction-hooks.js';
+import { shellQuote } from '../shell-quote.js';
 
 export const CODEX_EVIDENCE_VERSION = '0.140.0';
 const codexEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -448,8 +449,10 @@ export class CodexProvider extends BaseLaunchProvider {
       preToolUseEntries.push({
         matcher: '*',
         command:
-          `OUT=$(curl -s -m 5 -X POST --data-binary @- "${urls.nativeTool}"); ` +
-          `if [ -z "$OUT" ]; then ` +
+          `OUT=$(curl --fail -s -m 5 -X POST --data-binary @- ${shellQuote(urls.nativeTool)}); STATUS=$?; ` +
+          `case "$OUT" in ` +
+          `'\{"hookSpecificOutput":\{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":'*'"}}'|'\{"hookSpecificOutput":\{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":'*'"}}') VALID=1;; *) VALID=0;; esac; ` +
+          `if [ "$STATUS" -ne 0 ] || [ "$VALID" -ne 1 ]; then ` +
           `echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"native tool policy unreachable"}}'; ` +
           `else printf '%s' "$OUT"; fi; exit 0`
       });

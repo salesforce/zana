@@ -240,21 +240,28 @@ export function ProjectsList({
 
   const [dropOver, setDropOver] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [projectActionTitles, setProjectActionTitles] = useState<Record<string, string | null>>({});
+  const [projectActionTitles, setProjectActionTitles] = useState<{
+    menu: MenuState | null;
+    titles: Record<string, string>;
+  }>({ menu: null, titles: {} });
   const menuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!menu?.projectId) return;
     let current = true;
-    setProjectActionTitles({});
+    setProjectActionTitles({ menu, titles: {} });
     for (const action of rowMenuActions) {
       if (!action.titleForProject) continue;
       const key = `${menu.projectId}:${action.pluginId}:${action.id}:${action.generation}`;
       void Promise.resolve().then(() => action.titleForProject!(menu.projectId)).then(
         (title) => {
-          if (current) setProjectActionTitles((titles) => ({ ...titles, [key]: title.trim().slice(0, 100) || null }));
+          if (current) setProjectActionTitles((state) => state.menu === menu
+            ? { ...state, titles: { ...state.titles, [key]: title.trim().slice(0, 100) || action.title } }
+            : state);
         },
         () => {
-          if (current) setProjectActionTitles((titles) => ({ ...titles, [key]: null }));
+          if (current) setProjectActionTitles((state) => state.menu === menu
+            ? { ...state, titles: { ...state.titles, [key]: action.title } }
+            : state);
         }
       );
     }
@@ -1266,7 +1273,7 @@ export function ProjectsList({
                   {rowMenuActions.map((action) => {
                     const Icon = resolveIcon(action.icon ?? 'Puzzle');
                     const key = `${action.pluginId}:${action.id}:${action.generation}`;
-                    const resolvedTitle = projectActionTitles[`${p.id}:${key}`];
+                    const resolvedTitle = projectActionTitles.menu === menu ? projectActionTitles.titles[`${p.id}:${key}`] : undefined;
                     return (
                       <button
                         key={key}
@@ -1280,7 +1287,7 @@ export function ProjectsList({
                         }}
                       >
                         <Icon size={12} />
-                        <span>{action.titleForProject ? (resolvedTitle ?? (resolvedTitle === null ? 'Action unavailable' : 'Checking…')) : action.title}</span>
+                        <span>{action.titleForProject ? (resolvedTitle ?? 'Checking…') : action.title}</span>
                       </button>
                     );
                   })}

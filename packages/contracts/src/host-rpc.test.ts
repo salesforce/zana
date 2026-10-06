@@ -110,6 +110,27 @@ describe('host-rpc contract', () => {
     }).success).toBe(false);
   });
 
+  it('requires protocol 42 for project-bound plugin host calls', () => {
+    const command = {
+      type: 'plugin.host.call', pluginId: 'fixture', generation: 'g1',
+      artifact: { digest: 'a'.repeat(64), byteLength: 12 },
+      callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
+      projectRoot: '/registered/project'
+    };
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(42);
+    expect(HostRpcRequestMessageSchema.parse({
+      type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      requestId: 'r1', command
+    }).command).toEqual(command);
+    expect(HostRpcRequestMessageSchema.safeParse({
+      type: 'host-rpc.request', protocolVersion: 41,
+      requestId: 'r1', command
+    }).success).toBe(false);
+    expect(HostRpcCommandSchema.safeParse({ ...command, projectRoot: '' }).success).toBe(false);
+    expect(HostRpcCommandSchema.safeParse({ ...command, unexpected: true }).success).toBe(false);
+    expect(HostRpcCommandSchema.safeParse({ ...command, projectRoot: undefined }).success).toBe(true);
+  });
+
   it('round-trips the command union and rejects unknown types', () => {
     expect(HostRpcCommandSchema.parse({ type: 'provider.status' }).type).toBe('provider.status');
     expect(HostRpcCommandSchema.parse({
@@ -832,7 +853,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(41);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(42);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
