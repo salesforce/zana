@@ -305,7 +305,7 @@ test('idle follow-ups start despite eight hidden active threads', async ({ app }
   }
 });
 
-test('Send now sends the selected message from active and paused queues', async ({ app }, testInfo) => {
+test('Send now sends the selected message from active and paused queues', async ({ app }) => {
   const { window } = app;
   await window.getByTestId('nav-home').click();
   const home = window.locator('.thread-command-composer').first();
@@ -325,7 +325,6 @@ test('Send now sends the selected message from active and paused queues', async 
   }
   const during = queued.locator('.thread-queued-ghost').filter({ hasText: 'Send this during the job' });
   await expect(during.getByRole('button', { name: 'Send now', exact: true })).toBeVisible();
-  await queued.screenshot({ path: testInfo.outputPath('queue-send-now.png') });
   await stubNativeDialogs(app.electron, [1, 1]);
   await during.getByRole('button', { name: 'Send now', exact: true }).click();
   await expect(timeline.getByTestId('thread-user-text').filter({ hasText: 'Send this during the job' })).toBeVisible();
