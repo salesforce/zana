@@ -772,11 +772,16 @@ export class ExecutionService {
       for (const intent of record.noticeIntents ?? []) {
         if (intent.status === 'ACKNOWLEDGED' || intent.nextAttemptAt > now) continue;
         const blocker = record.blockers?.find((candidate) => candidate.id === intent.blockerId && !candidate.resolved);
-        if (!blocker) continue;
+        if (!blocker) {
+          await this.deps.store.cancelNotice(record.id, intent.key);
+          continue;
+        }
         try {
           await this.appendHumanBlockerNotice(record, blocker, blocker.options ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true) : {});
-        } catch {
-          await this.deps.store.deferNotice(record.id, intent.key, now + Math.min(60_000, 1_000 * 2 ** Math.min(intent.attempts, 6)));
+        } catch (error) {
+          const deferred = await this.deps.store.deferNotice(record.id, intent.key);
+          const updated = deferred.noticeIntents?.find((candidate) => candidate.key === intent.key);
+          this.deps.logError?.(`execution blocker notice delivery deferred execution=${record.id} blocker=${intent.blockerId} notice=${intent.key} attempts=${updated?.attempts ?? intent.attempts} retryAt=${updated?.nextAttemptAt ?? now}`, error);
         }
       }
     }

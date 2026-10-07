@@ -218,6 +218,17 @@ export interface ExecutionDeliveryRecord {
   deliveredAt?: number;
 }
 
+export interface ExecutionNoticeIntent {
+  key: string;
+  blockerId: string;
+  status: 'PENDING' | 'ACKNOWLEDGED';
+  attempts: number;
+  nextAttemptAt: number;
+  inboxItemId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ExecutionRecord {
   id: string;
   callerPrincipalId: string;
@@ -249,7 +260,7 @@ export interface ExecutionRecord {
   workUnits?: ExecutionWorkUnit[];
   blockers?: ExecutionBlocker[];
   deliveries?: ExecutionDeliveryRecord[];
-  noticeIntents?: Array<{ key: string; blockerId: string; status: 'PENDING' | 'ACKNOWLEDGED'; attempts: number; nextAttemptAt: number; inboxItemId?: string; createdAt: number; updatedAt: number }>;
+  noticeIntents?: ExecutionNoticeIntent[];
   /** Fixed, non-sliding timeout extension for a committed unresolved blocker. */
   blockerGraceUntil?: number;
   /** Durable explanation for a terminal timeout; never implies inbox delivery. */
@@ -479,6 +490,17 @@ function isState(value: unknown): value is ExecutionState {
     || value === 'BLOCKED' || value === 'STOPPED' || value === 'FAILED';
 }
 
+function validNoticeIntent(intent: unknown): intent is ExecutionNoticeIntent {
+  if (!intent || typeof intent !== 'object') return false;
+  const value = intent as Partial<ExecutionNoticeIntent>;
+  return validString(value.key) && validString(value.blockerId)
+    && (value.status === 'PENDING' || value.status === 'ACKNOWLEDGED')
+    && validNonNegativeInteger(value.attempts)
+    && typeof value.nextAttemptAt === 'number' && Number.isFinite(value.nextAttemptAt)
+    && (value.inboxItemId === undefined || validString(value.inboxItemId))
+    && typeof value.createdAt === 'number' && typeof value.updatedAt === 'number';
+}
+
 function validRecord(value: unknown): value is ExecutionRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Partial<ExecutionRecord>;
@@ -503,7 +525,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.workUnits === undefined || Array.isArray(record.workUnits) && record.workUnits.length <= MAX_WORK_UNITS && record.workUnits.every(validWorkUnit))
     && (record.blockers === undefined || Array.isArray(record.blockers) && record.blockers.length <= MAX_WORK_UNITS && record.blockers.every(validExecutionBlocker))
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
-    && (record.noticeIntents === undefined || Array.isArray(record.noticeIntents) && record.noticeIntents.length <= MAX_WORK_UNITS && record.noticeIntents.every((intent) => !!intent && validString(intent.key) && validString(intent.blockerId) && (intent.status === 'PENDING' || intent.status === 'ACKNOWLEDGED') && validNonNegativeInteger(intent.attempts) && typeof intent.nextAttemptAt === 'number' && Number.isFinite(intent.nextAttemptAt) && (intent.inboxItemId === undefined || validString(intent.inboxItemId)) && typeof intent.createdAt === 'number' && typeof intent.updatedAt === 'number'))
+    && (record.noticeIntents === undefined || Array.isArray(record.noticeIntents) && record.noticeIntents.length <= MAX_WORK_UNITS && record.noticeIntents.every(validNoticeIntent))
     && (record.blockerGraceUntil === undefined || typeof record.blockerGraceUntil === 'number' && Number.isFinite(record.blockerGraceUntil))
     && (record.timeoutReason === undefined || record.timeoutReason === 'idle' || record.timeoutReason === 'unresolved-blocker')
     && (record.successorLaunchRequestId === undefined || validString(record.successorLaunchRequestId))
@@ -2067,17 +2089,37 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function deferNotice(executionId: string, key: string, retryAt: number): Promise<ExecutionRecord> {
+  async function deferNotice(executionId: string, key: string): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
       const timestamp = now();
       const intent = record.noticeIntents?.find((candidate) => candidate.key === string(key, 'notice key'));
-      if (!intent || intent.status === 'ACKNOWLEDGED') return clone(record);
-      intent.attempts += 1; intent.nextAttemptAt = retryAt; intent.updatedAt = timestamp;
+      if (!intent || intent.status !== 'PENDING') return clone(record);
+      intent.attempts += 1;
+      intent.nextAttemptAt = timestamp + Math.min(60_000, 1_000 * 2 ** Math.min(intent.attempts, 6));
+      intent.updatedAt = timestamp;
       record.stateVersion += 1; record.updatedAt = timestamp;
       append(snapshot.state, record, record.state, 'warning', 'Execution blocker notice deferred', timestamp, { kind: 'event' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function cancelNotice(executionId: string, key: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const timestamp = now();
+      const keyValue = string(key, 'notice key');
+      const index = record.noticeIntents?.findIndex((candidate) => candidate.key === keyValue) ?? -1;
+      if (index < 0 || record.noticeIntents![index]!.status !== 'PENDING') return clone(record);
+      record.noticeIntents!.splice(index, 1);
+      record.stateVersion += 1;
+      record.updatedAt = timestamp;
+      append(snapshot.state, record, record.state, 'info', 'Execution blocker notice cancelled', timestamp, { kind: 'event' });
       persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
@@ -2619,7 +2661,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

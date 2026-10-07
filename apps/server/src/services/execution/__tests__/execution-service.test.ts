@@ -1739,6 +1739,26 @@ describe('SquadExecutionService', () => {
     expect((await store.get(record.id))?.noticeIntents?.[0]).toMatchObject({ status: 'ACKNOWLEDGED', inboxItemId: 'inbox-1' });
   }));
 
+  it('cancels an obsolete pending blocker notice so it cannot starve later delivery', async () => fixture(async (filePath) => {
+    const appendOnce = vi.fn(async () => ({ id: 'inbox-1' }));
+    const inbox = { append: vi.fn(async () => ({ id: 'fallback' })), appendOnce };
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store, inbox }));
+    const started = await service.start('session-1', 'project-1', request);
+    if (!started.ok) throw new Error('start failed');
+    let record = await store.registerPlan(started.value.id, started.value.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker' }, 'unit');
+    await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker' }, 'unit', { id: 'stale', question: 'Already answered elsewhere' });
+    const raw = JSON.parse(await readFile(filePath, 'utf8')) as { records: Array<{ blockers?: unknown[] }> };
+    raw.records[0]!.blockers = [];
+    await writeFile(filePath, JSON.stringify(raw));
+
+    await new SquadExecutionService(deps(filePath, { store: createExecutionStore({ filePath }), inbox })).flushBlockerNotices();
+
+    expect(appendOnce).not.toHaveBeenCalled();
+    expect((await createExecutionStore({ filePath }).get(record.id))?.noticeIntents).toEqual([]);
+  }));
+
   it('coordinator answers a coordinator-audience block: delivery enqueued to the worker slot, and the worker ack resolves the blocker + returns the unit to CLAIMED', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, {
@@ -1843,6 +1863,7 @@ describe('SquadExecutionService', () => {
     expect((await store.get(record.id))?.blockers?.find((blocker) => blocker.id === 'blocker')).toMatchObject({ audience: 'human' });
     expect(inbox.appendOnce).toHaveBeenCalled();
   }));
+
 
   it('does NOT escalate a coordinator blocker before the dwell passes', async () => fixture(async (filePath) => {
     let now = 1000;

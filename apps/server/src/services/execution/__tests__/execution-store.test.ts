@@ -55,6 +55,27 @@ describe('execution store', () => {
     now = 1_130;
     expect(await store.decideDeadline(record.id, 1_050, 30)).toMatchObject({ kind: 'stopped', record: { state: 'STOPPED', timeoutReason: 'unresolved-blocker' } });
   }));
+  it('cancels obsolete notice intents and schedules retries from post-increment attempts', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { id: 'blocker', question: 'Need input' });
+    const key = record.noticeIntents![0]!.key;
+
+    record = await store.deferNotice(record.id, key);
+    expect(record.noticeIntents?.[0]).toMatchObject({ attempts: 1, nextAttemptAt: 3_000 });
+    now = 3_000;
+    record = await store.deferNotice(record.id, key);
+    expect(record.noticeIntents?.[0]).toMatchObject({ attempts: 2, nextAttemptAt: 7_000 });
+
+    record = await store.cancelNotice(record.id, key);
+    expect(record.noticeIntents).toEqual([]);
+    expect(await store.listPendingNotices()).toEqual([]);
+  }));
   it('persists immutable usage deltas with exact replay and explicit reset epochs', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => 10 });
     const record = (await store.claim(request())).record;
