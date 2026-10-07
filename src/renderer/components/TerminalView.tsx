@@ -474,85 +474,52 @@ function TerminalViewImpl({ session, area }: Props) {
     term.options.theme = resolveTerminalTheme(terminalTheme, theme);
   }, [terminalTheme, theme]);
 
-  // Refit when becoming visible OR when area placement changes (split open/
-  // close also resizes the host element under us). The ResizeObserver above
-  // will also catch most pane resizes, but firing here removes a one-frame
-  // mismatch when the layout class changes without a size change yet.
-  useEffect(() => {
-    if (visible && fitRef.current) {
-      requestAnimationFrame(() => {
-        try {
-          if (disposedRef.current) return;
-          fitRef.current?.fit();
-          if (termRef.current) {
-            void window.cc.terminals
-              .resize(session.id, termRef.current.cols, termRef.current.rows)
-              .catch(() => {});
-            // Output that arrived while hidden couldn't auto-scroll (zero-height
-            // viewport). If we were tailing, snap to bottom now that the tab is
-            // measurable again so the latest output is visible.
-            if (stickToBottomRef.current) termRef.current.scrollToBottom();
-          }
-          // Only focus the primary area ('a') on transition; secondary panes
-          // get focus only from explicit click.
-          if (area === 'a') termRef.current?.focus();
-        } catch {
-          /* ignore */
-        }
-      });
-    }
-  }, [visible, area, session.id]);
-
-  // When this session becomes the agent-inspector modal's session, TerminalSurface
-  // reparents its live xterm node into the modal anchor with appendChild. A DOM
-  // move neither resizes the element nor notifies xterm, and if the agent's tab
-  // was ALREADY the active tab `area`/`visible` don't change either — so the
-  // refit effect above never re-fires. The result: xterm keeps painting a stale
-  // (often blank) viewport until some input (e.g. an arrow key) forces a sync,
-  // which is exactly the "I have to press arrow keys before I see the history"
-  // symptom. Force a fit + full refresh + tail-snap on the reparent so the whole
-  // scrollback shows the instant the modal opens.
+  // Bring xterm back in sync with a pane that just became (or was re-laid-out
+  // while) visible: retry across frames until the element has a real size, then
+  // fit, nudge the pty so the TUI redraws, and repaint xterm's own viewport.
   //
-  // A FRESHLY-launched agent (global board "+" → inspector modal) is the hard
-  // case: its TerminalView mounts for the FIRST time straight into the modal
-  // anchor, so `term.open()` (a child layout effect) can run BEFORE
-  // TerminalSurface's parent layout effect has appendChild'd the portal node
-  // into the anchor — xterm then initializes against a detached / zero-size
-  // container and a single rAF fit can still land before layout settles,
-  // leaving the viewport blank. So instead of one rAF we retry across frames
-  // until the element actually has a non-zero size (or a short deadline), then
-  // do the fit + full refresh + tail-snap.
+  // Shared by the visible-transition effect and the modal-reparent effect
+  // below. Both edges have the same three failure modes, and the tab path used
+  // to cover none of them, which is the "manual scheduled run opens to a blank
+  // terminal" symptom:
   //
-  // SYMMETRIC on close too: the reparent BACK (modal anchor → workspace) is the
-  // same bare appendChild and leaves the same stale viewport / SIGWINCH-starved
-  // TUI. It used to be masked by the ResizeObserver firing at a new size, but now
-  // that the observer skips an unchanged-size re-fit (the freeze fix), a modal
-  // whose pane happens to be the SAME pixel size as the workspace pane would fire
-  // no observer and leave xterm desynced until a keystroke. So we run the same
-  // fit + refresh + tail-snap on BOTH edges of `isModalSession` (open AND close),
-  // detected via a prev-value ref, independent of the size cache.
-  const isModalSession = useUi((s) => s.agentModal?.sessionId === session.id);
-  const wasModalSessionRef = useRef(false);
-  useEffect(() => {
-    const was = wasModalSessionRef.current;
-    wasModalSessionRef.current = isModalSession;
-    // Run the reparent re-sync when the modal ownership TOGGLES in either
-    // direction. A steady `false` (a terminal that never enters the modal) is the
-    // common case and must stay a no-op.
-    if (isModalSession === was) return;
+  //  1. A single rAF `fit()` can land before layout settles. The scheduler's
+  //     deep-link flips nav, project focus and workspace mode in one tick, so
+  //     the first frame after `visible` flips often sees a 0×0 host; FitAddon
+  //     then no-ops and nothing re-fires (the ResizeObserver skips 0-size).
+  //  2. claude is a full-screen TUI that repaints IN PLACE on the normal buffer
+  //     (verified: no alt-screen `\x1b[?1049h`; it uses ESC7/ESC8 save-restore +
+  //     cursor-relative moves and assumes it knows the current grid). It only
+  //     redraws on new output OR a real SIGWINCH, and node-pty suppresses
+  //     SIGWINCH when the new dims equal the ones it holds — exactly the case
+  //     when fit() lands on the grid the agent was spawned at. A scheduled run
+  //     sitting inside a long tool call emits nothing, so the pane stays empty.
+  //  3. The WebGL renderer is attached at mount, and a headless/background
+  //     session mounts hidden (display:none → 0×0 canvas). Its texture can be
+  //     stale when first shown; a `refresh()` after the resize repaints it.
+  //
+  // The pty nudge (rows-1 then rows) guarantees two genuine dimension changes
+  // → two SIGWINCHs → claude redraws its whole frame. Harmless for a shell — it
+  // just re-wraps once. The same rows-only round-trip on the xterm OBJECT also
+  // re-syncs xterm's native scrollbar after a DOM move: the appendChild reparent
+  // resets `.xterm-viewport` scrollTop to 0 while xterm's Viewport caches the
+  // pre-move geometry, and `syncScrollArea()` early-returns when it all still
+  // matches. A real height change busts that cache without a buffer reflow
+  // (reflow is gated on a COLUMN change) so no scrollback is lost.
+  //
+  // Retries only while the node is actually on screen (offsetParent is null for
+  // display:none), bounded by a short deadline, so a terminal that lands back on
+  // a hidden tab doesn't burn a 2s rAF spin — the next visible transition
+  // handles it.
+  const resyncViewport = (focus: boolean): (() => void) => {
     let raf = 0;
+    let nudgeRaf = 0;
     const deadline = Date.now() + 2000;
     const sync = () => {
       const term = termRef.current;
       if (disposedRef.current || !term) return;
       const el = ref.current;
       const sized = !!el && el.clientHeight > 0 && el.clientWidth > 0;
-      // Not laid out yet — retry only while the node is actually on screen
-      // (offsetParent is null for display:none). On CLOSE the session may land
-      // back on a hidden workspace tab; there's nothing to resync there — the
-      // visible-transition effect handles it when the tab is next shown — so
-      // don't burn a 2s rAF spin on it. On OPEN the modal anchor is always
-      // visible, so this keeps retrying until layout settles as before.
       if (!sized) {
         const onScreen = !!el && el.offsetParent !== null;
         if (onScreen && Date.now() < deadline) raf = requestAnimationFrame(sync);
@@ -562,56 +529,86 @@ function TerminalViewImpl({ session, area }: Props) {
         fitRef.current?.fit();
         const cols = term.cols;
         const rows = term.rows;
-
-        // Re-sync xterm's NATIVE scrollbar to the rendered viewport. The
-        // appendChild reparent silently resets the browser's `.xterm-viewport`
-        // scrollTop to 0, but xterm's Viewport caches the pre-reparent geometry
-        // (`_lastRecordedViewportHeight` / `_lastScrollTop` / cell height) — and
-        // `syncScrollArea()` early-returns when all three still match, which
-        // they do after a bare DOM move. fit() is ALSO a no-op when it lands on
-        // the same grid, so no onResize fires to bust that cache. Result: the
-        // scrollbar THUMB sits at the top while the canvas shows the bottom
-        // (the reported desync). Force it: a rows-only resize on the xterm
-        // OBJECT down one row then back changes the canvas height, so the guard
-        // fails and Viewport re-runs `_innerRefresh`, which writes
-        // scrollTop = ydisp*rowHeight — re-pinning the thumb to the real
-        // position WITHOUT changing scroll position. Rows-only never triggers a
-        // buffer reflow (that's gated on a COLUMN change), so it's cheap and
-        // loses no scrollback. `resize()` early-returns on unchanged dims, hence
-        // the down-then-up round-trip: each leg is a genuine change that fires.
         term.resize(cols, Math.max(1, rows - 1));
         term.resize(cols, rows);
-
-        // claude is a full-screen TUI that repaints IN PLACE on the normal
-        // buffer (verified: no alt-screen `\x1b[?1049h`; it uses ESC7/ESC8
-        // save-restore + cursor-relative moves and assumes it knows the current
-        // grid). It only redraws when it receives new output OR a real SIGWINCH.
-        // node-pty suppresses SIGWINCH when the new dims equal the dims it
-        // already holds — exactly the case if fit() lands on the same grid the
-        // agent was spawned at. So we NUDGE the PTY too: resize to one row
-        // short, then back on the next frame. The round-trip guarantees a
-        // genuine dimension change (two SIGWINCHs), prompting claude to redraw
-        // its whole frame so an idle agent isn't left showing a stale grid after
-        // the reparent. Harmless for a shell — it just re-wraps once.
         void window.cc.terminals.resize(session.id, cols, Math.max(1, rows - 1)).catch(() => {});
-        requestAnimationFrame(() => {
+        nudgeRaf = requestAnimationFrame(() => {
+          nudgeRaf = 0;
           if (disposedRef.current) return;
           void window.cc.terminals.resize(session.id, cols, rows).catch(() => {});
-          // Repaint xterm's own viewport too: the reparent can leave the
-          // renderer's texture stale, so refresh the visible rows and tail-snap.
           try {
             term.refresh(0, term.rows - 1);
+            // Output that arrived while hidden couldn't auto-scroll (zero-height
+            // viewport). If we were tailing, snap to bottom now that the pane is
+            // measurable again so the latest output is visible.
             if (stickToBottomRef.current) term.scrollToBottom();
           } catch {
             /* ignore */
           }
         });
+        if (focus) term.focus();
       } catch {
         /* ignore */
       }
     };
     raf = requestAnimationFrame(sync);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (nudgeRaf) cancelAnimationFrame(nudgeRaf);
+    };
+  };
+
+  // Refit when becoming visible OR when area placement changes (split open/
+  // close also resizes the host element under us). The ResizeObserver above
+  // will also catch most pane resizes, but firing here removes a one-frame
+  // mismatch when the layout class changes without a size change yet, and
+  // the full resync (see resyncViewport) is what makes a background/scheduled
+  // session that mounted hidden actually paint when it is first promoted to a
+  // tab. Only the primary area ('a') takes focus on transition; secondary
+  // panes get focus only from an explicit click.
+  useEffect(() => {
+    if (!visible) return;
+    return resyncViewport(area === 'a');
+    // resyncViewport is a stable closure over refs + session.id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, area, session.id]);
+
+  // When this session becomes the agent-inspector modal's session, TerminalSurface
+  // reparents its live xterm node into the modal anchor with appendChild. A DOM
+  // move neither resizes the element nor notifies xterm, and if the agent's tab
+  // was ALREADY the active tab `area`/`visible` don't change either — so the
+  // refit effect above never re-fires. The result: xterm keeps painting a stale
+  // (often blank) viewport until some input (e.g. an arrow key) forces a sync,
+  // which is exactly the "I have to press arrow keys before I see the history"
+  // symptom. Force the full resync on the reparent so the whole scrollback shows
+  // the instant the modal opens.
+  //
+  // A FRESHLY-launched agent (global board "+" → inspector modal) is the hard
+  // case: its TerminalView mounts for the FIRST time straight into the modal
+  // anchor, so `term.open()` (a child layout effect) can run BEFORE
+  // TerminalSurface's parent layout effect has appendChild'd the portal node
+  // into the anchor — xterm then initializes against a detached / zero-size
+  // container. resyncViewport's sized-retry covers that.
+  //
+  // SYMMETRIC on close too: the reparent BACK (modal anchor → workspace) is the
+  // same bare appendChild and leaves the same stale viewport / SIGWINCH-starved
+  // TUI. It used to be masked by the ResizeObserver firing at a new size, but now
+  // that the observer skips an unchanged-size re-fit (the freeze fix), a modal
+  // whose pane happens to be the SAME pixel size as the workspace pane would fire
+  // no observer and leave xterm desynced until a keystroke. So we run the resync
+  // on BOTH edges of `isModalSession` (open AND close), detected via a
+  // prev-value ref, independent of the size cache.
+  const isModalSession = useUi((s) => s.agentModal?.sessionId === session.id);
+  const wasModalSessionRef = useRef(false);
+  useEffect(() => {
+    const was = wasModalSessionRef.current;
+    wasModalSessionRef.current = isModalSession;
+    // Run the reparent re-sync when the modal ownership TOGGLES in either
+    // direction. A steady `false` (a terminal that never enters the modal) is the
+    // common case and must stay a no-op.
+    if (isModalSession === was) return;
+    return resyncViewport(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isModalSession, session.id]);
 
   // Drop a file (or absolute path) onto the terminal to type its shell-quoted
