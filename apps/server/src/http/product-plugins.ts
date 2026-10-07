@@ -152,14 +152,14 @@ function toPluginThreadSummary(row: {
   };
 }
 
-export async function attachProductPluginService(
+export function createAttachedProductPluginService(
   ctx: ProductHttpContext,
   opts?: Pick<
     PluginServiceOptions,
     'onAgentCapabilitiesChanged' | 'onAppsChanged' | 'watchBuiltinPluginSources' | 'hostAgentToolSource'
   >
     & { bundledRoot?: string }
-): Promise<PluginService> {
+): PluginService {
   const interactions = new InteractionService(ctx.db);
   const plugins = createPluginService({
     dataDir: ctx.dataDir,
@@ -389,6 +389,13 @@ export async function attachProductPluginService(
     stopInteractionMaintenance();
     originalStop();
   };
+  return plugins;
+}
+
+export async function startAttachedProductPluginService(
+  ctx: ProductHttpContext,
+  plugins: PluginService
+): Promise<void> {
   await plugins.start();
   for (const hostId of ctx.hostHub.connectedHostIds()) {
     for (const provider of listThreadProviders().filter((row) => row.models?.scope === 'host')) {
@@ -405,6 +412,18 @@ export async function attachProductPluginService(
       }
     }
   }
+}
+
+export async function attachProductPluginService(
+  ctx: ProductHttpContext,
+  opts?: Pick<
+    PluginServiceOptions,
+    'onAgentCapabilitiesChanged' | 'onAppsChanged' | 'watchBuiltinPluginSources' | 'hostAgentToolSource'
+  >
+    & { bundledRoot?: string }
+): Promise<PluginService> {
+  const plugins = createAttachedProductPluginService(ctx, opts);
+  await startAttachedProductPluginService(ctx, plugins);
   return plugins;
 }
 
@@ -418,7 +437,9 @@ export function pluginAssetRootFromService(
   pluginId: string
 ): string | null {
   const row = plugins?.get(pluginId);
-  return row?.enabled && row.appEntry ? row.rootDir : null;
+  return row?.enabled && row.appEntry && plugins?.snapshot().some((entry) => entry.id === pluginId && entry.appUrl)
+    ? row.rootDir
+    : null;
 }
 
 export { toPluginAppSnapshot };

@@ -513,6 +513,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   mkdirSync(kvRoot, { recursive: true });
   let updateSweep: { stop(): void } | null = null;
   const builtinWatchers: Array<{ close(): void }> = [];
+  const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const recoveryAttempts = new Map<string, number>();
+  const MAX_WATCHDOG_RECOVERY_ATTEMPTS = 3;
+  let lifecycleGeneration = 0;
+  let starting: Promise<void> | null = null;
+  let stopped = false;
   const servicesRegistry = createPluginServicesRegistry();
   const promotionQueue = createSerializedTransactionQueue();
   const lifecycleEpochs = new Map<string, number>();
@@ -525,6 +531,37 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const bumpLifecycleEpoch = (id: string): void => {
     lifecycleEpochs.set(id, lifecycleEpoch(id) + 1);
   };
+  const isCurrent = (id: string, epoch: number, handle?: LivePlugin['handle']): boolean =>
+    !stopped && lifecycleEpoch(id) === epoch && (!handle || live.get(id)?.handle === handle);
+  const cancelRecovery = (id: string, resetAttempts = true): void => {
+    const timer = recoveryTimers.get(id);
+    if (timer) clearTimeout(timer);
+    recoveryTimers.delete(id);
+    if (resetAttempts) recoveryAttempts.delete(id);
+  };
+  const scheduleWatchdogRecovery = (id: string): void => {
+    if (stopped || recoveryTimers.has(id) || !store.get(id)?.enabled) return;
+    const attempt = recoveryAttempts.get(id) ?? 0;
+    if (attempt >= MAX_WATCHDOG_RECOVERY_ATTEMPTS) return;
+    recoveryAttempts.set(id, attempt + 1);
+    const timer = setTimeout(() => {
+      recoveryTimers.delete(id);
+      if (stopped || !store.get(id)?.enabled) return;
+      void service.reload(id).then((row) => {
+        if (row.status === 'degraded') scheduleWatchdogRecovery(id);
+      }).catch((error) => {
+        console.error(`[plugins] automatic recovery failed for ${id}:`, error instanceof Error ? error.message : error);
+        scheduleWatchdogRecovery(id);
+      });
+    }, 1_000 * 2 ** attempt);
+    timer.unref();
+    recoveryTimers.set(id, timer);
+  };
+
+  async function waitForStartup(): Promise<void> {
+    if (starting) await starting;
+    if (stopped) throw new Error('plugin service is stopped');
+  }
 
   function requiresOf(row: InstalledPluginRow): string[] {
     try {
@@ -839,6 +876,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     const compiledRel = declared.replace(/\.tsx?$/, '.js');
     if (/\.tsx?$/.test(declared) && (row.sourceKind === 'path' || !existsSync(join(row.rootDir, compiledRel)))) {
       try {
+        // Production ignores this. Built-Electron E2E injects a deterministic
+        // slow toolchain boundary without weakening worker startup deadlines.
+        const e2eBuildDelayMs = process.env.ZCC_E2E_PLUGIN_BUILD_DELAY_MS;
+        if (e2eBuildDelayMs && /^\d{1,6}$/.test(e2eBuildDelayMs)) {
+          await new Promise<void>((resolve) => setTimeout(resolve, Number(e2eBuildDelayMs)));
+        }
         await buildPluginApp(row.rootDir, hostVersion, { minify: false, sourcemap: true, toolchain: await getPluginBuildToolchain(opts.dataDir) });
       } catch (error) {
         const detail = (error instanceof Error ? error.message : String(error))
@@ -888,7 +931,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     opts.registerTeams?.(id, []);
   }
 
-  async function loadOne(row: InstalledPluginRow): Promise<void> {
+  async function loadOne(row: InstalledPluginRow, isActive: () => boolean = () => !stopped): Promise<void> {
     const previous = live.get(row.id);
     if (!row.enabled) {
       await disposeOne(row.id);
@@ -916,7 +959,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         row = { ...row, version: manifest.version, appEntry: manifest.appEntry, serverEntry: manifest.serverEntry };
       }
       await ensureCompiledApp(row);
+      if (!isActive()) return;
     } catch (error) {
+      if (!isActive()) return;
       const detail = error instanceof Error ? error.message : String(error);
       if (previous?.handle && previous.row.status === 'running') throw error;
       await disposeOne(row.id);
@@ -926,8 +971,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return;
     }
     let files: string[];
-    try { files = await scanPluginFiles(row.rootDir); }
+    try { files = await scanPluginFiles(row.rootDir); if (!isActive()) return; }
     catch (error) {
+      if (!isActive()) return;
       if (previous?.handle && previous.row.status === 'running') throw error;
       await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: error instanceof Error ? error.message : String(error) };
@@ -966,7 +1012,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         zccVersion: hostVersion,
         dataDir: opts.dataDir
       });
+      if (!isActive()) return;
     } catch (error) {
+      if (!isActive()) return;
       const detail = error instanceof Error ? error.message : String(error);
       if (previous?.handle && previous.row.status === 'running') throw error;
       // Read provider declarations even when the bridge cannot run. Existing
@@ -974,6 +1022,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       hostArtifactProblem = detail;
     }
     let configurationMessage: string | null = null;
+    let activationFailure: Error | null = null;
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
       providerUnavailableReason: hostArtifactProblem,
       requestPluginInteraction: opts.requestPluginInteraction,
@@ -1067,18 +1116,33 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           api: handle.api, entry, generation: row.updatedAt,
           databasePath: join(kvRoot, row.id, 'data.db'),
           onFailure: error => {
-            if (live.get(row.id)?.handle !== handle) return;
+            if (live.get(row.id)?.handle !== handle) {
+              activationFailure = error;
+              return;
+            }
+            const epoch = lifecycleEpoch(row.id);
             void (async () => {
               await disposeOne(row.id);
+              if (!isCurrent(row.id, epoch) || store.get(row.id)?.enabled === false) return;
               const degraded = { ...row, status: 'degraded' as const, statusDetail: error.message };
               live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
-              await store.upsert(degraded); await emitCapabilities(); await emitAppsChanged();
+              await store.upsert(degraded);
+              if (!isCurrent(row.id, epoch)) return;
+              await emitCapabilities();
+              if (!isCurrent(row.id, epoch)) return;
+              await emitAppsChanged();
+              if (error.message === 'Plugin event loop stopped responding') scheduleWatchdogRecovery(row.id);
             })().catch(error => console.error('Plugin failure cleanup failed', error));
           }
         });
         serverRuntimes.add(runtime);
         handle.api.onDispose(() => { runtime.dispose(); serverRuntimes.delete(runtime); });
         await runtime.started;
+        if (activationFailure) throw activationFailure;
+        if (!isActive()) {
+          await handle.dispose();
+          return;
+        }
       }
       if (hostArtifactProblem) throw new Error(hostArtifactProblem);
       const running = {
@@ -1087,10 +1151,24 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         status: (configurationMessage ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
         statusDetail: configurationMessage
       };
+      if (!isActive()) {
+        await handle.dispose();
+        return;
+      }
       await store.upsert(running);
+      if (!isActive()) {
+        await handle.dispose();
+        return;
+      }
       const previousArtifact = hostArtifacts.get(row.id);
       if (previousArtifact && opts.productContext) await disposePluginHostWorkers(opts.productContext, row.id, previousArtifact.generation);
+      if (!isActive()) {
+        await handle.dispose();
+        return;
+      }
+      if (activationFailure) throw activationFailure;
       live.set(row.id, { row: running, handle, rpc });
+      cancelRecovery(row.id);
       if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
       else hostArtifacts.delete(row.id);
       if (previous && previous.handle && previous.handle !== handle) {
@@ -1100,6 +1178,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await applyMissingRequiredPluginStatus();
     } catch (error) {
       await handle.dispose();
+      if (!isActive()) return;
       const detail = error instanceof Error ? error.message : String(error);
       if (previous?.handle && previous.row.status === 'running') throw error;
       await disposeOne(row.id);
@@ -1391,9 +1470,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         enabled: row.enabled,
         provenance: row.provenance,
         sourceKind: row.sourceKind,
-        status: row.status,
+        status: row.status === 'running' && !live.get(row.id)?.handle ? 'degraded' : row.status,
         appEntry: row.appEntry,
-        appUrl: appUrlFor(row),
+        appUrl: live.get(row.id)?.handle ? appUrlFor(row) : null,
         npmResolvedVersion: row.npmResolvedVersion,
         gitResolvedCommit: row.gitResolvedCommit,
         source: row.source,
@@ -1625,7 +1704,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return row;
     },
     async enable(id) {
+      await waitForStartup();
       bumpLifecycleEpoch(id);
+      cancelRecovery(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
       const next = { ...row, enabled: true, updatedAt: now() };
@@ -1639,6 +1720,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     },
     async disable(id) {
       bumpLifecycleEpoch(id);
+      cancelRecovery(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
       await disposeOne(id);
@@ -1653,6 +1735,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     },
     async remove(id) {
       bumpLifecycleEpoch(id);
+      cancelRecovery(id);
       availableUpdates.delete(id);
       await disposeOne(id);
       const row = await store.remove(id);
@@ -1671,6 +1754,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await syncCliSkill();
     },
     async reload(id) {
+      await waitForStartup();
+      bumpLifecycleEpoch(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
       const epoch = lifecycleEpoch(id);
@@ -1742,33 +1827,58 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return installed;
     },
     async start() {
+      if (starting) return starting;
+      if (stopped) return;
+      const generation = ++lifecycleGeneration;
+      const isActive = () => !stopped && lifecycleGeneration === generation;
+      starting = (async () => {
       await retireRetiredFirstPartyPlugins();
+      if (!isActive()) return;
       await this.reconcileBuiltins();
+      if (!isActive()) return;
       await seedDefaultMarketplaces();
+      if (!isActive()) return;
       const pending = store.list().filter((row) => !live.has(row.id));
       const { ordered, cycles } = sortPluginsByRequires(
         pending.map((row) => ({ id: row.id, requires: requiresOf(row), row }))
       );
       for (const cycle of cycles) {
+        if (!isActive()) return;
         const detail = `plugin requires cycle: ${formatPluginRequireCycle(cycle.cycle)}`;
         const degraded = { ...cycle.plugin.row, status: 'degraded' as const, statusDetail: detail };
         live.set(cycle.plugin.id, { row: degraded, handle: null, rpc: new Map() });
         await store.upsert(degraded);
       }
       for (const node of ordered) {
-        if (!live.has(node.id)) await loadOne(node.row);
+        if (!isActive()) return;
+        if (!live.has(node.id)) {
+          const epoch = lifecycleEpoch(node.id);
+          await loadOne(node.row, () => isActive() && lifecycleEpoch(node.id) === epoch);
+        }
       }
+      if (!isActive()) return;
       await applyMissingRequiredPluginStatus();
+      if (!isActive()) return;
       await emitCapabilities();
+      if (!isActive()) return;
       await emitAppsChanged();
+      if (!isActive()) return;
       await syncCliSkill();
+      if (!isActive()) return;
       updateSweep?.stop();
       updateSweep = startPluginUpdateSweep({
         checkUpdates: () => service.checkUpdates()
       });
       startBuiltinSourceWatchers();
+      })();
+      return starting;
     },
     stop() {
+      stopped = true;
+      lifecycleGeneration++;
+      for (const timer of recoveryTimers.values()) clearTimeout(timer);
+      recoveryTimers.clear();
+      recoveryAttempts.clear();
       for (const runtime of serverRuntimes) runtime.dispose();
       serverRuntimes.clear();
       for (const current of live.values()) void current.handle?.dispose().catch(() => {});

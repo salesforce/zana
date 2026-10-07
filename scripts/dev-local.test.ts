@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  clearViteDependencyCache,
   APP_UI_PACKAGE,
   attachDevProcessLifecycle,
   createDevTurboCommand,
@@ -37,6 +38,18 @@ afterEach(() => {
 });
 
 describe('dev-local turbo TUI', () => {
+  it('removes only the app Vite dependency cache', () => {
+    const root = makeTempDir();
+    const cache = join(root, 'apps', 'app', 'node_modules', '.vite');
+    const keep = join(root, 'apps', 'app', 'node_modules', 'keep.txt');
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, 'react.js'), 'stale');
+    writeFileSync(keep, 'keep');
+    clearViteDependencyCache(root);
+    expect(() => readFileSync(join(cache, 'react.js'))).toThrow();
+    expect(readFileSync(keep, 'utf8')).toBe('keep');
+  });
+
   it('launches Turbo TUI for desktop, server, and host-daemon by default', () => {
     expect(createDevTurboCommand(false)).toEqual({
       command: 'pnpm',
