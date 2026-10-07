@@ -2,8 +2,8 @@ import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { MAX_NOTES_CHARS, checkReleaseNotes, runReleaseNotesGuard } from './check-release-notes.mjs';
+import { describe, expect, it, vi } from 'vitest';
+import { MAX_NOTES_CHARS, checkReleaseNotes, runReleaseNotesCli, runReleaseNotesGuard } from './check-release-notes.mjs';
 import { MAX_UPDATE_NOTE_CHARS } from '../apps/desktop/src/update-release-notes.js';
 
 const GOOD = '# What’s new in 1.2.3\n\n**Headline.** A sentence long enough to count as real release notes for this version.\n\n- Item with `<tag>` and `a | b` in code.';
@@ -46,6 +46,20 @@ describe('checkReleaseNotes', () => {
 });
 
 describe('release-notes executable', () => {
+  it('runs only when loaded as the CLI entrypoint', () => {
+    const previous = process.exitCode;
+    const run = vi.fn(() => 1);
+    try {
+      runReleaseNotesCli(false, run);
+      expect(run).not.toHaveBeenCalled();
+      runReleaseNotesCli(true, run);
+      expect(run).toHaveBeenCalledOnce();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previous;
+    }
+  });
+
   it.each([
     { name: 'valid release', body: GOOD, tag: 'v1.2.3', status: 0, output: 'present' },
     { name: 'missing notes', body: null, tag: 'main', status: 1, output: 'missing docs/releases/1.2.3.md' },
