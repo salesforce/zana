@@ -148,8 +148,6 @@ export interface PluginService {
   start(): Promise<void>;
   /** Release the periodic catalog-update sweep. Safe to call more than once. */
   stop(): void;
-  /** True only after activation completes and until stop begins. */
-  isStarted(): boolean;
   snapshot(): PluginUiSnapshot[];
   appUrl(id: string): string | null;
   agentContributions(): PluginAgentContribution[];
@@ -1895,7 +1893,6 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       updateSweep?.stop();
       updateSweep = null;
     },
-    isStarted: () => started,
     snapshot,
     appUrl(id) {
       const row = store.get(id);

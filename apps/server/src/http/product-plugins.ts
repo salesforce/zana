@@ -388,6 +388,7 @@ export function createAttachedProductPluginService(
   plugins.stop = () => {
     stopInteractionMaintenance();
     originalStop();
+    if (ctx.plugins === plugins) ctx.plugins = undefined;
   };
   return plugins;
 }
@@ -397,7 +398,7 @@ export async function startAttachedProductPluginService(
   plugins: PluginService
 ): Promise<void> {
   await plugins.start();
-  if (!plugins.isStarted()) return;
+  if (ctx.plugins !== plugins) return;
   for (const hostId of ctx.hostHub.connectedHostIds()) {
     for (const provider of listThreadProviders().filter((row) => row.models?.scope === 'host')) {
       try {
