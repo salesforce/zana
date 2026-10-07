@@ -86,4 +86,9 @@ export function runReleaseNotesGuard({ root = repoRoot, tag = process.env.GITHUB
   return 0;
 }
 
-if (import.meta.main) process.exitCode = runReleaseNotesGuard();
+/** Entry point seam stays unit-testable while preserving direct CLI behavior. */
+export function runReleaseNotesCli(isMain = import.meta.main, run = runReleaseNotesGuard) {
+  if (isMain) process.exitCode = run();
+}
+
+runReleaseNotesCli();
