@@ -60,6 +60,9 @@ jobs:
       - name: Prepare Slack runtime assets
         run: pnpm --filter zcc-plugin-slack-bridge-2ff2 package
 
+      - name: Install Chrome for Slack diagram tests
+        run: pnpm --dir plugins/slack-bridge-2ff2 exec puppeteer browsers install chrome
+
       # The real Chromium diagram test needs the same sandbox support as Electron.
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
