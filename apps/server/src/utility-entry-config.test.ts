@@ -16,10 +16,12 @@ vi.mock('./http/product-context.js', async original => ({
   ...await original<typeof import('./http/product-context.js')>(), createProductHttpContext: () => h.context
 }));
 vi.mock('./http/product-plugins.js', async original => ({
-  ...await original<typeof import('./http/product-plugins.js')>(), attachProductPluginService: async (ctx: any) => {
-    ctx.plugins = { refreshSafeMode: h.refresh };
+  ...await original<typeof import('./http/product-plugins.js')>(),
+  createAttachedProductPluginService: (ctx: any) => {
+    ctx.plugins = { refreshSafeMode: h.refresh, stop() {} };
     return ctx.plugins;
-  }
+  },
+  startAttachedProductPluginService: async () => undefined
 }));
 vi.mock('./static-host.js', () => ({ startStaticHost: async () => ({ url: 'http://127.0.0.1:0/', close: h.close }) }));
 vi.mock('./runtime-database.js', () => ({ createRuntimeDatabase: () => ({ close: h.databaseClose }) }));
