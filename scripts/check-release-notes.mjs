@@ -23,7 +23,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
@@ -86,4 +86,4 @@ export function runReleaseNotesGuard({ root = repoRoot, tag = process.env.GITHUB
   return 0;
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) process.exitCode = runReleaseNotesGuard();
+if (import.meta.main) process.exitCode = runReleaseNotesGuard();
