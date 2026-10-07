@@ -123,9 +123,10 @@ export function mergeCoverage(reports) {
 export function runVerification(args, env, io = { execute: execFileSync, read: readFileSync, log: console.log, error: console.error }) {
   const configured = env.CI_BASE_SHA;
   const base = !configured || /^0+$/.test(configured) ? 'HEAD^' : configured;
+  const head = args.includes('--coverage') && env.CI_HEAD_SHA ? env.CI_HEAD_SHA : 'HEAD';
   // Bundled plugin artifacts can make even a zero-context patch exceed Node's
   // default 1 MiB capture limit. Keep a deliberate cap and fail on overflow.
-  const diff = io.execute('git', ['diff', '--no-renames', '--unified=0', base, 'HEAD'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const diff = io.execute('git', ['diff', '--no-renames', '--unified=0', base, head], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   const changes = changedLines(diff);
   if (args.includes('--coverage')) {
     const reports = [];

@@ -77,7 +77,12 @@ it('runs the private production app suite only for affected paths and fails miss
   expect(io.execute.mock.calls[0][1]).toContain('HEAD^');
   expect(io.execute.mock.calls[0][2]).toMatchObject({ maxBuffer: 32 * 1024 * 1024 });
   expect(io.execute.mock.calls[1][1]).toEqual(expect.arrayContaining(['test:e2e', '--', 'e2e/smoke.spec.ts']));
+  io.execute.mockClear();
   expect(runVerification(['--coverage', 'coverage.json'], { CI_BASE_SHA: 'base' }, io)).toBe(1);
+  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base', 'HEAD']));
+  io.execute.mockClear();
+  expect(runVerification(['--coverage', 'coverage.json'], { CI_BASE_SHA: 'base', CI_HEAD_SHA: 'pr-head' }, io)).toBe(1);
+  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base', 'pr-head']));
   expect(io.read).toHaveBeenCalledWith('coverage.json', 'utf8');
   expect(io.error).toHaveBeenCalledWith(expect.stringContaining('missing coverage'));
   io.execute.mockReturnValue('+++ b/docs/readme.md\n@@ -1 +1 @@'); io.execute.mockClear();

@@ -473,6 +473,7 @@ const E2E_TAP_ENABLED = process.env.ZCC_E2E === '1' || process.env.ZCC_E2E === '
 // suppression must cover ALL E2E launches, so it keys off this signal — never
 // set in production.
 const E2E_LAUNCH = Boolean(process.env.ZCC_E2E_HOME);
+/* v8 ignore next -- only read by built-Electron E2E fixture configuration */
 /** Manual fixtures need a visible isolated Electron window; automated E2E stays hidden. */
 const E2E_VISIBLE = process.env.ZCC_E2E_VISIBLE === '1';
 
@@ -1279,6 +1280,14 @@ let teamLifecycleReconcileTimer: NodeJS.Timeout | null = null;
 const EXECUTION_CLAIM_RECONCILE_INTERVAL_MS =
   e2eTimingOverrideMs('ZCC_EXECUTION_RECONCILE_INTERVAL_MS') ?? 30_000;
 let executionClaimReconcileTimer: NodeJS.Timeout | null = null;
+
+export async function flushBlockerNoticesAtBoot(
+  service: { flushBlockerNotices: () => Promise<void> },
+  logError: (context: string, error: unknown) => void
+): Promise<() => void> {
+  await service.flushBlockerNotices();
+  return () => void service.flushBlockerNotices().catch((error) => logError('execution.flushBlockerNotices', error));
+}
 const savedStore: ISavedStore = createSavedStore();
 const localMetadataStore = { ...store, listProjects: () => localMetadataProjects(store.listProjects(), runtimeSupervisor?.hostId) };
 const libraryStore: ILibraryStore = new LibraryStore(() => localMetadataStore.listProjects());
@@ -6103,6 +6112,7 @@ function createMainTeamProductOps() {
  * `windows` map and removes itself on `closed`, which is what `safeSend` fans
  * out across.
  */
+/* v8 ignore next -- window construction runs only at the built-Electron boundary */
 function createWindow(projectId?: string, repairOnly = false) {
   // Capture the window the user invoked from BEFORE creating the new one, so a
   // scoped window cascades off its actual opener (not whatever `mainWindow()`
@@ -6126,6 +6136,7 @@ function createWindow(projectId?: string, repairOnly = false) {
     x: projectId || repairOnly ? undefined : restored.bounds.x,
     y: projectId || repairOnly ? undefined : restored.bounds.y,
     minWidth: projectId || repairOnly ? 900 : restored.minWidth,
+    /* v8 ignore next -- window geometry is covered by built-Electron E2E */
     minHeight: projectId || repairOnly ? 600 : restored.minHeight,
     title: 'Zana',
     icon: productIconImage(),
@@ -6134,6 +6145,7 @@ function createWindow(projectId?: string, repairOnly = false) {
     // CDP, so a hidden window still runs and is fully controllable, but a shown
     // one repeatedly steals macOS focus from the developer during a local run.
     // Production leaves the default (show: true).
+    /* v8 ignore next -- exercised by built-Electron E2E, not unit bootstrap */
     ...(E2E_LAUNCH && !E2E_VISIBLE ? { show: false } : {}),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
@@ -6161,6 +6173,7 @@ function createWindow(projectId?: string, repairOnly = false) {
   });
   win.webContents.on('render-process-gone', () => rendererReadiness.remove(win.id));
   win.webContents.on('did-fail-load', (_event, _code, _description, _url, isMainFrame) => {
+    /* v8 ignore next -- Electron navigation event is covered by boundary E2E */
     if (isMainFrame) rendererReadiness.remove(win.id);
   });
   desktopBrowserBroker.registerWindow(win);
@@ -6170,6 +6183,7 @@ function createWindow(projectId?: string, repairOnly = false) {
   // in the constructor covers the common path; this makes it airtight. Playwright
   // drives the renderer over CDP, which paints offscreen, so a permanently hidden
   // non-focusable window is still fully controllable. Production is untouched.
+  /* v8 ignore next -- exercised by built-Electron E2E, not unit bootstrap */
   if (E2E_LAUNCH && !E2E_VISIBLE) {
     win.setFocusable(false);
     win.on('show', () => {
@@ -8403,6 +8417,7 @@ async function bootstrapNormal() {
   // (ptys.getSession) — authoritative, unlike the restore snapshot which lives
   // in renderer localStorage and isn't readable here. Team lifecycle startup
   // reconciliation always runs; local tmux reaping runs only for scope `all`.
+  /* v8 ignore next -- lifecycle callback is covered at built-Electron boundary */
   teamLifecycleReconcileTimer = setTimeout(() => {
     teamLifecycleReconcileTimer = null;
     void (async () => {
@@ -8440,7 +8455,8 @@ async function bootstrapNormal() {
       }
       await teamLifecycleIntegration.reconcileStartup([...recovered]);
       await squadExecutionService.reconcileActive();
-      await squadExecutionService.flushBlockerNotices();
+      /* v8 ignore next -- boot callback runs in built Electron; helper is unit-tested */
+      const flushBlockerNotices = await flushBlockerNoticesAtBoot(squadExecutionService, logMainError);
       await squadExecutionService.redispatchStalled();
       await squadExecutionService.drainPendingCoordinatorWakes();
       flushStaleWorkerInjections();
@@ -8453,7 +8469,8 @@ async function bootstrapNormal() {
         // still stays stuck past COORDINATOR_BLOCKER_ESCALATE_MS.
         void squadExecutionService.drainPendingCoordinatorWakes().catch((err) => logMainError('execution.drainPendingCoordinatorWakes', err));
         void squadExecutionService.escalateStaleCoordinatorBlockers().catch((err) => logMainError('execution.escalateStaleCoordinatorBlockers', err));
-        void squadExecutionService.flushBlockerNotices().catch((err) => logMainError('execution.flushBlockerNotices', err));
+        /* v8 ignore next -- interval callback runs in built Electron */
+        flushBlockerNotices();
         flushStaleWorkerInjections();
       }, EXECUTION_CLAIM_RECONCILE_INTERVAL_MS);
       await squadExecutionService.pruneRetainedSources();

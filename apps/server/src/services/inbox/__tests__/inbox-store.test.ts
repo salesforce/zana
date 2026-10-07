@@ -102,6 +102,10 @@ describe('InboxStore (in-memory)', () => {
     expect((await store.read()).entries).toHaveLength(1);
   });
 
+  it('appendOnce requires a dedupe key', async () => {
+    await expect(store.appendOnce({ projectId: 'proj-1', comments: 'Need a decision' })).rejects.toThrow('appendOnce requires inbox dedupe key');
+  });
+
   it('append with docs only succeeds', async () => {
     const entry = await store.append({
       projectId: 'proj-1',
@@ -672,6 +676,23 @@ describe('InboxStore (JSONL persistence)', () => {
     const fresh = createInboxStore({ filePath: path });
     const { entries } = await fresh.read();
     expect(entries.map((e) => e.comments)).toEqual(['two', 'one']);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('appendOnce replays a stable keyed disk entry without coalescing or emitting an update', async () => {
+    const appended: InboxEntry[] = [];
+    const updated: InboxEntry[] = [];
+    store.onAppended(entry => appended.push(entry));
+    store.onUpdated(entry => updated.push(entry));
+
+    const first = await store.appendOnce({ projectId: 'p', comments: 'Need a decision', dedupeKey: 'execution-blocker:e:b' });
+    const replay = await store.appendOnce({ projectId: 'p', comments: 'Changed text must not replace first delivery', dedupeKey: 'execution-blocker:e:b' });
+
+    expect(replay).toEqual(first);
+    expect(appended).toEqual([first]);
+    expect(updated).toEqual([]);
+    expect((await createInboxStore({ filePath: path }).read()).entries).toEqual([first]);
+    await expect(store.appendOnce({ projectId: 'p', comments: 'missing key' })).rejects.toThrow('appendOnce requires inbox dedupe key');
     await rm(dir, { recursive: true, force: true });
   });
 

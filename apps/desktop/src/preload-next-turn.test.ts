@@ -23,3 +23,16 @@ it('exposes Send now through the authorized UI-send IPC channel', async () => {
   await expect(api.threads.sendNextTurn('thread/one', 'item two')).resolves.toBe(result);
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.uiSend, 'thread/one', 'item two');
 });
+
+it('exposes timeout recovery through its dedicated execution IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  const result = { ok: true };
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce(result);
+
+  await expect(api.executionBoard.recoverTimedOut('project-1', 'execution-1', 4, 'request-1')).resolves.toBe(result);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(
+    IPC.executionBoard.recoverTimedOut, 'project-1', 'execution-1', 4, 'request-1'
+  );
+});

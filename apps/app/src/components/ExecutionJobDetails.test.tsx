@@ -49,10 +49,15 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
     snapshot.execution.state = 'STOPPED';
     snapshot.execution.timeoutReason = 'unresolved-blocker';
-    snapshot.execution.currentBlocker = { id: 'blocker-1', workUnitId: 'unit-1', slotId: 'slot-1', question: 'Need a decision' };
+    snapshot.execution.currentBlocker = {
+      id: 'blocker-1', workUnitId: 'unit-1', slotId: 'slot-1', question: 'Need a decision',
+      notice: { status: 'ACKNOWLEDGED', attempts: 2, inboxItemId: 'inbox-1' }
+    };
     (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
     const recover = await screen.findByRole('button', { name: 'Recover timed-out run' });
+    expect(screen.getByText(/Timed out while waiting for this blocker/)).toBeTruthy();
+    expect(screen.getByText(/Inbox notice: acknowledged.*attempts 2.*item inbox-1/)).toBeTruthy();
     fireEvent.click(recover);
     await waitFor(() => expect(window.cc.executionBoard.recoverTimedOut).toHaveBeenCalledWith('project-1', 'execution-1', 2, expect.any(String)));
     expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();

@@ -1723,19 +1723,29 @@ describe('SquadExecutionService', () => {
   it('replays a durable pending blocker notice after an inbox failure', async () => fixture(async (filePath) => {
     const appendOnce = vi.fn()
       .mockRejectedValueOnce(new Error('inbox offline'))
+      .mockRejectedValueOnce(new Error('inbox still offline'))
       .mockResolvedValue({ id: 'inbox-1' });
     const inbox = { append: vi.fn(async () => ({ id: 'fallback' })), appendOnce };
-    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
-    const first = new SquadExecutionService(deps(filePath, { store, inbox }));
+    const logError = vi.fn();
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    const first = new SquadExecutionService(deps(filePath, { store, inbox, now: () => now }));
     const started = await first.start('session-1', 'project-1', request);
     if (!started.ok) throw new Error('start failed');
     let record = await store.registerPlan(started.value.id, started.value.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker' }, 'unit');
     await first.blockWork({ executionId: record.id, projectId: record.projectId, role: 'worker', slotId: 'worker' }, 'unit', { id: 'blocker', question: 'Need help' });
     await vi.waitFor(async () => expect((await store.get(record.id))?.noticeIntents?.[0]?.status).toBe('PENDING'));
-    const restarted = new SquadExecutionService(deps(filePath, { store, inbox }));
+    now = 3_000;
+    const restarted = new SquadExecutionService(deps(filePath, { store, inbox, now: () => now, logError }));
     await restarted.flushBlockerNotices();
-    expect(appendOnce).toHaveBeenCalledTimes(2);
+    expect(logError).toHaveBeenCalledWith(
+      expect.stringContaining('execution blocker notice delivery deferred execution=execution-1 blocker=blocker'),
+      expect.objectContaining({ message: 'inbox still offline' })
+    );
+    now = 7_000;
+    await new SquadExecutionService(deps(filePath, { store, inbox, now: () => now })).flushBlockerNotices();
+    expect(appendOnce).toHaveBeenCalledTimes(3);
     expect((await store.get(record.id))?.noticeIntents?.[0]).toMatchObject({ status: 'ACKNOWLEDGED', inboxItemId: 'inbox-1' });
   }));
 
@@ -2384,6 +2394,36 @@ describe('SquadExecutionService', () => {
     expect(await store.get(source.id)).toMatchObject({ state: 'STOPPED', timeoutReason: 'unresolved-blocker', successorExecutionId: 'execution-2' });
   }));
 
+  it('validates timeout recovery input and carries completed output plus unresolved question into its successor', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: (() => { let next = 0; return () => `execution-${++next}`; })(), now: () => now });
+    const service = new SquadExecutionService(deps(filePath, { store, now: () => now }));
+    const started = await service.start('owner', 'project-1', { ...request, launchRequestId: 'source-with-context', policy: { deadlineMs: 100 } });
+    if (!started.ok) throw new Error('source launch failed');
+    let source = await store.registerPlan(started.value.id, started.value.stateVersion, [
+      { id: 'done', title: 'Inspect', task: 'Inspect', dependencies: [], readOnly: true },
+      { id: 'pending', title: 'Report', task: 'Report', dependencies: ['done'], readOnly: true }
+    ]);
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'done');
+    source = await store.completeWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'done', 'Inspection found target A.');
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending');
+    source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending', { id: 'blocker', question: 'Approve target A?' });
+    now = 1_101;
+    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+
+    await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, ' ')).resolves.toEqual({
+      ok: false, code: 'INVALID', message: 'invalid timeout recovery request'
+    });
+    await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion - 1, 'recover-context')).resolves.toMatchObject({ ok: false, code: 'CONFLICT' });
+
+    const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-context');
+    expect(recovered).toMatchObject({ ok: true, value: { id: 'execution-2' } });
+    const successor = await store.get('execution-2');
+    expect(successor?.request.objective).toContain('Inspect: Inspection found target A.');
+    expect(successor?.request.objective).toContain('Approve target A?');
+    expect(successor?.workUnits).toEqual([expect.objectContaining({ id: 'pending', dependencies: [] })]);
+  }));
+
   it('fails closed rather than rerunning a timed-out mutating unit without provenance', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
@@ -2402,6 +2442,66 @@ describe('SquadExecutionService', () => {
       ok: false, code: 'RECOVERY_NOT_ALLOWED', message: expect.stringContaining('mutating work')
     });
     expect(await store.get(source.id)).toMatchObject({ state: 'STOPPED', timeoutReason: 'unresolved-blocker' });
+  }));
+
+  it('rejects recovery after completed mutating work and does not reserve a successor', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    const service = new SquadExecutionService(deps(filePath, { store, now: () => now }));
+    const started = await service.start('owner', 'project-1', { ...request, launchRequestId: 'completed-mutating', policy: { deadlineMs: 100 } });
+    if (!started.ok) throw new Error('source launch failed');
+    let source = await store.registerPlan(started.value.id, started.value.stateVersion, [
+      { id: 'write', title: 'Write', task: 'Deploy', dependencies: [] },
+      { id: 'read', title: 'Read', task: 'Inspect', dependencies: [], readOnly: true }
+    ]);
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'write');
+    source = await store.completeWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'write', 'deployed');
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'read');
+    source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'read', { id: 'blocker', question: 'Continue?' });
+    now = 1_101;
+    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-completed-mutating')).resolves.toMatchObject({
+      ok: false, code: 'RECOVERY_NOT_ALLOWED', message: expect.stringContaining('completed mutating work')
+    });
+    expect((await store.get(source.id))?.successorLaunchRequestId).toBeUndefined();
+  }));
+
+  it('recovers an eligible timeout without retained blocker text', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: (() => { let next = 0; return () => `execution-${++next}`; })(), now: () => now });
+    const service = new SquadExecutionService(deps(filePath, { store, now: () => now }));
+    const started = await service.start('owner', 'project-1', { ...request, launchRequestId: 'source-no-blocker', policy: { deadlineMs: 100 } });
+    if (!started.ok) throw new Error('source launch failed');
+    let source = await store.registerPlan(started.value.id, started.value.stateVersion, [{ id: 'unit', title: 'Read', task: 'Inspect', dependencies: [], readOnly: true }]);
+    source = await store.transition(source.id, source.stateVersion, 'STOPPED', 'warning', 'Execution timed out');
+    const raw = JSON.parse(await readFile(filePath, 'utf8')) as { records: Array<{ timeoutReason?: string }> };
+    raw.records[0]!.timeoutReason = 'unresolved-blocker';
+    await writeFile(filePath, JSON.stringify(raw));
+    const stopped = (await createExecutionStore({ filePath, id: () => 'unused' }).get(source.id))!;
+
+    const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, stopped.stateVersion, 'recover-no-blocker');
+    expect(recovered).toMatchObject({ ok: true, value: { id: 'execution-2' } });
+    expect((await store.get('execution-2'))?.request.objective).toContain('No completed unit outputs were retained.');
+    expect((await store.get('execution-2'))?.request.objective).not.toContain('Unresolved human input');
+  }));
+
+  it('rejects absent timeout recovery and a non-error reservation failure', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    const service = new SquadExecutionService(deps(filePath, { store, now: () => now }));
+    await expect(service.recoverTimedOut('owner', 'project-1', 'missing', 1, 'recover-missing')).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
+
+    const started = await service.start('owner', 'project-1', { ...request, launchRequestId: 'reserve-failure', policy: { deadlineMs: 100 } });
+    if (!started.ok) throw new Error('source launch failed');
+    let source = await store.registerPlan(started.value.id, started.value.stateVersion, [{ id: 'unit', title: 'Read', task: 'Inspect', dependencies: [], readOnly: true }]);
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit', { id: 'blocker', question: 'Continue?' });
+    now = 1_101;
+    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    vi.spyOn(store, 'reserveTimeoutRecovery').mockRejectedValueOnce('storage unavailable');
+    await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-failure')).resolves.toEqual({
+      ok: false, code: 'RECOVERY_NOT_ALLOWED', message: 'storage unavailable'
+    });
   }));
 
   it('stops at its deadline without renderer status or list polling', async () => fixture(async (filePath) => {

@@ -29,6 +29,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # Coverage locations must match PR-head source lines. The E2E job
+          # below stays on GitHub's synthetic merge to validate integration.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: pnpm/action-setup@v4
 
@@ -75,6 +78,7 @@ jobs:
         run: node scripts/ci-verification.mjs --coverage coverage/root/coverage-final.json coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json
         env:
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
   # Every affected seam is exercised in the built app; failures fail CI.
   # Keep model-spending live attach suites outside unattended CI.
