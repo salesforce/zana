@@ -13,6 +13,9 @@ import { pathToFileURL } from 'node:url';
 
 const ZERO_OID = /^0+$/;
 const GITHUB_REPOSITORY = 'salesforce/zana';
+// Known work alias is retained for existing installs. Teams may add aliases
+// without weakening host verification through ZANA_GITHUB_SSH_ALIASES.
+const DEFAULT_GITHUB_SSH_ALIASES = ['github.com-work-public'];
 const INERT_DOC = /^(?:docs\/.+\.md|README\.md|CONTRIBUTING\.md)$/;
 const UNSAFE_DOC = /(?:^|\/)(?:AGENTS\.md|SKILL\.md|fixtures?\/|snapshots?\/|test(?:ing)?\/|test-data\/|assets\/|generated\/)/i;
 
@@ -62,9 +65,14 @@ function featureRef(ref) {
   return /^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref) && !protectedRef(ref);
 }
 
-function changedPaths(base, localOid, runGit) {
+export function changedPaths(base, localOid, runGit) {
   const output = runGit(['diff', '--name-status', '--find-renames', base, localOid]);
-  return output.split('\n').filter(Boolean).map((line) => line.split('\t').at(-1)).filter(Boolean);
+  return output.split('\n').filter(Boolean).flatMap((line) => {
+    const [status, ...paths] = line.split('\t');
+    // Renames and copies carry both paths. A runtime source renamed into docs
+    // remains runtime-affecting and must not take the inert prose fast path.
+    return /^[RC]/.test(status) ? paths : paths.slice(-1);
+  }).filter(Boolean);
 }
 
 function inertDocs(paths) {
@@ -104,9 +112,10 @@ export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBa
   return { action: 'full', reason: resultPaths.length ? 'path owner is not in complete fast-path inventory' : 'empty diff cannot establish safe selection', paths: resultPaths, oid: [...oids][0] };
 }
 
-function configuredAliases(run) {
+export function configuredAliases(run, configured = process.env.ZANA_GITHUB_SSH_ALIASES) {
   const aliases = {};
-  for (const host of ['github.com-work-public']) {
+  const hosts = configured ? configured.split(',').map((host) => host.trim()).filter(Boolean) : DEFAULT_GITHUB_SSH_ALIASES;
+  for (const host of hosts) {
     const result = run('ssh', ['-G', host], { encoding: 'utf8' });
     if (result?.status !== 0) continue;
     const hostname = /^hostname\s+(.+)$/m.exec(result.stdout)?.[1];
@@ -122,6 +131,8 @@ export function runFullVerification({ oid, root = process.cwd(), run = spawnSync
     log(`pre-push: snapshot ${oid.slice(0, 12)} in ${snapshot}`);
     const clone = run('git', ['clone', '--no-local', '--no-checkout', root, snapshot], { stdio: 'inherit' });
     if (clone.status !== 0) throw new Error('could not create isolated push snapshot');
+    const fetch = run('git', ['fetch', '--no-tags', root, oid], { cwd: snapshot, stdio: 'inherit' });
+    if (fetch.status !== 0) throw new Error(`could not fetch pushed object ${oid}`);
     const checkout = run('git', ['checkout', '--detach', oid], { cwd: snapshot, stdio: 'inherit' });
     if (checkout.status !== 0) throw new Error(`could not check out pushed object ${oid}`);
     const install = run('pnpm', ['install', '--frozen-lockfile'], { cwd: snapshot, stdio: 'inherit' });
@@ -137,6 +148,10 @@ export function runFullVerification({ oid, root = process.cwd(), run = spawnSync
 }
 
 export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, run = spawnSync } = {}) {
+  if (!remoteUrl) {
+    error('pre-push: Git did not provide remote URL; aborting push.');
+    return 1;
+  }
   const tuples = parseTuples(input);
   const runGit = (args) => gitOk(args, { cwd: root });
   const selection = select({
@@ -153,7 +168,9 @@ export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = 
   if (selection.action === 'abort') return 1;
   if (selection.action === 'skip') return 0;
   try {
-    const oids = selection.oids ?? [selection.oid ?? tuples?.find((tuple) => !ZERO_OID.test(tuple.localOid))?.localOid];
+    const oids = selection.oids ?? (selection.oid ? [selection.oid] : [...new Set((tuples ?? [])
+      .filter((tuple) => !ZERO_OID.test(tuple.localOid)).map((tuple) => tuple.localOid))]);
+    if (!oids.length) throw new Error('no pushed object available for full verification');
     for (const oid of oids) verify({ oid, root, log });
     return 0;
   } catch (cause) {
