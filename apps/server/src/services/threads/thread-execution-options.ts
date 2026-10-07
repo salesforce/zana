@@ -77,6 +77,9 @@ function toProviderInfo(provider: ThreadProviderRecord, available: boolean): Thr
     available,
     maintenance: { health: false, usage: false, installation: false },
     composerActions: provider.composerActions ?? [],
+    serviceTiers: provider.serviceTiers
+      ? [{id:'default',label:'Default'}, ...provider.serviceTiers.filter(tier => tier.id !== 'default')]
+      : (provider.capabilities.supportsServiceTier ? [{id:'default',label:'Default'},{id:'fast',label:'Fast'}] : []),
     capabilities: {
       supportsThreadArchive: provider.capabilities.supportsThreadArchive,
       supportsThreadRename: provider.capabilities.supportsThreadRename,
@@ -214,6 +217,7 @@ export function buildThreadExecutionOptions(input: {
   providerId?: string;
   availability: readonly HarnessVerifyResult[];
   extraInstalled?: Readonly<Record<string, boolean>>;
+  providerServiceTiersDisabled?: boolean;
   listed?: { models: AvailableModel[]; selectedOnlyModels: AvailableModel[]; acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> } } | null;
   listError?: ThreadModelLoadErrorCode | null;
   listErrorDetail?: string | null;
@@ -231,7 +235,11 @@ export function buildThreadExecutionOptions(input: {
       ? { providerId: requested.id, code: input.listError, detail: input.listErrorDetail ?? null }
       : null;
   return {
-    providers: offered.map((provider) => toProviderInfo(provider, !provider.unavailableReason)),
+    providers: offered.map((provider) => {
+      const info = toProviderInfo(provider, !provider.unavailableReason);
+      if (input.providerServiceTiersDisabled) info.serviceTiers = [];
+      return info;
+    }),
     permissionCeiling: 'full',
     models: modelLoadError?.code === 'provider_unavailable' ? [] : useListed ? input.listed!.models : staticModels,
     selectedOnlyModels: modelLoadError?.code === 'provider_unavailable' ? [] : useListed ? input.listed!.selectedOnlyModels : [],

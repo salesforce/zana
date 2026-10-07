@@ -1,4 +1,7 @@
 import { join } from 'node:path';
+import { SalesforceToolkitAdapter, providerTools, toolProvider, toolkitNativeSchema } from './toolkit-adapter.js';
+import { toolkitRuntimeLoader } from './toolkit-runtime.js';
+import type { SalesforceToolCallContext, ToolkitRuntime } from './tool-provider-contract.js';
 import { WorkbenchResults } from './workbench-results.js';
 import { WORKBENCH_ACTIONS, actionCatalog, actionInput, actionParameters, isWorkbenchAction, workbenchActionNames } from './workbench-actions.js';
 import { WorkbenchControl } from './workbench-control.js';
@@ -52,7 +55,7 @@ import { WorkbenchService } from './workbench-service.js';
 import { ProjectContexts, ProjectContextError } from './project-context.js';
 import type { SalesforceSdk } from './sdk-contract.js';
 import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-project.js';
-import { generatedOutputPath, parseGenerateInput } from './project-generate.js';
+import { generatedProjectPath, parseGenerateInput } from './project-generate.js';
 import { connectDxProject } from './project-connect.js';
 import {
   AgentFilesError,
@@ -98,6 +101,13 @@ import {
 } from './types.js';
 
 const SETTINGS = {
+  toolProvider: {
+    type: 'select' as const,
+    label: 'Agent tool provider',
+    description: 'Choose Built-in, Toolkit, or Both. The org picker and workbench stay available. New sessions receive the selected tool set.',
+    options: ['both', 'builtin', 'toolkit'],
+    default: 'both'
+  },
   [SETTING_DEFAULT_ORG]: {
     type: 'string' as const,
     label: 'Default org alias',
@@ -132,7 +142,7 @@ function dialectSetting(value: unknown): AgentScriptDialect {
   return normalizeAgentScriptDialect(value);
 }
 
-export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: SalesforceDeps = createNodeDeps(), labTransport?: AgentforceTransport): Promise<void> {
+export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: SalesforceDeps = createNodeDeps(), labTransport?: AgentforceTransport, loadToolkit: () => Promise<ToolkitRuntime> = toolkitRuntimeLoader()): Promise<void> {
   const settings = zcc.settings.define(SETTINGS);
   const artifacts: ArtifactStore = createKvArtifactStore(zcc.storage.kv);
   const readSharedSettings = async (): Promise<PluginSettingsValues> => {
@@ -181,7 +191,36 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     deps,
     readSettings
   });
-  zcc.services.provide(sdk);
+  const selectedProvider = async () => toolProvider((await settings.get()).toolProvider);
+  const toolkit = new SalesforceToolkitAdapter({
+    sdk, provider: selectedProvider, loadRuntime: loadToolkit,
+    scope: async ctx => {
+      const project = (await zcc.sdk.projects.list()).find(project => project.id === ctx.projectId);
+      if (!project?.path || project.local !== true) throw Error('Toolkit execution requires a registered local project attested by this host. Update the host if its SDK does not provide local project attestation.');
+      const current = contexts.current();
+      if (current?.projectId !== ctx.projectId) throw Error('Toolkit project context does not match this request.');
+      return { projectId: ctx.projectId, workspace: current.settings.projectRoot, orgAlias: current.settings.defaultOrg };
+    }
+  });
+  zcc.onDispose(() => toolkit.dispose());
+  settings.onChange(next => { if (toolProvider(next.toolProvider) === 'builtin') toolkit.cancelActive(); });
+  const runToolkit = (input: unknown, ctx: SalesforceToolCallContext): Promise<unknown> => {
+    const raw = input && typeof input === 'object' ? input as Record<string, any> : {};
+    switch (raw.action) {
+      case 'list': return toolkit.catalog();
+      case 'describe': return toolkit.describe(String(raw.tool ?? ''));
+      case 'call': return toolkit.invoke(String(raw.tool ?? ''), raw.input, ctx, raw.resumeId);
+      case 'result.read': return toolkit.read(String(raw.runId ?? ''), ctx, { pointer: raw.pointer, offset: raw.offset, limit: raw.limit });
+      default: return Promise.resolve({ ok: false, code: 'invalid_input', error: 'Use sf_tools list, describe, call or result.read.' });
+    }
+  };
+  zcc.services.provide({ ...sdk,
+    toolCatalog: () => toolkit.catalog(),
+    toolDescribe: (name: string) => toolkit.describe(name),
+    toolInvoke: (name: string, input: unknown, ctx: SalesforceToolCallContext, resumeId?: string) => contexts.run({ projectId: ctx.projectId }, () => toolkit.invoke(name, input, ctx, resumeId)),
+    toolReadResult: (runId: string, ctx: SalesforceToolCallContext, selection?: { pointer?: string; offset?: number; limit?: number }) => contexts.run({ projectId: ctx.projectId }, () => toolkit.read(runId, ctx, selection))
+  });
+  registerRpc('toolkit.run', args => runToolkit(args, { projectId: contexts.current()?.projectId ?? '', threadId: rpcString(args, 'threadId') }));
   const explorer = new SoqlExplorer(sdk, {
     get: <T>(key: string) => zcc.storage.kv.get<T>(contexts.key(key)),
     set: (key, value) => zcc.storage.kv.set(contexts.key(key), value)
@@ -363,7 +402,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     return {
       ok: true,
       name: parsed.name,
-      path: generatedOutputPath(cli.result, parsed.outputDir, parsed.name)
+      path: generatedProjectPath(parsed.outputDir, parsed.name)
     };
   });
   let actionReads = 0;
@@ -569,7 +608,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
 
   const invokeAction = async (action: string, input: unknown, ctx: PluginAgentToolContext): Promise<unknown> => {
     try {
-      if (action === 'capabilities') return { ok: true, actions: actionCatalog() };
+      if (action === 'capabilities') return { ok: true, actions: actionCatalog(), toolkit: await toolkit.catalog() };
       if (!ctx.projectId) return { ok: false, code: 'project_required', error: 'Choose a registered project for Salesforce actions.' };
       if (!isWorkbenchAction(action)) return { ok: false, code: 'invalid_input', error: 'Unknown Salesforce action. Use capabilities.' };
       const data = actionInput(input);
@@ -592,7 +631,13 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return result;
     } catch (error) { return agentFilesFailure(error); }
   };
-  const runFamily = (name: string, input: unknown, ctx: PluginAgentToolContext): Promise<unknown> => {
+  const runFamily = async (name: string, input: unknown, ctx: PluginAgentToolContext): Promise<unknown> => {
+    if (name === 'sf_tools') return runToolkit(input, ctx);
+    if (['sf_flow', 'code_analyzer', 'sf_metadata'].includes(name)) {
+      const { resumeId, ...parameters } = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+      return toolkit.invoke(name, parameters, ctx, typeof resumeId === 'string' ? resumeId : undefined);
+    }
+    if (['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent'].includes(name) && await selectedProvider() === 'toolkit') return { ok: false, code: 'provider_disabled', error: 'Built-in family tools are disabled. Use sf_tools describe/call for the toolkit contract, or select Both in plugin settings.' };
     const action = rpcString(input, 'action');
     if (isWorkbenchAction(action)) return invokeAction(action, (input as { input?: unknown }).input ?? input, ctx);
     if (name === 'sf_agent') return runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence);
@@ -609,6 +654,21 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     parameters: { ...actionParameters, properties: { ...actionParameters.properties, action: { type: 'string', enum: ['capabilities', ...workbenchActionNames] } } },
     execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => invokeAction(rpcString(input, 'action'), (input as { input?: unknown })?.input, ctx)),
   });
+  zcc.agents.registerTool({
+    name: 'sf_tools',
+    description: 'Discover and invoke the 21 sf-agentic-tools capabilities. List then describe the desired tool before calling. Project/org and effect authorization are host-owned. Read bounded saved results by runId; resume with resumeId. No shell commands.',
+    parameters: { type: 'object', properties: {
+      action: { type: 'string', enum: ['list', 'describe', 'call', 'result.read'] },
+      tool: { type: 'string' }, input: { type: 'object' }, resumeId: { type: 'string' },
+      runId: { type: 'string' }, pointer: { type: 'string' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 }
+    }, required: ['action'] },
+    execute: (input, ctx) => ['list', 'describe'].includes(rpcString(input, 'action')) ? runToolkit(input, ctx) : contexts.run({ projectId: ctx.projectId }, () => runToolkit(input, ctx))
+  });
+  for (const name of ['sf_flow', 'code_analyzer', 'sf_metadata']) zcc.agents.registerTool({
+    name, description: `Salesforce toolkit ${name}. Use sf_tools describe for action availability and prerequisites. Execution stays within the selected project/org; effectful calls require host approval.`,
+    parameters: toolkitNativeSchema(name),
+    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runFamily(name, input, ctx))
+  });
 
   // Local authoring is available without a shared org. Connection readiness is
   // request/project-scoped and must not mark the entire plugin unavailable.
@@ -620,14 +680,14 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       { name: 'doctor', summary: 'Check Salesforce CLI, aliases, and the target org', usage: 'zcc sf doctor' },
       { name: 'org', summary: 'List CLI-connected orgs and the resolved target (no token)', usage: 'zcc sf org' },
       { name: 'action', summary: 'Run a scoped workbench action; capabilities lists actions', usage: 'zcc sf action <action> --input <JSON> --json' },
-      { name: 'tool', summary: 'Run a Salesforce family tool with structured input', usage: 'zcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc> --input <JSON> --json' },
+      { name: 'tool', summary: 'Run a Salesforce family tool with structured input', usage: 'zcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc|sf_tools|sf_flow|code_analyzer|sf_metadata> --input <JSON> --json' },
       { name: 'lint', summary: 'Lint a confined .agent file (or every bundle)', usage: 'zcc sf lint [path]' }
     ],
     async run(argv, cliContext) {
       const execute = async () => {
       const command = argv[0] ?? 'doctor';
       if (command === '--help' || command === '-h') {
-        return { exitCode: 0, stdout: 'zcc sf doctor\nzcc sf org\nzcc sf lint [path]\nzcc sf action capabilities --json\nzcc sf action <action> --input <JSON> --json\nzcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc> --input <JSON> --json\n' };
+        return { exitCode: 0, stdout: 'zcc sf doctor\nzcc sf org\nzcc sf lint [path]\nzcc sf action capabilities --json\nzcc sf action <action> --input <JSON> --json\nzcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc|sf_tools|sf_flow|code_analyzer|sf_metadata> --input <JSON> --json\n' };
       }
       if (command === 'action' || command === 'tool') {
         const inputIndex = argv.indexOf('--input');
@@ -636,7 +696,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         catch { return { exitCode: 2, stderr: 'Provide valid JSON after --input.\n' }; }
         const ctx = { projectId: cliContext.projectId ?? '', threadId: cliContext.threadId ?? '', signal: cliContext.signal ?? new AbortController().signal };
         if (!ctx.projectId && argv[1] !== 'capabilities') return { exitCode: 2, stderr: 'Run in a registered project (or pass the ZCC project context).\n' };
-        const result = command === 'action' ? await invokeAction(argv[1] ?? '', input, ctx) : await runFamily(argv[1] ?? '', actionInput(input), ctx);
+        const result = command === 'action' ? await invokeAction(argv[1] ?? '', input, ctx) : await runFamily(argv[1] ?? '', argv[1] === 'sf_tools' ? input as Record<string, unknown> : actionInput(input), ctx);
         return { exitCode: (result as { ok?: boolean })?.ok === false ? 1 : 0, stdout: JSON.stringify(result) + '\n' };
       }
       const snapshot = await readSettings();
@@ -683,17 +743,19 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
 
   zcc.agents.configure(async (ctx) => contexts.run({ projectId: ctx.projectId }, async () => {
     const snapshot = await readSettings();
+    const provider = await selectedProvider();
+    const toolkitInstructions = provider === 'builtin' ? '' : '\nSalesforce toolkit: use sf_tools list, then describe and call. sf_flow, code_analyzer and sf_metadata are available directly. Context and authorization come from the host; never supply workspace, target_org or allowEffects. Saved evidence uses runId/resumeId, not paths.';
     if (!shouldContributeConstitution({
       defaultOrg: contexts.current()?.targetSource === 'project' ? snapshot.defaultOrg : (await readSharedSettings()).defaultOrg,
       dxProject: isDxProject(snapshot.projectRoot, deps.exists)
     })) {
-      return ctx.projectId ? { tools: ['sf_workbench', 'sf_agent'], instructions: 'Salesforce local authoring is available: use sf_workbench capabilities, then draft.create. Org actions require selecting a connected org.' } : {};
+      return ctx.projectId ? { tools: providerTools(provider, false), skills: provider === 'builtin' ? [] : ['salesforce-toolkit'], instructions: 'Salesforce local authoring is available: use sf_workbench capabilities, then draft.create. Org actions require selecting a connected org.' + toolkitInstructions } : {};
     }
     const listed = await listOrgsSafe(sdk);
     return {
-      instructions: CONSTITUTION_INSTRUCTIONS + `\nSalesforce project target: ${snapshot.defaultOrg || 'not selected'}.\n` + orgRosterInstructions(listed.orgs, listed.selectedAlias),
-      tools: ['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent', 'sf_workbench'],
-      skills: ['salesforce-constitution', 'salesforce-dx']
+      instructions: CONSTITUTION_INSTRUCTIONS + `\nSalesforce project target: ${snapshot.defaultOrg || 'not selected'}.\n` + orgRosterInstructions(listed.orgs, listed.selectedAlias) + toolkitInstructions,
+      tools: providerTools(provider, true),
+      skills: ['salesforce-constitution', ...(provider !== 'toolkit' ? ['salesforce-dx'] : []), ...(provider !== 'builtin' ? ['salesforce-toolkit'] : [])]
     };
   }).catch(() => ({})));
 
@@ -753,7 +815,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       },
       required: ['action']
     },
-    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runLwc(input, deps, readSettings, artifacts))
+    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runFamily('sf_lwc', input, ctx))
   });
 
   zcc.agents.registerTool({

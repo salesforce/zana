@@ -5,10 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { buildPluginApp } from '../../../packages/plugin-build/src/build-plugin.ts';
 import { build } from 'vite';
 import { buildFlowVisualizer } from './build-flow-visualizer.mjs';
+import { buildToolkitRuntime } from './build-toolkit.mjs';
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = join(pluginRoot, '../..');
 const version = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).version ?? '0.0.0';
+await buildToolkitRuntime();
 await buildFlowVisualizer(pluginRoot);
 await build({ configFile: join(pluginRoot, 'playground/vite.config.ts') });
 await buildPluginApp(pluginRoot, String(version));

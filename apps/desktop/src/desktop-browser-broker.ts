@@ -62,6 +62,10 @@ export function createDesktopBrowserBroker(args: {
   const registryListeners = new Set<() => void>();
   const snapshots = new Map<string, string>();
   let hostId: string | null = null;
+  args.manager.setDownloadControlGuard?.((webContentsId, tabId) => {
+    const instance = instanceForWindow(webContentsId);
+    return instance !== undefined && controlFor(instance, tabId) !== undefined;
+  });
 
   function instanceForWindow(webContentsId: number): InstanceEntry | undefined {
     return [...instances.values()].find(

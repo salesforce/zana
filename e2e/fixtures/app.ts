@@ -232,7 +232,7 @@ async function appWindow(app: ElectronApplication): Promise<Page> {
   throw new Error('app renderer window never appeared');
 }
 
-async function closeApp(app: ElectronApplication): Promise<void> {
+export async function closeApp(app: ElectronApplication): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([
     app.close().catch(() => undefined),

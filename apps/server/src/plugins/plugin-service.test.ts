@@ -502,20 +502,20 @@ describe('PluginService', () => {
     } finally { vi.useRealTimers(); warn.mockRestore(); }
   });
 
-  it('admitDispatch: returns the first plugin\'s wait when no plugin rejects', async () => {
+  it.each([true, false])('admitDispatch: a non-overrideable wait wins in either registration order (first overrideable=%s)', async firstOverrideable => {
     const dataDir = root();
     const first = writePlugin(
       join(root(), 'first-waiter'),
       'first-waiter',
       `export default function plugin(zcc) {
-        zcc.hooks.on(() => ({ action: 'wait', reason: 'queued-first', overrideable: true }));
+        zcc.hooks.on(() => ({ action: 'wait', reason: 'queued-first', overrideable: ${firstOverrideable} }));
       }\n`
     );
     const second = writePlugin(
       join(root(), 'second-waiter'),
       'second-waiter',
       `export default function plugin(zcc) {
-        zcc.hooks.on(() => ({ action: 'wait', reason: 'queued-second', overrideable: false }));
+        zcc.hooks.on(() => ({ action: 'wait', reason: 'queued-second', overrideable: ${!firstOverrideable} }));
       }\n`
     );
     const service = createPluginService({ dataDir, bundledRoot: root() });
@@ -523,7 +523,20 @@ describe('PluginService', () => {
     await service.install(second);
     await expect(
       service.admitDispatch({ dispatchId: 'd1', threadId: 't1', projectId: 'p1', generation: 1 })
-    ).resolves.toEqual({ action: 'wait', reason: 'queued-first', overrideable: true, pluginId: 'first-waiter' });
+    ).resolves.toEqual(firstOverrideable
+      ? { action: 'wait', reason: 'queued-second', overrideable: false, pluginId: 'second-waiter' }
+      : { action: 'wait', reason: 'queued-first', overrideable: false, pluginId: 'first-waiter' });
+  });
+
+  it('admitDispatch: keeps an overrideable wait when every plugin permits an override', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    for (const id of ['first-waiter', 'second-waiter']) {
+      await service.install(writePlugin(join(root(), id), id, `export default function plugin(zcc) {
+        zcc.hooks.on(() => ({ action: 'wait', reason: '${id}', overrideable: true }));
+      }\n`));
+    }
+    await expect(service.admitDispatch({ dispatchId: 'd', threadId: 't', projectId: 'p', generation: 1 }))
+      .resolves.toEqual({ action: 'wait', reason: 'first-waiter', overrideable: true, pluginId: 'first-waiter' });
   });
 
   it('decideToolPolicy: any plugin denying wins (deny-wins fan-out)', async () => {
@@ -2093,4 +2106,15 @@ describe('isolated plugin service return semantics', () => {
     const service = createPluginService({ dataDir: root(), bundledRoot: root() }); await service.install(provider); await service.install(consumer);
     expect(await service.callRpc('sync-consumer', 'check', {})).toEqual({ label: 'prefix ready', during: 1, after: 0, delayed: 'async', lazy: 'lazy', version: 1, hasVersion: true });
   });
+});
+
+it('safe mode suspends non-bundled RPC and preserves enabled preferences across reload and restore', async () => {
+ let safeMode=false;
+ const dir=writePlugin(join(root(),'safe-mode'),'safe-mode');
+ const service=createPluginService({dataDir:root(),bundledRoot:root(),getAppConfig:()=>({pluginSafeMode:safeMode})});
+ await service.install(dir);expect(await service.callRpc('safe-mode','ping',{})).toMatchObject({ok:true});
+ safeMode=true;await service.refreshSafeMode();expect(service.get('safe-mode')).toMatchObject({enabled:true,status:'disabled',statusDetail:'Suspended by plugin safe mode'});
+ await expect(service.callRpc('safe-mode','ping',{})).rejects.toThrow();await service.reload('safe-mode');expect(service.status('safe-mode')).toBe('disabled');
+ safeMode=false;await service.refreshSafeMode();expect(service.status('safe-mode')).toBe('running');expect(await service.callRpc('safe-mode','ping',{})).toMatchObject({ok:true});
+ await service.disable('safe-mode');safeMode=true;await service.refreshSafeMode();safeMode=false;await service.refreshSafeMode();expect(service.get('safe-mode')).toMatchObject({enabled:false,status:'disabled',statusDetail:null});
 });

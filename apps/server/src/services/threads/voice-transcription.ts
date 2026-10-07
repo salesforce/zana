@@ -4,8 +4,8 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import { VOICE_TRANSCRIPTION_MAX_BYTES } from '../../http/multipart-voice.js';
 
 export const DEFAULT_VOICE_MODEL = 'gpt-transcribe';
-export const VOICE_COMMAND_TIMEOUT_MS = 10_000;
-export const VOICE_RPC_TIMEOUT_MS = 25_000;
+export const VOICE_COMMAND_TIMEOUT_MS = 70_000;
+export const VOICE_RPC_TIMEOUT_MS = 85_000;
 export const CODEX_VOICE_LOGIN_MESSAGE =
   'Voice input needs a Codex login on the connected computer. Sign in there, then try again.';
 

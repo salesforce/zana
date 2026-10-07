@@ -1,0 +1,547 @@
+/* Keep harness styling local: Editor and plugins also consume opener rows. */
+.harness-settings {
+  --harness-divider: var(--settings-divider, var(--border));
+}
+
+.harness-settings .harness-health {
+  margin: 0 0 14px;
+  padding: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--bg-panel);
+  border: 1px solid var(--harness-divider);
+  border-radius: 10px;
+  color: var(--text-primary);
+}
+
+.harness-machine-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  flex: none;
+}
+
+.harness-health-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 170px;
+  gap: 3px;
+  min-width: 0;
+}
+
+.harness-machine-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.harness-settings .harness-health-msg {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.harness-settings .harness-health--warn .harness-health-msg {
+  color: var(--accent-amber, #b7791f);
+}
+
+.harness-settings .harness-health-actions {
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.harness-settings .opener-list {
+  border-color: var(--harness-divider);
+  background: var(--bg-panel);
+}
+
+.harness-settings .opener-row + .opener-row {
+  border-color: var(--harness-divider);
+}
+
+.harness-settings .opener-row-head {
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.harness-settings .opener-row-glyph {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.harness-settings .opener-row-text {
+  gap: 3px;
+}
+
+.harness-settings .opener-row-blurb {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.harness-settings .opener-row-status-stack {
+  margin-left: auto;
+  gap: 4px;
+}
+
+.harness-settings .opener-row-always {
+  min-width: 36px;
+  text-align: center;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+.harness-setup-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 2px 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.harness-setup-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.harness-model-refresh {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--harness-divider);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+
+.harness-model-refresh .settings-btn {
+  flex: none;
+}
+
+.harness-model-refresh .settings-help {
+  margin: 0;
+  min-width: 0;
+}
+
+.harness-session-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.harness-session-tab {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--harness-divider);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.harness-session-tab.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel));
+  color: var(--accent);
+}
+
+.harness-session-tab-label,
+.harness-session-tab-description {
+  display: block;
+}
+
+.harness-session-tab-label {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.harness-session-tab-description {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.harness-disclosure {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.harness-disclosure:hover,
+.harness-session-tab:not(.is-active):hover {
+  background: var(--bg-elevated);
+}
+
+.harness-disclosure:focus-visible,
+.harness-session-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.harness-configure-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.harness-settings .thread-provider-model-status {
+  flex: 0 1 auto;
+  max-width: 45%;
+  text-align: right;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.harness-settings .opener-row-advanced {
+  padding: 16px;
+  background: var(--bg-panel);
+  border-color: var(--harness-divider);
+}
+
+.harness-settings .thread-provider-model-actions {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.harness-settings .thread-provider-models {
+  max-height: 360px;
+  gap: 0;
+}
+
+.harness-settings .thread-provider-models li {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--harness-divider);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.harness-settings .thread-provider-models code {
+  color: var(--text-muted);
+}
+
+.harness-default-card {
+  padding: 16px;
+  margin: 0 0 16px;
+  border: 1px solid var(--harness-divider);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+
+.harness-default-card > .settings-field {
+  margin: 0;
+}
+
+.harness-settings .settings-field--row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 220px);
+  gap: 4px 24px;
+  align-items: center;
+}
+
+.harness-settings .settings-field--row > label {
+  display: contents;
+}
+
+.harness-settings .settings-field--row .settings-label {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: end;
+}
+
+.harness-settings .settings-field--row > label > :not(.settings-label) {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.harness-settings .settings-field--row > .settings-help {
+  grid-column: 1;
+  grid-row: 2;
+  margin: 0;
+  align-self: start;
+}
+
+.harness-inheritance {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--harness-divider);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.harness-inheritance ol {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--text-primary);
+}
+
+.harness-inheritance li + li::before {
+  content: '›';
+  margin-right: 8px;
+  color: var(--text-muted);
+}
+
+.harness-settings .harness-cli-options {
+  gap: 24px;
+  padding: 24px;
+}
+
+.harness-options-group {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.harness-options-group > legend,
+.harness-thread-options h4 {
+  padding: 0;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.harness-options-group .harness-options-intro {
+  margin: 0 0 12px;
+}
+
+.harness-options-fields {
+  border: 1px solid var(--harness-divider);
+  border-radius: 8px;
+  background: var(--bg-input, var(--bg-panel));
+  overflow: hidden;
+}
+
+.harness-options-fields > .settings-field {
+  margin: 0;
+  padding: 16px;
+  min-width: 0;
+}
+
+.harness-options-fields > .settings-field + .settings-field {
+  border-top: 1px solid var(--harness-divider);
+}
+
+.harness-options-group:disabled .harness-options-fields {
+  opacity: 0.6;
+}
+
+.harness-option-notice {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.harness-thread-options h4 {
+  margin: 0;
+}
+
+.harness-model-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--harness-divider);
+  border-radius: 7px;
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text-muted);
+}
+
+.harness-model-search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.harness-model-search > svg {
+  flex: none;
+}
+
+.harness-model-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 10px 0;
+}
+
+.harness-model-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.harness-model-name {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.harness-model-default {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+
+.harness-model-pagination,
+.harness-model-pagination > div,
+.harness-model-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.harness-model-pagination,
+.harness-model-meta {
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.harness-model-meta {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--harness-divider);
+}
+
+.harness-settings [data-testid='harness-legacy-list'] {
+  margin-bottom: 24px;
+}
+
+@container (max-width: 620px) {
+  .harness-settings .settings-field--row {
+    display: block;
+  }
+
+  .harness-settings .settings-field--row > label {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .harness-settings .settings-field--row .settings-label {
+    align-self: auto;
+  }
+
+  .harness-settings .settings-field--row > .settings-help {
+    margin-top: 6px;
+  }
+
+  .harness-settings .harness-cli-options {
+    padding: 16px;
+  }
+
+  .harness-settings .opener-row-head {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .harness-settings .opener-row-text {
+    flex: 1 1 calc(100% - 88px);
+  }
+
+  .harness-settings .opener-row-status-stack {
+    align-items: flex-start;
+    margin-left: 44px;
+    margin-right: auto;
+  }
+
+  .harness-settings .thread-provider-model-status {
+    margin-left: 74px;
+    max-width: calc(100% - 74px);
+    text-align: left;
+  }
+
+  .harness-settings .harness-configure-label {
+    display: none;
+  }
+
+  .harness-settings .harness-health-actions {
+    width: calc(100% - 50px);
+    margin-left: 50px;
+  }
+
+  .harness-model-refresh {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .harness-session-tab {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .harness-session-tab-description {
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .harness-settings .opener-row-chevron {
+    transition: none;
+  }
+}
+
+.harness-session-tab > svg {
+  flex: none;
+}
+
+.harness-settings .thread-provider-id {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.harness-settings .thread-provider-model-actions > button {
+  flex: none;
+}

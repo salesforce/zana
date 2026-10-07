@@ -1,3 +1,4 @@
+import { authorizedServiceTier } from './provider-service-tier.js';
 import { getEnvironment, getThreadExecutionState, getLatestConversationCheckpoint, type ConversationThreadRow } from '@zana-ai/zcc-db';
 import type { ThreadResumeFields } from '@zana-ai/zcc-contracts/host-rpc';
 import type { PermissionMode } from '@zana-ai/zcc-domain/thread-runtime';
@@ -34,7 +35,8 @@ export async function threadResumeFields(
     projectId: thread.projectId
   });
   const permissionMode = threadPermissionMode(ctx, thread, requestedPermissionMode);
-  const { model, reasoningLevel, acpMode, serviceTier } = readLastThreadExecution(ctx, thread.id);
+  const { model, reasoningLevel, acpMode, serviceTier: inheritedTier } = readLastThreadExecution(ctx, thread.id);
+  const serviceTier = authorizedServiceTier(ctx, thread.providerId, inheritedTier, {inherited:true});
   const requestedMode = getThreadExecutionState(ctx.db, thread.id)?.requestedMode;
   const claudeCodePermissionMode = requestedMode
     ? claudeCodePermissionModeForTurn(thread.providerId, requestedMode)

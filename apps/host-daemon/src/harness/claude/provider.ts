@@ -465,6 +465,10 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
     // Mirror the local precedence stack: base → globals → projectSettings → PERSONA.
     const effectiveProfile = input.persona?.baseProfile ?? input.profile;
     const remoteExtra = cleanExtraArgs(input.extraArgs);
+    const modelTarget = resolveModelTarget(this, {
+      config: input.config, persona: input.persona, projectSettings: input.projectSettings,
+      perTabRouting: input.harnessRouting, profile: effectiveProfile, extraArgs: remoteExtra, scope: 'remote'
+    });
     const autoModeActive = this.computeAutoModeActive({
       profile: effectiveProfile,
       config: input.config,
@@ -576,6 +580,7 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
           ...sessionIdArgs,
           ...personaArgs,
           ...psArgs,
+          ...(modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
           ...guidanceArgs,
           ...lifecycleArgs,
           ...resumeArgs,

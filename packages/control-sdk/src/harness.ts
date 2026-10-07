@@ -10,19 +10,27 @@ export interface HarnessVerifyRow {
   binary?: string;
 }
 
-export async function listHarnessVerify(http: ProductHttpClient): Promise<HarnessVerifyRow[]> {
+export async function listHarnessVerify(http: ProductHttpClient, hostId?: string): Promise<HarnessVerifyRow[]> {
   const listed = await http.request<{ results?: HarnessVerifyRow[] }>(
     'GET',
-    '/api/v1/harness/verify'
+    '/api/v1/harness/verify',
+    {query:{hostId}}
   );
   return listed.results ?? [];
 }
 
 export async function preflight(
   http: ProductHttpClient,
-  opts: { surface: 'thread' | 'cli-agent'; providerId?: string; profile?: string }
+  opts: { surface: 'thread' | 'cli-agent'; providerId?: string; profile?: string; hostId?: string }
 ): Promise<HarnessVerifyRow> {
-  const results = await listHarnessVerify(http);
+  let results: HarnessVerifyRow[];
+  try { results = await listHarnessVerify(http, opts.hostId); }
+  catch (error) {
+    if (opts.hostId || !(error instanceof ControlError) || !/ambiguous.host/i.test(error.message)) throw error;
+    const primary = (await listHosts(http)).find(host => host.isPrimary);
+    if (!primary) throw error;
+    results = await listHarnessVerify(http, primary.id);
+  }
   const needle = (opts.profile ?? opts.providerId ?? '').toLowerCase();
   const family = needle.replace(/^acp-/, '').replace(/-code$/, '').split('-')[0];
   const row = results.find((entry) =>

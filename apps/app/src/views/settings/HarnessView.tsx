@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
-import { AlertTriangle, Bot, CheckCircle2, ChevronRight, Download, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, Laptop, MessageSquare, RefreshCw, Search, Terminal, XCircle } from 'lucide-react';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import type { ProviderCliInstallActionKind, ProviderCliKey, ProviderCliStatusResponse } from '@zana-ai/zcc-contracts/host-rpc';
@@ -39,27 +39,13 @@ import {
 } from '../../components/thread/pickers/harness-login.js';
 import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 import { ModelRefreshControl } from './ModelRefreshControl.js';
+import './harness-settings.css';
 
 const USE_HARNESS_DEFAULT = { id: '', label: 'Use harness default' } as const;
 const CODEX_UI = providerUiSchema('codex');
 
-/**
- * Settings → AI Harness. The page leads with a verification list (install
- * probe + enable switch for each coding CLI), then Modern / CLI Agent tabs
- * for the settings that belong to each launch path.
- *
- * The install probe (`<binary> --version`) is folded into the status rows so
- * the operator sees WHY an enabled harness might be greyed-out in the New Agent
- * modal (its CLI isn't on PATH) right where they toggle it. Claude Code is
- * `alwaysEnabled` — it has no switch (like Finder in the opener bar), only a
- * status badge. Optional families auto-activate when the CLI is found; the
- * switch is an explicit hide, not a required opt-in.
- *
- * NOTE: these are the coding-CLI harnesses (`cursor-agent`/`codex`/`pi`/
- * `opencode`/`grok`) — DISTINCT from the GUI-launch editors (`cursor`/`code`/`idea`)
- * under the Editor tab. Provider API keys live under the LLM Providers tab; each
- * harness authenticates via its own login flow.
- */
+/** Install and sign-in status is shared across launch surfaces. Modern model
+ * catalogues and CLI launch defaults live in their respective tabs below. */
 
 /** Map a harness family → the base launch profile whose glyph represents it, so
  *  the row icons match the New Agent modal's picker exactly. */
@@ -76,14 +62,14 @@ const FAMILY_PROFILE: Record<HarnessFamily, LaunchProfileId> = {
 
 /** One-line blurb per family, shown under the name in the row. */
 const FAMILY_BLURB: Record<HarnessFamily, string> = {
-  claude: 'Anthropic’s Claude Code CLI — the default harness.',
-  cursor: 'The ‘cursor-agent’ coding CLI. Authenticates via its own login.',
-  codex: 'OpenAI’s ‘codex’ coding CLI. Authenticates via its own login.',
-  pi: 'The multi-provider ‘pi’ coding-agent CLI (~40 providers).',
-  opencode: 'The ‘opencode’ terminal agent (npm ‘opencode-ai’). zcc-inbox is wired in automatically.',
-  grok: 'xAI’s ‘grok’ coding CLI (Grok Build). Authenticates via its own login.',
-  mastracode: 'The ‘mastracode’ coding CLI (Mastra Code). Authenticates via its own login.',
-  afcode: 'Agentforce Code. Uses its existing LLM Gateway environment or native credential configuration.'
+  claude: 'Anthropic’s coding agent',
+  cursor: 'Cursor’s coding agent',
+  codex: 'OpenAI’s coding agent',
+  pi: 'A coding agent with multiple AI providers',
+  opencode: 'An open-source coding agent',
+  grok: 'xAI’s coding agent',
+  mastracode: 'Mastra’s coding agent',
+  afcode: 'Salesforce’s coding agent'
 };
 
 /** The `AppConfig` enable flag per family (`claude` has none — always on). */
@@ -114,17 +100,17 @@ export function summarizeHarnessHealth(
   const enabledFlags = status.map((row) => familyEnabled(row.family, config, row.enabled));
   const installed = status.filter((row) => row.installed).length;
   const enabled = enabledFlags.filter(Boolean).length;
-  if (installed === total && enabled === total) {
-    return { ok: true, message: `All ${total} installed and enabled`, installed, enabled, total };
-  }
-  const parts: string[] = [];
-  if (installed !== total) parts.push(`${installed} of ${total} installed`);
-  const disabled = status.filter((_, index) => !enabledFlags[index]);
-  if (disabled.length) {
-    const names = disabled.map((row) => row.label).join(', ');
-    parts.push(`${names} ${disabled.length === 1 ? 'is' : 'are'} off`);
-  }
-  return { ok: false, message: parts.join(' · '), installed, enabled, total };
+  const missing = status.filter((row, index) => enabledFlags[index] && !row.installed).length;
+  const message = `${installed} installed · ${enabled} enabled`;
+  return {
+    ok: missing === 0,
+    message: missing > 0
+      ? `${message} · ${missing} enabled ${missing === 1 ? 'harness needs' : 'harnesses need'} installation`
+      : message,
+    installed,
+    enabled,
+    total
+  };
 }
 
 /** The `AppConfig` binary-override key per family. */
@@ -164,7 +150,7 @@ function StatusBadge({ h, enabled }: { h: HarnessVerifyResult; enabled: boolean 
   return (
     <span className={`opener-row-status opener-row-status--${state}`} title={title}>
       {h.installed ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-      {h.installed ? h.version || 'installed' : missing ? 'not found' : 'off'}
+      {h.installed ? h.version || 'Installed' : 'Not installed'}
     </span>
   );
 }
@@ -200,6 +186,23 @@ function LoginBadge({ login }: { login: HarnessLoginStatus }) {
       <CheckCircle2 size={13} />
       signed in
     </span>
+  );
+}
+
+export function HarnessOptionsGroup({
+  title, help, disabled = false, children
+}: {
+  title: string;
+  help?: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <fieldset className="harness-options-group" disabled={disabled}>
+      <legend>{title}</legend>
+      {help ? <p className="settings-help harness-options-intro">{help}</p> : null}
+      <div className="harness-options-fields">{children}</div>
+    </fieldset>
   );
 }
 
@@ -254,7 +257,7 @@ function HarnessRow({
   const binaryField = (
     <Field
       label={`${h.label} binary`}
-      help={`Command run for ${h.family} tabs. Blank ⇒ ‘${BINARY_PLACEHOLDER[h.family]}’ on your PATH.`}
+      help={`Leave blank to use ${BINARY_PLACEHOLDER[h.family]} from your PATH. Set a command or full path to use another installation.`}
       mono
     >
       <input
@@ -290,9 +293,9 @@ function HarnessRow({
       : undefined)
     ?? '';
   const providerField = providerTargets.length ? (
-    <Field label="Default Provider" help={providerRelationship === 'fixed-provider'
-      ? `${h.label} uses this fixed provider.`
-      : 'Selects which provider’s models appear below. Combined provider/model harnesses encode this choice in the model id.'}>
+    <Field label="Default Provider" layout="row" help={providerRelationship === 'fixed-provider'
+      ? `${h.label} uses this provider.`
+      : 'Choose the provider to use for new CLI agents and the models shown below.'}>
       <PopoverPicklist
         value={selectedProvider}
         ariaLabel="Default provider"
@@ -324,7 +327,7 @@ function HarnessRow({
     </Field>
   ) : null;
   const modelLevelField = modelTargets.length ? (
-    <Field label="Default Model Level" help={`Native ${h.label} models with their portable model-level mapping.`}>
+    <Field label="Default Model Level" layout="row" help="Choose a model for new CLI agents. Levels in brackets match Persona and Agent model settings.">
       <PopoverPicklist
         value={selectedModelTarget}
         ariaLabel="Default model level"
@@ -358,7 +361,7 @@ function HarnessRow({
   ) : null;
   const executionMapping = descriptor?.targets?.executionStateMapping;
   const executionStateField = executionMapping && h.family !== 'codex' ? (
-    <Field label="Default Execution State" help={`Native ${h.label} execution policies with their portable execution-state mapping.`}>
+    <Field label="Default Execution State" layout="row" help="Choose how new CLI agents plan, edit files, and ask for approval.">
       <PopoverPicklist
         value={config.harnessRouting?.byAdapter?.[h.family]?.executionState ?? ''}
         ariaLabel="Default execution state"
@@ -387,36 +390,40 @@ function HarnessRow({
     </Field>
   ) : null;
 
+  const RowHeader = mode === 'settings' ? 'button' : 'div';
+
   return (
     <div
       className={`opener-row${shown ? '' : ' opener-row--off'}`}
       id={mode === 'status' ? `settings-anchor-harness-${h.family}` : undefined}
     >
-      <div className="opener-row-head">
+      <RowHeader
+        className={`opener-row-head${mode === 'settings' ? ' harness-disclosure' : ''}`}
+        {...(mode === 'settings' ? {
+          type: 'button' as const,
+          'aria-expanded': open,
+          'aria-label': `Advanced settings for ${h.label}`,
+          onClick: () => setOpen((value) => !value)
+        } : {})}
+      >
         {mode === 'settings' ? (
-          <button
-            type="button"
-            className="opener-row-expand"
-            aria-expanded={open}
-            aria-label={`Advanced settings for ${h.label}`}
-            onClick={() => setOpen((v) => !v)}
-          >
+          <span className="opener-row-expand" aria-hidden>
             <ChevronRight
               size={14}
               className={`opener-row-chevron${open ? ' opener-row-chevron--open' : ''}`}
               aria-hidden
             />
-          </button>
+          </span>
         ) : null}
 
         <span className="opener-row-glyph" aria-hidden>
           {profileIcon(FAMILY_PROFILE[h.family], 17)}
         </span>
 
-        <div className="opener-row-text">
+        <span className="opener-row-text">
           <span className="opener-row-name">{h.label}</span>
           <span className="opener-row-blurb">{FAMILY_BLURB[h.family]}</span>
-        </div>
+        </span>
 
         {mode === 'status' ? (
           <span className="opener-row-status-stack">
@@ -450,11 +457,12 @@ function HarnessRow({
             />
           ) : (
             <span className="opener-row-always" title="Always available">
-              default
+              Always on
             </span>
           )
         ) : null}
-      </div>
+        {mode === 'settings' ? <span className="harness-configure-label">Configure</span> : null}
+      </RowHeader>
       {mode === 'status' && cliError ? (
         <p className="machine-cli-row-error" role="alert" data-testid={`harness-cli-error-${h.family}`}>
           {cliError}
@@ -471,29 +479,39 @@ function HarnessRow({
       ) : null}
 
       {mode === 'settings' && open ? (
-        <div className="opener-row-advanced">
-          {h.family === 'opencode' ? (
-            <Field
-              label="Project agents"
-              help="Show project-specific OpenCode agents in both Modern and CLI Agent pickers. Build and Plan remain available when off."
-            >
-              <ToggleSwitch
-                checked={config.nativeAgentDiscoveryEnabled !== false}
-                onChange={(nativeAgentDiscoveryEnabled) => {
-                  onConfigDraft({ ...config, nativeAgentDiscoveryEnabled });
-                  void onUpdate({ nativeAgentDiscoveryEnabled });
-                }}
-                label="Discover additional native agents"
-              />
-            </Field>
+        <div className="opener-row-advanced harness-cli-options">
+          {!shown || !h.installed ? (
+            <p className="harness-option-notice" role="status">
+              {!shown ? 'Enable this harness above to edit its launch defaults.' : 'Install this harness above to edit its launch defaults. You can set a custom binary below.'}
+            </p>
           ) : null}
-          {binaryField}
-          <fieldset disabled={!shown || !h.installed} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-            {providerField}
-            {modelLevelField}
-            {executionStateField}
-          </fieldset>
+          {providerField || modelLevelField || executionStateField ? (
+            <HarnessOptionsGroup title="Launch defaults" disabled={!shown || !h.installed}>
+              {providerField}
+              {modelLevelField}
+              {executionStateField}
+            </HarnessOptionsGroup>
+          ) : null}
           {advanced}
+          {h.family === 'opencode' ? (
+            <HarnessOptionsGroup title="Project agents">
+              <Field
+                label="Discover project agents"
+                layout="row"
+                help="Show additional OpenCode agents in Modern and CLI Agent pickers. Build and Plan stay available when off."
+              >
+                <ToggleSwitch
+                  checked={config.nativeAgentDiscoveryEnabled !== false}
+                  onChange={(nativeAgentDiscoveryEnabled) => {
+                    onConfigDraft({ ...config, nativeAgentDiscoveryEnabled });
+                    void onUpdate({ nativeAgentDiscoveryEnabled });
+                  }}
+                  label="Discover additional native agents"
+                />
+              </Field>
+            </HarnessOptionsGroup>
+          ) : null}
+          <HarnessOptionsGroup title="Connection">{binaryField}</HarnessOptionsGroup>
         </div>
       ) : null}
     </div>
@@ -541,19 +559,19 @@ const THREAD_PROVIDER_PROFILE: Record<string, LaunchProfileId> = {
 };
 
 const THREAD_PROVIDER_BLURB: Record<string, string> = {
-  'claude-code': 'Anthropic’s Claude Code — dedicated Agent SDK Modern provider.',
-  'acp-cursor': 'Cursor via the Agent Client Protocol (ACP).',
-  cursor: 'Cursor via the Agent Client Protocol (ACP).',
-  'acp-opencode': 'OpenCode via the Agent Client Protocol (ACP).',
-  'acp-omp': 'OMP via the Agent Client Protocol (ACP).',
-  'acp-grok': 'Grok Build via the Agent Client Protocol (ACP).',
-  'acp-mastracode': 'Mastra Code via the Agent Client Protocol (ACP).',
-  'acp-afcode': 'Agentforce Code via the Agent Client Protocol (ACP).',
-  'acp-hermes-agent': 'Hermes Agent via the Agent Client Protocol (ACP).',
-  opencode: 'OpenCode via the Agent Client Protocol (ACP).',
-  codex: 'OpenAI’s Codex — dedicated app-server Modern provider.',
-  pi: 'The multi-provider Pi coding-agent CLI.',
-  fake: 'Test-only provider used by AgentRuntime.'
+  'claude-code': 'Anthropic’s coding agent',
+  'acp-cursor': 'Cursor’s coding agent',
+  cursor: 'Cursor’s coding agent',
+  'acp-opencode': 'An open-source coding agent',
+  'acp-omp': 'A coding agent with multiple AI providers',
+  'acp-grok': 'xAI’s coding agent',
+  'acp-mastracode': 'Mastra’s coding agent',
+  'acp-afcode': 'Salesforce’s coding agent',
+  'acp-hermes-agent': 'A coding agent with persistent memory',
+  opencode: 'An open-source coding agent',
+  codex: 'OpenAI’s coding agent',
+  pi: 'A coding agent with multiple AI providers',
+  fake: 'A provider for testing'
 };
 
 function threadProviderGlyph(providerId: string) {
@@ -564,7 +582,7 @@ function threadProviderGlyph(providerId: string) {
 }
 
 function threadProviderBlurb(providerId: string): string {
-  return THREAD_PROVIDER_BLURB[providerId] ?? 'Registered Modern provider plugin.';
+  return THREAD_PROVIDER_BLURB[providerId] ?? 'A provider for Modern conversations.';
 }
 
 const THREAD_PROVIDER_MODEL_CAP = 12;
@@ -596,41 +614,45 @@ function ThreadProviderRow({
   loading: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
   const models = entry?.models ?? [];
-  const visible = models.slice(0, THREAD_PROVIDER_MODEL_CAP);
-  const hidden = models.length - visible.length;
+  const search = query.trim().toLocaleLowerCase();
+  const matching = models.filter((model) => !search || `${model.displayName} ${model.id}`.toLocaleLowerCase().includes(search));
+  const pageCount = Math.ceil(matching.length / THREAD_PROVIDER_MODEL_CAP);
+  const currentPage = Math.min(page, Math.max(0, pageCount - 1));
+  const first = currentPage * THREAD_PROVIDER_MODEL_CAP;
+  const visible = matching.slice(first, first + THREAD_PROVIDER_MODEL_CAP);
   const status = threadProviderModelsStatus(provider.id, loading, entry);
   return (
     <li className="opener-row">
-      <div className="opener-row-head">
-        <button
-          type="button"
-          className="opener-row-expand"
-          aria-expanded={open}
-          aria-label={`Models for ${provider.displayName}`}
-          onClick={() => setOpen((value) => !value)}
-        >
+      <button
+        type="button"
+        className="opener-row-head harness-disclosure"
+        aria-expanded={open}
+        aria-label={`Models for ${provider.displayName}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="opener-row-expand" aria-hidden>
           <ChevronRight
             size={14}
             className={`opener-row-chevron${open ? ' opener-row-chevron--open' : ''}`}
             aria-hidden
           />
-        </button>
+        </span>
         <span className="opener-row-glyph" aria-hidden>
           {threadProviderGlyph(provider.id)}
         </span>
-        <div className="opener-row-text">
+        <span className="opener-row-text">
           <span className="opener-row-name">{provider.displayName}</span>
           <span className="opener-row-blurb">{threadProviderBlurb(provider.id)}</span>
-        </div>
+        </span>
         <span className="thread-provider-model-status">{status}</span>
-        <code className="thread-provider-id" title={provider.pluginId}>
-          {provider.pluginId}
-        </code>
-      </div>
+      </button>
       {open ? (
-        <div className="opener-row-advanced">
+        <div className="opener-row-advanced harness-thread-options">
           <div className="thread-provider-model-actions">
+            <h4>Available models</h4>
             <button
               type="button"
               className="cred-btn"
@@ -639,27 +661,61 @@ function ThreadProviderRow({
                 void reloadThreadProviderModels(provider.id);
               }}
             >
+              <RefreshCw size={13} aria-hidden className={loading ? 'harness-recheck-spin' : undefined} />
               {models.length > 0 ? 'Reload' : 'Load'}
             </button>
           </div>
+          {models.length > 0 ? (
+            <label className="harness-model-search">
+              <Search size={14} aria-hidden />
+              <input
+                type="search"
+                aria-label={`Search ${provider.displayName} models`}
+                placeholder="Search models…"
+                value={query}
+                onChange={(event) => { setQuery(event.target.value); setPage(0); }}
+              />
+            </label>
+          ) : null}
           {visible.length > 0 ? (
             <ul className="thread-provider-models">
               {visible.map((model) => (
-                <li key={model.id} title={model.id}>
-                  {model.displayName} <code>{model.id}</code>
+                <li key={model.id}>
+                  <span className="harness-model-copy">
+                    <span className="harness-model-name">{model.displayName}</span>
+                    <code>{model.id}</code>
+                  </span>
+                  {model.isDefault ? <span className="harness-model-default">Provider default</span> : null}
                 </li>
               ))}
-              {hidden > 0 ? <li className="thread-provider-models-more">and {hidden} more</li> : null}
             </ul>
           ) : (
-            <p className="settings-help">{status}</p>
+            <p className="settings-help" role="status">{search && models.length > 0 ? 'No models match your search.' : status}</p>
           )}
+          {matching.length > 0 ? (
+            <div className="harness-model-pagination">
+              <span>{first + 1}–{first + visible.length} of {matching.length} {matching.length === 1 ? 'model' : 'models'}</span>
+              {pageCount > 1 ? (
+                <div>
+                  <button type="button" className="settings-btn" disabled={currentPage === 0}
+                    aria-label={`Previous ${provider.displayName} models`} onClick={() => setPage(currentPage - 1)}>
+                    <ChevronLeft size={14} aria-hidden /> Previous
+                  </button>
+                  <button type="button" className="settings-btn" disabled={currentPage >= pageCount - 1}
+                    aria-label={`Next ${provider.displayName} models`} onClick={() => setPage(currentPage + 1)}>
+                    Next <ChevronRight size={14} aria-hidden />
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {entry?.modelLoadError && models.length > 0 ? (
             <p role="status" className="settings-help">Showing previously loaded models. {emptyModelsHint(provider.id, entry.modelLoadError, entry.modelLoadErrorDetail)}</p>
           ) : null}
-          {entry?.lastSuccessAt != null ? (
-            <p className="settings-help">Last loaded: {new Date(entry.lastSuccessAt).toLocaleString()}</p>
-          ) : null}
+          <div className="harness-model-meta">
+            {entry?.lastSuccessAt != null ? <span>Last loaded: {new Date(entry.lastSuccessAt).toLocaleString()}</span> : null}
+            <code className="thread-provider-id" title={provider.pluginId}>{provider.pluginId}</code>
+          </div>
         </div>
       ) : null}
     </li>
@@ -799,58 +855,64 @@ export function HarnessView({
   }, []);
 
   const claudeAdvanced = (
-    <fieldset disabled={false} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-      <Field
-        label="Append system prompt"
-        help="Additive: this text is appended first. Project, Persona, and Agent prompt text is appended after it."
-      >
-        <textarea
-          className="settings-textarea"
-          rows={4}
-          value={config.claudeAppendSystemPrompt ?? ''}
-          onChange={(event) => onConfigDraft({ ...config, claudeAppendSystemPrompt: event.target.value })}
-          onBlur={(event) => void onUpdate({ claudeAppendSystemPrompt: event.target.value.trim() || undefined })}
-          placeholder="Optional"
+    <>
+      <HarnessOptionsGroup title="Instructions" help="Add guidance for every Claude Code CLI agent.">
+        <Field
+          label="Append system prompt"
+          help="Additive: this text is appended first. Project, Persona, and Agent prompt text is appended after it."
+        >
+          <textarea
+            className="settings-textarea"
+            rows={4}
+            value={config.claudeAppendSystemPrompt ?? ''}
+            onChange={(event) => onConfigDraft({ ...config, claudeAppendSystemPrompt: event.target.value })}
+            onBlur={(event) => void onUpdate({ claudeAppendSystemPrompt: event.target.value.trim() || undefined })}
+            placeholder="Optional"
+          />
+        </Field>
+      </HarnessOptionsGroup>
+      <HarnessOptionsGroup title="Command arguments">
+        <TextArgsField
+          label="Extra args"
+          help="Applied first. If a later Project, Persona, or Agent setting uses the same option, the later setting takes priority."
+          values={config.claudeExtraArgs ?? []}
+          placeholder="--plugin-dir /path/to/plugin"
+          onChange={(values) => void onUpdate({ claudeExtraArgs: values.length ? values : undefined })}
         />
-      </Field>
-      <TextArgsField
-        label="Extra args"
-        help="Applied first. If a later Project, Persona, or Agent setting uses the same option, the later setting takes priority."
-        values={config.claudeExtraArgs ?? []}
-        placeholder="--plugin-dir /path/to/plugin"
-        onChange={(values) => void onUpdate({ claudeExtraArgs: values.length ? values : undefined })}
-      />
-      <ChipField
-        label="Add dirs"
-        help="Combined: directories from Global, Project, Persona, and Agent settings are all included."
-        values={config.claudeAddDirs ?? []}
-        placeholder="/path/to/dir"
-        onChange={(values) => void onUpdate({ claudeAddDirs: values.length ? values : undefined })}
-      />
-      <ChipField
-        label="Allowed tools"
-        help="Combined and deduplicated across Global, Project, Persona, and Agent settings."
-        values={config.claudeAllowedTools ?? []}
-        placeholder="Bash(git:*)"
-        onChange={(values) => void onUpdate({ claudeAllowedTools: values.length ? values : undefined })}
-      />
-      <ChipField
-        label="Denied tools"
-        help="Combined and deduplicated across every level. A denial remains in effect when later levels add more settings."
-        values={config.claudeDeniedTools ?? []}
-        placeholder="Bash(rm:*)"
-        onChange={(values) => void onUpdate({ claudeDeniedTools: values.length ? values : undefined })}
-      />
-    </fieldset>
+      </HarnessOptionsGroup>
+      <HarnessOptionsGroup title="Tools & access" help="Directories and tool rules combine with your Project, Persona, and Agent settings.">
+        <ChipField
+          label="Add dirs"
+          help="Combined: directories from Global, Project, Persona, and Agent settings are all included."
+          values={config.claudeAddDirs ?? []}
+          placeholder="/path/to/dir"
+          onChange={(values) => void onUpdate({ claudeAddDirs: values.length ? values : undefined })}
+        />
+        <ChipField
+          label="Allowed tools"
+          help="Combined and deduplicated across Global, Project, Persona, and Agent settings."
+          values={config.claudeAllowedTools ?? []}
+          placeholder="Bash(git:*)"
+          onChange={(values) => void onUpdate({ claudeAllowedTools: values.length ? values : undefined })}
+        />
+        <ChipField
+          label="Denied tools"
+          help="Combined and deduplicated across every level. A denial remains in effect when later levels add more settings."
+          values={config.claudeDeniedTools ?? []}
+          placeholder="Bash(rm:*)"
+          onChange={(values) => void onUpdate({ claudeDeniedTools: values.length ? values : undefined })}
+        />
+      </HarnessOptionsGroup>
+    </>
   );
 
   // PI's launcher-wide (provider, model, thinking) defaults live in its Advanced
-  // disclosure, below the binary field.
+  // disclosure, grouped separately from connection settings.
   const piAdvanced = (
     <>
       <Field
         label="Default provider"
-        help="Passed as ‘pi --provider <name>’. PI accepts any of its ~40 providers (anthropic, openai, google, mistral, …). Blank ⇒ PI’s own default."
+        help="Provider name, such as anthropic or openai. Leave blank to use Pi’s own default."
         mono
       >
         <input
@@ -864,7 +926,7 @@ export function HarnessView({
       </Field>
       <Field
         label="Default model"
-        help="Passed as ‘pi --model <pattern>’. A ‘provider/id’ slug (openai/gpt-5), a fuzzy pattern (sonnet), or a ‘:thinking’ suffix. Blank ⇒ PI’s provider default."
+        help="A model ID or name pattern, such as openai/gpt-5 or sonnet. Leave blank to use the provider’s default."
         mono
       >
         <input
@@ -878,7 +940,8 @@ export function HarnessView({
       </Field>
       <Field
         label="Default thinking level"
-        help="Passed as ‘pi --thinking <level>’ — PI’s extended-reasoning budget. ‘Default’ ⇒ emit no flag (PI decides)."
+        layout="row"
+        help="Choose how much reasoning Pi uses. Default lets Pi decide."
       >
         <PopoverPicklist
           value={config.piThinking ?? 'default'}
@@ -901,16 +964,17 @@ export function HarnessView({
   );
 
   const piNativeAdvanced = (
-    <fieldset disabled={config.harnessPiEnabled === false || status.find((entry) => entry.family === 'pi')?.installed !== true} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+    <HarnessOptionsGroup title="Provider & reasoning" disabled={config.harnessPiEnabled === false || status.find((entry) => entry.family === 'pi')?.installed !== true}>
       {piAdvanced}
-    </fieldset>
+    </HarnessOptionsGroup>
   );
 
   const codexAdvanced = (
-    <fieldset disabled={config.harnessCodexEnabled === false || status.find((entry) => entry.family === 'codex')?.installed !== true} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+    <HarnessOptionsGroup title="Permissions & isolation" disabled={config.harnessCodexEnabled === false || status.find((entry) => entry.family === 'codex')?.installed !== true}>
       <Field
         label="Default Sandbox Policy"
-        help="Controls filesystem and command isolation. Bracketed text shows which portable Persona/Agent Execution State normally selects this policy."
+        layout="row"
+        help="Choose which files and commands Codex can access."
       >
         <HarnessOptionSelect
           id="global-codex-sandbox"
@@ -923,7 +987,8 @@ export function HarnessView({
       </Field>
       <Field
         label="Default Approval Policy"
-        help="Controls when Codex asks before acting. Bracketed text shows which portable Persona/Agent Execution State normally selects this policy."
+        layout="row"
+        help="Choose when Codex asks before taking an action."
       >
         <HarnessOptionSelect
           id="global-codex-approval"
@@ -934,7 +999,7 @@ export function HarnessView({
           dropDefaultId
         />
       </Field>
-    </fieldset>
+    </HarnessOptionsGroup>
   );
 
   const contributionNodes: Record<string, React.ReactNode> = {
@@ -1030,34 +1095,19 @@ export function HarnessView({
   );
 
   return (
-    <>
-    <Section
-      anchorId="harness-models"
-      title="Model lists"
-      help="Recalculate every available model list after signing in, changing provider configuration, or reconnecting a machine. Modern and CLI Agent pickers pick up the new lists without restarting the app."
-    >
-      <ModelRefreshControl />
-    </Section>
-
+    <div className="harness-settings">
     <Section
       anchorId="harness-status"
-      title="Install status"
-      help={
-        <>
-          Coding CLIs used by Modern and CLI agents. Enable a family here to show it in launch UIs.
-          Check re-probes each binary and whether Cursor, Codex, Pi, and OpenCode are signed in — a
-          successful check also refreshes their model lists. Install or update a CLI from the row,
-          or manage every paired box on{' '}
-          <a href={getSettingsRoutePath('machines')} data-testid="harness-machines-link">
-            Machines
-          </a>
-          .
-        </>
-      }
+      title="Installed harnesses"
+      help="Choose which coding agents appear when you start a session. Each harness uses its own account and sign-in."
+      flush
     >
       <div className={`harness-health harness-health--${health.ok ? 'ok' : 'warn'}`} role="status">
-        {health.ok ? <CheckCircle2 size={16} aria-hidden /> : <AlertTriangle size={16} aria-hidden />}
-        <span className="harness-health-msg">{health.message}</span>
+        <span className="harness-machine-icon" aria-hidden><Laptop size={20} /></span>
+        <div className="harness-health-copy">
+          <span className="harness-machine-name">This machine{thisMachine?.name ? ` · ${thisMachine.name}` : ''}</span>
+          <span className="harness-health-msg">{checking ? 'Checking installation and sign-in…' : health.message}</span>
+        </div>
         <div className="harness-health-actions">
           {actionable.length > 0 ? (
             <button
@@ -1079,7 +1129,7 @@ export function HarnessView({
           ) : null}
           <button type="button" className="cred-btn" onClick={runCheck} disabled={checking}>
             <RefreshCw size={14} className={checking ? 'harness-recheck-spin' : undefined} aria-hidden />
-            {checking ? 'Checking…' : 'Check, Install or Fix'}
+            {checking ? 'Checking…' : 'Check status'}
           </button>
         </div>
       </div>
@@ -1122,59 +1172,76 @@ export function HarnessView({
           })
         )}
       </div>
+      <div className="harness-setup-footer">
+        <span>Check status refreshes installation, sign-in, and model availability.</span>
+        <a href={getSettingsRoutePath('machines')} data-testid="harness-machines-link">
+          Manage machines <ChevronRight size={13} aria-hidden />
+        </a>
+      </div>
     </Section>
 
-    <div className="settings-section settings-section--flush">
+    <Section anchorId="harness-models" title="Model lists" flush>
+      <ModelRefreshControl />
+    </Section>
+
+    <Section title="Session settings" flush>
       <HarnessSettingsTabs pane={pane} onPaneChange={setPane} />
       <div
         role="tabpanel"
         id="settings-anchor-harness-thread"
+        aria-labelledby="harness-tab-thread"
         hidden={pane !== 'thread'}
         data-testid="harness-thread-pane"
       >
         <p className="settings-help settings-section-help">
-          These plugins power Modern conversations. They register through{' '}
-          <code>experimental_registerProvider</code> and launch via AgentRuntime
-          — not the CLI Agent PTY harness. Model names come from the host; Reload
-          fetches that provider again and updates the composer picker, bypassing
-          its cache.
+          Browse models for Thread conversations. Choose a model in the conversation
+          composer; open a harness here to search its models or refresh availability.
         </p>
         <ThreadProvidersPanel />
       </div>
       <div
         role="tabpanel"
         id="settings-anchor-harness-legacy"
+        aria-labelledby="harness-tab-legacy"
         hidden={pane !== 'legacy'}
         data-testid="harness-legacy-pane"
       >
         <p className="settings-help settings-section-help">
-          PTY coding-agent CLIs used only by legacyAgentSession. Global defaults apply first.
-          Launch settings then apply in this order: Global → Project → Persona → Agent.
+          Set defaults for agents running in a terminal. Project, Persona, and
+          Agent settings can override these defaults.
         </p>
-        <Field
-          label="Default harness"
-          help="Used for defaulted new-agent launches. Explicit profile selections and pinned personas keep their profile."
-        >
-          {descriptors === null ? (
-            <Skeleton width="180px" height="28px" />
-          ) : (
-            <PopoverPicklist
-              value={config.defaultHarness ?? 'claude'}
-              ariaLabel="Default harness"
-              onChange={(nextHarness) => {
-                const defaultHarness = nextHarness as AppConfig['defaultHarness'];
-                onConfigDraft({ ...config, defaultHarness });
-                void onUpdate({ defaultHarness });
-              }}
-              options={defaultHarnessOptions.map((descriptor) => ({
-                value: descriptor.id,
-                label: `${descriptor.label}${descriptor.availability.installed ? '' : ' (not installed)'}`,
-                disabled: (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
-                  (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] === false)
-              }))}
-            />
-          )}
-        </Field>
+        <div className="harness-default-card">
+          <Field
+            label="Default harness"
+            layout="row"
+            help="Used when a new CLI agent has no explicit harness or pinned Persona."
+          >
+            {descriptors === null ? (
+              <Skeleton width="180px" height="28px" />
+            ) : (
+              <PopoverPicklist
+                value={config.defaultHarness ?? 'claude'}
+                ariaLabel="Default harness"
+                onChange={(nextHarness) => {
+                  const defaultHarness = nextHarness as AppConfig['defaultHarness'];
+                  onConfigDraft({ ...config, defaultHarness });
+                  void onUpdate({ defaultHarness });
+                }}
+                options={defaultHarnessOptions.map((descriptor) => ({
+                  value: descriptor.id,
+                  label: `${descriptor.label}${descriptor.availability.installed ? '' : ' (not installed)'}`,
+                  disabled: (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
+                    (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] === false)
+                }))}
+              />
+            )}
+          </Field>
+          <div className="harness-inheritance" aria-label="Settings priority">
+            <span>Settings apply in order</span>
+            <ol>{['Global', 'Project', 'Persona', 'Agent'].map((level) => <li key={level}>{level}</li>)}</ol>
+            <span>Later choices take priority.</span>
+          </div>
+        </div>
         {defaultUnavailable && (
           <p className="settings-help" role="alert">
             {unavailableDefaultMessage(config.defaultHarness!)}
@@ -1196,8 +1263,8 @@ export function HarnessView({
         </div>
         <RemoteMachineDefaultsList />
       </div>
+    </Section>
     </div>
-    </>
   );
 }
 
@@ -1208,26 +1275,38 @@ export function HarnessSettingsTabs({
   pane: 'thread' | 'legacy';
   onPaneChange: (next: 'thread' | 'legacy') => void;
 }) {
+  const tabs = [
+    { id: 'thread', label: 'Modern', description: 'Conversations & models', Icon: MessageSquare },
+    { id: 'legacy', label: 'CLI Agent', description: 'Terminal launch defaults', Icon: Terminal }
+  ] as const;
   return (
-    <div className="settings-tabs" role="tablist" aria-label="Harness settings">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={pane === 'thread'}
-        className={`settings-tab${pane === 'thread' ? ' is-active' : ''}`}
-        onClick={() => onPaneChange('thread')}
-      >
-        Modern
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={pane === 'legacy'}
-        className={`settings-tab${pane === 'legacy' ? ' is-active' : ''}`}
-        onClick={() => onPaneChange('legacy')}
-      >
-        CLI Agent
-      </button>
+    <div className="harness-session-tabs" role="tablist" aria-label="Harness settings">
+      {tabs.map(({ id, label, description, Icon }, index) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          id={`harness-tab-${id}`}
+          aria-label={label}
+          aria-controls={`settings-anchor-harness-${id}`}
+          aria-selected={pane === id}
+          tabIndex={pane === id ? 0 : -1}
+          className={`harness-session-tab${pane === id ? ' is-active' : ''}`}
+          onClick={() => onPaneChange(id)}
+          onKeyDown={(event) => {
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1
+              : event.key === 'ArrowRight' || event.key === 'ArrowLeft' ? 1 - index : null;
+            if (next === null) return;
+            event.preventDefault();
+            onPaneChange(tabs[next].id);
+            (event.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
+          }}
+        >
+          <Icon size={18} aria-hidden />
+          <span><span className="harness-session-tab-label">{label}</span>
+            <span className="harness-session-tab-description">{description}</span></span>
+        </button>
+      ))}
     </div>
   );
 }

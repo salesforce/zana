@@ -152,6 +152,7 @@ export function resolveCliAgentFamily(input: {
   rememberedFamilyId: string | null;
   effectiveDefaultFamilyId: string | null;
   stickyFamilyId?: string | null;
+  fallbackToAvailable?: boolean;
 }): string {
   if (input.stickyFamilyId) return input.stickyFamilyId;
   const available = new Set(input.availableFamilyIds);
@@ -163,7 +164,7 @@ export function resolveCliAgentFamily(input: {
   if (input.effectiveDefaultFamilyId && available.has(input.effectiveDefaultFamilyId)) {
     return input.effectiveDefaultFamilyId;
   }
-  return input.effectiveDefaultFamilyId || '';
+  return (input.fallbackToAvailable ? input.availableFamilyIds[0] : input.effectiveDefaultFamilyId) || '';
 }
 
 /**
@@ -202,17 +203,6 @@ export function cliAgentProfileSource(
   if (provenance !== 'automatic' || automaticProfile === null) return 'explicit';
   if (familyId && harnessFamilyOf(automaticProfile) !== familyId) return 'explicit';
   return 'seeded-default';
-}
-
-export function availableAgentHarnesses<T extends {
-  agentDefaultEligible: boolean;
-  availability: { enabled: boolean; installed: boolean };
-}>(descriptors: readonly T[]): T[] {
-  return descriptors.filter((descriptor) =>
-    descriptor.agentDefaultEligible
-    && descriptor.availability.enabled
-    && descriptor.availability.installed
-  );
 }
 
 export function isAbsoluteLocalPath(path: string): boolean {

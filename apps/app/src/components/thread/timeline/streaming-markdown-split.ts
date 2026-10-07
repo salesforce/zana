@@ -26,6 +26,7 @@ import {
   parseFenceOpen,
   type OpenFence
 } from '../../markdown-block-scan.js';
+import { REVIEW_COMMENT_OPEN } from '../../markdown-review-comments.js';
 
 interface StreamingMarkdownSplit {
   settled: string;
@@ -40,6 +41,7 @@ export function splitStreamingMarkdown(
   const lastCompleteLineIndex = lines.length - 2;
   let openFence: OpenFence | null = null;
   let mathOpen = false;
+  let commentOpen = false;
   let lastNonBlankLine: string | null = null;
   let boundaryLineIndex = -1;
 
@@ -56,6 +58,12 @@ export function splitStreamingMarkdown(
       if (countOccurrences(line, MATH_DELIMITER) % 2 === 1) {
         mathOpen = false;
       }
+      lastNonBlankLine = line;
+      continue;
+    }
+    if (commentOpen) {
+      if (/^ {0,3}:::[ \t]*\r?$/u.test(line)) commentOpen = false;
+      else openFence = parseFenceOpen(line);
       lastNonBlankLine = line;
       continue;
     }
@@ -83,6 +91,10 @@ export function splitStreamingMarkdown(
       continue;
     }
     lastNonBlankLine = line;
+    if (REVIEW_COMMENT_OPEN.test(line)) {
+      commentOpen = true;
+      continue;
+    }
     const fence = parseFenceOpen(line);
     if (fence !== null) {
       openFence = fence;

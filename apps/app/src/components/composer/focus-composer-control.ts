@@ -11,7 +11,7 @@ export function focusComposerControl(event: MouseEvent<HTMLElement>) {
     event.preventDefault();
     // These actions are available in both layouts. Preserve the current layout
     // until the click lands, especially Stop on a narrow, wrapped toolbar.
-    if (button.matches('.thread-command-send, .thread-command-stop')) {
+    if (button.matches('.thread-command-send, .thread-command-stop, [data-preserve-composer-focus]')) {
       return;
     }
     button.focus({ preventScroll: true });

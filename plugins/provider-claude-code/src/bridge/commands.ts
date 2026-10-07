@@ -86,6 +86,9 @@ export const claudeTurnStartParamsSchema = z.object({
   providerSubagentsEnabled: z.boolean().optional(),
   config: z.record(z.string(), z.unknown()).optional(),
   permissionEscalation: bridgePermissionEscalationSchema,
+  permissionMode: claudePermissionModeSchema,
+  permissionScope: bridgePermissionScopeSchema,
+  additionalWorkspaceWriteRoots: bridgeAdditionalWorkspaceWriteRootsSchema,
   claudeCodePermissionMode: z.literal("plan").optional(),
 });
 
@@ -102,6 +105,9 @@ export const claudeTurnSteerParamsSchema = z.object({
   memoryEnabled: z.boolean().optional(),
   providerSubagentsEnabled: z.boolean().optional(),
   permissionEscalation: bridgePermissionEscalationSchema,
+  permissionMode: claudePermissionModeSchema,
+  permissionScope: bridgePermissionScopeSchema,
+  additionalWorkspaceWriteRoots: bridgeAdditionalWorkspaceWriteRootsSchema,
   claudeCodePermissionMode: z.literal("plan").optional(),
 });
 

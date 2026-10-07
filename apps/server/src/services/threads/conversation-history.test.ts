@@ -82,3 +82,11 @@ it('a full-text miss over growing history runs without blocking other timers', a
   try { expect((await conversationHistoryAsync(db, { query: 'absent-search-needle' })).rows).toEqual([]); expect(ticks).toBeGreaterThan(5); }
   finally { clearInterval(timer); }
 });
+
+it('ranks title matches first and returns bounded human message context with a sequence link', async () => {
+ const title=create('violet title'); const body=create('more recent');
+ const event=appendConversationThreadEvent(db,{threadId:body.id,type:'item/completed',payload:{event:{item:{type:'assistantMessage',text:'x'.repeat(400)+'violet '+ 'y'.repeat(400)}}}});
+ const page=await conversationHistoryAsync(db,{query:'violet'});
+ expect(page.rows.map(row=>row.id)).toEqual([title.id,body.id]); expect(page.rows[1].matchingMessage?.sequence).toBe(event.sequence);
+ expect(page.rows[1].matchingMessage?.text).toContain('violet'); expect(page.rows[1].matchingMessage!.text.length).toBeLessThan(250);
+});

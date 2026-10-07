@@ -1,0 +1,51 @@
+[
+  {
+    "start": 0.4,
+    "end": 3.045,
+    "slot_end": 4.7,
+    "speech_seconds": 2.645,
+    "text": "Meet Zana for Slack, shown here with Pi."
+  },
+  {
+    "start": 5.4,
+    "end": 15.19,
+    "slot_end": 16.6,
+    "speech_seconds": 9.79,
+    "text": "In a linked channel, just mention Zana with your task. Zana uses that channel\u2019s Project and harness: Pi here, or any harness installed in Zana."
+  },
+  {
+    "start": 17.4,
+    "end": 27.555,
+    "slot_end": 29.6,
+    "speech_seconds": 10.155,
+    "text": "Pi works on your own computer. When it needs a decision, it asks right in the Slack thread. Answer there, and Pi fixes the code and reruns the tests."
+  },
+  {
+    "start": 30.4,
+    "end": 37.243,
+    "slot_end": 40.6,
+    "speech_seconds": 6.843,
+    "text": "When the turn ends, Zana posts the answer right back in your Slack thread: what changed, and how the tests did."
+  },
+  {
+    "start": 41.4,
+    "end": 50.167,
+    "slot_end": 51.6,
+    "speech_seconds": 8.767,
+    "text": "Reply in the thread to keep going. Zana continues the same conversation, with the same Project, machine, and harness."
+  },
+  {
+    "start": 52.4,
+    "end": 59.578,
+    "slot_end": 63.6,
+    "speech_seconds": 7.178,
+    "text": "Or message Zana privately. Ask for your unread reports, and it reads them straight from your Zana inbox."
+  },
+  {
+    "start": 64.4,
+    "end": 72.371,
+    "slot_end": 73.6,
+    "speech_seconds": 7.971,
+    "text": "Zana Home lists every agent, so you can follow, mute, or stop them. Just keep your computer awake, with Zana running."
+  }
+]

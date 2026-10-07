@@ -12,6 +12,7 @@ import {
   Activity,
   ArrowLeft,
   AppWindow,
+  SquarePen,
   Sparkles,
   Bot,
   type LucideIcon
@@ -37,6 +38,7 @@ import { useProjectTabAvailability } from '../hooks/useProjectTabAvailability.js
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
   getInboxRoutePath,
+  getNewThreadRoutePath,
   getProjectModeRoutePath,
   getProjectSettingsRoutePath,
   getSettingsRoutePath,
@@ -59,9 +61,9 @@ import {
  * The left nav rail for a single-project FOCUSED VIEW. Replaces the global
  * {@link Sidebar} with the same chrome, destination list, a bottom Project
  * session tree, utility dock, and drag-and-drop reorder — only the destinations
- * change (this project's views instead of Home / Projects).
+ * change (this project's launch action and views).
  *
- * Inbox is pinned (same as the global rail). Everything else, including
+ * New Chat and Inbox are pinned (same as the global rail). Everything else, including
  * Agents, can be reordered and is persisted separately from the global sidebar.
  * Live agents and recent threads sit in a Project collection at the bottom of
  * the rail — the same spot as the global Projects tree, without filter / sort.
@@ -150,6 +152,22 @@ export function ProjectScopedNav({
   const backLabel = route.isProjectSettings ? 'Back to Global settings' : 'Back to all projects';
 
   const items: SidebarRailItem[] = [
+    {
+      kind: 'row',
+      id: 'home',
+      label: 'New Chat',
+      icon: <SquarePen size={16} />,
+      to: getNewThreadRoutePath(project.id),
+      testId: 'project-nav-home',
+      active: false,
+      mobileGroup: 'featured',
+      title: `New chat in ${project.name}`,
+      splitContent: { kind: 'new-thread', projectId: project.id },
+      onClick: (event) => {
+        event.preventDefault();
+        useUi.getState().setLauncherOpen(true);
+      }
+    },
     { kind: 'row', id: 'conversation-history', label: 'History', icon: <History size={16} />,
       to: '#', testId: 'nav-conversation-history', active: false,
       onClick: (event) => { event.preventDefault(); useConversationHistory.getState().open(project.id); } },

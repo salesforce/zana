@@ -43,7 +43,7 @@ describe('Experimental voice settings', () => {
 });
 
 describe('Experimental CLI Agent host catalog', () => {
-  it('offers an off-by-default toggle for the host execution-options catalog', () => {
+  it('no longer offers a toggle — CLI Agents always use the host catalog', () => {
     const html = renderToStaticMarkup(
       <ExperimentalView
         config={base}
@@ -51,9 +51,7 @@ describe('Experimental CLI Agent host catalog', () => {
         onUpdate={vi.fn()}
       />
     );
-    expect(html).toContain('CLI Agent host catalog');
-    expect(html).toContain('execution-options');
-    expect(html).toContain('local install list');
+    expect(html).not.toContain('CLI Agent host catalog');
   });
 });
 

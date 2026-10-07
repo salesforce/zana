@@ -789,7 +789,6 @@ function mirroredConfigFlags(config: AppConfig) {
     heartbeatEnabled: config.heartbeatEnabled ?? false,
     goalsEnabled: config.goalsEnabled ?? false,
     cliRemoteToolProxyEnabled: config.cliRemoteToolProxyEnabled ?? false,
-    cliRemoteHostCatalogEnabled: config.cliRemoteHostCatalogEnabled ?? false,
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
@@ -1514,10 +1513,6 @@ interface DataState {
    *  Remote host vs Local agent · remote tools picker on SSH projects.
    *  Hydrated on init, kept live by the Settings toggle. Default off. */
   cliRemoteToolProxyEnabled: boolean;
-  /** Mirror of AppConfig.cliRemoteHostCatalogEnabled — CLI Agent asks the
-   *  execution host which CLIs/models are installed (Modern execution-options).
-   *  Hydrated on init, kept live by the Settings toggle. Default off. */
-  cliRemoteHostCatalogEnabled: boolean;
   /** Mirror of AppConfig.followUpsEnabled — gates the experimental Follow-ups
    *  project tab. Hydrated on init, kept live by the Settings toggle. Default off. */
   followUpsEnabled: boolean;
@@ -1662,7 +1657,6 @@ interface DataState {
   setHeartbeatEnabled: (on: boolean) => void;
   setGoalsEnabled: (on: boolean) => void;
   setCliRemoteToolProxyEnabled: (on: boolean) => void;
-  setCliRemoteHostCatalogEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
   setClassicSessionViewEnabled: (on: boolean) => void;
@@ -2014,7 +2008,6 @@ export const useData = create<DataState>((set, get) => ({
   heartbeatEnabled: false,
   goalsEnabled: false,
   cliRemoteToolProxyEnabled: false,
-  cliRemoteHostCatalogEnabled: false,
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
@@ -2091,10 +2084,6 @@ export const useData = create<DataState>((set, get) => ({
 
   setCliRemoteToolProxyEnabled(on) {
     set({ cliRemoteToolProxyEnabled: on });
-  },
-
-  setCliRemoteHostCatalogEnabled(on) {
-    set({ cliRemoteHostCatalogEnabled: on });
   },
 
   setFollowUpsEnabled(on) {

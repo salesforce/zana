@@ -177,7 +177,8 @@ describe('AgentScriptPanel', () => {
         })
       );
     });
-    expect(save.textContent).toBe('Example');
+    expect(save.hidden).toBe(true);
+    expect(el.querySelector('.af-draft-state')?.textContent).toBe('Unsaved draft');
     await act(async () => {
       save.click();
     });

@@ -195,16 +195,19 @@ describe('registerScheduleManageTools', () => {
     prompt: 'other secret'
   });
 
-  it('registers exactly the three schedule_* tools', () => {
+  it('registers all six schedule_* tools', () => {
     const { server, tools } = fakeServer();
     registerScheduleManageTools(server as never, {
       projectId: 'proj-1',
       scheduleAgentApi: makeApi([local])
     });
     expect([...tools.keys()].sort()).toEqual([
+      'schedule_get',
       'schedule_list',
+      'schedule_reload',
       'schedule_run_now',
-      'schedule_set_enabled'
+      'schedule_set_enabled',
+      'schedule_update'
     ]);
   });
 
@@ -318,5 +321,51 @@ describe('registerScheduleManageTools', () => {
     );
     expect(out.scope).toBe('project:proj-1');
     expect(out.schedules.map((s: { id: string }) => s.id)).toEqual(['qa-hourly']);
+  });
+});
+
+describe('schedule definition agent operations', () => {
+  function fixture() {
+    const task = makeTask();
+    const api = makeApi([task, makeTask({ id: 'foreign', projectId: 'other' })], {
+      get: vi.fn(() => task),
+      update: vi.fn(async (_id, patch) => ({ ...task, ...patch })),
+      reload: vi.fn(async () => ({ reloaded: false, reason: 'run worker is live', sessionIds: ['worker'], schedule: task }))
+    });
+    const { server, tools } = fakeServer();
+    registerScheduleManageTools(server as never, { projectId: 'proj-1', scheduleAgentApi: api });
+    return { task, api, tools };
+  }
+  it('gets the live prompt, arguments, timestamp and cadence by name', async () => {
+    const { api, tools } = fixture();
+    const out = payload(await tools.get('schedule_get')!({ id: 'Hourly QA sweep' }));
+    expect(api.get).toHaveBeenCalledWith('qa-hourly');
+    expect(out.schedule).toMatchObject({ prompt: 'Run the suite. Do not leak this.', extraArgs: ['--secret-token'], updatedAt: '2026-09-01T10:00:00.000Z', schedule: { every: '1h' } });
+    expect(out.schedule).not.toHaveProperty('runs');
+  });
+  it('passes a strict definition patch to the UI manager and returns its acknowledgement', async () => {
+    const { api, tools } = fixture(); const patch = { prompt: 'New', extraArgs: ['--effort', 'high'], every: '2h' };
+    const out = payload(await tools.get('schedule_update')!({ id: 'qa-h', patch }));
+    expect(api.update).toHaveBeenCalledWith('qa-hourly', patch); expect(out.schedule.prompt).toBe('New');
+  });
+  it('reports reload deferral and the exact blocking sessions', async () => {
+    const { api, tools } = fixture();
+    const out = payload(await tools.get('schedule_reload')!({ id: 'qa-hourly' }));
+    expect(api.reload).toHaveBeenCalledWith('qa-hourly');
+    expect(out).toMatchObject({ ok: true, reloaded: false, reason: 'run worker is live', sessionIds: ['worker'] });
+  });
+  it.each(['schedule_get', 'schedule_update', 'schedule_reload'])('confines %s unless explicitly widened', async name => {
+    const { tools } = fixture();
+    expect((await tools.get(name)!({ id: 'foreign', patch: { prompt: 'New' }, projectId: 'other' })).isError).toBe(true);
+    expect((await tools.get(name)!({ id: 'foreign', patch: { prompt: 'New' }, allProjects: true })).isError).toBeFalsy();
+  });
+  it.each([{}, { enabled: true }, { projectId: 'forged' }, { extraArgs: [1] }, { prompt: 1 }, { every: '1h', cron: '* * * * *' }])('rejects an invalid patch before mutation: %j', async patch => {
+    const { api, tools } = fixture(); expect((await tools.get('schedule_update')!({ id: 'qa-hourly', patch })).isError).toBe(true); expect(api.update).not.toHaveBeenCalled();
+  });
+  it.each(['schedule_get', 'schedule_reload', 'schedule_update'])('surfaces owner failures for %s', async name => {
+    const { api, tools } = fixture();
+    api.get = () => { throw new Error('Owner offline'); }; api.reload = async () => { throw new Error('Owner offline'); }; api.update = async () => { throw new Error('Owner offline'); };
+    const result = await tools.get(name)!({ id: 'qa-hourly', patch: { prompt: 'New' } });
+    expect(result.isError).toBe(true); expect(text(result)).toContain('Owner offline');
   });
 });

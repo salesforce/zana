@@ -16,6 +16,19 @@ export function boardDropAction(item: FleetItem, from: LaneKey, to: LaneKey): 's
   return to === 'idle' && from !== 'idle' ? 'stop' : null;
 }
 
+/**
+ * Phone swipe-to-close closes immediately, like the agents drawer. Squad runs
+ * and team orchestrators keep their own lifecycle controls, so they are not
+ * swipeable (closing an orchestrator would also stop its team without asking).
+ */
+export function canSwipeClose(item: FleetItem): boolean {
+  if (item.kind === 'thread') return true;
+  if (item.kind !== 'agent') return false;
+  const { card } = item;
+  return !card.isSyntheticExecutionHost && !card.session.cohort?.executionId
+    && card.session.cohort?.role !== 'orchestrator';
+}
+
 interface BoardMoveDeps {
   stop(item: FleetItem): Promise<void>;
   close(item: FleetItem): Promise<void>;

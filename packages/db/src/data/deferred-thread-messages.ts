@@ -203,13 +203,26 @@ export function markDeferredThreadMessageFailed(
 
 export function markDeferredThreadMessageDispatching(
   db: ZccDatabase,
-  args: { id: string; threadId: string; retryFailed?: boolean }
+  args: { id: string; threadId: string; retryFailed?: boolean; expectedUpdatedAt?: number }
 ): boolean {
   const result = db.sqlite.prepare(
     `UPDATE deferred_thread_messages
         SET status = 'dispatching', updated_at = ?
-      WHERE id = ? AND thread_id = ? AND (status = 'queued' OR (? = 1 AND status = 'failed'))`
-  ).run(Date.now(), args.id, args.threadId, args.retryFailed ? 1 : 0);
+      WHERE id = ? AND thread_id = ? AND (status = 'queued' OR (? = 1 AND status = 'failed'))
+        AND (? IS NULL OR updated_at = ?)`
+  ).run(Date.now(), args.id, args.threadId, args.retryFailed ? 1 : 0, args.expectedUpdatedAt ?? null, args.expectedUpdatedAt ?? null);
+  return Number(result.changes ?? 0) > 0;
+}
+
+/** Admission wait retains the original row and any concurrent Stop pause. */
+export function holdDeferredThreadMessage(
+  db: ZccDatabase,
+  args: { id: string; threadId: string; payload: string }
+): boolean {
+  const result = db.sqlite.prepare(
+    `UPDATE deferred_thread_messages SET status = 'queued', payload = ?, updated_at = ?
+      WHERE id = ? AND thread_id = ? AND status = 'dispatching'`
+  ).run(args.payload, Date.now(), args.id, args.threadId);
   return Number(result.changes ?? 0) > 0;
 }
 

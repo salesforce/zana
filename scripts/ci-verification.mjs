@@ -55,7 +55,7 @@ export function changedLines(diff) {
 
 function productionFile(path) {
   return /^(apps\/.*\/src\/|packages\/.*\/src\/|plugins\/[^/]+\/|website\/(lib|app)\/|services\/|scripts\/)/.test(path) &&
-    /\.(?:[cm]?js|tsx?)$/.test(path) && !/^plugins\/[^/]+\/(app\.js|server\.mjs)$/.test(path) && !/(?:\.test\.|\.spec\.|\/vitest\.config\.|\/__tests__\/|\/(test|testing|fixtures)\/|\/fake-[^/]+\.[cm]?js$|\.d\.ts$)/.test(path);
+    /\.(?:[cm]?js|tsx?)$/.test(path) && !/^plugins\/[^/]+\/(app\.js|server\.mjs)$/.test(path) && !/(?:\.test\.|\.spec\.|\/vitest\.(?:config|setup)\.|\/__tests__\/|\/(test|testing|fixtures)\/|\/test-harness\.tsx?$|\/fake-[^/]+(?:\.[cm]?js|-harness\.ts)$|\.d\.ts$)/.test(path);
 }
 
 /** Comments do not change runtime behavior, even inside an uncovered function. */

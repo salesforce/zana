@@ -27,7 +27,7 @@ export { PROJECTS_SECTION_SORT_ID, PROJECT_SESSIONS_SECTION_SORT_ID, TRAILING_PR
 export const WORKSPACES_SECTION_SORT_ID = PROJECTS_SECTION_SORT_ID;
 export const GLOBAL_NAV_ORDER_KEY = 'zcc.sidebarNavOrder';
 export const PROJECT_NAV_ORDER_KEY = 'zcc.projectSidebarNavOrder';
-export const PINNED_PROJECT_NAV_IDS = ['inbox'] as const;
+export const PINNED_PROJECT_NAV_IDS = ['home', 'inbox'] as const;
 
 /** Dropping with dnd-kit's default layout transition animates the node back to
  *  its pre-drag slot, then React commits the new order — a one-frame blink. */

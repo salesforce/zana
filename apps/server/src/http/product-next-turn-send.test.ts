@@ -50,14 +50,83 @@ function queue(target = threadId) {
     payload: JSON.stringify({ kind: 'send', mode: 'queue-if-active', input: 'selected message' })
   });
 }
-function send(id: string, callerHeaders?: Record<string, string>) {
+function send(id: string, callerHeaders?: Record<string, string>, body: unknown = {
+  confirmed: true, expectedUpdatedAt: getDeferredThreadMessage(server.ctx.db, { threadId, id })?.updatedAt ?? 0
+}) {
   return fetch(`${server.url}api/v1/threads/${threadId}/next-turn/${id}/send`, {
-    method: 'POST', headers: { 'content-type': 'application/json', ...callerHeaders }, body: '{}'
+    method: 'POST', headers: { 'content-type': 'application/json', ...callerHeaders }, body: JSON.stringify(body)
   });
 }
 function uiSend(id: string) {
   return send(id, { 'x-zcc-ui-send-proof': signUiSend(uiSecret, threadId, id) });
 }
+
+function mobileSend(id: string, expectedUpdatedAt: number, body: unknown = { confirmed: true, expectedUpdatedAt }) {
+  return fetch(`${server.url}api/v1/threads/${threadId}/next-turn/${id}/send`, {
+    method: 'POST', headers: {
+      'content-type': 'application/json', 'x-zcc-ui-send-surface': 'mobile',
+      'x-zcc-ui-send-proof': signUiSend(uiSecret, threadId, id, Date.now(), 'mobile-ui')
+    }, body: JSON.stringify(body)
+  });
+}
+
+it('sends only the confirmed phone message while leaving its paused neighbors intact', async () => {
+  const first = queue();
+  const selected = queue();
+  const response = await mobileSend(selected.id, selected.updatedAt);
+  expect(response.status, await response.clone().text()).toBe(200);
+  expect(getDeferredThreadMessage(server.ctx.db, { threadId, id: selected.id })).toBeNull();
+  expect(listDeferredThreadMessages(server.ctx.db, threadId)).toEqual([first]);
+  expect(server.ctx.hostHub.callHostOnlineRpc).toHaveBeenCalledOnce();
+});
+
+it.each(['desktop', 'phone'])('rejects changed %s confirmations without dispatching or altering the queued row', async surface => {
+  const selected = queue();
+  const response = surface === 'phone' ? await mobileSend(selected.id, selected.updatedAt - 1)
+    : await send(selected.id, { 'x-zcc-ui-send-proof': signUiSend(uiSecret, threadId, selected.id) },
+      { confirmed: true, expectedUpdatedAt: selected.updatedAt - 1 });
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toMatchObject({ error: 'queued-send-changed' });
+  expect(getDeferredThreadMessage(server.ctx.db, { threadId, id: selected.id })).toEqual(selected);
+  expect(server.ctx.hostHub.callHostOnlineRpc).not.toHaveBeenCalled();
+});
+
+it.each([{}, { confirmed: false, expectedUpdatedAt: 1 }, { confirmed: true }, { confirmed: true, expectedUpdatedAt: -1 }])('requires a valid phone confirmation body (%j)', async body => {
+  const selected = queue();
+  expect((await mobileSend(selected.id, selected.updatedAt, body)).status).toBe(400);
+  expect(getDeferredThreadMessage(server.ctx.db, { threadId, id: selected.id })).toEqual(selected);
+  expect(server.ctx.hostHub.callHostOnlineRpc).not.toHaveBeenCalled();
+});
+
+it('requires the confirmed revision after native desktop approval', async () => {
+  const selected = queue();
+  const response = await send(selected.id, { 'x-zcc-ui-send-proof': signUiSend(uiSecret, threadId, selected.id) }, {});
+  expect(response.status).toBe(400);
+  expect(getDeferredThreadMessage(server.ctx.db, { threadId, id: selected.id })).toEqual(selected);
+  expect(server.ctx.hostHub.callHostOnlineRpc).not.toHaveBeenCalled();
+});
+
+it('cannot relabel a desktop proof as a phone approval', async () => {
+  const selected = queue();
+  const response = await send(selected.id, {
+    'x-zcc-ui-send-surface': 'mobile', 'x-zcc-ui-send-proof': signUiSend(uiSecret, threadId, selected.id)
+  });
+  expect(response.status).toBe(403);
+  expect(server.ctx.hostHub.callHostOnlineRpc).not.toHaveBeenCalled();
+});
+
+it('preserves a non-overrideable plugin wait after a verified phone confirmation', async () => {
+  const selected = createDeferredThreadMessage(server.ctx.db, {
+    threadId, kind: 'send', paused: true,
+    payload: JSON.stringify({ kind: 'send', mode: 'auto', input: 'held prompt',
+      admission: { generation: 1, overrideable: false, reason: 'policy' } })
+  });
+  const response = await mobileSend(selected.id, selected.updatedAt);
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toMatchObject({ error: 'dispatch_not_overrideable' });
+  expect(getDeferredThreadMessage(server.ctx.db, { threadId, id: selected.id })).not.toBeNull();
+  expect(server.ctx.hostHub.callHostOnlineRpc).not.toHaveBeenCalled();
+});
 
 it('sends the selected stored prompt and broadcasts the remaining paused queue', async () => {
   const first = queue();

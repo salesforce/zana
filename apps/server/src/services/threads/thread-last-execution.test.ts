@@ -18,10 +18,12 @@ describe('readLastThreadExecution', () => {
   });
   it('retains the last valid service tier across requests that omit it', () => {
     const turn = (serviceTier?: unknown) => ({ payload: { type: 'client/turn/requested', execution: { serviceTier } } });
-    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([turn('fast'), turn('invalid'), turn()] as never);
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([turn('fast'), turn('invalid tier!'), turn()] as never);
     expect(readLastThreadExecution({ db: {} }, 't1').serviceTier).toBe('fast');
     vi.mocked(listConversationThreadEventsWindow).mockReturnValue([turn('fast'), turn('default')] as never);
     expect(readLastThreadExecution({ db: {} }, 't1').serviceTier).toBe('default');
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([turn('fast'), turn('provider-priority'), turn()] as never);
+    expect(readLastThreadExecution({ db: {} }, 't1').serviceTier).toBe('provider-priority');
   });
   it.each(['accept-edits', 'auto', 'full'])('reads the newest valid %s permission and filters the bounded query to turn requests', (permissionMode) => {
     const turn = (execution: unknown) => ({ payload: { type: 'client/turn/requested', execution } });

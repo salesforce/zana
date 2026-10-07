@@ -180,6 +180,42 @@ describe('createUpdater (notify-only)', () => {
     expect(stub.autoUpdater.downloadUpdate).not.toHaveBeenCalled();
   });
 
+  it('asks the feed for the full changelog between installed and offered versions', () => {
+    makeUpdater();
+    expect((stub.autoUpdater as { fullChangelog?: boolean }).fullChangelog).toBe(true);
+  });
+
+  it('carries normalized release notes on `available` and `downloaded`, not on progress ticks', async () => {
+    const { updater, statuses } = makeUpdater();
+    await updater.checkForUpdates();
+    stub.autoUpdater.emit('update-available', {
+      version: '1.2.3',
+      releaseNotes: [
+        { version: '1.2.2', note: '<p>older</p>' },
+        { version: '1.2.3', note: '<h1>Hi</h1><script>x()</script>' }
+      ]
+    });
+    const notes = [
+      { version: '1.2.3', markdown: '# Hi' },
+      { version: '1.2.2', markdown: 'older' }
+    ];
+    expect(statuses().at(-1)).toEqual({ kind: 'available', version: '1.2.3', releaseNotes: notes });
+    stub.autoUpdater.emit('download-progress', { percent: 10 });
+    expect(statuses().at(-1)).toEqual({ kind: 'downloading', version: '1.2.3' });
+    stub.autoUpdater.emit('update-downloaded', { version: '1.2.3' });
+    expect(statuses().at(-1)).toEqual({ kind: 'downloaded', version: '1.2.3', releaseNotes: notes });
+  });
+
+  it('drops stale notes once the feed reports nothing newer', async () => {
+    const { updater, statuses } = makeUpdater();
+    await updater.checkForUpdates();
+    stub.autoUpdater.emit('update-available', { version: '1.2.3', releaseNotes: '<p>notes</p>' });
+    expect(statuses().at(-1)).toMatchObject({ releaseNotes: [{ version: '1.2.3', markdown: 'notes' }] });
+    stub.autoUpdater.emit('update-not-available', {});
+    stub.autoUpdater.emit('update-downloaded', { version: '1.2.3' });
+    expect(statuses().at(-1)).toEqual({ kind: 'downloaded', version: '1.2.3' });
+  });
+
   it('suppresses a skipped version (reports not-available instead)', async () => {
     const { updater, statuses } = makeUpdater('1.2.3');
     await updater.checkForUpdates();
@@ -348,5 +384,27 @@ describe('updater.simulate (dev/QA affordance)', () => {
     const { updater, statuses } = makeUpdater('9.9.9', { allowSimulation: true });
     await updater.simulate('9.9.9');
     expect(statuses()).toEqual([{ kind: 'not-available' }]);
+  });
+
+  it('attaches the newest bundled note, relabeled, so the banner preview is exercisable', async () => {
+    const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-update-notes-'));
+    const prev = process.env.ZCC_RELEASE_NOTES_DIR;
+    process.env.ZCC_RELEASE_NOTES_DIR = dir;
+    try {
+      await writeFile(join(dir, '1.0.0.md'), '# old');
+      await writeFile(join(dir, '1.1.0.md'), '# newest');
+      const { updater, statuses } = makeUpdater(undefined, { allowSimulation: true });
+      await updater.simulate('9.9.9');
+      const available = statuses().find((s) => s.kind === 'available');
+      expect(available).toEqual({ kind: 'available', version: '9.9.9', releaseNotes: [{ version: '9.9.9', markdown: '# newest' }] });
+      expect(statuses().at(-1)).toMatchObject({ kind: 'downloaded', releaseNotes: [{ version: '9.9.9' }] });
+    } finally {
+      if (prev === undefined) delete process.env.ZCC_RELEASE_NOTES_DIR;
+      else process.env.ZCC_RELEASE_NOTES_DIR = prev;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

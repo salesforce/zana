@@ -2,7 +2,7 @@ import { ArrowLeft, FolderCog, Search, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { useData, useUi } from '../../store.js';
-import { SETTINGS_SECTIONS, SETTINGS_GROUPS, SETTINGS_SUBSECTIONS } from '@/views/settings/SettingsView';
+import { SETTINGS_SECTIONS, SETTINGS_GROUPS, SETTINGS_SUBSECTIONS } from '@/views/settings/settings-navigation';
 import { SidebarResizer } from '../SidebarResizer.js';
 import { useAppSettingsRouteMemory } from '../../hooks/useAppSettingsRouteMemory.js';
 import { getSettingsTabRoutePath } from '../../lib/route-paths.js';

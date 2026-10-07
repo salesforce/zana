@@ -37,19 +37,19 @@ describe('sidebarSortable', () => {
   it('keeps the global and project rails on separate persisted orders', () => {
     expect(GLOBAL_NAV_ORDER_KEY).toBe('zcc.sidebarNavOrder');
     expect(PROJECT_NAV_ORDER_KEY).toBe('zcc.projectSidebarNavOrder');
-    expect(PINNED_PROJECT_NAV_IDS).toEqual(['inbox']);
+    expect(PINNED_PROJECT_NAV_IDS).toEqual(['home', 'inbox']);
     expect(TRAILING_PROJECT_NAV_IDS).toEqual(['sidebar-section:project-sessions']);
   });
 
-  it('pins Inbox and leaves Agents movable on the project rail', () => {
+  it('pins New Chat and Inbox and leaves Agents movable on the project rail', () => {
     const markup = renderToStaticMarkup(
       <Probe
-        available={['inbox', 'agents', 'feed', 'terminals']}
+        available={['home', 'inbox', 'agents', 'feed', 'terminals']}
         pinned={PINNED_PROJECT_NAV_IDS}
       />
     );
 
-    expect(markup).toContain('data-pinned="inbox"');
+    expect(markup).toContain('data-pinned="home,inbox"');
     expect(markup).toContain('data-sortable="agents,feed,terminals"');
   });
 

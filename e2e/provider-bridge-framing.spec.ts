@@ -302,3 +302,37 @@ try {
   rmSync(recordDir, { recursive: true });
   expect(existsSync(recordDir)).toBe(false);
 });
+
+
+test('native Codex questions reach the renderer and return selected labels and free text', async ({ app }) => {
+  const root = join(app.home, 'question-project'); mkdirSync(root);
+  const responseLogPath = join(app.home, 'codex-question-responses.jsonl');
+  writeFileSync(join(app.home, 'codex-framing-script.json'), JSON.stringify({
+    modelId: 'framing-fixture-model', responseLogPath,
+    turns: [[
+      { method: 'turn/started', params: { threadId: 'codex-thread', turn: { id: 'native-turn', status: 'inProgress' } } },
+      { kind: 'request', method: 'item/tool/requestUserInput', params: {
+        threadId: 'codex-thread', turnId: 'native-turn', itemId: 'native-item', isBlocking: true, autoResolutionMs: null,
+        questions: [
+          { id: 'environment', header: 'Environment', question: 'Which environment?', options: [{ label: 'Staging', description: 'Test first' }, { label: 'Production', description: 'Release' }] },
+          { id: 'notes', header: 'Notes', question: 'Release notes?' }
+        ]
+      } },
+      { method: 'turn/completed', params: { threadId: 'codex-thread', turn: { id: 'native-turn', status: 'completed' } } }
+    ]]
+  }));
+  const id = await app.window.evaluate(async root => {
+    const project = await window.cc.projects.add(root); if (!project.ok) throw Error(project.message);
+    const response = await fetch('/api/v1/threads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: project.value.id, providerId: 'codex', input: 'Ask a native question', permissionMode: 'full' }) });
+    const body = await response.json(); if (!response.ok) throw Error(JSON.stringify(body)); return body.thread.id;
+  }, root);
+  await app.window.evaluate(id => { history.pushState({}, '', `/threads/${id}`); dispatchEvent(new PopStateEvent('popstate')); }, id);
+  await app.window.getByRole('button', { name: /Staging/ }).click();
+  await app.window.getByRole('button', { name: 'Next', exact: true }).click();
+  await app.window.getByLabel('Release notes?').fill('Ship after review');
+  await app.window.getByRole('button', { name: 'Submit', exact: true }).click();
+  await expect.poll(() => existsSync(responseLogPath) ? readFileSync(responseLogPath, 'utf8').trim() : '').not.toBe('');
+  const answers = readFileSync(responseLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  expect(answers).toContainEqual(expect.objectContaining({ result: { answers: { environment: { answers: ['Staging'] }, notes: { answers: ['Ship after review'] } } } }));
+  await expect.poll(() => app.window.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, id)).toBe('idle');
+});

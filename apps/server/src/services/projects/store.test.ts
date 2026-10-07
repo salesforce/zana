@@ -72,7 +72,6 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'teamJobLaunchEnabled',
     'composerShowAutonomousTeam',
     'goalsEnabled',
-    'cliRemoteHostCatalogEnabled',
     'followUpsEnabled',
     'heartbeatEnabled',
     'autoRenameTabs',

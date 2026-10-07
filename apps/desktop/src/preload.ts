@@ -1096,6 +1096,8 @@ const api: CcApi = {
   },
   scheduler: {
     list: () => ipcRenderer.invoke(IPC.scheduler.list),
+    get: (id) => ipcRenderer.invoke(IPC.scheduler.get, id),
+    reload: (id) => ipcRenderer.invoke(IPC.scheduler.reload, id),
     create: (input) => ipcRenderer.invoke(IPC.scheduler.create, input),
     update: (id, patch) => ipcRenderer.invoke(IPC.scheduler.update, id, patch),
     delete: (id) => ipcRenderer.invoke(IPC.scheduler.delete, id),

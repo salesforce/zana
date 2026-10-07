@@ -798,7 +798,9 @@ export const useUpdates = create<UpdatesLiveState>(() => ({
  * "What's New" modal state. `notes` are the curated release-notes docs to show;
  * `open` gates the modal. Opened two ways: automatically on first launch after
  * an update (the boot `consumeWhatsNew` pull, which also advances the seen
- * baseline in main), or on demand from the About tab (`openWhatsNewAll`). Kept
+ * baseline in main), on demand from the About tab (`openWhatsNewAll`), or from
+ * the update banner BEFORE installing (`preview` — notes for the offered
+ * version, carried on the updater status). Kept
  * separate from `useUpdates` so the modal is independent of the live updater
  * status stream.
  */
@@ -807,7 +809,9 @@ interface WhatsNewState {
   notes: ReleaseNote[];
   /** Heading context — the version range this batch covers, when known. */
   toVersion: string | null;
-  openWith(notes: ReleaseNote[], toVersion: string | null): void;
+  /** True when previewing a not-yet-installed update (offers "Update now"). */
+  preview: boolean;
+  openWith(notes: ReleaseNote[], toVersion: string | null, opts?: { preview?: boolean }): void;
   close(): void;
 }
 
@@ -815,9 +819,10 @@ export const useWhatsNew = create<WhatsNewState>((set) => ({
   open: false,
   notes: [],
   toVersion: null,
-  openWith(notes, toVersion) {
+  preview: false,
+  openWith(notes, toVersion, opts) {
     if (notes.length === 0) return;
-    set({ open: true, notes, toVersion });
+    set({ open: true, notes, toVersion, preview: opts?.preview === true });
   },
   close() {
     set({ open: false });

@@ -102,6 +102,40 @@ function createHarness() {
 }
 
 describe('BrowserTabContent chrome', () => {
+  it('loads existing browser control and ignores control belonging to another tab', async () => {
+    const harness = createHarness();
+    vi.stubGlobal('cc', { browser: harness.api });
+    const control = { leaseId: 'lease-existing', controllerLabel: 'Existing controller', expiresAt: Date.now() + 60_000 };
+    vi.mocked(harness.api.getControl!).mockResolvedValueOnce({ tabId: 'browser:test', threadId: 'thread-1', control });
+    const view = render(<BrowserTabContent tabId="browser:test" initialUrl="https://example.com"
+      canShowNativeBrowserView visibilityCoordinator={null} threadId="thread-1" onUpdate={() => undefined} />);
+    await act(async () => {});
+    expect(screen.getByTestId('thread-browser-automation').textContent).toContain('Existing controller');
+    view.unmount();
+    vi.mocked(harness.api.getControl!).mockResolvedValueOnce({ tabId: 'browser:other', threadId: 'thread-1', control });
+    render(<BrowserTabContent tabId="browser:test" initialUrl="https://example.com"
+      canShowNativeBrowserView visibilityCoordinator={null} threadId="thread-1" onUpdate={() => undefined} />);
+    await act(async () => {});
+    expect(screen.queryByTestId('thread-browser-automation')).toBeNull();
+  });
+
+  it('ignores a late control reply after unmount and contains a failed control lookup', async () => {
+    const harness = createHarness();
+    vi.stubGlobal('cc', { browser: harness.api });
+    const pending = Promise.withResolvers<DesktopBrowserControlState | null>();
+    vi.mocked(harness.api.getControl!).mockReturnValueOnce(pending.promise);
+    const view = render(<BrowserTabContent tabId="browser:test" initialUrl="https://example.com"
+      canShowNativeBrowserView visibilityCoordinator={null} threadId="thread-1" onUpdate={() => undefined} />);
+    view.unmount();
+    await act(async () => { pending.resolve({ tabId: 'browser:test', threadId: 'thread-1', control: null }); });
+    expect(screen.queryByTestId('thread-browser-automation')).toBeNull();
+    vi.mocked(harness.api.getControl!).mockRejectedValueOnce(new Error('Disconnected'));
+    render(<BrowserTabContent tabId="browser:test" initialUrl="https://example.com"
+      canShowNativeBrowserView visibilityCoordinator={null} threadId="thread-1" onUpdate={() => undefined} />);
+    await act(async () => {});
+    expect(screen.queryByTestId('thread-browser-automation')).toBeNull();
+  });
+
   it('shows the controller label with Stop and Take over', async () => {
     const harness = createHarness();
     vi.stubGlobal('cc', { browser: harness.api });

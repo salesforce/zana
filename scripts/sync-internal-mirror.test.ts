@@ -78,6 +78,8 @@ describe('sync-internal-mirror.sh', () => {
     return { srcWork, dstBare, dstWork };
   }
 
+  // This integration fixture launches several real Git processes. Coverage and
+  // parallel native-runtime suites can exceed the unit-test timeout on a busy host.
   it('copies every path except README.md and deletes paths gone from source', () => {
     const { srcWork, dstBare, dstWork } = setupPair();
 
@@ -114,7 +116,7 @@ describe('sync-internal-mirror.sh', () => {
     expect(() =>
       execFileSync('git', ['cat-file', '-e', 'HEAD:only-internal.txt'], { cwd: dstWork })
     ).toThrow();
-  });
+  }, 60_000);
 
   it('is a no-op when the internal tree already matches', () => {
     const { srcWork, dstBare } = setupPair();

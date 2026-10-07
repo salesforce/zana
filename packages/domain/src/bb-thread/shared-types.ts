@@ -24,7 +24,7 @@ export const reasoningLevelValues = [
 export const reasoningLevelSchema = z.enum(reasoningLevelValues);
 export type ReasoningLevel = z.infer<typeof reasoningLevelSchema>;
 
-export const serviceTierSchema = z.enum(["fast", "default"]);
+export const serviceTierSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/);
 export type ServiceTier = z.infer<typeof serviceTierSchema>;
 
 /**
@@ -310,12 +310,17 @@ export const promptInputSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("localImage"),
+    name: z.string().optional(),
+    sizeBytes: z.number().int().nonnegative().optional(),
+    mimeType: z.string().optional(),
     /**
      * Absolute paths and URI-like values are passed through to the runtime.
      * Relative paths are server-managed attachment references, not workspace
      * relative files.
      */
     path: z.string(),
+    sourceProjectId: z.string().min(1).max(100).optional(),
+    hostId: z.string().min(1).max(100).optional(),
     ...promptInputVisibilityFields,
   }),
   z.object({
@@ -326,6 +331,8 @@ export const promptInputSchema = z.discriminatedUnion("type", [
      * relative files.
      */
     path: z.string(),
+    sourceProjectId: z.string().min(1).max(100).optional(),
+    hostId: z.string().min(1).max(100).optional(),
     name: z.string().optional(),
     sizeBytes: z.number().int().nonnegative().optional(),
     mimeType: z.string().optional(),

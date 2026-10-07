@@ -3,6 +3,7 @@ import type { InspectWorkerLaunch } from '../launch/worker-recovery.js';
 import type { MetadataPersistence } from '../projects/project-record-store.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { isDeepStrictEqual } from 'node:util';
 import { watch, existsSync, mkdirSync, type FSWatcher } from 'node:fs';
 import type {
   Persona,
@@ -10,6 +11,7 @@ import type {
   ScheduleCreateInput,
   ScheduledTask,
   ScheduleRun,
+  ScheduleReloadResult,
   ScheduleUpdateInput
 } from '@zana-ai/zcc-domain/product';
 import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery as parseEveryShared } from '@zana-ai/zcc-domain/parse-every';
@@ -25,6 +27,7 @@ import {
   globalDir,
   listAllSchedules,
   projectDir,
+  readSchedule,
   saveSchedule
 } from './scheduler-store.js';
 import type { store as Store } from '../projects/store.js';
@@ -154,14 +157,8 @@ export class SchedulerManager extends EventEmitter {
   /** fs.watch handles, keyed by the watched directory path. */
   private watchers = new Map<string, FSWatcher>();
   private watchDebounce: NodeJS.Timeout | null = null;
-  /**
-   * Epoch-ms until which directory-watch events are ignored. We bump this on
-   * every `persist()` (the scheduler writes its own JSON on each fire), so the
-   * watcher only reacts to *external* edits — a skill or the user dropping a
-   * schedule file — not to our own run-history churn. Without this, a fire's
-   * `recordRun` → `persist` would trip the watcher and `loadAll` would wipe
-   * in-flight timer/run-index state.
-   */
+  private deferredReloads = new Set<string>();
+  /** Delay watcher reads after writes; events are postponed, never discarded. */
   private suppressWatchUntil = 0;
 
   private remotePoll: NodeJS.Timeout | null = null;
@@ -187,6 +184,29 @@ export class SchedulerManager extends EventEmitter {
   setEnabled(id: string, enabled: boolean): Promise<ScheduledTask | null> { return this.serial(() => this.setEnabledNow(id, enabled)); }
   remove(id: string): Promise<void> { return this.serial(() => this.removeNow(id)); }
   runNow(id: string): Promise<ScheduledTask> { return this.serial(() => this.runNowInternal(id)); }
+  get(id: string): ScheduledTask {
+    const live = this.live.get(id);
+    if (!live) throw new Error(`schedule not found: ${id}`);
+    return structuredClone(live.task);
+  }
+  reload(id: string): Promise<ScheduleReloadResult> {
+    return this.serial(async () => {
+      const live = this.live.get(id);
+      if (!live) throw new Error(`schedule not found: ${id}`);
+      this.deps?.ptys.reapDeadSessions();
+      const sessionIds = this.liveSessions(live);
+      if (sessionIds.length || live.task.status.runs.some(run => run.launchState === 'pending')) {
+        this.deferredReloads.add(id);
+        this.scheduleReload();
+        return { reloaded: false, schedule: this.get(id), reason: sessionIds.length ? `run ${sessionIds.join(', ')} is live` : 'worker launch is unconfirmed', sessionIds };
+      }
+      const task = await this.readCurrent(live.task);
+      this.replaceDefinition(live, task);
+      this.deferredReloads.delete(id);
+      this.emit('changed');
+      return { reloaded: true, schedule: this.get(id) };
+    });
+  }
   /** A recovery check never fires a schedule or enables its timer. */
   reconcile(id: string): Promise<boolean> { return this.serial(async () => {
     const live = this.live.get(id);
@@ -221,14 +241,41 @@ export class SchedulerManager extends EventEmitter {
 
   /** Read every schedule from disk and (re)arm enabled ones. Called on boot. */
   private async loadAllNow(projects: Project[]) {
-    if (this.hasLiveSession()) return;
+    this.deps?.ptys.reapDeadSessions();
     const epoch = this.epoch;
     const tasks = this.deps?.persistence ? await this.deps.persistence.load() : listAllSchedules(projects, (path, reason) =>
       this.log(`load ${path}`, `invalid schedule file dropped: ${reason}`)
     );
     if (epoch !== this.epoch) throw new Error('Scheduler stopped');
-    this.clearLive();
+    const ids = new Set(tasks.map(task => task.id));
+    let deferred = false;
+    for (const [id, live] of this.live) {
+      if (this.liveSessions(live).length || live.task.status.runs.some(run => run.launchState === 'pending')) {
+        if (!ids.has(id)) this.deferredReloads.add(id);
+        deferred ||= !ids.has(id) || this.deferredReloads.has(id);
+        continue;
+      }
+      if (!ids.has(id)) {
+        this.disarm(id);
+        for (const run of live.task.status.runs) if (run.sessionId) this.releaseSession(run.sessionId);
+        this.live.delete(id);
+        this.deferredReloads.delete(id);
+      }
+    }
     for (const task of tasks) {
+      const existing = this.live.get(task.id);
+      if (existing) {
+        const differs = !isDeepStrictEqual(this.snapshotSignature(existing.task), this.snapshotSignature(task));
+        if (this.liveSessions(existing).length || existing.task.status.runs.some(run => run.launchState === 'pending')) {
+          if (differs) this.deferredReloads.add(task.id);
+          deferred ||= this.deferredReloads.has(task.id);
+        }
+        else {
+          if (differs || this.deferredReloads.has(task.id)) this.replaceDefinition(existing, task);
+          this.deferredReloads.delete(task.id);
+        }
+        continue;
+      }
       // A pending launch is durably disabled, including for older app versions.
       if (task.status.runs.some(run => run.launchState === 'pending')) task.enabled = false;
       const live = this.makeLive(task);
@@ -245,6 +292,7 @@ export class SchedulerManager extends EventEmitter {
       if (task.enabled) this.arm(task.id);
     }
     this.emit('changed');
+    if (deferred) this.scheduleReload();
   }
 
   private async createNow(input: ScheduleCreateInput): Promise<ScheduledTask> {
@@ -297,7 +345,7 @@ export class SchedulerManager extends EventEmitter {
       autoCloseOnFinish: input.autoCloseOnFinish ?? true,
       maxDurationMinutes: input.maxDurationMinutes
     };
-    await this.persist(task);
+    await this.persist(task, task);
     this.live.set(task.id, this.makeLive(task));
     if (task.enabled) this.arm(task.id);
     this.emit('changed');
@@ -311,7 +359,8 @@ export class SchedulerManager extends EventEmitter {
     if (patch.enabled && live.task.status.runs.some(run => run.launchState === 'pending')) {
       await this.recoverPending(live);
     }
-    const next: ScheduledTask = structuredClone(live.task);
+    const current = await this.readCurrent(live.task);
+    const next: ScheduledTask = { ...current, status: structuredClone(live.task.status) };
     if (patch.name !== undefined) next.name = patch.name.trim();
     if (patch.description !== undefined) next.description = patch.description.trim() || undefined;
     if (patch.enabled !== undefined) next.enabled = patch.enabled;
@@ -357,7 +406,12 @@ export class SchedulerManager extends EventEmitter {
       next.group = patch.group?.trim() ? patch.group.trim() : undefined;
     }
     next.updatedAt = new Date().toISOString();
-    await this.persist(next);
+    const definitionPatch: Partial<ScheduledTask> = { updatedAt: next.updatedAt };
+    for (const key of Object.keys(patch) as (keyof ScheduleUpdateInput)[]) {
+      const field = key === 'every' || key === 'cron' || key === 'tz' ? 'schedule' : key === 'retain' ? 'history' : key;
+      Object.assign(definitionPatch, { [field]: next[field as keyof ScheduledTask] });
+    }
+    await this.persist(next, definitionPatch);
     live.task = next;
     this.disarm(id);
     if (next.enabled) this.arm(id);
@@ -427,6 +481,9 @@ export class SchedulerManager extends EventEmitter {
   }
 
   stopAll() {
+    if (this.watchDebounce) clearTimeout(this.watchDebounce);
+    this.watchDebounce = null;
+    this.deferredReloads.clear();
     this.epoch++;
     this.clearLive();
   }
@@ -451,8 +508,7 @@ export class SchedulerManager extends EventEmitter {
   /**
    * Watch the global + per-project schedule directories so externally-authored
    * schedule files (e.g. the `zcc-center` skill writing one, or a hand-edit)
-   * go live without an app restart. Our own writes are suppressed via
-   * `suppressWatchUntil`, so this only fires on external changes.
+   * go live without an app restart. Reloading preserves active run ownership.
    *
    * Call once after `loadAll` at boot, and again via `rebindWatchers` when the
    * project list changes (so new projects' dirs get watched).
@@ -461,7 +517,7 @@ export class SchedulerManager extends EventEmitter {
     this.rebindWatchers();
     if (!this.remotePoll && this.deps?.persistence) {
       this.remotePoll = setInterval(() => {
-        if (!this.pending && !this.hasLiveSession() && this.deps) void this.loadAll(this.deps.store.listProjects()).catch(error => this.log('refresh', error));
+        if (!this.pending && this.deps) void this.loadAll(this.deps.store.listProjects()).catch(error => this.log('refresh', error));
       }, 15_000);
       this.remotePoll.unref?.();
     }
@@ -536,19 +592,15 @@ export class SchedulerManager extends EventEmitter {
   /** Coalesce burst events (an editor/agent save = create+rename+modify). */
   private scheduleReload() {
     if (this.watchDebounce) clearTimeout(this.watchDebounce);
+    const epoch = this.epoch;
     this.watchDebounce = setTimeout(() => {
       this.watchDebounce = null;
-      // Skip our own run-history writes.
-      if (Date.now() < this.suppressWatchUntil) return;
+      if (Date.now() < this.suppressWatchUntil) { this.scheduleReload(); return; }
       if (!this.deps) return;
-      // Don't yank state out from under an in-flight fire. loadAll() calls
-      // stopAll(), which clears timers and run-index maps — reloading mid-fire
-      // would orphan the exit handler's recordRun. Defer instead.
-      if (this.hasLiveSession()) {
-        this.scheduleReload();
-        return;
-      }
-      void this.loadAll(this.deps.store.listProjects()).catch(error => this.log('reload', error));
+      void this.loadAll(this.deps.store.listProjects()).catch(error => {
+        this.log('reload', error);
+        if (epoch === this.epoch && this.deferredReloads.size) this.scheduleReload();
+      });
     }, 250);
   }
 
@@ -586,19 +638,44 @@ export class SchedulerManager extends EventEmitter {
     return counted.size;
   }
 
-  /** True if any schedule has a spawned terminal session still running. */
-  private hasLiveSession(): boolean {
-    if (!this.deps) return false;
-    for (const live of this.live.values()) {
-      for (const r of live.task.status.runs) {
-        if (!r.sessionId) continue;
-        const sessions = this.deps.ptys.list(live.task.projectId);
-        if (sessions.some((s) => s.id === r.sessionId && s.status !== 'exited')) {
-          return true;
-        }
-      }
+  private liveSessions(live: Live): string[] {
+    const sessions = this.deps?.ptys.list(live.task.projectId) ?? [];
+    return [...new Set(live.task.status.runs.flatMap(run => run.sessionId && sessions.some(session => session.id === run.sessionId && session.status !== 'exited') ? [run.sessionId] : []))];
+  }
+
+  private replaceDefinition(live: Live, task: ScheduledTask) {
+    this.disarm(task.id);
+    live.task = task;
+    live.runIndexBySession = this.makeLive(task).runIndexBySession;
+    for (const run of task.status.runs) if (run.id) live.countedRunIds.add(run.id);
+    while (live.countedRunIds.size > COUNTED_RUN_IDS_CAP) live.countedRunIds.delete(live.countedRunIds.values().next().value!);
+    if (task.enabled) this.arm(task.id);
+  }
+
+  private publishRuntime(live: Live, task: ScheduledTask) {
+    const retime = live.task.enabled !== task.enabled || !isDeepStrictEqual(live.task.schedule, task.schedule);
+    live.task = task;
+    if (retime) {
+      this.disarm(task.id);
+      if (task.enabled) this.arm(task.id);
     }
-    return false;
+  }
+
+  private snapshotSignature(task: ScheduledTask) {
+    // File validation supplies optional undefined keys; ignore those as well as
+    // the timer's derived nextRunAt so our own writes never postpone cadence.
+    return JSON.parse(JSON.stringify({ ...task, status: { ...task.status, nextRunAt: undefined } }));
+  }
+
+  private async readCurrent(task: ScheduledTask): Promise<ScheduledTask> {
+    if (!this.deps) return structuredClone(task);
+    if (this.deps.persistence) {
+      const epoch = this.epoch;
+      const current = this.deps.persistence.read ? await this.deps.persistence.read(task) : structuredClone(task);
+      if (epoch !== this.epoch) throw new Error('Scheduler stopped');
+      return current;
+    }
+    return readSchedule(task, this.deps.store.listProjects());
   }
 
   /**
@@ -634,14 +711,17 @@ export class SchedulerManager extends EventEmitter {
     };
   }
 
-  private async persist(task: ScheduledTask) {
+  private async persist(task: ScheduledTask, definitionPatch: Partial<ScheduledTask> = {}) {
     if (!this.deps) return;
-    // Our own write — keep the watcher quiet long enough for the fs event to
-    // land and be ignored, so run-history churn doesn't trigger a reload.
+    // Delay the watcher until the write is settled; its event stays queued.
     this.suppressWatchUntil = Date.now() + 1_000;
     const epoch = this.epoch;
-    if (this.deps.persistence) await this.deps.persistence.save(task);
-    else saveSchedule(task, this.deps.store.listProjects());
+    if (definitionPatch.id !== task.id) {
+      const current = await this.readCurrent(task);
+      Object.assign(task, { ...current, ...definitionPatch, status: task.status });
+    }
+    if (this.deps.persistence) await this.deps.persistence.save(task, definitionPatch);
+    else saveSchedule(task, this.deps.store.listProjects(), definitionPatch);
     if (epoch !== this.epoch) throw new Error('Scheduler stopped');
   }
 
@@ -710,7 +790,13 @@ export class SchedulerManager extends EventEmitter {
   private async fire(id: string, opts: { manual: boolean }) {
     const live = this.live.get(id);
     if (!live || !this.deps) return;
+    const enabledBeforeRefresh = live.task.enabled;
+    const priorCadence = live.task.schedule;
+    const current = await this.readCurrent(live.task);
+    live.task = { ...current, status: live.task.status };
     this.disarm(id);
+    if (!opts.manual && enabledBeforeRefresh && !live.task.enabled) { this.emit('changed'); return; }
+    if (!opts.manual && !isDeepStrictEqual(priorCadence, current.schedule)) { this.arm(id); this.emit('changed'); return; }
     if (live.task.status.runs.some(run => run.launchState === 'pending')) throw new Error('Unconfirmed worker launch');
 
     // Concurrent-duplicate guard: a fire whose launch is async (remote/coordinator
@@ -1180,8 +1266,8 @@ export class SchedulerManager extends EventEmitter {
     status.lastRunAt = run.at;
     status.lastRunResult = run.result;
     status.lastRunSessionId = run.sessionId;
-    await this.persist(next);
-    live.task = next;
+    await this.persist(next, enabled === undefined ? {} : { enabled });
+    this.publishRuntime(live, next);
     live.countedRunIds = countedRunIds;
     live.runIndexBySession = runIndexBySession;
     this.emit('changed');
@@ -1234,7 +1320,7 @@ export class SchedulerManager extends EventEmitter {
         next.status.lastRunResult = 'success';
       }
       await this.persist(next);
-      live.task = next;
+      this.publishRuntime(live, next);
       this.emit('changed');
       return;
     }
@@ -1281,7 +1367,7 @@ export class SchedulerManager extends EventEmitter {
         ...(durationMs !== undefined ? { durationMs } : {})
       };
       await this.persist(next);
-      live.task = next;
+      this.publishRuntime(live, next);
       this.emit('changed');
       if (live.task.autoCloseOnFinish) {
         const pendingSubagents = this.deps?.getPendingSubagentCount?.(sessionId) ?? 0;

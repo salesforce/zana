@@ -68,7 +68,7 @@ if(live){
     await win.getByRole('button', { name: 'Open Blocked remote', exact: true }).click();
     await win.getByTestId('agents-board-new-thread').click();
     const modal = win.getByTestId('launch-modal');
-    await modal.getByRole('button', { name: 'CLI Agent', exact: true }).click();
+    await modal.getByRole('button', { name: 'Modern', exact: true }).click();
     await modal.getByTestId('composer-host-action').click();
     const drawer = win.getByTestId('host-install-drawer');
     await expect(drawer.getByTestId('host-install-log')).toContainText('Public HTTPS is unavailable', { timeout: liveHost ? 90_000 : 45_000 });

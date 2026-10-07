@@ -26,7 +26,8 @@ if (args[0] === 'org' && args[1] === 'login') {
   if (fs.existsSync(folder)) throw Error('Project generated twice');
   fs.mkdirSync(path.join(folder, 'force-app', 'main', 'default'), {recursive:true});
   fs.writeFileSync(path.join(folder, 'sfdx-project.json'), JSON.stringify({packageDirectories:[{path:'force-app',default:true}],sourceApiVersion:'62.0'}));
-  result = { outputDir:folder };
+  // Match the installed CLI: outputDir is the parent, not the DX project root.
+  result = { outputDir:value('--output-dir'), created:[path.join(folder,'sfdx-project.json')], rawOutput:'create generated file\\n'.repeat(1200) };
 } else if (args[0] === 'config' && args[1] === 'set') {
   if (fs.existsSync(path.join(home, 'fail-config'))) { console.log(JSON.stringify({status:1,message:'Permission denied'})); process.exit(1); }
   if (args.includes('--global') || !fs.existsSync('sfdx-project.json')) throw Error('Wrong config scope');
@@ -65,7 +66,9 @@ test('Salesforce project creation logs in before creating a connected DX project
   expect(await wizard.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('salesforce-create-login-light.png') });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await wizard.getByRole('radio', { name: 'Sandbox', exact: true }).check();
+  // The native radio is visually hidden; users choose its visible label card.
+  await wizard.getByText('Sandbox', { exact: true }).click();
+  await expect(wizard.getByRole('radio', { name: 'Sandbox', exact: true })).toBeChecked();
   await wizard.getByLabel('Org alias', { exact: true }).fill('fail-login');
   await wizard.getByRole('button', { name: 'Log in to Salesforce', exact: true }).click();
   await expect(wizard.getByRole('alert')).toContainText('Sign-in did not finish');
@@ -81,13 +84,16 @@ test('Salesforce project creation logs in before creating a connected DX project
   writeFileSync(join(home, 'fail-config'), 'fail once');
   await wizard.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(wizard.getByRole('alert')).toContainText('Could not set');
+  await expect(wizard.getByRole('button', { name: 'Open project', exact: true })).toBeEnabled();
   expect(existsSync(join(home, 'projects/Acme/sfdx-project.json'))).toBe(true);
   rmSync(join(home, 'fail-config'));
-  await wizard.getByRole('button', { name: 'Finish setup', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Retry connection', exact: true }).click();
   await expect(wizard).toHaveCount(0);
   const projects = await page.evaluate(() => window.cc.projects.list());
   const project = projects.find(row => row.path === realpathSync(join(home, 'projects/Acme')));
   expect(project).toBeTruthy();
+  expect(projects.filter(row => row.path === project!.path)).toHaveLength(1);
+  expect(projects.some(row => row.path === realpathSync(join(home, 'projects')))).toBe(false);
   expect(project!.icon).toBe('Cloud');
   await page.getByRole('button', { name: 'Back to all projects', exact: true }).click();
   const projectRow = page.locator('.project-item').filter({ hasText: 'Acme' });
@@ -120,4 +126,37 @@ test('Salesforce project creation logs in before creating a connected DX project
   }
   expect(commands.find(row => row.args[1] === 'login').args).toEqual(['org', 'login', 'web', '--json', '--instance-url', 'https://test.salesforce.com', '--alias', 'fail-login']);
   expect(errors).toEqual([]);
+});
+
+test('Salesforce connection failure leaves the new project available to open', async ({ app, home }) => {
+  const page = app.window;
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(row => row.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  await page.evaluate(() => { history.pushState({}, '', '/projects'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await page.getByRole('button', { name: 'Add project', exact: true }).click();
+  await page.getByRole('button', { name: 'Salesforce project', exact: true }).click();
+  const wizard = page.getByTestId('salesforce-create-project');
+  await wizard.getByRole('button', { name: 'Use a connected org', exact: true }).click();
+  await wizard.getByRole('combobox', { name: /^Connected org/ }).selectOption('dev');
+  await wizard.getByRole('button', { name: 'Continue', exact: true }).click();
+  await wizard.getByLabel('Project name', { exact: true }).fill('Available');
+  await wizard.getByLabel('Parent folder', { exact: true }).fill(join(home, 'projects'));
+  writeFileSync(join(home, 'fail-config'), 'keep failing');
+  await wizard.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(wizard.getByRole('alert')).toContainText('Could not set');
+  await expect(wizard.getByText(/Your project was created and added to Projects/)).toBeVisible();
+  const projectPath = realpathSync(join(home, 'projects/Available'));
+  const projects = await page.evaluate(() => window.cc.projects.list());
+  const project = projects.find(row => row.path === projectPath);
+  expect(project).toBeTruthy();
+  expect(projects.filter(row => row.path === projectPath)).toHaveLength(1);
+  expect(existsSync(join(projectPath, 'sfdx-project.json'))).toBe(true);
+  expect(existsSync(join(projectPath, '.sf/config.json'))).toBe(false);
+  await wizard.getByRole('button', { name: 'Open project', exact: true }).click();
+  await expect(wizard).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Back to all projects', exact: true })).toBeVisible();
+  expect(new URL(page.url()).pathname).toContain(project!.id);
+  const commands = readFileSync(join(home, 'sf-create-trace.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  expect(commands.filter(row => row.args[0] === 'project')).toHaveLength(1);
+  expect(commands.filter(row => row.args[0] === 'config')).toHaveLength(1);
 });

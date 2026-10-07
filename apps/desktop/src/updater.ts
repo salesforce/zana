@@ -37,7 +37,9 @@ import { app } from 'electron';
 // under this package's ESM ("type": "module") build.
 import electronUpdater from 'electron-updater';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
-import type { UpdateProgress, UpdateStatus } from '@zana-ai/zcc-domain/product';
+import type { ReleaseNote, UpdateProgress, UpdateStatus } from '@zana-ai/zcc-domain/product';
+import { normalizeUpdateReleaseNotes } from './update-release-notes.js';
+import { listReleaseNotes } from './release-notes.js';
 
 const { autoUpdater } = electronUpdater;
 
@@ -168,6 +170,20 @@ export function friendlyUpdateError(err: unknown): string {
   return raw;
 }
 
+/**
+ * Notes for a fake (dev / simulate) update: the newest BUNDLED release note,
+ * relabeled to the fake version, so the banner's "What's new" path is
+ * exercisable without a real feed. Best-effort — no notes on a read failure.
+ */
+export async function sampleNotesFor(version: string): Promise<ReleaseNote[]> {
+  try {
+    const [latest] = await listReleaseNotes();
+    return latest ? [{ version, markdown: latest.markdown }] : [];
+  } catch {
+    return [];
+  }
+}
+
 export function createUpdater(deps: UpdaterDeps): Updater {
   const { safeSend, log } = deps;
   const pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_UPDATE_POLL_MS;
@@ -227,6 +243,12 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   // can report it (autoUpdater.currentVersion is the *installed* version, not
   // the one being fetched).
   let pendingVersion: string | undefined;
+  // Notes for the offered version(s), captured with `pendingVersion` so the
+  // banner can show them before (and after) the download. Not re-sent on every
+  // `downloading` tick — the renderer keeps the last copy.
+  let pendingNotes: ReleaseNote[] = [];
+  const withNotes = (status: UpdateStatus): UpdateStatus =>
+    pendingNotes.length > 0 ? { ...status, releaseNotes: pendingNotes } : status;
 
   // In dev (or any unpackaged run) electron-updater can't function and throws
   // if invoked. Return a no-op updater that reports `disabled` so the UI can
@@ -243,7 +265,8 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       const version = fake.replace(/^v/i, '');
       return {
         async checkForUpdates() {
-          emitStatus({ kind: 'available', version });
+          pendingNotes = await sampleNotesFor(version);
+          emitStatus(withNotes({ kind: 'available', version }));
         },
         async downloadUpdate({ installNow = false }: { installNow?: boolean } = {}) {
           // Simulate a download (no network): step the progress over ~1.5s so the
@@ -261,7 +284,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
             });
             emitStatus({ kind: 'downloading', version });
           }
-          emitStatus({ kind: 'downloaded', version });
+          emitStatus(withNotes({ kind: 'downloaded', version }));
           if (installNow) log('updater(dev-fake)', 'quitAndInstall suppressed in dev');
         },
         skipVersion(v: string) {
@@ -342,6 +365,9 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   // choice relies on it).
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  // Ask for every release between the installed and offered version, not just
+  // the newest, so a user skipping several releases sees all of them.
+  autoUpdater.fullChangelog = true;
   autoUpdater.logger = {
     info: (m: unknown) => console.log(`[updater] ${String(m)}`),
     warn: (m: unknown) => console.warn(`[updater] ${String(m)}`),
@@ -375,18 +401,20 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   autoUpdater.on('checking-for-update', () => emitStatus({ kind: 'checking' }));
   autoUpdater.on('update-available', (info) => {
     pendingVersion = info?.version;
+    pendingNotes = normalizeUpdateReleaseNotes(info?.releaseNotes, pendingVersion);
     // Honor a skipped version: the user already declined it, so don't re-offer
     // until something newer ships.
     if (pendingVersion && pendingVersion === deps.getSkippedVersion()) {
       emitStatus({ kind: 'not-available' });
       return;
     }
-    emitStatus({ kind: 'available', version: pendingVersion });
+    emitStatus(withNotes({ kind: 'available', version: pendingVersion }));
   });
   autoUpdater.on('update-not-available', () => {
     // No newer release: drop the captured target so a later stray
     // `download-progress` can't report a stale version.
     pendingVersion = undefined;
+    pendingNotes = [];
     emitStatus({ kind: 'not-available' });
   });
   autoUpdater.on('download-progress', (p) => {
@@ -401,7 +429,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   });
   autoUpdater.on('update-downloaded', (info) => {
     updateStaged = true;
-    emitStatus({ kind: 'downloaded', version: info?.version ?? pendingVersion });
+    emitStatus(withNotes({ kind: 'downloaded', version: info?.version ?? pendingVersion }));
     if (installWhenDownloaded) {
       installWhenDownloaded = false;
       installStagedUpdate();
@@ -510,7 +538,8 @@ export function createUpdater(deps: UpdaterDeps): Updater {
         return;
       }
       pendingVersion = v;
-      emitStatus({ kind: 'available', version: v });
+      pendingNotes = await sampleNotesFor(v);
+      emitStatus(withNotes({ kind: 'available', version: v }));
       await new Promise((r) => setTimeout(r, 500));
       emitStatus({ kind: 'downloading', version: v });
       for (const percent of [15, 45, 80, 100]) {
@@ -523,7 +552,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
         });
         emitStatus({ kind: 'downloading', version: v });
       }
-      emitStatus({ kind: 'downloaded', version: v });
+      emitStatus(withNotes({ kind: 'downloaded', version: v }));
       log('updater.simulate', `walked fake update flow for v${v} (nothing installed)`);
     },
     getStatus,

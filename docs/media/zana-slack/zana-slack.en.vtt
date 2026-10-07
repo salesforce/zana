@@ -1,0 +1,22 @@
+WEBVTT
+
+00:00:00.400 --> 00:00:04.700
+Meet Zana for Slack, shown here with Pi.
+
+00:00:05.400 --> 00:00:16.600
+In a linked channel, just mention Zana with your task. Zana uses that channel’s Project and harness: Pi here, or any harness installed in Zana.
+
+00:00:17.400 --> 00:00:29.600
+Pi works on your own computer. When it needs a decision, it asks right in the Slack thread. Answer there, and Pi fixes the code and reruns the tests.
+
+00:00:30.400 --> 00:00:40.600
+When the turn ends, Zana posts the answer right back in your Slack thread: what changed, and how the tests did.
+
+00:00:41.400 --> 00:00:51.600
+Reply in the thread to keep going. Zana continues the same conversation, with the same Project, machine, and harness.
+
+00:00:52.400 --> 00:01:03.600
+Or message Zana privately. Ask for your unread reports, and it reads them straight from your Zana inbox.
+
+00:01:04.400 --> 00:01:13.600
+Zana Home lists every agent, so you can follow, mute, or stop them. Just keep your computer awake, with Zana running.

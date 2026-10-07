@@ -455,6 +455,7 @@ function SplitPane(props: SplitTreeProps & { node: PaneNode; isSplitPane: boolea
       ) : null}
       <WorkspacePaneContent
         content={node.content}
+        timelineEnabled={!isHiddenByMaximize && (isSplitPane || isFocused)}
         paneId={node.paneId}
         isFocused={isFocused}
         isSplitPane={isSplitPane}
@@ -505,6 +506,7 @@ function SplitTree(props: SplitTreeProps) {
 
 function WorkspacePaneContent({
   content,
+  timelineEnabled = true,
   paneId,
   isFocused,
   isSplitPane,
@@ -518,6 +520,7 @@ function WorkspacePaneContent({
   onBeginPaneDrag
 }: {
   content: PaneContent;
+  timelineEnabled?: boolean;
   paneId: string;
   isFocused: boolean;
   isSplitPane: boolean;
@@ -557,21 +560,23 @@ function WorkspacePaneContent({
 
   return (
     <PaneContextProvider value={value}>
-      <PaneBody content={content} paneId={paneId} />
+      <PaneBody content={content} paneId={paneId} timelineEnabled={timelineEnabled} />
     </PaneContextProvider>
   );
 }
 
 function PaneBody({
   content,
+  timelineEnabled,
   paneId
 }: {
   content: PaneContent;
+  timelineEnabled: boolean;
   paneId: string;
 }) {
   const projects = useData((s) => s.projects);
   if (content.kind === 'thread') {
-    return <ThreadDetail key={content.threadId} threadId={content.threadId} />;
+    return <ThreadDetail key={content.threadId} threadId={content.threadId} timelineEnabled={timelineEnabled} />;
   }
   if (content.kind === 'agent-session') {
     return (

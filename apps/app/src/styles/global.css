@@ -7456,6 +7456,76 @@ body.resizing-col {
   overflow-wrap: anywhere;
 }
 
+/* Project settings → Checkouts: one row per machine checkout, then an
+   inline add form (machine | folder | button) that wraps on narrow panels. */
+.project-checkout-list {
+  margin-bottom: 14px;
+}
+
+.project-checkout-row {
+  align-items: flex-start;
+  padding: 10px 0;
+}
+
+.project-checkout-row .machine-status-dot {
+  margin-top: 5px;
+}
+
+.project-checkout-row > .settings-badge,
+.project-checkout-row > .settings-btn {
+  flex: 0 0 auto;
+}
+
+.project-checkout-details {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-checkout-path {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-checkout-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.project-checkout-add .settings-field {
+  margin-bottom: 0;
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.project-checkout-add .settings-field--mono {
+  flex: 2 1 16rem;
+}
+
+.project-checkout-add .settings-field input,
+.project-checkout-add .settings-field select,
+.project-checkout-add > .settings-btn {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+}
+
+.project-checkout-add > .settings-btn {
+  width: auto;
+}
+
+.project-checkout-error {
+  color: var(--danger, #e5534b);
+}
+
 .project-process-row {
   align-items: flex-start;
 }
@@ -13576,7 +13646,7 @@ body.resizing-col .explorer-resizer::after {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
+  background: var(--bg-base);
   /* Compact chrome is keyed off the board pane, not the window — the Agents
      view sits beside the nav + list columns, so a "bit small" screen is a
      narrow board, not necessarily a narrow viewport. */
@@ -31250,7 +31320,7 @@ body.resizing-col .library-split-resizer::after {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
+  background: var(--bg-base);
   /* Compact chrome is keyed off the board pane, not the window — the Agents
      view sits beside the nav + list columns, so a "bit small" screen is a
      narrow board, not necessarily a narrow viewport. */
@@ -32999,6 +33069,48 @@ textarea.ui-command-composer-input {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   background: var(--bg-elevated, var(--bg-panel));
+}
+
+.model-reasoning-picker-model-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  z-index: 1;
+}
+
+.model-reasoning-picker-reload {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px -4px -2px 0;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.model-reasoning-picker-reload:hover,
+.model-reasoning-picker-reload:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.model-reasoning-picker-reload:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+.model-reasoning-picker-reload:disabled { cursor: default; }
+.model-reasoning-picker-reload.is-reloading svg { animation: model-picker-reload-spin 1s linear infinite; }
+@keyframes model-picker-reload-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .model-reasoning-picker-reload.is-reloading svg { animation: none; }
 }
 
 .model-reasoning-picker-row {
@@ -35355,9 +35467,17 @@ textarea.thread-command-editor {
   padding: 8px 12px 10px;
 }
 
-.thread-timeline-work.is-dim,
+/* Past rows recede only while collapsed. Opacity compounds through the tree,
+   so an opened row and everything nested inside it render at full contrast —
+   otherwise children of an expanded past group fall to ~16% and are unreadable. */
+.thread-timeline-work.is-dim:not(.is-open),
 .thread-timeline-system.is-dim {
   opacity: 0.4;
+}
+
+.thread-timeline-nested .thread-timeline-work.is-dim,
+.thread-timeline-nested .thread-timeline-system.is-dim {
+  opacity: 1;
 }
 
 .thread-timeline-work-header {

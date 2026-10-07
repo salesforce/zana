@@ -36,3 +36,14 @@ it('exposes timeout recovery through its dedicated execution IPC channel', async
     IPC.executionBoard.recoverTimedOut, 'project-1', 'execution-1', 4, 'request-1'
   );
 });
+
+it('exposes schedule get and reload through their distinct product IPC channels', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce({ ok: true, value: { id: 'schedule-1' } });
+  electron.invoke.mockResolvedValueOnce({ ok: true, value: { id: 'schedule-1', name: 'Reloaded' } });
+  await expect(api.scheduler.get('schedule-1')).resolves.toEqual({ ok: true, value: { id: 'schedule-1' } });
+  await expect(api.scheduler.reload('schedule-1')).resolves.toEqual({ ok: true, value: { id: 'schedule-1', name: 'Reloaded' } });
+  expect(electron.invoke.mock.calls).toEqual([[IPC.scheduler.get, 'schedule-1'], [IPC.scheduler.reload, 'schedule-1']]);
+});

@@ -6,9 +6,16 @@ const state = vi.hoisted(() => ({
   open: true,
   notes: [{ version: '2.3.0', markdown: '# Release 2.3.0' }],
   toVersion: '2.3.0' as string | null,
+  preview: false,
   close: vi.fn(),
 }));
-vi.mock('../store.js', () => ({ useWhatsNew: (selector: (value: typeof state) => unknown) => selector(state) }));
+const updates = vi.hoisted(() => ({ status: { kind: 'idle' as string } }));
+const productApi = vi.hoisted(() => ({ download: vi.fn(async () => {}), quitAndInstall: vi.fn(async () => {}) }));
+vi.mock('../store.js', () => ({
+  useWhatsNew: (selector: (value: typeof state) => unknown) => selector(state),
+  useUpdates: (selector: (value: typeof updates) => unknown) => selector(updates)
+}));
+vi.mock('../lib/product-client.js', () => ({ product: { updates: productApi } }));
 vi.mock('./MarkdownContent.js', () => ({ MarkdownContent: ({ text }: { text: string }) => <div>{text}</div> }));
 import { WhatsNewModal } from './WhatsNewModal.js';
 
@@ -17,7 +24,49 @@ afterEach(() => {
   state.open = true;
   state.notes = [{ version: '2.3.0', markdown: '# Release 2.3.0' }];
   state.toVersion = '2.3.0';
+  state.preview = false;
   state.close.mockClear();
+  updates.status = { kind: 'idle' };
+  productApi.download.mockClear();
+  productApi.quitAndInstall.mockClear();
+});
+
+describe('WhatsNewModal update preview', () => {
+  it('offers "Update now" for an available update and starts the install', () => {
+    state.preview = true;
+    updates.status = { kind: 'available' };
+    render(<WhatsNewModal />);
+    expect(screen.queryByRole('button', { name: 'Got it' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Update now' }));
+    expect(state.close).toHaveBeenCalledOnce();
+    expect(productApi.download).toHaveBeenCalledWith({ installNow: true });
+  });
+
+  it('offers "Restart now" once the update is staged', () => {
+    state.preview = true;
+    updates.status = { kind: 'downloaded' };
+    render(<WhatsNewModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Restart now' }));
+    expect(productApi.quitAndInstall).toHaveBeenCalledOnce();
+    expect(productApi.download).not.toHaveBeenCalled();
+  });
+
+  it('"Later" just closes', () => {
+    state.preview = true;
+    updates.status = { kind: 'available' };
+    render(<WhatsNewModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Later' }));
+    expect(state.close).toHaveBeenCalledOnce();
+    expect(productApi.download).not.toHaveBeenCalled();
+  });
+
+  it('falls back to "Got it" when the previewed update is no longer actionable', () => {
+    state.preview = true;
+    updates.status = { kind: 'downloading' };
+    render(<WhatsNewModal />);
+    expect(screen.getByRole('button', { name: 'Got it' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Update now' })).toBeNull();
+  });
 });
 
 describe('WhatsNewModal video', () => {

@@ -545,6 +545,16 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   and creates a **draft** release on `salesforce/zana`. A human then publishes
   that draft. Local `pnpm run release:mac` packages the host arch only
   (`--publish never`) and must not upload.
+  **The release body is also the pre-update "What's new" preview.** The workflow
+  copies `docs/releases/<version>.md` into the draft (`body_path`); the update
+  banner reads that body back from the feed (`UpdateInfo.releaseNotes`, with
+  `fullChangelog`) and `apps/desktop/src/update-release-notes.ts` converts it to a
+  bounded markdown subset in main. So a version bump needs its notes written
+  before tagging, using no images, tables or raw HTML, and under 32 KB. These are
+  enforced by `scripts/check-release-notes.mjs` in the release `verify` job, along
+  with a tag/`package.json` match. Its size cap is test-locked to
+  `MAX_UPDATE_NOTE_CHARS`. Editing the notes after the draft exists means editing
+  the GitHub body too. Checklist: `docs/desktop-release-pipeline.md`.
 
 - **The local-spawn argv/env assembly lives in `PtyManager.create()` and
   dispatches through the per-profile `LaunchProvider`; `@zana-ai/zcc-spawn-plan` is now the

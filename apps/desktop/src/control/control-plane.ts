@@ -46,6 +46,8 @@ import {
   TerminalSession,
   AgentState,
   ScheduledTask,
+  ScheduleReloadResult,
+  ScheduleUpdateInput,
   PersonaSummary,
   ProductTeamOps,
   TeamSummary,
@@ -57,6 +59,7 @@ import {
 import type { CreateTerminalRequest } from '@zana-ai/zcc-domain/product';
 import { parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
+import { scheduleDefinitionPatchSchema } from '@zana-ai/zcc-server/services/scheduler/schedule-manage-mcp-tools';
 
 /** Caps a single request line so a malformed/hostile client can't balloon memory. */
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -191,8 +194,11 @@ export interface ControlPlaneDeps {
    * projected to non-sensitive metadata. Read-only and agent-allowed.
    */
   listTeams: () => TeamSummary[];
-  /** Scheduler reads + the three gated mutations the CLI exposes. */
+  /** Scheduler reads and definition/runtime mutations exposed by the CLI. */
   listSchedules: () => ScheduledTask[];
+  getSchedule?: (id: string) => Result<ScheduledTask> | Promise<Result<ScheduledTask>>;
+  reloadSchedule?: (id: string) => Result<ScheduleReloadResult> | Promise<Result<ScheduleReloadResult>>;
+  updateSchedule?: (id: string, patch: ScheduleUpdateInput) => Result<ScheduledTask> | Promise<Result<ScheduledTask>>;
   runScheduleNow: (id: string) => Result<ScheduledTask> | Promise<Result<ScheduledTask>>;
   setScheduleEnabled: (id: string, enabled: boolean) => Result<ScheduledTask> | Promise<Result<ScheduledTask>>;
   /** Team operations remain owned and authorized by Electron main. */
@@ -264,7 +270,8 @@ const AGENT_ALLOWED_OPS = new Set<string>([
   'agent.list',
   'term.list',
   'term.get',
-  'sched.list'
+  'sched.list',
+  'sched.get'
 ]);
 
 /**
@@ -342,6 +349,8 @@ const KNOWN_OPS = new Set<string>([
   'session.status',
   'sched.runNow',
   'sched.setEnabled',
+  'sched.reload',
+  'sched.update',
   'team.launch',
   'team.status',
   'team.answer',
@@ -673,6 +682,17 @@ export async function dispatchOp(
       return r.ok
         ? { ok: true, value: { delivered: r.delivered, handle: r.handle, id: r.id } }
         : { ok: false, code: 'SEND_FAILED', message: r.error };
+    }
+    case 'sched.get':
+    case 'sched.reload':
+    case 'sched.update': {
+      const id = str(args.id);
+      if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+      if (op === 'sched.get') return deps.getSchedule?.(id) ?? { ok: false, code: 'UNAVAILABLE', message: 'Schedule get is unavailable' };
+      if (op === 'sched.reload') return deps.reloadSchedule?.(id) ?? { ok: false, code: 'UNAVAILABLE', message: 'Schedule reload is unavailable' };
+      const patch = scheduleDefinitionPatchSchema.safeParse(args.patch);
+      if (!patch.success) return { ok: false, code: 'BAD_ARGS', message: patch.error.message };
+      return deps.updateSchedule?.(id, patch.data) ?? { ok: false, code: 'UNAVAILABLE', message: 'Schedule update is unavailable' };
     }
     case 'sched.runNow': {
       const id = str(args.id);

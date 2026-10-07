@@ -1,7 +1,7 @@
 import { subscribeProductReconnect } from '../../lib/product-ws.js';
 import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBanner.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
@@ -84,6 +84,7 @@ import {
 } from '../../components/thread/timeline/thread-optimistic-events.js';
 import {
   findDeepestTimelineSearchHit,
+  findTimelineMessageAtSequence,
   type TimelineSearchHit
 } from '../../components/thread/timeline/thread-search.js';
 import {
@@ -104,6 +105,7 @@ export function ThreadDetailView() {
 
 export function ThreadDetail({
   threadId,
+  timelineEnabled = true,
   embedded = false,
   mobileTitleInShell = false,
   modal = false,
@@ -112,6 +114,7 @@ export function ThreadDetail({
   includePluginMessageActions = true
 }: {
   threadId: string;
+  timelineEnabled?: boolean;
   embedded?: boolean;
   /** A focused mobile list detail shares the shell header while retaining its list. */
   mobileTitleInShell?: boolean;
@@ -160,6 +163,7 @@ export function ThreadDetail({
   const [threadProviderId, setThreadProviderId] = useState<string | null>(null);
   const [threadModel, setThreadModel] = useState<string | null>(null);
   const [threadReasoning, setThreadReasoning] = useState<string | null>(null);
+  const [threadServiceTier, setThreadServiceTier] = useState<string | null>(null);
   const [threadAcpMode, setThreadAcpMode] = useState<string | null>(null);
   const [threadPermissionMode, setThreadPermissionMode] = useState<{ threadId: string; mode: string | null } | null>(null);
   const [rows, setRows] = useState<TimelineRow[]>([]);
@@ -194,11 +198,18 @@ export function ThreadDetail({
   const [searchDraft, setSearchDraft] = useState('');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [linkParams] = useSearchParams();
+  const linkSequence = Number(linkParams.get('message'));
+  const linkLoads = useRef(0);
+  const lastLinkCursor = useRef<string | null>(null);
   const [searchHit, setSearchHit] = useState<TimelineSearchHit | null>(null);
+  useEffect(() => { linkLoads.current = 0; lastLinkCursor.current = null; setSearchHit(null); }, [threadId, linkSequence]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const rowsRef = useRef<TimelineRow[]>([]);
   const maxSeqRef = useRef(0);
   const loadedRef = useRef(false);
+  const loadedThreadRef = useRef<string | null>(null);
+  const olderLoadRef = useRef<AbortController | null>(null);
   const hadThreadRecordRef = useRef(false);
   const runLoadRef = useRef<() => void>(() => {});
   useThreadOpenFileSignal({
@@ -284,22 +295,27 @@ export function ThreadDetail({
   }, [displayRows, searchHit, searchQuery]);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!threadId || !timelineEnabled) return;
     let cancelled = false;
     let activeLoad: AbortController | null = null;
-    rowsRef.current = [];
-    maxSeqRef.current = 0;
-    loadedRef.current = false;
-    historyGeneration.current++;
-    loadedOlderRef.current = false;
-    olderCursorRef.current = null;
-    setOlderCursor(null);
-    setLoadingOlder(false);
-    hadThreadRecordRef.current = false;
-    setTimelineLoading(true);
-    setLoadError(null);
-    setArchivedAt(null);
-    setExecutionModeRequested(null);
+    // Visibility changes keep the loaded page and cursor. Reveal catches up
+    // through the same delta path; only a different thread resets its history.
+    if (loadedThreadRef.current !== threadId) {
+      loadedThreadRef.current = threadId;
+      rowsRef.current = [];
+      maxSeqRef.current = 0;
+      loadedRef.current = false;
+      historyGeneration.current++;
+      loadedOlderRef.current = false;
+      olderCursorRef.current = null;
+      setOlderCursor(null);
+      setLoadingOlder(false);
+      hadThreadRecordRef.current = false;
+      setTimelineLoading(true);
+      setLoadError(null);
+      setArchivedAt(null);
+      setExecutionModeRequested(null);
+    }
 
     const applyTimeline = (
       timeline: Awaited<ReturnType<typeof product.threads.timeline>>,
@@ -374,6 +390,7 @@ export function ThreadDetail({
         model?: string | null;
         reasoningLevel?: string | null;
         acpMode?: string | null;
+        serviceTier?: string | null;
         permissionMode?: string | null;
         parentThreadId?: string | null;
         originKind?: unknown;
@@ -394,6 +411,7 @@ export function ThreadDetail({
       setThreadProviderId(typeof thread.providerId === 'string' ? thread.providerId : null);
       setThreadModel(typeof thread.model === 'string' ? thread.model : null);
       setThreadReasoning(typeof thread.reasoningLevel === 'string' ? thread.reasoningLevel : null);
+      setThreadServiceTier(typeof thread.serviceTier === 'string' ? thread.serviceTier : null);
       setThreadAcpMode(typeof thread.acpMode === 'string' ? thread.acpMode : null);
       setThreadPermissionMode({ threadId, mode: typeof thread.permissionMode === 'string' ? thread.permissionMode : null });
       setParentThreadId(thread.parentThreadId ?? null);
@@ -495,6 +513,9 @@ export function ThreadDetail({
       historyGeneration.current++;
       cancelled = true;
       activeLoad?.abort();
+      olderLoadRef.current?.abort();
+      olderLoadRef.current = null;
+      setLoadingOlder(false);
       runLoadRef.current = () => {};
       runner.dispose();
       refreshScheduler.dispose();
@@ -502,7 +523,7 @@ export function ThreadDetail({
       stopEvents();
       stopReconnect();
     };
-  }, [threadId, upsertThread]);
+  }, [threadId, upsertThread, timelineEnabled]);
 
   const markRead = useCallback(() => {
     if (!threadId) return;
@@ -732,14 +753,16 @@ export function ThreadDetail({
 
   const loadOlderHistory = async () => {
     const cursor = olderCursorRef.current;
-    if (!threadId || !cursor || loadingOlder) return;
+    if (!threadId || !timelineEnabled || !cursor || loadingOlder) return;
     const generation = historyGeneration.current;
+    const controller = new AbortController();
+    olderLoadRef.current = controller;
     setLoadingOlder(true);
     try {
       const body = await product.threads.timeline(threadId, {
         segmentLimit: TIMELINE_SEGMENT_LIMIT, beforeAnchorId: cursor.anchorId, beforeAnchorSeq: cursor.anchorSeq,
         includeNestedRows: 'false', summaryOnly: 'true'
-      });
+      }, { signal: controller.signal });
       if (generation !== historyGeneration.current || olderCursorRef.current?.anchorId !== cursor.anchorId) return;
       const merged = mergeTimelinePages(body.rows as TimelineRow[], rowsRef.current);
       if (JSON.stringify(merged).length > 32 * 1024 * 1024) {
@@ -753,8 +776,23 @@ export function ThreadDetail({
       setOlderCursor(olderCursorRef.current);
     } catch (error) {
       if (generation === historyGeneration.current) setLoadError(threadDetailLoadError(error));
-    } finally { if (generation === historyGeneration.current) setLoadingOlder(false); }
+    } finally {
+      if (olderLoadRef.current === controller) olderLoadRef.current = null;
+      if (generation === historyGeneration.current) setLoadingOlder(false);
+    }
   };
+
+  useEffect(() => {
+    if (!timelineEnabled) return;
+    if (!Number.isSafeInteger(linkSequence) || linkSequence <= 0 || searchQuery) return;
+    const hit = findTimelineMessageAtSequence(displayRows, linkSequence);
+    if (hit) { setSearchHit(previous => previous?.id === hit.id ? previous : hit); return; }
+    if (olderCursor && !loadingOlder && linkLoads.current < 100 && olderCursor.anchorId !== lastLinkCursor.current) {
+      lastLinkCursor.current = olderCursor.anchorId;
+      linkLoads.current++;
+      void loadOlderHistory();
+    }
+  }, [displayRows, linkSequence, olderCursor, loadingOlder, searchQuery, timelineEnabled]);
 
   const exitPlanMode = useCallback(() => {
     if (!threadId || planExitPending) return;
@@ -976,6 +1014,7 @@ export function ThreadDetail({
                 providerId={threadProviderId ?? undefined}
                 model={threadModel}
                 reasoningLevel={threadReasoning}
+                serviceTier={threadServiceTier}
                 acpMode={threadAcpMode}
                 permissionMode={threadPermissionMode?.threadId === threadId ? threadPermissionMode.mode : null}
                 executionModeRequested={executionModeRequested}

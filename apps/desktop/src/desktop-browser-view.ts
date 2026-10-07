@@ -59,6 +59,7 @@ export interface DesktopBrowserNativeTab extends DesktopBrowserState {
 }
 
 interface BrowserViewEntry {
+  tabId: string;
   view: WebContentsView;
   hostWindow: DesktopBrowserHostWindow;
   threadId: string;
@@ -129,6 +130,7 @@ export interface DesktopBrowserAutomationSnapshot {
 }
 
 export interface DesktopBrowserViewManager {
+  setDownloadControlGuard?(guard: (hostWebContentsId: number, tabId: string) => boolean): void;
   createTab(args: {
     hostWindow: DesktopBrowserHostWindow;
     tabId: string;
@@ -235,6 +237,7 @@ export function createDesktopBrowserViewManager(options?: {
 }): DesktopBrowserViewManager {
   const partition = options?.partition ?? ZCC_BROWSER_PARTITION;
   const appCommands = options?.appCommands;
+  let downloadControlGuard = (_hostWebContentsId: number, _tabId: string) => false;
   const entries = new Map<string, BrowserViewEntry>();
   const automationTargets = new Map<string, string>();
   const resizingHostIds = new Set<number>();
@@ -348,8 +351,13 @@ export function createDesktopBrowserViewManager(options?: {
       callback(isAllowedBrowserPermission(permission));
     });
     browserSession.setPermissionCheckHandler((_wc, permission) => isAllowedBrowserPermission(permission));
-    browserSession.on('will-download', (event) => {
-      event.preventDefault();
+    browserSession.on('will-download', (event, item, webContents) => {
+      const entry = [...entries.values()].find(value => value.view.webContents === webContents);
+      if (sessionPartition !== partition || !entry || !entry.visible || entry.automationTargetId !== null || downloadControlGuard(entry.hostWindow.webContents.id, entry.tabId)) {
+        event.preventDefault();
+        return;
+      }
+      item.setSaveDialogOptions({ title: 'Save downloaded file' });
     });
     hardenedSessions.set(sessionPartition, browserSession);
     return browserSession;
@@ -524,6 +532,7 @@ export function createDesktopBrowserViewManager(options?: {
       }
     });
     const entry: BrowserViewEntry = {
+      tabId: args.tabId,
       view,
       hostWindow: args.hostWindow,
       threadId: args.threadId ?? '',
@@ -630,6 +639,7 @@ export function createDesktopBrowserViewManager(options?: {
   }
 
   return {
+    setDownloadControlGuard(guard) { downloadControlGuard = guard; },
     createTab(request) {
       if (!isAllowedBrowserUrl(request.url)) throw new Error('Unsupported browser URL');
       if (request.hostWindow.isDestroyed() || request.hostWindow.webContents.isDestroyed()) {

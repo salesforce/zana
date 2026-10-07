@@ -166,16 +166,42 @@ describe('listen.ts', () => {
 });
 
 describe('product plugin sdk confinement', () => {
+  it('marks SSH and secondary-host projects unavailable to local SDK execution', () => {
+    const projects = { list: () => [
+      { id: 'local', name: 'Local', path: '/tmp/local', local: true },
+      { id: 'ssh', name: 'SSH', path: '/tmp/local', remote: { host: 'other' } },
+      { id: 'host', name: 'Host', path: '/tmp/local', hostId: 'secondary' }
+    ] } as any;
+    expect(productListProjects({ projects })).toEqual([
+      { id: 'local', name: 'Local', path: '/tmp/local', local: true },
+      { id: 'ssh', name: 'SSH', path: '/tmp/local', local: false },
+      { id: 'host', name: 'Host', path: '/tmp/local', local: false }
+    ]);
+  });
+  it('permits the registered primary host and rejects a secondary host with the same local path', async () => {
+    server = await startProductServer({ dataDir: tempDir(), origins: { serverPort: 0, devAppPort: 5173 } });
+    const { upsertHost } = await import('@zana-ai/zcc-db');
+    const primary = upsertHost(server.ctx.db, { name: 'Primary', hostKeyHash: 'primary', isPrimary: true });
+    const secondary = upsertHost(server.ctx.db, { name: 'Secondary', hostKeyHash: 'secondary', isPrimary: false });
+    const projects = { list: () => [
+      { id: 'primary', name: 'Primary', path: '/tmp/same', hostId: primary.id },
+      { id: 'secondary', name: 'Secondary', path: '/tmp/same', hostId: secondary.id }
+    ] } as any;
+    expect(productListProjects({ projects, db: server.ctx.db })).toEqual([
+      { id: 'primary', name: 'Primary', path: '/tmp/same', local: true },
+      { id: 'secondary', name: 'Secondary', path: '/tmp/same', local: false }
+    ]);
+  });
   it('projects the host-owned Default Project marker only when true, independently of its display name', () => {
     const projects = { list: () => [
-      {id:'default', name:'Renamed scratch', path:'/tmp/default', quickAgent:true},
+      {id:'default', name:'Renamed scratch', path:'/tmp/default', quickAgent:true, local:true},
       {id:'named', name:'Default Project', path:'/tmp/named'},
       {id:'ordinary', name:'Other', path:'/tmp/ordinary', quickAgent:false}
     ] } as any;
     expect(productListProjects({projects})).toEqual([
-      {id:'default', name:'Renamed scratch', path:'/tmp/default', quickAgent:true},
-      {id:'named', name:'Default Project', path:'/tmp/named'},
-      {id:'ordinary', name:'Other', path:'/tmp/ordinary'}
+      {id:'default', name:'Renamed scratch', path:'/tmp/default', quickAgent:true, local:true},
+      {id:'named', name:'Default Project', path:'/tmp/named', local:true},
+      {id:'ordinary', name:'Other', path:'/tmp/ordinary', local:true}
     ]);
   });
   it('lists projects and rejects inbox pushes for unknown project ids', async () => {
@@ -187,7 +213,7 @@ describe('product plugin sdk confinement', () => {
     const project = await projects.add(projectDir);
     const inbox = createInboxStore({ filePath: join(dir, '.zcc', 'inbox', 'entries.jsonl') });
     const ctx = { projects, inbox };
-    expect(productListProjects(ctx)).toEqual([{ id: project.id, name: project.name, path: project.path }]);
+    expect(productListProjects(ctx)).toEqual([{ id: project.id, name: project.name, path: project.path, local:true }]);
     await projects.update(project.id, { icon: 'Cloud' });
     expect(productListProjects(ctx)[0].icon).toBe('Cloud');
     await expect(
@@ -220,6 +246,37 @@ it('awaits the shared queue store through the live plugin SDK callback', async (
   const plugins = await attachProductPluginService(server.ctx, { bundledRoot });
   await plugins.install(pluginRoot);
   await expect(plugins.callRpc('queue-reader', 'queue', { threadId: 'thread' })).resolves.toEqual([{ id: queued.id }]);
+});
+
+it('authorizes plugin queue writes against the registered thread and normalizes attachment provenance', async () => {
+  const dataDir = tempDir(), pluginRoot = tempDir(), bundledRoot = tempDir();
+  writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({ name: 'queue-writer', version: '0.1.0',
+    engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+    zcc: { name: 'Queue writer', description: 'Queue write regression', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
+  writeFileSync(join(pluginRoot, 'server.mjs'), `export default api => {
+    api.rpc.method('create', args => api.sdk.threads.queuedMessages.create(args));
+  };`);
+  server = await startProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+  const { createConversationThread, createEnvironment, upsertHost } = await import('@zana-ai/zcc-db');
+  const host = upsertHost(server.ctx.db, { name: 'Queue host', hostKeyHash: 'queue-host' });
+  const environment = createEnvironment(server.ctx.db, { projectId: 'queue-project', hostId: host.id,
+    path: tempDir(), workspaceProvisionType: 'unmanaged', status: 'ready' });
+  const thread = createConversationThread(server.ctx.db, { projectId: 'queue-project', hostId: host.id,
+    environmentId: environment.id, providerId: 'codex' });
+  const plugins = await attachProductPluginService(server.ctx, { bundledRoot });
+  await plugins.install(pluginRoot);
+  await expect(plugins.callRpc('queue-writer', 'create', { threadId: 'missing', input: [{ type: 'text', text: 'Do work' }] }))
+    .rejects.toThrow('Thread is not registered');
+  await expect(plugins.callRpc('queue-writer', 'create', { threadId: thread.id,
+    input: [{ type: 'localImage', path: '/tmp/foreign.png', hostId: 'other-machine' }] }))
+    .rejects.toThrow('belongs to another machine');
+  const created = await plugins.callRpc('queue-writer', 'create', { threadId: thread.id,
+    input: [{ type: 'localImage', path: '/tmp/owned.png', hostId: host.id }] });
+  expect(created).toMatchObject({ id: expect.any(String) });
+  const { listQueuedMessages } = await import('../services/threads/queued-messages.js');
+  const queue = await listQueuedMessages(dataDir, thread.id);
+  expect(queue).toHaveLength(1);
+  expect(queue[0].content).toEqual([{ type: 'localImage', path: '/tmp/owned.png' }]);
 });
 
 function writeInteractionsPlugin(dir: string, pluginId: string): void {

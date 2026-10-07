@@ -103,3 +103,34 @@ it('bounds aggregate refresh time and outstanding reads, rotates hosts, and disc
     expect(listCalls[5][0].projectId).toBe('remote-3');
   } finally { vi.useRealTimers(); }
 });
+
+describe('explicit original-owner reads', () => {
+  it('reads current foreign content and updates the revision used by the next write', async () => {
+    const { store, request } = fixture();
+    const latest = record({ title: 'Disk edit' });
+    request.mockResolvedValueOnce({ projectId: 'foreign', kind: 'followups', hostId: 'b', records: [{ id: 'f', content: JSON.stringify(latest), sha256: 'edited' }] });
+    expect(await store.read(record())).toEqual(latest);
+    await store.save(latest); expect(request.mock.calls.at(-1)![0]).toMatchObject({ action: 'write', expectedSha256: 'edited' });
+  });
+  it('requires an owner response rather than returning a cached record', async () => {
+    const { store, request } = fixture(); await store.load(); request.mockRejectedValue(new Error('offline'));
+    await expect(store.read(record())).rejects.toThrow('offline');
+  });
+  it.each(['scope', 'kind', 'missing', 'invalid', 'identity'])('rejects an invalid explicit %s read', async problem => {
+    const { store, request } = fixture();
+    const result: ProjectMetadataResult = { projectId: 'foreign', kind: 'followups', hostId: 'b', records: [{ id: 'f', content: JSON.stringify(record()), sha256: 'revision' }] };
+    if (problem === 'scope') result.projectId = 'other';
+    if (problem === 'kind') result.kind = 'goals';
+    if (problem === 'missing') result.records = [];
+    if (problem === 'invalid') result.records[0].content = '{}';
+    if (problem === 'identity') result.records[0].content = JSON.stringify(record({ id: 'wrong' }));
+    request.mockResolvedValue(result); await expect(store.read(record())).rejects.toThrow();
+  });
+  it('reads local records through their adapter and forwards explicit definition patches', async () => {
+    const { store, local, request } = fixture(); const value = record({ source: 'global' });
+    local.list.mockReturnValue([value]); expect(await store.read(value)).toEqual(value);
+    const patch = { title: 'Patched' }; await store.save(value, patch);
+    expect(local.save).toHaveBeenCalledWith(value, store.localProjects(), patch); expect(request).not.toHaveBeenCalled();
+    local.list.mockReturnValue([]); await expect(store.read(value)).rejects.toThrow('not found');
+  });
+});

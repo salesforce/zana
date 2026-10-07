@@ -190,3 +190,61 @@ describe('agent board drag/drop', () => {
     expect(agentBoardMoves.store.getState().done).toEqual({});
   });
 });
+
+describe('phone agent board swipe-to-close', () => {
+  function swipe(title: string, to: number) {
+    const surface = card(title).parentElement!;
+    let captured = false;
+    surface.setPointerCapture = vi.fn(() => { captured = true; });
+    surface.hasPointerCapture = vi.fn(() => captured);
+    surface.releasePointerCapture = vi.fn(() => { captured = false; });
+    const at = (x: number) => ({ pointerId: 1, isPrimary: true, button: 0, clientX: x, clientY: 30 });
+    fireEvent.pointerDown(card(title), at(240));
+    fireEvent.pointerMove(card(title), at(to));
+    fireEvent.pointerUp(card(title), at(to));
+    fireEvent.click(card(title));
+    return surface;
+  }
+  function phone(items: FleetItem[], inspect = vi.fn()) {
+    layout.compact = true;
+    render(<MemoryRouter><AgentBoardLanes cards={items} onInspect={inspect} /></MemoryRouter>);
+    return inspect;
+  }
+
+  it('closes a CLI agent immediately on a long left swipe without opening it', async () => {
+    const inspect = phone([agentFleetItem(agent)]);
+    await act(async () => { swipe('CLI probe', 40); });
+    expect(api.close).toHaveBeenCalledExactlyOnceWith('cli', 'p');
+    expect(api.write).not.toHaveBeenCalled();
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it('archives a thread after revealing the Close action with a short swipe', async () => {
+    const inspect = phone([threadFleetItem(thread)]);
+    const surface = swipe('Thread probe', 160);
+    expect(surface.style.transform).toBe('translateX(-88px)');
+    expect(inspect).not.toHaveBeenCalled();
+    const action = surface.closest('.swipe-close')!.querySelector<HTMLButtonElement>('.swipe-close-action button')!;
+    await act(async () => { fireEvent.click(action); });
+    expect(api.archive).toHaveBeenCalledExactlyOnceWith('thread');
+    expect(useThreads.getState().threads).toEqual([]);
+  });
+
+  it('still opens a card on a plain tap', () => {
+    const inspect = phone([agentFleetItem(agent)]);
+    fireEvent.click(card('CLI probe'));
+    expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ id: 'cli' }));
+  });
+
+  it('does not offer swipe on desktop, squad runs or team orchestrators', () => {
+    layout.compact = false;
+    const view = render(<MemoryRouter><AgentBoardLanes cards={[agentFleetItem(agent)]} onInspect={vi.fn()} /></MemoryRouter>);
+    expect(document.querySelector('.swipe-close')).toBeNull();
+    view.unmount();
+    phone([
+      agentFleetItem({ ...agent, session: { ...agent.session, id: 'orch', title: 'Orchestrator', cohort: { teamId: 't', teamName: 'Team', role: 'orchestrator' } } }),
+      agentFleetItem({ ...agent, session: { ...agent.session, id: 'run', title: 'Run worker', cohort: { teamId: 't', teamName: 'Team', role: 'worker', executionId: 'e' } } })
+    ] as FleetItem[]);
+    expect(document.querySelector('.swipe-close')).toBeNull();
+  });
+});

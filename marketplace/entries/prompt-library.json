@@ -1,0 +1,10 @@
+{
+  "id": "prompt-library",
+  "displayName": "Prompt Library",
+  "description": "Star, search, and reuse structured prompts from thread, project, or all history.",
+  "overview": "Keep useful prompts close at hand. Search the current thread, a project, or all visible thread history, star prompts, and restore them into the composer.\n\nRestoring a prompt preserves its structured text and attachment references. Uploaded attachments reused in another project are copied into that project's storage before sending. Machine-local attachments must belong to the destination machine.\n\nPrompt Library is optional and is not installed automatically. Starred prompts are stored locally in the plugin's storage.\n",
+  "icon": { "lucide": "BookMarked" },
+  "tags": ["official"],
+  "author": { "name": "Zana", "github": "salesforce", "url": "https://github.com/salesforce/zana" },
+  "source": { "git": { "url": "https://github.com/salesforce/zana", "subdir": "plugins/prompt-library", "ref": "HEAD" } }
+}

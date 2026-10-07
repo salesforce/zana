@@ -1,0 +1,23 @@
+{
+  "name": "@zcc-ext/prompt-library",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Star and reuse prompts from thread, project, or all history.",
+  "engines": {
+    "zcc": ">=2.3.3",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "build": "tsx ./build.ts"
+  },
+  "zcc": {
+    "name": "Prompt Library",
+    "description": "Star and reuse prompts from thread, project, or all history.",
+    "branding": {
+      "icon": "BookMarked"
+    },
+    "server": "./server.mjs",
+    "app": "./app.tsx"
+  }
+}

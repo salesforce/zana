@@ -116,6 +116,15 @@ describe('collectTestPluginApp', () => {
 });
 
 describe('createFakePluginHost sdk stubs', () => {
+  it('records prompt history requests and permits overriding the empty default', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'history-reader' });
+    const args = { scope: 'project' as const, projectId: 'p1' };
+    await expect(zcc.sdk.experimental_promptHistory.list(args)).resolves.toEqual({ entries: [], nextCursor: null });
+    harness.sdk.stub('experimental_promptHistory.list', () => ({ entries: [], nextCursor: 'older-page' }));
+    await expect(zcc.sdk.experimental_promptHistory.list(args)).resolves.toEqual({ entries: [], nextCursor: 'older-page' });
+    expect(harness.sdk.callsTo('experimental_promptHistory.list')).toEqual([[args], [args]]);
+  });
+
   it('throws until inbox and projects callbacks are wired', async () => {
     const bare = createFakePluginHost({ pluginId: 'bare' });
     await expect(bare.zcc.sdk.inbox.push({ projectId: 'p', comments: 'x' })).rejects.toThrow(/not available/);

@@ -102,6 +102,11 @@
   border-radius: 10px;
   font-size: 16px;
 }
+.model-reasoning-picker-menu--mobile .model-reasoning-picker-reload {
+  width: 44px;
+  height: 44px;
+  margin: -12px -8px -6px 0;
+}
 .model-reasoning-picker-menu--mobile .model-reasoning-picker-row > span { overflow-wrap: anywhere; min-width: 0; }
 .model-reasoning-picker-menu--mobile .model-reasoning-picker-row > svg { flex-shrink: 0; }
 .model-reasoning-picker-menu--mobile .model-reasoning-picker-row.is-selected {

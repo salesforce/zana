@@ -9,6 +9,14 @@ const now = 1_800_000_000_000;
 afterEach(() => vi.useRealTimers());
 
 describe('desktop UI send proofs', () => {
+  it('binds authenticated phone approvals to their surface and consumes them once', () => {
+    const verify = createUiSendVerifier(secret);
+    const proof = signUiSend(secret, threadId, itemId, Date.now(), 'mobile-ui');
+    expect(verify(proof, threadId, itemId)).toBe(false);
+    expect(verify(proof, threadId, itemId, 'mobile-ui')).toBe(true);
+    expect(verify(proof, threadId, itemId, 'mobile-ui')).toBe(false);
+    expect(verify(signUiSend(secret, threadId, itemId), threadId, itemId, 'mobile-ui')).toBe(false);
+  });
   it('rejects short verifier secrets', () => {
     expect(() => createUiSendVerifier('x'.repeat(31))).toThrow('Invalid desktop UI signing secret');
     expect(() => createUiSendVerifier('x'.repeat(32))).not.toThrow();

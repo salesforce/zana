@@ -135,8 +135,14 @@ describe('shouldEngageSidebarSplitDrag', () => {
     expect(shouldEngageSidebarSplitDrag({ ...base, x: 300, y: 320 })).toBe(true);
   });
 
-  it('lets reorder win on a mostly-vertical drag even past the edge', () => {
-    expect(shouldEngageSidebarSplitDrag({ ...base, x: 288, y: 700 })).toBe(false);
+  it('engages diagonal drags from low project rows to pane edges outside the sidebar', () => {
+    expect(shouldEngageSidebarSplitDrag({ ...base, x: 288, y: 700 })).toBe(true);
+    expect(shouldEngageSidebarSplitDrag({ ...base, startY: 700, x: 288, y: 100 })).toBe(true);
+  });
+
+  it('keeps vertical reordering inside the sidebar', () => {
+    expect(shouldEngageSidebarSplitDrag({ ...base, x: 20, y: 700 })).toBe(false);
+    expect(shouldEngageSidebarSplitDrag({ ...base, x: 248, y: 100 })).toBe(false);
   });
 
   it('requires travel beyond the activation distance even just past the edge', () => {

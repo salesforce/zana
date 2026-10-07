@@ -1,3 +1,4 @@
+import { pagedConversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
 import { validatePluginHostValue } from './plugin-host-rpc.js';
 import { searchPluginInbox, readPluginInbox } from './plugin-inbox.js';
 import { completePluginAssistant } from './plugin-assistant.js';
@@ -594,6 +595,14 @@ export function createPluginApi(
       }
     } satisfies PluginHooks,
     sdk: {
+      experimental_promptHistory: {
+        list: async (args: { scope: 'thread' | 'project' | 'all'; threadId?: string; projectId?: string; cursor?: string; query?: string }) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          if (!['thread', 'project', 'all'].includes(args?.scope)) throw new Error('Invalid history scope');
+          return pagedConversationPromptHistory(options.productContext, args);
+        }
+      },
       assistant: {
         complete: async (args) => {
           assertLive();
@@ -663,7 +672,7 @@ export function createPluginApi(
             ...(args?.visibility === 'hidden' || args?.visibility === 'visible' ? { visibility: args.visibility } : {}),
             ...(args?.environment ? { environment: spawnEnvironmentChoiceSchema.parse(args.environment) } : {}),
             ...(args?.hostId ? { hostId: args.hostId } : {}),
-            ...(args?.serviceTier === 'default' || args?.serviceTier === 'fast' ? { serviceTier: args.serviceTier } : {}),
+            ...(typeof args?.serviceTier === 'string' ? { serviceTier: args.serviceTier } : {}),
             ...(args?.pluginMetadata !== undefined
               ? { pluginMetadata: validatePluginMetadata(args.pluginMetadata) }
               : {})

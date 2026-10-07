@@ -54,6 +54,7 @@ export interface MobileGatewayManagerDeps {
   connectionStore?: MobileConnectionStore;
   connectRelay?: typeof connectRelay;
   connectFetch?: ConnectFetch;
+  signQueuedSend?: (threadId: string, itemId: string) => string;
 }
 
 /**
@@ -100,6 +101,7 @@ export class MobileGatewayManager {
       this.handle = await this.startGateway({
         upstream: typeof this.deps.upstream === 'function' ? this.deps.upstream() : this.deps.upstream, publicUrl: binding.publicUrl,
         host: binding.host, port: this.port, devices: this.deps.devices,
+        signQueuedSend: this.deps.signQueuedSend,
         ...(gatewayCredential ? { connectGatewayCredential: gatewayCredential } : {}),
         ...(gatewayCredential && this.deps.dataDir ? { connectInstanceId: readProductInstanceId(this.deps.dataDir) } : {})
       });

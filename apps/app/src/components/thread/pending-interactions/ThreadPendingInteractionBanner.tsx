@@ -1,3 +1,4 @@
+import { loadQuestionDraft, saveQuestionDraft, clearQuestionDraft, questionDraftKey } from './question-drafts.js';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Check } from 'lucide-react';
 import {
@@ -25,7 +26,6 @@ import {
 } from './pending-interaction-formatting.js';
 import {
   OTHER_OPTION_LABEL,
-  createInitialQuestionAnswers,
   isQuestionAnswered,
   pendingQuestionBannerTitle,
   shouldShowFreeTextInput,
@@ -324,16 +324,20 @@ function QuestionPendingInteractionBanner({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [activeId, setActiveId] = useState(interaction.id);
-  const [answers, setAnswers] = useState<Record<string, QuestionAnswerDraft>>(
-    () => createInitialQuestionAnswers(payload.questions)
-  );
-  if (activeId !== interaction.id) {
-    setActiveId(interaction.id);
-    setAnswers(createInitialQuestionAnswers(payload.questions));
-    setCurrentIndex(0);
-  }
+  const draftKey = questionDraftKey(threadId, interaction.id);
+  const signature = JSON.stringify(payload.questions);
+  const identity = `${draftKey}:${signature}`;
+  const [draft, setDraft] = useState(() => ({ identity, ...loadQuestionDraft(draftKey, payload.questions) }));
+  if (draft.identity !== identity) setDraft({ identity, ...loadQuestionDraft(draftKey, payload.questions) });
+  const activeDraft = draft.identity === identity ? draft : { identity, ...loadQuestionDraft(draftKey, payload.questions) };
+  const currentIndex = activeDraft.index;
+  const answers = activeDraft.answers;
+  const setCurrentIndex = (value: number | ((index: number) => number)) => {
+    const index = typeof value === 'function' ? value(currentIndex) : value;
+    const next = { ...activeDraft, index };
+    saveQuestionDraft(draftKey, next);
+    setDraft(next);
+  };
   const questions = payload.questions;
   const total = questions.length;
   const current = questions[Math.min(currentIndex, Math.max(total - 1, 0))] ?? null;
@@ -345,10 +349,11 @@ function QuestionPendingInteractionBanner({
     questionId: string,
     update: (answer: QuestionAnswerDraft) => QuestionAnswerDraft
   ) => {
-    setAnswers((currentAnswers) => ({
-      ...currentAnswers,
-      [questionId]: update(currentAnswers[questionId] ?? { selected: [], otherSelected: false })
-    }));
+    const next = { ...activeDraft, answers: { ...answers,
+      [questionId]: update(answers[questionId] ?? { selected: [], otherSelected: false })
+    } };
+    saveQuestionDraft(draftKey, next);
+    setDraft(next);
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -358,7 +363,7 @@ function QuestionPendingInteractionBanner({
     void product.threads.interactions.resolve(threadId, interaction.id, {
       kind: 'user_answer',
       answers: toUserAnswerResolution(questions, answers)
-    }).catch((caught: unknown) => {
+    }).then(() => clearQuestionDraft(draftKey, activeDraft)).catch((caught: unknown) => {
       setError(caught instanceof Error ? caught.message : 'Failed to answer question');
     }).finally(() => setBusy(false));
   };

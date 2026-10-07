@@ -1,0 +1,43 @@
+{
+  "name": "@zcc-ext/design-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Design documents your agents can read, edit, review and enrich — rendered as rich pages.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "build": "node --import tsx scripts/build-app.mjs",
+    "package": "node --import tsx scripts/build-app.mjs"
+  },
+  "zcc": {
+    "name": "Design Docs",
+    "description": "Multi-file design documents (specs, RFCs, ADRs) that agents read, edit, review and enrich",
+    "branding": {
+      "icon": "DraftingCompass"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js",
+    "skills": [
+      "skills"
+    ]
+  },
+  "dependencies": {
+    "lucide-react": "^1.35.0"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
+    "@zana-ai/zcc-plugin-build": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "better-sqlite3": "^12.11.1",
+    "happy-dom": "^20.10.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  }
+}

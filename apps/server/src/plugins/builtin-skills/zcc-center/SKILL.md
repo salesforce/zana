@@ -6,10 +6,10 @@ description: Author schedules, schedule templates, and personas for Zana by writ
 # zcc-center — schedule / template / persona file formats
 
 > **Prefer MCP in-session, CLI in a human shell.** Inside a Zana agent
-> terminal, list / fire / enable / disable with `schedule_list`,
-> `schedule_run_now`, and `schedule_set_enabled` on the `zcc-inbox` MCP
+> terminal, list / read / edit / refresh / fire / enable / disable with `schedule_list`,
+> `schedule_get`, `schedule_update`, `schedule_reload`, `schedule_run_now`, and `schedule_set_enabled` on the `zcc-inbox` MCP
 > server (same `.zcc/schedules` store the Scheduler UI uses — not
-> `zana_schedule_*` / `.zana/scheduler` YAML). `zcc schedule run-now|enable|disable`
+> `zana_schedule_*` / `.zana/scheduler` YAML). `zcc schedule update|reload|run-now|enable|disable`
 > is refused for agents (`FORBIDDEN_AGENT`). In an operator shell, the CLI
 > verbs are the happy path. This skill is a **file-format appendix** for when
 > you must author JSON on disk. Do not write JSON into `.zcc` as the default
@@ -494,3 +494,11 @@ injected into your system prompt for scheduled runs.)
   `baseProfile`/`model`/`permissionMode` enum silently skips the file.
 - **`initialPrompt` is claude-only.** A `shell` persona's `initialPrompt` is
   dropped (it would run as a shell command).
+
+When editing an existing schedule, prefer `schedule_update({ id, patch })` over
+writing its JSON: patch `prompt`, `extraArgs`, `every` or `cron`, and optional `tz`.
+Read back the live app definition with `schedule_get({ id })` to verify the
+prompt, arguments, cadence and `updatedAt`. After a direct file edit,
+`schedule_reload({ id })` either refreshes immediately or reports its own live
+worker and retries when it finishes. Other projects' scheduled runs do not block
+that refresh. Runtime status writes preserve definition fields already on disk.

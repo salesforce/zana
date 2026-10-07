@@ -1,0 +1,17 @@
+{
+  "name": "@zcc-ext/google-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "App activity and coarse page views in Google Analytics, with a disconnect switch.",
+  "engines": { "zcc": ">=1.0.0", "zccPluginSdk": ">=0.1.0" },
+  "scripts": { "build": "node build.mjs", "package": "node build.mjs" },
+  "zcc": {
+    "name": "Google Analytics",
+    "description": "App activity and coarse page views in Google Analytics, with a disconnect switch.",
+    "branding": { "icon": "ChartNoAxesColumn" },
+    "server": "./server.mjs",
+    "app": "./src/app.ts",
+    "extra": { "runtimeAssets": ["release-defaults"] }
+  }
+}

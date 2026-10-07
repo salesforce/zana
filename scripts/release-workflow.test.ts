@@ -63,6 +63,15 @@ describe('Windows release pipeline', () => {
       .toContain('artifacts/release-windows-x64/latest.yml');
   });
 
+  it('publishes the curated notes as the release body the update banner previews', () => {
+    // The app reads this body back from the feed for its pre-update "What's new";
+    // dropping body_path silently empties that preview.
+    const publish = workflow.jobs.release.steps.find((step: any) => step.uses?.startsWith('softprops/action-gh-release@'));
+    expect(publish.with.body_path).toBe('docs/releases/${{ steps.meta.outputs.title }}.md');
+    expect(workflow.jobs.release.steps.find((step: any) => step.id === 'meta').run).toContain('title=${GITHUB_REF_NAME#v}');
+    expect(workflow.jobs.verify.steps.some((step: any) => step.run === 'pnpm run check:release-notes')).toBe(true);
+  });
+
   it('builds natively and tests the actual Windows package before uploading', () => {
     const windows = workflow.jobs['build-windows'];
     expect(windows['runs-on']).toBe('windows-2025');

@@ -8,10 +8,10 @@ import { startProductServer, type ProductServer } from './product-server.js';
 let server: ProductServer;
 let dir: string;
 const row = { id: 's', projectId: 'p', hostId: 'primary', profile: 'shell', status: 'running' };
-async function boot(projectHostId?: string) {
+async function boot(projectHostId?: string, remote?: { host: string }) {
   dir = mkdtempSync(join(tmpdir(), 'zcc-cli-api-'));
   writeFileSync(join(dir, 'projects.json'), JSON.stringify({ version: 1, projects: [
-    { id: 'p', name: 'Project', path: dir, hostId: projectHostId, createdAt: 1, lastActiveAt: 1 }
+    { id: 'p', name: 'Project', path: dir, hostId: projectHostId, remote, createdAt: 1, lastActiveAt: 1 }
   ] }));
   server = await startProductServer({ dataDir: dir, origins: { serverPort: 0, devAppPort: 5173 } });
   upsertHost(server.ctx.db, { id: 'primary', name: 'Primary', hostKeyHash: 'a'.repeat(64), isPrimary: true });
@@ -52,6 +52,19 @@ it('validates the project and machine before forwarding any executable intent', 
 it('rejects a foreign project owner even when the caller selects the primary', async () => {
   const ops = await boot('secondary');
   expect((await request('', 'POST', { projectId: 'p', hostId: 'primary', profile: 'shell' })).status).toBe(409);
+  expect(ops.create).not.toHaveBeenCalled();
+});
+
+it.each([undefined, 'secondary'])('forwards registered SSH CLI launches with daemon binding %s', async hostId => {
+  const ops = await boot(hostId, { host: 'ssh-box' });
+  for (const requested of [undefined, 'primary', ...(hostId ? [hostId] : [])]) {
+    expect((await request('', 'POST', { projectId: 'p', profile: 'shell', hostId: requested })).status).toBe(201);
+    expect(ops.create).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: 'p', hostId: requested }));
+  }
+  ops.create.mockClear();
+  for (const requested of ['other', '', null, 42]) {
+    expect((await request('', 'POST', { projectId: 'p', profile: 'shell', hostId: requested })).status).toBe(409);
+  }
   expect(ops.create).not.toHaveBeenCalled();
 });
 

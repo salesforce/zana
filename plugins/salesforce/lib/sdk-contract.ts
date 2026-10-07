@@ -9,6 +9,8 @@
  * free of `@zana-ai/*` and of DX UI (Explorer, Agentforce, Apex/LWC tools).
  */
 import type { QueryPage } from './soql-query-more.js';
+export type { SalesforceToolProvider, SalesforceToolService, SalesforceToolCallContext } from './tool-provider-contract.js';
+export type SalesforcePluginSdk = SalesforceSdk & import('./tool-provider-contract.js').SalesforceToolService;
 import type {
   DoctorReport,
   EnvelopeKind,

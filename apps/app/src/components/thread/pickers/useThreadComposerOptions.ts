@@ -108,9 +108,7 @@ export function useThreadComposerOptions(input: {
     });
   }, [model, providerId, reasoningLevel]);
 
-  const refreshAcpModeOptions = useCallback(() => {
-    void hostCatalog.reloadProvider(providerId);
-  }, [hostCatalog, providerId]);
+  const refreshModels = useCallback(() => hostCatalog.reloadProvider(providerId), [hostCatalog, providerId]);
 
   useEffect(() => {
     if (input.lockedProviderId) setProviderIdState(input.lockedProviderId);
@@ -280,7 +278,8 @@ export function useThreadComposerOptions(input: {
     acpMode,
     setAcpMode,
     acpModeOptions,
-    refreshAcpModeOptions,
+    refreshAcpModeOptions: refreshModels,
+    refreshModels,
     modelOptions,
     moreModelOptions,
     modelIsLoading: loading,
@@ -288,6 +287,7 @@ export function useThreadComposerOptions(input: {
     modelLoadErrorDetail,
     reasoningLevel,
     setReasoningLevel,
-    reasoningOptions
+    reasoningOptions,
+    serviceTierOptions: catalog.providers.find(row => row.id === providerId)?.serviceTiers ?? []
   };
 }

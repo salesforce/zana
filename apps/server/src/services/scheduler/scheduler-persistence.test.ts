@@ -8,7 +8,7 @@ import { validateScheduleFile } from './schedule-validation.js';
 const fs = vi.hoisted(() => ({ watch: vi.fn(), existsSync: vi.fn(() => true), mkdirSync: vi.fn() }));
 vi.mock('node:fs', () => fs);
 vi.mock('./scheduler-store.js', () => ({
-  saveSchedule: vi.fn(), deleteSchedule: vi.fn(() => true), listAllSchedules: vi.fn(() => []),
+  readSchedule: vi.fn((task) => structuredClone(task)), saveSchedule: vi.fn(), deleteSchedule: vi.fn(() => true), listAllSchedules: vi.fn(() => []),
   globalDir: () => '/global/schedules', projectDir: (project: Project) => `${project.path}/.zcc/schedules`
 }));
 const project: Project = { id: 'p1', name: 'Original owner', path: '/owner/project', createdAt: 0, lastActiveAt: 0 };
@@ -22,6 +22,7 @@ const deferred = <T>() => {
 function fixture() {
   const records = new Map<string, ScheduledTask>();
   const persistence = {
+    read: undefined as undefined | ReturnType<typeof vi.fn>,
     load: vi.fn(async () => structuredClone([...records.values()])),
     save: vi.fn(async (value: ScheduledTask) => { records.set(value.id, structuredClone(value)); }),
     remove: vi.fn(async (value: ScheduledTask) => { records.delete(value.id); }),
@@ -231,12 +232,12 @@ describe('original-owner scheduler persistence', () => {
     expect(await manager.setEnabled('absent', false)).toBeNull(); await manager.remove('absent');
     await manager.onProjectRemoved(project.id); expect(manager.list()).toEqual([]); expect(records.has(task.id)).toBe(true);
   });
-  it('refreshes foreign records periodically but skips a live worker and cleans up the poll', async () => {
+  it('refreshes foreign records periodically while preserving a live worker and cleans up the poll', async () => {
     vi.useFakeTimers(); const { manager, input, persistence, sessions } = fixture(); manager.startWatching();
     const task = await manager.create(input); await vi.advanceTimersByTimeAsync(15_000); expect(persistence.load).toHaveBeenCalledOnce();
-    await manager.runNow(task.id); await vi.advanceTimersByTimeAsync(15_000); expect(persistence.load).toHaveBeenCalledOnce();
+    await manager.runNow(task.id); await vi.advanceTimersByTimeAsync(15_000); expect(persistence.load).toHaveBeenCalledTimes(2);
     sessions[0].status = 'exited'; persistence.load.mockRejectedValue(new Error('offline'));
-    await vi.advanceTimersByTimeAsync(15_000); expect(persistence.load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(15_000); expect(persistence.load).toHaveBeenCalledTimes(3);
     manager.stopWatching(); manager.stopAll(); expect(vi.getTimerCount()).toBe(0);
   });
   it('watches only local directories and handles external changes and watcher failures', async () => {
@@ -275,15 +276,123 @@ describe('original-owner scheduler persistence', () => {
     const task = await manager.create({ ...input, enabled: true }); manager.stopAll();
     await manager.loadAll([project]); expect(vi.getTimerCount()).toBe(1);
     await manager.runNow(task.id); const calls = persistence.load.mock.calls.length;
-    await manager.loadAll([project]); expect(persistence.load).toHaveBeenCalledTimes(calls); expect(deps.launchTerminal).toHaveBeenCalledOnce();
+    await manager.loadAll([project]); expect(persistence.load).toHaveBeenCalledTimes(calls + 1); expect(deps.launchTerminal).toHaveBeenCalledOnce();
     await manager.setEnabled(task.id, false); expect(manager.list()[0].enabled).toBe(false);
   });
-  it('ignores its own file writes and postpones an external reload while a worker is live', async () => {
-    vi.useFakeTimers(); const { manager, input, persistence, sessions } = fixture();
+  it('retains a watcher event inside write suppression and reloads other schedules during a live run', async () => {
+    vi.useFakeTimers(); const { manager, input, persistence, records, ptys } = fixture();
     let changed!: () => void; fs.watch.mockImplementation((_dir, _options, callback) => { changed = callback; return { close: vi.fn(), on: vi.fn() }; });
-    manager.startWatching(); const task = await manager.create(input); changed(); await vi.advanceTimersByTimeAsync(250); expect(persistence.load).not.toHaveBeenCalled();
-    await manager.runNow(task.id); await vi.advanceTimersByTimeAsync(1_000); changed(); await vi.advanceTimersByTimeAsync(500); expect(persistence.load).not.toHaveBeenCalled();
-    sessions[0].status = 'exited'; await vi.advanceTimersByTimeAsync(250); expect(persistence.load).toHaveBeenCalledOnce();
+    manager.startWatching(); const active = await manager.create(input); const idle = await manager.create(input);
+    await manager.runNow(active.id);
+    records.get(idle.id)!.prompt = 'External edit'; changed();
+    await vi.advanceTimersByTimeAsync(250); expect(persistence.load).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(manager.get(idle.id).prompt).toBe('External edit');
+    expect(ptys.listenerCount('exit')).toBe(1);
+    expect(manager.get(active.id).status.runCount).toBe(1);
+  });
+  it('preserves disk prompt/effort without updatedAt changes on report, completion and toggles', async () => {
+    const { manager, input, persistence, records, sessions, ptys } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const task = await manager.create({ ...input, prompt: 'Old', extraArgs: ['--effort', 'max'] });
+    await manager.runNow(task.id);
+    Object.assign(records.get(task.id)!, { prompt: 'External', extraArgs: ['--effort', 'high'] });
+    const stamp = records.get(task.id)!.updatedAt;
+    await manager.attachReport(sessions[0].id, 'Done');
+    expect(records.get(task.id)).toMatchObject({ prompt: 'External', extraArgs: ['--effort', 'high'], updatedAt: stamp });
+    await manager.onAgentFinished(sessions[0].id);
+    await manager.setEnabled(task.id, true);
+    sessions[0].status = 'exited'; ptys.emit('exit', sessions[0].id, 0);
+    await manager.attachReport('absent', 'drain');
+    expect(manager.get(task.id)).toMatchObject({ prompt: 'External', extraArgs: ['--effort', 'high'], enabled: true, status: { runCount: 1, runs: [expect.objectContaining({ report: 'Done', finishedAt: expect.any(String) })] } });
+  });
+  it('patches the latest disk definition and refuses unreadable or deleted definitions', async () => {
+    const { manager, input, persistence, records } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const task = await manager.create(input);
+    records.get(task.id)!.prompt = 'External';
+    await manager.update(task.id, { every: '1h', extraArgs: ['--effort', 'medium'] });
+    expect(records.get(task.id)).toMatchObject({ prompt: 'External', schedule: { every: '1h' } });
+    persistence.read.mockRejectedValue(new Error('unreadable JSON'));
+    const writes = persistence.save.mock.calls.length;
+    await expect(manager.setEnabled(task.id, false)).rejects.toThrow('unreadable');
+    await expect(manager.reload(task.id)).rejects.toThrow('unreadable');
+    await expect(manager.runNow(task.id)).rejects.toThrow('unreadable');
+    expect(persistence.save).toHaveBeenCalledTimes(writes);
+  });
+  it('reports a same-schedule reload deferral, retries across writes, and preserves exit listeners', async () => {
+    vi.useFakeTimers(); const { manager, input, records, sessions, ptys } = fixture();
+    const task = await manager.create(input); await manager.runNow(task.id);
+    records.get(task.id)!.prompt = 'Reloaded';
+    expect(await manager.reload(task.id)).toMatchObject({ reloaded: false, reason: expect.stringContaining(sessions[0].id), sessionIds: [sessions[0].id] });
+    await vi.advanceTimersByTimeAsync(750); expect(manager.get(task.id).prompt).toBeUndefined();
+    // Another schedule's persistence extends suppression across the deferred callback.
+    await manager.create(input); sessions[0].status = 'exited';
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(manager.get(task.id).prompt).toBe('Reloaded'); expect(ptys.listenerCount('exit')).toBe(1);
+    ptys.emit('exit', sessions[0].id, 0); await manager.attachReport('absent', 'drain');
+    expect(manager.get(task.id).status.runs[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+  it('gets a detached live snapshot and reloads one record without a launch', async () => {
+    const { manager, input, persistence, records, deps } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const task = await manager.create(input); const copy = manager.get(task.id); copy.prompt = 'Mutated';
+    expect(manager.get(task.id).prompt).toBeUndefined(); records.get(task.id)!.prompt = 'Disk';
+    expect(await manager.reload(task.id)).toMatchObject({ reloaded: true, schedule: { prompt: 'Disk' } });
+    expect(deps.launchTerminal).not.toHaveBeenCalled();
+    expect(() => manager.get('missing')).toThrow('not found'); await expect(manager.reload('missing')).rejects.toThrow('not found');
+  });
+  it('refreshes the definition at fire time and reaps dead sessions before reload guards', async () => {
+    const { manager, input, persistence, records, deps, sessions, ptys } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const task = await manager.create(input); Object.assign(records.get(task.id)!, { prompt: 'Latest prompt', extraArgs: ['--effort', 'high'] });
+    await manager.runNow(task.id);
+    expect(deps.launchTerminal).toHaveBeenCalledWith(expect.objectContaining({ extraArgs: expect.arrayContaining(['--effort', 'high', 'Latest prompt']) }), expect.any(Object));
+    ptys.reapDeadSessions.mockImplementation(() => { sessions[0].status = 'exited'; });
+    expect(await manager.reload(task.id)).toMatchObject({ reloaded: true });
+  });
+  it('keeps an unchanged timer deadline across watcher and periodic reloads', async () => {
+    vi.useFakeTimers(); const { manager, input, records } = fixture();
+    const task = await manager.create({ ...input, enabled: true });
+    const deadline = manager.get(task.id).status.nextRunAt;
+    await vi.advanceTimersByTimeAsync(15_000);
+    // Simulate validator-added optional undefined keys and a different JSON key order.
+    const saved = records.get(task.id)!;
+    records.set(task.id, { prompt: undefined, extraArgs: undefined, ...saved, status: { ...saved.status, nextRunAt: undefined } });
+    await manager.loadAll([project]);
+    expect(manager.get(task.id).status.nextRunAt).toBe(deadline);
+  });
+  it('retimes a disk cadence edit rather than firing it at the previous deadline', async () => {
+    vi.useFakeTimers(); const { manager, input, persistence, records, deps } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const task = await manager.create({ ...input, enabled: true });
+    records.get(task.id)!.schedule = { every: '1h' };
+    await (manager as any).fire(task.id, { manual: false });
+    expect(deps.launchTerminal).not.toHaveBeenCalled();
+    expect(manager.get(task.id).status.nextRunAt).toBe(new Date(Date.now() + 3_600_000).toISOString());
+    records.get(task.id)!.enabled = false;
+    await (manager as any).fire(task.id, { manual: false });
+    expect(deps.launchTerminal).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+  it('retimes a disk cadence adopted during report persistence without releasing the worker', async () => {
+    vi.useFakeTimers(); const { manager, input, persistence, records, sessions, ptys } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const task = await manager.create({ ...input, enabled: true }); await manager.runNow(task.id);
+    records.get(task.id)!.schedule = { every: '1h' };
+    await manager.attachReport(sessions[0].id, 'Done');
+    expect(manager.get(task.id).status.nextRunAt).toBe(new Date(Date.now() + 3_600_000).toISOString());
+    expect(ptys.listenerCount('exit')).toBe(1);
+  });
+  it('retries a deferred reload after an owner refresh failure and rejects late reads after shutdown', async () => {
+    vi.useFakeTimers(); const { manager, input, persistence, records, sessions } = fixture();
+    const task = await manager.create(input); await manager.runNow(task.id);
+    await manager.reload(task.id); records.get(task.id)!.prompt = 'Deferred'; sessions[0].status = 'exited';
+    persistence.load.mockRejectedValueOnce(new Error('offline'));
+    await vi.advanceTimersByTimeAsync(1_250); expect(manager.get(task.id).prompt).toBe('Deferred');
+    const blocked = deferred<ScheduledTask>(); persistence.read = vi.fn(() => blocked.promise);
+    const updating = manager.update(task.id, { prompt: 'Late' }); await vi.advanceTimersByTimeAsync(0);
+    manager.stopAll(); blocked.resolve(records.get(task.id)!); await expect(updating).rejects.toThrow('stopped');
+    expect(records.get(task.id)!.prompt).toBe('Deferred');
   });
   it('handles a removed execution project and releases owned resources on project removal', async () => {
     const { manager, input, deps, ptys } = fixture(); const task = await manager.create(input);

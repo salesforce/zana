@@ -976,6 +976,8 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.classicSessionViewEnabled === 'boolean') {
     normalized.classicSessionViewEnabled = input.classicSessionViewEnabled;
   }
+  if (typeof input.providerServiceTiersDisabled === 'boolean') normalized.providerServiceTiersDisabled = input.providerServiceTiersDisabled;
+  if (typeof input.pluginSafeMode === 'boolean') normalized.pluginSafeMode = input.pluginSafeMode;
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
   }
@@ -1078,9 +1080,6 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.cliRemoteToolProxyEnabled === 'boolean') {
     normalized.cliRemoteToolProxyEnabled = input.cliRemoteToolProxyEnabled;
-  }
-  if (typeof input.cliRemoteHostCatalogEnabled === 'boolean') {
-    normalized.cliRemoteHostCatalogEnabled = input.cliRemoteHostCatalogEnabled;
   }
   if (typeof input.followUpsEnabled === 'boolean') {
     normalized.followUpsEnabled = input.followUpsEnabled;

@@ -6,11 +6,15 @@ export function VoiceRecordingBar({
   state,
   stream,
   onConfirm,
+  onSend,
+  sendDisabled,
   onCancel
 }: {
   state: 'recording' | 'transcribing';
   stream: MediaStream | null;
   onConfirm: () => void;
+  onSend?: () => void;
+  sendDisabled?: boolean;
   onCancel: () => void;
 }) {
   const isTranscribing = state === 'transcribing';
@@ -36,6 +40,7 @@ export function VoiceRecordingBar({
         <canvas ref={canvasRef} aria-hidden className="thread-voice-wave" />
         <span className="sr-only">{isTranscribing ? 'Transcribing' : 'Recording'}</span>
       </div>
+      {onSend && !isTranscribing && <button type="button" className="thread-voice-bar-btn" aria-label="Transcribe and send recording" disabled={sendDisabled} onClick={onSend}>Send</button>}
       <button
         type="button"
         className="thread-voice-bar-btn is-confirm"

@@ -4,6 +4,7 @@ import {
   createDesktopBrowserTab,
   desktopBrowserTabAction,
   syncDesktopBrowserTabs,
+  persistDesktopBrowserTab,
   DESKTOP_BROWSER_MAX_LEASES,
   listDesktopBrowserInstances,
   openDesktopBrowserConnection,
@@ -215,5 +216,131 @@ describe('remote browser automation', () => {
     await releaseDesktopBrowserControl(c, lease);
     await desktopBrowserTabAction(c, { ...SCOPE, tabId: 'browser:tab-1' }, 'close');
     expect(rpc.mock.calls.some(([x]) => x.command.type === 'desktop.browser.reveal_tab')).toBe(false);
+  });
+});
+
+describe('desktop tab recovery', () => {
+  const orphan = { id: 'browser:tab-1', kind: 'browser', environmentId: null, title: 'Old', url: 'about:blank', desktopTarget: { hostId: SCOPE.hostId, instanceId: 'old-window', generation: 'old-generation' } };
+  function recoveryContext(rpc: any) {
+    vi.mocked(getConversationThread).mockReturnValue({ id: SCOPE.threadId, projectId: 'p1' } as never);
+    vi.mocked(getThreadPluginMetadata).mockReturnValue(null as never);
+    vi.mocked(getThreadTabs).mockReturnValue({ revision: 1, tabsJson: JSON.stringify([orphan]) } as never);
+    vi.mocked(replaceThreadTabs).mockReturnValue({ revision: 2 } as never);
+    return ctx(rpc);
+  }
+  it('adopts a tab when its previous window is gone', async () => {
+    const rpc = vi.fn(async () => ({ instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation, label: 'Current' }] }));
+    const c = recoveryContext(rpc);
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    await vi.waitFor(() => expect(replaceThreadTabs).toHaveBeenCalled());
+    const saved = JSON.parse(vi.mocked(replaceThreadTabs).mock.calls[0][1].tabsJson);
+    expect(saved[0].desktopTarget).toMatchObject({ instanceId: SCOPE.instanceId, generation: SCOPE.generation });
+  });
+  it('closes the duplicate instead of taking a tab from another live window', async () => {
+    const rpc = vi.fn(async ({ command }: any) => command.type === 'desktop.browser.list_instances'
+      ? { instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation }, { instanceId: 'old-window', generation: 'other' }] }
+      : { ok: true });
+    syncDesktopBrowserTabs(recoveryContext(rpc), SCOPE, [tab() as never]);
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'desktop.browser.close_tab' }) })));
+    expect(replaceThreadTabs).not.toHaveBeenCalled();
+  });
+  it('ignores an adoption result superseded by a newer snapshot', async () => {
+    let complete!: (value: unknown) => void;
+    const rpc = vi.fn(() => new Promise(resolve => { complete = resolve; }));
+    const c = recoveryContext(rpc);
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    syncDesktopBrowserTabs(c, SCOPE, []);
+    complete({ instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation }] });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(replaceThreadTabs).not.toHaveBeenCalled();
+  });
+  it('ignores a generation that is no longer active', async () => {
+    const rpc = vi.fn(async () => ({ instances: [{ instanceId: SCOPE.instanceId, generation: 'new-generation' }] }));
+    syncDesktopBrowserTabs(recoveryContext(rpc), SCOPE, [tab() as never]);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(replaceThreadTabs).not.toHaveBeenCalled();
+  });
+
+  it('publishes asynchronous adoption through the live hub after the original transaction', async () => {
+    const rpc = vi.fn(async () => ({ instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation }] }));
+    const c = recoveryContext(rpc) as any;
+    const liveHub = { emit: vi.fn() };
+    c.asyncHub = liveHub;
+    syncDesktopBrowserTabs(c, SCOPE, [tab({ title: 'Recovered', url: 'https://example.test/' }) as never]);
+    await vi.waitFor(() => expect(liveHub.emit).toHaveBeenCalledWith('threads:tabs', expect.objectContaining({ revision: 2 })));
+    expect(c.hub.emit).not.toHaveBeenCalled();
+    expect(JSON.parse(vi.mocked(replaceThreadTabs).mock.calls[0][1].tabsJson)[0]).toMatchObject({ title: 'Recovered', url: 'https://example.test/' });
+  });
+
+  it.each(['thread-deleted', 'remote-surface', 'tabs-deleted'])('abandons adoption when the authoritative state changes: %s', async change => {
+    let complete!: (value: unknown) => void;
+    const rpc = vi.fn(() => new Promise(resolve => { complete = resolve; }));
+    const c = recoveryContext(rpc);
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    if (change === 'thread-deleted') vi.mocked(getConversationThread).mockReturnValue(null as never);
+    if (change === 'remote-surface') {
+      vi.mocked(getConversationThread).mockReturnValue({ id: SCOPE.threadId, projectId: 'p1', originPluginId: 'chat' } as never);
+      vi.mocked(getThreadPluginMetadata).mockReturnValue({ corrupt: false, metadata: { interactionSurface: { kind: 'remote', label: 'Chat' } } });
+    }
+    if (change === 'tabs-deleted') vi.mocked(getThreadTabs).mockReturnValue(null as never);
+    complete({ instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation }] });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(replaceThreadTabs).not.toHaveBeenCalled();
+  });
+
+  it('keeps unrelated and newly reassigned tabs intact when reconciling the latest snapshot', async () => {
+    let complete!: (value: unknown) => void;
+    const rpc = vi.fn(() => new Promise(resolve => { complete = resolve; }));
+    const c = recoveryContext(rpc);
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    const latest = [
+      { ...orphan, desktopTarget: { ...orphan.desktopTarget, instanceId: SCOPE.instanceId } },
+      { ...orphan, id: 'other-tab' }
+    ];
+    vi.mocked(getThreadTabs).mockReturnValue({ revision: 8, tabsJson: JSON.stringify(latest) } as never);
+    complete({ instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation }] });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(replaceThreadTabs).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not publish an adoption that loses an optimistic revision race', async () => {
+    const rpc = vi.fn(async () => ({ instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation }] }));
+    const c = recoveryContext(rpc) as any;
+    vi.mocked(replaceThreadTabs).mockReturnValue('conflict');
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    await vi.waitFor(() => expect(replaceThreadTabs).toHaveBeenCalled());
+    expect(c.hub.emit).not.toHaveBeenCalled();
+  });
+
+  it('allows a fresh adoption after desktop discovery fails', async () => {
+    const rpc = vi.fn().mockRejectedValueOnce(new Error('Desktop disconnected'))
+      .mockResolvedValue({ instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation }] });
+    const c = recoveryContext(rpc);
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(replaceThreadTabs).not.toHaveBeenCalled();
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    await vi.waitFor(() => expect(replaceThreadTabs).toHaveBeenCalledTimes(1));
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it('an explicit tab write supersedes pending adoption', async () => {
+    let complete!: (value: unknown) => void;
+    const rpc = vi.fn(() => new Promise(resolve => { complete = resolve; }));
+    const c = recoveryContext(rpc);
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    persistDesktopBrowserTab(c, SCOPE, tab({ title: 'User chosen' }) as never);
+    expect(replaceThreadTabs).toHaveBeenCalledTimes(1);
+    complete({ instances: [{ instanceId: SCOPE.instanceId, generation: SCOPE.generation }] });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(replaceThreadTabs).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an orphan when the host has no authoritative discovery capability', () => {
+    const c = recoveryContext(vi.fn()) as any;
+    delete c.hostHub;
+    syncDesktopBrowserTabs(c, SCOPE, [tab() as never]);
+    expect(replaceThreadTabs).not.toHaveBeenCalled();
   });
 });

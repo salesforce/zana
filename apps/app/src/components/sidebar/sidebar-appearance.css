@@ -21,11 +21,6 @@
   color: var(--text-muted);
 }
 
-/* Separate the two pinned destinations from the reorderable destinations. */
-.sidebar.sidebar--global .sidebar-nav > [data-testid='nav-inbox'] {
-  margin-bottom: 8px;
-}
-
 .sidebar .nav-badge {
   min-width: 20px;
   padding: 1px 5px;

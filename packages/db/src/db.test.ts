@@ -351,6 +351,12 @@ describe('packages/db', () => {
     expect(maxConversationEventSequenceByThreadIds(db, [withEvents.id, empty.id])).toEqual({
       [withEvents.id]: 2
     });
+    expect(maxConversationEventSequenceByThreadIds(db, [
+      ...Array.from({ length: 505 }, (_, index) => `missing-${index}`),
+      empty.id, withEvents.id, withEvents.id, "missing'quoted"
+    ])).toEqual({ [withEvents.id]: 2 });
+    db.sqlite.prepare('DELETE FROM thread_events WHERE thread_id = ? AND sequence = 2').run(withEvents.id);
+    expect(maxConversationEventSequenceByThreadIds(db, [withEvents.id])).toEqual({ [withEvents.id]: 1 });
   });
 
   it('stores deferred thread messages oldest first', () => {

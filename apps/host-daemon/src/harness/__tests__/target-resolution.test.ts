@@ -15,6 +15,30 @@ const config = (): AppConfig => ({
 describe('target-resolution main authorization', () => {
   const opencode = providerFor('opencode');
 
+  it.each(['local', 'remote'] as const)('treats ACP Agent default as native model selection on %s launches', (scope) => {
+    const resolved = resolveModelTarget(opencode, {
+      config: {
+        ...config(),
+        harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'obsolete/global-model' } } }
+      },
+      profile: 'opencode', extraArgs: [], scope,
+      persona: { id: 'p', name: 'P', modelLevel: 'high' },
+      projectSettings: { modelLevel: 'low' },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'acp-default' } } }
+    });
+    expect(resolved).toMatchObject({ source: 'per-tab', structuredSelected: false, contribution: {} });
+    expect(resolved.targetId).toBeUndefined();
+  });
+
+  it('keeps raw model arguments available when ACP Agent default is selected', () => {
+    const resolved = resolveModelTarget(opencode, {
+      config: config(), profile: 'opencode', extraArgs: ['--model', 'llmgw/custom'], scope: 'remote',
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'acp-default' } } }
+    });
+    expect(resolved).toMatchObject({ structuredSelected: false, rawOverride: true, contribution: {} });
+    expect(resolved.targetId).toBeUndefined();
+  });
+
   it('resolves model routing through Agent > Persona > Project > Global precedence', () => {
     const global = {
       schemaVersion: 1 as const,

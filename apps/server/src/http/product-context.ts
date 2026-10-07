@@ -100,7 +100,7 @@ export interface ProductHttpContext {
   cliAgentOps?: import('./cli-agent-ops.js').ProductCliAgentOps;
   /** Main-only session grants; absent on a server without a CLI coordinator. */
   cliCallbacks?: import('../services/launch/cli-callback-authority.js').CliCallbackAuthority;
-  verifyUiSend: (proof: unknown, threadId: string, itemId: string) => boolean;
+  verifyUiSend: (proof: unknown, threadId: string, itemId: string, caller?: import('./ui-send-proof.js').UiSendCaller) => boolean;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;

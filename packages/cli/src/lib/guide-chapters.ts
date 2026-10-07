@@ -131,9 +131,13 @@ is checked by reload/dev; a successful command does not verify the rendered UI.
   {
     id: 'automations',
     title: 'Automations',
-    content: `Schedules are still listed and toggled with:
+    content: `Read and edit the running Scheduler with:
 
   zcc schedule ls
+  zcc schedule get <id> --json
+  zcc schedule update <id> --patch '{"prompt":"New prompt","extraArgs":["--effort","high"]}'
+  zcc schedule update <id> --patch-file /path/to/patch.json
+  zcc schedule reload <id> --json
   zcc schedule run-now <id>
   zcc schedule enable|disable <id>
   zcc team launch --team <id> --project <id> --goal "..." [--mode structured|freeform] [--wait]

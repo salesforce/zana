@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
 // Save / delete to disk are not under test here — stub them out so the manager
 // doesn't try to write to /tmp/cc-test-home.
 vi.mock('./scheduler-store.js', () => ({
-  saveSchedule: vi.fn(),
+  readSchedule: vi.fn((task) => structuredClone(task)), saveSchedule: vi.fn(),
   deleteSchedule: vi.fn(() => true),
   listAllSchedules: vi.fn(() => []),
   globalDir: () => '/tmp/cc-test-home/.zcc/schedules',

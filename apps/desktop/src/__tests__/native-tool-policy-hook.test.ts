@@ -116,7 +116,8 @@ describe('queued send confirmation', () => {
     expect(showMessageBox).toHaveBeenCalledWith(win, expect.objectContaining({ defaultId: 0, cancelId: 0 }));
     expect(signUiSend).toHaveBeenCalledWith(expect.any(String), 'thread-1', 'item_2');
     expect(fetchMock).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/api/v1/threads/thread-1/next-turn/item_2/send' }),
-      expect.objectContaining({ method: 'POST', headers: { 'content-type': 'application/json', 'x-zcc-ui-send-proof': 'signed-proof' }, body: '{}' }));
+      expect.objectContaining({ method: 'POST', headers: { 'content-type': 'application/json', 'x-zcc-ui-send-proof': 'signed-proof' },
+        body: JSON.stringify({ confirmed: true, expectedUpdatedAt: 1 }) }));
   });
 
   it.each([

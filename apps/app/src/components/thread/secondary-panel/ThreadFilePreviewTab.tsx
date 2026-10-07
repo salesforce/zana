@@ -17,7 +17,6 @@ import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runt
 import { videoContentType } from '@zana-ai/zcc-domain';
 import { ThreadVideoPreview, videoPreviewUrl } from './ThreadVideoPreview.js';
 import {
-  applyPreviewResult,
   copyText,
   loadFilePreview,
   previewKind,
@@ -55,7 +54,7 @@ export function ThreadFilePreviewView({
   storage?: boolean;
   lineNumber?: number | null;
 }) {
-  if (error) return <p className="thread-detail-empty">{error}</p>;
+  if (error && content === null) return <p className="thread-detail-empty">{error}</p>;
   if (content === null) {
     return (
       <StencilLines
@@ -75,6 +74,7 @@ export function ThreadFilePreviewView({
   }
   return (
     <div className="thread-file-preview" data-testid="thread-file-preview">
+      {error ? <p role="status" className="thread-detail-empty">Refresh failed: {error}</p> : null}
       <DocContent
         path={path}
         content={content}
@@ -222,8 +222,10 @@ export function ThreadFilePreviewTab({
   // This component is reused across tabs. Only this file's local selection can
   // override its explicit opener or the saved preference for its extension.
   const override = selection.scope === openerScope ? selection.key : openerKey ?? null;
-  const [content, setContent] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const contentScope = JSON.stringify([path, threadId, projectId, storage]);
+  const [loaded, setLoaded] = useState<{ scope: string; content: string | null; error: string | null }>({ scope: contentScope, content: null, error: null });
+  const content = loaded.scope === contentScope ? loaded.content : null;
+  const error = loaded.scope === contentScope ? loaded.error : null;
   const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
   const opener = resolveFileOpener(path, openers, override);
   const OpenerComponent = opener?.component;
@@ -250,8 +252,9 @@ export function ThreadFilePreviewTab({
 
   useEffect(() => {
     if (livePlan || videoSrc) return;
-    setError(null);
-    setContent(null);
+    setLoaded(previous => previous.scope === contentScope
+      ? { ...previous, error: null }
+      : { scope: contentScope, content: null, error: null });
     let cancelled = false;
     const hostReader = storage
       ? product.threads.storageContent
@@ -270,10 +273,12 @@ export function ThreadFilePreviewTab({
           : undefined
       }
     ).then((result) => {
-      applyPreviewResult(cancelled, result, setError, setContent);
+      if (!cancelled) setLoaded(previous => ({ scope: contentScope,
+        content: ('content' in result ? result.content : null) ?? (previous.scope === contentScope ? previous.content : null),
+        error: 'error' in result ? result.error : null }));
     });
     return () => { cancelled = true; };
-  }, [path, storage, threadId, projectId, livePlan, videoSrc, previewRevision]);
+  }, [path, storage, threadId, projectId, livePlan, videoSrc, previewRevision, contentScope]);
 
   const chrome = (
     <ThreadFilePreviewChrome

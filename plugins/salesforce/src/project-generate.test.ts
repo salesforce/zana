@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { generatedOutputPath, generatedProjectPath, parseGenerateInput } from '../lib/project-generate.js';
+import { generatedProjectPath, parseGenerateInput } from '../lib/project-generate.js';
 
 describe('parseGenerateInput', () => {
   it('accepts a name and parent folder', () => {
@@ -20,10 +20,10 @@ describe('parseGenerateInput', () => {
   });
 });
 
-describe('generatedOutputPath', () => {
-  it('prefers the CLI outputDir and falls back to parent/name', () => {
-    expect(generatedOutputPath({ outputDir: '/tmp/ws/Acme' }, '/tmp/ws', 'Acme')).toBe('/tmp/ws/Acme');
+describe('generatedProjectPath', () => {
+  it('uses the requested child folder', () => {
     expect(generatedProjectPath('/tmp/ws', 'Acme')).toBe('/tmp/ws/Acme');
-    expect(generatedOutputPath(null, '/tmp/ws', 'Acme')).toBe('/tmp/ws/Acme');
+    expect(generatedProjectPath('/tmp/ws/', 'Acme')).toBe('/tmp/ws/Acme');
+    expect(generatedProjectPath('projects', 'Acme')).toBe('projects/Acme');
   });
 });

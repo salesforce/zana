@@ -26,7 +26,7 @@ export interface ThreadRuntimeAdapter {
     mode?: string;
     model?: string;
     reasoningLevel?: ReasoningLevel;
-    serviceTier?: 'default' | 'fast';
+    serviceTier?: string;
     acpMode?: string;
     clientRequestId?: string;
     permissionMode?: 'accept-edits' | 'auto' | 'full';

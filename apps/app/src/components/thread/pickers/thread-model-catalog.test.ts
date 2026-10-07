@@ -831,6 +831,7 @@ describe('automatic catalog recovery', () => {
     expect(modelDiscoveryConfigKey(initial)).toBe(modelDiscoveryConfigKey({ ...initial, theme: 'dark' }));
     expect(modelDiscoveryConfigKey(initial)).not.toBe(modelDiscoveryConfigKey({ ...initial, codexBinary: 'new' }));
     expect(modelDiscoveryConfigKey(initial)).not.toBe(modelDiscoveryConfigKey({ ...initial, harnessCodexEnabled: false }));
+    expect(modelDiscoveryConfigKey(initial)).not.toBe(modelDiscoveryConfigKey({ ...initial, providerServiceTiersDisabled: true }));
   });
 });
 
@@ -849,4 +850,43 @@ it('retries an old authentication failure when the picker remounts, with a coold
   await catalog.ensure();
   expect(fetcher).toHaveBeenCalledTimes(4);
   expect(catalog.getSnapshot().byProvider.codex.modelLoadError).toBeNull();
+});
+
+
+describe('recovery with subscribers that read the LRU catalog', () => {
+  it.each(['config', 'reconnect', 'plugin', 'focus'] as const)('bounds %s recovery even when notification reorders the catalog Map', async (trigger) => {
+    let fail = trigger === 'plugin';
+    const fetcher = vi.fn(async () => ({
+      ...optionsBody(['codex'], 'fresh'),
+      modelLoadError: fail ? { providerId: 'codex', code: 'provider_unavailable', detail: null } : null
+    }));
+    resetThreadModelCatalog(fetcher);
+    updateModelCatalogHosts([{ id: 'local', status: 'connected', isPrimary: true }]);
+    await prefetchThreadModelCatalog();
+    if (trigger === 'reconnect') updateModelCatalogHosts([{ id: 'local', status: 'disconnected', isPrimary: true }]);
+    if (trigger === 'focus') vi.spyOn(Date, 'now').mockReturnValue(Date.now() + MODEL_CATALOG_FRESH_MS + 1);
+    const before = fetcher.mock.calls.length;
+    let notifications = 0;
+    const catalog = threadModelCatalogForHost();
+    const unsubscribe = catalog.subscribe(() => {
+      // Fail quickly on regression instead of allowing an infinite loop to
+      // wedge the worker. React's external-store subscriber reads like this.
+      if (++notifications > 20) throw new Error('Recovery revisited a catalog indefinitely');
+      getThreadModelCatalog();
+    });
+    fail = false;
+    try {
+      if (trigger === 'config') invalidateModelCatalogs();
+      if (trigger === 'reconnect') updateModelCatalogHosts([{ id: 'local', status: 'connected', isPrimary: true }]);
+      if (trigger === 'plugin') recoverUnavailableModelCatalogs();
+      if (trigger === 'focus') recoverStaleModelCatalogs();
+      await vi.waitFor(() => expect(fetcher.mock.calls.length).toBeGreaterThan(before));
+      await vi.waitFor(() => expect(getThreadModelCatalog().inflight.size).toBe(0));
+      expect(notifications).toBeLessThan(20);
+      await vi.waitFor(() => expect(getThreadModelCatalog().byProvider.codex.modelLoadError).toBeNull());
+    } finally {
+      unsubscribe();
+      vi.restoreAllMocks();
+    }
+  });
 });

@@ -122,10 +122,31 @@ describe('Salesforce project setup', () => {
     await submit();
     expect(ui().getByRole('alert')).toBeTruthy();
     expect(props.toProject).not.toHaveBeenCalled();
-    await submit();
+    if (stage === 'connect') await click('Retry connection');
+    else await submit();
     expect(props.toProject).toHaveBeenCalledOnce();
     expect(rpc.mock.calls.filter(([, method]) => method === 'project.generate')).toHaveLength(stage === 'generate' ? 2 : 1);
     expect(props.addProject).toHaveBeenCalledTimes(stage === 'register' ? 2 : 1);
+  });
+  it.each(['result', 'transport'])('opens a created project after a connection %s failure without retrying or recreating it', async failure => {
+    await mount(); await submit();
+    const normal = rpc.getMockImplementation()!;
+    rpc.mockImplementation(async (id, method, args) => {
+      if (method !== 'project.connect') return normal(id, method, args);
+      if (failure === 'transport') throw Error('Plugin unavailable');
+      return { ok: false, error: 'Choose a registered Salesforce DX project.' };
+    });
+    await submit();
+    expect(ui().getByRole('alert').textContent).toContain(failure === 'transport' ? 'Plugin unavailable' : 'registered Salesforce DX project');
+    expect(ui().getByText(/Your project was created and added to Projects/)).toBeTruthy();
+    expect(ui().getByRole<HTMLButtonElement>('button', { name: 'Open project' }).disabled).toBe(false);
+    expect(props.toProject).not.toHaveBeenCalled();
+    await click('Open project');
+    expect(props.toProject).toHaveBeenCalledWith('p1', { tabId: 'salesforce' });
+    expect(props.close).toHaveBeenCalledOnce();
+    expect(rpc.mock.calls.filter(([, method]) => method === 'project.generate')).toHaveLength(1);
+    expect(rpc.mock.calls.filter(([, method]) => method === 'project.connect')).toHaveLength(1);
+    expect(props.addProject).toHaveBeenCalledOnce();
   });
   it('requires a folder when no default is available and handles cancelled folder selection', async () => {
     vi.mocked(props.cloneRoot).mockRejectedValue(Error('No default'));

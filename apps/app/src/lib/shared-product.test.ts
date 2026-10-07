@@ -72,3 +72,14 @@ it('reads a fresh snapshot after reconnect and fences it behind newer events or 
   expect(callback).toHaveBeenLastCalledWith({ theme: 'light' });
   stop(); expect(stopReconnect).toHaveBeenCalledOnce();
 });
+it.each(['get', 'reload'] as const)('routes scheduler %s to the selected instance owner', async method => {
+  api.mockResolvedValueOnce({ sharedProductServices: true }).mockResolvedValueOnce({ ok: true, value: { ok: true, value: { id: 'task' } } });
+  const { product } = await import('./product-client.js');
+  expect(await product.scheduler[method]('task')).toMatchObject({ ok: true, value: { id: 'task' } });
+  expect(api).toHaveBeenLastCalledWith('/shared-product', expect.objectContaining({ body: JSON.stringify({ method: `scheduler.${method}`, args: ['task'] }) }));
+});
+it.each(['get', 'reload'] as const)('returns explicit unavailability for scheduler %s without an owner', async method => {
+  api.mockResolvedValueOnce({ sharedProductServices: false });
+  const { product } = await import('./product-client.js');
+  expect(await product.scheduler[method]('task')).toMatchObject({ ok: false, code: 'unavailable', message: expect.stringContaining('owner') });
+});

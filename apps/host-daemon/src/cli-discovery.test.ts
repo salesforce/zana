@@ -37,6 +37,13 @@ it('preserves absent optional discovery and an unavailable version without fabri
   expect(await f.run({ query: 'roles', nativeAgentDiscoveryEnabled: false })).toEqual({ query: 'roles', roles: [] });
   expect(await f.run({ query: 'models' })).toEqual({ query: 'models' });
 });
+it('does not authorize a harness disabled on the machine that owns discovery', async () => {
+  const f = fixture();
+  f.config.harnessOpenCodeEnabled = false;
+  expect(await f.run()).toEqual({ query: 'version', version: undefined });
+  f.config.harnessOpenCodeEnabled = true;
+  expect(await f.run()).toEqual({ query: 'version', version: '1.2.3' });
+});
 it('rejects malformed requests, non-directory roots and symlink escapes before probing', async () => {
   const f = fixture(); const outside = join(f.home, 'outside'); mkdirSync(outside);
   const link = join(f.root, 'escape'); symlinkSync(outside, link);

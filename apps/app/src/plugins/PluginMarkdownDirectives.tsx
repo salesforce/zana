@@ -1,5 +1,7 @@
 import { Fragment, useMemo, useSyncExternalStore, type ComponentType } from 'react';
 import { MarkdownContent } from '../components/MarkdownContent.js';
+import { parseReviewComments, type ReviewComment as ParsedReviewComment } from '../components/markdown-review-comments.js';
+import { ReviewComment } from '../components/thread/timeline/ReviewComment.js';
 import { useIncrementalMarkdownPieces } from '../components/markdown-incremental-pieces.js';
 import { collectMarkdownLightboxItems } from '../components/thread/timeline/thread-inline-images.js';
 import { openWorkspaceFileForThread } from '../components/thread/secondary-panel/useThreadOpenFileSignal.js';
@@ -33,9 +35,10 @@ export function PluginMarkdownDirectives({
     listMessageDirectives
   );
   const parsed = parseMessageDirectives(text);
+  const comments = parseReviewComments(text);
   const byName = new Map(registrations.map((row) => [row.id, row]));
   const hasRegisteredDirective = parsed.some((dir) => byName.has(dir.name));
-  const pieces = useIncrementalMarkdownPieces(text, !hasRegisteredDirective);
+  const pieces = useIncrementalMarkdownPieces(text, !hasRegisteredDirective && comments.length === 0);
   const documentLightboxItems = useMemo(
     () => collectMarkdownLightboxItems(text, projectId),
     [projectId, text]
@@ -47,7 +50,7 @@ export function PluginMarkdownDirectives({
     filePathHints,
     lightboxItems: documentLightboxItems
   };
-  if (!hasRegisteredDirective) {
+  if (!hasRegisteredDirective && comments.length === 0) {
     let offset = 0;
     return (
       <>
@@ -67,12 +70,18 @@ export function PluginMarkdownDirectives({
       </>
     );
   }
-  const segments: Array<{ kind: 'md'; text: string } | { kind: 'dir'; dir: ParsedMessageDirective }> = [];
+  type SpecialSegment = { kind: 'dir'; dir: ParsedMessageDirective } | { kind: 'comment'; dir: ParsedReviewComment };
+  const special: SpecialSegment[] = [
+    ...comments.map((dir): SpecialSegment => ({ kind: 'comment', dir })),
+    ...parsed.filter((dir) => byName.has(dir.name) && !comments.some((comment) => dir.start >= comment.start && dir.start < comment.end))
+      .map((dir): SpecialSegment => ({ kind: 'dir', dir }))
+  ].sort((a, b) => a.dir.start - b.dir.start);
+  const segments: Array<{ kind: 'md'; text: string } | SpecialSegment> = [];
   let cursor = 0;
-  for (const dir of parsed) {
-    if (!byName.has(dir.name)) continue;
+  for (const segment of special) {
+    const { dir } = segment;
     if (dir.start > cursor) segments.push({ kind: 'md', text: text.slice(cursor, dir.start) });
-    segments.push({ kind: 'dir', dir });
+    segments.push(segment);
     cursor = dir.end;
   }
   if (cursor < text.length) segments.push({ kind: 'md', text: text.slice(cursor) });
@@ -97,6 +106,9 @@ export function PluginMarkdownDirectives({
           ) : (
             <Fragment key={`md-${index}`} />
           );
+        }
+        if (segment.kind === 'comment') {
+          return <ReviewComment key={`comment-${segment.dir.start}`} comment={segment.dir} threadId={threadId} projectId={projectId} filePathHints={filePathHints} />;
         }
         const registration = byName.get(segment.dir.name);
         if (!registration) return <code key={`dir-${index}`}>{segment.dir.source}</code>;

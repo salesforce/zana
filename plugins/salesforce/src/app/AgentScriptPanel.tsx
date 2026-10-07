@@ -1,9 +1,7 @@
 import { controlText, useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Bot, PanelRight } from 'lucide-react';
 import { callPluginRpc, useSettings, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import {
-  breadcrumbSegments,
   buildAgentScriptFileTree,
   defaultExpandedFolders,
   filterAgentScriptFileTree,
@@ -14,6 +12,7 @@ import { type AgentScriptDialect, type PublicOrgView } from '../../lib/types.js'
 import { takeQueuedAgentScriptOpen } from './agent-script-open.js';
 import { parseAgentforcePanelPath } from './agentforce-panel-params.js';
 import { OrgPicker } from './OrgPicker.js';
+import { AgentScriptDocumentBar } from './AgentScriptDocumentBar.js';
 import {
   isPlaygroundToHost,
   PLAYGROUND_ASSET_SRC,
@@ -520,7 +519,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     [fileQuery, files]
   );
   const exampleTitle = AGENT_SCRIPT_EXAMPLES.find((row) => row.id === exampleId)?.title;
-  const crumbs = breadcrumbSegments(activePath, exampleTitle);
   const hint = useMemo(
     () => playgroundHint(Boolean(status), status?.dxProject, Boolean(projectId)),
     [projectId, status]
@@ -532,39 +530,19 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   });
   const saveDisabled = saveIsDisabled(saveEnabled, activePath, busy);
   const documentBar = (
-      <div className="af-document-bar">
-        <button type="button" className="icon-btn" title="Browse org agents" aria-label="Browse org agents" onClick={() => openTool('agents')}><Bot size={15} aria-hidden="true" /></button>
-        <div className="sf-as-crumb" aria-label="Agentforce file">
-          {crumbs.length === 0 ? <span className="sf-as-crumb-seg">Untitled</span> : null}
-          {crumbs.map((seg, index) => (
-            <span key={`${seg}:${index}`} className="sf-as-crumb-seg">
-              {index > 0 ? ' › ' : ''}
-              {seg}
-            </span>
-          ))}
-        </div>
-        <span className="af-draft-state"><i />{dirty ? 'Unsaved draft' : activePath ? 'Saved' : 'Example'}{issues ? ` · ${issues} issues` : ''}</span>
-        {props.headerActions}
-        {props.orgPicker !== false && <OrgPicker pluginId={pluginId} projectId={projectId} compact />}
+      <>
+        <AgentScriptDocumentBar path={activePath} exampleTitle={exampleTitle} dirty={dirty} busy={busy} issues={issues}
+          saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady} panelOpen={tools.state.open}
+          headerActions={props.headerActions}
+          orgPicker={props.orgPicker !== false && <OrgPicker pluginId={pluginId} projectId={projectId} compact />}
+          onBrowse={() => openTool('agents')} onSave={() => void save()}
+          onSaveAs={() => { setError(null); setSaveAsOpen(true); }} onShowPanel={tools.toggle} />
         {orgSessionLabel(org) ? (
           <span hidden className="sf-as-crumb-seg" data-testid="salesforce-playground-org">
             {orgSessionLabel(org)}
           </span>
         ) : null}
-        <button
-          type="button"
-          className={`sf-as-save${dirty && !saveDisabled ? ' is-dirty' : ''}`}
-          data-testid="salesforce-agent-script-save"
-          aria-label="Save Agentforce file"
-          hidden={!activePath}
-          disabled={saveDisabled}
-          onClick={() => void save()}
-        >
-          {busy ? 'Saving…' : !activePath ? 'Example' : dirty ? 'Save' : 'Saved'}
-        </button>
-        <button type="button" className="sf-as-save" disabled={!saveEnabled || busy || !playgroundReady} onClick={() => { setError(null); setSaveAsOpen(true); }}>Save as…</button>
-        {!tools.state.open && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={tools.toggle}><PanelRight size={14} aria-hidden="true" /></button>}
-      </div>
+      </>
   );
 
   return (

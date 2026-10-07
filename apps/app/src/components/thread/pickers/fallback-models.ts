@@ -5,6 +5,7 @@ export interface ThreadComposerProviderOption {
   displayName: string;
   permissionModes: string[];
   composerActions: string[];
+  serviceTiers?: Array<{id:string; label:string; description?:string}>;
 }
 
 const FALLBACK_PROVIDERS: readonly ThreadComposerProviderOption[] = [

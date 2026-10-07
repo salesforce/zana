@@ -27,6 +27,7 @@ import {
   type TimelineRow
 } from '@zana-ai/zcc-server-contract';
 import { ThreadCreateError } from '../../http/thread-create.js';
+import { cachedConversationOutline } from './conversation-outline-cache.js';
 import { previewTimelineResponseOutputs } from './timeline-output-preview.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import {
@@ -408,33 +409,39 @@ export function conversationTimelineTurnSummaryDetails(
 
 export function conversationOutline(ctx: ProductHttpContext, threadId: string) {
   const thread = requireThread(ctx, threadId);
-  const rows = listConversationThreadEvents(ctx.db, threadId, {
-    omitPayloadTypes: ['turn/diff/updated', 'item/commandExecution/outputDelta'],
-    onlyItemTypes: ['agentMessage', 'userMessage']
-  });
-  const events = storedEventsToMeta(rows);
   const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
-  const timeline = buildThreadTimelineFromEvents({
-    acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
-    contextWindowEvents: events,
-    events,
-    options: {
-      includeDebugRawEvents: false,
-      includeNestedRows: true,
-      includeProviderUnhandledOperations: includeProviderUnhandledOperations(ctx),
-      isLatestPage: true,
-      providerId: thread.providerId,
-      threadStatus: thread.status,
-      threadName: thread.title ?? '',
-      turnMessageDetail: 'full',
-      workspaceRoot: environment?.path ?? null,
-      planCommand: planCommandForProvider(thread.providerId)
-    }
-  });
-  return {
-    items: conversationItemsFromRows(timeline.rows),
-    maxSeq: rows[rows.length - 1]?.sequence ?? 0
+  const project = () => {
+    const rows = listConversationThreadEvents(ctx.db, threadId, {
+      omitPayloadTypes: ['turn/diff/updated', 'item/commandExecution/outputDelta'],
+      onlyItemTypes: ['agentMessage', 'userMessage']
+    });
+    const events = storedEventsToMeta(rows);
+    const timeline = buildThreadTimelineFromEvents({
+      acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
+      contextWindowEvents: events,
+      events,
+      options: {
+        includeDebugRawEvents: false,
+        includeNestedRows: false,
+        includeProviderUnhandledOperations: includeProviderUnhandledOperations(ctx),
+        isLatestPage: true,
+        providerId: thread.providerId,
+        threadStatus: thread.status,
+        threadName: thread.title ?? '',
+        turnMessageDetail: 'full',
+        workspaceRoot: environment?.path ?? null,
+        planCommand: planCommandForProvider(thread.providerId)
+      }
+    });
+    return {
+      items: conversationItemsFromRows(timeline.rows),
+      maxSeq: rows[rows.length - 1]?.sequence ?? 0
+    };
   };
+  // The main-owned database and authorized thread are resolved before reuse.
+  return cachedConversationOutline(ctx.db, threadId, JSON.stringify([
+    thread.providerId, thread.status, thread.title, environment?.path, includeProviderUnhandledOperations(ctx), planCommandForProvider(thread.providerId)
+  ]), project);
 }
 
 export function resolveActivePlanTurn(ctx: ProductHttpContext, thread: ConversationThreadRow) {

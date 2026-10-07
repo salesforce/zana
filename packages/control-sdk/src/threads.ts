@@ -51,7 +51,7 @@ export class ThreadHandle {
     return waitForThreadEvent(this.http, this.id, { type, ...opts });
   }
 
-  async send(text: string, opts?: { mode?: string; model?: string; acpMode?: string; reasoningLevel?: string; serviceTier?: 'default' | 'fast'; permissionMode?: ThreadLaunchSpec['permissionMode'] }): Promise<ThreadRecord> {
+  async send(text: string, opts?: { mode?: string; model?: string; acpMode?: string; reasoningLevel?: string; serviceTier?: string; permissionMode?: ThreadLaunchSpec['permissionMode'] }): Promise<ThreadRecord> {
     const sent = await this.http.request<{ thread?: ThreadRecord }>(
       'POST',
       `/api/v1/threads/${encodeURIComponent(this.id)}/send`,

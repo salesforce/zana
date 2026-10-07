@@ -150,7 +150,9 @@ async function preflightStructuredRouting(
     configEnabled,
     installed: true
   });
-  if (!enabled) return 'selected harness is disabled';
+  // A remote daemon supplies a version only for its own enabled harnesses.
+  // The coordinator's local toggle does not describe that remote installation.
+  if (!enabled && !(input.scope === 'remote' && discovery)) return 'selected harness is disabled';
   for (const facet of resolved.facets) {
     const evaluated = evaluateFacetEvidence(provider, facet, input.scope, installedVersion);
     if (evaluated.classification === 'unavailable') return `${facet}: ${evaluated.reason}`;

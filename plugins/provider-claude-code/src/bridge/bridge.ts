@@ -104,15 +104,17 @@ import {
   type ClaudeInteractiveResponse,
   type ClaudePermissionMode,
   type ClaudePermissionRequestApprovalParams,
+  type ClaudePermissionRule,
   type ClaudeSuggestedPermissionUpdate,
   type ClaudeUserQuestionInput,
   type ClaudeUserQuestionRequestParams,
+  CLAUDE_BASH_TOOL_NAME,
   CLAUDE_EXIT_PLAN_MODE_TOOL_NAME,
   CLAUDE_USER_QUESTION_TOOL_NAME,
   claudeExitPlanModeInputSchema,
   claudeSuggestedPermissionUpdateSchema,
   claudeUserQuestionInputSchema,
-  shouldRequestClaudePermissionApproval,
+  getSuggestedRules,
   toPendingInteractionPermissionProfile,
 } from "../interactive-contract.js";
 
@@ -177,6 +179,7 @@ interface PendingPermissionRequest extends PendingInteractiveRequestBase {
   kind: "permission_request";
   originalInput: Record<string, unknown>;
   permissions: PendingInteractionGrantedPermissionProfile;
+  suggestedRules: ClaudePermissionRule[];
   toolName: string;
 }
 
@@ -223,6 +226,7 @@ interface ThreadSession {
   pendingForwardedToolCalls: number;
   pendingSessionCronIds: Set<string>;
   restartBeforeNextTurn: ClaudeSessionRestart | null;
+  launchedWithBypassPermissions: boolean;
   recoveryHintRaisedThisTurn: "authRequired" | "rateLimited" | null;
   sdkSessionState: ClaudeSdkSessionState | undefined;
   streamEnded: boolean;
@@ -320,13 +324,6 @@ interface ReplaceThreadSessionBeforeNextTurnArgs {
 
 interface ClaudeCodeThreadStopResult {
   ok: true;
-}
-
-interface ClaudeCanUseToolDecisionContext {
-  blockedPath: string | undefined;
-  decisionReason: string | undefined;
-  suggestions: ClaudeSuggestedPermissionUpdate[] | undefined;
-  toolName: string;
 }
 
 interface BuildInteractiveRequestParamsArgs {
@@ -682,6 +679,12 @@ function sessionPermissionGrantCovers(
 function hasClaudeSessionPermissionGrant(
   args: ClaudeSessionPermissionCoverageArgs,
 ): boolean {
+  if (
+    args.permissions.network === null &&
+    args.permissions.fileSystem === null
+  ) {
+    return false;
+  }
   return args.grants.some((grant) =>
     sessionPermissionGrantCovers({
       grant,
@@ -720,6 +723,60 @@ function pushPromptInput(
     threadSession.permissionEscalationByPromptId.delete(promptId);
     throw error;
   });
+}
+
+async function applyPermissionSettings(
+  attachment: ThreadAttachment,
+  params: TurnStartParams | TurnSteerParams,
+): Promise<boolean> {
+  const construction = attachment.sessionConstructionConfig.sessionOptions;
+  const writeRoots = params.permissionScope === "workspace" ? params.additionalWorkspaceWriteRoots ?? [] : [];
+  if (attachment.approvedPlanPermissionMode === params.permissionMode &&
+      construction.permissionScope === params.permissionScope &&
+      isDeepStrictEqual(construction.additionalWorkspaceWriteRoots ?? [], writeRoots)) return false;
+  const permissionMode = attachment.permissionMode === "plan" ? "plan" : params.permissionMode;
+  const nextConstruction = { ...construction, permissionMode, permissionScope: params.permissionScope, additionalWorkspaceWriteRoots: writeRoots };
+  const rebuilt = buildSessionOptions({ ...nextConstruction, ...attachment.liveSettings, permissionMode: params.permissionMode,
+    getPermissionEscalation: (context) => attachment.residentSession ? resolvePermissionEscalationForWork(attachment.residentSession, context) : null,
+  }, attachment.sessionOptions.env ?? {});
+  const permissionSettings = { sandbox: rebuilt.sandbox ?? { enabled: false }, permissions: { additionalDirectories: [...(rebuilt.additionalDirectories ?? [])] } };
+  const resident = attachment.residentSession;
+  const readonlyMode = (mode: ClaudePermissionMode) => mode === "default" || mode === "dontAsk";
+  const needsRestart = resident !== null && (
+    (params.permissionMode === "bypassPermissions" && !resident.launchedWithBypassPermissions) ||
+    readonlyMode(attachment.approvedPlanPermissionMode) !== readonlyMode(params.permissionMode));
+  attachment.sessionPermissionGrants = [];
+  if (resident) resolvePendingInteractiveRequests(resident, "Permissions changed while awaiting approval");
+  if (resident && !needsRestart) {
+    try {
+      await resident.session.applyPermissionSettings(permissionSettings);
+      if (attachment.permissionMode !== permissionMode) await resident.session.setPermissionMode(permissionMode);
+    } catch (error) {
+      // A partly applied policy must never continue accepting work.
+      resident.restartBeforeNextTurn = { reason: "Claude Code permission update failed", showRuntimeNote: false };
+      resident.session.stop();
+      throw error;
+    }
+  }
+  resident?.translator.configureSandbox(rebuilt.sandbox?.enabled === true);
+  attachment.sessionConstructionConfig.sessionOptions = nextConstruction;
+  attachment.permissionMode = permissionMode;
+  attachment.approvedPlanPermissionMode = params.permissionMode;
+  const currentSettings = typeof attachment.sessionOptions.settings === "object" ? attachment.sessionOptions.settings : {};
+  attachment.sessionOptions.settings = { ...currentSettings, ...permissionSettings };
+  attachment.sessionOptions.permissionMode = permissionMode;
+  attachment.sessionOptions.allowBypassPermissions = rebuilt.allowBypassPermissions;
+  if (rebuilt.sandbox) attachment.sessionOptions.sandbox = rebuilt.sandbox;
+  else delete attachment.sessionOptions.sandbox;
+  if (rebuilt.additionalDirectories) attachment.sessionOptions.additionalDirectories = rebuilt.additionalDirectories;
+  else delete attachment.sessionOptions.additionalDirectories;
+  if (needsRestart && resident) {
+    const hooks = rebuilt.hooks;
+    attachment.sessionOptions.hooks = hooks;
+    addSessionTrackingHooks(attachment.sessionOptions, attachment.threadIdRef);
+    resident.restartBeforeNextTurn = { reason: "Claude Code permissions changed", showRuntimeNote: false };
+  }
+  return needsRestart;
 }
 
 async function applyLiveSessionSettings(
@@ -1108,6 +1165,7 @@ function createThreadSession(attachment: ThreadAttachment): ThreadSession {
     pendingForwardedToolCalls: 0,
     pendingSessionCronIds: new Set(),
     restartBeforeNextTurn: null,
+    launchedWithBypassPermissions: attachment.sessionOptions.allowBypassPermissions && process.getuid?.() !== 0,
     recoveryHintRaisedThisTurn: null,
     sdkSessionState: undefined,
     streamEnded: false,
@@ -1434,9 +1492,10 @@ function buildTrackedSessionOptions(
   threadIdRef: ThreadIdRef,
 ): SdkSessionOptions {
   const sessionOptions = buildSessionOptions(
-    withTrackedPermissionEscalation(params, threadIdRef),
+    { ...withTrackedPermissionEscalation(params, threadIdRef), permissionMode: params.approvedPlanPermissionMode },
     env,
   );
+  sessionOptions.permissionMode = params.permissionMode;
   addSessionTrackingHooks(sessionOptions, threadIdRef);
   sessionOptions.recordThreadId = () => threadIdRef.current;
   return sessionOptions;
@@ -1815,6 +1874,7 @@ function buildInteractiveRequestParams(
       blockedPath: args.blockedPath,
       suggestions: args.suggestions,
     }),
+    suggestedRules: getSuggestedRules(args.suggestions),
   };
 }
 
@@ -1842,7 +1902,10 @@ function decodePendingInteractiveResponse(
     return null;
   }
   try {
-    return buildClaudeInteractiveResponse(outcome.data);
+    return buildClaudeInteractiveResponse(
+      outcome.data,
+      pending.kind === "permission_request" ? pending.suggestedRules : [],
+    );
   } catch {
     return null;
   }
@@ -1958,6 +2021,7 @@ function createForwardInteractiveRequest(
         payload,
         originalInput: args.input,
         permissions: params.permissions,
+        suggestedRules: params.suggestedRules,
         resolve: finish,
         toolName: args.toolName,
       });
@@ -2053,22 +2117,11 @@ async function enterPlanModeIfRequested(
   threadSession.attachment.permissionMode = "plan";
 }
 
-function restoreApprovedPlanPermissionMode(threadSession: ThreadSession): void {
-  if (
-    threadSession.attachment.permissionMode ===
-    threadSession.attachment.approvedPlanPermissionMode
-  ) {
-    return;
-  }
-  threadSession.attachment.permissionMode =
-    threadSession.attachment.approvedPlanPermissionMode;
-  void threadSession.session
-    .setPermissionMode(threadSession.attachment.approvedPlanPermissionMode)
-    .catch((error: unknown) => {
-      logBridgeError(
-        `Failed to leave Plan mode: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+async function restoreApprovedPlanPermissionMode(threadSession: ThreadSession): Promise<void> {
+  const attachment = threadSession.attachment;
+  if (attachment.permissionMode === attachment.approvedPlanPermissionMode) return;
+  await threadSession.session.setPermissionMode(attachment.approvedPlanPermissionMode);
+  attachment.permissionMode = attachment.approvedPlanPermissionMode;
 }
 
 function createCanUseTool(threadIdRef: ThreadIdRef): CanUseTool {
@@ -2143,16 +2196,13 @@ function createCanUseTool(threadIdRef: ThreadIdRef): CanUseTool {
       options.suggestions,
     );
 
-    const requestContext: ClaudeCanUseToolDecisionContext = {
+    const requestedPermissions = toPendingInteractionPermissionProfile({
       toolName,
       blockedPath: options.blockedPath,
-      decisionReason: options.decisionReason,
       suggestions,
-    };
-    const requestedPermissions =
-      toPendingInteractionPermissionProfile(requestContext);
+    });
     if (
-      toolName === "Bash" &&
+      toolName === CLAUDE_BASH_TOOL_NAME &&
       shouldAutoDenyInteractiveRequest(interactiveRequestPolicy) &&
       typeof input === "object" &&
       input !== null &&
@@ -2193,18 +2243,6 @@ function createCanUseTool(threadIdRef: ThreadIdRef): CanUseTool {
           toolUseID: options.toolUseID,
         };
       }
-    }
-
-    const shouldRequestApproval =
-      shouldRequestClaudePermissionApproval(requestContext) ||
-      (options.suggestions?.length ?? 0) > 0;
-
-    if (!shouldRequestApproval) {
-      return {
-        behavior: "allow",
-        updatedInput: input,
-        toolUseID: options.toolUseID,
-      };
     }
 
     if (threadSession.attachment.permissionMode === "bypassPermissions") {
@@ -2599,10 +2637,9 @@ async function runTurnStart(
     applyChromeSetting(attachment, params.chromeEnabled);
   }
 
-  const threadSession = await getWritableThreadSession(
-    params.threadId,
-    "new-turn",
-  );
+  try { if (attachment) await applyPermissionSettings(attachment, params); }
+  catch (error) { sendError(id, -32000, error instanceof Error ? error.message : String(error)); return; }
+  const threadSession = await getWritableThreadSession(params.threadId, "new-turn");
   if (!threadSession) {
     sendError(id, -32000, "No active session");
     return;
@@ -2684,10 +2721,10 @@ async function runTurnSteer(
     applyChromeSetting(attachment, params.chromeEnabled);
   }
 
-  const threadSession = await getWritableThreadSession(
-    params.threadId,
-    "steer",
-  );
+  let permissionRestartRequired = false;
+  try { permissionRestartRequired = attachment ? await applyPermissionSettings(attachment, params) : false; }
+  catch (error) { sendError(id, -32000, error instanceof Error ? error.message : String(error)); return; }
+  const threadSession = await getWritableThreadSession(params.threadId, permissionRestartRequired ? "new-turn" : "steer");
   if (!threadSession) {
     sendError(id, -32000, "No active session");
     return;
@@ -2868,6 +2905,7 @@ function handleParsedMessage(parsed: unknown): void {
     }
     if (
       pending.kind === "permission_request" &&
+      pending.toolName !== CLAUDE_BASH_TOOL_NAME &&
       shouldCacheClaudeSessionPermission(interactiveResponse)
     ) {
       threadSession.attachment.sessionPermissionGrants.push({
@@ -2881,7 +2919,14 @@ function handleParsedMessage(parsed: unknown): void {
       pending.toolName === CLAUDE_EXIT_PLAN_MODE_TOOL_NAME &&
       interactiveResponse.behavior === "allow"
     ) {
-      restoreApprovedPlanPermissionMode(threadSession);
+      void restoreApprovedPlanPermissionMode(threadSession).then(() => {
+        pending.resolve(buildInteractivePermissionResult(pending, interactiveResponse));
+      }).catch((error: unknown) => {
+        const message = `Failed to leave Plan mode: ${error instanceof Error ? error.message : String(error)}`;
+        logBridgeError(message);
+        pending.resolve({ behavior: "deny", message, toolUseID: pending.itemId });
+      });
+      return;
     }
 
     pending.resolve(

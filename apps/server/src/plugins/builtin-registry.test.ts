@@ -34,6 +34,7 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   connect: 'Host access',
   'browser-automation': 'Host access',
   'custom-instructions': 'Context & knowledge',
+  'design-docs': 'Context & knowledge',
   docs: 'Context & knowledge',
   github: 'Developer tools',
   'harness-claude': 'Agent interaction',
@@ -51,7 +52,9 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   'pdf-preview': 'Interface',
   'plugin-guide': 'Developer tools',
   'posthog-analytics': 'Host access',
+  'google-analytics': 'Host access',
   'pr-monitor': 'Developer tools',
+  'prompt-library': 'Context & knowledge',
   'provider-acp': 'Agent interaction',
   'provider-afcode': 'Agent interaction',
   'provider-claude-code': 'Agent interaction',
@@ -72,6 +75,7 @@ const EXPECTED_ICONS: Record<string, string> = {
   connect: 'Cable',
   'browser-automation': 'Globe',
   'custom-instructions': 'ScrollText',
+  'design-docs': 'DraftingCompass',
   docs: 'Library',
   github: 'Github',
   'harness-claude': './icons/claude-code.svg',
@@ -89,7 +93,9 @@ const EXPECTED_ICONS: Record<string, string> = {
   'pdf-preview': 'FileText',
   'plugin-guide': 'Puzzle',
   'posthog-analytics': 'LineChart',
+  'google-analytics': 'ChartNoAxesColumn',
   'pr-monitor': 'GitPullRequest',
+  'prompt-library': 'BookMarked',
   'provider-acp': './icons/cursor.svg',
   'provider-afcode': './icons/afcode.svg',
   'provider-claude-code': './icons/claude-code.svg',
@@ -145,6 +151,15 @@ describe('promoted autoInstall reclaim', () => {
 });
 
 describe('bundled plugin registry invariants', () => {
+  it('installs both analytics plugins by default with independent user opt-out', () => {
+    for (const pluginId of ['google-analytics', 'posthog-analytics']) {
+      expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === pluginId)).toMatchObject({
+        autoInstall: true, defaultEnabled: true
+      });
+      expect(RECLAIM_UNINSTALLED_AUTOINSTALL_IDS).not.toContain(pluginId);
+    }
+  });
+
   it('keeps official plugins bundled but out of the auto-install builtins', () => {
     const builtinNames = new Set(BUILTIN_PLUGINS.map((plugin) => plugin.name));
     for (const plugin of OFFICIAL_PLUGINS) {
