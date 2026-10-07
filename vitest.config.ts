@@ -21,9 +21,9 @@ export default defineConfig({
   test: {
     // Leave CPU capacity for the real CLI subprocesses exercised by this suite.
     // Saturating every core can starve their bounded version probes on busy hosts.
-    // Four workers is also a ceiling on large hosts: each worker can spawn
-    // several real bridges, shells, and native PTYs at the same time.
-    maxWorkers: Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2))),
+    // Two workers leave enough capacity for suites that each spawn several real
+    // bridges, shells, and native PTYs at the same time.
+    maxWorkers: Math.min(2, Math.max(1, Math.floor(availableParallelism() / 2))),
     // The default 5s per-test timeout is too tight for the full parallel run:
     // several suites `vi.resetModules()` per test, and resetModules clears the
     // module-instantiation cache but NOT Vite's transform cache, so the first
