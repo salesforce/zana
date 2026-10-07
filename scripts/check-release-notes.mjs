@@ -21,7 +21,7 @@
  *
  * Exit 0 = notes OK; exit 1 = a problem (with a message naming the file to fix).
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -86,4 +86,4 @@ export function runReleaseNotesGuard({ root = repoRoot, tag = process.env.GITHUB
   return 0;
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) process.exitCode = runReleaseNotesGuard();
+if (process.argv[1] && pathToFileURL(realpathSync(resolve(process.argv[1]))).href === import.meta.url) process.exitCode = runReleaseNotesGuard();
