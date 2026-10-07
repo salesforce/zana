@@ -47,7 +47,7 @@ export class ExecutionDeadlineWatchdog {
     if (this.disposed || TERMINAL_STATES.has(record.state)) return;
     const deadlineMs = record.request.policy?.deadlineMs;
     if (typeof deadlineMs !== 'number' || !Number.isFinite(deadlineMs) || deadlineMs <= 0) return;
-    this.arm(record.id, executionProgressAnchor(record) + deadlineMs, 1);
+    this.arm(record.id, record.blockerGraceUntil ?? (executionProgressAnchor(record) + deadlineMs), 1);
   }
 
   restore(records: readonly ExecutionRecord[]): void {

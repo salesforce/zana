@@ -8,7 +8,7 @@ import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './pol
 import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-grant-store.js';
 import type { createExecutionSourceRegistry } from './source-registry.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
-import type { InboxInput } from '../inbox/inbox-store.js';
+import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-watchdog.js';
 import { PlanReadinessWatchdog } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
@@ -33,6 +33,7 @@ const PROVEN_DEAD_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.PROVEN_DEAD;
  * genuinely stuck/parked coordinator reaches the escalation.
  */
 const COORDINATOR_BLOCKER_ESCALATE_MS = 5 * 60_000;
+const HUMAN_BLOCKER_DEADLINE_GRACE_MS = COORDINATOR_BLOCKER_ESCALATE_MS + 30_000;
 /**
  * How long a coordinator wake may sit unqueued against an `unknown`-state
  * coordinator before it is delivered anyway. A remote/opencode coordinator with
@@ -215,7 +216,7 @@ export interface ExecutionServiceDeps {
   deliverToWorker?: (sessionId: string, text: string) => boolean;
   triggerDeliveryDrain?: (sessionId: string) => void;
   logError?: (message: string, error: unknown) => void;
-  inbox?: { append: (input: InboxInput) => Promise<unknown> };
+  inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   admissionInput?: (projectId: string, request: ExecutionRequestV1) => Promise<TeamAdmissionInput> | TeamAdmissionInput;
   /** Main-owned snapshot resolver. Agent/renderer model claims never authorize routing. */
@@ -762,6 +763,23 @@ export class ExecutionService {
     const active = await this.deps.store.listActive();
     this.deadlineWatchdog.restore(active);
     this.planReadinessWatchdog.restore(active);
+  }
+
+  async flushBlockerNotices(): Promise<void> {
+    const now = (this.deps.now ?? Date.now)();
+    const records = await this.deps.store.listPendingNotices();
+    for (const record of records) {
+      for (const intent of record.noticeIntents ?? []) {
+        if (intent.status === 'ACKNOWLEDGED' || intent.nextAttemptAt > now) continue;
+        const blocker = record.blockers?.find((candidate) => candidate.id === intent.blockerId && !candidate.resolved);
+        if (!blocker) continue;
+        try {
+          await this.appendHumanBlockerNotice(record, blocker, blocker.options ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true) : {});
+        } catch {
+          await this.deps.store.deferNotice(record.id, intent.key, now + Math.min(60_000, 1_000 * 2 ** Math.min(intent.attempts, 6)));
+        }
+      }
+    }
   }
 
   /**
@@ -1683,14 +1701,8 @@ export class ExecutionService {
         const questionData = blocker.options
           ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true)
           : {};
-        void this.deps.inbox?.append({
-          projectId: binding.projectId,
-          subject: record.jobTitle || 'Job Execution Blocked',
-          comments: blocker.question,
-          executionId: record.id,
-          blockerId: blocker.id,
-          ...questionData
-        }).catch((err) => {
+        const persistedBlocker = record.blockers?.find((candidate) => candidate.id === blocker.id);
+        if (persistedBlocker) void this.appendHumanBlockerNotice(record, persistedBlocker, questionData).catch((err) => {
           console.error('Failed to append linked inbox entry for execution blocker', err);
         });
       }
@@ -1752,7 +1764,15 @@ export class ExecutionService {
     for (const record of active) {
       for (const blocker of record.blockers ?? []) {
         if (blocker.resolved || blocker.audience !== 'coordinator' || blocker.escalatedAt !== undefined) continue;
-        if (now - blocker.createdAt < COORDINATOR_BLOCKER_ESCALATE_MS) continue;
+        let coordinatorUnavailable = false;
+        try {
+          const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.launchRequestId));
+          coordinatorUnavailable = !lifecycle?.orchestratorSessionId
+            || (lifecycle.workers ?? []).find((worker) => worker.sessionId === lifecycle.orchestratorSessionId)?.process === 'exited';
+        } catch {
+          // A failed lifecycle read is transient, not evidence the coordinator died.
+        }
+        if (!coordinatorUnavailable && now - blocker.createdAt < COORDINATOR_BLOCKER_ESCALATE_MS) continue;
         // A coordinator answer already in flight → let it land; not stuck.
         if ((record.deliveries ?? []).some((delivery) => delivery.blockerId === blocker.id && (delivery.state === 'PENDING' || delivery.state === 'LEASED'))) continue;
         try {
@@ -1766,14 +1786,7 @@ export class ExecutionService {
         const questionData = blocker.options
           ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true)
           : {};
-        void this.deps.inbox?.append({
-          projectId: record.projectId,
-          subject: record.jobTitle || 'Job Execution Blocked',
-          comments: blocker.question,
-          executionId: record.id,
-          blockerId: blocker.id,
-          ...questionData
-        }).catch((err) => {
+        void this.appendHumanBlockerNotice(record, blocker, questionData).catch((err) => {
           (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))('Failed to append inbox entry for escalated coordinator blocker', err);
         });
       }
@@ -1989,6 +2002,79 @@ export class ExecutionService {
     } finally {
       this.endStarting(record.id);
     }
+  }
+
+  /**
+   * Start a fresh execution for a timeout that was waiting on human input. This
+   * never reopens the source record or revives its canceled workers. Recovery is
+   * deliberately limited to plans whose unfinished work is read-only: mutating
+   * work needs durable artifact/provenance replay before it can be safe.
+   */
+  async recoverTimedOut(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, clientRequestId: string) {
+    const source = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+    if (!source) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
+    if (!Number.isInteger(expectedStateVersion) || !clientRequestId.trim()) {
+      return { ok: false as const, code: 'INVALID', message: 'invalid timeout recovery request' };
+    }
+    const rejectUnsafeRecovery = (record: ExecutionRecord) => {
+      const units = record.workUnits ?? [];
+      if (units.some((unit) => unit.state !== 'COMPLETED' && !unit.readOnly)) {
+        return 'recovery requires durable provenance for unfinished mutating work';
+      }
+      if (units.some((unit) => unit.state === 'COMPLETED' && !unit.readOnly)) {
+        return 'recovery requires durable provenance for completed mutating work';
+      }
+      return undefined;
+    };
+    const unsafeReason = rejectUnsafeRecovery(source);
+    // Do not reserve an execution that policy will reject: the user may retry after
+    // durable provenance becomes available.
+    if (unsafeReason) return { ok: false as const, code: 'RECOVERY_NOT_ALLOWED', message: unsafeReason };
+    let reserved: ExecutionRecord;
+    try {
+      reserved = await this.deps.store.reserveTimeoutRecovery(source.id, expectedStateVersion, clientRequestId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false as const, code: message === 'stale execution state' ? 'CONFLICT' : 'RECOVERY_NOT_ALLOWED', message };
+    }
+    const reservedUnsafeReason = rejectUnsafeRecovery(reserved);
+    if (reservedUnsafeReason) return { ok: false as const, code: 'RECOVERY_NOT_ALLOWED', message: reservedUnsafeReason };
+    const units = reserved.workUnits ?? [];
+    const unfinished = units.filter((unit) => unit.state !== 'COMPLETED');
+    const completed = units.filter((unit) => unit.state === 'COMPLETED');
+    const completedIds = new Set(completed.map((unit) => unit.id));
+    const completedContext = completed
+      .filter((unit) => unit.result !== undefined)
+      .map((unit) => `${unit.title}: ${unit.result!.slice(0, 2_048)}`)
+      .join('\n')
+      .slice(0, 8_192);
+    const unresolvedBlockers = (reserved.blockers ?? [])
+      .filter((blocker) => !blocker.resolved)
+      .map((blocker) => `- ${blocker.question}${blocker.options?.length ? ` Options: ${blocker.options.join(' | ')}` : ''}`)
+      .join('\n')
+      .slice(0, 8_192);
+    const request: ExecutionRequestV1 = {
+      ...reserved.request,
+      teamId: reserved.teamId,
+      launchRequestId: reserved.successorLaunchRequestId!,
+      objective: [
+        reserved.request.objective,
+        'Recovery run: completed read-only work must not be repeated.',
+        completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.',
+        unresolvedBlockers
+          ? `Unresolved human input from the timed-out run:\n${unresolvedBlockers}\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.`
+          : undefined
+      ].filter(Boolean).join('\n\n'),
+      workUnits: unfinished.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => ({
+        ...unit,
+        dependencies: unit.dependencies.filter((dependency) => !completedIds.has(dependency))
+      })),
+      coordinationMode: reserved.coordinationMode
+    };
+    const recovered = await this.start(callerPrincipalId, projectId, request);
+    if (!recovered.ok) return recovered;
+    await this.deps.store.linkTimeoutSuccessor(source.id, clientRequestId, recovered.value.id);
+    return { ok: true as const, value: recovered.value, source };
   }
 
   async putArtifact(
@@ -2599,7 +2685,7 @@ export class ExecutionService {
     const deadlineMs = record.request.policy?.deadlineMs;
     if (deadlineMs && (this.deps.now ?? Date.now)() >= executionProgressAnchor(record) + deadlineMs
       && record.state !== 'COMPLETED' && record.state !== 'FAILED' && record.state !== 'STOPPED') {
-      return this.timeoutExecution(record.id);
+      return this.applyDeadlineDecision(record);
     }
     let rawLifecycle: any;
     try {
@@ -2800,15 +2886,14 @@ export class ExecutionService {
   private async enforceDeadline(executionId: string): Promise<void> {
     const record = await this.deps.store.get(executionId);
     if (!record) return;
-    if (!isResumeGrantTerminal(record.state)) {
-      const deadlineMs = record.request.policy?.deadlineMs;
-      if (typeof deadlineMs === 'number' && Number.isFinite(deadlineMs) && deadlineMs > 0
-        && (this.deps.now ?? Date.now)() < executionProgressAnchor(record) + deadlineMs) {
-        this.deadlineWatchdog.schedule(record);
-        return;
-      }
+    // A prior deadline write can survive while cancellation fails. Keep the
+    // watchdog retrying terminal teardown; do not reinterpret STOPPED as a new
+    // deadline decision.
+    if (record.state === 'STOPPED') {
+      await this.cancelTimedOutLaunch(record);
+      return;
     }
-    await this.timeoutExecution(executionId);
+    await this.applyDeadlineDecision(record);
   }
 
   private async timeoutExecution(executionId: string): Promise<ExecutionRecord> {
@@ -2831,6 +2916,44 @@ export class ExecutionService {
     await this.cleanupTerminal(stopped);
     await this.cancelTimedOutLaunch(stopped);
     return stopped;
+  }
+
+  private async applyDeadlineDecision(record: ExecutionRecord): Promise<ExecutionRecord> {
+    if (isResumeGrantTerminal(record.state)) return record;
+    const deadlineMs = record.request.policy?.deadlineMs;
+    if (typeof deadlineMs !== 'number' || !Number.isFinite(deadlineMs) || deadlineMs <= 0) return record;
+    const decision = await this.deps.store.decideDeadline(
+      record.id,
+      executionProgressAnchor(record) + deadlineMs,
+      HUMAN_BLOCKER_DEADLINE_GRACE_MS
+    );
+    if (decision.kind === 'continue' || decision.kind === 'grace') {
+      this.deadlineWatchdog.schedule(decision.record);
+      return decision.record;
+    }
+    await this.cleanupTerminal(decision.record);
+    await this.cancelTimedOutLaunch(decision.record);
+    return decision.record;
+  }
+
+  private async appendHumanBlockerNotice(
+    record: ExecutionRecord,
+    blocker: NonNullable<ExecutionRecord['blockers']>[number],
+    questionData: Record<string, unknown>
+  ): Promise<void> {
+    const inbox = this.deps.inbox;
+    if (!inbox) return;
+    const input: InboxInput = {
+      projectId: record.projectId,
+      subject: record.jobTitle || 'Job Execution Blocked',
+      comments: blocker.question,
+      executionId: record.id,
+      blockerId: blocker.id,
+      dedupeKey: `execution-blocker:${record.id}:${blocker.id}`,
+      ...questionData
+    };
+    const entry = inbox.appendOnce ? await inbox.appendOnce(input) : await inbox.append(input);
+    await this.deps.store.acknowledgeNotice(record.id, input.dedupeKey!, entry.id);
   }
 
   /**
@@ -2873,15 +2996,20 @@ export class ExecutionService {
   private async launchMayProceed(record: ExecutionRecord): Promise<boolean> {
     const current = await this.deps.store.get(record.id);
     if (!current) return false;
+    if (current.state === 'STOPPED') {
+      try { await this.cancelTimedOutLaunch(current); } catch { /* watchdog retries teardown */ }
+      return false;
+    }
     const deadlineMs = current.request.policy?.deadlineMs;
     const expired = typeof deadlineMs === 'number'
       && Number.isFinite(deadlineMs)
       && deadlineMs > 0
       && (this.deps.now ?? Date.now)() >= executionProgressAnchor(current) + deadlineMs;
     if (!isResumeGrantTerminal(current.state) && !expired) return true;
-    if (expired || current.state === 'STOPPED') {
+    if (expired) {
       try {
-        await this.timeoutExecution(current.id);
+        const decided = await this.applyDeadlineDecision(current);
+        if (!isResumeGrantTerminal(decided.state)) return true;
       } catch {
         // Watchdog owns bounded retry; post-launch fence still prevents RUNNING.
       }

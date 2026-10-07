@@ -311,6 +311,8 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.executionBoard.resume, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion === true),
     retryDelivery: (projectId, executionId, expectedStateVersion, blockerId, deliveryId) =>
       ipcRenderer.invoke(IPC.executionBoard.retryDelivery, projectId, executionId, expectedStateVersion, blockerId, deliveryId),
+    recoverTimedOut: (projectId, executionId, expectedStateVersion, clientRequestId) =>
+      ipcRenderer.invoke(IPC.executionBoard.recoverTimedOut, projectId, executionId, expectedStateVersion, clientRequestId),
     clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
     relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
   },

@@ -249,6 +249,15 @@ export interface ExecutionRecord {
   workUnits?: ExecutionWorkUnit[];
   blockers?: ExecutionBlocker[];
   deliveries?: ExecutionDeliveryRecord[];
+  noticeIntents?: Array<{ key: string; blockerId: string; status: 'PENDING' | 'ACKNOWLEDGED'; attempts: number; nextAttemptAt: number; inboxItemId?: string; createdAt: number; updatedAt: number }>;
+  /** Fixed, non-sliding timeout extension for a committed unresolved blocker. */
+  blockerGraceUntil?: number;
+  /** Durable explanation for a terminal timeout; never implies inbox delivery. */
+  timeoutReason?: 'idle' | 'unresolved-blocker';
+  /** Stable launch request reserved for one recovered successor. */
+  successorLaunchRequestId?: string;
+  successorExecutionId?: string;
+  recoveryRequestId?: string;
   finalSummary?: string;
   assembledResult?: ExecutionAssembledResultV1;
   usageObservations?: ExecutionUsageObservationV1[];
@@ -494,6 +503,12 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.workUnits === undefined || Array.isArray(record.workUnits) && record.workUnits.length <= MAX_WORK_UNITS && record.workUnits.every(validWorkUnit))
     && (record.blockers === undefined || Array.isArray(record.blockers) && record.blockers.length <= MAX_WORK_UNITS && record.blockers.every(validExecutionBlocker))
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
+    && (record.noticeIntents === undefined || Array.isArray(record.noticeIntents) && record.noticeIntents.length <= MAX_WORK_UNITS && record.noticeIntents.every((intent) => !!intent && validString(intent.key) && validString(intent.blockerId) && (intent.status === 'PENDING' || intent.status === 'ACKNOWLEDGED') && validNonNegativeInteger(intent.attempts) && typeof intent.nextAttemptAt === 'number' && Number.isFinite(intent.nextAttemptAt) && (intent.inboxItemId === undefined || validString(intent.inboxItemId)) && typeof intent.createdAt === 'number' && typeof intent.updatedAt === 'number'))
+    && (record.blockerGraceUntil === undefined || typeof record.blockerGraceUntil === 'number' && Number.isFinite(record.blockerGraceUntil))
+    && (record.timeoutReason === undefined || record.timeoutReason === 'idle' || record.timeoutReason === 'unresolved-blocker')
+    && (record.successorLaunchRequestId === undefined || validString(record.successorLaunchRequestId))
+    && (record.successorExecutionId === undefined || validString(record.successorExecutionId))
+    && (record.recoveryRequestId === undefined || validString(record.recoveryRequestId))
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
     && (record.assembledResult === undefined || validAssembledResult(record.assembledResult))
     && (record.usageObservations === undefined || Array.isArray(record.usageObservations) && record.usageObservations.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION && record.usageObservations.every(validUsageObservation))
@@ -894,6 +909,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         for (const record of parsed.records) {
           if (!record || typeof record !== 'object') continue;
           if (!Array.isArray(record.deliveries)) record.deliveries = [];
+          if (!Array.isArray(record.noticeIntents)) record.noticeIntents = [];
           const legacyWake = (record as ExecutionRecord & { coordinatorWake?: { message: string; createdAt: number } }).coordinatorWake;
           if (!Array.isArray(record.coordinatorWakes)) record.coordinatorWakes = legacyWake ? [{ version: 1, id: `${record.id}:wake:1`, key: `HUMAN_BLOCKER\0\0${record.state}`, cause: 'HUMAN_BLOCKER', stateOrClaimGeneration: record.state, ...legacyWake }] : [];
           record.coordinatorWakes = (record.coordinatorWakes as Array<CoordinatorWakeV1 | { id: string; message: string; createdAt: number }>).map((wake, index) => 'version' in wake ? wake : ({
@@ -924,6 +940,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   function persist(state: ExecutionStateFile, expectedHash: string | null): void {
     for (const record of state.records) {
       record.deliveries ??= [];
+      record.noticeIntents ??= [];
       record.deliveries = record.deliveries.filter((delivery) => {
         if (delivery.state === 'DELIVERED') return delivery.deliveredAt === undefined || now() - delivery.deliveredAt < DELIVERED_RETENTION_MS;
         if (delivery.state === 'FAILED') return now() - delivery.updatedAt < DELIVERED_RETENTION_MS;
@@ -1003,7 +1020,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const timestamp = now();
       const record: ExecutionRecord = {
         ...bounded, id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, state: 'READY', stateVersion: 0, lastEventSequence: 0,
-        deliveries: [], recoveryGeneration: 0, recoveryDeadlineAt: timestamp + EXECUTION_RECOVERY_TTL_MS, createdAt: timestamp, updatedAt: timestamp
+        deliveries: [], noticeIntents: [], recoveryGeneration: 0, recoveryDeadlineAt: timestamp + EXECUTION_RECOVERY_TTL_MS, createdAt: timestamp, updatedAt: timestamp
       };
       snapshot.state.records.push(record);
       append(snapshot.state, record, 'READY', 'info', 'Execution reserved', timestamp);
@@ -1037,6 +1054,86 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       append(snapshot.state, record, state, severity, string(summary, 'event summary'), timestamp, { kind: 'transition', fromState, toState: state });
       persist(snapshot.state, snapshot.hash);
       return clone(record);
+    });
+  }
+
+  /** Reserve exactly one successor request for an eligible timed-out source. */
+  async function reserveTimeoutRecovery(executionId: string, expectedStateVersion: number, clientRequestId: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const requestId = string(clientRequestId, 'recovery request id');
+      // Same click retry replays even after reservation advanced stateVersion.
+      if (record.successorLaunchRequestId && record.recoveryRequestId === requestId) return clone(record);
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      if (record.state !== 'STOPPED' || record.timeoutReason !== 'unresolved-blocker' || record.dismissedAt !== undefined) {
+        throw new Error('execution recovery is not allowed');
+      }
+      if (record.successorLaunchRequestId) {
+        if (record.recoveryRequestId !== requestId) throw new Error('execution recovery already reserved');
+        return clone(record);
+      }
+      record.recoveryRequestId = requestId;
+      record.successorLaunchRequestId = `${record.id}:recovery:${requestId}`;
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'info', 'Timed-out execution recovery reserved', record.updatedAt, { kind: 'reservation' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function linkTimeoutSuccessor(executionId: string, clientRequestId: string, successorExecutionId: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.recoveryRequestId !== string(clientRequestId, 'recovery request id')) throw new Error('execution recovery request mismatch');
+      const successorId = string(successorExecutionId, 'successor execution id');
+      if (record.successorExecutionId && record.successorExecutionId !== successorId) throw new Error('execution recovery successor conflict');
+      if (record.successorExecutionId) return clone(record);
+      record.successorExecutionId = successorId;
+      record.stateVersion += 1; record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'info', 'Timed-out execution successor linked', record.updatedAt, { kind: 'event' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /**
+   * One serialized deadline decision used by watchdog and polling callers. A
+   * committed blocker earns exactly one fixed grace window; repeated polls never
+   * extend it. The terminal transition and its reason persist together.
+   */
+  async function decideDeadline(executionId: string, deadlineAt: number, blockerGraceMs: number): Promise<{ kind: 'continue' | 'grace' | 'stopped'; record: ExecutionRecord }> {
+    if (!Number.isFinite(deadlineAt) || !Number.isInteger(blockerGraceMs) || blockerGraceMs < 0) throw new Error('invalid deadline decision');
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const timestamp = now();
+      if (terminalStates.has(record.state) || timestamp < deadlineAt) return { kind: 'continue' as const, record: clone(record) };
+      const hasBlocker = record.blockers?.some((blocker) => !blocker.resolved) ?? false;
+      if (hasBlocker && blockerGraceMs > 0 && record.blockerGraceUntil === undefined) {
+        record.blockerGraceUntil = timestamp + blockerGraceMs;
+        record.stateVersion += 1;
+        record.updatedAt = timestamp;
+        append(snapshot.state, record, record.state, 'warning', 'Execution deadline paused for unresolved blocker', timestamp, { kind: 'event' });
+        persist(snapshot.state, snapshot.hash);
+        return { kind: 'grace' as const, record: clone(record) };
+      }
+      if (hasBlocker && record.blockerGraceUntil !== undefined && timestamp < record.blockerGraceUntil) {
+        return { kind: 'grace' as const, record: clone(record) };
+      }
+      const fromState = record.state;
+      record.state = 'STOPPED';
+      record.timeoutReason = hasBlocker ? 'unresolved-blocker' : 'idle';
+      record.stateVersion += 1;
+      record.updatedAt = timestamp;
+      append(snapshot.state, record, 'STOPPED', 'warning', hasBlocker ? 'Execution timed out with unresolved blocker' : 'Execution timed out', timestamp, { kind: 'transition', fromState, toState: 'STOPPED' });
+      persist(snapshot.state, snapshot.hash);
+      return { kind: 'stopped' as const, record: clone(record) };
     });
   }
 
@@ -1922,6 +2019,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       clearClaim(unit);
       record.blockers ??= [];
       record.blockers.push({ id: string(input.id, 'blocker id'), workUnitId: unit.id, slotId: authority.slotId, question: string(input.question, 'blocker question'), ...(input.options ? { options: input.options.map((option) => string(option, 'blocker option')) } : {}), ...(input.audience === 'coordinator' ? { audience: 'coordinator' as const } : {}), resolved: false, createdAt: timestamp });
+      if (input.audience !== 'coordinator') {
+        record.noticeIntents ??= [];
+        record.noticeIntents.push({ key: `execution-blocker:${record.id}:${input.id}`, blockerId: string(input.id, 'blocker id'), status: 'PENDING', attempts: 0, nextAttemptAt: timestamp, createdAt: timestamp, updatedAt: timestamp });
+      }
       record.state = 'BLOCKED';
     }, `Work unit blocked: ${workUnitId}`);
   }
@@ -1934,14 +2035,58 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * so the sweep only ever escalates a genuinely stuck coordinator ask exactly once.
    */
   async function escalateBlockerToHuman(executionId: string, blockerId: string): Promise<ExecutionRecord> {
-    return mutateRecord(executionId, undefined, (record) => {
+    return mutateRecord(executionId, undefined, (record, timestamp) => {
       const blocker = findBlocker(record, blockerId);
       if (blocker.resolved) throw new Error('execution blocker is resolved');
       if (blocker.audience !== 'coordinator') throw new Error('only a coordinator-audience blocker escalates to human');
       if (blocker.escalatedAt !== undefined) throw new Error('execution blocker already escalated');
       blocker.audience = 'human';
-      blocker.escalatedAt = now();
+      blocker.escalatedAt = timestamp;
+      record.noticeIntents ??= [];
+      if (!record.noticeIntents.some((intent) => intent.blockerId === blocker.id)) {
+        record.noticeIntents.push({ key: `execution-blocker:${record.id}:${blocker.id}`, blockerId: blocker.id, status: 'PENDING', attempts: 0, nextAttemptAt: timestamp, createdAt: timestamp, updatedAt: timestamp });
+      }
     }, `Coordinator blocker escalated to human: ${blockerId}`);
+  }
+
+  async function acknowledgeNotice(executionId: string, key: string, inboxItemId: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const timestamp = now();
+      const intent = record.noticeIntents?.find((candidate) => candidate.key === string(key, 'notice key'));
+      if (!intent) throw new Error('execution notice intent not found');
+      if (intent.status !== 'ACKNOWLEDGED') {
+        intent.status = 'ACKNOWLEDGED'; intent.inboxItemId = string(inboxItemId, 'inbox item id'); intent.attempts += 1; intent.updatedAt = timestamp;
+        record.stateVersion += 1; record.updatedAt = timestamp;
+        append(snapshot.state, record, record.state, 'info', 'Execution blocker notice acknowledged', timestamp, { kind: 'event' });
+        persist(snapshot.state, snapshot.hash);
+      }
+      return clone(record);
+    });
+  }
+
+  async function deferNotice(executionId: string, key: string, retryAt: number): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const timestamp = now();
+      const intent = record.noticeIntents?.find((candidate) => candidate.key === string(key, 'notice key'));
+      if (!intent || intent.status === 'ACKNOWLEDGED') return clone(record);
+      intent.attempts += 1; intent.nextAttemptAt = retryAt; intent.updatedAt = timestamp;
+      record.stateVersion += 1; record.updatedAt = timestamp;
+      append(snapshot.state, record, record.state, 'warning', 'Execution blocker notice deferred', timestamp, { kind: 'event' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function listPendingNotices(limit = 100): Promise<ExecutionRecord[]> {
+    return storeQueue.run(async () => clone(read().state.records
+      .filter((record) => record.noticeIntents?.some((intent) => intent.status === 'PENDING'))
+      .slice(0, Math.max(1, Math.min(limit, 100)))));
   }
 
   async function enqueueBlockerDelivery(
@@ -2474,7 +2619,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

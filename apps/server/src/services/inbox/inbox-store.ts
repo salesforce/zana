@@ -118,6 +118,12 @@ export interface InboxReadOpts {
 
 export interface IInboxStore {
   append(input: InboxInput): Promise<InboxEntry>;
+  /**
+   * Append one durable entry for a stable `(projectId, dedupeKey)` pair. Unlike
+   * `append`, a retry returns the original entry unchanged: no timestamp refresh
+   * and no occurrence bump. Use for externally retried delivery protocols.
+   */
+  appendOnce(input: InboxInput): Promise<InboxEntry>;
   read(opts?: InboxReadOpts): Promise<{ entries: InboxEntry[]; hasMore: boolean }>;
   /**
    * Every live entry id currently on disk / in memory. Used by the sibling
@@ -633,6 +639,22 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
     });
   }
 
+  async function appendOnce(input: InboxInput): Promise<InboxEntry> {
+    validateInput(input);
+    if (!input.dedupeKey) throw new Error('appendOnce requires inbox dedupe key');
+    const entry: InboxEntry = { ...input, id: randomUUID(), ts: Date.now() };
+    return runExclusive(async () => {
+      await mkdir(dirname(filePath), { recursive: true });
+      const existing = await read({ projectId: input.projectId, limit: maxEntries > 0 ? maxEntries : 10_000 });
+      const prior = existing.entries.find((candidate) => candidate.dedupeKey === input.dedupeKey);
+      if (prior) return prior;
+      await appendFile(filePath, JSON.stringify(entry) + '\n');
+      liveIds?.add(entry.id);
+      emitter.emit('appended', entry);
+      return entry;
+    });
+  }
+
   async function read(opts: InboxReadOpts = {}): Promise<{ entries: InboxEntry[]; hasMore: boolean }> {
     const limit = Math.max(1, Math.min(10_000, Math.floor(opts.limit ?? 100)));
     const entries: InboxEntry[] = [];
@@ -809,6 +831,7 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
 
   return {
     append,
+    appendOnce,
     read,
     listIds,
     hasId,
@@ -865,6 +888,17 @@ export function createMemoryInboxStore(): IInboxStore {
         }
       }
     }
+    entries.push(entry);
+    emitter.emit('appended', entry);
+    return entry;
+  }
+
+  async function appendOnce(input: InboxInput): Promise<InboxEntry> {
+    validateInput(input);
+    if (!input.dedupeKey) throw new Error('appendOnce requires inbox dedupe key');
+    const prior = entries.find((entry) => entry.projectId === input.projectId && entry.dedupeKey === input.dedupeKey);
+    if (prior) return prior;
+    const entry: InboxEntry = { ...input, id: randomUUID(), ts: Date.now() };
     entries.push(entry);
     emitter.emit('appended', entry);
     return entry;
@@ -941,6 +975,7 @@ export function createMemoryInboxStore(): IInboxStore {
 
   return {
     append,
+    appendOnce,
     read,
     listIds,
     hasId,

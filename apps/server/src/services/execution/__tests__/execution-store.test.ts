@@ -38,6 +38,23 @@ async function accumulateKickoffFailures(store: ReturnType<typeof createExecutio
 }
 
 describe('execution store', () => {
+  it('grants one fixed blocker deadline grace then stops with a durable reason', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { id: 'blocker', question: 'Need input' });
+    now = 1_100;
+    const grace = await store.decideDeadline(record.id, 1_050, 30);
+    expect(grace).toMatchObject({ kind: 'grace', record: { blockerGraceUntil: 1_130, state: 'BLOCKED' } });
+    now = 1_110;
+    expect(await store.decideDeadline(record.id, 1_050, 30)).toMatchObject({ kind: 'grace', record: { blockerGraceUntil: 1_130 } });
+    now = 1_130;
+    expect(await store.decideDeadline(record.id, 1_050, 30)).toMatchObject({ kind: 'stopped', record: { state: 'STOPPED', timeoutReason: 'unresolved-blocker' } });
+  }));
   it('persists immutable usage deltas with exact replay and explicit reset epochs', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => 10 });
     const record = (await store.claim(request())).record;

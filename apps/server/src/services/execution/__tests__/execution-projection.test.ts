@@ -66,6 +66,18 @@ describe('projectExecutionProjection', () => {
     });
   });
 
+  it('projects durable deadline reason without exposing recovery authority', () => {
+    const input = record();
+    input.state = 'STOPPED';
+    input.timeoutReason = 'unresolved-blocker';
+    input.successorExecutionId = 'execution-2';
+    input.noticeIntents = [{ key: 'execution-blocker:execution-1:current', blockerId: 'current', status: 'ACKNOWLEDGED', attempts: 1, inboxItemId: 'inbox-1', nextAttemptAt: 1, createdAt: 1, updatedAt: 1 }];
+    expect(projectExecutionProjection([input], [])[0]).toMatchObject({
+      state: 'STOPPED', timeoutReason: 'unresolved-blocker', successorExecutionId: 'execution-2', recovery: { status: 'terminal' }
+    });
+    expect(projectExecutionProjection([input], [])[0].currentBlocker?.notice).toMatchObject({ status: 'ACKNOWLEDGED', inboxItemId: 'inbox-1' });
+  });
+
   it('projects bounded assembled detail without raw structured result', () => {
     const input = record();
     input.assembledResult = { version: 1, outcome: 'partial', summary: 'summary', units: [{ id: 'build', title: 'Build', state: 'COMPLETED', result: 'ok', structuredResult: { secret: 'x'.repeat(10_000) } }], failures: [], artifacts: [], verification: [], usage: { version: 1, completeness: 'unavailable', observationCount: 0, gapCount: 0, byRole: [] }, digest: `sha256:${'1'.repeat(64)}` };

@@ -39,6 +39,7 @@ export const IPC = {
     respond: 'executionBoard:respond',
     resume: 'executionBoard:resume',
     retryDelivery: 'executionBoard:retryDelivery',
+    recoverTimedOut: 'executionBoard:recoverTimedOut',
     clearResumeToken: 'executionBoard:clearResumeToken',
     relaunchMonitor: 'executionBoard:relaunchMonitor'
   },

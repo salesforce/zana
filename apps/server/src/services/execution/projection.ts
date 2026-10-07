@@ -96,6 +96,7 @@ function blockerProjection(record: ExecutionRecord): Pick<ExecutionBoardProjecti
   const currentDelivery = currentBlocker ? [...(record.deliveries ?? [])]
     .filter((delivery) => delivery.blockerId === currentBlocker.id)
     .sort((left, right) => right.updatedAt - left.updatedAt)[0] : undefined;
+  const currentNotice = currentBlocker ? (record.noticeIntents ?? []).find((notice) => notice.blockerId === currentBlocker.id) : undefined;
   const deliveryStateByBlocker = new Map<string, NonNullable<ExecutionBoardProjection['blockers']>[number]['deliveryState']>();
   for (const delivery of [...(record.deliveries ?? [])].sort((left, right) => left.updatedAt - right.updatedAt)) {
     deliveryStateByBlocker.set(delivery.blockerId, delivery.state);
@@ -111,6 +112,11 @@ function blockerProjection(record: ExecutionRecord): Pick<ExecutionBoardProjecti
         maxAttempts: MAX_DELIVERY_ATTEMPTS,
         retryEligible: currentDelivery.state === 'FAILED' && (currentDelivery.manualRetryCount ?? 0) < 1,
         ...(currentDelivery.lastError ? { error: firstErrorLine(currentDelivery.lastError) } : {})
+      } } : {}),
+      ...(currentNotice ? { notice: {
+        status: currentNotice.status,
+        attempts: currentNotice.attempts,
+        ...(currentNotice.inboxItemId ? { inboxItemId: currentNotice.inboxItemId } : {})
       } } : {})
     } } : {}),
     blockers: (record.blockers ?? []).map((blocker) => ({
@@ -255,6 +261,8 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
       ? { status: 'live', sessionId: orchestratorSessionId }
       : { status: 'lost' },
     recoveryAttention: !terminal && !orchestratorSessionId,
+    ...(record.timeoutReason ? { timeoutReason: record.timeoutReason } : {}),
+    ...(record.successorExecutionId ? { successorExecutionId: record.successorExecutionId } : {}),
     recovery: {
       status: terminal ? 'terminal' : (record.recoveryDeadlineAt ?? 0) > Date.now() ? 'available' : 'expired',
       ...(record.recoveryDeadlineAt === undefined ? {} : { deadlineAt: record.recoveryDeadlineAt })

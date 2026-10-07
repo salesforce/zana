@@ -250,6 +250,23 @@ export function registerExecutionBoardIpc(): void {
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
   );
 
+  handleFromCaller<[string, string, number, string], Result<ExecutionBoardProjection>>(
+    IPC.executionBoard.recoverTimedOut,
+    async (win, projectId, executionId, expectedStateVersion, clientRequestId) => {
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      if (!Number.isInteger(expectedStateVersion) || typeof clientRequestId !== 'string' || !clientRequestId.trim()) {
+        return { ok: false, code: 'INVALID', message: 'invalid timeout recovery request' };
+      }
+      // Interactive product routes identify the authenticated instance owner;
+      // never derive authority from the requested execution record.
+      const result = await squadExecutionService.recoverTimedOut('interactive:local', projectId, executionId, expectedStateVersion, clientRequestId);
+      return result.ok
+        ? { ok: true, value: executionProjection(result.value) }
+        : { ok: false, code: result.code, message: result.message };
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'timeout recovery unavailable' })
+  );
+
   const executionWorkControl = async (
     action: 'retry' | 'release' | 'reassign', projectId: string, executionId: string,
     expectedStateVersion: number, workUnitId: string, assignedSlotId?: string

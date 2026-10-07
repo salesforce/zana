@@ -95,6 +95,13 @@ describe('InboxStore (in-memory)', () => {
     expect(entry.ts).toBeGreaterThanOrEqual(before);
   });
 
+  it('appendOnce replays a stable keyed entry without refreshing occurrence metadata', async () => {
+    const first = await store.appendOnce({ projectId: 'proj-1', comments: 'Need a decision', dedupeKey: 'execution-blocker:e:b' });
+    const replay = await store.appendOnce({ projectId: 'proj-1', comments: 'Changed text must not replace first delivery', dedupeKey: 'execution-blocker:e:b' });
+    expect(replay).toEqual(first);
+    expect((await store.read()).entries).toHaveLength(1);
+  });
+
   it('append with docs only succeeds', async () => {
     const entry = await store.append({
       projectId: 'proj-1',

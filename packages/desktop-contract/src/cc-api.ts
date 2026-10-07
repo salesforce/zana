@@ -208,6 +208,7 @@ export interface CcApi {
     respond(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
     resume(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
     retryDelivery(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, deliveryId: string): Promise<Result<ExecutionBoardProjection>>;
+    recoverTimedOut(projectId: string, executionId: string, expectedStateVersion: number, clientRequestId: string): Promise<Result<ExecutionBoardProjection>>;
     clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
     relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };

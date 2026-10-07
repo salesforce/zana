@@ -94,6 +94,9 @@ function blockerLines(execution: ExecutionProjection): string[] {
     lines.push(`      question: ${currentBlocker.question}`);
     if (currentBlocker.options?.length) lines.push(`      options: ${currentBlocker.options.join(' · ')}`);
     if (currentBlocker.response) lines.push(`      response: ${currentBlocker.response}`);
+    if (currentBlocker.notice) {
+      lines.push(`      inbox notice: ${currentBlocker.notice.status} · attempts ${currentBlocker.notice.attempts}${currentBlocker.notice.inboxItemId ? ` · item ${currentBlocker.notice.inboxItemId}` : ''}`);
+    }
     if (currentBlocker.delivery) {
       lines.push(`      delivery: ${currentBlocker.delivery.state} · attempt ${currentBlocker.delivery.attempt}/${currentBlocker.delivery.maxAttempts}${currentBlocker.delivery.error ? ` · error: ${currentBlocker.delivery.error}` : ''} · retryEligible: ${currentBlocker.delivery.retryEligible}`);
     }
@@ -352,6 +355,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
           <p className="execution-blocker-question">{snapshot.execution.currentBlocker.question}</p>
           {snapshot.execution.currentBlocker.options?.length ? <p className="execution-blocker-options">{snapshot.execution.currentBlocker.options.join(' · ')}</p> : null}
           {isTerminal && <p className="execution-blocker-terminal" role="status">Squad run {execution.state.toLowerCase()}. This blocker is retained as history and can no longer receive a response.</p>}
+          {isTerminal && execution.timeoutReason === 'unresolved-blocker' && <p role="status" aria-live="polite">Timed out while waiting for this blocker. Recovery starts a fresh run; retained read-only work is not repeated.</p>}
+          {snapshot.execution.currentBlocker.notice && <p role="status" aria-live="polite">Inbox notice: {snapshot.execution.currentBlocker.notice.status.toLowerCase()} · attempts {snapshot.execution.currentBlocker.notice.attempts}{snapshot.execution.currentBlocker.notice.inboxItemId ? ` · item ${snapshot.execution.currentBlocker.notice.inboxItemId}` : ''}</p>}
           {snapshot.execution.currentBlocker.delivery && <p className="execution-delivery-status"
             role={snapshot.execution.currentBlocker.delivery.state === 'FAILED' ? 'alert' : 'status'}
             aria-live="polite"
@@ -421,6 +426,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       <div className="execution-details-actions">
         {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}
         {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>}
+        {execution.state === 'STOPPED' && execution.timeoutReason === 'unresolved-blocker' && !execution.successorExecutionId && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverTimedOut(projectId, executionId, execution.stateVersion ?? 0, crypto.randomUUID()))}>Recover timed-out run</button>}
+        {execution.successorExecutionId && <p role="status">Recovered successor: {execution.successorExecutionId}</p>}
         {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}
       </div>
     </section>

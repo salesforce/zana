@@ -27,7 +27,7 @@ beforeEach(() => {
   clipboardWriteText = vi.fn(async () => ({ ok: true as const }));
   Object.defineProperty(window, 'cc', { configurable: true, value: { executionBoard: {
     snapshot: vi.fn(async () => structuredClone(baseSnapshot)), stop: vi.fn(), retry: vi.fn(), retryWork: vi.fn(),
-    releaseWork: vi.fn(), reassignWork: vi.fn(), respond: vi.fn(), retryDelivery: vi.fn(), readArtifact: vi.fn(), relaunchMonitor: vi.fn()
+    releaseWork: vi.fn(), reassignWork: vi.fn(), respond: vi.fn(), retryDelivery: vi.fn(), recoverTimedOut: vi.fn(), readArtifact: vi.fn(), relaunchMonitor: vi.fn()
   }, clipboard: { writeText: clipboardWriteText } } });
 });
 afterEach(() => {
@@ -43,6 +43,31 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     expect(screen.getByText('visible result')).toBeTruthy();
     expect(screen.getByText(/appropriate · legal route · inactive proposal/)).toBeTruthy();
     expect(screen.getByText('final result')).toBeTruthy();
+  });
+
+  it('offers recovery only for blocker timeouts and keeps terminal response disabled', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'STOPPED';
+    snapshot.execution.timeoutReason = 'unresolved-blocker';
+    snapshot.execution.currentBlocker = { id: 'blocker-1', workUnitId: 'unit-1', slotId: 'slot-1', question: 'Need a decision' };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    const recover = await screen.findByRole('button', { name: 'Recover timed-out run' });
+    fireEvent.click(recover);
+    await waitFor(() => expect(window.cc.executionBoard.recoverTimedOut).toHaveBeenCalledWith('project-1', 'execution-1', 2, expect.any(String)));
+    expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
+  });
+
+  it('shows linked successor instead of offering duplicate timeout recovery', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'STOPPED';
+    snapshot.execution.timeoutReason = 'unresolved-blocker';
+    snapshot.execution.successorExecutionId = 'execution-successor';
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+
+    expect(await screen.findByText('Recovered successor: execution-successor')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Recover timed-out run' })).toBeNull();
   });
 
   it('keeps stop available and hides generic retry for resource blocks', async () => {
@@ -99,6 +124,15 @@ describe('ExecutionJobDetails copy job details', () => {
     expect(text).toMatch(/attempt: [^·]*· turnCount: [^·]*· claimGeneration: [^·]*· claimId:/);
     expect(text).toContain('Deliveries (0):');
     expect(text).toContain('Coordinator wakes (0):');
+  });
+
+  it('includes durable blocker-notice receipt in copied diagnostics', () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.currentBlocker = {
+      id: 'blocker-1', workUnitId: 'unit-1', slotId: 'slot-1', question: 'Need approval',
+      notice: { status: 'ACKNOWLEDGED', attempts: 2, inboxItemId: 'inbox-1' }
+    };
+    expect(buildJobDetailsText('project-1', snapshot)).toContain('inbox notice: ACKNOWLEDGED · attempts 2 · item inbox-1');
   });
 
   it('surfaces a failure toast when the clipboard write fails', async () => {
