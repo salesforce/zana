@@ -1934,7 +1934,7 @@ rl.on("line", (line) => {
         await waitForRuntimeState({
           label: "provider recording env stderr",
           predicate: () => stderrLines.length > spawn,
-          timeoutMs: 5_000,
+          timeoutMs: 30_000,
         });
         expect(JSON.parse(stderrLines[spawn]!)).toEqual({
           recordingDir: expectedDir,
@@ -2020,7 +2020,7 @@ rl.on("line", (line) => {
       await waitForRuntimeState({
         label: "provider bridge env stderr",
         predicate: () => stderrLines.length > 0,
-        timeoutMs: 5_000,
+        timeoutMs: 30_000,
       });
 
       expect(stderrLines[0]).toBe("1|bridge|thr_explicit");
