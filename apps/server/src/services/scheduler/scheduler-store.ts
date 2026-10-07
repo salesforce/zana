@@ -9,7 +9,8 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { Project, ScheduledTask } from '@zana-ai/zcc-domain/product';
 import { electronZccDataDir } from '../../electron-data-dir.js';
 
@@ -22,9 +23,11 @@ function ensureDir(dir: string) {
 
 function writeJsonAtomic(file: string, value: unknown) {
   const payload = JSON.stringify(value, null, 2);
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tmp, payload);
-  renameSync(tmp, file);
+  const tmp = `${file}.tmp-${randomUUID()}`;
+  try {
+    writeFileSync(tmp, payload, { mode: 0o600 });
+    renameSync(tmp, file);
+  } finally { rmSync(tmp, { force: true }); }
 }
 
 function readScheduleFile(
@@ -86,6 +89,7 @@ export function listAllSchedules(
 }
 
 function fileFor(task: ScheduledTask, projects: Project[]): string {
+  if (!task.id || task.id !== basename(task.id) || task.id.includes('\\') || task.id === '.' || task.id === '..') throw new Error('Invalid schedule id');
   let dir = globalDir();
   if (task.source && task.source !== 'global') {
     const projectId = task.source.projectId;
@@ -97,8 +101,25 @@ function fileFor(task: ScheduledTask, projects: Project[]): string {
   return join(dir, `${task.id}.json`);
 }
 
-export function saveSchedule(task: ScheduledTask, projects: Project[]): void {
-  writeJsonAtomic(fileFor(task, projects), stripTransient(task));
+export function readSchedule(task: ScheduledTask, projects: Project[]): ScheduledTask {
+  const file = fileFor(task, projects);
+  let reason = 'file is missing';
+  const value = readScheduleFile(file, (_path, error) => { reason = error; });
+  if (!value) throw new Error(`Cannot read schedule ${task.id}: ${reason}`);
+  if (value.id !== task.id || (task.source && task.source !== 'global' && value.projectId !== task.projectId)) {
+    throw new Error('Schedule file identity mismatch');
+  }
+  return { ...value, source: task.source };
+}
+
+/** Merge at the synchronous write boundary, including edits with unchanged updatedAt. */
+export function saveSchedule(task: ScheduledTask, projects: Project[], definitionPatch: Partial<ScheduledTask> = task): void {
+  const file = fileFor(task, projects);
+  const next = definitionPatch?.id === task.id
+    ? task // Explicit create.
+    : { ...readSchedule(task, projects), ...definitionPatch, status: task.status };
+  writeJsonAtomic(file, stripTransient(next));
+  Object.assign(task, next);
 }
 
 /**

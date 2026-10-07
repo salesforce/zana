@@ -1,4 +1,5 @@
 import { bridgeLaunchForProvider, getThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
 import { join } from 'node:path';
 import {
   createPluginService,
@@ -10,6 +11,7 @@ import {
 import {
   getConversationThread,
   getEnvironment,
+  getPrimaryHost,
   listConversationThreadEventsWindow,
   queryConversationThreads
 } from '@zana-ai/zcc-db';
@@ -54,9 +56,10 @@ export async function productPushInbox(
 }
 
 export function productListProjects(
-  ctx: Pick<ProductHttpContext, 'projects'>
+  ctx: Pick<ProductHttpContext, 'projects'> & Partial<Pick<ProductHttpContext, 'db'>>
 ): PluginSdkProject[] {
-  return ctx.projects.list().map((row) => ({ id: row.id, name: row.name, path: row.path, ...(row.icon ? { icon: row.icon } : {}), ...(row.quickAgent === true ? { quickAgent: true } : {}) }));
+  const localHostId = ctx.db ? getPrimaryHost(ctx.db)?.id : undefined;
+  return ctx.projects.list().map((row) => ({ id: row.id, name: row.name, path: row.path, local: !row.remote && (!row.hostId || row.hostId === localHostId), ...(row.icon ? { icon: row.icon } : {}), ...(row.quickAgent === true ? { quickAgent: true } : {}) }));
 }
 
 /**
@@ -324,7 +327,10 @@ export function createAttachedProductPluginService(
       return (await listQueuedMessages(ctx.dataDir, threadId)).map((row) => ({ id: row.id }));
     },
     createQueuedMessage: async ({ threadId, input, senderThreadId }) => {
-      const message = await createQueuedMessage(ctx.dataDir, threadId, input as never, {
+      const thread = getConversationThread(ctx.db, threadId);
+      if (!thread) throw new Error('Thread is not registered');
+      const normalized = await normalizePortableAttachments(ctx, input, thread.projectId, thread.hostId);
+      const message = await createQueuedMessage(ctx.dataDir, threadId, normalized as never, {
         senderThreadId
       });
       return { id: message.id };

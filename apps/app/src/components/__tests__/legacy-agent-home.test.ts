@@ -4,7 +4,6 @@ import {
   absolutePathMentions,
   applyLaunchPatch,
   assembleCliLaunchPrompt,
-  availableAgentHarnesses,
   composerDropProjectRoot,
   availableModelsToPickerOptions,
   cliAgentCatalogProviders,
@@ -33,17 +32,6 @@ import {
   withExecutionState,
   writeCliExtraArgs
 } from '../legacy-agent-home.js';
-
-describe('availableAgentHarnesses', () => {
-  it('keeps only enabled, installed, agent-eligible adapters', () => {
-    expect(availableAgentHarnesses([
-      { id: 'claude', agentDefaultEligible: true, availability: { enabled: true, installed: true } },
-      { id: 'cursor', agentDefaultEligible: false, availability: { enabled: true, installed: true } },
-      { id: 'codex', agentDefaultEligible: true, availability: { enabled: false, installed: true } },
-      { id: 'pi', agentDefaultEligible: true, availability: { enabled: true, installed: false } }
-    ]).map((row) => row.id)).toEqual(['claude']);
-  });
-});
 
 describe('PROFILE_BY_FAMILY', () => {
   it('maps every harness family to its default launch profile', () => {
@@ -92,6 +80,21 @@ describe('threadPermissionMode', () => {
 });
 
 describe('resolveCliAgentFamily', () => {
+  it('preserves a configured default during an empty roster and leaves an unconfigured roster blank', () => {
+    const input = { currentFamilyId: '', rememberedFamilyId: null, availableFamilyIds: [], effectiveDefaultFamilyId: 'codex' };
+    expect(resolveCliAgentFamily(input)).toBe('codex');
+    expect(resolveCliAgentFamily({ ...input, effectiveDefaultFamilyId: null })).toBe('');
+    expect(resolveCliAgentFamily({ ...input, availableFamilyIds: ['opencode'], effectiveDefaultFamilyId: null })).toBe('');
+  });
+  it('uses an offered remote harness when the local default is absent, while retaining valid preferences', () => {
+    const input = { currentFamilyId: '', rememberedFamilyId: null, effectiveDefaultFamilyId: 'claude',
+      availableFamilyIds: ['opencode', 'codex'], fallbackToAvailable: true };
+    expect(resolveCliAgentFamily(input)).toBe('opencode');
+    expect(resolveCliAgentFamily({ ...input, effectiveDefaultFamilyId: 'codex' })).toBe('codex');
+    expect(resolveCliAgentFamily({ ...input, rememberedFamilyId: 'codex' })).toBe('codex');
+    expect(resolveCliAgentFamily({ ...input, currentFamilyId: 'codex' })).toBe('codex');
+    expect(resolveCliAgentFamily({ ...input, fallbackToAvailable: false })).toBe('claude');
+  });
   it('keeps the current family when it is still installed', () => {
     expect(resolveCliAgentFamily({
       currentFamilyId: 'codex',

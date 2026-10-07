@@ -8,6 +8,7 @@ describe('repairStreamingMarkdownTail', () => {
   });
 
   it('leaves fenced code and directives alone', () => {
+    expect(repairStreamingMarkdownTail('\n:::comment{title="Partial')).toBe('\n:::comment{title="Partial');
     expect(repairStreamingMarkdownTail('```ts\nconst x = 1')).toBe('```ts\nconst x = 1');
     expect(repairStreamingMarkdownTail('\n::chart{id=1}')).toBe('\n::chart{id=1}');
   });

@@ -1,13 +1,14 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import type { ApprovalPendingInteraction, PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../../../lib/product-client.js';
 import { ThreadPendingInteractionBanner } from './ThreadPendingInteractionBanner.js';
+import { loadQuestionDraft, questionDraftKey } from './question-drafts.js';
 
 vi.mock('../../../lib/product-client.js', () => ({
   product: {
@@ -428,5 +429,80 @@ describe('ThreadPendingInteractionBanner keyboard', () => {
     );
     expect(document.activeElement).not.toBe(screen.getByTestId('thread-pending-question-submit'));
     expect(screen.queryByTestId('thread-pending-decision-toolbar')).toBeNull();
+  });
+});
+
+describe('question drafts across navigation', () => {
+  function question(id: string): PendingInteraction {
+    return {
+      ...commandInteraction(), id, resolution: null,
+      payload: { kind: 'user_question', questions: [
+        { id: 'topic', prompt: 'Choose a topic', multiSelect: false, allowFreeText: true,
+          options: [{ value: 'code', label: 'Code' }, { value: 'docs', label: 'Docs' }] },
+        { id: 'details', prompt: 'Describe the changes', multiSelect: false, allowFreeText: true }
+      ] }
+    };
+  }
+  const viewOf = (interaction: PendingInteraction, threadId = 'draft-thread') => <MemoryRouter>
+    <ThreadPendingInteractionBanner interaction={interaction} threadId={threadId} />
+  </MemoryRouter>;
+
+  it('restores the selected question, option and free text after leaving and returning', () => {
+    const interaction = question('draft-navigation');
+    const first = render(viewOf(interaction));
+    fireEvent.click(screen.getByRole('button', { name: 'Docs' }));
+    fireEvent.click(screen.getByTestId('thread-pending-question-next'));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Keep both phone and desktop' } });
+    first.unmount();
+    render(viewOf(interaction));
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Keep both phone and desktop');
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('thread-pending-question-back'));
+    expect(screen.getByRole('button', { name: 'Docs' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getAllByTestId('thread-pending-question-step')[1]);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Keep both phone and desktop');
+  });
+
+  it('resets a draft when the interaction or question schema changes, and isolates threads', () => {
+    const interaction = question('draft-identity');
+    const view = render(viewOf(interaction));
+    fireEvent.click(screen.getByTestId('thread-pending-question-next'));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Private answer' } });
+    view.rerender(viewOf(interaction, 'other-thread'));
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    view.rerender(viewOf(question('different-interaction')));
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    const changed = question('draft-identity');
+    if (changed.payload.kind !== 'user_question') throw new Error('Expected question');
+    changed.payload.questions[0].prompt = 'A revised question';
+    view.rerender(viewOf(changed));
+    expect(screen.getByText('A revised question')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('thread-pending-question-next'));
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('keeps answers after a failed submission and clears only the successfully submitted draft', async () => {
+    const interaction = question('draft-submit');
+    vi.mocked(product.threads.interactions.resolve).mockRejectedValueOnce(new Error('Disconnected'));
+    render(viewOf(interaction));
+    fireEvent.click(screen.getByRole('button', { name: 'Other…' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Another topic' } });
+    fireEvent.click(screen.getByTestId('thread-pending-question-next'));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Draft details' } });
+    fireEvent.click(screen.getByTestId('thread-pending-question-submit'));
+    await screen.findByText('Disconnected');
+    await waitFor(() => expect(screen.getByTestId('thread-pending-question-submit').hasAttribute('disabled')).toBe(false));
+    if (interaction.payload.kind !== 'user_question') throw new Error('Expected question');
+    const key = questionDraftKey('draft-thread', interaction.id);
+    expect(loadQuestionDraft(key, interaction.payload.questions).answers.details.freeText).toBe('Draft details');
+    fireEvent.click(screen.getByTestId('thread-pending-question-submit'));
+    const questions = interaction.payload.questions;
+    await waitFor(() => expect(loadQuestionDraft(key, questions).answers.details.freeText).toBe(''));
+    expect(product.threads.interactions.resolve).toHaveBeenLastCalledWith('draft-thread', interaction.id, {
+      kind: 'user_answer', answers: {
+        topic: { selected: [], freeText: 'Another topic' },
+        details: { selected: [], freeText: 'Draft details' }
+      }
+    });
   });
 });

@@ -19,7 +19,7 @@ export interface VoiceCaptureHost {
 export interface VoiceCaptureCallbacks {
   onState: (state: VoiceInputState) => void;
   onStream: (stream: MediaStream | null) => void;
-  onTranscript: (text: string) => void;
+  onTranscript: (text: string) => void | Promise<void>;
   onError: (message: string) => void;
 }
 
@@ -27,7 +27,9 @@ export interface VoiceCaptureSession {
   start: () => Promise<void>;
   stop: () => void;
   cancel: () => void;
-  dispose: () => void;
+  dispose: (options?: { preserveTranscription?: boolean }) => void;
+  retry: () => Promise<void>;
+  canRetry: () => boolean;
 }
 
 export function createVoiceCapture(
@@ -42,6 +44,8 @@ export function createVoiceCapture(
   let shouldTranscribe = true;
   let transcriptionAbort: AbortController | null = null;
   let state: VoiceInputState = 'idle';
+  let generation = 0;
+  let retryRecording: { file: File; mimeType: string } | null = null;
 
   const setState = (next: VoiceInputState) => {
     state = next;
@@ -60,15 +64,54 @@ export function createVoiceCapture(
     callbacks.onStream(null);
   };
 
+  const retry = async () => {
+    const recording = retryRecording;
+    if (!recording || state === 'transcribing') return;
+    setState('transcribing');
+    const abort = new AbortController();
+    transcriptionAbort = abort;
+    try {
+      const base64 = await fileToBase64(recording.file);
+      if (abort.signal.aborted) {
+        setState('idle');
+        return;
+      }
+      const result = await host.transcribe(base64, recording.mimeType);
+      if (abort.signal.aborted) {
+        setState('idle');
+        return;
+      }
+      const normalized = normalizeTranscript(result.ok ? result.text : '');
+      if (!result.ok || normalized.length === 0) {
+        throw new Error(result.error || 'Voice transcription returned an empty result.');
+      }
+      await callbacks.onTranscript(normalized);
+      retryRecording = null;
+      setState('idle');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setState('idle');
+        return;
+      }
+      fail(resolveRecordingErrorMessage(error));
+    } finally {
+      if (transcriptionAbort === abort) transcriptionAbort = null;
+    }
+  };
+
   const start = async () => {
     if (state === 'recording' || state === 'transcribing') return;
+    const startGeneration = ++generation;
+    retryRecording = null;
     const micOk = await host.ensureMicAccess().catch(() => true);
+    if (generation !== startGeneration) return;
     if (!micOk) {
       fail('Microphone access is off. Enable it for the app in System Settings › Privacy › Microphone.');
       return;
     }
     try {
       const nextStream = await host.getUserMedia({ audio: true });
+      if (generation !== startGeneration) { nextStream.getTracks().forEach(track => track.stop()); return; }
       stream = nextStream;
       callbacks.onStream(nextStream);
       chunks = [];
@@ -107,35 +150,8 @@ export function createVoiceCapture(
         }
         const recordedMimeType = recorder.mimeType || preferredMimeType || 'audio/webm';
         const audioFile = createRecordingFile(new Blob(recorded, { type: recordedMimeType }), recordedMimeType);
-        setState('transcribing');
-        const abort = new AbortController();
-        transcriptionAbort = abort;
-        try {
-          const base64 = await fileToBase64(audioFile);
-          if (abort.signal.aborted) {
-            setState('idle');
-            return;
-          }
-          const result = await host.transcribe(base64, recordedMimeType);
-          if (abort.signal.aborted) {
-            setState('idle');
-            return;
-          }
-          const normalized = normalizeTranscript(result.ok ? result.text : '');
-          if (!result.ok || normalized.length === 0) {
-            throw new Error(result.error || 'Voice transcription returned an empty result.');
-          }
-          callbacks.onTranscript(normalized);
-          setState('idle');
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            setState('idle');
-            return;
-          }
-          fail(resolveRecordingErrorMessage(error));
-        } finally {
-          if (transcriptionAbort === abort) transcriptionAbort = null;
-        }
+        retryRecording = { file: audioFile, mimeType: recordedMimeType };
+        await retry();
       };
       recorder.start(CHUNK_TIMESLICE_MS);
     } catch (error) {
@@ -159,6 +175,8 @@ export function createVoiceCapture(
   };
 
   const cancel = () => {
+    generation++;
+    retryRecording = null;
     if (state === 'recording') {
       if (mediaRecorder && mediaRecorder.state === 'recording') {
         shouldTranscribe = false;
@@ -177,18 +195,21 @@ export function createVoiceCapture(
     }
   };
 
-  const dispose = () => {
+  const dispose = (options?: { preserveTranscription?: boolean }) => {
+    generation++;
+    if (options?.preserveTranscription && (state === 'transcribing' || state === 'error')) return;
+    shouldTranscribe = false;
+    retryRecording = null;
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       try { mediaRecorder.stop(); } catch { /* ignore */ }
     }
     mediaRecorder = null;
     chunks = [];
     startedAtMs = null;
-    shouldTranscribe = true;
     transcriptionAbort?.abort();
     transcriptionAbort = null;
     stopMediaStream();
   };
 
-  return { start, stop, cancel, dispose };
+  return { start, stop, cancel, dispose, retry, canRetry: () => state === 'error' && retryRecording !== null };
 }

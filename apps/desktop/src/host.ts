@@ -217,7 +217,7 @@ import { MobileGatewayManager } from '@zana-ai/zcc-server/mobile/manager';
 import { MobileConnectionStore } from '@zana-ai/zcc-server/mobile/connection';
 import { MobileDeviceStore } from '@zana-ai/zcc-server/mobile/device-store';
 import { readMcpPort, writeMcpPort } from '@zana-ai/zcc-server';
-import { startControlPlane, type ControlPlaneHandle } from './control/control-plane.js';
+import { startControlPlane, type ControlPlaneHandle, type ControlPlaneDeps } from './control/control-plane.js';
 import { controlCredentialForSession, verifySessionControlCredential } from '@zana-ai/zcc-host-daemon/control-credential';
 import { ensureMcpConfigForProject, rebuildExtensionServers } from '@zana-ai/zcc-host-daemon/mcp-config';
 import { redeployBundledSkills, syncExtensionSkills, removeSkillsForExtension } from '@zana-ai/zcc-server/services/skills/skill-installer';
@@ -253,7 +253,7 @@ import { SchedulerManager } from '@zana-ai/zcc-server/services/scheduler/schedul
 import { GoalManager } from '@zana-ai/zcc-server/services/goals/goal-manager';
 import { FollowUpManager } from '@zana-ai/zcc-server/services/followups/followup-manager';
 import { ProjectRecordStore } from '@zana-ai/zcc-server/services/projects/project-record-store';
-import { listAllSchedules, saveSchedule, deleteSchedule } from '@zana-ai/zcc-server/services/scheduler/scheduler-store';
+import { listAllSchedules, saveSchedule, readSchedule, deleteSchedule } from '@zana-ai/zcc-server/services/scheduler/scheduler-store';
 import { validateScheduleFile } from '@zana-ai/zcc-server/services/scheduler/schedule-validation';
 import { listAllGoals, saveGoal, deleteGoal, validateGoalFile } from '@zana-ai/zcc-server/services/goals/goal-store';
 import { listAllFollowUps, saveFollowUp, deleteFollowUp, validateFollowUpFile } from '@zana-ai/zcc-server/services/followups/followup-store';
@@ -1281,6 +1281,28 @@ const savedStore: ISavedStore = createSavedStore();
 const localMetadataStore = { ...store, listProjects: () => localMetadataProjects(store.listProjects(), runtimeSupervisor?.hostId) };
 const libraryStore: ILibraryStore = new LibraryStore(() => localMetadataStore.listProjects());
 const scheduler = new SchedulerManager();
+export const scheduleAgentApi = {
+  list: () => scheduler.list(),
+  get: (id: string) => scheduler.get(id),
+  update: (id: string, patch: ScheduleUpdateInput) => scheduler.update(id, patch),
+  reload: (id: string) => scheduler.reload(id),
+  runNow: (id: string) => scheduler.runNow(id),
+  setEnabled: (id: string, enabled: boolean) => scheduler.setEnabled(id, enabled)
+};
+export const scheduleControlApi: Pick<ControlPlaneDeps, 'getSchedule' | 'reloadSchedule' | 'updateSchedule'> = {
+  getSchedule: async (id) => {
+    try { return { ok: true, value: scheduler.get(id) }; }
+    catch (error) { return { ok: false, code: 'GET_FAILED', message: String(error) }; }
+  },
+  reloadSchedule: async (id) => {
+    try { return { ok: true, value: await scheduler.reload(id) }; }
+    catch (error) { return { ok: false, code: 'RELOAD_FAILED', message: String(error) }; }
+  },
+  updateSchedule: async (id, patch) => {
+    try { return { ok: true, value: await scheduler.update(id, patch) }; }
+    catch (error) { return { ok: false, code: 'UPDATE_FAILED', message: String(error) }; }
+  }
+};
 // Persistent project goals: an event-driven loop that spawns a worker, evaluates
 // it, and re-spawns with feedback until the success criteria pass (or it caps
 // out / stalls). Deps wired at boot next to the scheduler (Rule 3).
@@ -2883,9 +2905,30 @@ const mobileGateway = new MobileGatewayManager({
   connectionStore: new MobileConnectionStore(join(electronZccDataDir(), 'mobile', 'connection.json')),
   devices: new MobileDeviceStore(join(electronZccDataDir(), 'mobile', 'devices.json')),
   // Resolve after the runtime has selected its actual port (including fallback ports).
-  upstream: productServerUrl
+  upstream: productServerUrl,
+  signQueuedSend: signMobileQueuedSend
 });
 let runtimeSupervisor: RuntimeSupervisor | null = null;
+export function discoveryForRegisteredLaunch(
+  supervisor: Pick<RuntimeSupervisor, 'cliDiscovery' | 'hostId'> | null,
+  project: Pick<Project, 'id' | 'remote' | 'hostId'>,
+  launch: { worktree?: unknown; scratch?: unknown; cwd: string },
+  request: Pick<CreateTerminalRequest, 'hostId'>,
+  profile: CreateTerminalRequest['profile'],
+  nativeAgentDiscoveryEnabled: boolean
+) {
+  return supervisor && (project.remote ? Boolean(project.hostId) : !launch.worktree && !launch.scratch)
+    ? createHostCliDiscovery(rpc => supervisor.cliDiscovery(rpc), {
+        projectId: project.id, hostId: project.remote ? project.hostId : request.hostId ?? project.hostId ?? supervisor.hostId,
+        ...(project.remote ? {} : { cwd: launch.cwd }), profile,
+        nativeAgentDiscoveryEnabled
+      })
+    : undefined;
+}
+
+export function signMobileQueuedSend(threadId: string, itemId: string): string {
+  return signUiSend(ensureProductServerCredential(), threadId, itemId, Date.now(), 'mobile-ui');
+}
 const libraryNotifications = createSnapshotNotifications(async () => {
   if (!runtimeSupervisor) throw new Error('Library runtime is unavailable');
   return runtimeSupervisor.libraryDocument({ action: 'snapshot' }) as Promise<import('@zana-ai/zcc-domain/product').LibrarySnapshot>;
@@ -4088,16 +4131,9 @@ async function launchAuthorizedTerminal(
     persona: frameworkPersona
   });
   if (!selection.ok) return { ok: false, code: selection.code, message: selection.message };
-  // Registered project roots use the enrolled machine's discovery. Legacy SSH
-  // and main-owned scratch/worktrees retain their existing path until their
-  // environment records are owned by the product server.
-  const hostDiscovery = runtimeSupervisor && !project.remote && !effectiveLaunch.worktree && !effectiveLaunch.scratch
-    ? createHostCliDiscovery(request => runtimeSupervisor!.cliDiscovery(request), {
-        projectId: project.id, hostId: req.hostId ?? project.hostId ?? runtimeSupervisor.hostId,
-        cwd: effectiveLaunch.cwd, profile: selection.profile,
-        nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled === true
-      })
-    : undefined;
+  // Discovery follows the checkout; the SSH PTY still belongs to this machine.
+  // Legacy unbound SSH and main-owned scratch/worktrees keep their existing path.
+  const hostDiscovery = discoveryForRegisteredLaunch(runtimeSupervisor, project, effectiveLaunch, req, selection.profile, config.nativeAgentDiscoveryEnabled === true);
   const installedVersion = hostDiscovery?.installedVersion ?? memoizeInstalledVersion(
     (adapterId) => installedHarnessVersion(config, adapterId)
   );
@@ -4320,7 +4356,8 @@ async function launchAuthorizedTerminal(
       legacyPersonaFacetCompatibility
     }, {
       consentStore: executionConsentStore,
-      installedVersion
+      installedVersion,
+      discovery: hostDiscovery?.discovery
     });
     if (currentExecution.decision === 'blocked') return { ok: false, reason: currentExecution.reason };
     const currentBinding = {
@@ -6773,7 +6810,7 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
     const item: unknown = result.items.find((entry: unknown) =>
       entry !== null && typeof entry === 'object' && 'id' in entry && entry.id === itemId);
     if (!item || typeof item !== 'object' || !('id' in item) || item.id !== itemId
-      || !('status' in item) || item.status !== 'queued'
+      || !('status' in item) || !['queued', 'failed'].includes(String(item.status))
       || !('text' in item) || typeof item.text !== 'string'
       || !('updatedAt' in item) || typeof item.updatedAt !== 'number') {
       throw new Error('Queued message no longer exists');
@@ -6807,7 +6844,7 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
   const response = await fetch(new URL(`${queuePath}/${encodeURIComponent(item.id)}/send`, base), {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-zcc-ui-send-proof': proof },
-    body: '{}', signal: AbortSignal.timeout(15_000)
+    body: JSON.stringify({ confirmed: true, expectedUpdatedAt: item.updatedAt }), signal: AbortSignal.timeout(15_000)
   });
   const result = await response.json() as { ok?: boolean; error?: string; message?: string };
   if (!response.ok || result.ok !== true) throw new Error(result.message ?? result.error ?? 'Send now failed');
@@ -7349,7 +7386,7 @@ async function bootstrapNormal() {
         return runtimeSupervisor.projectMetadata(request);
       },
       validate: validateScheduleFile,
-      local: { list: listAllSchedules, save: saveSchedule, remove: deleteSchedule },
+      local: { list: listAllSchedules, read: readSchedule, save: saveSchedule, remove: deleteSchedule },
       log: (projectId, error) => logMainError(`schedule metadata ${projectId}`, error)
     }),
     inbox: inboxStore,
@@ -8321,11 +8358,7 @@ async function bootstrapNormal() {
     // twin of the Scheduler UI. Main's SchedulerManager is the authority
     // (Rule 1) — tools never read a renderer-supplied catalogue. Scope
     // filtering happens in the tool (route projectId, optional allProjects).
-    scheduleAgentApi: {
-      list: () => scheduler.list(),
-      runNow: (id) => scheduler.runNow(id),
-      setEnabled: (id, enabled) => scheduler.setEnabled(id, enabled)
-    }
+    scheduleAgentApi
   })
     .then(async (handle) => {
       mcpServer = handle;
@@ -8680,6 +8713,7 @@ async function bootstrapNormal() {
       return { ok: true, delivered, handle: targetLabel, id: msg.id };
     },
     listSchedules: () => scheduler.list(),
+    ...scheduleControlApi,
     runScheduleNow: async (id) => {
       try {
         return { ok: true, value: await scheduler.runNow(id) };

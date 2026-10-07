@@ -1,0 +1,1 @@
+In a linked channel, just mention Zana with your task. Zana uses that channel’s Project and harness: Pi here, or any harness installed in Zana.

@@ -83,6 +83,39 @@ double-click to reset. **Save query** and `Cmd/Ctrl+S` save the current query.
 Debug logs has a filterable execution list and a text finder; **Next match** or
 Enter moves through highlighted matches without altering the log.
 
+## Optional agent tool providers
+
+**Plugins → Salesforce → Agent tool provider** selects `both` (default),
+`builtin` or `toolkit`. Both exposes the original family tools plus the toolkit.
+Built-in keeps the original contracts and never imports the toolkit runtime.
+Toolkit hides and disables the original family tools. `sf_workbench` remains
+available for project/org selection, authoring, approvals and native panels.
+Start a new agent turn/thread after switching to refresh its catalog; stale calls
+to a disabled provider fail closed.
+
+`sf_tools` provides `list`, `describe`, `call` and `result.read` for all 21 toolkit
+tools, including Agent Script and Data 360. Flow, Code Analyzer and metadata also
+have direct tools. Toolkit SOQL/Apex/LWC use the gateway to preserve existing
+contracts in Both mode. The CLI accepts the same inputs via `zcc sf tool`.
+
+Execution pins the registered local project and selected org. Effectful calls
+use host approval. Results are bounded and referenced by opaque run IDs; evidence
+is retained for at most 32 runs, with a 32 MiB/256-file limit per run, and removed
+on plugin unload. Remote projects cannot execute the local toolkit adapter.
+
+The integration is independently removable: `toolkit-adapter.ts` implements the
+host bridge; `tool-provider-contract.ts` is its SDK boundary; `toolkit-runtime.ts`
+lazily loads the execution package. The original Salesforce SDK and workbench
+never depend on sf-agentic-tools. Other plugins consume `SalesforcePluginSdk`
+from this plugin's `/sdk` export (`toolCatalog`, `toolDescribe`, `toolInvoke`,
+`toolReadResult`) instead of importing toolkit internals.
+
+The pinned v0.1.0 release is vendored with its manifest, SHA-256 and license under
+`vendor/`. `build-toolkit.mjs` verifies it and builds a standalone SDK plus its
+runtime resources; release packages ship `toolkit-runtime`, with no dependency
+on the source checkout or node_modules. CLI prerequisites such as Salesforce CLI
+and Java are discovered at runtime; consult each action's prerequisites.
+
 ## Agentforce Studio
 
 The Salesforce AgentScript editor stays in the center. The right side panel starts

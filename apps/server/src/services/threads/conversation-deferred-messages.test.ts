@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DeferredAdmissionWait,
   deferConversationSend,
   dropDeferredConversationMessage,
   dropDeferredConversationMessages,
@@ -81,6 +82,13 @@ vi.mock('@zana-ai/zcc-db', async (importOriginal) => {
       row.status = 'dispatching';
       return true;
     }),
+    holdDeferredThreadMessage: vi.fn((_db, args: { id: string; payload: string }) => {
+      const row = rows.find(entry => entry.id === args.id);
+      if (!row || row.status !== 'dispatching') return false;
+      row.status = 'queued';
+      row.payload = args.payload;
+      return true;
+    }),
     markDeferredThreadMessageFailed: vi.fn((_db, args: { id: string; reason: string }) => {
       const row = rows.find((entry) => entry.id === args.id);
       if (!row) return false;
@@ -127,7 +135,7 @@ vi.mock('@zana-ai/zcc-db', async (importOriginal) => {
 
 function ctx(pending = false, hostOnline = true): ProductHttpContext {
   return {
-    db: {},
+    db: { transaction: (run: () => unknown) => run() },
     pendingInteractions: {
       hasPendingThreadInteraction: () => pending
     },
@@ -138,6 +146,25 @@ function ctx(pending = false, hostOnline = true): ProductHttpContext {
 }
 
 describe('deferred conversation messages', () => {
+  it.each([false, true])('retains the selected row and ends draining on a persistent plugin wait (force=%s)', async force => {
+    rows.length = 0; queuePaused = false; openTurn = null; thread.status = 'idle';
+    deferConversationSend(ctx(), { threadId: 'thr-1', input: 'held prompt', mode: 'auto' });
+    deferConversationSend(ctx(), { threadId: 'thr-1', input: 'later prompt', mode: 'auto' });
+    const ids = rows.map(row => row.id);
+    const admission = { generation: 3, overrideable: true, reason: 'capacity' };
+    const deliver = vi.fn(async () => { throw new DeferredAdmissionWait(admission); });
+    await expect(flushDeferredConversationMessages(ctx(), 'thr-1', deliver, { force }))
+      .resolves.toEqual({ flushed: 0, delayed: 'plugin-wait' });
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(rows.map(row => row.id)).toEqual(ids);
+    expect(rows.map(row => row.status)).toEqual(['queued', 'queued']);
+    expect(parseDeferredSendPayload(rows[0]!).admission).toEqual(admission);
+    expect(parseDeferredSendPayload(rows[1]!).admission).toBeUndefined();
+    const proceed = vi.fn(async () => {});
+    await expect(flushDeferredConversationMessages(ctx(), 'thr-1', proceed)).resolves.toEqual({ flushed: 2 });
+    expect(proceed).toHaveBeenCalledTimes(2);
+    expect(rows).toHaveLength(0);
+  });
   it('queues a send payload in arrival order', () => {
     rows.length = 0;
     queuePaused = false;

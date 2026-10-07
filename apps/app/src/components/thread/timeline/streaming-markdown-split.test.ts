@@ -10,6 +10,25 @@ function expectSplit(text: string, settled: string) {
 }
 
 describe("splitStreamingMarkdown", () => {
+  it('keeps multi-paragraph review comments together while streaming and after closing', () => {
+    const intro = 'Intro.\n\n';
+    const comment = ':::comment{title="Finding"}\n\nFirst.\n\nSecond.\n';
+    expectSplit(intro + comment, intro);
+    expect(splitStreamingMarkdown(comment)).toBeNull();
+    expectSplit(intro + comment + ':::\n\nAfter.\n', intro + comment + ':::\n\n');
+  });
+
+  it('does not close review containers on colon lines inside body code fences', () => {
+    const intro = 'Intro.\n\n';
+    const comment = ':::comment{title="Finding"}\n```md\n:::\n```\n\nMore.\n';
+    expectSplit(intro + comment, intro);
+  });
+
+  it('ignores comment headers inside ordinary code fences', () => {
+    const prefix = '```md\n:::comment{title="Example"}\n```\n\n';
+    expectSplit(prefix + 'After.\n', prefix);
+  });
+
   it("returns null when there is no blank line followed by a complete line", () => {
     expect(splitStreamingMarkdown("")).toBeNull();
     expect(splitStreamingMarkdown("Only one paragraph so far")).toBeNull();

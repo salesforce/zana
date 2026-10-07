@@ -1,4 +1,4 @@
-import { Copy, CornerUpLeft, GitFork, Pencil } from 'lucide-react';
+import { Link, Copy, CornerUpLeft, GitFork, Pencil } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { product } from '../../../lib/product-client.js';
 
@@ -38,6 +38,8 @@ export function MessageActionBar({
           <Copy size={12} />
         </button>
       ) : null}
+      {onCopy && threadId && sourceSeqEnd != null && <button type="button" className="thread-message-action" aria-label="Copy message link"
+        onClick={() => onCopy(new URL(`/threads/${encodeURIComponent(threadId)}?message=${sourceSeqEnd}`, window.location.origin).href)}><Link size={12} /></button>}
       {onEdit ? (
         <button
           type="button"

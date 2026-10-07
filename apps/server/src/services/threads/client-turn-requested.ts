@@ -37,7 +37,7 @@ export function appendClientTurnRequested(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
-    serviceTier?: 'default' | 'fast';
+    serviceTier?: string;
     acpMode?: string;
   }
 ): string | undefined {

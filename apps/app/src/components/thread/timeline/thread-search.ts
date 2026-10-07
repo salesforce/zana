@@ -64,3 +64,12 @@ export function timelineContainsRowId(rows: readonly ThreadTimelineViewRow[], id
   }
   return false;
 }
+
+export function findTimelineMessageAtSequence(rows: readonly ThreadTimelineViewRow[], sequence: number, ancestors: string[] = []): TimelineSearchHit | null {
+  for (const row of rows) {
+    const nested = findTimelineMessageAtSequence(childRows(row), sequence, [...ancestors,row.id]);
+    if (nested) return nested;
+    if (row.kind === 'conversation' && row.sourceSeqStart <= sequence && row.sourceSeqEnd >= sequence) return {id:row.id, ancestorIds:ancestors};
+  }
+  return null;
+}

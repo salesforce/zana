@@ -4,6 +4,19 @@ import { product } from '../lib/product-client.js';
 import { errorMessage, pushErrorToast, useData, useIdleTriage } from '../store.js';
 import { useThreads } from '../thread-store.js';
 import { useSplitWorkspace } from '../lib/split-layout/store.js';
+import type { FleetItem } from '../components/fleet-item.js';
+
+/** Archive a thread or close a CLI agent now (Done's delayed close, phone swipe). */
+export async function closeBoardItem(item: FleetItem) {
+  if (item.kind === 'thread') {
+    const result = await product.threads.archive(item.id);
+    if (!result.ok) throw new Error('Could not archive the agent');
+    useThreads.getState().remove(item.id);
+    useSplitWorkspace.getState().closePanesForThreads([item.id]);
+  } else if (item.kind === 'agent') {
+    await useData.getState().closeTerminal(item.id, item.projectId);
+  }
+}
 
 export const agentBoardMoves = createAgentBoardMoves({
   async stop(item) {
@@ -15,16 +28,7 @@ export const agentBoardMoves = createAgentBoardMoves({
       useIdleTriage.getState().clear(item.id);
     }
   },
-  async close(item) {
-    if (item.kind === 'thread') {
-      const result = await product.threads.archive(item.id);
-      if (!result.ok) throw new Error('Could not archive the agent');
-      useThreads.getState().remove(item.id);
-      useSplitWorkspace.getState().closePanesForThreads([item.id]);
-    } else if (item.kind === 'agent') {
-      await useData.getState().closeTerminal(item.id, item.projectId);
-    }
-  },
+  close: closeBoardItem,
   exists(item) {
     if (item.kind === 'thread') return useThreads.getState().threads.some(
       (thread) => thread.id === item.id && thread.createdAt === item.thread.createdAt && !thread.archivedAt

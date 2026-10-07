@@ -5,7 +5,7 @@ import { getModelRefreshState, refreshModels, subscribeModelRefresh } from '../.
 export function ModelRefreshControl() {
   const state = useSyncExternalStore(subscribeModelRefresh, getModelRefreshState, getModelRefreshState);
   return (
-    <div>
+    <div className="harness-model-refresh">
       <button type="button" className="settings-btn primary" disabled={state.running}
         data-testid="harness-recalculate-models"
         onClick={() => { void refreshModels(); }}>
@@ -13,7 +13,7 @@ export function ModelRefreshControl() {
         {state.running ? 'Recalculating models…' : 'Recalculate models'}
       </button>
       <p className="settings-help" role="status" aria-live="polite">
-        {state.message ?? 'Reload every available model list for Modern and CLI Agent pickers without restarting the app.'}
+        {state.message ?? 'Signed in or changed providers? Refresh model choices for Modern and CLI Agent sessions.'}
       </p>
     </div>
   );

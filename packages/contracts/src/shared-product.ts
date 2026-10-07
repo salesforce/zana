@@ -4,7 +4,7 @@ export const SHARED_PRODUCT_FAMILIES: Readonly<Record<string, readonly string[]>
   projects: ['ensureQuickAgent', 'remove'],
   terminals: ['list', 'create', 'write', 'reply', 'resize', 'close', 'backlog', 'setHeartbeat', 'setHeadless', 'agentStatusSnapshot', 'agentStatusSince', 'subagentSnapshot', 'subagentChildrenSnapshot', 'sessionStats', 'clearAgentBlocked'],
   projectSettings: ['get', 'set'],
-  scheduler: ['list', 'create', 'update', 'delete', 'setEnabled', 'runNow', 'reconcile', 'listTemplates'],
+  scheduler: ['list', 'get', 'reload', 'create', 'update', 'delete', 'setEnabled', 'runNow', 'reconcile', 'listTemplates'],
   'scheduler.groups': ['list', 'create', 'update', 'delete', 'reorder'],
   goals: ['list', 'create', 'update', 'delete', 'setStatus', 'runNow', 'reconcile'],
   followups: ['list', 'create', 'update', 'delete', 'setStatus', 'markSpawned'],

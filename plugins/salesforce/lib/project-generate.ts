@@ -22,16 +22,7 @@ export function parseGenerateInput(args: unknown): GenerateInput {
 }
 
 export function generatedProjectPath(outputDir: string, name: string): string {
+  // sf project generate reports the parent in result.outputDir. The generated
+  // DX root is always the requested child, regardless of the CLI response shape.
   return join(outputDir, name);
-}
-
-export function generatedOutputPath(result: unknown, outputDir: string, name: string): string {
-  if (result && typeof result === 'object') {
-    const row = result as Record<string, unknown>;
-    for (const key of ['outputDir', 'output-dir', 'path']) {
-      const value = row[key];
-      if (typeof value === 'string' && value.trim()) return value.trim();
-    }
-  }
-  return generatedProjectPath(outputDir, name);
 }

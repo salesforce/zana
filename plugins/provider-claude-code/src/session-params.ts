@@ -277,6 +277,11 @@ export function buildClaudeTurnParams(
     providerSubagentsEnabled: providerOptions.providerSubagentsEnabled,
     ...(config ? { config } : {}),
     permissionEscalation: args.options.permissionEscalation,
+    permissionMode: toClaudePermissionMode(args.options),
+    permissionScope: args.options.permissionScope,
+    additionalWorkspaceWriteRoots: args.options.permissionScope === "workspace"
+      ? providerOptions.additionalWorkspaceWriteRoots ?? []
+      : [],
     ...(providerOptions.claudeCodePermissionMode !== undefined
       ? { claudeCodePermissionMode: providerOptions.claudeCodePermissionMode }
       : {}),

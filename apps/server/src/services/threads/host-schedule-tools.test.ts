@@ -56,3 +56,19 @@ it('preserves an owner mutation rejection and never retries', async () => {
   expect(result.success).toBe(false); expect(result.contentItems[0]!.text).toContain('already running');
   expect(control).toHaveBeenCalledTimes(2);
 });
+it.each(['schedule_get', 'schedule_reload', 'schedule_update'])('routes %s to the owner exactly once after scope resolution', async name => {
+  control.mockResolvedValueOnce({ ok: true, value: [task] }).mockResolvedValueOnce({ ok: true, value: { ok: true, value: name === 'schedule_reload' ? { reloaded: false, reason: 'run X is live', sessionIds: ['X'], schedule: task } : task } });
+  const result = await invoke(name, { id: task.id, patch: { prompt: 'New', extraArgs: ['--effort', 'high'] } });
+  expect(result.success).toBe(true);
+  expect(control).toHaveBeenCalledTimes(2);
+  expect(control.mock.calls[1][2]).toEqual({ method: `scheduler.${name.slice(9)}`, args: name === 'schedule_update' ? [task.id, { prompt: 'New', extraArgs: ['--effort', 'high'] }] : [task.id] });
+  if (name === 'schedule_reload') expect(JSON.parse(result.contentItems[0]!.text!)).toMatchObject({ reloaded: false, reason: 'run X is live', sessionIds: ['X'] });
+});
+it.each(['schedule_get', 'schedule_reload', 'schedule_update'])('confines the %s definition surface', async name => {
+  expect((await invoke(name, { id: 'foreign', patch: { prompt: 'New' } })).success).toBe(false);
+  expect(control.mock.calls.every(call => call[2].method === 'scheduler.list')).toBe(true);
+});
+it('rejects forged fields and empty patches on modern schedule updates', async () => {
+  for (const patch of [{}, { enabled: true }, { extraArgs: [1] }, { projectId: 'p2' }]) expect((await invoke('schedule_update', { id: task.id, patch })).success).toBe(false);
+  expect(control.mock.calls.every(call => call[2].method === 'scheduler.list')).toBe(true);
+});

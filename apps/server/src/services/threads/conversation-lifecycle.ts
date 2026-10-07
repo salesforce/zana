@@ -1,3 +1,6 @@
+import { authorizedServiceTier } from './provider-service-tier.js';
+import { normalizePortableAttachments } from '../projects/portable-attachments.js';
+import { attachmentPathResolverForHost } from '../projects/host-attachments.js';
 import { assertPlanImplementationReady, assertPlanRevision } from './conversation-plan-implementation.js';
 import { withConversationSend, withConversationSendCancellation, type ConversationSendLease } from './conversation-send-guard.js';
 import {
@@ -23,6 +26,7 @@ import {
   resolveConversationForkPoint
 } from './conversation-fork-history.js';
 import {
+  DeferredAdmissionWait,
   deferConversationSend,
   dropDeferredConversationMessages,
   flushDeferredConversationMessages,
@@ -105,12 +109,12 @@ export async function sendConversationTurn(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
-    serviceTier?: 'default' | 'fast';
+    serviceTier?: string;
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean } = {}
+  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; retainQueuedRow?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   return withConversationSend(ctx.db, threadId, lease => sendConversationTurnWithLease(lease, ctx, threadId, input, mode, execution, options));
 }
@@ -125,12 +129,12 @@ async function sendConversationTurnWithLease(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
-    serviceTier?: 'default' | 'fast';
+    serviceTier?: string;
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean } = {}
+  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; retainQueuedRow?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -143,22 +147,29 @@ async function sendConversationTurnWithLease(
     const outcome = await admitDispatch(ctx, {
       threadId: live.id,
       projectId: live.projectId
+    }, () => {
+      lease.assertCurrent();
+      const current = getConversationThread(ctx.db, threadId);
+      if (!current) throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
+      ensureConversationThreadIsWritable(current);
     });
     if (outcome.decision.action === 'reject') {
       throw new ThreadCreateError(409, 'dispatch_rejected', outcome.decision.message);
     }
     if (outcome.decision.action === 'wait') {
+      const admission = {
+        generation: outcome.generation,
+        overrideable: outcome.decision.overrideable,
+        reason: outcome.decision.reason,
+        pluginId: outcome.pluginId
+      };
+      if (options.retainQueuedRow) throw new DeferredAdmissionWait(admission);
       deferConversationSend(ctx, {
         threadId: live.id,
         input,
         mode,
         execution,
-        admission: {
-          generation: outcome.generation,
-          overrideable: outcome.decision.overrideable,
-          reason: outcome.decision.reason,
-          pluginId: outcome.pluginId
-        }
+        admission
       });
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
       return live;
@@ -167,8 +178,11 @@ async function sendConversationTurnWithLease(
   if (!live.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
+  input = await normalizePortableAttachments(ctx, input, live.projectId, live.hostId);
+  lease.assertCurrent();
   const permissionMode = threadPermissionMode(ctx, live, execution?.permissionMode);
   const lastExecution = readLastThreadExecution(ctx, live.id);
+  const explicitServiceTier = execution?.serviceTier !== undefined;
   execution = {
     ...execution,
     model: execution?.model ?? lastExecution.model ?? undefined,
@@ -176,7 +190,8 @@ async function sendConversationTurnWithLease(
     acpMode: execution?.acpMode ?? lastExecution.acpMode ?? undefined,
     serviceTier: execution?.serviceTier ?? lastExecution.serviceTier
   };
-  const serviceTier = execution.serviceTier;
+  const serviceTier = authorizedServiceTier(ctx, live.providerId, execution.serviceTier, {inherited:!explicitServiceTier});
+  execution.serviceTier = serviceTier;
   let packedExecution = { ...execution, permissionMode, serviceTier };
   const requestedMode = requestedExecutionModeFromTurn({ acpMode: execution?.acpMode, input });
   if (options.compact !== true) {
@@ -256,8 +271,9 @@ async function sendConversationTurnWithLease(
   const prompt = hostPromptInputFromInput(
     resolvedInput,
     textPrompt,
-    (path) => resolvePromptAttachmentPath(ctx.dataDir, live.projectId, path)
+    await attachmentPathResolverForHost(ctx, { hostId: live.hostId, projectId: live.projectId, input: resolvedInput })
   );
+  lease.assertCurrent();
   if (prompt.length === 0) {
     throw new ThreadCreateError(400, 'invalid-input', 'input is required');
   }
@@ -343,7 +359,7 @@ async function dispatchTurnSubmit(
       permissionMode?: PermissionMode;
       model?: string;
       reasoningLevel?: ReasoningLevel;
-      serviceTier?: 'default' | 'fast';
+      serviceTier?: string;
       acpMode?: string;
     };
     clientRequestId?: string;
@@ -421,7 +437,7 @@ async function recoverOrSettleTurnSubmit(
       permissionMode?: PermissionMode;
       model?: string;
       reasoningLevel?: ReasoningLevel;
-      serviceTier?: 'default' | 'fast';
+      serviceTier?: string;
       acpMode?: string;
     };
     clientRequestId?: string;
@@ -769,7 +785,7 @@ export async function flushHeldConversationSends(
   if (options.force) resumeConversationQueue(ctx, threadId);
   try {
     await flushDeferredConversationMessages(ctx, threadId, async (payload) => {
-      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true });
+      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, retainQueuedRow: true });
     }, options);
   } finally {
     const thread = getConversationThread(ctx.db, threadId);
@@ -778,20 +794,16 @@ export async function flushHeldConversationSends(
 }
 
 /**
- * Caller identity for the audit trail. A same-origin desktop-UI click carries
- * no formal session/user system (Rule 1 — the renderer is advisory-only), so
- * it is stamped with the literal 'desktop-ui'; CLI/control-sdk callers pass
- * their `x-zcc-caller-session-id`/`x-zcc-caller-credential` value instead.
- * The HTTP route (`product-api.ts` `verifiedOverrideCaller`) verifies that
- * credential against the control-signing HMAC before calling this function —
- * `overriddenBy` here is already an authenticated identity or 'desktop-ui',
- * never an unverified header value.
+ * The HTTP route verifies a single-use approval from desktop main or the
+ * authenticated phone gateway before entering this override path. Agent
+ * session credentials cannot authorize it; the renderer never holds the signer.
  */
 export async function sendHeldConversationMessage(
   ctx: ProductHttpContext,
   threadId: string,
   itemId: string,
-  overriddenBy: string = 'desktop-ui'
+  overriddenBy: string = 'desktop-ui',
+  expectedUpdatedAt?: number
 ): Promise<void> {
   try {
     await sendDeferredConversationMessage(ctx, threadId, itemId, async (payload) => {
@@ -826,7 +838,7 @@ export async function sendHeldConversationMessage(
         );
       }
       await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true });
-    });
+    }, expectedUpdatedAt);
   } finally {
     const thread = getConversationThread(ctx.db, threadId);
     if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
@@ -891,7 +903,7 @@ async function turnSubmitCommand(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
-    serviceTier?: 'default' | 'fast';
+    serviceTier?: string;
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
@@ -937,7 +949,7 @@ async function threadStartCommandForFork(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
-    serviceTier?: 'default' | 'fast';
+    serviceTier?: string;
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;

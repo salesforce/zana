@@ -24,6 +24,18 @@ function fakeHandle(port = 8785) {
 }
 
 describe('MobileGatewayManager', () => {
+  it('passes the main-owned queued-send signer to the authenticated gateway', async () => {
+    const signer = vi.fn(() => 'private-proof');
+    const start = vi.fn(async () => fakeHandle(8785));
+    const manager = remoteManager({ devices: new MobileDeviceStore(), upstream: 'http://127.0.0.1:8780',
+      startGateway: start as unknown as typeof startMobileGateway, signQueuedSend: signer });
+    try {
+      await manager.start();
+      expect(start).toHaveBeenCalledWith(expect.objectContaining({ signQueuedSend: signer }));
+      expect(signer).not.toHaveBeenCalled();
+      expect(JSON.stringify(manager.status())).not.toContain('private-proof');
+    } finally { await manager.close(); }
+  });
   const make = (startGateway: typeof startMobileGateway) =>
     remoteManager({
       devices: new MobileDeviceStore(),

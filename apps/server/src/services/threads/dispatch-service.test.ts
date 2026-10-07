@@ -31,6 +31,25 @@ function fixture() {
 }
 
 describe('admitDispatch', () => {
+  it.each(['wait', 'proceed', 'reject', 'error'])('does not mutate admission state after cancellation during a late %s', async action => {
+    const f = fixture();
+    try {
+      await admitDispatch(f.ctx(vi.fn().mockResolvedValue({ action: 'wait', reason: 'prior', overrideable: true })), f.request);
+      const previous = getDispatchAdmissionGeneration(f.db, f.request.threadId);
+      let complete!: (value: unknown) => void;
+      let fail!: (error: Error) => void;
+      let cancelled = false;
+      const admit = vi.fn(() => new Promise((resolve, reject) => { complete = resolve; fail = reject; }));
+      const cancellation = new Error('send_cancelled');
+      const pending = admitDispatch(f.ctx(admit), f.request, () => { if (cancelled) throw cancellation; });
+      const rejected = expect(pending).rejects.toBe(cancellation);
+      cancelled = true;
+      if (action === 'error') fail(new Error('plugin failed'));
+      else complete(action === 'wait' ? { action, reason: 'late', overrideable: true } : { action, message: 'rejected' });
+      await rejected;
+      expect(getDispatchAdmissionGeneration(f.db, f.request.threadId)).toEqual(previous);
+    } finally { f.cleanup(); }
+  });
   it('forwards a wait decision and mints generation 1 for a fresh thread', async () => {
     const f = fixture();
     try {

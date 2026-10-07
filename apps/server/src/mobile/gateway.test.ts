@@ -1,17 +1,18 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, request, type IncomingMessage } from 'node:http';
 import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
-import { startMobileGateway, isMobileProxyPath } from './gateway.js';
+import { startMobileGateway, isMobileProxyPath, type MobileGatewayOptions } from './gateway.js';
+import { createUiSendVerifier, signUiSend } from '../http/ui-send-proof.js';
 import { MobileDeviceStore, DEVICE_LIFETIME_MS } from './device-store.js';
 const cleanup: Array<() => unknown> = [];
 afterEach(async () => {
   for (const fn of cleanup.splice(0).reverse()) await fn();
 });
-async function setup(https = false) {
+async function setup(https = false, options: Partial<MobileGatewayOptions> = {}) {
   let now = Date.now();
   const requests: Array<{ url?: string; headers: IncomingMessage['headers']; body: string }> = [];
   const upstream = createServer(async (req, res) => {
@@ -45,7 +46,8 @@ async function setup(https = false) {
     upstream: `http://127.0.0.1:${port}`,
     publicUrl: `${https ? 'https' : 'http'}://phone.local`,
     port: 0,
-    now: () => now
+    now: () => now,
+    ...options
   });
   cleanup.push(gateway.close);
   function call(
@@ -104,6 +106,69 @@ async function setup(https = false) {
   };
 }
 describe('mobile gateway', () => {
+  it('signs confirmed queued sends only after phone authentication and replaces forged proof headers', async () => {
+    const secret = 'mobile-gateway-fixture-secret-at-least-32-bytes';
+    const signer = vi.fn((threadId: string, itemId: string) => signUiSend(secret, threadId, itemId, Date.now(), 'mobile-ui'));
+    const f = await setup(false, { signQueuedSend: signer });
+    const path = '/api/v1/threads/thread-1/next-turn/item-1/send';
+    const body = JSON.stringify({ confirmed: true, expectedUpdatedAt: 2 });
+    const headers = { 'content-type': 'application/json' };
+    expect((await f.call(path, { method: 'POST', headers, body })).status).toBe(401);
+    expect(signer).not.toHaveBeenCalled();
+    const paired = await f.pair();
+    const session = await f.session(paired.json.credential);
+    expect((await f.call(path, { method: 'POST', headers: {
+      ...headers, cookie: session.cookie, 'x-zcc-ui-send-proof': 'forged', 'x-zcc-ui-send-surface': 'desktop'
+    }, body })).status).toBe(200);
+    expect(signer).toHaveBeenCalledExactlyOnceWith('thread-1', 'item-1');
+    const forwarded = f.requests.at(-1)!;
+    expect(forwarded.headers['x-zcc-ui-send-surface']).toBe('mobile');
+    expect(createUiSendVerifier(secret)(forwarded.headers['x-zcc-ui-send-proof'], 'thread-1', 'item-1', 'mobile-ui')).toBe(true);
+    expect(JSON.parse(forwarded.body)).toEqual({ confirmed: true, expectedUpdatedAt: 2 });
+    expect(forwarded.headers.cookie).toBeUndefined();
+    f.gateway.revoke(paired.json.deviceId);
+    expect((await f.call(path, { method: 'POST', headers: { ...headers, cookie: session.cookie }, body })).status).toBe(401);
+    expect(signer).toHaveBeenCalledOnce();
+  });
+
+  it('requires confirmation, rejects cross-origin requests and never signs unrelated paths', async () => {
+    const signer = vi.fn(() => 'proof');
+    const f = await setup(false, { signQueuedSend: signer });
+    const paired = await f.pair();
+    const session = await f.session(paired.json.credential);
+    const headers = { cookie: session.cookie, 'content-type': 'application/json' };
+    const path = '/api/v1/threads/thread-1/next-turn/item-1/send';
+    for (const input of [{}, { confirmed: false, expectedUpdatedAt: 2 }, { confirmed: true }, { confirmed: true, expectedUpdatedAt: -1 }]) {
+      expect((await f.call(path, { method: 'POST', headers, body: JSON.stringify(input) })).status).toBe(400);
+    }
+    expect((await f.call(path, { method: 'POST', headers: { ...headers, origin: 'https://untrusted.example' }, body: JSON.stringify({ confirmed: true, expectedUpdatedAt: 2 }) })).status).toBe(403);
+    await f.call('/api/v1/projects', { headers: { ...headers, 'x-zcc-ui-send-proof': 'forged' } });
+    expect(f.requests.at(-1)!.headers['x-zcc-ui-send-proof']).toBeUndefined();
+    expect(signer).not.toHaveBeenCalled();
+  });
+
+  it('allows signed sends from authenticated Connect visitors and rejects a forged tunnel capability', async () => {
+    const credential = 'k'.repeat(43);
+    const signer = vi.fn(() => 'connect-proof');
+    const f = await setup(false, { host: '127.0.0.1', connectGatewayCredential: credential, signQueuedSend: signer });
+    const path = '/api/v1/threads/thread-1/next-turn/item-1/send';
+    const body = JSON.stringify({ confirmed: true, expectedUpdatedAt: 2 });
+    expect((await f.call(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-zcc-connect-gateway': 'x'.repeat(43) }, body })).status).toBe(401);
+    expect((await f.call(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-zcc-connect-gateway': credential }, body })).status).toBe(200);
+    expect(signer).toHaveBeenCalledExactlyOnceWith('thread-1', 'item-1');
+  });
+
+  it('fails closed if queued-send approval is unavailable', async () => {
+    const f = await setup();
+    const paired = await f.pair();
+    const session = await f.session(paired.json.credential);
+    const response = await f.call('/api/v1/threads/thread-1/next-turn/item-1/send', {
+      method: 'POST', headers: { cookie: session.cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmed: true, expectedUpdatedAt: 2 })
+    });
+    expect(response.status).toBe(503);
+    expect(f.requests).toHaveLength(0);
+  });
   it('pairs once, persists only a credential hash, and scopes a secure session', async () => {
     const f = await setup(true);
     expect((await f.call('/_mobile/health')).json).toEqual({ product: 'zcc', mobileGateway: 1 });

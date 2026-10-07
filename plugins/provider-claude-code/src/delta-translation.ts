@@ -424,7 +424,7 @@ export function createClaudeDeltaTranslator(
   options: ClaudeDeltaTranslatorOptions,
 ) {
   const sessionCwd = options.cwd;
-  const sandboxEnabled = options.sandboxEnabled;
+  let sandboxEnabled = options.sandboxEnabled;
   const statesByThreadId = new Map<string, ClaudeThreadDialectState>();
   let injectedToolsByName = new Map<string, ClaudeInjectedTool>();
 
@@ -1315,6 +1315,7 @@ export function createClaudeDeltaTranslator(
     acceptInput,
     buildSessionSettlementDeltas,
     configureInjectedTools,
+    configureSandbox: (enabled: boolean) => { sandboxEnabled = enabled; },
     hasOpenSessionWork,
     hasOpenTurn,
     setClaudeModelContextWindowHint,

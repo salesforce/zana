@@ -30,6 +30,8 @@ export interface MobileGatewayOptions {
   /** Ephemeral local capability supplied only by the authenticated Connect tunnel. */
   connectGatewayCredential?: string;
   connectInstanceId?: string;
+  /** Main-owned signer, invoked only after phone session and origin authorization. */
+  signQueuedSend?: (threadId: string, itemId: string) => string;
 }
 
 function origin(raw: string): URL {
@@ -243,6 +245,18 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
         return json(res, 405, { error: 'Method not allowed' });
       if (Number(req.headers['content-length'] ?? 0) > MAX_BODY)
         return json(res, 413, { error: 'Body too large' });
+      const queuedSend = req.method === 'POST' && !machine
+        ? url.pathname.match(/^\/api\/v1\/threads\/([a-zA-Z0-9_-]{1,128})\/next-turn\/([a-zA-Z0-9_-]{1,128})\/send$/)
+        : null;
+      let confirmedSendBody: string | undefined;
+      if (queuedSend) {
+        const input = await body(req);
+        if (input.confirmed !== true || !Number.isSafeInteger(input.expectedUpdatedAt) || Number(input.expectedUpdatedAt) < 0) {
+          return json(res, 400, { error: 'Confirm the selected queued message before sending' });
+        }
+        if (!options.signQueuedSend) return json(res, 503, { error: 'Queued send approval is unavailable' });
+        confirmedSendBody = JSON.stringify({ confirmed: true, expectedUpdatedAt: input.expectedUpdatedAt });
+      }
       // Build a small header allowlist. In particular, never forward caller
       // Authorization, Cookie, proxy credentials, or X-Forwarded-* to the host.
       const headers: Record<string, string> = {
@@ -268,6 +282,13 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
       ]) {
         const value = req.headers[key];
         if (typeof value === 'string') headers[key] = value;
+      }
+      if (queuedSend && confirmedSendBody !== undefined) {
+        // Caller-supplied proof/surface headers never pass the allowlist. Only
+        // this authenticated phone edge may mint a mobile approval.
+        headers['x-zcc-ui-send-proof'] = options.signQueuedSend!(queuedSend[1]!, queuedSend[2]!);
+        headers['x-zcc-ui-send-surface'] = 'mobile';
+        headers['content-length'] = String(Buffer.byteLength(confirmedSendBody));
       }
       const proxy = httpRequest(
         new URL(url.pathname + url.search, upstream),
@@ -319,7 +340,8 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
       });
       req.on('aborted', () => proxy.destroy());
       res.on('close', () => proxy.destroy());
-      req.pipe(cap).pipe(proxy);
+      if (confirmedSendBody !== undefined) proxy.end(confirmedSendBody);
+      else req.pipe(cap).pipe(proxy);
     } catch {
       if (!res.headersSent)
         json(res, 400, { error: 'Invalid request or device store unavailable' });

@@ -1,7 +1,7 @@
 import remend from 'remend';
 
 const TRIPLE_FENCE = /```/;
-const DIRECTIVE = /(^|\n)\s*::[a-z]/;
+const DIRECTIVE = /(^|\n)\s*::{1,2}[a-z]/;
 
 /**
  * Repair incomplete markdown on a live streaming tail only. Copy/export keeps

@@ -172,6 +172,10 @@ export function persistDesktopBrowserTab(
   tab: DesktopBrowserTab
 ) {
   if (tab.threadId !== scope.threadId || tab.url.length > 4096) return;
+  let pending = pendingTabAdoptions.get(ctx.db);
+  if (!pending) { pending = new Map(); pendingTabAdoptions.set(ctx.db, pending); }
+  const key = JSON.stringify([scope.hostId, scope.instanceId, scope.threadId]);
+  pending.delete(key);
   if (remoteInteractionSurface(ctx.db, scope.threadId)) return;
   requireThread(ctx, scope.threadId);
   const stored = getThreadTabs(ctx.db, scope.threadId);
@@ -485,11 +489,17 @@ export async function revokeThreadDesktopBrowserControl(
   await Promise.allSettled(leases.map((entry) => releaseDesktopBrowserControl(ctx, entry.lease)));
 }
 
+const pendingTabAdoptions = new WeakMap<object, Map<string, symbol>>();
+
 export function syncDesktopBrowserTabs(
-  ctx: Pick<ProductHttpContext, 'db' | 'hub'>,
+  ctx: Pick<ProductHttpContext, 'db' | 'hub'> & Partial<Pick<ProductHttpContext, 'hostHub'>> & { asyncHub?: ProductHttpContext['hub'] },
   scope: ExperimentalDesktopBrowserScope,
   nativeTabs: DesktopBrowserTab[]
 ) {
+  let pending = pendingTabAdoptions.get(ctx.db);
+  if (!pending) { pending = new Map(); pendingTabAdoptions.set(ctx.db, pending); }
+  const key = JSON.stringify([scope.hostId, scope.instanceId, scope.threadId]);
+  pending.delete(key);
   if (remoteInteractionSurface(ctx.db, scope.threadId)) return;
   requireThread(ctx, scope.threadId);
   const stored = getThreadTabs(ctx.db, scope.threadId);
@@ -505,6 +515,7 @@ export function syncDesktopBrowserTabs(
         && !ids.has(tab.id)
       )
   );
+  let claimed = false;
   for (const tab of nativeTabs) {
     if (tab.threadId !== scope.threadId || tab.url.length > 4096) continue;
     const index = next.findIndex((value) => value.id === tab.tabId);
@@ -522,6 +533,7 @@ export function syncDesktopBrowserTabs(
         )
       )
     ) {
+      if (previous.kind === 'browser' && previous.desktopTarget?.hostId === scope.hostId) claimed = true;
       continue;
     }
     const value: ThreadTab = {
@@ -540,12 +552,38 @@ export function syncDesktopBrowserTabs(
     else next[index] = value;
   }
   const parsed = threadTabsSchema.parse(next);
-  if (JSON.stringify(parsed) === JSON.stringify(tabs)) return;
-  const replaced = replaceThreadTabs(ctx.db, {
-    threadId: scope.threadId,
-    expectedRevision: stored?.revision ?? 0,
-    tabsJson: JSON.stringify(parsed)
-  });
-  if (replaced === 'conflict') return;
-  emitTabs(ctx, scope.threadId, replaced.revision, parsed);
+  if (JSON.stringify(parsed) !== JSON.stringify(tabs)) {
+    const replaced = replaceThreadTabs(ctx.db, {
+      threadId: scope.threadId,
+      expectedRevision: stored?.revision ?? 0,
+      tabsJson: JSON.stringify(parsed)
+    });
+    if (replaced !== 'conflict') emitTabs(ctx, scope.threadId, replaced.revision, parsed);
+  }
+  if (!claimed || !ctx.hostHub) return;
+  const token = Symbol();
+  pending.set(key, token);
+  const adoptions = pending;
+  void listDesktopBrowserInstances({ hostHub: ctx.hostHub }, scope.hostId).then(async ({ instances }) => {
+    if (adoptions.get(key) !== token || !instances.some(instance => instance.instanceId === scope.instanceId && instance.generation === scope.generation)) return;
+    if (!getConversationThread(ctx.db, scope.threadId) || remoteInteractionSurface(ctx.db, scope.threadId)) return;
+    const latest = getThreadTabs(ctx.db, scope.threadId);
+    if (!latest) return;
+    const live = new Set(instances.map(instance => instance.instanceId));
+    const duplicates: string[] = [];
+    let adopted = false;
+    const nextTabs = parseStoredTabs(latest.tabsJson).map(previous => {
+      const native = nativeTabs.find(tab => tab.tabId === previous.id && tab.threadId === scope.threadId && tab.url.length <= 4096);
+      if (!native || previous.kind !== 'browser' || previous.desktopTarget?.hostId !== scope.hostId || previous.desktopTarget.instanceId === scope.instanceId) return previous;
+      if (live.has(previous.desktopTarget.instanceId)) { duplicates.push(native.tabId); return previous; }
+      adopted = true;
+      return { ...previous, url: native.url, title: native.title.slice(0, 1024) || null,
+        desktopTarget: { hostId: scope.hostId, instanceId: scope.instanceId, generation: scope.generation } };
+    });
+    if (adopted) {
+      const replaced = replaceThreadTabs(ctx.db, { threadId: scope.threadId, expectedRevision: latest.revision, tabsJson: JSON.stringify(threadTabsSchema.parse(nextTabs)) });
+      if (replaced !== 'conflict') emitTabs({ ...ctx, hub: ctx.asyncHub ?? ctx.hub }, scope.threadId, replaced.revision, nextTabs);
+    }
+    await Promise.allSettled(duplicates.map(tabId => desktopBrowserTabAction({ ...ctx, hostHub: ctx.hostHub! }, { ...scope, tabId }, 'close')));
+  }).catch(() => undefined).finally(() => { if (adoptions.get(key) === token) adoptions.delete(key); });
 }

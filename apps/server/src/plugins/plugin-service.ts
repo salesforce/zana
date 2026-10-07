@@ -144,6 +144,7 @@ export interface PluginService {
   disable(id: string): Promise<InstalledPluginRow>;
   remove(id: string): Promise<void>;
   reload(id: string): Promise<InstalledPluginRow>;
+  refreshSafeMode(): Promise<void>;
   reconcileBuiltins(): Promise<InstalledPluginRow[]>;
   start(): Promise<void>;
   /** Release the periodic catalog-update sweep. Safe to call more than once. */
@@ -417,6 +418,7 @@ export interface PluginServiceOptions {
     injectBundledSkills?: boolean;
     disabledBundledSkills?: string[];
     inAppAgentTerminalsEnabled?: boolean;
+    pluginSafeMode?: boolean;
   };
 }
 
@@ -937,9 +939,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   async function loadOne(row: InstalledPluginRow, isActive: () => boolean = () => !stopped): Promise<void> {
     const previous = live.get(row.id);
-    if (!row.enabled) {
+    const safeModeBlocked = opts.getAppConfig?.().pluginSafeMode === true && row.sourceKind !== 'builtin';
+    if (!row.enabled || safeModeBlocked) {
       await disposeOne(row.id);
-      const disabled = { ...row, status: 'disabled' as const };
+      const disabled = { ...row, status: 'disabled' as const, statusDetail: safeModeBlocked ? 'Suspended by plugin safe mode' : null };
       live.set(row.id, { row: disabled, handle: null, rpc: new Map() });
       await store.upsert(disabled);
       await applyMissingRequiredPluginStatus();
@@ -1678,7 +1681,27 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
   }
 
+  let safeModeRefresh: Promise<void> = Promise.resolve();
+  let appliedSafeMode = opts.getAppConfig?.().pluginSafeMode === true;
   const service: PluginService = {
+    refreshSafeMode() {
+      const refresh = safeModeRefresh.then(async () => {
+        const safeMode = opts.getAppConfig?.().pluginSafeMode === true;
+        if (safeMode === appliedSafeMode) return;
+        const { ordered } = sortPluginsByRequires(store.list().map(row => ({ id: row.id, requires: requiresOf(row), row })));
+        for (const node of ordered) {
+          const row = store.get(node.id);
+          if (row?.sourceKind !== 'builtin') await loadOne(row!);
+        }
+        await applyMissingRequiredPluginStatus();
+        await emitCapabilities();
+        await emitAppsChanged();
+        await syncCliSkill();
+        appliedSafeMode = safeMode;
+      });
+      safeModeRefresh = refresh.catch(() => {});
+      return refresh;
+    },
     list: () => store.list(),
     get: (id) => store.get(id),
     status: (id) => store.get(id)?.status,
@@ -1959,6 +1982,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         // Never proceed or return an overrideable wait without every veto reviewed.
         const decisions = await withDeadline(Promise.all(reviews), 9_000, 'dispatch admission');
         return decisions.find((decision) => decision.action === 'reject')
+          ?? decisions.find((decision) => decision.action === 'wait' && !decision.overrideable)
           ?? decisions.find((decision) => decision.action === 'wait')
           ?? { action: 'proceed' };
       } catch {

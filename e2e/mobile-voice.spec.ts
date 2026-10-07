@@ -62,6 +62,7 @@ else {
     const credential = await pair.json();
     expect((await context.request.post(`${serverUrl}/_mobile/session`, { headers: { authorization: `Bearer ${credential.credential}` } })).ok()).toBe(true);
     const window = await context.newPage();
+    window.setDefaultTimeout(15_000);
     await window.addInitScript(() => {
       Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: async () => new MediaStream() });
       class Recorder {
@@ -87,19 +88,20 @@ else {
       const audio = form.get('file') as File;
       expect(audio.name).toBe('recording.mp4');
       const result = await invoke(Buffer.from(await audio.arrayBuffer()).toString('base64'), audio.type, audio.name);
+      await testInfo.attach('voice-response', { body: JSON.stringify(result), contentType: 'application/json' });
       await route.fulfill({ status: result.status, json: result.body });
     });
     await window.goto(`${serverUrl}/threads/${threadId}`);
     await expect(window.locator('.app-shell')).toHaveAttribute('data-mobile', 'true');
     const input = window.getByTestId('thread-command-input');
     await expect(input).toBeVisible();
-    const record = async () => {
+    const record = async (send = false) => {
       const options = window.getByRole('button', { name: 'Composer options', exact: true });
       if (await options.getAttribute('aria-expanded') !== 'true') await options.click();
       await window.getByRole('button', { name: 'Start voice input', exact: true }).click();
       await expect(window.getByTestId('thread-voice-bar')).toBeVisible();
       await window.waitForTimeout(1100); // real minimum recording duration
-      await window.getByRole('button', { name: 'Stop and transcribe recording' }).click();
+      await window.getByRole('button', { name: send ? 'Transcribe and send recording' : 'Stop and transcribe recording', exact: true }).click();
     };
     writeFileSync(join(codexHome, 'mode'), 'success');
     await input.fill('Draft: ');
@@ -116,6 +118,16 @@ else {
     await expect(window.locator('.toast.error')).not.toContainText('synthetic-private-error');
     await expect(input).toContainText('Draft:');
     await window.screenshot({ path: testInfo.outputPath('mobile-voice-keychain-guidance.png') });
+
+    writeFileSync(join(codexHome, 'mode'), 'success');
+    await window.getByRole('button', { name: 'Retry voice transcription', exact: true }).click();
+    await expect(window.getByRole('button', { name: 'Retry voice transcription', exact: true })).toHaveCount(0);
+    await expect(input).toContainText('Voice works on my phone.');
+    await input.fill('Send this recording:');
+    await record(true);
+    await expect(window.getByTestId('thread-timeline')).toContainText('Send this recording:');
+    await expect(window.getByTestId('thread-timeline')).toContainText('Voice works on my phone.');
+    await expect(input).toBeEmpty();
 
     for (const mode of ['missing', 'timeout', 'overflow', 'success']) {
       writeFileSync(join(codexHome, 'mode'), mode);

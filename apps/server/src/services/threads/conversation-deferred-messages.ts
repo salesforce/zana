@@ -13,6 +13,7 @@ import {
   retryDeferredThreadMessage,
   postponeDeferredThreadRetry,
   markDeferredThreadMessageDispatching,
+  holdDeferredThreadMessage,
   markDeferredThreadMessageFailed,
   pauseDeferredThreadMessagesForThread,
   requeueDeferredThreadMessagesForThread,
@@ -30,9 +31,17 @@ export interface DeferredSendPayload {
   kind: 'send';
   input: unknown;
   mode: ThreadSendMode;
-  execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: 'default' | 'fast'; acpMode?: string };
+  execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: string; acpMode?: string };
   senderThreadId?: string;
   admission?: { generation: number; overrideable: boolean; reason: string; pluginId?: string };
+}
+
+/** Drain callers must retain their claimed row rather than enqueueing a replacement. */
+export class DeferredAdmissionWait extends Error {
+  constructor(readonly admission: NonNullable<DeferredSendPayload['admission']>) {
+    super(admission.reason);
+    this.name = 'DeferredAdmissionWait';
+  }
 }
 
 function isDeferredSendPayload(value: unknown): value is DeferredSendPayload {
@@ -55,7 +64,7 @@ export function deferConversationSend(
     threadId: string;
     input: unknown;
     mode: ThreadSendMode;
-    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: 'default' | 'fast'; acpMode?: string };
+    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: string; acpMode?: string };
     senderThreadId?: string;
     sendAfter?: number | null;
     paused?: boolean;
@@ -78,8 +87,8 @@ export function deferConversationSend(
       input: args.input,
       mode: args.mode,
       ...(args.execution ? { execution: args.execution } : {}),
-      ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {})
-      , ...(args.admission ? { admission: args.admission } : {})
+      ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {}),
+      ...(args.admission ? { admission: args.admission } : {})
     } satisfies DeferredSendPayload),
     sendAfter: args.sendAfter ?? null,
     paused: args.paused === true || isThreadQueueAutoSendPaused(ctx.db, args.threadId),
@@ -222,7 +231,8 @@ export async function sendDeferredConversationMessage(
   ctx: ProductHttpContext,
   threadId: string,
   itemId: string,
-  deliver: (payload: DeferredSendPayload) => Promise<void>
+  deliver: (payload: DeferredSendPayload) => Promise<void>,
+  expectedUpdatedAt?: number
 ): Promise<void> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) throw forceFlushError('unknown-thread');
@@ -231,9 +241,12 @@ export async function sendDeferredConversationMessage(
   if (!hostOnline(ctx, thread.hostId)) throw forceFlushError('host-offline');
   const row = getDeferredThreadMessage(ctx.db, { id: itemId, threadId });
   if (!row) throw new ThreadCreateError(404, 'unknown-queued-send', 'queued send was not found');
+  if (expectedUpdatedAt !== undefined && row.updatedAt !== expectedUpdatedAt) {
+    throw new ThreadCreateError(409, 'queued-send-changed', 'Queued message changed; confirm again');
+  }
   // Auto-drain and repeated clicks compete for the same atomic claim. Never
   // reclaim an in-flight row: that can submit the same prompt twice.
-  if (!markDeferredThreadMessageDispatching(ctx.db, { id: itemId, threadId, retryFailed: true })) {
+  if (!markDeferredThreadMessageDispatching(ctx.db, { id: itemId, threadId, retryFailed: true, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) })) {
     throw new ThreadCreateError(409, 'queued-send-dispatching', 'This message is already being sent');
   }
   try {
@@ -334,6 +347,17 @@ export async function flushDeferredConversationMessages(
       for (const row of claimed) deleteDeferredThreadMessage(ctx.db, { id: row.id, threadId });
       flushed += claimed.length;
     } catch (error) {
+      if (error instanceof DeferredAdmissionWait) {
+        ctx.db.transaction(() => {
+          for (const row of claimed) {
+            holdDeferredThreadMessage(ctx.db, {
+              id: row.id, threadId,
+              payload: JSON.stringify({ ...parseDeferredSendPayload(row), admission: error.admission })
+            });
+          }
+        });
+        return { flushed, delayed: 'plugin-wait' };
+      }
       const reason = error instanceof Error ? error.message : 'dispatch-failed';
       for (const row of claimed) {
         markDeferredThreadMessageFailed(ctx.db, { id: row.id, threadId, reason, retryable: isRetryableDeferredFailure(error) });

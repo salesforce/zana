@@ -27,7 +27,7 @@ import { ProjectView } from '@/views/project/ProjectView';
 import { TerminalSurface } from './components/TerminalSurface.js';
 import { SplitWorkspaceRoute } from '@/views/SplitWorkspaceRoute';
 import { ProjectScopedNav } from './components/ProjectScopedNav.js';
-import { SettingsView } from '@/views/settings/SettingsView';
+import { LazySettingsView as SettingsView } from '@/views/settings/LazySettingsView';
 import { ExtensionsView } from '@/views/extensions/ExtensionsView';
 import { FollowUpsView } from '@/views/follow-ups/FollowUpsView';
 import { SuggestionsView } from '@/views/suggestions/SuggestionsView';

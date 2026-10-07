@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import WebSocket from 'ws';
-import { appendConversationThreadEvent, createConversationThread, createEnvironment, getConversationThread, openHostSession, upsertHost } from '@zana-ai/zcc-db';
+import { appendConversationThreadEvent, createConversationThread, createEnvironment, getConversationThread, getThreadTabs, replaceThreadTabs, openHostSession, upsertHost } from '@zana-ai/zcc-db';
 import { HOST_RPC_PROTOCOL_VERSION, type HostEventEnvelope, type HostRuntimeSnapshot } from '@zana-ai/zcc-contracts/host-rpc';
 import { startProductServer } from './product-server.js';
 import { hashHostKey } from './host-hub.js';
@@ -46,6 +46,52 @@ async function eventHost() {
     return batchId;
   };
 }
+
+it('adopts an orphaned browser tab through authenticated host RPC and emits after the event transaction', async () => {
+  const live = thread('idle');
+  const oldWindow = randomUUID(), currentWindow = randomUUID(), generation = randomUUID();
+  const tabId = 'browser:recovery-tab';
+  replaceThreadTabs(server.ctx.db, {
+    threadId: live.id, expectedRevision: 0,
+    tabsJson: JSON.stringify([{ id: tabId, kind: 'browser', environmentId: null, title: 'Old', url: 'about:blank',
+      desktopTarget: { hostId, instanceId: oldWindow, generation: 'old-generation' } }])
+  });
+  const updates: unknown[] = [];
+  const stop = server.ctx.hub.subscribe('threads:tabs', value => updates.push(value));
+  const batchId = randomUUID();
+  let ack: unknown;
+  const commands: string[] = [];
+  let connection!: ReturnType<typeof createHostServerSocket>;
+  connection = connect({ onMessage: raw => {
+    const message = raw as { type: string; batchId?: string; requestId?: string; command?: { type: string } };
+    if (message.batchId === batchId) ack = message;
+    if (message.type !== 'host-rpc.request') return;
+    commands.push(message.command!.type);
+    connection.send(JSON.stringify({ type: 'host-rpc.response', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      requestId: message.requestId, commandType: message.command!.type, ok: true,
+      result: { instances: [{ instanceId: currentWindow, generation, label: 'Current' }] }
+    }));
+  } });
+  try {
+    await connection.ready;
+    connection.send(JSON.stringify({ type: 'host.event', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId, instanceId, batchId, events: [{ kind: 'desktop.browser.changed', threadId: live.id,
+        payload: { type: 'desktop-browser.changed', instanceId: currentWindow, generation, threadId: live.id, tabs: [{ tabId, threadId: live.id,
+          title: 'Recovered', url: 'https://example.test/', control: null,
+          profile: { kind: 'automation', id: 'recovery-profile' }, presentation: 'hidden' }] }
+      }]
+    }));
+    await vi.waitFor(() => expect(ack).toMatchObject({ accepted: 1, rejected: [] }));
+    await vi.waitFor(() => expect(updates).toContainEqual(expect.objectContaining({ threadId: live.id, revision: 2 })));
+    const saved = getThreadTabs(server.ctx.db, live.id)!;
+    expect(saved.revision).toBe(2);
+    expect(JSON.parse(saved.tabsJson)[0]).toMatchObject({ title: 'Recovered', url: 'https://example.test/',
+      desktopTarget: { hostId, instanceId: currentWindow, generation } });
+    expect(commands).toEqual(['desktop.browser.list_instances']);
+  } finally {
+    stop();
+  }
+});
 
 it('rejects completed-item events outside the authenticated host without reconciling their plans', async () => {
   const other = upsertHost(server.ctx.db, { name: 'other-event-host', hostKeyHash: hashHostKey('other-event-key') });

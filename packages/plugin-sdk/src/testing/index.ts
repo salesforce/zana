@@ -375,6 +375,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     sdk: {
+      experimental_promptHistory: {list: async args => invokeSdk('experimental_promptHistory.list', async () => ({entries:[], nextCursor:null}), args) as ReturnType<ZccPluginApi['sdk']['experimental_promptHistory']['list']>},
       assistant: {
         complete: async (args) => invokeSdk('assistant.complete', async () => { throw new Error('zcc.sdk is not available in this runtime'); }, args) as ReturnType<ZccPluginApi['sdk']['assistant']['complete']>
       },

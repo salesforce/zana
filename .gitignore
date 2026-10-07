@@ -69,6 +69,7 @@ resources/scheduled-supervisor
 
 # Local screenshots, demos, and generated exports. Keep copies on disk, out of Git.
 /artifacts/
+/output/
 
 # Docker remote-machine join secrets / loopback-proxy pid (local play only)
 docker/remote-machine/.env

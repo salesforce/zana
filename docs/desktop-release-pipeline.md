@@ -48,3 +48,35 @@ For local packaging on Windows, run `pnpm dist:win`. Local packaging passes
 `--publish never`; release publication belongs to the workflow. OpenCode staging
 selects the build host's platform and uses `opencode.exe` on Windows. The POSIX
 scheduled supervisor is bundled only on macOS/Linux.
+
+## Release notes and version bumps
+
+A version bump touches `package.json` (and `package-lock.json`),
+`apps/mobile/app.json`, the website version pins (`website/.env.example`,
+`website/Dockerfile`, `website/heroku.yml`, `website/lib/site.ts`), and adds
+`docs/releases/<version>.md`.
+
+That one notes file is shown in three places:
+
+1. **The GitHub release body.** The workflow's `body_path` copies the file into
+   the draft release.
+2. **The update banner's "What's new" preview, before installing.** The app
+   reads the release body back from the update feed and converts it to markdown
+   in the main process (`apps/desktop/src/update-release-notes.ts`).
+3. **The What's New modal after installing.** electron-builder bundles
+   `docs/releases` into the app.
+
+When you bump the version:
+
+- **Write the notes before you tag.** `pnpm run check:release-notes` runs in the
+  release `verify` job and fails if the file is missing or shorter than 80
+  characters, or if the pushed tag doesn't match `package.json`.
+- **Use headings, paragraphs, lists, emphasis, links and code only.** The
+  feed conversion drops images, tables and raw HTML, so the guard rejects them.
+  It also rejects notes over 32 KB, which the preview would truncate. Bundled
+  media, such as the 2.3.0 video, goes in `ReleaseNoteVideo`, keyed by version.
+- **Keep the GitHub body in sync after drafting.** The draft body is copied once,
+  when the workflow runs. If you fix the notes later, edit
+  `docs/releases/<version>.md` *and* the release body on GitHub. Users who
+  haven't updated yet read the GitHub copy; users who have updated read the
+  bundled one.

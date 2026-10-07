@@ -268,4 +268,44 @@ describe('voice capture session', () => {
     expect(onError).toHaveBeenCalledWith('Microphone permission denied');
     micError.dispose();
   });
+  it('retries the original audio and finishes an accepted recording after detachment', async () => {
+    installRecorder();
+    let now = 0;
+    const onTranscript = vi.fn();
+    const transcribe = vi.fn().mockResolvedValueOnce({ ok: false, text: '', error: 'temporary error' }).mockResolvedValueOnce({ ok: true, text: 'Recovered' });
+    const session = createVoiceCapture({ now: () => now, ensureMicAccess: async () => true, getUserMedia: async () => fakeStream(), transcribe }, { onState: () => undefined, onStream: () => undefined, onTranscript, onError: () => undefined });
+    await session.start(); now = 1500; session.stop();
+    await vi.waitFor(() => expect(session.canRetry()).toBe(true));
+    session.dispose({ preserveTranscription: true });
+    await session.retry();
+    expect(transcribe.mock.calls[0]).toEqual(transcribe.mock.calls[1]);
+    expect(onTranscript).toHaveBeenCalledWith('Recovered');
+    expect(session.canRetry()).toBe(false);
+    session.dispose();
+  });
+  it('lets an accepted transcription finish after detaching and awaits its owner', async () => {
+    installRecorder(); let now = 0;
+    let finish!: (value: { ok: boolean; text: string }) => void;
+    const transcribe = vi.fn(() => new Promise<{ ok: boolean; text: string }>(resolve => { finish = resolve; }));
+    const onTranscript = vi.fn();
+    const session = createVoiceCapture({ now: () => now, ensureMicAccess: async () => true, getUserMedia: async () => fakeStream(), transcribe }, { onState: () => undefined, onStream: () => undefined, onTranscript, onError: () => undefined });
+    await session.start(); now = 1500; session.stop();
+    await vi.waitFor(() => expect(transcribe).toHaveBeenCalled());
+    session.dispose({ preserveTranscription: true });
+    finish({ ok: true, text: 'Owned transcript' });
+    await vi.waitFor(() => expect(onTranscript).toHaveBeenCalledWith('Owned transcript'));
+    session.dispose();
+  });
+  it('releases a microphone that arrives after disposal', async () => {
+    installRecorder();
+    const stream = fakeStream();
+    let giveStream!: (stream: MediaStream) => void;
+    const getUserMedia = vi.fn(() => new Promise<MediaStream>(resolve => { giveStream = resolve; }));
+    const session = createVoiceCapture({ ensureMicAccess: async () => true, getUserMedia, transcribe: vi.fn() }, { onState: () => undefined, onStream: () => undefined, onTranscript: () => undefined, onError: () => undefined });
+    const start = session.start();
+    await vi.waitFor(() => expect(getUserMedia).toHaveBeenCalled());
+    session.dispose(); giveStream(stream); await start;
+    expect(stream.getTracks()[0].stop).toHaveBeenCalled();
+  });
+
 });

@@ -654,6 +654,8 @@ export const IPC = {
   },
   scheduler: {
     list: 'scheduler:list',
+    get: 'scheduler:get',
+    reload: 'scheduler:reload',
     create: 'scheduler:create',
     update: 'scheduler:update',
     delete: 'scheduler:delete',

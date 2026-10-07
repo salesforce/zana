@@ -98,6 +98,26 @@ it('allows type-only files while rejecting uncovered runtime TypeScript', () => 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+it('excludes Vitest setup and test harnesses while still requiring coverage for product runtime and build scripts', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zcc-ci-test-support-'));
+  const paths = [
+    'plugins/fixture/vitest.setup.ts', 'plugins/fixture/src/app/test-harness.tsx',
+    'plugins/fixture/src/bridge/fake-provider-harness.ts', 'plugins/fixture/src/bridge/fake-provider.mjs',
+    'plugins/fixture/src/app/runtime.tsx', 'plugins/fixture/scripts/build-app.mjs'
+  ];
+  try {
+    for (const path of paths) {
+      mkdirSync(resolve(root, path, '..'), { recursive: true });
+      writeFileSync(resolve(root, path), 'export const value = 1;');
+    }
+    const changes = new Map(paths.map(path => [path, new Set([1])]));
+    expect(coverageFailures(changes, {}, root)).toEqual([
+      'plugins/fixture/src/app/runtime.tsx: missing coverage',
+      'plugins/fixture/scripts/build-app.mjs: missing coverage'
+    ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 it('combines complementary root and package coverage even when local ids differ', () => {
   const loc = { start: { line: 2 }, end: { line: 2 } };
   const branch = { loc };
@@ -121,4 +141,6 @@ it('keeps the existing required CI check as an always-running gate over both job
   expect(workflow).toContain('pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts --coverage');
   expect(workflow).toContain('--config vitest.release-coverage.config.ts --coverage');
   expect(workflow).toContain('coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json');
+  expect(workflow).toContain("description: 'Optional comparison base for the full unpublished branch range'");
+  expect(workflow.match(/CI_BASE_SHA: \$\{\{ inputs\.base_sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'HEAD\^' \}\}/g)).toHaveLength(2);
 });

@@ -132,11 +132,26 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     autoInstall: true,
     defaultEnabled: true,
     category: 'Host access'
+  },
+  {
+    name: 'google-analytics',
+    pluginId: 'google-analytics',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Host access'
   }
 ];
 
 /** Bundled but store-only until `zcc plugin install <name>`. */
 export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
+  { name: 'prompt-library', pluginId: 'prompt-library', autoInstall: false, defaultEnabled: true, category: 'Context & knowledge' },
+  {
+    name: 'design-docs',
+    pluginId: 'design-docs',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Context & knowledge'
+  },
   {
     name: 'provider-afcode',
     pluginId: 'provider-afcode',

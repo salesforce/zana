@@ -75,7 +75,7 @@ export class Zcc {
   };
 
   readonly harness = {
-    preflight: (opts: { surface: 'thread' | 'cli-agent'; providerId?: string; profile?: string }) =>
+    preflight: (opts: { surface: 'thread' | 'cli-agent'; providerId?: string; profile?: string; hostId?: string }) =>
       preflight(this.http, opts)
   };
 

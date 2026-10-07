@@ -633,6 +633,8 @@ export interface PluginComposerApi {
    * merges every plugin's patch at send; main still authorizes.
    */
   experimental_setLaunchPatch(patch: PluginComposerLaunchPatch | null): void;
+  /** Restore prompt metadata; main validates attachment provenance on send. */
+  experimental_replacePrompt?(input: readonly import('@zana-ai/zcc-domain/thread-runtime').PromptInput[], sourceThreadId?: string): void;
 }
 
 export interface PluginComposerThreadRowStatus {

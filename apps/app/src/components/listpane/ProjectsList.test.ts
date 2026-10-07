@@ -199,7 +199,8 @@ describe('sidebar workspace scrolling', () => {
     expect(css).toContain('.icon-btn {\n  display: grid;\n  place-items: center;');
     expect(css).toContain('.icon-btn svg {\n  display: block;\n}');
     expect(tsx).toContain('<ListFilter size={14} />');
-    expect(tsx).toContain('<MoreHorizontal size={14} />');
+    expect(tsx).toContain('<RefreshCw size={14}');
+    expect(tsx).not.toContain('aria-label="Project menu"');
     expect(tsx).toContain('<Plus size={14} />');
   });
 });
@@ -211,7 +212,6 @@ describe('sidebar workspace header menus', () => {
     expect(source).toContain('sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)');
     expect(source).toContain("if (e.key === 'Escape')");
     expect(source).toContain('setSidebarAddOpen(false);\n        setSidebarOrganizeOpen(false);');
-    expect(source).toContain('anchorTop: rect.top');
     expect(source).toContain('const openAbove = spaceBelow < menu.height + MENU_GAP && spaceAbove > spaceBelow');
     expect(source).toContain('placeFixedMenu(menuEl, button.getBoundingClientRect())');
   });

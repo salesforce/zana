@@ -21,7 +21,7 @@ import {
 import { z } from "zod";
 import { acpSessionUpdateSchema, acpStopReasonSchema } from "./wire.js";
 
-export const ACP_DEFAULT_MODEL_ID = "acp-default";
+export { ACP_DEFAULT_MODEL_ID } from "@zana-ai/zcc-domain/thread-runtime";
 
 export type AcpBridgeReasoningCli = z.infer<typeof acpBridgeReasoningCliSchema>;
 

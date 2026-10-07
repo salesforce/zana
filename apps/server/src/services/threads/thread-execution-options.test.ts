@@ -446,3 +446,13 @@ describe('plugin host default execution options', () => {
     });
   });
 });
+
+
+it('offers Default alongside one provider-defined tier and removes tiers under the instance policy', () => {
+  const provider = registerThreadProvider('tier-test', { id: 'tier-test', displayName: 'Tier test', serviceTiers: [{ id: 'economy', label: 'Economy' }], capabilities: { supportsServiceTier: true, fork: 'none', permissionModes: ['full'], reasoningLevels: [] } });
+  try {
+    const options = buildThreadExecutionOptions({ availability: [] });
+    expect(options.providers.find(row => row.id === 'tier-test')?.serviceTiers).toEqual([{ id: 'default', label: 'Default' }, { id: 'economy', label: 'Economy' }]);
+    expect(buildThreadExecutionOptions({ availability: [], providerServiceTiersDisabled: true }).providers.find(row => row.id === 'tier-test')?.serviceTiers).toEqual([]);
+  } finally { provider.unregister(); }
+});

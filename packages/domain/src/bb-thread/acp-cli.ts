@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { reasoningLevelSchema } from "./shared-types.js";
 
+/** ACP catalog placeholder: let the connected agent select its configured model. */
+export const ACP_DEFAULT_MODEL_ID = "acp-default";
+
 const providerSkillRootPathSchema = z
   .string()
   .min(1)

@@ -74,6 +74,12 @@ export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogPr
       throw Error(result.warning || 'Signed in. Choose your org from the connected list to continue.');
     }
   });
+  const openProject = () => {
+    if (alive.current && created.current?.projectId) {
+      props.toProject(created.current.projectId, { tabId: 'salesforce' });
+      props.close();
+    }
+  };
   const create = () => run('Creating project…', async () => {
     if (!created.current) {
       const result = requireResult<{ path: string }>(await call('project.generate', { name: name.trim(), outputDir: outputDir.trim() }));
@@ -86,11 +92,9 @@ export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogPr
       created.current.projectId = project.id;
     }
     requireResult(await call('project.connect', { projectId: created.current.projectId, selectedAlias: connected }));
-    if (alive.current) {
-      props.toProject(created.current.projectId, { tabId: 'salesforce' });
-      props.close();
-    }
+    openProject();
   });
+  const connectionFailed = !!created.current?.projectId && !!error;
 
   return <div className="sf-surface sf-create-project" data-testid="salesforce-create-project">
     <style>{SALESFORCE_STYLES}</style>
@@ -100,7 +104,10 @@ export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogPr
     </ol>
     <form onSubmit={event => {
       event.preventDefault();
-      if (connected) { if (name.trim() && outputDir.trim()) void create(); }
+      if (connected) {
+        if (connectionFailed && !busy) openProject();
+        else if (name.trim() && outputDir.trim()) void create();
+      }
       else if (existing) { if (selected && !busy) choose(selected); }
       else void signIn();
     }}>
@@ -134,14 +141,17 @@ export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogPr
               <button type="button" className="sf-btn" disabled={!!busy || !!created.current} onClick={() => void run('Choosing folder…', async () => { const picked = await props.pickDirectory(); if (alive.current && picked) setOutputDir(picked); })}>Browse…</button></div>
           </div>
           <p className="sf-create-path">{outputDir && name.trim() ? `${outputDir.replace(/[\\/]+$/, '')}/${name.trim()}` : 'Choose where to save your project.'}</p>
-          {created.current && error && <p className="sf-muted">Your folder is ready. Retry to finish connecting it.</p>}
+          {created.current && error && <p className="sf-muted">{connectionFailed
+            ? 'Your project was created and added to Projects. Open it now, or retry connecting your org. You can also connect from the Salesforce tab later.'
+            : 'Your folder is ready. Retry to add it to Projects.'}</p>}
         </>}
         {error && <p className="sf-login-error" role="alert">{error}</p>}
       </div>
       <div className="sf-create-footer">
         <button type="button" className="sf-btn quiet" disabled={!!connected && !!busy} onClick={props.close}>{busy ? 'Close' : 'Cancel'}</button>
+        {connectionFailed && <button type="button" className="sf-btn" disabled={!!busy} onClick={() => void create()}>Retry connection</button>}
         <button type="submit" className="sf-btn primary" disabled={!!busy || (connected ? !name.trim() || !outputDir.trim() : existing && !selected)}>
-          {busy || (connected ? created.current ? 'Finish setup' : 'Create project' : existing ? 'Continue' : <><span>Log in to Salesforce</span><ArrowUpRight /></>)}
+          {busy || (connected ? connectionFailed ? 'Open project' : created.current ? 'Finish setup' : 'Create project' : existing ? 'Continue' : <><span>Log in to Salesforce</span><ArrowUpRight /></>)}
         </button>
       </div>
     </form>

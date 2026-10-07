@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./cli-host-guard": "./src/cli-host-guard.ts",
     ".": {
       "types": "./src/index.ts",
       "source": "./src/index.ts",

@@ -1,0 +1,22 @@
+sf-agentic-tools
+
+This product includes software derived from SF Pi, originally developed by
+Salesforce and the SF Pi contributors and distributed under Apache License 2.0.
+Upstream: https://github.com/salesforce/sf-pi
+Extraction base: standalone-tool-cli proposal, commit
+3b204a44eababb7535da92940b7aaa9f96610125.
+
+The extracted source and its provenance are in vendor/sf-pi and UPSTREAM.json.
+The bundled tool guides and Data 360 registries are also derived from SF Pi.
+The instruction-only Salesforce integrations skill adapts SF Integrate's agent
+guide and README at commit 067e50fbad9d2481f5a2f50cc41d340930239061, replacing
+Pi-specific workflows with existing standalone tools and host/Setup handoffs.
+No executable SF Integrate implementation is included.
+Changes include independent packaging, shared CLI/SDK invocation, public types,
+standalone discovery, and removal of Pi-specific presentation dependencies.
+Additional extraction covers Code Analyzer and AgentScript/Agentforce domain
+operations, with independent state, settings, process execution, and authorization
+adapters. General metadata tooling is authored for this standalone package.
+The standalone output layer normalizes domain data and diagnostics, saves complete
+results, and provides bounded model views and local result paging independently of Pi.
+This project is independently maintained and is not an official Salesforce product.

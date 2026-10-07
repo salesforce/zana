@@ -4,8 +4,8 @@ import { isWithin } from '@zana-ai/zcc-path-confine';
 import { CliDiscoveryCommandSchema, CliDiscoveryResultSchema, type CliDiscoveryResult } from '@zana-ai/zcc-contracts/cli-discovery';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
-import { providerFor } from './harness/registry.js';
-import { installedHarnessVersion } from './harness/harness-verify.js';
+import { providerFor, registrationFor } from './harness/registry.js';
+import { harnessEnabledFromProbe, installedHarnessVersion } from './harness/harness-verify.js';
 
 /** Runs with this daemon's HOME, binaries and credentials. The server supplies
  * only a registered checkout boundary, never another machine's config/env. */
@@ -26,8 +26,17 @@ export async function discoverCliOnHost(raw: unknown, config: AppConfig, deps = 
   const provider = deps.providerFor(request.profile);
   let result: unknown;
   if (request.query === 'version') {
-    result = { query: 'version', version: await deps.installedHarnessVersion(localConfig,
-      harnessFamilyOf(request.profile) || provider.adapter.descriptor.id) };
+    const version = await deps.installedHarnessVersion(localConfig,
+      harnessFamilyOf(request.profile) || provider.adapter.descriptor.id);
+    const verification = registrationFor(request.profile)?.verification;
+    const enabled = harnessEnabledFromProbe({
+      alwaysEnabled: verification?.alwaysEnabled,
+      configEnabled: verification?.enabledConfigKey
+        ? localConfig[verification.enabledConfigKey as keyof AppConfig] as boolean | undefined
+        : undefined,
+      installed: Boolean(version)
+    });
+    result = { query: 'version', version: enabled ? version : undefined };
   } else if (request.query === 'roles') {
     result = { query: 'roles', roles: [...await provider.discoverRoleTargets?.({ cwd, config: localConfig }) ?? []] };
   } else {

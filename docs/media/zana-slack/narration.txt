@@ -1,0 +1,13 @@
+Meet Zana for Slack, shown here with Pi.
+
+In a linked channel, just mention Zana with your task. Zana uses that channel’s Project and harness: Pi here, or any harness installed in Zana.
+
+Pi works on your own computer. When it needs a decision, it asks right in the Slack thread. Answer there, and Pi fixes the code and reruns the tests.
+
+When the turn ends, Zana posts the answer right back in your Slack thread: what changed, and how the tests did.
+
+Reply in the thread to keep going. Zana continues the same conversation, with the same Project, machine, and harness.
+
+Or message Zana privately. Ask for your unread reports, and it reads them straight from your Zana inbox.
+
+Zana Home lists every agent, so you can follow, mute, or stop them. Just keep your computer awake, with Zana running.

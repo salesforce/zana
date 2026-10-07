@@ -86,7 +86,7 @@ test('Default Project discovers remote models and machine renames survive pairin
     await card.getByRole('button', { name: `Rename ${originalName}`, exact: true }).click();
     await card.getByRole('textbox', { name: 'Machine name', exact: true }).fill('My remote dev machine');
     await card.getByRole('textbox', { name: 'Machine name', exact: true }).press('Enter');
-    await expect(card.locator('strong')).toContainText('My remote dev machine');
+    await expect(card.locator('.machine-card-identity > strong')).toHaveText('My remote dev machine');
     await expect.poll(async () => (await remoteHost()).name).toBe('My remote dev machine');
     await stopDaemon();
     const repaired = await fetch(`${origin}/internal/hosts/enroll`, {
@@ -98,7 +98,7 @@ test('Default Project discovers remote models and machine renames survive pairin
     expect(repaired.status).toBe(201);
     await expect.poll(async () => (await remoteHost()).name).toBe('My remote dev machine');
     await win.reload();
-    await expect(win.locator('.machine-card strong').filter({ hasText: 'My remote dev machine' })).toBeVisible();
+    await expect(win.locator('.machine-card-identity > strong').filter({ hasText: 'My remote dev machine' })).toBeVisible();
     console.log('[machine-composer] rename persisted');
   } finally {
     await stopDaemon();

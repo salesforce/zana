@@ -15,8 +15,9 @@ import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { shortRunId } from '../lib/executionIdentity.js';
-import { boardDropAction, boardItemKey } from '../lib/agent-board-moves.js';
-import { agentBoardMoves, useAgentBoardMoves } from '../stores/agent-board-moves.js';
+import { boardDropAction, boardItemKey, canSwipeClose } from '../lib/agent-board-moves.js';
+import { agentBoardMoves, closeBoardItem, useAgentBoardMoves } from '../stores/agent-board-moves.js';
+import { SwipeToCloseCard } from './SwipeToCloseCard.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { MobileAgentBoard } from './MobileAgentBoard.js';
 import { isUnreadThread } from '../lib/unread-threads.js';
@@ -1312,9 +1313,16 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
   };
 
   const renderItem = (item: FleetItem, laneKey: LaneKey, grouped = false) => {
-    if (item.kind === 'thread') return renderThreadCard(item, laneKey, grouped);
-    if (item.kind === 'schedule') return renderScheduleCard(item, laneKey, grouped);
-    return renderCard(item.card, laneKey, grouped);
+    const node = item.kind === 'thread' ? renderThreadCard(item, laneKey, grouped)
+      : item.kind === 'schedule' ? renderScheduleCard(item, laneKey, grouped)
+      : renderCard(item.card, laneKey, grouped);
+    // Phones can't drag to Done; swipe left closes like the agents drawer.
+    if (!compact || !canSwipeClose(item) || moving.has(boardItemKey(item))) return node;
+    return (
+      <SwipeToCloseCard key={boardItemKey(item)} title={item.title} onClose={() => closeBoardItem(item)}>
+        {node}
+      </SwipeToCloseCard>
+    );
   };
 
   const renderLane = (key: string) => {

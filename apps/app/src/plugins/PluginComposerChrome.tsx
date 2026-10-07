@@ -26,6 +26,7 @@ export function PluginComposerChrome({
   scope,
   text,
   setText,
+  replacePrompt,
   focus,
   familyId,
   providerId,
@@ -34,6 +35,7 @@ export function PluginComposerChrome({
   scope: PluginComposerScope;
   text: string;
   setText: (next: string) => void;
+  replacePrompt?: PluginComposerApi['experimental_replacePrompt'];
   focus: () => void;
   familyId?: string;
   providerId?: string;
@@ -77,8 +79,9 @@ export function PluginComposerChrome({
       setText(`${text}@${mention.label} `);
     },
     focus,
-    experimental_setLaunchPatch() {}
-  }), [focus, scope, setText, text]);
+    experimental_setLaunchPatch() {},
+    ...(replacePrompt ? {experimental_replacePrompt: replacePrompt} : {})
+  }), [focus, scope, setText, text, replacePrompt]);
 
   // Set before children render so `useComposerView()` in meta chips sees
   // `familyId` on the first paint, not only after a later state update.

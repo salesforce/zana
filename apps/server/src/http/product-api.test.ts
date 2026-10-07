@@ -3131,11 +3131,33 @@ describe('async history and queue HTTP responsiveness', () => {
       const read = await fetch(`${server.url}api/v1/threads/history${query}`);
       expect(read.status).toBe(200); expect(await read.json()).toHaveProperty('rows');
     }
-    const queue = `${server.url}api/v1/threads/thread/queued-messages`;
+    const host = upsertHost(server.ctx.db, { name: 'queue host', hostKeyHash: 'q'.repeat(64) });
+    const thread = createConversationThread(server.ctx.db, { projectId: 'p', hostId: host.id, providerId: 'codex' });
+    const queue = `${server.url}api/v1/threads/${thread.id}/queued-messages`;
     expect(await (await fetch(queue)).json()).toEqual([]);
     const created = await fetch(queue, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'queued' }) });
     expect(created.status).toBe(201);
+    const message = await created.json();
     expect(await (await fetch(queue)).json()).toHaveLength(1);
+    const edited = await fetch(`${queue}/${message.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: [{ type: 'text', text: 'Edited queue' }], expectedUpdatedAt: message.updatedAt }) });
+    expect(edited.status).toBe(200);
+    const editedMessage = await edited.json();
+    expect(editedMessage.content).toEqual([{ type: 'text', text: 'Edited queue' }]);
+    const foreign = await fetch(`${queue}/${message.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: [{ type: 'localImage', path: '/tmp/foreign.png', hostId: 'another-host' }], expectedUpdatedAt: editedMessage.updatedAt }) });
+    expect(foreign.status).toBe(400);
+    expect(await foreign.json()).toMatchObject({ error: 'attachment-host-mismatch' });
+    const stale = await fetch(`${queue}/${message.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: null }) });
+    expect(stale.status).toBe(409);
+    for (const method of ['POST', 'PATCH']) {
+      const path = `${server.url}api/v1/threads/unregistered/queued-messages${method === 'PATCH' ? '/item' : ''}`;
+      const absent = await fetch(path, { method, headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: [{ type: 'text', text: 'Must not persist' }] }) });
+      expect(absent.status).toBe(404);
+      expect(await absent.json()).toMatchObject({ error: 'unknown-thread' });
+    }
     const missing = await fetch(`${queue}/missing/send`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     expect(missing.status).toBe(404);
   });
@@ -3157,5 +3179,45 @@ describe('async history and queue HTTP responsiveness', () => {
       expect(server.ctx.dataDir).toBe(dataDir);
       expect((await fetch(`${server.url}api/v1/health`)).status).toBe(200);
     } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('serves bounded prompt history scopes and rejects invalid scopes, cursors and missing threads', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'prompt-history-http-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const url = `${server.url}api/v1/prompts/history`;
+    const all = await fetch(url);
+    expect(all.status).toBe(200);
+    expect(await all.json()).toEqual({ entries: [], nextCursor: null });
+    const project = await fetch(`${url}?scope=project&projectId=p&cursor=&q=needle`);
+    expect(project.status).toBe(200);
+    expect(await project.json()).toEqual({ entries: [], nextCursor: null });
+    for (const [query, status, error] of [
+      ['scope=invalid', 400, 'invalid_scope'],
+      ['scope=thread', 400, 'invalid_scope'],
+      ['scope=project', 400, 'invalid_scope'],
+      ['scope=thread&threadId=missing', 404, 'unknown-thread'],
+      ['cursor=invalid', 400, 'invalid_cursor']
+    ] as const) {
+      const response = await fetch(`${url}?${query}`);
+      expect(response.status).toBe(status);
+      expect(await response.json()).toMatchObject({ error });
+    }
+  });
+
+  it('refreshes plugin safe mode only when the authoritative config flag changes', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'safe-mode-config-http-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const refreshSafeMode = vi.fn(async () => undefined);
+    const original = server.ctx.plugins;
+    server.ctx.plugins = { refreshSafeMode } as never;
+    try {
+      for (const [flag, expectedCalls] of [[true, 1], [true, 1], [false, 2]] as const) {
+        const response = await fetch(`${server.url}api/v1/config`, { method: 'PATCH',
+          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pluginSafeMode: flag }) });
+        expect(response.status).toBe(200);
+        expect((await response.json()).config.pluginSafeMode).toBe(flag);
+        expect(refreshSafeMode).toHaveBeenCalledTimes(expectedCalls);
+      }
+    } finally { server.ctx.plugins = original; }
   });
 });

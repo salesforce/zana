@@ -325,7 +325,7 @@ describe('conversationTimeline', () => {
 describe('conversationOutline', () => {
   it('returns an empty outline when there are no conversation rows', () => {
     vi.mocked(listConversationThreadEvents).mockReturnValueOnce([]);
-    const outline = conversationOutline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, '11111111-1111-4111-8111-111111111111');
+    const outline = conversationOutline({ db: { sqlite: { prepare: () => ({ get: () => ({ changes: 0 }) }), pragma: () => 1 } }, dataDir: '/tmp' } as unknown as ProductHttpContext, '11111111-1111-4111-8111-111111111111');
     expect(outline.items).toEqual([]);
     expect(outline.maxSeq).toBe(0);
   });

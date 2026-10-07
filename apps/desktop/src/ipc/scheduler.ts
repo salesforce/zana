@@ -17,6 +17,14 @@ export function registerSchedulerIpc(): void {
   }
 
   safeProductHandle(IPC.scheduler.list, () => listSchedulesForUi(), () => []);
+  for (const [channel, action] of [[IPC.scheduler.get, (id: string) => ctx.scheduler.get(id)], [IPC.scheduler.reload, (id: string) => ctx.scheduler.reload(id)]] as const) {
+    productHandle(channel, async (id: unknown) => {
+      if (typeof id !== 'string' || !id || id.length > 256) return { ok: false, code: 'BAD_INPUT', message: 'A valid schedule id is required' };
+      if (isExternalId(id)) return externalReject();
+      try { return { ok: true, value: await action(id) }; }
+      catch (error) { return { ok: false, code: 'SCHEDULE_FAILED', message: error instanceof Error ? error.message : String(error) }; }
+    });
+  }
   productHandle(
     IPC.scheduler.create,
     async (input: ScheduleCreateInput): Promise<Result<ScheduledTask>> => {

@@ -166,6 +166,7 @@ export {
   postponeDeferredThreadRetry,
   recoverInterruptedDeferredThreadMessages,
   markDeferredThreadMessageDispatching,
+  holdDeferredThreadMessage,
   markDeferredThreadMessageFailed,
   pauseDeferredThreadMessagesForThread,
   requeueDeferredThreadMessagesForThread,
@@ -221,3 +222,5 @@ export {
   type ThreadPluginMetadataPatchResult,
   type ThreadPluginMetadataRead
 } from './data/thread-plugin-metadata.js';
+
+export { listUserPromptHistory, userPromptHistoryQuery, formatUserPromptHistoryRows, type PromptHistoryCursor, type StoredPromptHistoryRow } from "./data/conversation-prompt-history.js";

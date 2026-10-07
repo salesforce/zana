@@ -5,7 +5,8 @@ import { localMetadataProjects } from './project-metadata.js';
 type RecordValue = { id: string; projectId: string; source?: 'global' | { projectId: string } };
 export interface MetadataPersistence<T> {
   load(): Promise<T[]>;
-  save(record: T): Promise<void>;
+  read?(record: T): Promise<T>;
+  save(record: T, definitionPatch?: Partial<T>): Promise<void>;
   remove(record: T): Promise<void>;
   localProjects(): Project[];
 }
@@ -27,7 +28,7 @@ export class ProjectRecordStore<T extends RecordValue> implements MetadataPersis
     primaryHostId(): string | undefined;
     request(request: ProjectMetadataRequest): Promise<ProjectMetadataResult>;
     validate(raw: unknown): T | { error: string };
-    local: { list(projects: Project[]): T[]; save(record: T, projects: Project[]): void; remove(id: string, projects: Project[]): boolean };
+    local: { list(projects: Project[]): T[]; read?(record: T, projects: Project[]): T; save(record: T, projects: Project[], definitionPatch?: Partial<T>): void; remove(id: string, projects: Project[]): boolean };
     log(projectId: string, error: unknown): void;
   }) {}
 
@@ -96,9 +97,30 @@ export class ProjectRecordStore<T extends RecordValue> implements MetadataPersis
     return this.localProjects().some(p => p.id === project.id) ? null : project;
   }
 
-  async save(record: T): Promise<void> {
+  /** Explicit reads require the owner to respond; never return a stale snapshot. */
+  async read(record: T): Promise<T> {
     const project = this.foreignProject(record);
-    if (!project) { this.deps.local.save(record, this.localProjects()); return; }
+    if (!project) {
+      if (this.deps.local.read) return this.deps.local.read(record, this.localProjects());
+      const found = this.deps.local.list(this.localProjects()).find(value => value.id === record.id);
+      if (!found) throw new Error(`Metadata record not found: ${record.id}`);
+      return found;
+    }
+    const result = await this.deps.request({ action: 'list', projectId: project.id, kind: this.deps.kind });
+    if (result.projectId !== project.id || result.kind !== this.deps.kind) throw new Error('Metadata response scope mismatch');
+    const found = result.records.find(value => value.id === record.id);
+    if (!found) throw new Error(`Metadata record not found: ${record.id}`);
+    const value = this.deps.validate(JSON.parse(found.content));
+    if ('error' in value) throw new Error(value.error);
+    if (value.id !== record.id || value.projectId !== project.id) throw new Error('Metadata record identity mismatch');
+    const revisions = this.revisions.get(project.id) ?? new Map<string, string>();
+    revisions.set(record.id, found.sha256); this.revisions.set(project.id, revisions);
+    return { ...value, source: { projectId: project.id } };
+  }
+
+  async save(record: T, definitionPatch?: Partial<T>): Promise<void> {
+    const project = this.foreignProject(record);
+    if (!project) { this.deps.local.save(record, this.localProjects(), definitionPatch); return; }
     const { source: _source, ...value } = record;
     const result = await this.deps.request({ action: 'write', projectId: project.id, kind: this.deps.kind,
       id: record.id, content: JSON.stringify(value, null, 2), expectedSha256: this.revisions.get(project.id)?.get(record.id) ?? null });

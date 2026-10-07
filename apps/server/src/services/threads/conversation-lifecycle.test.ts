@@ -55,6 +55,7 @@ vi.mock('@zana-ai/zcc-db', () => {
   }]);
   return {
   DEFERRED_THREAD_MESSAGE_CAP: 50,
+  getPrimaryHost: vi.fn(() => ({ id: 'host-1' })),
   getLatestConversationCheckpoint: vi.fn(() => null),
   listConversationActiveTurnInputs: vi.fn((_db, _id, before = Infinity) => {
     const events = listConversationThreadEvents();
@@ -173,6 +174,7 @@ import {
   listConversationThreadEvents,
   listConversationThreadEventsWindow,
   getHost,
+  getPrimaryHost,
   listConversationThreadsByProject,
   pauseDeferredThreadMessagesForThread,
   setConversationProviderThreadId,
@@ -547,6 +549,41 @@ describe('conversation lifecycle', () => {
         input: [
           { type: 'localImage', path: '/tmp/zcc-data/attachments/proj-1/shot.png' }
         ]
+      })
+    }));
+  });
+
+  it('copies a stored attachment onto a remote host before turn.submit', async () => {
+    const { mkdir, rm, writeFile } = await import('node:fs/promises');
+    const name = `remote-shot-${process.pid}-${Date.now()}.png`;
+    await mkdir('/tmp/zcc-data/attachments/proj-1', { recursive: true });
+    await writeFile(`/tmp/zcc-data/attachments/proj-1/${name}`, Buffer.from([7, 8]));
+    vi.mocked(getPrimaryHost).mockReturnValueOnce({ id: 'laptop' } as never);
+    const callHostOnlineRpc = vi.fn(async (input: unknown) => {
+      const command = (input as { command: { type: string } }).command;
+      if (command.type === 'project.clone_default_path') return { path: '/home/me/.zcc/checkouts/probe' };
+      if (command.type === 'host.write_file') return { outcome: 'written', sha256: 'x', sizeBytes: 2 };
+      return { threadId: thread.id, accepted: true };
+    });
+    try {
+      await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'localImage', path: name }]);
+    } finally {
+      await rm(`/tmp/zcc-data/attachments/proj-1/${name}`, { force: true });
+    }
+    const types = callHostOnlineRpc.mock.calls.map(([input]) => (input as { command: { type: string } }).command.type);
+    expect(types.indexOf('host.write_file')).toBeGreaterThan(-1);
+    expect(types.indexOf('host.write_file')).toBeLessThan(types.indexOf('turn.submit'));
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'host.write_file',
+        path: `/home/me/.zcc/attachments/proj-1/${name}`,
+        content: Buffer.from([7, 8]).toString('base64')
+      })
+    }));
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        input: [{ type: 'localImage', path: `/home/me/.zcc/attachments/proj-1/${name}` }]
       })
     }));
   });
@@ -2077,6 +2114,42 @@ describe('dispatch admission override (OBL-003)', () => {
     expect(JSON.parse(stored.payload).admission).toEqual({
       generation: 1, overrideable: true, reason: 'capacity', pluginId: 'platform-hooks-probe'
     });
+  });
+
+  it('propagates a drain wait without creating an immediately due replacement', async () => {
+    const context = { ...ctx(vi.fn()), plugins: { admitDispatch: vi.fn().mockResolvedValue({
+      action: 'wait', reason: 'capacity', overrideable: true
+    }) } } as unknown as ProductHttpContext;
+    await expect(sendConversationTurn(context, thread.id, 'held', 'auto', undefined, { drain: true, retainQueuedRow: true }))
+      .rejects.toMatchObject({ name: 'DeferredAdmissionWait', admission: { reason: 'capacity', overrideable: true } });
+    expect(createDeferredThreadMessage).not.toHaveBeenCalled();
+  });
+
+  it('still queues a waiting plan or parent send that has no claimed deferred row', async () => {
+    const context = { ...ctx(vi.fn()), plugins: { admitDispatch: vi.fn().mockResolvedValue({
+      action: 'wait', reason: 'capacity', overrideable: true
+    }) } } as unknown as ProductHttpContext;
+    await expect(sendConversationTurn(context, thread.id, 'system prompt', 'auto', undefined, { drain: true }))
+      .resolves.toMatchObject({ id: thread.id });
+    expect(createDeferredThreadMessage).toHaveBeenCalledOnce();
+  });
+
+  it.each(['stop', 'archive'])('does not queue a late admission wait after %s cancelled the send', async action => {
+    let resolve!: (value: unknown) => void;
+    const admit = vi.fn(() => new Promise(done => { resolve = done; }));
+    const context = { ...ctx(vi.fn(async () => ({}))), plugins: {
+      admitDispatch: admit, emitThreadEvent: vi.fn().mockResolvedValue(undefined)
+    } } as unknown as ProductHttpContext;
+    vi.mocked(recordDispatchAdmissionWait).mockClear();
+    const pending = sendConversationTurn(context, thread.id, 'cancelled prompt');
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'send_cancelled' });
+    await vi.waitFor(() => expect(admit).toHaveBeenCalled());
+    if (action === 'stop') await stopConversation(context, thread.id);
+    else await archiveConversation(context, thread.id, { skipEnvironmentCleanup: true });
+    resolve({ action: 'wait', reason: 'late wait', overrideable: true });
+    await rejected;
+    expect(recordDispatchAdmissionWait).not.toHaveBeenCalled();
+    expect(createDeferredThreadMessage).not.toHaveBeenCalled();
   });
 
   it('a plugin reject decision throws dispatch_rejected and never dispatches', async () => {

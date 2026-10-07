@@ -211,9 +211,9 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(css).not.toContain('.agents-board > .home-agent-composer {');
   });
 
-  it('paints the board on the standard panel surface', () => {
+  it('paints the board on the base canvas so its lanes stand out', () => {
     expect(css).not.toContain('.agents-board.aurora-host');
-    expect(css).toContain('.agents-board {\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--bg-panel);');
+    expect(css).toContain('.agents-board {\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--bg-base);');
     expect(css).toContain(
       '.agents-board-empty--launch {\n  overflow: auto;\n  gap: 20px;\n  justify-content: center;\n  padding: 48px 24px 56px;\n  background: transparent;'
     );

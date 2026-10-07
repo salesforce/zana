@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PluginComposerChrome } from './PluginComposerChrome.js';
+import { getActiveComposerApi } from './plugin-composer-api.js';
 
 function render(scope: Parameters<typeof PluginComposerChrome>[0]['scope']) {
   return renderToStaticMarkup(
@@ -17,6 +18,19 @@ function render(scope: Parameters<typeof PluginComposerChrome>[0]['scope']) {
 }
 
 describe('PluginComposerChrome create-plugin action', () => {
+  it('exposes structured prompt replacement only when the host composer supports it', () => {
+    const replacePrompt = vi.fn();
+    renderToStaticMarkup(<PluginComposerChrome
+      scope={{ kind: 'thread', threadId: 't1' }} text="" setText={() => undefined}
+      focus={() => undefined} replacePrompt={replacePrompt}
+    ><span>composer</span></PluginComposerChrome>);
+    const input = [{ type: 'localImage' as const, path: '/tmp/restored.png' }];
+    getActiveComposerApi()!.experimental_replacePrompt!(input);
+    expect(replacePrompt).toHaveBeenCalledWith(input);
+    render({ kind: 'thread', threadId: 't1' });
+    expect(getActiveComposerApi()!.experimental_replacePrompt).toBeUndefined();
+  });
+
   it('labels the new-thread action Create plugin', () => {
     const html = render({ kind: 'new-thread', projectId: null });
     expect(html).toContain('data-testid="composer-create-plugin"');

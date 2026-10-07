@@ -14,6 +14,19 @@ vi.mock('electron', () => ({
 const { normalizeConfig, normalizeProjectSettings, store } = await import('../store.js');
 const { AUTO_CLOSE_IDLE_DEFAULTS } = await import('@zana-ai/zcc-domain/product');
 
+describe('normalizeConfig — provider tiers and plugin safe mode', () => {
+  it.each([true, false])('preserves explicitly configured booleans (%s)', value => {
+    expect(normalizeConfig({ providerServiceTiersDisabled: value, pluginSafeMode: value })).toMatchObject({
+      providerServiceTiersDisabled: value, pluginSafeMode: value
+    });
+  });
+  it('omits malformed settings so they cannot enable a feature through coercion', () => {
+    const normalized = normalizeConfig({ providerServiceTiersDisabled: 'true' as never, pluginSafeMode: 1 as never });
+    expect(normalized).not.toHaveProperty('providerServiceTiersDisabled');
+    expect(normalized).not.toHaveProperty('pluginSafeMode');
+  });
+});
+
 describe('normalizeConfig — global Claude launch settings', () => {
   it('trims, deduplicates, and preserves supported values', () => {
     const result = normalizeConfig({
@@ -432,11 +445,8 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ inAppAgentTerminalsEnabled: 'yes' }).inAppAgentTerminalsEnabled).toBeUndefined();
   });
 
-  it('passes through a boolean cliRemoteHostCatalogEnabled, drops non-booleans', () => {
-    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: true }).cliRemoteHostCatalogEnabled).toBe(true);
-    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: false }).cliRemoteHostCatalogEnabled).toBe(false);
-    // @ts-expect-error intentional bad input
-    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: 'yes' }).cliRemoteHostCatalogEnabled).toBeUndefined();
+  it('drops the retired cliRemoteHostCatalogEnabled flag from saved configs', () => {
+    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: true } as never)).not.toHaveProperty('cliRemoteHostCatalogEnabled');
   });
 
   it('passes through boolean composer launch-surface flags, drops non-booleans', () => {

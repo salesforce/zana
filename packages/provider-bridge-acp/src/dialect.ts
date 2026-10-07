@@ -35,6 +35,7 @@ type AcpCompactionOutcome =
 
 export interface AcpDialect {
   readonly id: string;
+  readonly launchEnv?: Readonly<Record<string, string>>;
   toolIdentity?(event: AcpToolCallUpdateEvent): AcpToolIdentity | undefined;
   classifyToolCall?(
     event: AcpToolCallUpdateEvent,
@@ -373,6 +374,7 @@ function normalizeOpenCodeCommandEvent(
 
 export const OPENCODE_ACP_DIALECT: AcpDialect = {
   id: "opencode",
+  launchEnv: { OPENCODE_CLIENT: "acp", OPENCODE_ENABLE_QUESTION_TOOL: "false" },
   normalizeCommandEvent: normalizeOpenCodeCommandEvent,
 };
 

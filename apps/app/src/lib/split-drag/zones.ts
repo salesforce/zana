@@ -134,6 +134,8 @@ export function shouldEngageSidebarSplitDrag({
   if (x <= sidebarRightEdge) return false;
   const dx = x - startX;
   const dy = y - startY;
-  if (Math.abs(dx) <= Math.abs(dy)) return false;
+  // Crossing into the workspace chooses a pane drag. Project session rows
+  // sit low in the rail, so reaching a pane's top/left edge is often mostly
+  // vertical; sidebar reordering remains available inside the rail.
   return Math.hypot(dx, dy) > distance;
 }

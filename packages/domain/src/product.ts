@@ -2260,6 +2260,10 @@ export interface AppConfig {
    * every report stays inline (no demotion).
    */
   feedNoiseClassifierEnabled?: boolean;
+  /** Suspend installed non-bundled plugins without changing their enabled preference. */
+  pluginSafeMode?: boolean;
+  /** Suppress non-default service tiers for this instance. */
+  providerServiceTiersDisabled?: boolean;
   /**
    * Allow terminal output to WRITE the system clipboard via OSC 52. When ON
    * (default), an OSC 52 copy escape emitted by a local or remote process
@@ -2463,14 +2467,6 @@ export interface AppConfig {
    * (Rule 1); the renderer never sends host credentials.
    */
   cliRemoteToolProxyEnabled?: boolean;
-  /**
-   * EXPERIMENTAL — CLI Agent asks the project’s execution host which CLIs and
-   * models are installed (`GET /system/execution-options?hostId=…`, same path
-   * Modern uses) instead of this machine’s local `harness.descriptors` list.
-   * Default OFF: the CLI Agent picker still reflects locally installed
-   * harnesses and trusted PTY adapter catalogs.
-   */
-  cliRemoteHostCatalogEnabled?: boolean;
   /**
    * Master switch for the EXPERIMENTAL Follow-ups feature: when ON, the
    * "Follow-ups" project-scoped nav tab appears (durable parked questions from
@@ -3341,6 +3337,7 @@ export interface ThreadHistoryQuery {
   offset?: number;
 }
 export interface ThreadHistoryRow {
+  matchingMessage?: { sequence:number; text:string };
   id: string;
   projectId: string;
   providerId: string;
@@ -4418,6 +4415,13 @@ export function toTeamSummary(t: Team): TeamSummary {
   };
 }
 
+export interface ScheduleReloadResult {
+  reloaded: boolean;
+  schedule: ScheduledTask;
+  reason?: string;
+  sessionIds?: string[];
+}
+
 export interface ScheduleUpdateInput {
   name?: string;
   description?: string;
@@ -5493,6 +5497,12 @@ export interface UpdateStatus {
   version?: string;
   /** Present when kind === 'error'. */
   message?: string;
+  /**
+   * Notes for the offered version(s), newest first, when the feed carries them
+   * (`available` / `downloaded`; omitted on progress ticks). Main-normalized markdown —
+   * never raw feed HTML — and bounded. Absent when the feed has none.
+   */
+  releaseNotes?: ReleaseNote[];
 }
 
 /** Download progress as emitted by electron-updater's `download-progress`. */

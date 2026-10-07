@@ -25,7 +25,7 @@ operational playbook.
 > (or `zcc plugin run <id> …`). Core names always win. Combined plugin stdout
 > is capped at 1MiB.
 >
-> Operating **schedules** from the shell is `zcc schedule ls|run-now|enable|disable`.
+> Operating **schedules** from the shell is `zcc schedule ls|get|update|reload|run-now|enable|disable`.
 > Do not author JSON into `~/.zcc/schedules` as the happy path (`zcc-center` is
 > a file-format appendix only).
 >
@@ -75,10 +75,12 @@ read-only.
 **Refused:** `thread spawn` / `run`, `thread tell` / `agent send`, `thread stop`,
 `thread background stop`, `terminal create|send|close`, `machine rename|remove`,
 `settings` writes,
-`schedule run-now|enable|disable`, unless you are the **host-stamped orchestrator**
+`schedule update|reload|run-now|enable|disable`, unless you are the **host-stamped orchestrator**
 (the app's own spawn/close set). Do not set `ZCC_SESSION_ID` by hand.
-In-session, fire or toggle a Scheduler UI schedule with MCP
-(`schedule_run_now` / `schedule_set_enabled` on `zcc-inbox`), not the CLI.
+Schedule mutations remain operator-only even for orchestrators. In-session, use
+MCP `schedule_update`, `schedule_reload`, `schedule_run_now` or
+`schedule_set_enabled` on `zcc-inbox`. `schedule get` is a live read available
+to agent shells too.
 
 See `references/agent-gate.md`.
 
@@ -191,6 +193,10 @@ zcc inbox ls [--project ID] [--json]
 zcc inbox show <id>
 zcc followup ls [--project ID] [--status open|resolved|dismissed] [--all]
 zcc schedule ls
+zcc schedule get <id> --json
+zcc schedule update <id> --patch '{"prompt":"New prompt","extraArgs":["--effort","high"]}'
+zcc schedule update <id> --patch-file /path/to/patch.json
+zcc schedule reload <id> --json
 zcc schedule run-now <id>
 zcc schedule enable|disable <id>
 zcc personas ls
@@ -207,9 +213,9 @@ Team launch, answer, and stop are operator-only (control-socket token). Agent-cl
 callers can inspect status but cannot mutate team execution.
 
 Inbox mutations for agents are MCP (`inbox_push` / `inbox_search`) via the
-`zcc-inbox` skill, not this CLI. Schedule fire/toggle for agents is also MCP
-(`schedule_list` / `schedule_run_now` / `schedule_set_enabled`) — the CLI
-verbs stay operator-only.
+`zcc-inbox` skill, not this CLI. Schedule edits, reloads, fire and toggles for agents are also MCP
+(`schedule_list` / `schedule_get` / `schedule_update` / `schedule_reload` / `schedule_run_now` / `schedule_set_enabled`) — the CLI
+mutation verbs stay operator-only.
 
 ---
 

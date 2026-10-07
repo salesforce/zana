@@ -118,6 +118,8 @@ jobs:
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
           ZCC_RELAY_TOKEN: ${{ secrets.ZCC_RELAY_TOKEN }}
           ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
+          ZCC_GA4_MEASUREMENT_ID: ${{ secrets.ZCC_GA4_MEASUREMENT_ID }}
+          ZCC_GA4_API_SECRET: ${{ secrets.ZCC_GA4_API_SECRET }}
 
       # `pnpm run build` → prebuild → ensure-better-sqlite3 leaves SQLite on the
       # Node ABI (vitest / listen.ts) and caches it. Unpackaged Electron forks a
@@ -236,6 +238,8 @@ jobs:
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
           ZCC_RELAY_TOKEN: ${{ secrets.ZCC_RELAY_TOKEN }}
           ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
+          ZCC_GA4_MEASUREMENT_ID: ${{ secrets.ZCC_GA4_MEASUREMENT_ID }}
+          ZCC_GA4_API_SECRET: ${{ secrets.ZCC_GA4_API_SECRET }}
           # Passed in under *_SECRET names; the script promotes them to the real
           # env vars only when non-empty (see above). To enable signed +
           # notarized auto-updating builds, add these repo secrets:
@@ -315,6 +319,8 @@ jobs:
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
           ZCC_RELAY_TOKEN: ${{ secrets.ZCC_RELAY_TOKEN }}
           ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
+          ZCC_GA4_MEASUREMENT_ID: ${{ secrets.ZCC_GA4_MEASUREMENT_ID }}
+          ZCC_GA4_API_SECRET: ${{ secrets.ZCC_GA4_API_SECRET }}
 
       - name: Package Windows installer
         shell: pwsh

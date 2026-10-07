@@ -277,6 +277,7 @@ export function BrowserTabContent({
 
   useEffect(() => {
     if (desktopBrowser === null) return;
+    let disposed = false;
     registerBrowserView({ tabId, threadId });
     const bounds = readBounds() ?? EMPTY_BOUNDS;
     lastSentBoundsRef.current = bounds;
@@ -323,9 +324,10 @@ export function BrowserTabContent({
       });
     });
     void desktopBrowser.getControl?.(tabId).then((next) => {
-      if (next && next.tabId === tabId) setControl(next.control);
-    });
+      if (!disposed && next && next.tabId === tabId) setControl(next.control);
+    }).catch(() => undefined);
     return () => {
+      disposed = true;
       unsubscribe();
       unsubscribeSnapshot?.();
       unsubscribeControl?.();

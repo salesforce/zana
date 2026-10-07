@@ -1,0 +1,6302 @@
+{
+  "schemaVersion": 1,
+  "tools": [
+    {
+      "name": "code_analyzer",
+      "owner": "sf-code-analyzer",
+      "available": true,
+      "description": "Salesforce Code Analyzer prerequisite checks, scan recipes, rules, scans, configuration, and report inspection.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "doctor",
+              "run",
+              "rules",
+              "config",
+              "apexguru",
+              "apexguru_setup_help",
+              "recipes",
+              "last_report"
+            ],
+            "description": "Code Analyzer action to run."
+          },
+          "workspace": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Workspace paths/globs. Defaults to ['.'] for run."
+          },
+          "target": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Target files/folders/globs within the workspace."
+          },
+          "rule_selector": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rule selectors such as Recommended, pmd:Security, eslint:Recommended."
+          },
+          "config_file": {
+            "type": "string",
+            "description": "Optional code-analyzer.yml path."
+          },
+          "severity_threshold": {
+            "type": "string",
+            "description": "Run failure threshold: 1/critical, 2/high, 3/moderate, etc."
+          },
+          "include_fixes": {
+            "type": "boolean",
+            "description": "Include available fix data for violations."
+          },
+          "include_suggestions": {
+            "type": "boolean",
+            "description": "Include available suggestion data for violations."
+          },
+          "no_suppressions": {
+            "type": "boolean",
+            "description": "Ignore inline and config suppressions for this run."
+          },
+          "include_unmodified_rules": {
+            "type": "boolean",
+            "description": "For action='config', include unmodified rule config."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username for ApexGuru actions."
+          },
+          "report_file": {
+            "type": "string",
+            "description": "For last_report, inspect this explicit report artifact path."
+          },
+          "engine": {
+            "type": "string",
+            "description": "For last_report, filter findings by engine."
+          },
+          "rule": {
+            "type": "string",
+            "description": "For last_report, filter findings by rule."
+          },
+          "file": {
+            "type": "string",
+            "description": "For last_report, filter findings by file."
+          },
+          "start_browser_workflow": {
+            "type": "boolean",
+            "description": "For apexguru_setup_help, ask for approval and queue an SF Browser setup-check follow-up."
+          },
+          "output_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Additional output files. Format inferred from extension."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional command timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "inline",
+              "file_only"
+            ],
+            "description": "How much result detail to return. Defaults to summary."
+          }
+        },
+        "additionalProperties": false
+      },
+      "actions": {
+        "doctor": {
+          "available": true
+        },
+        "recipes": {
+          "available": true
+        },
+        "last_report": {
+          "available": true
+        },
+        "run": {
+          "available": true,
+          "effects": true
+        },
+        "rules": {
+          "available": true,
+          "effects": true
+        },
+        "config": {
+          "available": true,
+          "effects": true
+        },
+        "apexguru": {
+          "available": false,
+          "reason": "Org-backed ApexGuru is not part of the standalone Code Analyzer adapter."
+        },
+        "apexguru_setup_help": {
+          "available": false,
+          "reason": "Browser-assisted setup requires a separate browser integration."
+        }
+      },
+      "guidance": [
+        "Scans and rule discovery load workspace configuration and engines; authorize each invocation.",
+        "Use last_report with an explicit report_file to inspect results without rerunning.",
+        "A nonzero scanner exit is a failure even when a report exists."
+      ],
+      "guide": "sf-code-analyzer/AGENT_GUIDE.md"
+    },
+    {
+      "name": "sf_metadata",
+      "owner": "sf-metadata",
+      "available": true,
+      "description": "Inventory, select, retrieve, validate, and deploy Salesforce metadata with explicit orgs and asynchronous job status.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "inventory",
+              "manifest",
+              "deploy.preview",
+              "deploy.validate",
+              "deploy.start",
+              "deploy.status",
+              "retrieve",
+              "retrieve.status",
+              "retrieve.result"
+            ]
+          },
+          "target_org": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "manifest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metadata": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "type",
+                "fullName"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fullName": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "minItems": 1,
+            "maxItems": 1000
+          },
+          "api_version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+$"
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 3
+          },
+          "folder": {
+            "type": "string"
+          },
+          "max_entries": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "max_components": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "output_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "output_dir": {
+            "type": "string",
+            "minLength": 1
+          },
+          "overwrite": {
+            "type": "boolean"
+          },
+          "job_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$"
+          },
+          "test_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "NoTestRun"
+              },
+              {
+                "type": "string",
+                "const": "RunSpecifiedTests"
+              },
+              {
+                "type": "string",
+                "const": "RunLocalTests"
+              },
+              {
+                "type": "string",
+                "const": "RunAllTestsInOrg"
+              }
+            ]
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 1000
+          },
+          "ignore_warnings": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "actions": {
+        "inventory": {
+          "available": true
+        },
+        "manifest": {
+          "available": true
+        },
+        "manifest.write": {
+          "available": true,
+          "effects": true
+        },
+        "deploy.preview": {
+          "available": true
+        },
+        "deploy.validate": {
+          "available": true,
+          "effects": true
+        },
+        "deploy.start": {
+          "available": true,
+          "effects": true
+        },
+        "deploy.status": {
+          "available": true
+        },
+        "retrieve": {
+          "available": true,
+          "effects": true
+        },
+        "retrieve.status": {
+          "available": true
+        },
+        "retrieve.result": {
+          "available": true,
+          "effects": true,
+          "requiresResume": true
+        }
+      },
+      "guidance": [
+        "Preview the selected components before validation or deployment.",
+        "Remote operations require target_org; deploy/retrieve return job IDs without waiting for completion.",
+        "Use retrieve.result with the retrieval run file to download to its bound output directory. Existing files require overwrite=true."
+      ],
+      "guide": "sf-metadata/AGENT_GUIDE.md"
+    },
+    {
+      "name": "agentscript_authoring",
+      "owner": "sf-agentscript",
+      "available": true,
+      "description": "Create, compile, inspect, review, and structurally edit Agent Script files.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "verb"
+        ],
+        "properties": {
+          "verb": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "create"
+              },
+              {
+                "type": "string",
+                "const": "compile"
+              },
+              {
+                "type": "string",
+                "const": "inspect"
+              },
+              {
+                "type": "string",
+                "const": "mutate"
+              }
+            ],
+            "description": "Authoring verb. create scaffolds a bundle; compile checks/formats; inspect queries structure/review; mutate edits structurally."
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "check"
+              },
+              {
+                "type": "string",
+                "const": "format"
+              },
+              {
+                "type": "string",
+                "const": "structure"
+              },
+              {
+                "type": "string",
+                "const": "context_profile"
+              },
+              {
+                "type": "string",
+                "const": "find_references"
+              },
+              {
+                "type": "string",
+                "const": "definition"
+              },
+              {
+                "type": "string",
+                "const": "check_targets"
+              },
+              {
+                "type": "string",
+                "const": "quality"
+              },
+              {
+                "type": "string",
+                "const": "review"
+              },
+              {
+                "type": "string",
+                "const": "runtime_smoke"
+              },
+              {
+                "type": "string",
+                "const": "set_field"
+              },
+              {
+                "type": "string",
+                "const": "rename"
+              },
+              {
+                "type": "string",
+                "const": "insert"
+              },
+              {
+                "type": "string",
+                "const": "delete"
+              },
+              {
+                "type": "string",
+                "const": "apply_quick_fix"
+              }
+            ],
+            "description": "Mode within the verb. compile defaults to check; inspect defaults to structure; mutate requires a mode; create omits mode."
+          },
+          "agent_file": {
+            "type": "string",
+            "description": "Absolute or workspace-relative path to a `.agent` file. Required in the standalone runtime except for create."
+          },
+          "bundle_name": {
+            "type": "string",
+            "description": "Required for verb='create'."
+          },
+          "output_dir": {
+            "type": "string",
+            "description": "Override the output bundle directory."
+          },
+          "template": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "minimal"
+              },
+              {
+                "type": "string",
+                "const": "agentforce-default"
+              }
+            ],
+            "description": "Scaffold template. Default 'agentforce-default'."
+          },
+          "job_spec": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "agent_user": {
+                "type": "string"
+              },
+              "subagents": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "description": "Canonical generated responsibilities; each entry becomes a subagent."
+              },
+              "topics": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "description": "Legacy alias for subagents. Ignored when subagents is supplied."
+              },
+              "variables": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "type"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "string"
+                        },
+                        {
+                          "type": "string",
+                          "const": "boolean"
+                        },
+                        {
+                          "type": "string",
+                          "const": "number"
+                        }
+                      ]
+                    },
+                    "mutable": {
+                      "type": "boolean"
+                    },
+                    "default": {},
+                    "description": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "description": "Optional seed for verb='create'."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "For verb='create'. Replace existing bundle dir. Default false."
+          },
+          "fallback": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "none"
+              },
+              {
+                "type": "string",
+                "const": "server"
+              }
+            ],
+            "description": "For verb='compile' mode='check'. Retry server compile when local rejects due to dialect skew. Requires target_org."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "sf CLI alias / username. Required for inspect.check_targets; optional for inspect.review org checks and compile server fallback."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Required for inspect.find_references and inspect.definition. Format '@<namespace>.<property>'."
+          },
+          "output_path": {
+            "type": "string",
+            "description": "For inspect.review. Optional Markdown report output path."
+          },
+          "phone_number": {
+            "type": "string",
+            "description": "Optional phone number for voice surface/runtime checks."
+          },
+          "component": {
+            "type": "string",
+            "description": "For mutate.set_field. Component path, e.g. topic.billing."
+          },
+          "field": {
+            "type": "string",
+            "description": "For mutate.set_field. Field name."
+          },
+          "value": {
+            "description": "For mutate.set_field. New scalar value."
+          },
+          "from": {
+            "type": "string",
+            "description": "For mutate.rename. Source symbol/component, e.g. '@subagent.billing'."
+          },
+          "to": {
+            "type": "string",
+            "description": "For mutate.rename. Target symbol/component, e.g. '@subagent.account_billing'."
+          },
+          "parent": {
+            "type": "string",
+            "description": "For mutate.insert guidance. Parent component path."
+          },
+          "child": {
+            "description": "For mutate.insert guidance. Child node."
+          },
+          "target": {
+            "type": "string",
+            "description": "For mutate.delete guidance. Component path to remove."
+          },
+          "diagnostic_code": {
+            "type": "string",
+            "description": "For mutate.apply_quick_fix. Diagnostic code."
+          },
+          "line": {
+            "type": "number",
+            "description": "For mutate.apply_quick_fix. 1-based diagnostic line."
+          },
+          "fix_index": {
+            "type": "number",
+            "description": "For mutate.apply_quick_fix. Default 0."
+          },
+          "source_version": {
+            "type": "string",
+            "description": "For mutate.apply_quick_fix. Source version from compile/check."
+          },
+          "diagnostic_id": {
+            "type": "string",
+            "description": "For mutate.apply_quick_fix. Diagnostic identity from compile/check."
+          },
+          "action_id": {
+            "type": "string",
+            "description": "For mutate.apply_quick_fix. Action identity from compile/check."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "For mutate modes. Return diff/proposed source without writing."
+          }
+        },
+        "additionalProperties": false
+      },
+      "actions": {
+        "create": {
+          "available": true,
+          "effects": true
+        },
+        "compile.check": {
+          "available": true
+        },
+        "compile.check.server": {
+          "available": true,
+          "effects": true
+        },
+        "compile.format": {
+          "available": true,
+          "effects": true
+        },
+        "inspect.structure": {
+          "available": true
+        },
+        "inspect.context_profile": {
+          "available": true
+        },
+        "inspect.find_references": {
+          "available": true
+        },
+        "inspect.definition": {
+          "available": true
+        },
+        "inspect.check_targets": {
+          "available": true
+        },
+        "inspect.quality": {
+          "available": true
+        },
+        "inspect.review": {
+          "available": true
+        },
+        "inspect.review.write_report": {
+          "available": true,
+          "effects": true
+        },
+        "inspect.runtime_smoke": {
+          "available": true,
+          "effects": true
+        },
+        "mutate.set_field": {
+          "available": true,
+          "effects": true
+        },
+        "mutate.rename": {
+          "available": true,
+          "effects": true
+        },
+        "mutate.insert": {
+          "available": true,
+          "effects": true
+        },
+        "mutate.delete": {
+          "available": true,
+          "effects": true
+        },
+        "mutate.apply_quick_fix": {
+          "available": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Pass explicit file, org, agent, version, and session identifiers; resume state is scoped to the current tool, workspace, and org.",
+        "Publish inactive, evaluate the exact version, then activate it with matching release evidence. Untested activation is unavailable."
+      ],
+      "guide": "sf-agentscript/AGENT_GUIDE.md"
+    },
+    {
+      "name": "agentscript_preview",
+      "owner": "sf-agentscript",
+      "available": true,
+      "description": "Start, converse with, trace, and end Agentforce preview sessions.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "start"
+              },
+              {
+                "type": "string",
+                "const": "send"
+              },
+              {
+                "type": "string",
+                "const": "end"
+              },
+              {
+                "type": "string",
+                "const": "end_all"
+              },
+              {
+                "type": "string",
+                "const": "trace"
+              },
+              {
+                "type": "string",
+                "const": "cleanup"
+              }
+            ],
+            "description": "start: open a preview session (agent_file OR agent_api_name). send: post one user utterance. end: finalize a session. end_all: dry-run or end multiple stored preview sessions. trace: ad-hoc planner-trace fetch. cleanup: remove stale .sf-agentic-tools/agents session dirs."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "sf CLI alias / username."
+          },
+          "agent_file": {
+            "type": "string",
+            "description": "For action='start': path to a `.agent` file. Local-compiled before the server call. Use this OR agent_api_name."
+          },
+          "agent_api_name": {
+            "type": "string",
+            "description": "For action='start': converse with a published, activated agent in the org. Use this OR agent_file. Skips local + server compile."
+          },
+          "agent_name": {
+            "type": "string",
+            "description": "Required for send/end (the agent folder under .sf-agentic-tools/agents/). Optional for start — defaults to the basename of agent_file or agent_api_name."
+          },
+          "mock_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "Mock"
+              },
+              {
+                "type": "string",
+                "const": "Live Test"
+              }
+            ],
+            "description": "Optional for action='start' with agent_file. Default 'Mock'."
+          },
+          "version_developer_name": {
+            "type": "string",
+            "description": "Optional for action='start' with agent_file. Pin agentVersion.developerName (for example 'v3' or 'v0') instead of resolving from bundle-meta / org lookup."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Required for send/end/trace. Returned by action='start'."
+          },
+          "message": {
+            "type": "string",
+            "description": "Required for action='send'. The user utterance to send."
+          },
+          "apex_debug": {
+            "type": "boolean",
+            "description": "Optional for action='send'. When true, capture the latest ApexLog produced during this turn."
+          },
+          "context_variables": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "value"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "isList": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "description": "Optional for action='start' and action='send'. Deterministic state seeds for mutable/context/linked variables. On start with agent_file, linked-variable bindings are patched from variables.X to state.X and persisted for every turn; send-time variables override persisted values by name."
+          },
+          "plan_id": {
+            "type": "string",
+            "description": "Required for action='trace'. Plan id to fetch."
+          },
+          "session_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "agent_file"
+              },
+              {
+                "type": "string",
+                "const": "api_name"
+              }
+            ],
+            "description": "Optional for action='end_all'. Restrict to local authoring-bundle sessions or published-agent sessions."
+          },
+          "include_ended": {
+            "type": "boolean",
+            "description": "Optional for action='end_all'. Include sessions that already have endTime. Default false."
+          },
+          "older_than_days": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Optional for action='cleanup' or action='end_all'. cleanup default 30; end_all has no age filter unless set."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Optional for action='cleanup' or action='end_all'. end_all defaults to true; cleanup defaults to false."
+          }
+        },
+        "additionalProperties": false
+      },
+      "actions": {
+        "start": {
+          "available": true,
+          "effects": true
+        },
+        "send": {
+          "available": true,
+          "effects": true
+        },
+        "end": {
+          "available": true,
+          "effects": true
+        },
+        "end_all": {
+          "available": true,
+          "effects": true,
+          "dryRun": true
+        },
+        "trace": {
+          "available": true
+        },
+        "cleanup": {
+          "available": true,
+          "effects": true,
+          "dryRun": true
+        }
+      },
+      "guidance": [
+        "Pass explicit file, org, agent, version, and session identifiers; resume state is scoped to the current tool, workspace, and org.",
+        "Publish inactive, evaluate the exact version, then activate it with matching release evidence. Untested activation is unavailable."
+      ],
+      "guide": "sf-agentscript/AGENT_GUIDE.md"
+    },
+    {
+      "name": "agentscript_eval",
+      "owner": "sf-agentscript",
+      "available": true,
+      "description": "Generate and run Agentforce evaluation specs, exact-version release contracts, and failure/trace inspection.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "run"
+              },
+              {
+                "type": "string",
+                "const": "run_release"
+              },
+              {
+                "type": "string",
+                "const": "get_failure"
+              },
+              {
+                "type": "string",
+                "const": "trace"
+              },
+              {
+                "type": "string",
+                "const": "resolve_active"
+              },
+              {
+                "type": "string",
+                "const": "generate_spec"
+              }
+            ],
+            "description": "run: full multi-turn regression. run_release: generate and run the exact-version release baseline plus tests/agentforce/<AgentApiName>.eval.json when present. get_failure: drill into a previous run's failure. trace: fetch a planner trace by (session_id, plan_id). resolve_active: look up Active BotVersion ids for $active_* placeholders. generate_spec: synthesize a starter eval spec from a `.agent` file."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "sf CLI alias / username."
+          },
+          "spec_path": {
+            "type": "string",
+            "description": "For action='run'. Path to a JSON eval spec. Use this OR spec."
+          },
+          "spec": {
+            "description": "For action='run'. Inline spec object. Use this OR spec_path."
+          },
+          "release_spec_path": {
+            "type": "string",
+            "description": "Optional for action='run_release'. Explicit designated release eval spec; defaults to tests/agentforce/<AgentApiName>.eval.json when present."
+          },
+          "agent_api_name": {
+            "type": "string",
+            "description": "Required for resolve_active and run_release. For run, resolves and injects missing agent.create_session ids; also required when the spec uses $active_* / $latest_* placeholders."
+          },
+          "version_resolution": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "active"
+              },
+              {
+                "type": "string",
+                "const": "latest"
+              },
+              {
+                "type": "string",
+                "const": "version"
+              }
+            ],
+            "description": "Optional for action='run' with agent_api_name. Default 'active' injects the production-serving Active BotVersion. 'latest' uses the newest version and requires acknowledge_inactive_version=true when non-Active. 'version' requires version=N."
+          },
+          "overwrite_agent_ids": {
+            "type": "boolean",
+            "description": "Optional for action='run' with agent_api_name. When true, overwrite explicit agent_id / agent_version_id fields in agent.create_session steps. Default false."
+          },
+          "traces_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "failed"
+              },
+              {
+                "type": "string",
+                "const": "all"
+              },
+              {
+                "type": "string",
+                "const": "off"
+              }
+            ],
+            "description": "Optional for action='run'. Default 'failed'."
+          },
+          "concurrency": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 32,
+            "description": "Optional for action='run'. Default 8."
+          },
+          "prompt_chars": {
+            "type": "number",
+            "minimum": 100,
+            "maximum": 4000,
+            "description": "Optional for action='run'. Max chars of llmEvents.prompt_content per turn."
+          },
+          "batch_timeout_ms": {
+            "type": "number",
+            "minimum": 1000,
+            "description": "Optional for action='run'. Per Evaluation API batch POST timeout. Default 300000. Client-side timeouts are not retried."
+          },
+          "inline_threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Optional for action='run'. Inline failure records when total <= threshold; otherwise summarize. Default 5."
+          },
+          "acknowledge_inactive_version": {
+            "type": "boolean",
+            "description": "Optional for action='run'. Confirms you intend to regression-test a non-Active BotVersion. Required when $latest_* placeholders resolve to an Inactive / InDevelopment version. Catches the 'I thought v12 was active but it's still v11' foot-gun."
+          },
+          "version": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Optional for action='resolve_active' or action='run' with version_resolution='version'. Pin to a specific BotVersion.VersionNumber (any Status). Use to look up ids for an old or non-Active version, then bake into the spec."
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "Active"
+              },
+              {
+                "type": "string",
+                "const": "any"
+              }
+            ],
+            "description": "Optional for action='resolve_active'. 'Active' (default) returns the latest Active BotVersion; 'any' returns the latest version regardless of state. Ignored when `version` is set."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Required for action='get_failure'. Run id from a previous agentscript_eval run."
+          },
+          "test_id": {
+            "type": "string",
+            "description": "Optional for action='get_failure'. Restrict to one failure."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Required for action='trace'."
+          },
+          "plan_id": {
+            "type": "string",
+            "description": "Required for action='trace'."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "minimum": 1000,
+            "description": "Optional for action='trace'. Default 60000."
+          },
+          "agent_file": {
+            "type": "string",
+            "description": "Required for action='generate_spec' and action='run_release'. Path to the `.agent` file used to derive the generated baseline."
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Optional for action='generate_spec'. When set, write the generated spec to this path (relative paths resolve against cwd). Default: return inline."
+          },
+          "context_variables": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "value"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Optional for action='generate_spec'. Default context_variables attached to every generated send_message step (eval-spec shape: [{name, type?, value}]). Use for auth-bypass seeds (verified_check, RoutableId, etc.) so generated tests reach the post-auth flows."
+          },
+          "include_subagent_tests": {
+            "type": "boolean",
+            "description": "Optional for action='generate_spec'. Include one routing test per non-start subagent. Default true."
+          },
+          "include_action_tests": {
+            "type": "boolean",
+            "description": "Optional for action='generate_spec'. Include one invocation probe per targeted action and connected agent. Default true."
+          },
+          "include_multi_turn_tests": {
+            "type": "boolean",
+            "description": "Optional for action='generate_spec'. Include evidence-backed same-session scenarios for provable after_response state and branch behavior. Default true."
+          },
+          "include_guardrail": {
+            "type": "boolean",
+            "description": "Optional for action='generate_spec'. Include the curated off-topic guardrail probe. Default true."
+          },
+          "include_safety_probes": {
+            "type": "boolean",
+            "description": "Optional for action='generate_spec'. Include the curated safety / adversarial probe block. Default true."
+          },
+          "max_functional_tests": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Optional for action='generate_spec'. Cap the subagent + action + connected-agent test count. Default 25."
+          }
+        },
+        "additionalProperties": false
+      },
+      "actions": {
+        "run": {
+          "available": true,
+          "effects": true
+        },
+        "run_release": {
+          "available": true,
+          "effects": true
+        },
+        "get_failure": {
+          "available": true
+        },
+        "trace": {
+          "available": true
+        },
+        "resolve_active": {
+          "available": true
+        },
+        "generate_spec": {
+          "available": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Pass explicit file, org, agent, version, and session identifiers; resume state is scoped to the current tool, workspace, and org.",
+        "Publish inactive, evaluate the exact version, then activate it with matching release evidence. Untested activation is unavailable."
+      ],
+      "guide": "sf-agentscript/AGENT_GUIDE.md"
+    },
+    {
+      "name": "agentscript_lifecycle",
+      "owner": "sf-agentscript",
+      "available": true,
+      "description": "Publish inactive Agentforce versions, activate with exact-version evaluation evidence, and manage agent users.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "publish"
+              },
+              {
+                "type": "string",
+                "const": "activate"
+              },
+              {
+                "type": "string",
+                "const": "deactivate"
+              },
+              {
+                "type": "string",
+                "const": "list_versions"
+              },
+              {
+                "type": "string",
+                "const": "agent_user_status"
+              },
+              {
+                "type": "string",
+                "const": "diagnose_agent_user"
+              },
+              {
+                "type": "string",
+                "const": "provision_agent_user"
+              }
+            ],
+            "description": "publish: ship a .agent file as an inactive new agent or version. activate / deactivate: toggle a BotVersion's Status (activation is release-eval gated and idempotent). list_versions: return every BotVersion on the agent. agent_user_status: cheap ready/not_ready/n/a preflight on the agent's user wiring. diagnose_agent_user: full read-only checklist (license, user, system PS, per-apex-class access). provision_agent_user: idempotently bring the org up to spec (creates user, assigns system PS, deploys + assigns custom PS for apex actions). Defaults to dry_run=true; pass dry_run=false to mutate."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "sf CLI alias / username."
+          },
+          "agent_file": {
+            "type": "string",
+            "description": "Required for action='publish'. Optional for action='activate' — when provided, runs a divergence check (warns when local .agent is newer than the BotVersion you're activating; flags the 'sf project deploy doesn't propagate config' footgun). Required for agent_user_status / diagnose_agent_user / provision_agent_user."
+          },
+          "agent_api_name": {
+            "type": "string",
+            "description": "Required for activate/deactivate/list_versions. Optional for publish (defaults to basename of agent_file without .agent)."
+          },
+          "release_spec_path": {
+            "type": "string",
+            "description": "Optional for action='activate'. Designated release eval spec path; defaults to tests/agentforce/<AgentApiName>.eval.json when present."
+          },
+          "acknowledge_untested_activation": {
+            "type": "boolean",
+            "description": "For action='activate'. Reserved for upstream compatibility. The standalone runtime rejects true; exact-version release evaluation is required."
+          },
+          "version": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Optional for activate/deactivate. Defaults to the latest BotVersion on the agent."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "For action='provision_agent_user'. Default true (preview the plan, no mutations). Pass false to actually create the user / assign PSs / deploy custom PS."
+          },
+          "acknowledge_quality_risk": {
+            "type": "boolean",
+            "description": "For action='publish'. Approve the newly reported High quality rule IDs (or quality-analysis-failed) for this bundle and invocation. Default false."
+          },
+          "username_override": {
+            "type": "string",
+            "description": "Optional for action='provision_agent_user'. Provision a specific username instead of the .agent's default_agent_user. Useful when the bundle was authored against a different name than what the org provides."
+          }
+        },
+        "additionalProperties": false
+      },
+      "actions": {
+        "publish": {
+          "available": true,
+          "effects": true
+        },
+        "activate": {
+          "available": true,
+          "effects": true
+        },
+        "deactivate": {
+          "available": true,
+          "effects": true
+        },
+        "list_versions": {
+          "available": true
+        },
+        "agent_user_status": {
+          "available": true
+        },
+        "diagnose_agent_user": {
+          "available": true
+        },
+        "provision_agent_user": {
+          "available": true,
+          "effects": true,
+          "dryRun": true
+        }
+      },
+      "guidance": [
+        "Pass explicit file, org, agent, version, and session identifiers; resume state is scoped to the current tool, workspace, and org.",
+        "Publish inactive, evaluate the exact version, then activate it with matching release evidence. Untested activation is unavailable."
+      ],
+      "guide": "sf-agentscript/AGENT_GUIDE.md"
+    },
+    {
+      "name": "sf_soql",
+      "owner": "sf-soql",
+      "available": true,
+      "description": "API-native SOQL lifecycle tool: schema describe, relationship discovery, validation, query plan, bounded sample/run/count/queryAll, and artifacts.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "org.preflight",
+              "schema.describe",
+              "schema.relationships",
+              "schema.search",
+              "query.draft",
+              "query.validate",
+              "query.explain",
+              "query.sample",
+              "query.run",
+              "query.count",
+              "query.queryAll",
+              "query.export",
+              "sosl.run",
+              "file.diagnose",
+              "lsp.status",
+              "history.last",
+              "history.rerun"
+            ],
+            "description": "SF SOQL lifecycle action."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username."
+          },
+          "query": {
+            "type": "string",
+            "description": "SOQL query text for validate/explain/sample/run/count/queryAll."
+          },
+          "object": {
+            "type": "string",
+            "description": "sObject API name for schema actions."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields for query.draft."
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "WHERE fragments for query.draft."
+          },
+          "order_by": {
+            "type": "string",
+            "description": "ORDER BY fragment for query.draft."
+          },
+          "intent": {
+            "type": "string",
+            "description": "Natural-language purpose for query.draft."
+          },
+          "file": {
+            "type": "string",
+            "description": "Local .soql/.cls/.trigger file for file.diagnose."
+          },
+          "output_file": {
+            "type": "string",
+            "description": "Workspace path for query.export output."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "csv",
+              "json",
+              "raw_json",
+              "flattened_json"
+            ],
+            "description": "Export artifact format for query.export. Default csv."
+          },
+          "api": {
+            "type": "string",
+            "enum": [
+              "rest",
+              "tooling"
+            ],
+            "description": "Query API mode. Default rest."
+          },
+          "max_rows": {
+            "type": "number",
+            "description": "Maximum rows to fetch. Hard-capped by sf-soql."
+          },
+          "limit": {
+            "type": "number",
+            "description": "Alias for max_rows in sample/queryAll workflows."
+          },
+          "include_plan": {
+            "type": "boolean",
+            "description": "Run query plan during validation when useful."
+          },
+          "allow_unbounded": {
+            "type": "boolean",
+            "description": "Allow query.run without LIMIT, still hard-capped."
+          },
+          "include_deleted": {
+            "type": "boolean",
+            "description": "Explicit queryAll/query deleted-row acknowledgement."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "inline",
+              "file_only"
+            ],
+            "description": "Reserved output mode for future richer output."
+          }
+        }
+      },
+      "actions": {
+        "status": {
+          "available": true
+        },
+        "org.preflight": {
+          "available": true
+        },
+        "schema.describe": {
+          "available": true
+        },
+        "schema.relationships": {
+          "available": true
+        },
+        "schema.search": {
+          "available": true
+        },
+        "query.draft": {
+          "available": true
+        },
+        "query.validate": {
+          "available": true
+        },
+        "query.explain": {
+          "available": true
+        },
+        "query.sample": {
+          "available": true
+        },
+        "query.run": {
+          "available": true
+        },
+        "query.count": {
+          "available": true
+        },
+        "query.queryAll": {
+          "available": true
+        },
+        "query.export": {
+          "available": true,
+          "requiresResume": true,
+          "effects": true
+        },
+        "sosl.run": {
+          "available": true
+        },
+        "file.diagnose": {
+          "available": true
+        },
+        "lsp.status": {
+          "available": true
+        },
+        "history.last": {
+          "available": true,
+          "requiresResume": true
+        },
+        "history.rerun": {
+          "available": true,
+          "requiresResume": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Use sf_soql before raw CLI and establish current schema/relationship evidence before relying on custom names.",
+        "Prefer validation, count, or sample before broad execution; queryAll/deleted-row scope must be explicit and disclosed.",
+        "Use the guidePath returned by tools describe for Tooling API, query-plan, artifact, and export guidance."
+      ],
+      "guide": "sf-soql/AGENT_GUIDE.md"
+    },
+    {
+      "name": "sf_apex",
+      "owner": "sf-apex",
+      "available": true,
+      "description": "API-native Apex lifecycle tool: authoring plan, diagnostics, trace flags, logs, bounded log watch, Anonymous Apex, and targeted tests.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "org.preflight",
+              "apex.search",
+              "test.discover",
+              "test.plan",
+              "test.suites",
+              "coverage.summary",
+              "author.plan",
+              "diagnose.file",
+              "apex.source.get",
+              "trace.start",
+              "trace.stop",
+              "trace.status",
+              "log.latest",
+              "log.get",
+              "log.analyze",
+              "log.watch",
+              "anon.run",
+              "test.run",
+              "test.result",
+              "test.rerun"
+            ],
+            "description": "SF Apex lifecycle action."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username."
+          },
+          "target": {
+            "type": "string",
+            "description": "Primary Apex file/class target."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Apex file/class targets."
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query for apex.search/test.discover."
+          },
+          "test_only": {
+            "type": "boolean",
+            "description": "Restrict apex.search to likely test classes."
+          },
+          "limit": {
+            "type": "number",
+            "description": "Discovery result limit. Default 25, max 100."
+          },
+          "intent": {
+            "type": "string",
+            "description": "Authoring intent for author.plan."
+          },
+          "file": {
+            "type": "string",
+            "description": "Local file path for diagnose.file or log.analyze."
+          },
+          "body": {
+            "type": "string",
+            "description": "Anonymous Apex body or raw Apex log body."
+          },
+          "log_id": {
+            "type": "string",
+            "description": "ApexLog Id for log.get."
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Tooling User Id to trace/read logs for."
+          },
+          "duration_minutes": {
+            "type": "number",
+            "description": "Trace duration. Default 30, max 120."
+          },
+          "wait_seconds": {
+            "type": "number",
+            "description": "Wait window for log.watch/test polling."
+          },
+          "poll_interval_seconds": {
+            "type": "number",
+            "description": "Polling interval for log.watch."
+          },
+          "allow_mutation": {
+            "type": "boolean",
+            "description": "Required for mutation-like Anonymous Apex."
+          },
+          "include_coverage": {
+            "type": "boolean",
+            "description": "Collect Apex coverage evidence with test.run/test.result."
+          },
+          "include_uncovered_lines": {
+            "type": "boolean",
+            "description": "Include covered/uncovered line arrays in coverage.summary artifacts."
+          },
+          "include_members": {
+            "type": "boolean",
+            "description": "Include suite membership rows in test.suites."
+          },
+          "org_wide": {
+            "type": "boolean",
+            "description": "Include org-wide Apex coverage in coverage.summary."
+          },
+          "threshold_percent": {
+            "type": "number",
+            "description": "Coverage threshold signal only; does not fail runs."
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Targeted tests as ClassName or ClassName.methodName."
+          },
+          "class_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Targeted Apex test class names."
+          },
+          "suite_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Existing Apex test suite names to run."
+          },
+          "apex_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "ApexClass/ApexTrigger ids for apex.source.get."
+          },
+          "report_formats": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "markdown",
+                "junit",
+                "tap",
+                "text",
+                "json"
+              ]
+            },
+            "description": "Optional Apex test report artifact formats."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "AsyncApexJob id from test.run."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "inline",
+              "file_only"
+            ],
+            "description": "Reserved output mode for future richer output."
+          },
+          "semantic_checks": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable Jorje semantic checks for diagnose.file. Default true; false checks syntax only. Org schema is not fetched. Native warnings remain warnings."
+          }
+        }
+      },
+      "actions": {
+        "status": {
+          "available": true
+        },
+        "org.preflight": {
+          "available": true
+        },
+        "apex.search": {
+          "available": true
+        },
+        "test.discover": {
+          "available": true
+        },
+        "test.plan": {
+          "available": true
+        },
+        "test.suites": {
+          "available": true
+        },
+        "coverage.summary": {
+          "available": true
+        },
+        "author.plan": {
+          "available": true
+        },
+        "diagnose.file": {
+          "available": true
+        },
+        "apex.source.get": {
+          "available": true
+        },
+        "trace.start": {
+          "available": true,
+          "effects": true
+        },
+        "trace.stop": {
+          "available": true,
+          "effects": true
+        },
+        "trace.status": {
+          "available": true
+        },
+        "log.latest": {
+          "available": true
+        },
+        "log.get": {
+          "available": true
+        },
+        "log.analyze": {
+          "available": true
+        },
+        "log.watch": {
+          "available": true,
+          "effects": true
+        },
+        "anon.run": {
+          "available": true,
+          "effects": true
+        },
+        "test.run": {
+          "available": true,
+          "effects": true
+        },
+        "test.result": {
+          "available": true
+        },
+        "test.rerun": {
+          "available": true,
+          "requiresResume": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Use sf_apex before raw CLI for Apex lifecycle evidence; the calling harness's file tools own source edits and focused tests should reproduce behavior before changes when feasible.",
+        "Anonymous Apex is a bounded probe or rollback rehearsal, not a substitute for maintainable targeted tests.",
+        "Use the guidePath returned by tools describe for trace, log, test, coverage, and artifact workflows."
+      ],
+      "guide": "sf-apex/AGENT_GUIDE.md"
+    },
+    {
+      "name": "sf_lwc",
+      "owner": "sf-lwc",
+      "available": true,
+      "description": "Local-native LWC lifecycle tool: project scan, component inspection, focused diagnostics, targeted local Jest tests, and artifacts.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "project.scan",
+              "component.list",
+              "component.inspect",
+              "file.diagnose",
+              "test.discover",
+              "test.plan",
+              "test.run",
+              "history.last",
+              "history.rerun"
+            ],
+            "description": "SF LWC lifecycle action."
+          },
+          "workspace": {
+            "type": "string",
+            "description": "Workspace or SFDX project path. Defaults to cwd."
+          },
+          "package_dir": {
+            "type": "string",
+            "description": "SFDX package directory to scan, such as force-app."
+          },
+          "component": {
+            "type": "string",
+            "description": "LWC component bundle name."
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Reserved component list for future use."
+          },
+          "file": {
+            "type": "string",
+            "description": "Local LWC file path for diagnosis or test planning."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Local LWC file paths for diagnosis."
+          },
+          "test_file": {
+            "type": "string",
+            "description": "Local LWC Jest test file path."
+          },
+          "test_name": {
+            "type": "string",
+            "description": "Exact LWC Jest test name to run."
+          },
+          "test_pattern": {
+            "type": "string",
+            "description": "Advanced Jest --testNamePattern. Prefer test_name when exact."
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum items to show inline. Artifacts remain complete."
+          },
+          "include_source": {
+            "type": "boolean",
+            "description": "Include source snippets in component inspection artifacts."
+          },
+          "include_dependencies": {
+            "type": "boolean",
+            "description": "Reserved flag for dependency-rich inspection."
+          },
+          "include_tests": {
+            "type": "boolean",
+            "description": "Reserved flag for test-rich inspection."
+          },
+          "report_formats": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown"
+              ]
+            },
+            "description": "Guaranteed local test report artifact formats. V1 always writes JSON/stdout/stderr/markdown."
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "description": "Bounded local Jest timeout. Default 120 seconds; clamped to 1..300.",
+            "minimum": 1,
+            "maximum": 300
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "inline",
+              "file_only"
+            ],
+            "description": "Reserved output mode for future richer output."
+          }
+        }
+      },
+      "actions": {
+        "status": {
+          "available": true
+        },
+        "project.scan": {
+          "available": true
+        },
+        "component.list": {
+          "available": true
+        },
+        "component.inspect": {
+          "available": true
+        },
+        "file.diagnose": {
+          "available": true
+        },
+        "test.discover": {
+          "available": true
+        },
+        "test.plan": {
+          "available": true
+        },
+        "test.run": {
+          "available": true,
+          "effects": true
+        },
+        "history.last": {
+          "available": true,
+          "requiresResume": true
+        },
+        "history.rerun": {
+          "available": true,
+          "requiresResume": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Use sf_lwc for local LWC inspection, diagnostics, and focused Jest evidence before raw npm commands; normal file tools own edits.",
+        "sf_lwc never deploys, retrieves, installs dependencies, starts watch mode, or substitutes for Apex/schema/browser evidence.",
+        "Use the guidePath returned by tools describe for lifecycle boundaries and cross-tool handoffs."
+      ],
+      "guide": "sf-lwc/AGENT_GUIDE.md"
+    },
+    {
+      "name": "sf_flow",
+      "owner": "sf-flow",
+      "available": true,
+      "description": "Lean Salesforce Flow lifecycle tool: core-five authoring plans, project scan, local diagnostics and Mermaid topology, source-bound safe quick fixes, check-only validation, explicit guarded activation/deactivation, and targeted Flow tests.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "org.preflight",
+              "project.scan",
+              "flow.inspect",
+              "author.plan",
+              "diagnose.file",
+              "quality.rules",
+              "fix.apply",
+              "validate.check",
+              "lifecycle.status",
+              "deploy.activate",
+              "lifecycle.activate",
+              "lifecycle.deactivate",
+              "test.discover",
+              "test.plan",
+              "test.run",
+              "test.result",
+              "test.rerun"
+            ],
+            "description": "SF Flow lifecycle action."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username."
+          },
+          "workspace": {
+            "type": "string",
+            "description": "SFDX workspace path. Defaults to cwd."
+          },
+          "file": {
+            "type": "string",
+            "description": "Workspace-contained .flow-meta.xml or .flow file."
+          },
+          "flow_name": {
+            "type": "string",
+            "description": "Exact Flow API name for lifecycle actions."
+          },
+          "version": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Exact existing Flow version to activate."
+          },
+          "allow_mutation": {
+            "type": "boolean",
+            "description": "Required execution-intent flag for Flow activation/deactivation; per-call effect authorization remains separate."
+          },
+          "intent": {
+            "type": "string",
+            "description": "Natural-language authoring intent for author.plan."
+          },
+          "flow_type": {
+            "type": "string",
+            "enum": [
+              "screen",
+              "autolaunched",
+              "record-triggered",
+              "schedule-triggered",
+              "platform-event-triggered"
+            ],
+            "description": "Explicit core Flow family when intent alone is ambiguous."
+          },
+          "object": {
+            "type": "string",
+            "description": "Triggering Salesforce object API name."
+          },
+          "event": {
+            "type": "string",
+            "description": "Triggering platform event API name."
+          },
+          "trigger_timing": {
+            "type": "string",
+            "enum": [
+              "before-save",
+              "after-save",
+              "before-delete"
+            ],
+            "description": "Record-triggered transaction timing."
+          },
+          "record_event": {
+            "type": "string",
+            "enum": [
+              "create",
+              "update",
+              "create-and-update",
+              "delete"
+            ],
+            "description": "Record operation that starts a record-triggered Flow."
+          },
+          "flow_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Flow API names containing Flow tests."
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Targeted Flow tests as FlowApiName.TestName."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Flow test run ID for test.result."
+          },
+          "fix_id": {
+            "type": "string",
+            "description": "Source-bound quick-fix ID returned by diagnose.file."
+          },
+          "source_version": {
+            "type": "string",
+            "description": "Exact source version returned by diagnose.file."
+          },
+          "wait_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 300,
+            "description": "Bounded Flow test wait. Default 60 seconds."
+          },
+          "include_coverage": {
+            "type": "boolean",
+            "description": "Request supported test-run coverage evidence."
+          },
+          "report_formats": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown",
+                "junit",
+                "tap"
+              ]
+            },
+            "description": "Optional Flow test report artifact formats."
+          },
+          "quality_profile": {
+            "type": "string",
+            "enum": [
+              "generation",
+              "review",
+              "audit"
+            ],
+            "description": "Quality rule profile for diagnose.file or quality.rules."
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Maximum inline items. Artifacts remain complete."
+          }
+        }
+      },
+      "actions": {
+        "status": {
+          "available": true
+        },
+        "org.preflight": {
+          "available": true
+        },
+        "project.scan": {
+          "available": true
+        },
+        "flow.inspect": {
+          "available": true
+        },
+        "author.plan": {
+          "available": true
+        },
+        "diagnose.file": {
+          "available": true
+        },
+        "quality.rules": {
+          "available": true
+        },
+        "fix.apply": {
+          "available": true,
+          "effects": true
+        },
+        "validate.check": {
+          "available": true,
+          "effects": true
+        },
+        "lifecycle.status": {
+          "available": true
+        },
+        "deploy.activate": {
+          "available": true,
+          "effects": true
+        },
+        "lifecycle.activate": {
+          "available": true,
+          "effects": true
+        },
+        "lifecycle.deactivate": {
+          "available": true,
+          "effects": true
+        },
+        "test.discover": {
+          "available": true
+        },
+        "test.plan": {
+          "available": true
+        },
+        "test.run": {
+          "available": true,
+          "effects": true
+        },
+        "test.result": {
+          "available": true
+        },
+        "test.rerun": {
+          "available": true,
+          "effects": true,
+          "requiresResume": true
+        }
+      },
+      "guidance": [
+        "Use sf_flow before generic XML reasoning for Flow metadata; the calling harness's file tools own source edits.",
+        "Pass target_org to sf_flow author.plan when custom fields, actions, or subflow contracts must be grounded before authoring; omitted targets keep planning local.",
+        "Use sf_flow diagnose.file before validate.check; check-only validation never deploys or activates a Flow.",
+        "Use sf_flow fix.apply only with a current fix_id and source_version returned by diagnose.file; stale or unsupported fixes are refused.",
+        "Use sf_flow lifecycle.status for canonical REST lifecycle evidence; do not delegate FlowDefinitionView lifecycle verification to generic SOQL guessing.",
+        "Use sf_flow deploy.activate for one exact local Flow file, sf_flow lifecycle.activate for one exact existing version, and sf_flow lifecycle.deactivate for deterministic deactivation. Mutations require explicit target_org and allow_mutation=true, remain subject to per-call effect authorization, and refuse production or unknown orgs.",
+        "Do not invent `sf flow activate` or manually build temporary activation projects; SF CLI has no such Flow activation command.",
+        "Use sf_flow targeted Flow tests only after an eligible Flow test exists in the org.",
+        "Use the guidePath returned by tools describe for core Flow families, lifecycle ordering, and proof boundaries."
+      ],
+      "guide": "sf-flow/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_discover",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Discover Data 360 readiness, action catalog entries, examples, and routing guidance.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "catalog.search": {
+          "available": true
+        },
+        "catalog.action": {
+          "available": true
+        },
+        "readiness.probe": {
+          "available": true
+        }
+      },
+      "guidance": [
+        "Use actions.search and action.describe when the right Data 360 family action is unclear.",
+        "Use readiness.probe before workflows when org readiness is uncertain."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_connect",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Manage source connectivity: connectors, connections, endpoints, source schemas, and auth preflight.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "auth.clear": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_auth.clear": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "auth.exchange": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_auth.exchange_pkce": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "auth.pkce_start": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_auth.pkce_start": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "auth.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ingest_auth.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "auth.sessions": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ingest_auth.sessions": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "auth.status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ingest_auth.status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection_create_snowflake": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_connection_create_snowflake": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "connection_endpoints": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connection_endpoints": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection_test": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connection_test": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_connection_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "connection.db_schemas.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.database_schemas.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connection_db_schemas_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_connection_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "connection.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connection_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connection_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.object_fields.describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.objects.fields.describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connection_object_fields_describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.objects.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connection_objects_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_connection_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "connections_sfdc.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connections_sfdc_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connector.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connector_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connector.metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connector_metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connectors.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_connectors_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "snowflake_connection.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_snowflake_connection_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "source_schema.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ingest_api_schema_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ingest_api.schema.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "source_schema.put": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ingest_api_schema_put": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_api.schema.put": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "source_schema.test": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ingest_api_schema_test": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ingest_api.schema.test": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "source.list_ingest_api": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "connection.list_ingest_api": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ingest_api_connections_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        }
+      },
+      "guidance": [
+        "Use source_schema.test before source_schema.put for Ingestion API schemas.",
+        "Use connection.test before connection.create when connector metadata requires credentials."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_prepare",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Prepare raw data: dataspaces, DLOs, data streams, ingest jobs, transforms, and DataKits.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "csv_schema.infer": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "csv.infer_schema": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datakit_component_deps": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datakit_component_deps": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datakit_component.status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datakit_component_status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datakit_components": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datakit_components": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datakit_deploy.status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datakit_deploy_status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datakit.deploy": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datakit_deploy": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "datakit.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datakit_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datakit.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datakit_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datakit.manifest": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datakit_manifest": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datakit.undeploy": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datakit_undeploy": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "datakits.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datakits_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dataspace_member.add": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataspace_member_add": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dataspace_member.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dataspace_member_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dataspace_member.remove": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataspace_member_remove": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dataspace.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataspace_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dataspace.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataspace_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dataspace.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dataspace_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dataspace.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dataspace_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dataspace.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataspace_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "datastream_create_aws_s3": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_create_aws_s3": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "datastream_create_sfdc": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_create_sfdc": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "datastream_create_snowflake": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_create_snowflake": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dlo.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dlo_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dlo.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dlo_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dlo.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dlo_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dlo.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dlo_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dlo.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dlo_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_job.close": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "tenant_ingest.job.close": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_job.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "tenant_ingest.job.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_job.poll": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "tenant_ingest.job.poll": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ingest_job.upload_csv": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "tenant_ingest.job.upload_csv": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "stream.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "stream.create_ingest_api": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_create_ingest_api": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "data_stream.create_ingest_api": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "stream.create_third_party_connector": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_create_third_party_connectors": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "data_stream.create_third_party_connector": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "stream.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "stream.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datastream_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "stream.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datastream_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "stream.list.data_streams_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_data_streams_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "stream.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "stream.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_datastream_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "transform_schedule_set": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_transform_schedule_set": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "transform_schedule.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_transform_schedule_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "transform.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_transform_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "transform.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_transform_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "transform.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_transform_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "transform.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_transform_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "transform.list.data_transforms_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_data_transforms_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "transform.prepare": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_transform_prepare": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "transform.validate_prepare": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "transform.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_transform_run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "transform.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_transform_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "transform.validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_transform_validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        }
+      },
+      "guidance": [
+        "Use stream.create_ingest_api for Ingestion API streams after source schema upload.",
+        "Use dry_run before confirmed stream, transform, DataKit, or ingest-job actions."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_harmonize",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Model, map, and unify data with DMOs, mappings, standard mappings, smart helpers, and identity resolution.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "dmo_field_mapping.add": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dmo_field_mapping_add": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dmo_field_mapping.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dmo_field_mapping_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dmo_mapping.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dmo_mapping_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dmo_mapping.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dmo_mapping_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dmo_mapping.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dmo_mapping_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dmo_mapping.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dmo_mapping_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dmo_mapping.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dmo_mapping_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dmo.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dmo_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dmo.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dmo_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "dmo.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dmo_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dmo.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dmo_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dmo.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dmo_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "event_date_recommend": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_event_date_recommend": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "identity.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_identity_resolutions_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ir_full.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ir_full_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ir.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ir_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ir.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ir_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ir.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ir_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ir.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ir_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ir.publish": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ir_publish": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ir.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ir_run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ir.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ir_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "preview_field_matches": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_preview_field_matches": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "smart_datastream.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_smart_datastream_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "smart_mapping.suggest": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_smart_mapping_suggest": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "standard_mapping.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_standard_mapping_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "standard_mapping.preview": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_standard_mapping_preview": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        }
+      },
+      "guidance": [
+        "Inspect DLO and DMO fields before mapping.",
+        "Use smart mapping helpers before hand-building broad mappings."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_segment",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Build calculated insights and audience segments, then publish or inspect status.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "ci.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ci_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ci.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ci_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ci.disable": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ci_disable": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ci.enable": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ci_enable": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ci.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ci_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ci.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_calculated_insights_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ci.list.compat": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ci_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ci.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ci_run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ci.run.status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ci_run_status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ci.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ci_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ci.validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ci_validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "segment.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_segment_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "segment.deactivate": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_segment_deactivate": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "segment.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_segment_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "segment.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_segment_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "segment.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_segments_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "segment.list.compat": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_segment_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "segment.publish": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_segment_publish": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "segment.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_segment_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Validate calculated insights before create.",
+        "Check CI and segment status before downstream activation."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_activate",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Deliver downstream with activations, activation targets, data actions, action targets, and personalization configuration.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "activation_target.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_activation_target_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "activation_target.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_activation_target_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "activation_target.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_activation_target_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "activation_target.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_activation_target_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "activation_target.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_activation_target_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "activation.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_activation_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "activation.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_activation_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "activation.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_activation_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "activation.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_activations_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "activation.list.compat": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_activation_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "activation.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_activation_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "data_action_target.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataaction_target_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "data_action_target.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataaction_target_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "data_action_target.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dataaction_target_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "data_action_target.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dataaction_target_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "data_action_target.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataaction_target_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "data_action.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataaction_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "data_action.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_dataaction_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "data_action.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dataaction_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "data_action.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dataaction_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "data_action.list.catalog": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_data_actions_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.engagement_signals.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_p13n_engagement_signals_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "p13n.engagement_signals.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.experience_config.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_experience_config_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.experience_config.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.experience_config.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_experience_config_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.experience_config.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.experience_config.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_p13n_experience_config_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "p13n.experience_config.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.experience_config.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_p13n_experience_config_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "p13n.experience_config.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.experience_config.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_experience_config_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.experience_config.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.mobile_preview.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_mobile_preview_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.mobile_preview.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.org_info.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_p13n_org_info_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "p13n.org_info.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.point.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_point_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.point.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.point.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_point_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.point.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.point.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_p13n_point_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "p13n.point.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.point.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_point_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.point.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.schema.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_schema_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.schema.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.schema.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_schema_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.schema.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.schema.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_p13n_schema_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "p13n.schema.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.schema.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_schema_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.schema.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.transformer.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_transformer_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.transformer.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.transformer.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_transformer_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.transformer.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "personalization.transformer.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_p13n_transformer_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "p13n.transformer.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.transformer.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_p13n_transformer_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "p13n.transformer.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "personalization.transformer.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_p13n_transformer_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "p13n.transformer.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Create or inspect targets before creating activations, data actions, or personalization configs."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_query",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Run SQL, metadata search, profile queries, data graph reads, row counts, samples, and verification.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "data_spaces.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_data_spaces_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datagraph.lookup": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datagraph_lookup": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datagraph.metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datagraph_metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "datagraph.query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_datagraph_query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dlo_describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dlo_describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "dmo_describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_dmo_describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "insight.metadata_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_insights_metadata_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "insights.metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_insights_metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "insights.query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_insights_query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "metadata.entities": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_metadata_entities": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "metadata.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_metadata_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "metadata.query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "metadata.search": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_metadata_search": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "profile.metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_profile_metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "profile.metadata_model": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_profile_metadata_model": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "profile.query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_profile_query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "sql.cancel": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_query_sql_cancel": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "sql.rows": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_query_sql_rows": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "sql.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_query_sql": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "sql.status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_query_sql_status": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "sql.verify_rows": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "sql.count_dlo": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        }
+      },
+      "guidance": [
+        "Prefer sql.count, sql.sample, or sql.verify_rows before broad row queries."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_semantic",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Manage semantic models, semantic objects, metrics, search indexes, retrievers, and ML/prediction model surfaces.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "ml.alert.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_alert_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.alerts.query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_alerts_query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.configured_model.activate": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_configured_model_activate": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.configured_model.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_configured_model_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.configured_model.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_configured_model_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.configured_model.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_configured_model_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.configured_model.history.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_configured_model_history_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.configured_model.history.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_configured_model_history_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.configured_model.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_configured_model_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.configured_model.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_configured_model_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.model_artifact.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_model_artifact_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.model_artifact.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_model_artifact_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.model_artifact.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_model_artifact_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.model_artifact.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_model_artifact_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.model_setup.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_model_setup_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.model_setup.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_model_setup_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.model_setup.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_model_setup_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.model_setup.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_model_setup_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.model_setup.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_model_setup_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.predict": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_predict": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.prediction_job_def.activate": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_activate": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.create_binary_classification": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_create_binary_classification": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.create_clustering": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_create_clustering": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.create_multiclass_classification": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_create_multiclass_classification": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.create_regression": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_create_regression": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.create_sentiment_detection": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_create_sentiment_detection": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.create_topic_classification": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_create_topic_classification": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.deactivate": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_deactivate": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job_def.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_prediction_job_def_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.prediction_job_def.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_prediction_job_def_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.prediction_job_def.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_def_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.prediction_job.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_prediction_job_run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.query_data_profile": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_query_data_profile": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.query_outcome": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_query_outcome": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.query_row_count": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_query_row_count": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.query_setup_fields": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_query_setup_fields": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.setup_version.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_setup_version_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ml.setup_version.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_setup_version_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.setup_version.inspector_metrics.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_setup_version_inspector_metrics_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.setup_version.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_ml_setup_version_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ml.setup_version.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_ml_setup_version_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "model_artifact.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_model_artifact_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "retriever.config.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_retriever_config_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "retriever.config.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_retriever_config_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "retriever.config.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_retriever_config_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "retriever.config.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_retriever_config_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "retriever.config.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_retriever_config_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "retriever.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_retriever_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "retriever.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_retriever_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "retriever.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_retriever_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "retriever.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_retrievers_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "retriever.list.compat": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_retriever_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "retriever.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_retriever_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "search_index.config": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_search_index_config": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "search_index.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_search_index_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "search_index.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_search_index_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "search_index.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_search_index_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "search_index.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_search_indexes_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "search_index.list.compat": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_search_index_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "search_index.process_history": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_search_index_process_history": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "search_index.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_search_index_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.calculated_dimension.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_calc_dim_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.calculated_dimension.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_calc_dim_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.calculated_dimension.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_calc_dim_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.calculated_dimension.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_calc_dims_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.calculated_dimension.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_calc_dim_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.calculated_measure.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_calc_measure_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.calculated_measure.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_calc_measure_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.calculated_measure.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_calc_measure_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.calculated_measure.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_calc_measures_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.calculated_measure.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_calc_measure_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.clone": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_clone": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.data_object.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_data_object_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.data_object.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_data_object_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.data_object.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_data_object_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.data_object.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_data_objects_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.data_object.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_data_object_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.dependencies": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_dependencies": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.dimension.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_dimensions_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.formula_metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_formula_metadata": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.get.catalog": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_semantic_model_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.list.catalog": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_semantic_models_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.measurement.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_measurements_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.metric.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_metric_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.metric.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_metric_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.metric.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_metric_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.metric.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_metrics_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.metric.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_metric_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.permissions": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_permissions": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.query.gateway": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_semantic_query": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.relationship.create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_relationship_create": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.relationship.delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_relationship_delete": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.relationship.get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_relationship_get": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.relationship.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_relationships_list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.relationship.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_relationship_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "d360_sdm_update": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "semantic_model.validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_semantic_model_validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_model.validate.compat": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "d360_sdm_validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        }
+      },
+      "guidance": [
+        "Use action.describe for semantic and ML subresources; this family is intentionally broad."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_observe",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Analyze Agentforce STDM sessions, platform tracing spans, trace trees, errors, and latency.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "stdm.find_sessions": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "agent_observability.stdm_find_sessions": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "stdm.session_otel": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "agent_observability.stdm_session_otel": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "stdm.otel": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "stdm.session_timeline": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "agent_observability.stdm_session_timeline": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "trace.error_traces": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "agent_observability.platform_error_traces": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "trace.join_interaction_trace": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "agent_observability.join_interaction_trace": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "trace.operation_latency_summary": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "agent_observability.operation_latency_summary": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "trace.trace_tree": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "agent_observability.platform_trace_tree": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        }
+      },
+      "guidance": [
+        "Use observe actions for production behavior; use sf-agentscript for local .agent development."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_orchestrate",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Plan and run journeys, manifests, cross-phase workflows, sweeps, and cleanup.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "activate_segment.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.activate_segment.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "activate_segment.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "journey.activate_segment.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "agent_behavior_investigation.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.agent_behavior_investigation.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "agent_behavior_investigation.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.agent_behavior_investigation.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "build_segment.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.build_segment.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "build_segment.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "journey.build_segment.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "cleanup.discover_owned": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.cleanup.discover_owned": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "cleanup.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.cleanup.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "cleanup.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "journey.cleanup.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_auth.pkce_interactive": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "journey.ingest_auth.pkce_interactive": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "ingest_csv.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.ingest_csv.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "ingest_csv.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "journey.ingest_csv.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "intent.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "intent.route": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.catalog.describe": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.catalog.list": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "make_data_usable.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.make_data_usable.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "make_data_usable.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "journey.make_data_usable.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "manifest.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.manifest.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "manifest.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "journey.manifest.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "manifest.validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.manifest.validate": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_retrieval.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "journey.semantic_retrieval.plan": {
+          "available": true,
+          "dryRun": true,
+          "effects": false
+        },
+        "semantic_retrieval.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        },
+        "journey.semantic_retrieval.run": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Mutating journeys are plan-first: run *.plan, review steps, then run with explicit confirmation."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    },
+    {
+      "name": "data360_api",
+      "owner": "sf-data360",
+      "available": true,
+      "description": "Raw Data 360 REST escape hatch for endpoints not yet promoted to a family action.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Family action, e.g. actions.search, action.describe, stream.create_ingest_api, or sql.verify_rows."
+          },
+          "params": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            },
+            "description": "Action parameters."
+          },
+          "target_org": {
+            "type": "string",
+            "description": "Salesforce org alias or username. Defaults to Salesforce target-org configuration."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Resolve the action without mutating."
+          },
+          "allow_confirmed": {
+            "type": "boolean",
+            "description": "Allow confirmed/destructive execution after dry-run review."
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "Optional request timeout in ms."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "summary",
+              "file_only"
+            ],
+            "description": "How to return broad responses."
+          }
+        }
+      },
+      "actions": {
+        "help": {
+          "available": true
+        },
+        "actions.list": {
+          "available": true
+        },
+        "actions.search": {
+          "available": true
+        },
+        "action.describe": {
+          "available": true
+        },
+        "examples.get": {
+          "available": true
+        },
+        "rest.request": {
+          "available": true,
+          "dryRun": true,
+          "effects": true
+        }
+      },
+      "guidance": [
+        "Prefer family actions for repeated workflows; use data360_api only when you know the raw endpoint."
+      ],
+      "guide": "sf-data360/AGENT_GUIDE.md"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import type { LaunchProfileId, TerminalSession } from '@zana-ai/zcc-domain/produ
 import { readJsonBody, sendJson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
 import { getPrimaryHost } from '@zana-ai/zcc-db';
+import { cliHostProblem } from '@zana-ai/zcc-domain/cli-host-guard';
 import {
   asControlResult,
   cliAgentPresentationStatus,
@@ -105,9 +106,9 @@ export async function handleCliAgentsApi(
       return true;
     }
     const primaryId = getPrimaryHost(ctx.db)?.id;
-    if ((body.hostId !== undefined && (typeof body.hostId !== 'string' || !body.hostId || body.hostId !== primaryId))
-      || (project.hostId && project.hostId !== primaryId)) {
-      sendJson(response, 409, { ok: false, code: 'host-unsupported', message: 'CLI Agents on secondary machines are not available yet. Use a Modern thread on that machine.' });
+    const hostProblem = cliHostProblem({ hostId: body.hostId as string | undefined }, project, primaryId);
+    if (hostProblem) {
+      sendJson(response, 409, { ok: false, code: 'host-unsupported', message: hostProblem });
       return true;
     }
     const input: ProductCliAgentCreateInput = {

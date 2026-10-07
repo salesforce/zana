@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   isStandaloneBuiltinCompactCommand,
   approvalInteractionOutcomeSchema,
+  userQuestionInteractionOutcomeSchema,
   type DynamicTool,
   type PromptInput,
   type ThreadDelta,
@@ -47,6 +48,7 @@ import {
   experimental_defineProviderBridge,
   type ProviderRecoveryHint,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import {
   CODEX_MACOS_PERMISSION_EXTENSION_KIND,
@@ -65,7 +67,6 @@ import {
   toCodexDynamicTools,
   toCodexPermissionSettings,
   toCodexServiceTier,
-  toCodexThreadPermissionSettings,
   toCodexUserInput,
   type BbThreadForkParams,
   type BbThreadStartParams,
@@ -423,6 +424,7 @@ interface CodexBridgeSession {
   translator: CodexEventTranslator;
   construction: CodexSessionConstruction;
   constructionSignature: string;
+  turnPermissionSettings: ReturnType<typeof toCodexPermissionSettings>;
   openCodexTurnIds: Set<string>;
   turnSettledWaiters: Map<string, Array<() => void>>;
   awaitingReplayedUsage: boolean;
@@ -521,7 +523,6 @@ function constructionSignature(
   cwd: string,
   sessionOptions: CodexSessionOptions,
 ): string {
-  const permissionSettings = toCodexThreadPermissionSettings(sessionOptions);
   const poolBaseUrl = sessionOptions.envVars?.[CODEX_POOL_BASE_URL_ENV];
   const poolToken = sessionOptions.envVars?.[CODEX_POOL_AUTH_TOKEN_ENV];
   return JSON.stringify({
@@ -529,9 +530,6 @@ function constructionSignature(
     reasoningLevel: sessionOptions.reasoningLevel ?? null,
     memoryEnabled: sessionOptions.memoryEnabled ?? null,
     providerSubagentsEnabled: sessionOptions.providerSubagentsEnabled ?? null,
-    approvalPolicy: permissionSettings.approvalPolicy,
-    approvalsReviewer: permissionSettings.approvalsReviewer,
-    sandbox: permissionSettings.sandbox,
     poolRoute:
       poolBaseUrl === undefined || poolToken === undefined
         ? null
@@ -763,10 +761,16 @@ function handleChildRequest(
     providerNativeIds: true,
   })
     .then((result) => {
-      const outcome = approvalInteractionOutcomeSchema.parse({
-        payload: request.payload,
-        resolution: result,
-      });
+      const outcome =
+        request.payload.kind === "user_question"
+          ? userQuestionInteractionOutcomeSchema.parse({
+              payload: request.payload,
+              resolution: result,
+            })
+          : approvalInteractionOutcomeSchema.parse({
+              payload: request.payload,
+              resolution: result,
+            });
       responder.result(buildCodexInteractiveResponse(outcome));
     })
     .catch((error: unknown) => {
@@ -995,6 +999,7 @@ async function constructThreadSession(
       args.cwd,
       decoded.sessionOptions,
     ),
+    turnPermissionSettings: toCodexPermissionSettings({ additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots, gitWritableRoots: [], options: decoded.sessionOptions }),
     openCodexTurnIds: new Set(),
     turnSettledWaiters: new Map(),
     awaitingReplayedUsage: args.request.kind !== "start",
@@ -1116,6 +1121,11 @@ async function constructThreadSession(
       providerThreadId: codexThreadId,
       threadId: args.threadId,
     });
+    session.turnPermissionSettings = toCodexPermissionSettings({
+      additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots,
+      gitWritableRoots: translator.getThreadGitWritableRoots(args.threadId),
+      options: decoded.sessionOptions,
+    });
     announceSessionIdentity(session, codexThreadId);
     return { session, codexThreadId };
   } catch (error) {
@@ -1152,6 +1162,7 @@ function registerResumableSession(session: CodexBridgeSession): void {
     translator: session.translator,
     construction: session.construction,
     constructionSignature: session.constructionSignature,
+    turnPermissionSettings: session.turnPermissionSettings,
     openCodexTurnIds: new Set(),
     turnSettledWaiters: new Map(),
     awaitingReplayedUsage: true,
@@ -1511,6 +1522,8 @@ async function handleTurnStart(
         ),
         options: decoded.sessionOptions,
       });
+      const previousPermissions = session.turnPermissionSettings;
+      session.turnPermissionSettings = permissionSettings;
       await connection.request({
         method: "turn/start",
         params: {
@@ -1524,6 +1537,9 @@ async function handleTurnStart(
         },
         resultSchema: ignoredChildResultSchema,
         timeoutMs: CHILD_REQUEST_TIMEOUT_MS,
+      }).catch((error: unknown) => {
+        if (session.turnPermissionSettings === permissionSettings) session.turnPermissionSettings = previousPermissions;
+        throw error;
       });
     }
     sendResult(id, { threadId: params.threadId });
@@ -1562,6 +1578,26 @@ async function handleTurnSteer(
     return;
   }
   try {
+    const decoded = decodeCodexOptions(params.options);
+    const permissionSettings = toCodexPermissionSettings({
+      additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots,
+      gitWritableRoots: session.translator.getThreadGitWritableRoots(params.threadId),
+      options: decoded.sessionOptions,
+    });
+    if (!isDeepStrictEqual(session.turnPermissionSettings, permissionSettings)) {
+      if (!session.openCodexTurnIds.has(params.expectedTurnId)) throw new Error("The turn to steer is no longer active");
+      await session.connection.request({
+        method: "turn/interrupt",
+        params: { threadId: session.codexThreadId, turnId: params.expectedTurnId },
+        resultSchema: ignoredChildResultSchema,
+        timeoutMs: CHILD_REQUEST_TIMEOUT_MS,
+      });
+      if (!await waitForCodexTurnSettlement(session, params.expectedTurnId, INTERRUPT_SETTLEMENT_TIMEOUT_MS)) {
+        throw new Error("Codex did not stop the active turn before applying new permissions");
+      }
+      await handleTurnStart(id, params);
+      return;
+    }
     await session.connection.request({
       method: "turn/steer",
       params: {

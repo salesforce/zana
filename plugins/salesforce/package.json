@@ -20,7 +20,12 @@
       "icon": "Cloud"
     },
     "server": "./server.ts",
-    "extra": { "runtimeAssets": ["playground/dist"] },
+    "extra": {
+      "runtimeAssets": [
+        "playground/dist",
+        "toolkit-runtime"
+      ]
+    },
     "app": "./app.js",
     "skills": [
       "skills"
@@ -40,7 +45,8 @@
     "@xyflow/react": "^12.10.0",
     "fast-xml-parser": "5.11.1",
     "lucide-react": "^1.47.0",
-    "monaco-editor": "^0.54.0"
+    "monaco-editor": "^0.54.0",
+    "sf-agentic-tools": "file:vendor/sf-agentic-tools-0.1.0.tgz"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",

@@ -9,6 +9,7 @@ import { useComposerPromptField } from './use-composer-prompt-field.js';
 import { PROJECT_DRAG_MIME } from '../../lib/project-drag.js';
 import { serializePromptEditor } from './serialize-prompt-editor.js';
 import { COMPOSER_TERMINAL_COMMAND } from './composer-terminal-command.js';
+import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 
 const attachments = vi.hoisted(() => ({ desktop: false, pickFiles: vi.fn(async (): Promise<string[]> => []) }));
 const suggestionState = vi.hoisted(() => ({ commands: [] as Array<{ name: string; description: string }> }));
@@ -37,7 +38,7 @@ const editor = {
   },
   setEditable: vi.fn(),
   isDestroyed: false,
-  commands: { focus: vi.fn(), clearContent: vi.fn(), setContent: vi.fn() },
+  commands: { focus: vi.fn(), clearContent: vi.fn(), setContent: vi.fn((_content: unknown) => undefined) },
   view: { posAtCoords: vi.fn((): { pos: number } | null => ({ pos: 4 })) },
   chain: () => chain
 };
@@ -116,6 +117,45 @@ describe('useComposerPromptField', () => {
     act(() => editorState.options?.onUpdate?.({ editor }));
 
     expect(screen.getByTestId('text').textContent).toBe('after');
+  });
+
+  it('restores structured text and attachments, supports removing one attachment and clearing the draft', () => {
+    const { result } = renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [],
+      slashCatalog: { kind: 'cli' }, onSubmit: vi.fn()
+    }));
+    const text: PromptInput = { type: 'text', text: 'Review @Thread', mentions: [
+      { start: 7, end: 14, resource: { kind: 'thread', threadId: 't1', label: 'Thread' } }
+    ] };
+    const first: PromptInput = { type: 'localImage', path: '/tmp/first.png' };
+    const second: PromptInput = { type: 'localImage', path: '/tmp/second.png' };
+    act(() => result.current.replacePrompt([text, first, second]));
+    expect(serializePromptEditor(editor.commands.setContent.mock.calls.at(-1)![0])).toEqual({
+      text: text.text, mentions: text.mentions
+    });
+    expect(result.current.restoredAttachments).toEqual([first, second]);
+    act(() => result.current.removeRestoredAttachment(0));
+    expect(result.current.restoredAttachments).toEqual([second]);
+    act(() => result.current.clear());
+    expect(result.current.restoredAttachments).toEqual([]);
+    expect(editor.commands.clearContent).toHaveBeenCalled();
+    act(() => result.current.replacePrompt([]));
+    expect(serializePromptEditor(editor.commands.setContent.mock.calls.at(-1)![0])).toEqual({ text: '', mentions: [] });
+  });
+
+  it('rejects a malformed restored prompt without clearing the current draft or attachments', () => {
+    const { result } = renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [],
+      slashCatalog: { kind: 'cli' }, onSubmit: vi.fn()
+    }));
+    const image: PromptInput = { type: 'localImage', path: '/tmp/kept.png' };
+    act(() => result.current.replacePrompt([image]));
+    editor.commands.clearContent.mockClear();
+    editor.commands.setContent.mockClear();
+    expect(() => result.current.replacePrompt([{ type: 'localImage', path: 123 } as unknown as PromptInput])).toThrow();
+    expect(result.current.restoredAttachments).toEqual([image]);
+    expect(editor.commands.clearContent).not.toHaveBeenCalled();
+    expect(editor.commands.setContent).not.toHaveBeenCalled();
   });
 
   const project = { id: 'other-project', name: 'Other project', path: '/other' } as Project;

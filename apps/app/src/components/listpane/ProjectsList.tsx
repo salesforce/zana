@@ -353,6 +353,9 @@ export function ProjectsList({
   // the gesture visible feedback.
   const handleRefresh = async () => {
     if (refreshing) return;
+    setMenu(null);
+    setSidebarAddOpen(false);
+    setSidebarOrganizeOpen(false);
     setRefreshing(true);
     try {
       await loadProjects();
@@ -898,8 +901,7 @@ export function ProjectsList({
         ) : (
           <h2>Projects</h2>
         )}
-        {/* The sidebar header keeps project creation under one + menu. The
-            overflow menu is intentionally reserved for non-creation actions. */}
+        {/* The sidebar header keeps project creation under one + menu. */}
         <div className="list-header-actions">
           {inSidebar ? (
             <>
@@ -966,22 +968,14 @@ export function ProjectsList({
                 )}
               </div>
               <button
+                type="button"
                 className="icon-btn"
-                aria-label="Project menu"
-                title="Project menu"
-                onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  setSidebarAddOpen(false);
-                  setSidebarOrganizeOpen(false);
-                  setMenu({
-                    projectId: '',
-                    x: rect.right,
-                    y: rect.bottom,
-                    anchorTop: rect.top
-                  });
-                }}
+                aria-label="Reload project list"
+                title="Refresh projects"
+                disabled={refreshing}
+                onClick={() => void handleRefresh()}
               >
-                <MoreHorizontal size={14} />
+                <RefreshCw size={14} className={refreshing ? 'spin' : undefined} aria-hidden="true" />
               </button>
               <div className="sidebar-projects-menu-wrap" ref={sidebarAddRef}>
                 <button

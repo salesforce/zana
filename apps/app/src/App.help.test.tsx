@@ -1,13 +1,24 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { useHelp } from './components/help/HelpProvider.js';
 
-const fixtures = vi.hoisted(() => ({ compact: false, unread: 0, drawer: vi.fn() }));
-vi.mock('./lib/product-client.js', () => ({ product: new Proxy({}, { get: () => new Proxy({}, {
-  get: (_target, method) => String(method).startsWith('on') ? () => () => {} : async () => []
+const fixtures = vi.hoisted(() => ({
+  compact: false, unread: 0, drawer: vi.fn(),
+  pluginChanged: null as null | ((entries: unknown[]) => void),
+  recoverCatalogs: vi.fn(), reconcilePlugins: vi.fn().mockResolvedValue(undefined),
+  unsubscribePlugins: vi.fn()
+}));
+vi.mock('./lib/product-client.js', () => ({ product: new Proxy({}, { get: (_target, surface) => new Proxy({}, {
+  get: (_target, method) => String(surface) === 'pluginApps' && String(method) === 'onChanged' ? (callback: (entries: unknown[]) => void) => {
+    fixtures.pluginChanged = callback;
+    return fixtures.unsubscribePlugins;
+  } : String(method).startsWith('on') ? () => () => {} : async () => []
 }) }) }));
+vi.mock('./components/thread/pickers/thread-model-catalog.js', async importOriginal => ({
+  ...await importOriginal<object>(), recoverUnavailableModelCatalogs: fixtures.recoverCatalogs
+}));
 vi.mock('./store.js', async importOriginal => ({ ...await importOriginal<object>(),
   useUnreadInboxCount: () => fixtures.unread, installInboxCrossWindowSync: () => () => {}
 }));
@@ -23,7 +34,7 @@ vi.mock('./components/thread/secondary-panel/useThreadOpenFileSignal.js', () => 
 vi.mock('./components/thread/secondary-panel/useThreadOpenTerminalSignal.js', () => ({ useCliAgentTerminalSignal: () => {} }));
 vi.mock('./modules/index.js', () => { const modules: never[] = []; return { useMergedModules: () => modules }; });
 vi.mock('./modules/loader.js', () => ({ initExtensionModules: async () => {}, reconcileExtensionModules: async () => {} }));
-vi.mock('./plugins/plugin-app-loader.js', () => ({ initPluginApps: async () => {}, reconcilePluginApps: async () => {} }));
+vi.mock('./plugins/plugin-app-loader.js', () => ({ initPluginApps: async () => {}, reconcilePluginApps: fixtures.reconcilePlugins }));
 vi.mock('./components/MobileShellChrome.js', () => ({
   useMobileNavigation: () => ({ isCompact: fixtures.compact, drawerOpen: true, setDrawerOpen: fixtures.drawer }),
   MobileShellReporter: () => null,
@@ -75,7 +86,27 @@ beforeAll(async () => {
   store.useData.setState({ init: vi.fn().mockResolvedValue(undefined), projects: [], terminals: {} });
   App = (await import('./App.js')).App;
 });
-afterEach(() => { cleanup(); localStorage.clear(); fixtures.drawer.mockClear(); });
+afterEach(() => {
+  cleanup(); localStorage.clear(); fixtures.drawer.mockClear();
+  fixtures.pluginChanged = null;
+  fixtures.recoverCatalogs.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
+});
+
+it('retries unavailable model catalogs on plugin changes and ignores late pushes after unmount', async () => {
+  fixtures.compact = false; fixtures.unread = 0;
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  const notify = fixtures.pluginChanged!;
+  expect(notify).toBeTypeOf('function');
+  const entries = [{ id: 'reconnected-provider' }];
+  await act(async () => { notify(entries); });
+  expect(fixtures.recoverCatalogs).toHaveBeenCalledOnce();
+  expect(fixtures.reconcilePlugins).toHaveBeenCalledWith(entries);
+  view.unmount();
+  expect(fixtures.unsubscribePlugins).toHaveBeenCalled();
+  await act(async () => { notify([]); });
+  expect(fixtures.recoverCatalogs).toHaveBeenCalledOnce();
+  expect(fixtures.reconcilePlugins).toHaveBeenCalledOnce();
+});
 
 it('shares Help between the titlebar and navigation and clears exploration on query navigation', () => {
   fixtures.compact = false; fixtures.unread = 0;

@@ -10,7 +10,7 @@ export type PreflightSkip = { skip: true; reason: string };
 
 export async function preflightOrSkip(
   zcc: Zcc,
-  opts: { surface: 'thread' | 'cli-agent'; providerId?: string; profile?: string }
+  opts: { surface: 'thread' | 'cli-agent'; providerId?: string; profile?: string; hostId?: string }
 ): Promise<HarnessVerifyRow | PreflightSkip> {
   try {
     return await preflight(zcc.http, opts);

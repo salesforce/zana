@@ -61,9 +61,9 @@ function ThreadHistory({ projectId, query }: { projectId?: string; query: string
   const previewGeneration = useRef(0);
   const navigate = useNavigate();
   const projects = useData((s) => s.projects);
-  const open = (id: string, owner: string) => {
+  const open = (id: string, owner: string, sequence?: number) => {
     useConversationHistory.getState().close();
-    navigate(getThreadRoutePath(id, owner));
+    navigate(getThreadRoutePath(id, owner) + (sequence ? `?message=${sequence}` : ''));
   };
   const load = async (offset = 0, version = generation.current) => {
     setLoading(true); setError('');
@@ -101,6 +101,7 @@ function ThreadHistory({ projectId, query }: { projectId?: string; query: string
             if (version === previewGeneration.current) setTranscript(threadHistoryTranscript(timeline.rows as TimelineRow[], timeline.timelinePage?.hasOlderRows));
           } catch (error) { if (version === previewGeneration.current) setPreviewError(errorText(error)); }
         }}>
+          {row.matchingMessage && <span className="history-meta">{row.matchingMessage.text}</span>}
           <strong>{row.title || 'Untitled conversation'}</strong>
           <HistoryContext harnessId={row.providerId} harnessName={row.providerLabel} projectName={projects.find((p) => p.id === row.projectId)?.name} />
           <span className="history-meta">{date(row.updatedAt)} · {row.archivedAt ? 'Archived' : 'Unarchived'}</span>
@@ -125,7 +126,7 @@ function ThreadHistory({ projectId, query }: { projectId?: string; query: string
           catch (error) { setError(errorText(error)); }
           finally { setRestoring(null); }
         }}>{restoring ? 'Restoring…' : 'Restore conversation'}</button>}
-        <button className={`btn${selected.archivedAt ? '' : ' primary'}`} disabled={!!restoring} onClick={() => open(selected.id, selected.projectId)}>Open conversation</button>
+        <button className={`btn${selected.archivedAt ? '' : ' primary'}`} disabled={!!restoring} onClick={() => open(selected.id, selected.projectId, selected.matchingMessage?.sequence)}>Open conversation</button>
       </>} />
     </div>
   </>;

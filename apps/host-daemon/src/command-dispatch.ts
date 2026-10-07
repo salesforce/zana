@@ -122,7 +122,7 @@ export type ThreadResumeInput = {
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
-  serviceTier?: 'default' | 'fast';
+  serviceTier?: string;
   acpMode?: string;
   claudeCodePermissionMode?: 'plan';
   providerOptions?: Record<string, unknown>;
@@ -177,7 +177,7 @@ export interface CommandRuntime {
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
-    serviceTier?: 'default' | 'fast';
+    serviceTier?: string;
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
@@ -238,7 +238,7 @@ export function createCommandRuntime(options: {
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
-    serviceTier?: 'default' | 'fast';
+    serviceTier?: string;
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;

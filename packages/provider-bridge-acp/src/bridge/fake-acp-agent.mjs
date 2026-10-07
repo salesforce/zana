@@ -71,6 +71,7 @@
  *                            → stop reason returned for /compact
  */
 
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { appendFileSync, renameSync, writeFileSync } from "node:fs";
 
@@ -158,8 +159,27 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
+if (process.env.FAKE_ACP_LINGERING_DESCENDANT_PID_FILE) {
+  spawn(
+    process.execPath,
+    [
+      "-e",
+      [
+        "process.on('SIGTERM', () => {});",
+        "const fs = require('node:fs');",
+        "const pidFile = process.argv[1];",
+        "fs.writeFileSync(pidFile + '.tmp', String(process.pid));",
+        "fs.renameSync(pidFile + '.tmp', pidFile);",
+        "setInterval(() => {}, 1000);",
+      ].join(" "),
+      process.env.FAKE_ACP_LINGERING_DESCENDANT_PID_FILE,
+    ],
+    { stdio: "ignore" },
+  );
+}
+
 if (process.env.FAKE_ACP_READY_FILE) {
-  writeFileSync(process.env.FAKE_ACP_READY_FILE, "ready\n");
+  writeFileSync(process.env.FAKE_ACP_READY_FILE, String(process.pid));
 }
 
 if (process.env.FAKE_ACP_LAUNCH_LOG) {
@@ -520,6 +540,20 @@ async function handlePrompt(message) {
       outcome = "error";
     }
     notifyUpdate(messageChunk(`permission:${outcome}`));
+  } else if (text.includes("permission-probe")) {
+    let wrote = false;
+    try {
+      await requestClient("fs/write_text_file", {
+        sessionId: activeSessionId,
+        path: process.env.FAKE_ACP_WRITE_PATH,
+        content: "permission probe\n",
+      });
+      wrote = true;
+    } catch {}
+    notifyUpdate(
+      messageChunk(JSON.stringify({ wrote, args: process.argv.slice(2) })),
+    );
+    if (text.includes("hold")) return;
   } else if (text.includes("write-file")) {
     try {
       await requestClient("fs/write_text_file", {

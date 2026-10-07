@@ -2,6 +2,7 @@ import type { AppConfig, Persona, ProjectSettings, LaunchProfileId, HarnessModel
 import type { HarnessFamily } from '@zana-ai/zcc-domain/product';
 import type { HarnessScope, ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import { harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
+import { ACP_DEFAULT_MODEL_ID } from '@zana-ai/zcc-domain/thread-runtime';
 import { hasNativeOption, type HarnessNativeContribution } from './adapter-contract.js';
 import { executionTargetFor } from './evidence-registry.js';
 
@@ -247,6 +248,13 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
     if (!targetId) {
       throw new Error(`${provider.adapter.descriptor.label} does not support ${level} model level.`);
     }
+  }
+
+  // The shared ACP catalog uses a placeholder when model selection belongs to
+  // the agent. Preserve its precedence over inherited model pins, but never
+  // validate it against a CLI inventory or contribute a forced model argument.
+  if (targetId === ACP_DEFAULT_MODEL_ID) {
+    return { source, structuredSelected: false, rawOverride: hasRawModel, contribution: {} };
   }
 
   let contribution: HarnessNativeContribution = {};

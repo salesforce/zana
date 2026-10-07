@@ -269,6 +269,30 @@
       }
     },
     {
+      "id": "design-docs",
+      "displayName": "Design Docs",
+      "description": "Multi-file design documents (specs, RFCs, ADRs) that agents read, edit, review and enrich.",
+      "overview": "Write design documents with your agents: specs, RFCs, ADRs, product briefs and API designs. Each doc is a small project of files rendered as formatted pages. Agents in your projects know your docs, read them for context, edit them, and review them. Every change lands live and is versioned.\n\n## What you get\n\n- A Design Docs workbench. It has a doc list with search and status filters, a file tree for each doc, and a reading view with preview, edit and side-by-side modes.\n- Multi-file docs. Markdown with tables, task lists, math and Mermaid. Standalone `.mmd` diagrams. Self-contained HTML mockups, with desktop, tablet and phone widths. SVG, images and highlighted code.\n- Templates for technical designs, product specs, ADRs and API designs, or a blank doc.\n- Review comments. Select any passage to comment on it or ask an agent about it. Comments are anchored to the quoted text and highlighted in the page.\n- History with diffs. Every save, by you or an agent, is a revision. Compare it with the previous one and restore it in one click.\n- A Design tab in each project, showing that project's docs and the global ones.\n- Doc cards in chat. A card opens the doc beside the conversation, so you can watch an agent's edits arrive.\n- Save as design doc. Use it on any chat message, or on a selected part of one.\n\n## For agents\n\nEvery thread is told about the current project's active docs. Agents get `design_doc_*` tools to list, read, create, edit, update and comment on docs, and the same operations as `zcc design-docs` on the command line. Edits are exact-match replacements with revision checks, so a concurrent edit by you is reported as a conflict instead of being overwritten. Type `@` in the composer to attach a doc to a prompt.\n\n## Ask agent\n\nEach doc has an Ask agent menu. It can review the doc, fill gaps, add diagrams, check the design against the code, address open comments, or run your own prompt. It starts a thread in the doc's project and opens the doc beside it.\n\n## Data\n\nDocs are stored in the plugin's local database on this machine. A doc belongs to one project or is global. Deleting a file keeps it in history. Deleting a doc removes it permanently.\n",
+      "icon": {
+        "lucide": "DraftingCompass"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/design-docs",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
       "id": "docs",
       "displayName": "Docs",
       "description": "Durable project knowledge: Docs rail, per-project Library, and the library-curator skill",
@@ -336,6 +360,30 @@
         "git": {
           "url": "https://github.com/salesforce/zana",
           "subdir": "plugins/github",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "google-analytics",
+      "displayName": "Google Analytics",
+      "description": "App activity and coarse page views in Google Analytics, with a disconnect switch.",
+      "overview": "App opens, visible activity, and coarse page views in your Google Analytics 4 property. Runs independently alongside PostHog so you can compare the two.\n\n## What you get\n\n- App-open events and a visible-app activity ping every minute.\n- Initial page views and navigation between fixed sections such as Agents, Inbox, Settings, Explorer, and Library.\n- A disconnect switch and a separate switch for presence-only measurement.\n\nThe plugin is installed and enabled by default but sends nothing until a GA4 Web stream's Measurement ID and Measurement Protocol API secret are configured in plugin Settings or supplied to the product server. Disable or uninstall it at any time; an uninstall is respected on future launches.\n\nEvents use a random installation id. They never include prompts, replies, titles, paths, actual URLs, or project/thread ids. Google receives the direct network connection. Visible activity indicates an open app, not typing or an exact count of people. Measurement Protocol-only reporting has limitations; verify live events in your own GA4 Realtime report.\n",
+      "icon": {
+        "lucide": "ChartNoAxesColumn"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/google-analytics",
           "ref": "HEAD"
         }
       }
@@ -624,6 +672,30 @@
         "git": {
           "url": "https://github.com/salesforce/zana",
           "subdir": "plugins/pr-monitor",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "prompt-library",
+      "displayName": "Prompt Library",
+      "description": "Star, search, and reuse structured prompts from thread, project, or all history.",
+      "overview": "Keep useful prompts close at hand. Search the current thread, a project, or all visible thread history, star prompts, and restore them into the composer.\n\nRestoring a prompt preserves its structured text and attachment references. Uploaded attachments reused in another project are copied into that project's storage before sending. Machine-local attachments must belong to the destination machine.\n\nPrompt Library is optional and is not installed automatically. Starred prompts are stored locally in the plugin's storage.\n",
+      "icon": {
+        "lucide": "BookMarked"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/prompt-library",
           "ref": "HEAD"
         }
       }

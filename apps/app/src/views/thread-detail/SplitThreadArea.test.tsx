@@ -19,7 +19,7 @@ vi.mock('../agents/AgentSessionPage.js', () => ({
   )
 }));
 vi.mock('../threads/NewThreadView.js', () => ({ NewThreadView: () => <div data-testid="new-thread" /> }));
-vi.mock('../threads/ThreadDetailView.js', () => ({ ThreadDetail: () => <div data-testid="thread-detail" /> }));
+vi.mock('../threads/ThreadDetailView.js', () => ({ ThreadDetail: ({threadId,timelineEnabled}: {threadId: string; timelineEnabled?: boolean}) => <div data-testid="thread-detail" data-thread={threadId} data-timeline-enabled={String(timelineEnabled)} /> }));
 vi.mock('./PluginPanelPaneView.js', () => ({ PluginPanelPaneView: () => <div data-testid="plugin-panel" /> }));
 vi.mock('../../plugins/plugin-slots.js', () => {
   const panels: unknown[] = [];
@@ -344,6 +344,26 @@ function renderPair(side: 'right' | 'bottom' = 'right') {
 
 describe('split shell interaction', () => {
   afterEach(() => { cleanup(); resetSplitWorkspace(); });
+
+  it('pauses hidden thread timelines on maximize and compact layouts, retaining visible siblings', () => {
+    const layout = splitPane(createSinglePaneLayout({ kind: 'thread', projectId: null, threadId: 'a' }), 'pane-1', 'right', { kind: 'thread', projectId: null, threadId: 'b' });
+    useSplitWorkspace.setState({ layout, maximizedPaneId: null });
+    const ui = <MemoryRouter initialEntries={['/threads/b']}><SplitThreadArea routeContent={{kind:'thread',projectId:null,threadId:'b'}} /></MemoryRouter>;
+    const view = render(ui);
+    const first = screen.getAllByTestId('thread-detail').find(element => element.dataset.thread === 'a')!;
+    const second = screen.getAllByTestId('thread-detail').find(element => element.dataset.thread === 'b')!;
+    expect(first.dataset.timelineEnabled).toBe('true');
+    expect(second.dataset.timelineEnabled).toBe('true');
+    act(() => useSplitWorkspace.getState().setMaximizedPaneId('pane-2'));
+    expect(first.dataset.timelineEnabled).toBe('false');
+    expect(second.dataset.timelineEnabled).toBe('true');
+    act(() => useSplitWorkspace.getState().setMaximizedPaneId(null));
+    expect(first.dataset.timelineEnabled).toBe('true');
+    viewport.compact = true;
+    view.rerender(<MemoryRouter initialEntries={['/threads/b']}><SplitThreadArea routeContent={{kind:'thread',projectId:null,threadId:'b'}} /></MemoryRouter>);
+    expect(first.dataset.timelineEnabled).toBe('false');
+    expect(second.dataset.timelineEnabled).toBe('true');
+  });
 
   it('renders the focused pane on compact screens and preserves the desktop tree', () => {
     viewport.compact = true;

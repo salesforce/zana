@@ -65,6 +65,34 @@ function createFakeWindow() {
 }
 
 describe("desktop browser broker snapshots", () => {
+  it('blocks downloads only while the owning window has active automation control', async () => {
+    const tab = nativeTab('thread-tab', THREAD_ID);
+    const setDownloadControlGuard = vi.fn<(guard: (windowId: number, tabId: string) => boolean) => void>();
+    const manager = {
+      listTabs: () => [tab], subscribeAutomationTabs: () => () => undefined,
+      profileSession: () => ({}) as Session, destroyAll: () => undefined, setDownloadControlGuard
+    };
+    const broker = createDesktopBrowserBroker({ manager: manager as unknown as DesktopBrowserViewManager, product: 'Chrome/1' });
+    const window = createFakeWindow();
+    broker.registerWindow(window as never);
+    broker.setHostId('host_local');
+    const guard = setDownloadControlGuard.mock.calls[0][0];
+    const target = broker.getTarget(window.webContents.id)!;
+    try {
+      expect(guard(999, tab.tabId)).toBe(false);
+      expect(guard(window.webContents.id, tab.tabId)).toBe(false);
+      await broker.execute({ type: 'desktop.browser.acquire_control', ...target, threadId: THREAD_ID,
+        tabIds: [tab.tabId], leaseId: 'download-lease', controllerLabel: 'Automation', expiresAt: Date.now() + 60_000 });
+      expect(guard(window.webContents.id, tab.tabId)).toBe(true);
+      expect(guard(window.webContents.id, 'different-tab')).toBe(false);
+      await broker.execute({ type: 'desktop.browser.release_control', ...target, threadId: THREAD_ID,
+        leaseId: 'download-lease' });
+      expect(guard(window.webContents.id, tab.tabId)).toBe(false);
+      broker.releaseWindow(window.webContents.id);
+      expect(guard(window.webContents.id, tab.tabId)).toBe(false);
+    } finally { broker.dispose(); }
+  });
+
   it("publishes snapshots only for real threads and keeps plugin-panel tabs local", () => {
     let tabs = [
       nativeTab("thread-tab", THREAD_ID),

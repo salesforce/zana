@@ -1,3 +1,5 @@
+import { promptEditorDocument } from './restore-prompt-editor.js';
+import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent } from 'react';
 import { useEditor } from '@tiptap/react';
 import type { Project } from '@zana-ai/zcc-domain/product';
@@ -98,6 +100,7 @@ export function useComposerPromptField({
   onError
 }: UseComposerPromptFieldArgs) {
   const draft = useComposerDraft();
+  const [restoredAttachments, setRestoredAttachments] = useState<PromptInput[]>([]);
   const [markdownInPrompt] = useBooleanPreference(
     MARKDOWN_IN_PROMPT_KEY,
     MARKDOWN_IN_PROMPT_DEFAULT
@@ -524,11 +527,19 @@ export function useComposerPromptField({
     editor?.commands.clearContent();
     for (const image of imagesRef.current) URL.revokeObjectURL(image.previewSrc);
     setImages([]);
+    setRestoredAttachments([]);
   }, [editor]);
 
   const setText = useCallback((next: string) => {
     editor?.commands.setContent(next);
   }, [editor]);
+
+  const replacePrompt = useCallback((input: readonly PromptInput[]) => {
+    const parts = input.map(part => promptInputSchema.parse(part));
+    clear();
+    editor?.commands.setContent(promptEditorDocument(parts));
+    setRestoredAttachments(parts.filter(part => part.type !== 'text'));
+  }, [clear, editor]);
 
   const focus = useCallback(() => {
     editor?.commands.focus();
@@ -575,6 +586,9 @@ export function useComposerPromptField({
       }
     },
     images,
+    restoredAttachments,
+    replacePrompt,
+    removeRestoredAttachment: (index: number) => setRestoredAttachments(rows => rows.filter((_,i) => i !== index)),
     removeImage,
     dropOver,
     dropHandlers,

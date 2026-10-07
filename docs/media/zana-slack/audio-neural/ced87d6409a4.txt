@@ -1,0 +1,1 @@
+When the turn ends, Zana posts the answer right back in your Slack thread: what changed, and how the tests did.

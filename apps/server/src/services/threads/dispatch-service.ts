@@ -18,7 +18,8 @@ export interface DispatchAdmissionOutcome {
 
 export async function admitDispatch(
   ctx: ProductHttpContext,
-  request: { threadId: string; projectId: string }
+  request: { threadId: string; projectId: string },
+  assertCurrent?: () => void
 ): Promise<DispatchAdmissionOutcome> {
   if (!ctx.plugins) return { decision: { action: 'proceed' }, generation: 1 };
   const current = getDispatchAdmissionGeneration(ctx.db, request.threadId);
@@ -31,6 +32,7 @@ export async function admitDispatch(
         timer = setTimeout(() => resolve({ action: 'reject', message: 'Plugin dispatch admission timed out' }), DISPATCH_ADMISSION_TIMEOUT_MS);
       })
     ]);
+    assertCurrent?.();
     if (decision.action === 'wait') {
       const recorded = recordDispatchAdmissionWait(ctx.db, {
         threadId: request.threadId,
@@ -47,6 +49,8 @@ export async function admitDispatch(
     }
     return { decision, generation };
   } catch {
+    // Cancellation must propagate without recording/clearing a later send's admission.
+    assertCurrent?.();
     // A failed admission cannot prove that all plugin vetoes were reviewed.
     clearDispatchAdmissionGeneration(ctx.db, request.threadId);
     return { decision: { action: 'reject', message: 'Plugin dispatch admission unavailable' }, generation };

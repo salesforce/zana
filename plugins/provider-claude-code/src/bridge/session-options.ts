@@ -356,6 +356,7 @@ export function buildSessionOptions(
     model,
     env,
     permissionMode: params.permissionMode,
+    allowBypassPermissions: params.permissionScope === "full",
     ...(params.reasoningLevel
       ? { effort: toSdkEffort(params.reasoningLevel) }
       : {}),

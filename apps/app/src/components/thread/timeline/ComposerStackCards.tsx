@@ -8,7 +8,6 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../../lib/product-client.js';
-import { hasDesktopBridge } from '../../../lib/app-surface.js';
 import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
 import { loadWorkspaceMeta } from '../secondary-panel/threadSecondaryPanelLogic.js';
 import { nextTurnItemText, queuedMessagePreview } from './queued-message-text.js';
@@ -23,7 +22,6 @@ interface NextTurnItemView {
 }
 
 export function QueuedMessagesCard({ threadId }: { threadId: string }) {
-  const canSendNow = hasDesktopBridge();
   const [items, setItems] = useState<NextTurnItemView[]>([]);
   const [paused, setPaused] = useState(false);
   const [flushing, setFlushing] = useState(false);
@@ -85,7 +83,7 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
             className="thread-queued-flush"
             data-testid="thread-queued-send-now"
             aria-busy={flushing}
-            disabled={sendingId !== null || deletingId !== null}
+            disabled={flushing || sendingId !== null || deletingId !== null}
             onClick={() => {
               if (flushing || sendingId || deletingId) return;
               setFlushing(true);
@@ -127,10 +125,8 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
               className="thread-queued-flush"
               data-testid="thread-queued-item-send-now"
               aria-busy={sendingId === item.id}
-               disabled={!canSendNow || flushing || sendingId !== null || deletingId !== null || item.status === 'dispatching'}
-               aria-describedby={!canSendNow ? 'thread-queued-send-now-unavailable' : undefined}
+              disabled={flushing || sendingId !== null || deletingId !== null || item.status === 'dispatching'}
                onClick={() => {
-                 if (!canSendNow || flushing || sendingId || deletingId) return;
                 setSendingId(item.id);
                 setFlushError(null);
                 void product.threads.sendNextTurn(threadId, item.id)
@@ -175,11 +171,6 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
            </li>
          ))}
        </ul>
-       {!canSendNow ? (
-         <p id="thread-queued-send-now-unavailable" className="thread-banner-meta">
-           Send now requires the desktop app; browser approval is unavailable.
-         </p>
-       ) : null}
      </section>
   );
 }

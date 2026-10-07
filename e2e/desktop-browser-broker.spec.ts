@@ -297,3 +297,52 @@ test('equivalent previews reuse their page without crossing browser profiles', a
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
+
+
+test('native downloads require a visible personal tab without a control lease', async ({ app }) => {
+  const server = createServer((request, response) => {
+    if (request.url === '/download') {
+      response.writeHead(200, { 'content-type': 'text/plain', 'content-disposition': 'attachment; filename="fixture.txt"' });
+      response.end('native download fixture');
+    } else { response.writeHead(200, { 'content-type': 'text/html' }); response.end('<p>Download fixture</p>'); }
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+  const execute = (command: Record<string, unknown>) => app.electron.evaluate(async (_electron, command) => {
+    const broker = (globalThis as any).__zccDesktopBrowserBroker;
+    const [instance] = broker.listInstances();
+    return broker.execute({ ...instance, threadId: 'thr_abcdefghij', ...command });
+  }, command);
+  const download = (pageUrl: string) => app.electron.evaluate(async ({ webContents }, pageUrl) => {
+    const contents = webContents.getAllWebContents().find(row => row.getURL() === pageUrl);
+    if (!contents) throw Error('Download tab missing');
+    return new Promise(resolve => {
+      const timer = setTimeout(() => rejectDownload(), 10000);
+      const rejectDownload = () => { contents.session.removeListener('will-download', observe); resolve({ timeout: true }); };
+      const observe = (event: Electron.Event, item: Electron.DownloadItem) => {
+        clearTimeout(timer); contents.session.removeListener('will-download', observe);
+        if (event.defaultPrevented) { resolve({ blocked: true }); return; }
+        const options = item.getSaveDialogOptions(); item.cancel();
+        resolve({ blocked: false, title: options.title });
+      };
+      contents.session.on('will-download', observe);
+      contents.downloadURL(new URL('/download', pageUrl).href);
+    });
+  }, pageUrl);
+  try {
+    await execute({ type: 'desktop.browser.create_tab', tabId: 'download-personal', profile: { kind: 'personal' }, url, presentation: 'hidden' });
+    await expect.poll(() => app.electron.evaluate(({ webContents }, url) => webContents.getAllWebContents().some(row => row.getURL() === url && !row.isLoading()), url)).toBe(true);
+    expect(await download(url)).toEqual({ blocked: true });
+    await app.window.evaluate(() => { history.pushState({}, '', '/threads/thr_abcdefghij'); dispatchEvent(new PopStateEvent('popstate')); });
+    await expect(app.window.getByTestId('thread-detail')).toBeVisible();
+    await execute({ type: 'desktop.browser.reveal_tab', tabId: 'download-personal' });
+    await expect(app.window.getByTestId('thread-browser-tab')).toBeVisible();
+    await expect.poll(() => app.electron.evaluate(({ BrowserWindow }, url) => BrowserWindow.getAllWindows().some(win => win.contentView.children.some(view => 'webContents' in view && (view as Electron.WebContentsView).webContents.getURL() === url && view.getVisible())), url)).toBe(true);
+    expect(await download(url)).toEqual({ blocked: false, title: 'Save downloaded file' });
+    await execute({ type: 'desktop.browser.acquire_control', leaseId: 'download-lease', tabIds: ['download-personal'], controllerLabel: 'Download regression', expiresAt: Date.now() + 60000 });
+    expect(await download(url)).toEqual({ blocked: true });
+    await execute({ type: 'desktop.browser.create_tab', tabId: 'download-automation', profile: { kind: 'automation', id: 'download-run' }, url: url + '?automation', presentation: 'hidden' });
+    await expect.poll(() => app.electron.evaluate(({ webContents }, url) => webContents.getAllWebContents().some(row => row.getURL() === url && !row.isLoading()), url + '?automation')).toBe(true);
+    expect(await download(url + '?automation')).toEqual({ blocked: true });
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});

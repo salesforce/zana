@@ -1,0 +1,24 @@
+{
+  "id": "design-docs",
+  "displayName": "Design Docs",
+  "description": "Multi-file design documents (specs, RFCs, ADRs) that agents read, edit, review and enrich.",
+  "overview": "Write design documents with your agents: specs, RFCs, ADRs, product briefs and API designs. Each doc is a small project of files rendered as formatted pages. Agents in your projects know your docs, read them for context, edit them, and review them. Every change lands live and is versioned.\n\n## What you get\n\n- A Design Docs workbench. It has a doc list with search and status filters, a file tree for each doc, and a reading view with preview, edit and side-by-side modes.\n- Multi-file docs. Markdown with tables, task lists, math and Mermaid. Standalone `.mmd` diagrams. Self-contained HTML mockups, with desktop, tablet and phone widths. SVG, images and highlighted code.\n- Templates for technical designs, product specs, ADRs and API designs, or a blank doc.\n- Review comments. Select any passage to comment on it or ask an agent about it. Comments are anchored to the quoted text and highlighted in the page.\n- History with diffs. Every save, by you or an agent, is a revision. Compare it with the previous one and restore it in one click.\n- A Design tab in each project, showing that project's docs and the global ones.\n- Doc cards in chat. A card opens the doc beside the conversation, so you can watch an agent's edits arrive.\n- Save as design doc. Use it on any chat message, or on a selected part of one.\n\n## For agents\n\nEvery thread is told about the current project's active docs. Agents get `design_doc_*` tools to list, read, create, edit, update and comment on docs, and the same operations as `zcc design-docs` on the command line. Edits are exact-match replacements with revision checks, so a concurrent edit by you is reported as a conflict instead of being overwritten. Type `@` in the composer to attach a doc to a prompt.\n\n## Ask agent\n\nEach doc has an Ask agent menu. It can review the doc, fill gaps, add diagrams, check the design against the code, address open comments, or run your own prompt. It starts a thread in the doc's project and opens the doc beside it.\n\n## Data\n\nDocs are stored in the plugin's local database on this machine. A doc belongs to one project or is global. Deleting a file keeps it in history. Deleting a doc removes it permanently.\n",
+  "icon": {
+    "lucide": "DraftingCompass"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/design-docs",
+      "ref": "HEAD"
+    }
+  }
+}

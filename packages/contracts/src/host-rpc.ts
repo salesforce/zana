@@ -25,7 +25,8 @@ import {
   FILE_LIST_QUERY_MAX_LENGTH,
   pendingInteractionResolutionSchema,
   promptInputSchema,
-  reasoningLevelSchema
+  reasoningLevelSchema,
+  serviceTierSchema
 } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   providerCliInstallEventSchema,
@@ -362,7 +363,7 @@ export const ThreadStartCommandSchema = z.object({
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
-  serviceTier: z.enum(['default', 'fast']).optional(),
+  serviceTier: serviceTierSchema.optional(),
   acpMode: z.string().min(1).max(200).optional(),
   claudeCodePermissionMode: z.literal('plan').optional(),
   providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
@@ -400,7 +401,7 @@ export const ThreadPlanCancelCommandSchema = z.object({
 }).strict();
 
 export const ThreadResumeFieldsSchema = z.object({
-  serviceTier: z.enum(['default', 'fast']).optional(),
+  serviceTier: serviceTierSchema.optional(),
   projectId: z.string().min(1),
   providerId: z.string().min(1),
   providerThreadId: z.string().min(1),
@@ -419,7 +420,7 @@ export const ThreadResumeFieldsSchema = z.object({
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
 export const TurnSubmitCommandSchema = z.object({
-  serviceTier: z.enum(['default', 'fast']).optional(),
+  serviceTier: serviceTierSchema.optional(),
   type: z.literal('turn.submit'),
   threadId: UuidSchema,
   environmentId: UuidSchema,

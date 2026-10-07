@@ -12,7 +12,7 @@ it('shares Settings progress with palette recovery, reports failures, and suppor
   let release!: (value: { failedCatalogs: number; failedProviders: string[] }) => void;
   vi.mocked(reloadThreadModelCatalog).mockReturnValueOnce(new Promise((resolve) => { release = resolve; }));
   render(<ModelRefreshControl />);
-  expect(screen.getByRole('status').textContent).toContain('without restarting');
+  expect(screen.getByRole('status').textContent).toContain('Refresh model choices for Modern and CLI Agent sessions');
   fireEvent.click(screen.getByRole('button', { name: 'Recalculate models' }));
   expect((screen.getByRole('button', { name: 'Recalculating models…' }) as HTMLButtonElement).disabled).toBe(true);
   await act(async () => release({ failedCatalogs: 0, failedProviders: ['Pi'] }));

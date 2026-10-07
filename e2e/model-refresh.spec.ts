@@ -84,7 +84,7 @@ test('Automatic retry, Settings and command palette recover project model picker
     const refresh = win.getByRole('button', { name: 'Recalculate models', exact: true });
     await expect(refresh).toBeVisible();
     // The automatic Settings check must finish before testing an explicit retry.
-    await expect(win.getByRole('button', { name: 'Check, Install or Fix', exact: true })).toBeEnabled({ timeout: 30_000 });
+    await expect(win.getByRole('button', { name: 'Check status', exact: true })).toBeEnabled({ timeout: 30_000 });
     fail = true;
     await refresh.click();
     await expect(win.getByRole('status').filter({ hasText: 'Some model lists could not be refreshed.' })).toBeVisible();

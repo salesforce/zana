@@ -371,7 +371,7 @@ export function createHostHub(
           }
           try {
             syncDesktopBrowserTabs(
-              { db, hub: committedHub },
+              { db, hub: committedHub, asyncHub: hub, hostHub: { callHostOnlineRpc } as HostHub },
               {
                 hostId: session.hostId,
                 instanceId: parsed.data.instanceId,

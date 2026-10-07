@@ -7,7 +7,7 @@ import {
   mergeOptimisticTimelineRows,
   mergePendingStopRow
 } from './optimistic-timeline-row.js';
-import { findDeepestTimelineSearchHit, timelineContainsRowId } from './thread-search.js';
+import { findDeepestTimelineSearchHit, findTimelineMessageAtSequence, timelineContainsRowId } from './thread-search.js';
 import { retainTerminalExpansionIds, windowTimelineRows } from './timeline-window.js';
 import type { ThreadTimelineViewRow } from '@zana-ai/zcc-thread-view';
 
@@ -99,4 +99,13 @@ describe('timeline window', () => {
     expect(windowTimelineRows(rows, 3, { keepId: 'r0' }).visible[0]?.id).toBe('r0');
     expect(windowTimelineRows(rows, 3, { keepId: 'missing' }).hiddenCount).toBe(2);
   });
+});
+
+
+it('finds message links within inclusive sequence ranges and expands nested ancestors', () => {
+  const child = { id: 'child', kind: 'conversation', sourceSeqStart: 10, sourceSeqEnd: 12 };
+  const rows = [{ id: 'turn', kind: 'turn', children: [{ id: 'group', kind: 'bundle-summary', children: [child] }] }, { id: 'other', kind: 'conversation', sourceSeqStart: 20, sourceSeqEnd: 20 }] as ThreadTimelineViewRow[];
+  for (const sequence of [10, 11, 12]) expect(findTimelineMessageAtSequence(rows, sequence)).toEqual({ id: 'child', ancestorIds: ['turn', 'group'] });
+  expect(findTimelineMessageAtSequence(rows, 20)).toEqual({ id: 'other', ancestorIds: [] });
+  for (const sequence of [0, 9, 13, 21]) expect(findTimelineMessageAtSequence(rows, sequence)).toBeNull();
 });

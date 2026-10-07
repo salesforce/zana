@@ -33,7 +33,7 @@ export default function plugin(zcc: ZccPluginApi) {
     icon: "./icons/codex.svg",
     capabilities: {
       supportsServiceTier: true,
-      supportsNativeUserQuestion: false,
+      supportsNativeUserQuestion: true,
       fork: "checkpoint",
       supportsManualCompaction: true,
       supportsThreadArchive: true,

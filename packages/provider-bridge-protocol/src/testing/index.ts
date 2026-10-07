@@ -12,3 +12,5 @@ export * from "./parity.js";
 export * from "./first-party-replay.js";
 export * from "./recording.js";
 export * from "./rerecord.js";
+
+export { permissionChangeCases, runPermissionChangeCase } from "../contract-tests/permission-changes.js";

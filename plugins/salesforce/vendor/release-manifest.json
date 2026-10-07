@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "package": "sf-agentic-tools",
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "sourceCommit": "06188958bb84c1d8bee3aba084a866c3d3921eb5",
+  "node": ">=22.19",
+  "npmIntegrity": "sha512-/75pvnpJlZHzDTvxdDlcfEirMQ/cs6KzkUCaWO6gWnBY+P7SEgFPhqNgYWbhFS6a72DrfXHZLWJcEUf9jK54SQ==",
+  "assets": [
+    {
+      "name": "sf-agentic-tools-0.1.0.tgz",
+      "size": 1637972,
+      "sha256": "164ccae8e25184ee50d61e5cd06f3d3f16f6c7baada0c07c388d141179b7e851"
+    },
+    {
+      "name": "sf-agentic-tools-0.1.0-catalog.json",
+      "size": 181643,
+      "sha256": "2d5261fa463ee547e4550bb1190beaab530583f2bf49b8c1649f89a25c198df5"
+    }
+  ]
+}

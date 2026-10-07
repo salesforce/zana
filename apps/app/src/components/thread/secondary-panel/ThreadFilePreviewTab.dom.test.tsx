@@ -194,3 +194,29 @@ describe('file opener host preview lifetime', () => {
     expect(view.queryByRole('heading', { name: 'Loaded' })).toBeNull();
   });
 });
+
+it('retains the same document during refresh and hides it immediately for a new scope', async () => {
+  mocks.hostFileContent.mockResolvedValueOnce({ content: '# Original' });
+  const view = render(<ThreadFilePreviewTab path="report.md" threadId="t1" openerKey="host" />);
+  await view.findByRole('heading', { name: 'Original' });
+  let resolveRefresh!: (value: { content: string }) => void;
+  mocks.hostFileContent.mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve; }));
+  view.rerender(<ThreadFilePreviewTab path="report.md" threadId="t1" openerKey="host" previewRevision={1} />);
+  expect(view.getByRole('heading', { name: 'Original' })).toBeTruthy();
+  mocks.hostFileContent.mockResolvedValueOnce({ content: '# Other' });
+  view.rerender(<ThreadFilePreviewTab path="report.md" threadId="t2" openerKey="host" />);
+  expect(view.queryByRole('heading', { name: 'Original' })).toBeNull();
+  await view.findByRole('heading', { name: 'Other' });
+  await act(async () => { resolveRefresh({ content: '# Stale' }); });
+  expect(view.queryByRole('heading', { name: 'Stale' })).toBeNull();
+});
+it('keeps the existing document and shows a failed-refresh status', async () => {
+  mocks.hostFileContent.mockResolvedValueOnce({ content: '# Original' });
+  const view = render(<ThreadFilePreviewTab path="report.md" threadId="t1" openerKey="host" />);
+  await view.findByRole('heading', { name: 'Original' });
+  mocks.hostFileContent.mockRejectedValueOnce(new Error('offline'));
+  mocks.readFile.mockResolvedValue({ ok: false });
+  view.rerender(<ThreadFilePreviewTab path="report.md" threadId="t1" openerKey="host" previewRevision={1} />);
+  expect((await view.findByRole('status')).textContent).toContain('offline');
+  expect(view.getByRole('heading', { name: 'Original' })).toBeTruthy();
+});

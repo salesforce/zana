@@ -994,6 +994,9 @@ describe('inbox MCP server (end-to-end)', () => {
       projects: { get: (id) => (id === 'proj-1' ? makeProject('proj-1', 'P1') : null) },
       scheduleAgentApi: {
         list: () => [local, other],
+        get: () => ({ ...local, prompt: 'Live prompt', extraArgs: ['--effort', 'high'] }),
+        update: async (_id, patch) => ({ ...local, ...patch }),
+        reload: async () => ({ reloaded: false, reason: 'run X is live', sessionIds: ['X'], schedule: local }),
         runNow,
         setEnabled
       },
@@ -1051,6 +1054,18 @@ describe('inbox MCP server (end-to-end)', () => {
     expect((enabled as { isError?: boolean }).isError).toBeFalsy();
     expect(setEnabled).toHaveBeenCalledWith('qa-hourly', false);
 
+    for (const name of ['schedule_get', 'schedule_reload', 'schedule_update']) {
+      expect(tools.tools.find(tool => tool.name === name)).toBeTruthy();
+      const result = await client.callTool({ name, arguments: { id: local.id, ...(name === 'schedule_update' ? { patch: { prompt: 'Patched prompt', extraArgs: ['--effort', 'medium'] } } : {}) } });
+      expect(result.isError).toBeFalsy();
+      const body = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text);
+      if (name === 'schedule_get') expect(body.schedule).toMatchObject({ prompt: 'Live prompt', extraArgs: ['--effort', 'high'], updatedAt: local.updatedAt });
+      if (name === 'schedule_update') expect(body.schedule.prompt).toBe('Patched prompt');
+      if (name === 'schedule_reload') expect(body).toMatchObject({ reloaded: false, reason: 'run X is live', sessionIds: ['X'] });
+      expect((await client.callTool({ name, arguments: { id: other.id, ...(name === 'schedule_update' ? { patch: { prompt: 'Forged' } } : {}) } })).isError).toBe(true);
+    }
+    expect((await client.callTool({ name: 'schedule_update', arguments: { id: local.id, patch: { enabled: true } } })).isError).toBe(true);
+
     // Same tools on the project-scoped route (no session id).
     const projectOnly = await connectClient(handle.url, 'proj-1');
     clients.push(projectOnly);
@@ -1058,6 +1073,7 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(projectTools.tools.find((t) => t.name === 'schedule_list')).toBeTruthy();
     expect(projectTools.tools.find((t) => t.name === 'schedule_run_now')).toBeTruthy();
     expect(projectTools.tools.find((t) => t.name === 'schedule_set_enabled')).toBeTruthy();
+    for (const name of ['schedule_get', 'schedule_update', 'schedule_reload']) expect(projectTools.tools.find(t => t.name === name)).toBeTruthy();
     expect(projectTools.tools.find((t) => t.name === 'schedule_report')).toBeFalsy();
   });
 });

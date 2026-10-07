@@ -361,6 +361,11 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await terminalLaunchAuthority.execute(message.command) });
     }
     if (message.operation === 'product-event') {
+      if (message.channel === 'config:onChanged' || message.channel === 'product:reset') {
+        // Read the owner's config; the forwarded renderer snapshot is advisory.
+        await productContext?.plugins?.refreshSafeMode();
+        if (productContext) productHub?.emit('config:changed', productContext.config.getConfig());
+      }
       if (productHub) forwardRuntimeProductEvent(productHub, message.channel, message.args);
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: true });
     }

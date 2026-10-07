@@ -1,6 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
+import { useState } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -51,22 +52,21 @@ afterEach(() => {
 });
 
 describe('ThreadProviderCatalog', () => {
-  it('keeps the display name and plugin id in separate cells', () => {
-    const html = renderToStaticMarkup(<ThreadProviderCatalog providers={catalog} />);
-
-    expect(html).not.toContain('Claude Codeprovider-claude-code');
-    expect(html).toContain('class="opener-row-name">Claude Code<');
-    expect(html).toContain('class="thread-provider-id" title="provider-claude-code">provider-claude-code<');
-    expect(html).toContain('dedicated Agent SDK Modern provider.');
-    expect(html).toContain('Agent Client Protocol');
-    expect(html).toContain('dedicated app-server Modern provider.');
-    expect(html).toContain('Pi coding-agent CLI');
-    expect(html).toContain('OpenCode via the Agent Client Protocol');
-    expect(html).toContain('Agentforce Code via the Agent Client Protocol');
-    expect(html).toContain('Not loaded');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).not.toContain('>Load<');
-    expect(html).not.toContain('>Reload<');
+  it('leads with readable names and keeps plugin details inside the disclosure', () => {
+    render(<ThreadProviderCatalog providers={catalog} />);
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.queryByText('provider-claude-code')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Load', exact: true })).toBeNull();
+    expect(screen.getAllByText('Not loaded')).toHaveLength(catalog.length);
+    const row = screen.getByRole('button', { name: 'Models for Claude Code' });
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    // The name itself is part of the full-row button.
+    fireEvent.click(screen.getByText('Claude Code'));
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('provider-claude-code')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Load', exact: true })).toBeTruthy();
+    fireEvent.click(row);
+    expect(screen.queryByText('provider-claude-code')).toBeNull();
   });
 
   it('inserts OpenCode when a stale catalog omits it', () => {
@@ -102,8 +102,8 @@ describe('ThreadProviderCatalog', () => {
         providers={[{ id: 'other', displayName: 'Other', pluginId: 'provider-other' }]}
       />
     );
-    expect(html).toContain('Registered Modern provider plugin.');
-    expect(html).toContain('provider-other');
+    expect(html).toContain('A provider for Modern conversations.');
+    expect(html).not.toContain('provider-other');
     expect(html).toContain('Other');
   });
 
@@ -211,8 +211,9 @@ describe('ThreadProviderCatalog', () => {
     expect((screen.getByRole('button', { name: 'Load' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('caps a long model list after the row is opened', async () => {
+  it('pages a long model list and searches by name or ID without losing later models', async () => {
     const models = Array.from({ length: 14 }, (_, index) => modelRow(`model-${index}`, `Model ${index}`));
+    models[0].isDefault = true;
     const fetcher: ThreadExecutionOptionsFetcher = async (query) => ({
       providers: [providerRow('pi', 'Pi')],
       models: query?.providerId === 'pi' ? models : [],
@@ -231,7 +232,54 @@ describe('ThreadProviderCatalog', () => {
     expect(screen.getByText('Model 0')).toBeTruthy();
     expect(screen.getByText('Model 11')).toBeTruthy();
     expect(screen.queryByText('Model 12')).toBeNull();
-    expect(screen.getByText('and 2 more')).toBeTruthy();
+    expect(screen.getByText('Provider default')).toBeTruthy();
+    expect(screen.getByText('1–12 of 14 models')).toBeTruthy();
+    const previous = screen.getByRole('button', { name: 'Previous Pi models' }) as HTMLButtonElement;
+    const next = screen.getByRole('button', { name: 'Next Pi models' }) as HTMLButtonElement;
+    expect(previous.disabled).toBe(true);
+    fireEvent.click(next);
+    expect(screen.getByText('Model 12')).toBeTruthy();
+    expect(screen.getByText('13–14 of 14 models')).toBeTruthy();
+    expect(next.disabled).toBe(true);
+    expect(screen.queryByText('Model 0')).toBeNull();
+    fireEvent.click(previous);
+    expect(screen.getByText('Model 0')).toBeTruthy();
+    fireEvent.click(next);
+    const search = screen.getByRole('searchbox', { name: 'Search Pi models' });
+    fireEvent.change(search, { target: { value: ' MODEL-3 ' } });
+    expect(screen.getByText('Model 3')).toBeTruthy();
+    expect(screen.getByText('1–1 of 1 model')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Next Pi models' })).toBeNull();
+    fireEvent.change(search, { target: { value: 'Model 1' } });
+    expect(screen.getByText('1–5 of 5 models')).toBeTruthy();
+    fireEvent.change(search, { target: { value: 'absent' } });
+    expect(screen.getByRole('status').textContent).toBe('No models match your search.');
+    expect(screen.queryByText(/of \d+ model/)).toBeNull();
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getByText('1–12 of 14 models')).toBeTruthy();
+  });
+
+  it('clamps the current page when a refreshed catalogue gets smaller', async () => {
+    let models = Array.from({ length: 14 }, (_, index) => modelRow(`model-${index}`, `Model ${index}`));
+    resetThreadModelCatalog(async () => ({
+      providers: [providerRow('pi', 'Pi')], models, selectedOnlyModels: [],
+      permissionCeiling: 'full', modelLoadError: null
+    }));
+    await prefetchThreadModelCatalog();
+    render(<ThreadProviderCatalog providers={[catalog[2]]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Models for Pi' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next Pi models' }));
+    models = [modelRow('new-model', 'New model')];
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    await screen.findByText('New model');
+    expect(screen.getByText('1–1 of 1 model')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Previous Pi models' })).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Pi models' }), { target: { value: 'New model' } });
+    models = [];
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    await screen.findByRole('button', { name: 'Load' });
+    expect(screen.getByRole('status').textContent).toBe('Sign in with pi');
+    expect(screen.queryByText('No models match your search.')).toBeNull();
   });
 });
 
@@ -246,11 +294,32 @@ describe('HarnessSettingsTabs', () => {
     expect(html).toContain('is-active');
   });
 
-  it('marks CLI Agent selected when that pane is active', () => {
-    const html = renderToStaticMarkup(
-      <HarnessSettingsTabs pane="legacy" onPaneChange={() => undefined} />
-    );
-    expect(html).toMatch(/aria-selected="true"[^>]*>\s*CLI Agent/);
+  it('connects the selected tab with its panel and supports clicks and keyboard navigation', () => {
+    function Tabs() {
+      const [pane, setPane] = useState<'thread' | 'legacy'>('thread');
+      return <HarnessSettingsTabs pane={pane} onPaneChange={setPane} />;
+    }
+    render(<Tabs />);
+    const modern = screen.getByRole('tab', { name: 'Modern' });
+    const cli = screen.getByRole('tab', { name: 'CLI Agent' });
+    expect(modern.getAttribute('aria-controls')).toBe('settings-anchor-harness-thread');
+    expect(cli.getAttribute('aria-controls')).toBe('settings-anchor-harness-legacy');
+    expect(modern.tabIndex).toBe(0);
+    expect(cli.tabIndex).toBe(-1);
+    fireEvent.click(cli);
+    expect(cli.getAttribute('aria-selected')).toBe('true');
+    cli.focus();
+    fireEvent.keyDown(cli, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(modern);
+    expect(modern.getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(modern, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(cli);
+    fireEvent.keyDown(cli, { key: 'Home' });
+    expect(document.activeElement).toBe(modern);
+    fireEvent.keyDown(modern, { key: 'End' });
+    expect(document.activeElement).toBe(cli);
+    fireEvent.keyDown(cli, { key: 'Tab' });
+    expect(cli.getAttribute('aria-selected')).toBe('true');
   });
 });
 

@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, ChevronRight, Search, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, RotateCw, Search, X } from 'lucide-react';
 import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
 import { useDialogFocusTrap } from '../../../hooks/useDialogFocusTrap.js';
 import { placePopoverMenu, useExclusivePopover } from '../../ui/PopoverPicklist.js';
@@ -54,6 +54,7 @@ export interface ModelReasoningPickerProps {
   modelIsLoading?: boolean;
   modelLoadError?: string | null;
   modelLoadErrorDetail?: string | null;
+  onReloadModels?: () => Promise<void> | void;
   /** Hide the model list (OpenCode native role pins its own model). */
   modelLockedLabel?: string;
   onModelChange: (value: string) => void;
@@ -70,6 +71,7 @@ export function ModelReasoningPicker({
   modelIsLoading = false,
   modelLoadError = null,
   modelLoadErrorDetail = null,
+  onReloadModels,
   modelLockedLabel,
   onModelChange,
   disabled
@@ -396,7 +398,11 @@ export function ModelReasoningPicker({
             </div>
           ) : null}
           <div ref={sectionRef} className="model-reasoning-picker-section">
-            <div className="model-reasoning-picker-section-label">Model</div>
+            <ModelPickerHeader
+              key={selectedProviderId}
+              onReload={modelLockedLabel ? undefined : onReloadModels}
+              loading={modelIsLoading}
+            />
             {modelLoadError && !hasNoModels && !modelLockedLabel ? (
               <div role="status" className="model-reasoning-picker-hint">
                 Showing previously loaded models. {emptyModelsHint(selectedProviderId, modelLoadError, modelLoadErrorDetail)}
@@ -479,6 +485,48 @@ export function ModelReasoningPicker({
       )}
     </>
   );
+}
+
+function ModelPickerHeader({ onReload, loading }: {
+  onReload?: () => Promise<void> | void;
+  loading: boolean;
+}) {
+  const [reloading, setReloading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const pending = useRef(false);
+  const reload = async () => {
+    if (!onReload || pending.current || loading) return;
+    pending.current = true;
+    setReloading(true);
+    setFailed(false);
+    try {
+      await onReload();
+    } catch {
+      setFailed(true);
+    } finally {
+      pending.current = false;
+      setReloading(false);
+    }
+  };
+  return <>
+    <div className="model-reasoning-picker-section-label model-reasoning-picker-model-header">
+      <span>Model</span>
+      {onReload ? <button
+        type="button"
+        className={`model-reasoning-picker-reload${reloading ? ' is-reloading' : ''}`}
+        title={reloading ? 'Reloading models…' : 'Reload models'}
+        aria-label={reloading ? 'Reloading models' : 'Reload models'}
+        aria-busy={reloading}
+        disabled={loading || reloading}
+        onClick={() => { void reload(); }}
+      >
+        <RotateCw size={13} aria-hidden="true" />
+      </button> : null}
+    </div>
+    {failed ? <div role="status" className="model-reasoning-picker-hint">
+      Could not reload models. Try again.
+    </div> : null}
+  </>;
 }
 
 function ModelPickerLoadingRows() {

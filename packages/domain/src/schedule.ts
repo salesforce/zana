@@ -9,5 +9,6 @@ export type {
   ScheduleGroupInput,
   ScheduleTemplate,
   QuickPrompt,
-  ScheduleUpdateInput
+  ScheduleUpdateInput,
+  ScheduleReloadResult
 } from './product.js';

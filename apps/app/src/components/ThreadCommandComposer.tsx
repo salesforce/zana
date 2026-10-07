@@ -52,6 +52,7 @@ import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOpti
 import { preferredThreadProviderId } from './legacy-agent-home.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
+import { appendVoiceDraft, consumeVoiceDraft, subscribeVoiceDrafts, voiceDraft } from './thread/voice/voice-drafts.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { resolveThreadSubmitMode } from './thread/thread-submit-mode.js';
@@ -104,6 +105,7 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   onRunTerminal?: (command: string | null) => Promise<void>;
   /** Sticky requested mode from `thread_execution_state` (plan/goal/agent or native ACP id). */
   executionModeRequested?: string | null;
+  serviceTier?: string | null;
   planAction?: { id: number; threadId: string; kind: 'revise' | 'implement'; revision: number } | null;
   onPlanActionPending?: (pending: boolean) => void;
   onPlanActionHandled?: () => void;
@@ -129,6 +131,7 @@ export function ThreadCommandComposer({
   onCreated,
   onRunTerminal,
   executionModeRequested = null,
+  serviceTier: initialServiceTier,
   planAction,
   onPlanActionPending,
   onPlanActionHandled
@@ -141,6 +144,9 @@ export function ThreadCommandComposer({
   const lastProjectId = useData((s) => s.lastProjectId);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const upsertThread = useThreads((s) => s.upsert);
+  const [chosenServiceTier, setChosenServiceTier] = useState<string | undefined>(undefined);
+  const serviceTier = chosenServiceTier ?? initialServiceTier ?? undefined;
+  useEffect(() => setChosenServiceTier(undefined), [threadId, lockedProviderId]);
   const [internalProjectId, setInternalProjectId] = useState(
     pinnedProject?.id ?? composerProjectId ?? ''
   );
@@ -176,6 +182,11 @@ export function ThreadCommandComposer({
     projectId: currentThread?.projectId ?? selectedProject?.id,
     hostPending: !catalogHostId && hosts.length === 0
   });
+  useEffect(() => {
+    if (!options.rosterReady) return;
+    const tiers = options.serviceTierOptions;
+    if (tiers && serviceTier && serviceTier !== 'default' && !tiers.some(tier => tier.id === serviceTier)) setChosenServiceTier('default');
+  }, [options.rosterReady, options.serviceTierOptions, serviceTier]);
   const { permissionMode, setPermissionMode } = useThreadPermissionMode({
     threadId,
     initialPermissionMode,
@@ -444,7 +455,20 @@ export function ThreadCommandComposer({
     });
   }, [threadId]);
 
-  const voice = useVoiceInput({ onTranscript: field.insertText });
+  const voiceOwner = JSON.stringify([threadId ?? null, projectId, hostId ?? null]);
+  const receiveTranscript = useCallback((text: string) => appendVoiceDraft(voiceOwner, text), [voiceOwner]);
+  const voice = useVoiceInput({ onTranscript: receiveTranscript, ownerKey: voiceOwner });
+  useEffect(() => {
+    const deliver = () => {
+      if (!field.editor || field.editor.isDestroyed) return;
+      const text = voiceDraft(voiceOwner);
+      if (!text) return;
+      field.insertText(text);
+      consumeVoiceDraft(voiceOwner, text);
+    };
+    deliver();
+    return subscribeVoiceDrafts(deliver);
+  }, [voiceOwner, field.editor, field.insertText]);
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   const runPeerDaemon = useCallback(async (kind: 'install' | 'fix', targetHostId?: string) => {
@@ -514,6 +538,48 @@ export function ThreadCommandComposer({
     void runPeerDaemon('fix', hostAction.hostId);
   }, [hostAction, hostBusy, hosts, runPeerDaemon]);
 
+  const currentVoiceOwner = useRef(voiceOwner);
+  currentVoiceOwner.current = voiceOwner;
+  const sendRecording = () => {
+    const snapshot = field.serialize();
+    const images = [...field.images];
+    const attachments = [...field.restoredAttachments];
+    const selected = pinnedProject ?? projects.find(row => row.id === projectId);
+    if (busy || sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked) return;
+    if (!threadId && (!selected || !resolvedProviderId || !options.rosterReady || !isOfferedModernProvider(options.registeredProviderIds, resolvedProviderId))) return;
+    voice.stop(async transcript => {
+      const applied = applyComposerWorkMode({ ...snapshot, text: [snapshot.text, transcript].filter(Boolean).join('\n') }, selectedComposerMode?.usesSlashPlan ? 'plan' : 'agent');
+      const text = applied.text;
+      try {
+        const paths = images.length ? await persistComposerImages(selected?.id ?? projectId!, images) : [];
+        const input = [{type:'text' as const, text, mentions:applied.mentions}, ...attachments, ...paths.map(path => ({type:'localImage' as const, path}))];
+        if (threadId) {
+          await product.threads.send(threadId, input, resolveThreadSendMode({pickerMode:composerSendMode, modifierEnter:false}), {
+            permissionMode, serviceTier, model:options.model, reasoningLevel:options.reasoningLevel,
+            acpMode:selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
+          });
+          dispatchThreadMessageSent(threadId);
+        } else {
+          const created = await product.threads.create({projectId:selected!.id, providerId:resolvedProviderId!, input,
+            hostId, environment:selected!.quickAgent && foreignHost ? {kind:'personal'} : workspace,
+            cwd:foreignHost ? undefined : selected!.path, permissionMode, serviceTier, model:options.model, reasoningLevel:options.reasoningLevel,
+            acpMode:selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue});
+          if (!created.ok) throw new Error(created.message ?? 'Could not send voice message');
+          upsertThread(created.value);
+          if (currentVoiceOwner.current === voiceOwner) {
+            onCreated?.(created.value.id);
+            if (navigateOnCreate) navigate(getThreadRoutePath(created.value.id, route.isProjectFocused ? route.focusedProjectId : undefined));
+          }
+        }
+        if (currentVoiceOwner.current === voiceOwner && !field.editor?.isDestroyed && field.serialize().text === snapshot.text) field.clear();
+      } catch (error) {
+        // The capture retains audio and the frozen submission for Retry.
+        // Inserting text here would send the transcript twice on retry.
+        throw error;
+      }
+    });
+  };
+
   const submit = useCallback(async (opts?: { modifierEnter?: boolean }) => {
     if (busy) return;
     if (field.typeaheadOpen && field.suggestions.length > 0) return;
@@ -532,7 +598,7 @@ export function ThreadCommandComposer({
       return;
     }
     if (sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked) return;
-    if (!serialized.text.trim() && field.images.length === 0) {
+    if (!serialized.text.trim() && field.images.length === 0 && field.restoredAttachments.length === 0) {
       setError('Enter a message first');
       field.focus();
       return;
@@ -586,7 +652,8 @@ export function ThreadCommandComposer({
       setUploadProgress(null);
       const input = [
         ...(text.trim() ? [{ type: 'text' as const, text, mentions: applied.mentions }] : []),
-        ...imagePaths.map((path) => ({ type: 'localImage' as const, path }))
+        ...imagePaths.map((path) => ({ type: 'localImage' as const, path })),
+        ...field.restoredAttachments
       ];
       if (input.length === 0) {
         setError('Enter a message first');
@@ -598,6 +665,7 @@ export function ThreadCommandComposer({
         try {
           await product.threads.send(threadId, input, sendMode, {
             permissionMode,
+            serviceTier,
             model: options.model,
             reasoningLevel: options.reasoningLevel,
             acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
@@ -618,6 +686,7 @@ export function ThreadCommandComposer({
         environment: selected!.quickAgent && foreignHost ? { kind: 'personal' } : workspace,
         cwd: foreignHost ? undefined : selected!.path,
         permissionMode,
+        serviceTier,
         model: options.model,
         reasoningLevel: options.reasoningLevel,
         acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
@@ -653,8 +722,8 @@ export function ThreadCommandComposer({
     navigateOnCreate,
     onCreated,
     onRunTerminal,
-    options.model,
-    options.reasoningLevel,
+    serviceTier,
+    options.model,    options.reasoningLevel,
     options.acpMode,
     options.rosterReady,
     options.providers,
@@ -769,6 +838,7 @@ export function ThreadCommandComposer({
       scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
       text={field.text}
       setText={field.setText}
+      replacePrompt={field.replacePrompt}
       focus={field.focus}
       providerId={resolvedProviderId}
     >
@@ -832,12 +902,19 @@ export function ThreadCommandComposer({
           triggerKind={field.triggerKind}
           onApply={field.applySuggestion}
         />
+        {field.restoredAttachments.map((part, index) => <span key={index} className="thread-command-location">
+          {'path' in part ? part.path.split(/[\\/]/).at(-1) : 'Image'}
+          <button type="button" aria-label="Remove restored attachment" onClick={() => field.removeRestoredAttachment(index)}>×</button>
+        </span>)}
+        {voice.canRetry ? <button type="button" data-preserve-composer-focus onClick={() => void voice.retry()}>Retry voice transcription</button> : null}
         {voiceBusy ? (
           <ComposerToolbar>
             <VoiceRecordingBar
               state={voice.state === 'transcribing' ? 'transcribing' : 'recording'}
               stream={voice.stream}
-              onConfirm={voice.stop}
+              onConfirm={() => voice.stop()}
+              onSend={sendRecording}
+              sendDisabled={busy || sendBlocked || hostSendBlocked || providerCliBlocked}
               onCancel={voice.cancel}
             />
           </ComposerToolbar>
@@ -867,6 +944,7 @@ export function ThreadCommandComposer({
                 modelIsLoading={options.modelIsLoading}
                 modelLoadError={options.modelLoadError}
                 modelLoadErrorDetail={options.modelLoadErrorDetail}
+                onReloadModels={options.refreshModels}
                 onModelChange={options.setModel}
               />
             }

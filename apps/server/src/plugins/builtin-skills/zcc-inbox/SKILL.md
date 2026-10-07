@@ -13,8 +13,8 @@ Zana exposes an MCP server, `zcc-inbox`, with these inbox tools:
 - **`inbox_search`** — read back what's already in the inbox: list recent
   entries or substring-search them. Use it to answer "what's in my inbox?",
   find an earlier entry, or check whether you already reported something.
-- **`schedule_list`** / **`schedule_run_now`** / **`schedule_set_enabled`** —
-  list, fire, and enable/disable the same schedules the desktop Scheduler UI
+- **`schedule_list`** / **`schedule_get`** / **`schedule_update`** / **`schedule_reload`** / **`schedule_run_now`** / **`schedule_set_enabled`** —
+  list, read, edit, refresh, fire, and enable/disable the schedules the Scheduler UI
   shows (`.zcc/schedules` JSON). Not the marketplace `zana_schedule_*` YAML
   tools.
 - **`remote_exec`** — run a shell command on a registered **remote (SSH)**
@@ -208,14 +208,14 @@ desktop Scheduler UI aggregates. They do **not** read
 `[]` while the Scheduler UI has rows, you are on the marketplace MCP; use
 these `zcc-inbox` tools instead.
 
-**Tools:** `schedule_list` (read-only, pre-approved) · `schedule_run_now` ·
+**Tools:** `schedule_list` · `schedule_get` (read-only live definition) · `schedule_update` · `schedule_reload` · `schedule_run_now` ·
 `schedule_set_enabled` (first use asks permission unless Trust ZCC tools is on)
 
 ```ts
 // schedule_list
 { allProjects?: boolean }   // default false → this project only
 
-// schedule_run_now / schedule_set_enabled
+// schedule_get / schedule_reload / schedule_run_now / schedule_set_enabled
 {
   id: string,               // exact id, unique name, or unique id prefix
   enabled?: boolean,        // schedule_set_enabled only
@@ -252,8 +252,28 @@ schedule_run_now({ id: "Hourly QA sweep" })
 schedule_set_enabled({ id: "qa-hourly", enabled: false })
 ```
 
-Creating or editing a schedule's prompt/cadence is still the UI or writing
-JSON (see the `zcc-center` skill). `zcc schedule run-now|enable|disable` from
+Create schedules in the UI or using the JSON format in `zcc-center`.
+
+For edits to existing schedules, use `schedule_update({ id, patch })`. Its strict
+patch supports `prompt`, `extraArgs` (a string array, replaced as a whole), `every`,
+`cron`, and `tz` (`null` clears the timezone). Setting `every` clears `cron`, and
+setting `cron` clears `every`. This uses the same edit path as the Scheduler UI.
+Verify with `schedule_get({ id })`, which returns the app's live prompt,
+arguments, cadence and `updatedAt`; `schedule_list` remains a compact list.
+
+After a hand edit, use `schedule_reload({ id })`. A successful reload returns
+`reloaded: true`; `reloaded: false` includes `reason` and the blocking
+`sessionIds`. The request remains queued until the schedule's own run finishes.
+An unrelated project's live run does not block the reload. Invalid/deleted files
+produce an error. All three tools use the same project scope and optional
+`allProjects: true` widening as the other schedule tools.
+
+```javascript
+schedule_update({ id: "qa-hourly", patch: { prompt: "Run the full suite", extraArgs: ["--effort", "high"], every: "2h" } })
+schedule_get({ id: "qa-hourly" })
+schedule_reload({ id: "qa-hourly" })
+```
+`zcc schedule update|reload|run-now|enable|disable` from
 inside this session is refused (`FORBIDDEN_AGENT`); use these MCP tools.
 
 ## Running a command on a remote project — `remote_exec`
@@ -335,8 +355,9 @@ To find remote project ids, call `list_projects` — remote projects carry a
 - `remote_exec` only works against a project the user registered as remote; a
   local or unknown id returns an error. You never supply the host or credentials.
 - `inbox_search` is read-only: it never creates, edits, or removes entries.
-- `schedule_list` is read-only. `schedule_run_now` / `schedule_set_enabled` are
-  the in-session way to fire or toggle a Scheduler UI schedule; they never
+- `schedule_list` and `schedule_get` are read-only. `schedule_update`,
+  `schedule_reload`, `schedule_run_now` and `schedule_set_enabled` are
+  the in-session way to edit, refresh, fire or toggle a Scheduler UI schedule; they never
   touch `.zana/scheduler` YAML.
 - `docs` are pointers, never snapshots. If you regenerate `report.md` later,
   the user sees the new content next time they open the entry.

@@ -1,0 +1,62 @@
+/* Phone kanban cards: swipe left to close (twin of .mobile-agent-swipe). */
+.swipe-close { position: relative; overflow: hidden; border-radius: 14px; flex-shrink: 0; }
+.swipe-close-action {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--danger) 75%, black);
+  color: white;
+  font-size: 13px;
+  visibility: hidden;
+}
+.swipe-close:is([data-swiping='true'], [data-revealed='true']) .swipe-close-action { visibility: visible; }
+.swipe-close-action button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 88px;
+  align-self: stretch;
+  border: 0;
+  padding: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.swipe-close[data-ready='true'] .swipe-close-action button { width: 144px; }
+.swipe-close-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  transition: transform 160ms ease-out;
+}
+.swipe-close-surface > .agent-card { width: 100%; }
+.swipe-close[data-swiping='true'] .swipe-close-surface { transition: none; }
+.swipe-close-button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+/* Touch users swipe; keep a keyboard/screen-reader alternative out of the way. */
+.swipe-close-button:not(:focus-visible) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.swipe-close-button:focus-visible { position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; }
+@media (prefers-reduced-motion: reduce) {
+  .swipe-close-surface { transition: none; }
+}

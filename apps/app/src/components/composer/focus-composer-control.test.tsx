@@ -24,11 +24,11 @@ it('focuses tapped controls, including their icons, without scrolling or swallow
   expect(focus).toHaveBeenCalledTimes(1);
 });
 
-it.each(['send', 'stop'])('keeps %s stationary until the click lands in either layout', (action) => {
+it.each(['send', 'stop', 'retry'])('keeps %s stationary until the click lands in either layout', (action) => {
   const click = vi.fn();
   render(<div onMouseDownCapture={focusComposerControl}>
     <input aria-label="Message" />
-    <button className={`thread-command-${action}`} onClick={click}>{action}</button>
+    <button className={`thread-command-${action}`} data-preserve-composer-focus={action === 'retry' ? true : undefined} onClick={click}>{action}</button>
   </div>);
   const button = screen.getByRole('button');
   const focus = vi.spyOn(button, 'focus');

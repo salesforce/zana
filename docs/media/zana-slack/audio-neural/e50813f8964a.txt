@@ -1,0 +1,1 @@
+Pi works on your own computer. When it needs a decision, it asks right in the Slack thread. Answer there, and Pi fixes the code and reruns the tests.

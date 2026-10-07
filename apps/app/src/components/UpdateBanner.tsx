@@ -1,6 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { Sparkles, X, Loader2, CheckCircle2 } from 'lucide-react';
-import { useUpdates, useUpdateBanner, isUpdateBannerVisible } from '../store.js';
+import { useUpdates, useUpdateBanner, useWhatsNew, isUpdateBannerVisible } from '../store.js';
 
 /**
  * App-wide "a new version is available" banner, driven by the electron-updater
@@ -11,6 +11,8 @@ import { useUpdates, useUpdateBanner, isUpdateBannerVisible } from '../store.js'
  *                     the version for good (`updates.skip`).
  *   - `downloading` → progress %, actions disabled.
  *   - `downloaded`  → "Restart now" (`updates.quitAndInstall`).
+ * When the feed carried notes for the offered version (`status.releaseNotes`),
+ * a "What's new" action previews them in the What's New modal before installing.
  * The × hides it for this session only; a newer available version OR a staged
  * `downloaded` update un-dismisses it (see the onStatus handler in the store),
  * so a dismiss never buries the "Restart now" prompt. Renders nothing in every
@@ -26,6 +28,7 @@ export function UpdateBanner() {
   if (!isUpdateBannerVisible(kind, dismissed)) return null;
 
   const version = status.version;
+  const notes = status.releaseNotes ?? [];
   const vLabel = version ? `Version ${version}` : 'A new version';
   const pct = progress ? Math.round(progress.percent) : 0;
 
@@ -52,6 +55,17 @@ export function UpdateBanner() {
         )}
       </span>
       <span className="grow" />
+
+      {notes.length > 0 && (kind === 'available' || kind === 'downloaded') && (
+        <button
+          type="button"
+          className="update-banner-btn"
+          onClick={() => useWhatsNew.getState().openWith(notes, version ?? notes[0]?.version ?? null, { preview: true })}
+          title="Read the release notes for this update"
+        >
+          What’s new
+        </button>
+      )}
 
       {kind === 'available' && (
         <>

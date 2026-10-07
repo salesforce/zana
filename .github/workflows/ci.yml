@@ -12,7 +12,12 @@ on:
     branches:
       - main
   # Manual trigger also runs the same required verification jobs.
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: 'Optional comparison base for the full unpublished branch range'
+        required: false
+        type: string
 
 # A new push to a PR cancels the previous run for that PR — no point burning
 # minutes on a commit that's already superseded. main pushes use the ref so they
@@ -60,30 +65,39 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Unit tests with coverage
-        run: pnpm exec vitest run --coverage --coverage.reporter=json --coverage.reportsDirectory=coverage/root
+        run: pnpm exec vitest run --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/root
 
       - name: Tasks tests with package configuration and coverage
-        run: pnpm exec vitest run --config plugins/tasks/vitest.config.ts --coverage --coverage.reporter=json --coverage.reportsDirectory="$GITHUB_WORKSPACE/coverage/tasks"
+        run: pnpm exec vitest run --config plugins/tasks/vitest.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory="$GITHUB_WORKSPACE/coverage/tasks"
 
       - name: Pi provider tests with package configuration and coverage
-        run: pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts --coverage --coverage.reporter=json --coverage.reportsDirectory="$GITHUB_WORKSPACE/coverage/pi"
+        run: pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory="$GITHUB_WORKSPACE/coverage/pi"
 
       - name: Release package coverage
-        run: pnpm exec vitest run --config vitest.release-coverage.config.ts --coverage --coverage.reporter=json --coverage.reportsDirectory=coverage/release
+        run: pnpm exec vitest run --config vitest.release-coverage.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/release
 
       - name: Enforce changed-code coverage
         run: node scripts/ci-verification.mjs --coverage coverage/root/coverage-final.json coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json
         env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+
+      - name: Upload coverage reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-coverage
+          path: coverage/*/coverage-final.json
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Every affected seam is exercised in the built app; failures fail CI.
   # Keep model-spending live attach suites outside unattended CI.
   e2e:
     name: Affected Electron boundaries
     runs-on: ubuntu-latest
-    # Broad release branches select about 40 production-boundary cases. Keep
-    # their private build and full passing run bounded without cutting it off.
-    timeout-minutes: 45
+    # Broad release branches select 81 production-boundary cases; the first
+    # 50 took 31 minutes in CI. Bound the private build and complete suite.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -119,7 +133,7 @@ jobs:
       - name: Build and test affected Electron boundaries
         run: xvfb-run -a node scripts/ci-verification.mjs
         env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
           NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Upload Playwright report on failure

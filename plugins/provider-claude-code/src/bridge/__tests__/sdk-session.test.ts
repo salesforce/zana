@@ -26,6 +26,7 @@ import { SdkSession, type SdkSessionOptions } from "../sdk-session.js";
 const defaultOptions: SdkSessionOptions = {
   cwd: "/tmp/test",
   systemPrompt: "You are a test assistant.",
+  allowBypassPermissions: false,
 };
 
 interface ClaudeQueryPromptCall {
@@ -341,6 +342,7 @@ describe("SdkSession", () => {
       {
         ...defaultOptions,
         permissionMode: "bypassPermissions",
+        allowBypassPermissions: true,
       },
       onMessage,
       onDone,
@@ -366,6 +368,7 @@ describe("SdkSession", () => {
       {
         ...defaultOptions,
         permissionMode: "bypassPermissions",
+        allowBypassPermissions: true,
       },
       onMessage,
       onDone,
@@ -448,5 +451,24 @@ describe("SdkSession", () => {
         }),
       }),
     );
+  });
+});
+
+describe("Plan permission capabilities", () => {
+  it.each([false, true])("keeps the authorized bypass capability in Plan mode (%s)", (allowBypassPermissions) => {
+    queryMock.mockImplementation(() => mockQueryInstance);
+    const session = new SdkSession({ ...defaultOptions, permissionMode: "plan", allowBypassPermissions }, vi.fn(), vi.fn());
+    session.start();
+    expect(getLatestQueryCall().options.permissionMode).toBe("plan");
+    expect(getLatestQueryCall().options.allowDangerouslySkipPermissions === true).toBe(allowBypassPermissions && process.getuid?.() !== 0);
+  });
+  it("awaits sandbox updates and reports failure", async () => {
+    keepSdkStreamOpen();
+    queryMock.mockImplementation(() => mockQueryInstance);
+    const session = new SdkSession(defaultOptions, vi.fn(), vi.fn());
+    session.start();
+    mockQueryInstance.applyFlagSettings.mockRejectedValueOnce(new Error("policy rejected"));
+    await expect(session.applyPermissionSettings({ sandbox: { enabled: false }, permissions: { additionalDirectories: [] } })).rejects.toThrow("policy rejected");
+    session.stop();
   });
 });

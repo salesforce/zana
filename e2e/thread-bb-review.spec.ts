@@ -39,6 +39,9 @@ test.use({ initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true } });
 
 test('thread options survive public create, follow-up, stop and resume', async ({ app, home }) => {
   const win = app.window;
+  await win.evaluate(() => window.cc.config.set({
+    customModels: [{ providerId: 'fake', model: 'chosen-model', displayName: 'Chosen fixture model' }]
+  }));
   const path = join(home, 'options-project'); mkdirSync(path);
   const id = await win.evaluate(async path => {
     const project = await window.cc.projects.add(path); if (!project.ok) throw new Error(project.message);
@@ -57,7 +60,11 @@ test('thread options survive public create, follow-up, stop and resume', async (
   }, id);
   await expect.poll(settings).toEqual([expect.objectContaining({ model: 'chosen-model', reasoningLevel: 'high', serviceTier: 'fast' })]);
   await win.evaluate(async id => { await fetch(`/api/v1/threads/${id}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); await fetch(`/api/v1/threads/${id}/resume`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); }, id);
-  await win.evaluate(id => fetch(`/api/v1/threads/${id}/send`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: 'report_execution_snapshot resumed' }) }).then(response => response.json()), id);
+  await win.evaluate(id => { history.pushState({}, '', `/threads/${id}`); dispatchEvent(new PopStateEvent('popstate')); }, id);
+  await win.getByTestId('thread-command-input').fill('report_execution_snapshot resumed');
+  await expect(win.getByTestId('thread-command-send')).toBeEnabled();
+  await expect(win.getByRole('combobox', { name: 'Service tier', exact: true })).toHaveCount(0);
+  await win.getByTestId('thread-command-send').click();
   await expect.poll(settings).toHaveLength(2);
   expect((await settings())[1]).toMatchObject({ model: 'chosen-model', reasoningLevel: 'high', serviceTier: 'fast' });
   await expect.poll(async () => (await timeline()).status).toBe('idle');

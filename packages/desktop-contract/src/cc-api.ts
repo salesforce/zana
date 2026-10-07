@@ -120,6 +120,7 @@ import type {
   ScheduleGroupInput,
   ScheduleTemplate,
   ScheduleUpdateInput,
+  ScheduleReloadResult,
   ScheduledTask,
   SearchOptions,
   SearchResult,
@@ -490,7 +491,7 @@ export interface CcApi {
       permissionMode?: 'accept-edits' | 'auto' | 'full';
       model?: string;
       reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
-      serviceTier?: 'default' | 'fast';
+      serviceTier?: string;
       acpMode?: string;
     }): Promise<Result<{
       id: string;
@@ -561,7 +562,7 @@ export interface CcApi {
         permissionMode?: 'accept-edits' | 'auto' | 'full';
         model?: string;
         reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
-        serviceTier?: 'default' | 'fast';
+        serviceTier?: string;
         acpMode?: string;
       }
     ): Promise<{ ok: boolean }>;
@@ -684,7 +685,8 @@ export interface CcApi {
         displayName: string;
         available: boolean;
         composerActions: string[];
-        capabilities: { permissionModes: string[] };
+        serviceTiers?: Array<{id:string; label:string; description?:string}>;
+        capabilities: { permissionModes: string[]; supportsServiceTier?: boolean };
       }>;
       models: Array<{
         id: string;
@@ -1716,6 +1718,8 @@ export interface CcApi {
   };
   scheduler: {
     list(): Promise<ScheduledTask[]>;
+    get(id: string): Promise<Result<ScheduledTask>>;
+    reload(id: string): Promise<Result<ScheduleReloadResult>>;
     create(input: ScheduleCreateInput): Promise<Result<ScheduledTask>>;
     update(id: string, patch: ScheduleUpdateInput): Promise<Result<ScheduledTask>>;
     delete(id: string): Promise<Result<true>>;

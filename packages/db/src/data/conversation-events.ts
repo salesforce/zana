@@ -120,21 +120,26 @@ export function nextConversationEventSequence(db: ZccDatabase, threadId: string)
   return row.max_sequence + 1;
 }
 
-/** One grouped lookup for roster unread math. Empty input skips the query. */
+/** Indexed tip seeks avoid scanning every event in each roster thread. */
 export function maxConversationEventSequenceByThreadIds(
   db: ZccDatabase,
   threadIds: readonly string[]
 ): Record<string, number> {
   if (threadIds.length === 0) return {};
-  const placeholders = threadIds.map(() => '?').join(',');
-  const rows = db.sqlite.prepare(
-    `SELECT thread_id AS threadId, MAX(sequence) AS maxSequence
-     FROM thread_events
-     WHERE thread_id IN (${placeholders})
-     GROUP BY thread_id`
-  ).all(...threadIds) as { threadId: string; maxSequence: number }[];
   const out: Record<string, number> = {};
-  for (const row of rows) out[row.threadId] = row.maxSequence;
+  const unique = [...new Set(threadIds)];
+  // Keep parameter counts bounded even for internal/plugin callers.
+  for (let offset = 0; offset < unique.length; offset += 500) {
+    const batch = unique.slice(offset, offset + 500);
+    const rows = db.sqlite.prepare(
+      `WITH requested(thread_id) AS (VALUES ${batch.map(() => '(?)').join(',')})
+       SELECT thread_id AS threadId, (
+         SELECT sequence FROM thread_events
+         WHERE thread_id = requested.thread_id ORDER BY sequence DESC LIMIT 1
+       ) AS maxSequence FROM requested`
+    ).all(...batch) as { threadId: string; maxSequence: number | null }[];
+    for (const row of rows) if (row.maxSequence !== null) out[row.threadId] = row.maxSequence;
+  }
   return out;
 }
 

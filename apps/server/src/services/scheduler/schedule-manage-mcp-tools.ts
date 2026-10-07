@@ -19,7 +19,16 @@
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
+import type { ScheduledTask, ScheduleUpdateInput, ScheduleReloadResult } from '@zana-ai/zcc-domain/product';
+
+export const scheduleDefinitionPatchSchema = z.object({
+  prompt: z.string().max(1_000_000).optional(),
+  extraArgs: z.array(z.string().max(16_384)).max(256).optional(),
+  every: z.string().min(1).optional(),
+  cron: z.string().min(1).optional(),
+  tz: z.string().min(1).nullable().optional()
+}).strict().refine(patch => Object.values(patch).some(value => value !== undefined), 'At least one definition field is required')
+  .refine(patch => !(patch.every !== undefined && patch.cron !== undefined), 'every and cron are mutually exclusive');
 
 /**
  * Live SchedulerManager slice the tools call. The manager is the authority
@@ -27,9 +36,16 @@ import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
  */
 export interface ScheduleAgentApi {
   list(): ScheduledTask[];
+  get?(id: string): ScheduledTask;
+  update?(id: string, patch: ScheduleUpdateInput): Promise<ScheduledTask>;
+  reload?(id: string): Promise<ScheduleReloadResult>;
   runNow(id: string): ScheduledTask | Promise<ScheduledTask>;
   setEnabled(id: string, enabled: boolean): ScheduledTask | null | Promise<ScheduledTask | null>;
 }
+
+export const SCHEDULE_GET_DESCRIPTION = 'Read the live Scheduler UI definition that the app will run, including prompt, extraArgs, cadence and updatedAt. Default scope is this project; allProjects explicitly widens it.';
+export const SCHEDULE_UPDATE_DESCRIPTION = 'Patch prompt, extraArgs or cadence through the same Scheduler UI edit path. Supply id and patch. Default scope is this project; allProjects explicitly widens it. Use schedule_get to verify the acknowledged definition.';
+export const SCHEDULE_RELOAD_DESCRIPTION = 'Re-read one Scheduler UI schedule from its owning disk now. Returns reloaded:true, or reloaded:false with a reason and live session IDs; deferred reloads are retried automatically. Default scope is this project; allProjects explicitly widens it.';
 
 export const SCHEDULE_LIST_DESCRIPTION = [
   "List Zana Command Center Scheduler schedules — the same rows the app's",
@@ -105,6 +121,12 @@ export const scheduleSetEnabledInputSchema = {
       "When true, resolve `id` against every project's schedules. Defaults to false (this project only)."
     )
 };
+
+export const scheduleUpdateInputSchema = { ...scheduleRunNowInputSchema, patch: scheduleDefinitionPatchSchema };
+
+export function projectScheduleDefinition(task: ScheduledTask) {
+  return { ...projectSchedule(task), profile: task.profile, prompt: task.prompt ?? '', extraArgs: task.extraArgs ?? [], updatedAt: task.updatedAt };
+}
 
 export interface RegisterScheduleManageToolsOpts {
   /** The agent's own project, from the URL route. The default (confined) scope. */
@@ -233,6 +255,27 @@ export function registerScheduleManageTools(
   opts: RegisterScheduleManageToolsOpts
 ): void {
   const { projectId, scheduleAgentApi } = opts;
+
+  for (const name of ['schedule_get', 'schedule_reload', 'schedule_update'] as const) {
+    server.registerTool(name, {
+      description: name === 'schedule_get' ? SCHEDULE_GET_DESCRIPTION : name === 'schedule_reload' ? SCHEDULE_RELOAD_DESCRIPTION : SCHEDULE_UPDATE_DESCRIPTION,
+      inputSchema: name === 'schedule_update' ? scheduleUpdateInputSchema : scheduleRunNowInputSchema
+    }, async (input: { id: string; allProjects?: boolean; patch?: z.infer<typeof scheduleDefinitionPatchSchema> }) => {
+      try {
+        const found = lookupInScope(scheduleAgentApi, projectId, input.id, input.allProjects === true);
+        if (!found.ok) return fail(name, formatResolveError(found, input.id));
+        if (name === 'schedule_get') return okJson({ ok: true, schedule: projectScheduleDefinition(scheduleAgentApi.get?.(found.task.id) ?? found.task) });
+        if (name === 'schedule_reload') {
+          if (!scheduleAgentApi.reload) throw new Error('Schedule reload is unavailable');
+          const result = await scheduleAgentApi.reload(found.task.id);
+          return okJson({ ok: true, ...result, schedule: projectScheduleDefinition(result.schedule) });
+        }
+        if (!scheduleAgentApi.update) throw new Error('Schedule update is unavailable');
+        const task = await scheduleAgentApi.update(found.task.id, scheduleDefinitionPatchSchema.parse(input.patch));
+        return okJson({ ok: true, schedule: projectScheduleDefinition(task) });
+      } catch (error) { return fail(name, error instanceof Error ? error.message : String(error)); }
+    });
+  }
 
   server.registerTool(
     'schedule_list',

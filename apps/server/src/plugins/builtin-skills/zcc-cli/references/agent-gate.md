@@ -12,8 +12,8 @@ Mutating ops then fail with `FORBIDDEN_AGENT` and exit 5:
 - `zcc terminal create|send|close`
 - `zcc machine rename|remove`
 - `zcc settings` writes
-- `zcc schedule run-now|enable|disable` (in-session, use MCP `schedule_run_now` /
-  `schedule_set_enabled` on `zcc-inbox` instead)
+- `zcc schedule update|reload|run-now|enable|disable` (in-session, use MCP `schedule_run_now` /
+  `schedule_set_enabled` / `schedule_update` / `schedule_reload` on `zcc-inbox` instead)
 
 Reads stay allowed: `status`, `thread list|show|log|wait`, `thread background list`,
 `machine list|show`,

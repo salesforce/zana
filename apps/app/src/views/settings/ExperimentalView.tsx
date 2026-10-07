@@ -19,6 +19,15 @@ export function ExperimentalView({
 }) {
   return (
     <>
+      <Section title="Provider service tiers" help="Control whether providers offer non-default tiers.">
+        <CheckboxField label="Disable non-default service tiers" checked={config.providerServiceTiersDisabled ?? false}
+          help="Hide tier choices and reject non-default tier requests on this instance." onChange={v => onUpdate({providerServiceTiersDisabled:v})} />
+      </Section>
+      <Section title="Plugin recovery" help="Temporarily suspend installed plugins while diagnosing a problem.">
+        <CheckboxField label="Plugin safe mode"
+          help="Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved."
+          checked={config.pluginSafeMode ?? false} onChange={v => onUpdate({ pluginSafeMode: v })} />
+      </Section>
       <Section
         title="Experimental features"
         help="Opt-in features under active evaluation. They’re off by default and may change or be removed. Enabling one reveals its own settings here."
@@ -46,12 +55,6 @@ export function ExperimentalView({
           help="Experimental — a fast-model micro-call that DEMOTES routine 'task done' reports (comment-only, no docs/question/goal) into a folded 'Routine' section of the inbox feed, so high-value reports stay inline. Advisory only: it never hides a report with docs, an idea, a question, or a goal outcome, and a missing verdict just leaves everything inline. Off by default — each inbox change may trigger a background call on your own key."
           checked={config.feedNoiseClassifierEnabled ?? false}
           onChange={(v) => onUpdate({ feedNoiseClassifierEnabled: v })}
-        />
-        <CheckboxField
-          label="CLI Agent host catalog"
-          help="On a remote project, the CLI Agent picker asks that machine which CLIs and models are installed (same execution-options path Modern uses). Off ⇒ today’s local install list."
-          checked={config.cliRemoteHostCatalogEnabled ?? false}
-          onChange={(v) => onUpdate({ cliRemoteHostCatalogEnabled: v })}
         />
         <CheckboxField
           label="Keep agent terminals in ZCC"

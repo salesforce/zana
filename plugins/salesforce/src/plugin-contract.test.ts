@@ -109,7 +109,8 @@ describe('salesforce plugin contract', () => {
     expect(manifest.skillsRootPaths).toEqual(['skills']);
     expect(discoverPluginSkillNames(root, manifest.skillsRootPaths).sort()).toEqual([
       'salesforce-constitution',
-      'salesforce-dx'
+      'salesforce-dx',
+      'salesforce-toolkit'
     ]);
     expect(readFileSync(join(root, 'skills/salesforce-dx/SKILL.md'), 'utf8')).toContain('zcc sf doctor');
     expect(readFileSync(join(root, 'skills/salesforce-dx/SKILL.md'), 'utf8')).toContain('sf org list');
@@ -187,7 +188,7 @@ describe('salesforce plugin contract', () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await plugin(zcc);
     expect(harness.cli?.name).toBe('sf');
-    expect(harness.agentTools.map((tool) => tool.name).sort()).toEqual(['sf_agent', 'sf_apex', 'sf_lwc', 'sf_soql', 'sf_workbench']);
+    expect(harness.agentTools.map((tool) => tool.name).sort()).toEqual(['code_analyzer', 'sf_agent', 'sf_apex', 'sf_flow', 'sf_lwc', 'sf_metadata', 'sf_soql', 'sf_tools', 'sf_workbench']);
     expect(harness.needsConfiguration).toBeNull();
   });
 });
@@ -227,8 +228,8 @@ describe('salesforce plugin behavior', () => {
     expect(configured?.instructions).toContain(CONSTITUTION_INSTRUCTIONS);
     expect(configured?.instructions).toContain('Connected Salesforce CLI orgs');
     expect(configured?.instructions).toContain('dev');
-    expect(configured?.tools).toEqual(['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent', 'sf_workbench']);
-    expect(configured?.skills).toEqual(['salesforce-constitution', 'salesforce-dx']);
+    expect(configured?.tools).toEqual(['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent', 'sf_workbench', 'sf_tools', 'sf_flow', 'code_analyzer', 'sf_metadata']);
+    expect(configured?.skills).toEqual(['salesforce-constitution', 'salesforce-dx', 'salesforce-toolkit']);
     harness.setSettings({ defaultOrg: '', projectRoot: '/proj' });
     expect((await harness.agentConfigurers[0]?.({}))?.instructions).toContain(CONSTITUTION_INSTRUCTIONS);
   });
@@ -265,7 +266,12 @@ describe('salesforce plugin behavior', () => {
     expect(JSON.stringify(doctor)).not.toContain('SECRET_TOKEN');
   });
 
-  it('generates a DX project via sf project generate', async () => {
+  it.each([
+    { outputDir: '/tmp/ws', created: ['Acme/sfdx-project.json'] },
+    { outputDir: '/tmp/ws/Acme' },
+    { path: '/untrusted/path', 'output-dir': '/untrusted/parent' },
+    null,
+  ])('generates the requested DX child project regardless of CLI output %j', async result => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, {
       ...mockDeps(),
@@ -274,7 +280,7 @@ describe('salesforce plugin behavior', () => {
           expect(args).toEqual(['project', 'generate', '--name', 'Acme', '--output-dir', '/tmp/ws', '--json']);
           return {
             code: 0,
-            stdout: JSON.stringify({ status: 0, result: { outputDir: '/tmp/ws/Acme' } }),
+            stdout: JSON.stringify({ status: 0, result }),
             stderr: ''
           };
         }

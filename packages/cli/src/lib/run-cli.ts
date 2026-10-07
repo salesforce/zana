@@ -4,7 +4,7 @@
  */
 
 import { homedir } from 'node:os';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Project, Persona, PersonaSummary, ScheduledTask, InboxEntry } from './types.js';
 
@@ -251,6 +251,19 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
     } else if (command === 'run') {
       const { runSpawnAlias } = await import('./commands/thread.js');
       return await runSpawnAlias(subcommand ? [subcommand, ...rest] : rest, jsonOutput, httpDeps, dataDir);
+    } else if (command === 'schedule' && (subcommand === 'get' || subcommand === 'reload')) {
+      if (!rest[0] || rest.length !== 1) return errResult(`schedule ${subcommand} requires a <scheduleId>`, 2);
+      return await live(dataDir, `sched.${subcommand}`, { id: rest[0] }, jsonOutput);
+    } else if (command === 'schedule' && subcommand === 'update') {
+      const [id, flag, value] = rest;
+      if (!id || !value || rest.length !== 3 || !['--patch', '--patch-file'].includes(flag)) return errResult('schedule update requires <scheduleId> --patch <JSON> or --patch-file <path>', 2);
+      let patch: unknown;
+      try {
+        if (flag === '--patch-file' && statSync(value).size > 1_000_000) return errResult('Schedule patch file exceeds 1 MB', 2);
+        patch = JSON.parse(flag === '--patch-file' ? readFileSync(value, 'utf8') : value);
+        if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return errResult('Schedule patch must be a JSON object', 2);
+      } catch (error) { return errResult(`Invalid schedule patch: ${String(error)}`, 2); }
+      return await live(dataDir, 'sched.update', { id, patch }, jsonOutput);
     } else if (command === 'schedule' && subcommand === 'run-now') {
       const id = rest[0];
       if (!id) return errResult('schedule run-now requires a <scheduleId>', 2);
@@ -358,7 +371,8 @@ LIVE CONTROL PLANE (app must be running):
   team ls                  List the team catalogue (control plane)
   term reply <sessionId> <message>
   term close-summary <projectId> <sessionId...>
-  schedule run-now|enable|disable <id>
+  schedule get|reload|run-now|enable|disable <id>
+  schedule update <id> --patch <JSON> | --patch-file <path>
 
 OPTIONS:
   --json                   Output as JSON (machine-readable)

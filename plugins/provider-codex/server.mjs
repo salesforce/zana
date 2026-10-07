@@ -20,7 +20,7 @@ export default function plugin(zcc) {
     icon: './icons/codex.svg',
     capabilities: {
       supportsServiceTier: true,
-      supportsNativeUserQuestion: false,
+      supportsNativeUserQuestion: true,
       fork: 'checkpoint',
       supportsManualCompaction: true,
       supportsThreadArchive: true,

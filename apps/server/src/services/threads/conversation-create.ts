@@ -1,3 +1,5 @@
+import { authorizedServiceTier } from './provider-service-tier.js';
+import { normalizePortableAttachments } from '../projects/portable-attachments.js';
 import { projectOnHost, ProjectSourceUnavailableError } from '@zana-ai/zcc-domain/project';
 import type { ThreadStartResult } from '@zana-ai/zcc-contracts/host-rpc';
 import {
@@ -56,6 +58,7 @@ import { resolveSpawnChoiceForHost } from './spawn-choice-for-host.js';
 import { toRemoteStartPathHost } from '../hosts/host-public.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { attachmentMarkersFromInput, hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
+import { attachmentPathResolverForHost } from '../projects/host-attachments.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 import {
   withResolvedPathMentionContext,
@@ -90,7 +93,7 @@ export interface CreateConversationInput {
   permissionMode?: 'accept-edits' | 'auto' | 'full';
   model?: string;
   reasoningLevel?: ReasoningLevel;
-  serviceTier?: 'default' | 'fast';
+  serviceTier?: string;
   acpMode?: string;
   parentThreadId?: string;
   visibility?: 'visible' | 'hidden';
@@ -303,6 +306,7 @@ export async function createConversationFromRequest(
   if (!input.providerId) {
     throw new ThreadCreateError(400, 'invalid-provider', 'providerId is required');
   }
+  input.serviceTier = authorizedServiceTier(ctx, input.providerId, input.serviceTier);
   const pluginResolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
   const textPrompt = flattenThreadInput(pluginResolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
   const promptSource = textPrompt.length > 0 ? textPrompt : input.input.map((part) => part.trim()).filter((part) => part.length > 0);
@@ -357,6 +361,8 @@ export async function createConversationFromRequest(
     throw mapHostError(error);
   }
 
+  resolvedPromptInput = await normalizePortableAttachments(ctx, resolvedPromptInput, input.projectId, hostId);
+  input.promptInput = resolvedPromptInput;
   resolvedPromptInput = await withResolvedPathMentionContext(
     resolvedPromptInput,
     workspacePathMentionReaders(ctx, hostId, workspacePath)
@@ -364,7 +370,7 @@ export async function createConversationFromRequest(
   prompt = hostPromptInputFromInput(
     resolvedPromptInput,
     promptSource,
-    (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
+    await attachmentPathResolverForHost(ctx, { hostId, projectId: input.projectId, input: resolvedPromptInput })
   );
 
   // Presence-only signal for plugins (never the marker text/paths themselves).

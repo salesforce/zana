@@ -1,3 +1,5 @@
+import { getConversationThread } from '@zana-ai/zcc-db';
+import { conversationHistoryAsync } from './conversation-history.js';
 import { listVisibleConversationThreads } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { conversationThreadView, conversationThreadViews } from './conversation-create.js';
@@ -21,4 +23,15 @@ export function searchConversationThreads(ctx: ProductHttpContext, query: string
 
 export function resolveConversationMentions(ctx: ProductHttpContext, query: string, projectId?: string | null) {
   return searchConversationThreads(ctx, query, projectId);
+}
+
+/** Search saved messages across all history, independent of the live roster cap. */
+export async function searchConversationThreadsWithHistory(ctx: ProductHttpContext, query: string, projectId?: string | null) {
+  if (!query.trim()) return { threads: [] };
+  const page = await conversationHistoryAsync(ctx.db, {query, ...(projectId ? {projectId} : {})});
+  const threads = page.rows.slice(0,THREAD_SEARCH_RESULT_CAP).flatMap(row => {
+    const thread = getConversationThread(ctx.db, row.id);
+    return thread ? [{ ...conversationThreadView(ctx, thread), ...(row.matchingMessage ? {matchingMessage:row.matchingMessage} : {}) }] : [];
+  });
+  return {threads};
 }

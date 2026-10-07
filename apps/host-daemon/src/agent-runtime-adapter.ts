@@ -117,7 +117,7 @@ export function threadExecutionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
-  serviceTier?: 'default' | 'fast';
+  serviceTier?: string;
   permissionEscalation?: 'ask' | 'deny' | null;
 }): RuntimeThreadExecutionOptions {
   const mode = input.permissionMode ?? DEFAULT_THREAD_EXECUTION_OPTIONS.permissionMode;
@@ -146,7 +146,7 @@ function executionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
-  serviceTier?: 'default' | 'fast';
+  serviceTier?: string;
   acpMode?: string;
   claudeCodePermissionMode?: 'plan';
   providerOptions?: Record<string, unknown>;

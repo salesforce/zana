@@ -189,7 +189,8 @@ test('rejects a non-directly-launchable OpenCode role at the preflight boundary'
 });
 
 
-test('model refresh invalidates the launch inventory and preserves large CLI discovery output', async ({ app }) => {
+for (const surface of ['CLI Agent', 'Modern'] as const) {
+test(`${surface} model picker reload invalidates the launch inventory and preserves large CLI discovery output`, async ({ app }, testInfo) => {
   const { window } = app;
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-model-refresh-'));
   let projectId: string | undefined;
@@ -198,6 +199,7 @@ test('model refresh invalidates the launch inventory and preserves large CLI dis
   const inventory = (last: string) => [...Array.from({ length: 1_500 }, (_, i) => `llmgw/catalog-fixture-model-${i}`), last].join('\n') + '\n';
   try {
     writeFileSync(join(projectDir, '.zcc-model-list'), inventory('llmgw/recovery-old'));
+    writeFileSync(join(projectDir, '.zcc-acp-model-count'), '6');
     await enableOpenCode(window);
     projectId = await window.evaluate(async (path) => {
       const result = await window.cc.projects.add(path);
@@ -211,14 +213,35 @@ test('model refresh invalidates the launch inventory and preserves large CLI dis
     const first = await launch('llmgw/recovery-old');
     expect(first, JSON.stringify(first)).toMatchObject({ ok: true });
     if (first.ok) sessions.push(first.value.id);
+    await goToAgents(window);
+    const modal = await openLegacyAgentLauncher(window);
+    await selectTargetProject(window, modal, basename(projectDir));
+    if (surface === 'Modern') await modal.getByRole('button', { name: 'Modern', exact: true }).click();
+    await selectHarness(window, modal, 'acp-opencode');
+    const trigger = modal.getByTestId('model-reasoning-picker-trigger');
+    await trigger.click();
+    const search = window.getByRole('textbox', { name: 'Search models' });
+    await search.fill('Fake Gen 5');
+    await expect(window.getByTestId('model-reasoning-model-fake/gen-5')).toBeVisible();
+    await search.fill('Fake Gen 6');
+    await expect(window.getByText('No matching models', { exact: true })).toBeVisible();
     writeFileSync(join(projectDir, '.zcc-model-list'), inventory('llmgw/recovery-new'));
-    // Live provider discovery is the same product request made by Settings and the palette.
-    const refreshed = await window.evaluate(async (id) => {
-      const response = await fetch(`/api/v1/system/execution-options?providerId=acp-opencode&projectId=${encodeURIComponent(id)}&refresh=1`);
-      return { status: response.status, body: await response.json() };
-    }, projectId);
-    expect(refreshed.status).toBe(200);
-    expect(refreshed.body.modelLoadError).toBeNull();
+    writeFileSync(join(projectDir, '.zcc-acp-model-count'), '7');
+    const refreshResponse = window.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/v1/system/execution-options'
+        && url.searchParams.get('providerId') === 'acp-opencode'
+        && url.searchParams.get('projectId') === projectId
+        && url.searchParams.get('refresh') === '1';
+    });
+    await window.getByRole('button', { name: 'Reload models', exact: true }).click();
+    const refreshed = await refreshResponse;
+    expect(refreshed.status()).toBe(200);
+    expect((await refreshed.json()).modelLoadError).toBeNull();
+    await expect(window.getByRole('button', { name: 'Reload models', exact: true })).toBeEnabled();
+    await expect(window.getByTestId('model-reasoning-model-fake/gen-6')).toBeVisible();
+    await window.screenshot({ path: testInfo.outputPath('model-picker-reload.png') });
+    await trigger.click();
     const fresh = await launch('llmgw/recovery-new');
     expect(fresh, JSON.stringify(fresh)).toMatchObject({ ok: true });
     if (fresh.ok) sessions.push(fresh.value.id);
@@ -231,3 +254,4 @@ test('model refresh invalidates the launch inventory and preserves large CLI dis
     rmSync(projectDir, { recursive: true, force: true });
   }
 });
+}

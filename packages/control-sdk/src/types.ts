@@ -33,7 +33,7 @@ export interface ThreadLaunchSpec {
   acpMode?: string;
   permissionMode?: PermissionMode;
   reasoningLevel?: string;
-  serviceTier?: 'default' | 'fast';
+  serviceTier?: string;
   environment?: SpawnEnvironmentChoice;
   hostId?: string;
   title?: string;

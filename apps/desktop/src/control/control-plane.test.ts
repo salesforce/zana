@@ -88,7 +88,7 @@ describe('authorizeRequest', () => {
   });
 
   // Read-only ops (incl. the new persona.list) are allowed for agent-class callers.
-  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'term.get', 'sched.list'])(
+  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'term.get', 'sched.list', 'sched.get'])(
     'allows agent-class caller for read op %s',
     (op) => {
       const r = authorizeRequest({ ...EXPECTED, op, callerSessionId: 'sess-1' }, EXPECTED);
@@ -97,7 +97,7 @@ describe('authorizeRequest', () => {
   );
 
   // The keystone guarantee: an agent shelling out to `zcc` cannot mutate.
-  it.each(['term.create', 'term.close', 'term.close-summary', 'term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled', 'team.launch', 'team.answer', 'team.stop'])(
+  it.each(['term.create', 'term.close', 'term.close-summary', 'term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled', 'sched.reload', 'sched.update', 'team.launch', 'team.answer', 'team.stop'])(
     'refuses agent-class caller for mutating op %s',
     (op) => {
       const r = authorizeRequest({ ...EXPECTED, op, callerSessionId: 'sess-1' }, EXPECTED);
@@ -121,7 +121,7 @@ describe('authorizeRequest', () => {
       expect(r).toMatchObject({ ok: true, caller: 'orchestrator' });
     }
   );
-  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'term.get', 'sched.list'])(
+  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'term.get', 'sched.list', 'sched.get'])(
     'allows an orchestrator the read op %s',
     (op) => {
       const r = authorizeRequest(
@@ -153,7 +153,7 @@ describe('authorizeRequest', () => {
       expect(r).toMatchObject({ ok: true, caller: 'orchestrator' });
     }
   );
-  it.each(['term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled', 'team.launch', 'team.answer', 'team.stop'])(
+  it.each(['term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled', 'sched.reload', 'sched.update', 'team.launch', 'team.answer', 'team.stop'])(
     'still refuses an orchestrator the operator-only op %s',
     (op) => {
       const r = authorizeRequest(
@@ -232,6 +232,15 @@ function makeDeps(over: Partial<ControlPlaneDeps> = {}): ControlPlaneDeps {
 }
 
 describe('dispatchOp', () => {
+  it('returns the authoritative team, agent and schedule inventories', async () => {
+    const agents = [{ sessionId: 's1', projectId: 'p1', handle: 'reviewer', cwd: '/tmp/p1', role: 'qa' }];
+    const schedules = [{ id: 'scheduled-job' }] as ReturnType<ControlPlaneDeps['listSchedules']>;
+    const deps = makeDeps({ listAgents: () => agents, getAgentStatus: () => 'working', listSchedules: () => schedules });
+    await expect(dispatchOp('team.list', {}, deps)).resolves.toEqual({ ok: true, value: deps.listTeams() });
+    await expect(dispatchOp('agent.list', {}, deps)).resolves.toEqual({ ok: true, value: [{ ...agents[0], state: 'working' }] });
+    await expect(dispatchOp('sched.list', {}, deps)).resolves.toEqual({ ok: true, value: schedules });
+  });
+
   it('term.create delegates to the injected (confined) creator, never trusting cwd directly', async () => {
     const createTerminal = vi.fn(() => ({ ok: true as const, value: { id: 's9' } as any }));
     const deps = makeDeps({ createTerminal });
@@ -844,5 +853,22 @@ describe('startControlPlane (real socket)', () => {
     handle = null;
     expect(existsSync(socketPath)).toBe(false);
     expect(existsSync(tokenPath)).toBe(false);
+  });
+});
+
+
+describe('schedule definition control operations', () => {
+  it.each(['get', 'reload', 'update'])('dispatches %s to the owning scheduler', async action => {
+    const method = vi.fn(async () => ({ ok: true as const, value: {} as any }));
+    const deps = makeDeps({ getSchedule: method, reloadSchedule: method, updateSchedule: method });
+    expect(await dispatchOp(`sched.${action}`, { id: 'task', patch: { prompt: 'New', every: '1h' } }, deps)).toMatchObject({ ok: true });
+    expect(method).toHaveBeenCalledWith(...(action === 'update' ? ['task', { prompt: 'New', every: '1h' }] : ['task']));
+    expect(await dispatchOp(`sched.${action}`, {}, deps)).toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    expect(await dispatchOp(`sched.${action}`, { id: 'task', patch: { prompt: 'New' } }, makeDeps())).toMatchObject({ ok: false, code: 'UNAVAILABLE' });
+  });
+  it.each([{}, { status: {} }, { enabled: true }, { projectId: 'other' }, { every: '1h', cron: '* * * * *' }, { extraArgs: [1] }])('rejects invalid definition patches before calling the manager: %j', async patch => {
+    const update = vi.fn();
+    expect(await dispatchOp('sched.update', { id: 'task', patch }, makeDeps({ updateSchedule: update }))).toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    expect(update).not.toHaveBeenCalled();
   });
 });

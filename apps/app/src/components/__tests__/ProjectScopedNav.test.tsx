@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import type { ReactElement } from 'react';
+import type { ComponentProps, MouseEvent, ReactElement } from 'react';
+import type { SidebarRailItem } from '../SidebarRail.js';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { Project } from '@zana-ai/zcc-domain/product';
 
@@ -34,6 +35,7 @@ const h = vi.hoisted(() => {
   return {
     state,
     data,
+    railItems: [] as SidebarRailItem[],
     modules: [] as AppModule[],
     slotTabs: [] as Array<{
       pluginId: string;
@@ -88,6 +90,16 @@ vi.mock('../../plugins/plugin-slots', () => ({
 vi.mock('../../lib/resolveIcon', () => ({
   resolveIcon: () => () => null
 }));
+vi.mock('../SidebarRail', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../SidebarRail.js')>();
+  return {
+    ...original,
+    SidebarRail: (props: ComponentProps<typeof original.SidebarRail>) => {
+      h.railItems = props.items;
+      return <original.SidebarRail {...props} />;
+    }
+  };
+});
 vi.mock('../../hooks/useProjectTabAvailability', () => ({
   useProjectTabAvailability: () => h.tabAvailability
 }));
@@ -113,6 +125,31 @@ function renderNav(node: ReactElement) {
 }
 
 describe('ProjectScopedNav matches the global sidebar chrome', () => {
+  it('opens the existing launcher while retaining the project view and scoped split target', () => {
+    h.state.setLauncherOpen.mockClear();
+    h.state.setNav.mockClear();
+    renderNav(<ProjectScopedNav project={project} variant="focus" />);
+    const newChat = h.railItems.find((item) => item.kind === 'row' && item.id === 'home');
+    if (!newChat || newChat.kind !== 'row') throw new Error('New Chat is missing');
+    const preventDefault = vi.fn();
+    newChat.onClick?.({ preventDefault } as unknown as MouseEvent<HTMLAnchorElement>);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(h.state.setLauncherOpen).toHaveBeenCalledExactlyOnceWith(true);
+    expect(h.state.setNav).not.toHaveBeenCalled();
+    expect(newChat.splitContent).toEqual({ kind: 'new-thread', projectId: project.id });
+  });
+
+  it.each(['focus', 'window'] as const)('pins New Chat before Inbox in the %s rail', (variant) => {
+    const markup = renderNav(<ProjectScopedNav project={project} variant={variant} />);
+    const start = markup.indexOf('data-testid="project-nav-home"');
+    expect(start).toBeGreaterThan(-1);
+    const row = markup.slice(start, markup.indexOf('</a>', start));
+    expect(row).toContain('href="/projects/proj-1/threads/new"');
+    expect(row).toContain('>New Chat<');
+    expect(markup).not.toContain('data-sortable-nav-id="home"');
+    expect(start).toBeLessThan(markup.indexOf('data-testid="project-nav-inbox"'));
+  });
+
   it('keeps threads in the project tree when a thread-list plugin is active', () => {
     const markup = renderNav(<ProjectScopedNav project={project} variant="focus" />);
     expect(markup).toContain('data-threads-hidden="false"');

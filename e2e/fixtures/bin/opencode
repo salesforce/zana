@@ -32,6 +32,9 @@ if (args[0] === 'debug' && args[1] === 'agent') {
 if (args[0] === 'models') {
   process.stdout.write(existsSync('.zcc-model-list') ? readFileSync('.zcc-model-list') : 'llmgw/fixture-model\n', () => process.exit(0));
 } else if (args[0] === 'acp') {
+  if (existsSync('.zcc-acp-model-count')) {
+    process.env.FAKE_ACP_MODEL_COUNT = readFileSync('.zcc-acp-model-count', 'utf8').trim();
+  }
   if (existsSync('.zcc-doc-vault-agent')) {
     process.env.FAKE_ACP_MODE_CONFIG = '1';
     process.env.FAKE_ACP_MODE_OPTIONS = 'build:Build,plan:Plan,doc-vault:Doc-Vault';
