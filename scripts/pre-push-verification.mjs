@@ -104,12 +104,13 @@ export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBa
   return { action: 'full', reason: resultPaths.length ? 'path owner is not in complete fast-path inventory' : 'empty diff cannot establish safe selection', paths: resultPaths, oid: [...oids][0] };
 }
 
-function configuredAliases(runGit) {
+function configuredAliases(run) {
   const aliases = {};
-  const raw = runGit(['config', '--get-regexp', '^host\\..*\\.hostname$']) || '';
-  for (const line of raw.split('\n')) {
-    const match = /^host\.([^\s]+)\.hostname\s+(.+)$/.exec(line);
-    if (match) aliases[match[1]] = match[2];
+  for (const host of ['github.com-work-public']) {
+    const result = run('ssh', ['-G', host], { encoding: 'utf8' });
+    if (result?.status !== 0) continue;
+    const hostname = /^hostname\s+(.+)$/m.exec(result.stdout)?.[1];
+    if (hostname) aliases[host] = hostname;
   }
   return aliases;
 }
@@ -125,6 +126,8 @@ export function runFullVerification({ oid, root = process.cwd(), run = spawnSync
     if (checkout.status !== 0) throw new Error(`could not check out pushed object ${oid}`);
     const install = run('pnpm', ['install', '--frozen-lockfile'], { cwd: snapshot, stdio: 'inherit' });
     if (install.status !== 0) throw new Error('snapshot dependency install failed');
+    const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
+    if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
     log('pre-push: pnpm verify:full');
     const result = run('pnpm', ['verify:full'], { cwd: snapshot, stdio: 'inherit' });
     if (result.status !== 0) throw new Error('verification failed: pnpm verify:full');
@@ -133,13 +136,13 @@ export function runFullVerification({ oid, root = process.cwd(), run = spawnSync
   }
 }
 
-export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification } = {}) {
+export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, run = spawnSync } = {}) {
   const tuples = parseTuples(input);
   const runGit = (args) => gitOk(args, { cwd: root });
   const selection = select({
     tuples,
     remoteUrl,
-    aliases: configuredAliases(runGit),
+    aliases: configuredAliases(run),
     hasObject: (object) => runGit(['cat-file', '-e', `${object}^{commit}`]) !== null,
     mergeBase: (left, right) => runGit(['merge-base', left, right]),
     isAncestor: (left, right) => runGit(['merge-base', '--is-ancestor', left, right]) !== null,

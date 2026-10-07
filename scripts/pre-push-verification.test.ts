@@ -52,11 +52,11 @@ it('handles new branches and deletion-only pushes conservatively', () => {
 it('runs snapshot verification once per selected pushed oid and surfaces failures', () => {
   const log = vi.fn(); const error = vi.fn(); const verify = vi.fn();
   const select = vi.fn().mockReturnValue({ action: 'full', reason: 'fallback', oids: [OID, 'c'.repeat(40)] });
-  expect(runPrePush({ input: `${feature.localRef} ${OID} ${feature.remoteRef} ${BASE}\n`, remoteUrl: 'https://github.com/salesforce/zana', log, error, select, verify })).toBe(0);
+  expect(runPrePush({ input: `${feature.localRef} ${OID} ${feature.remoteRef} ${BASE}\n`, remoteUrl: 'https://github.com/salesforce/zana', log, error, select, verify, run: () => ({ status: 1 }) })).toBe(0);
   expect(verify).toHaveBeenCalledTimes(2);
   expect(log).toHaveBeenCalledWith('pre-push: full; fallback');
-  expect(runPrePush({ input: 'broken', remoteUrl: 'https://github.com/salesforce/zana', log, error, select: () => ({ action: 'abort', reason: 'bad input' }), verify })).toBe(1);
-  expect(runPrePush({ input: '', remoteUrl: 'https://github.com/salesforce/zana', log, error, select: () => ({ action: 'full', reason: 'fallback', oid: OID }), verify: () => { throw new Error('snapshot unavailable'); } })).toBe(1);
+  expect(runPrePush({ input: 'broken', remoteUrl: 'https://github.com/salesforce/zana', log, error, select: () => ({ action: 'abort', reason: 'bad input' }), verify, run: () => ({ status: 1 }) })).toBe(1);
+  expect(runPrePush({ input: '', remoteUrl: 'https://github.com/salesforce/zana', log, error, select: () => ({ action: 'full', reason: 'fallback', oid: OID }), verify: () => { throw new Error('snapshot unavailable'); }, run: () => ({ status: 1 }) })).toBe(1);
   expect(error).toHaveBeenCalledWith('pre-push: snapshot unavailable');
 });
 
@@ -73,6 +73,7 @@ it('creates a private detached snapshot, runs named full union, and cleans it up
       ['git', ['clone', '--no-local', '--no-checkout', root, snapshots[0]]],
       ['git', ['checkout', '--detach', OID]],
       ['pnpm', ['install', '--frozen-lockfile']],
+      ['pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package']],
       ['pnpm', ['verify:full']],
     ]);
     expect(snapshots).toHaveLength(1);
