@@ -114,6 +114,19 @@ describe('attachProductPluginService', () => {
     expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode');
   });
 
+  it('does not register providers when shutdown cancels activation', async () => {
+    const dataDir = tempDir();
+    const bundled = tempDir();
+    await writeProviderPlugin(join(bundled, 'provider-acp'));
+    server = await startProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+
+    const plugins = createAttachedProductPluginService(server.ctx, { bundledRoot: bundled });
+    plugins.stop();
+    await startAttachedProductPluginService(server.ctx, plugins);
+
+    expect(getThreadProvider('acp-opencode')).toBeUndefined();
+  });
+
   it('starts bundled plugins so thread create can resolve acp-opencode', async () => {
     const dataDir = tempDir();
     const bundled = tempDir();

@@ -62,13 +62,17 @@ describe('plugin service responsiveness failures', () => {
   });
 
   it('contains a rejected failure notification after persisting the degraded state', async () => {
+    vi.useFakeTimers();
     let rejectChanges = false;
     const changed = vi.fn(() => { if (rejectChanges) throw Error('notification failed'); });
     const { service, plugin } = fixture(changed);
     const row = await service.install(plugin); rejectChanges = true;
-    state.runtimes[0].options.onFailure(Error('worker failed'));
+    state.runtimes[0].options.onFailure(Error('Plugin event loop stopped responding'));
     await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
     expect(service.get(row.id)?.status).toBe('degraded');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('running'));
+    vi.useRealTimers();
   });
 
   it('restarts a watchdog-stalled plugin once the backoff expires', async () => {

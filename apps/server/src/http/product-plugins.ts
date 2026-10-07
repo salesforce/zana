@@ -397,6 +397,7 @@ export async function startAttachedProductPluginService(
   plugins: PluginService
 ): Promise<void> {
   await plugins.start();
+  if (!plugins.isStarted()) return;
   for (const hostId of ctx.hostHub.connectedHostIds()) {
     for (const provider of listThreadProviders().filter((row) => row.models?.scope === 'host')) {
       try {
@@ -437,9 +438,7 @@ export function pluginAssetRootFromService(
   pluginId: string
 ): string | null {
   const row = plugins?.get(pluginId);
-  return row?.enabled && row.appEntry && plugins?.snapshot().some((entry) => entry.id === pluginId && entry.appUrl)
-    ? row.rootDir
-    : null;
+  return row?.enabled && row.appEntry && plugins?.appUrl(pluginId) ? row.rootDir : null;
 }
 
 export { toPluginAppSnapshot };

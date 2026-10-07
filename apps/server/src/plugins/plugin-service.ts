@@ -148,7 +148,10 @@ export interface PluginService {
   start(): Promise<void>;
   /** Release the periodic catalog-update sweep. Safe to call more than once. */
   stop(): void;
+  /** True only after activation completes and until stop begins. */
+  isStarted(): boolean;
   snapshot(): PluginUiSnapshot[];
+  appUrl(id: string): string | null;
   agentContributions(): PluginAgentContribution[];
   sessionTools(ctx: PluginAgentConfigureContext): Promise<PluginSessionTools>;
   invokeAgentTool(args: {
@@ -516,9 +519,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const recoveryAttempts = new Map<string, number>();
   const MAX_WATCHDOG_RECOVERY_ATTEMPTS = 3;
+  const WATCHDOG_FAILURE_MESSAGE = 'Plugin event loop stopped responding';
+  const WATCHDOG_RECOVERY_BASE_DELAY_MS = 1_000;
   let lifecycleGeneration = 0;
   let starting: Promise<void> | null = null;
   let stopped = false;
+  let started = false;
   const servicesRegistry = createPluginServicesRegistry();
   const promotionQueue = createSerializedTransactionQueue();
   const lifecycleEpochs = new Map<string, number>();
@@ -553,7 +559,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         console.error(`[plugins] automatic recovery failed for ${id}:`, error instanceof Error ? error.message : error);
         scheduleWatchdogRecovery(id);
       });
-    }, 1_000 * 2 ** attempt);
+    }, WATCHDOG_RECOVERY_BASE_DELAY_MS * 2 ** attempt);
     timer.unref();
     recoveryTimers.set(id, timer);
   };
@@ -1128,10 +1134,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
               live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
               await store.upsert(degraded);
               if (!isCurrent(row.id, epoch)) return;
+              if (error.message === WATCHDOG_FAILURE_MESSAGE) scheduleWatchdogRecovery(row.id);
               await emitCapabilities();
               if (!isCurrent(row.id, epoch)) return;
               await emitAppsChanged();
-              if (error.message === 'Plugin event loop stopped responding') scheduleWatchdogRecovery(row.id);
             })().catch(error => console.error('Plugin failure cleanup failed', error));
           }
         });
@@ -1755,6 +1761,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     },
     async reload(id) {
       await waitForStartup();
+      cancelRecovery(id);
       bumpLifecycleEpoch(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
@@ -1870,11 +1877,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         checkUpdates: () => service.checkUpdates()
       });
       startBuiltinSourceWatchers();
+      started = true;
       })();
       return starting;
     },
     stop() {
       stopped = true;
+      started = false;
       lifecycleGeneration++;
       for (const timer of recoveryTimers.values()) clearTimeout(timer);
       recoveryTimers.clear();
@@ -1886,7 +1895,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       updateSweep?.stop();
       updateSweep = null;
     },
+    isStarted: () => started,
     snapshot,
+    appUrl(id) {
+      const row = store.get(id);
+      return row && live.get(id)?.handle ? appUrlFor(row) : null;
+    },
     agentContributions,
     sessionTools(ctx) {
       return resolvePluginSessionTools(withPluginMetadata(agentToolSources(), ctx), ctx);
