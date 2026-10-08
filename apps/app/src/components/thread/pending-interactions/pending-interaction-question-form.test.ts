@@ -4,8 +4,12 @@ import {
   isQuestionAnswered,
   optionInvitesFreeText,
   pendingQuestionBannerTitle,
+  questionChoiceIndexForKey,
+  recommendedOptionValue,
   shouldShowFreeTextInput,
   shouldShowOtherChoice,
+  splitInlineCode,
+  splitRecommendedLabel,
   toggleOtherChoice,
   toggleQuestionOption,
   toUserAnswerResolution
@@ -140,5 +144,48 @@ describe('pending interaction question form', () => {
       q1: { selected: [] }
     });
   });
-});
 
+  it('splits the Recommended suffix off an option label', () => {
+    expect(splitRecommendedLabel('Use a worktree (Recommended)')).toEqual({ label: 'Use a worktree', recommended: true });
+    expect(splitRecommendedLabel('Ship it — recommended')).toEqual({ label: 'Ship it', recommended: true });
+    expect(splitRecommendedLabel('Wait')).toEqual({ label: 'Wait', recommended: false });
+    expect(splitRecommendedLabel('Recommended')).toEqual({ label: 'Recommended', recommended: false });
+  });
+
+  it('preselects a single recommended option for single-select questions only', () => {
+    const options = [
+      { value: 'tree', label: 'Use a worktree (Recommended)' },
+      { value: 'here', label: 'Work here' }
+    ];
+    expect(recommendedOptionValue({ multiSelect: false, options })).toBe('tree');
+    expect(recommendedOptionValue({ multiSelect: true, options })).toBeUndefined();
+    expect(recommendedOptionValue({
+      multiSelect: false,
+      options: options.map((option) => ({ ...option, label: `${option.label} (Recommended)` }))
+    })).toBeUndefined();
+    expect(createInitialQuestionAnswers([{ id: 'q', allowFreeText: true, multiSelect: false, options }]).q)
+      .toEqual({ selected: ['tree'], freeText: '', otherSelected: false });
+    expect(createInitialQuestionAnswers([{ id: 'q', allowFreeText: false }]).q)
+      .toEqual({ selected: [], freeText: undefined, otherSelected: false });
+  });
+
+  it('splits inline code spans and leaves unmatched backticks literal', () => {
+    expect(splitInlineCode('Edit `a.ts` and `b.ts` now')).toEqual([
+      { text: 'Edit ', code: false },
+      { text: 'a.ts', code: true },
+      { text: ' and ', code: false },
+      { text: 'b.ts', code: true },
+      { text: ' now', code: false }
+    ]);
+    expect(splitInlineCode('`main`')).toEqual([{ text: 'main', code: true }]);
+    expect(splitInlineCode('a ` lone tick')).toEqual([{ text: 'a ` lone tick', code: false }]);
+  });
+
+  it('maps digit keys to choices within range', () => {
+    expect(questionChoiceIndexForKey('1', 3)).toBe(0);
+    expect(questionChoiceIndexForKey('3', 3)).toBe(2);
+    expect(questionChoiceIndexForKey('4', 3)).toBe(-1);
+    expect(questionChoiceIndexForKey('0', 3)).toBe(-1);
+    expect(questionChoiceIndexForKey('a', 3)).toBe(-1);
+  });
+});

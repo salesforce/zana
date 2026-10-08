@@ -28,8 +28,11 @@ import {
   OTHER_OPTION_LABEL,
   isQuestionAnswered,
   pendingQuestionBannerTitle,
+  questionChoiceIndexForKey,
   shouldShowFreeTextInput,
   shouldShowOtherChoice,
+  splitInlineCode,
+  splitRecommendedLabel,
   toggleOtherChoice,
   toggleQuestionOption,
   toUserAnswerResolution,
@@ -83,6 +86,7 @@ export function ThreadPendingInteractionBanner({
 function BannerShell({
   className,
   title,
+  titleAccessory,
   sourceThread,
   errorMessage,
   footer,
@@ -92,6 +96,7 @@ function BannerShell({
 }: {
   className?: string;
   title?: string;
+  titleAccessory?: ReactNode;
   sourceThread?: SourceThread;
   errorMessage?: string | null;
   footer?: ReactNode;
@@ -103,6 +108,7 @@ function BannerShell({
     <PendingInteractionShell
       className={className}
       title={title}
+      titleAccessory={titleAccessory}
       sourceThread={sourceThread}
       errorMessage={errorMessage}
       footer={footer}
@@ -277,12 +283,24 @@ function ApprovalDetailBlock({ detail }: { detail: PendingInteractionDetail }) {
   );
 }
 
+function InlineText({ text }: { text: string }) {
+  if (!text.includes('`')) return <>{text}</>;
+  return (
+    <>
+      {splitInlineCode(text).map((segment, index) => (
+        segment.code ? <code key={index}>{segment.text}</code> : <span key={index}>{segment.text}</span>
+      ))}
+    </>
+  );
+}
+
 function QuestionOptionButton({
   checked,
   description,
   disabled,
   label,
   multiSelect,
+  shortcut,
   onSelect
 }: {
   checked: boolean;
@@ -290,22 +308,33 @@ function QuestionOptionButton({
   disabled: boolean;
   label: string;
   multiSelect: boolean;
+  shortcut?: number;
   onSelect: () => void;
 }) {
+  const { label: cleanLabel, recommended } = splitRecommendedLabel(label);
   return (
     <button
       type="button"
       className={`thread-pending-option${checked ? ' is-selected' : ''}${multiSelect ? ' is-multi' : ''}`}
       aria-pressed={checked}
+      aria-keyshortcuts={shortcut ? String(shortcut) : undefined}
       disabled={disabled}
       onClick={onSelect}
     >
+      {shortcut ? <span className="thread-pending-option-key" aria-hidden="true">{shortcut}</span> : null}
       <span className="thread-pending-option-mark" aria-hidden="true">
         {checked ? <Check size={10} strokeWidth={3} /> : null}
       </span>
       <span className="thread-pending-option-copy">
-        <span className="thread-pending-option-label">{label}</span>
-        {description ? <span className="thread-pending-option-desc">{description}</span> : null}
+        <span className="thread-pending-option-label">
+          <InlineText text={cleanLabel} />
+          {recommended ? (
+            <span className="thread-pending-option-badge" data-testid="thread-pending-option-recommended">Recommended</span>
+          ) : null}
+        </span>
+        {description ? (
+          <span className="thread-pending-option-desc"><InlineText text={description} /></span>
+        ) : null}
       </span>
     </button>
   );
@@ -368,13 +397,44 @@ function QuestionPendingInteractionBanner({
     }).finally(() => setBusy(false));
   };
   const isLast = currentIndex >= total - 1;
+  const currentOptions = current?.options ?? [];
+  const showOther = current ? shouldShowOtherChoice(current) : false;
+  const choiceCount = currentOptions.length + (showOther ? 1 : 0);
+  const selectChoice = (index: number) => {
+    if (!current) return;
+    const option = currentOptions[index];
+    if (option) {
+      updateAnswer(current.id, (draft) => toggleQuestionOption(current, draft, option.value));
+    } else if (showOther && index === currentOptions.length) {
+      updateAnswer(current.id, (draft) => toggleOtherChoice(current, draft));
+    }
+  };
+  const onFormKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (disabled || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) return;
+    const choice = questionChoiceIndexForKey(event.key, choiceCount);
+    if (choice >= 0) {
+      event.preventDefault();
+      selectChoice(choice);
+      return;
+    }
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    if (!(event.target instanceof HTMLElement) || !event.target.closest('.thread-pending-option')) return;
+    event.preventDefault();
+    if (!isLast) setCurrentIndex((index) => Math.min(index + 1, total - 1));
+    else if (allAnswered) event.currentTarget.requestSubmit();
+  };
   return (
     <BannerShell
+      className="thread-pending-question-banner"
       title={pendingQuestionBannerTitle(total)}
+      titleAccessory={total === 1 && current?.shortLabel ? (
+        <span className="thread-pending-question-chip" data-testid="thread-pending-question-chip">{current.shortLabel}</span>
+      ) : null}
       sourceThread={sourceThread}
       errorMessage={error}
     >
-      <form className="thread-pending-question-form" onSubmit={submit}>
+      <form className="thread-pending-question-form" onSubmit={submit} onKeyDown={onFormKeyDown}>
         {total > 1 ? (
           <div className="thread-pending-question-steps">
             <div className="thread-pending-question-step-list">
@@ -402,9 +462,9 @@ function QuestionPendingInteractionBanner({
         ) : null}
         {current ? (
           <fieldset className="thread-pending-question" disabled={disabled}>
-            <legend>{current.prompt}</legend>
+            <legend><InlineText text={current.prompt} /></legend>
             <div className="thread-pending-option-list">
-              {(current.options ?? []).map((option) => {
+              {currentOptions.map((option, index) => {
                 const answer = answers[current.id] ?? { selected: [], otherSelected: false };
                 return (
                   <QuestionOptionButton
@@ -414,19 +474,19 @@ function QuestionPendingInteractionBanner({
                     disabled={disabled}
                     label={option.label}
                     multiSelect={current.multiSelect}
-                    onSelect={() => updateAnswer(current.id, (draft) => (
-                      toggleQuestionOption(current, draft, option.value)
-                    ))}
+                    shortcut={index < 9 ? index + 1 : undefined}
+                    onSelect={() => selectChoice(index)}
                   />
                 );
               })}
-              {shouldShowOtherChoice(current) ? (
+              {showOther ? (
                 <QuestionOptionButton
                   checked={Boolean(answers[current.id]?.otherSelected)}
                   disabled={disabled}
                   label={OTHER_OPTION_LABEL}
                   multiSelect={current.multiSelect}
-                  onSelect={() => updateAnswer(current.id, (draft) => toggleOtherChoice(current, draft))}
+                  shortcut={currentOptions.length < 9 ? currentOptions.length + 1 : undefined}
+                  onSelect={() => selectChoice(currentOptions.length)}
                 />
               ) : null}
             </div>
@@ -450,6 +510,11 @@ function QuestionPendingInteractionBanner({
           </fieldset>
         ) : null}
         <div className="thread-pending-banner-actions">
+          {choiceCount > 1 ? (
+            <span className="thread-pending-question-hint" aria-hidden="true">
+              <kbd>1</kbd>–<kbd>{Math.min(choiceCount, 9)}</kbd> to choose · <kbd>↵</kbd> to {isLast ? 'submit' : 'continue'}
+            </span>
+          ) : null}
           {currentIndex > 0 ? (
             <button
               type="button"

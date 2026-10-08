@@ -57,13 +57,59 @@ export function isQuestionAnswered(
   return answer.selected.length > 0;
 }
 
+const RECOMMENDED_SUFFIX = /\s*[-–—(]\s*recommended\s*\)?\s*$/i;
+
+/** Splits an agent's "Label (Recommended)" convention into a clean label plus a flag. */
+export function splitRecommendedLabel(label: string): { label: string; recommended: boolean } {
+  const stripped = label.replace(RECOMMENDED_SUFFIX, '').trim();
+  if (stripped === label.trim() || !stripped) return { label, recommended: false };
+  return { label: stripped, recommended: true };
+}
+
+export function recommendedOptionValue(
+  question: Pick<PendingInteractionUserQuestionQuestion, 'multiSelect' | 'options'>
+): string | undefined {
+  if (question.multiSelect) return undefined;
+  const recommended = (question.options ?? []).filter((option) => splitRecommendedLabel(option.label).recommended);
+  return recommended.length === 1 ? recommended[0]!.value : undefined;
+}
+
+export interface InlineSegment {
+  text: string;
+  code: boolean;
+}
+
+/** Splits `inline code` spans out of prompt/option text; unmatched backticks stay literal. */
+export function splitInlineCode(text: string): InlineSegment[] {
+  const segments: InlineSegment[] = [];
+  const pattern = /`([^`\n]+)`/g;
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    if (start > last) segments.push({ text: text.slice(last, start), code: false });
+    segments.push({ text: match[1]!, code: true });
+    last = start + match[0].length;
+  }
+  if (last < text.length) segments.push({ text: text.slice(last), code: false });
+  return segments;
+}
+
+/** Maps a digit key to a zero-based choice index, or -1 when it doesn't pick a choice. */
+export function questionChoiceIndexForKey(key: string, choiceCount: number): number {
+  if (!/^[1-9]$/.test(key)) return -1;
+  const index = Number(key) - 1;
+  return index < choiceCount ? index : -1;
+}
+
 export function createInitialQuestionAnswers(
-  questions: readonly Pick<PendingInteractionUserQuestionQuestion, 'id' | 'allowFreeText'>[]
+  questions: readonly (Pick<PendingInteractionUserQuestionQuestion, 'id' | 'allowFreeText'>
+    & Partial<Pick<PendingInteractionUserQuestionQuestion, 'multiSelect' | 'options'>>)[]
 ): Record<string, QuestionAnswerDraft> {
   const initial: Record<string, QuestionAnswerDraft> = {};
   for (const question of questions) {
+    const recommended = recommendedOptionValue({ multiSelect: question.multiSelect ?? false, options: question.options });
     initial[question.id] = {
-      selected: [],
+      selected: recommended ? [recommended] : [],
       freeText: question.allowFreeText ? '' : undefined,
       otherSelected: false
     };

@@ -10,6 +10,7 @@ interface SourceThread {
 export function PendingInteractionShell({
   className,
   title,
+  titleAccessory,
   sourceThread,
   errorMessage,
   footer,
@@ -19,6 +20,7 @@ export function PendingInteractionShell({
 }: {
   className?: string;
   title?: string;
+  titleAccessory?: ReactNode;
   sourceThread?: SourceThread;
   errorMessage?: string | null;
   footer?: ReactNode;
@@ -40,6 +42,7 @@ export function PendingInteractionShell({
           </Link>
         ) : null}
         {title ? <h3 className="thread-pending-banner-title">{title}</h3> : null}
+        {titleAccessory}
         <button
           type="button"
           className="thread-pending-shell-toggle"

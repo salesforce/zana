@@ -32755,6 +32755,31 @@ textarea.ui-command-composer-input {
   }
 }
 
+.thread-pending-question-banner .thread-pending-shell-header {
+  margin-bottom: 8px;
+}
+.thread-pending-question-banner .thread-pending-banner-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, var(--ink-muted));
+}
+.thread-pending-question-chip {
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
+  color: var(--accent-blue);
+  font-size: 11px;
+  font-weight: 600;
+}
+.thread-pending-question-banner code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-primary, var(--ink)) 8%, transparent);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.88em;
+  overflow-wrap: anywhere;
+}
 .thread-pending-question-form {
   display: flex;
   flex-direction: column;
@@ -32811,15 +32836,16 @@ textarea.ui-command-composer-input {
 }
 .thread-pending-question legend {
   padding: 0;
-  margin-bottom: 8px;
-  font-size: 15px;
-  font-weight: 650;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
   color: var(--text-primary, var(--ink));
 }
 .thread-pending-option-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
 }
 .thread-pending-option {
   display: flex;
@@ -32827,21 +32853,70 @@ textarea.ui-command-composer-input {
   align-items: flex-start;
   gap: 10px;
   margin: 0;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-background, var(--bg-base));
   color: inherit;
   text-align: left;
   font: inherit;
   cursor: pointer;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
 }
 .thread-pending-option:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-color: color-mix(in srgb, var(--text-primary, var(--ink)) 24%, var(--border));
+}
+.thread-pending-option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-blue) 45%, transparent);
+  outline-offset: 1px;
 }
 .thread-pending-option.is-selected {
-  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-elevated, var(--bg-background)));
-  border-color: color-mix(in srgb, var(--accent-blue) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-background, var(--bg-base)));
+  border-color: var(--accent-blue);
+}
+.thread-pending-option-key {
+  flex: 0 0 auto;
+  width: 12px;
+  margin-top: 1px;
+  color: var(--text-muted, var(--ink-muted));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 16px;
+}
+.thread-pending-option-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  color: var(--accent-blue);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  vertical-align: 1px;
+}
+.thread-pending-question-hint {
+  margin-right: auto;
+  color: var(--text-muted, var(--ink-muted));
+  font-size: 11.5px;
+}
+.thread-pending-question-hint kbd {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-background, var(--bg-base));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  text-align: center;
+}
+@container (max-width: 420px) {
+  .thread-pending-question-hint {
+    display: none;
+  }
 }
 .thread-pending-option-mark {
   display: inline-flex;
@@ -32868,14 +32943,14 @@ textarea.ui-command-composer-input {
 }
 .thread-pending-option-label {
   display: block;
-  font-size: 14px;
-  font-weight: 550;
+  font-size: 13.5px;
+  font-weight: 600;
   color: var(--text-primary, var(--ink));
 }
 .thread-pending-option-desc {
   display: block;
   margin-top: 2px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 400;
   color: var(--text-muted, var(--ink-muted));
 }

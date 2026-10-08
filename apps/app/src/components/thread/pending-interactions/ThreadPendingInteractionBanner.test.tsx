@@ -432,6 +432,81 @@ describe('ThreadPendingInteractionBanner keyboard', () => {
   });
 });
 
+describe('polished question card', () => {
+  afterEach(() => {
+    cleanup();
+    vi.mocked(product.threads.interactions.resolve).mockClear();
+  });
+
+  function worktreeQuestion(id: string, overrides: Record<string, unknown> = {}): PendingInteraction {
+    return {
+      ...commandInteraction(), id, resolution: null,
+      payload: { kind: 'user_question', questions: [{
+        id: 'approach',
+        prompt: 'Another session is on `main`. How should I proceed?',
+        shortLabel: 'Approach',
+        multiSelect: false,
+        allowFreeText: true,
+        options: [
+          { value: 'tree', label: 'Use a worktree (Recommended)', description: 'Create `.worktrees/fix` from origin/main' },
+          { value: 'here', label: 'Work in this checkout' },
+          { value: 'wait', label: 'Wait' }
+        ],
+        ...overrides
+      }] }
+    } as PendingInteraction;
+  }
+  const viewOf = (interaction: PendingInteraction) => <MemoryRouter>
+    <ThreadPendingInteractionBanner interaction={interaction} threadId="polish-thread" />
+  </MemoryRouter>;
+
+  it('renders the short label chip, inline code, a Recommended badge and preselects it', () => {
+    const { container } = render(viewOf(worktreeQuestion('polish-render')));
+    expect(screen.getByTestId('thread-pending-question-chip').textContent).toBe('Approach');
+    expect(container.querySelector('legend code')?.textContent).toBe('main');
+    expect(container.querySelector('.thread-pending-option-desc code')?.textContent).toBe('.worktrees/fix');
+    const recommended = screen.getByTestId('thread-pending-option-recommended').closest('button')!;
+    expect(recommended.getAttribute('aria-pressed')).toBe('true');
+    expect(recommended.textContent).not.toContain('(Recommended)');
+    expect(screen.getByTestId('thread-pending-question-submit').hasAttribute('disabled')).toBe(false);
+    expect(container.querySelectorAll('.thread-pending-option-key')).toHaveLength(4);
+    expect(container.querySelector('.thread-pending-question-hint')?.textContent).toContain('to submit');
+  });
+
+  it('selects choices with digit keys and submits with Enter from an option', async () => {
+    const interaction = worktreeQuestion('polish-keys');
+    render(viewOf(interaction));
+    const form = screen.getByTestId('thread-pending-question-submit').closest('form')!;
+    fireEvent.keyDown(form, { key: '3' });
+    expect(screen.getByRole('button', { name: 'Wait' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.keyDown(form, { key: '9' });
+    fireEvent.keyDown(form, { key: '2', metaKey: true });
+    expect(screen.getByRole('button', { name: 'Wait' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.keyDown(form, { key: 'Enter' });
+    expect(product.threads.interactions.resolve).not.toHaveBeenCalled();
+    fireEvent.keyDown(form, { key: '4' });
+    const textarea = screen.getByRole('textbox');
+    fireEvent.keyDown(textarea, { key: '1' });
+    expect(screen.getByRole('button', { name: 'Other…' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.keyDown(form, { key: '3' });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Wait' }), { key: 'Enter' });
+    await waitFor(() => expect(product.threads.interactions.resolve).toHaveBeenCalledWith('polish-thread', interaction.id, {
+      kind: 'user_answer', answers: { approach: { selected: ['wait'] } }
+    }));
+  });
+
+  it('advances with Enter on a multi-question ask and skips the chip', () => {
+    const interaction = worktreeQuestion('polish-steps');
+    if (interaction.payload.kind !== 'user_question') throw new Error('Expected question');
+    interaction.payload.questions.push({ id: 'second', prompt: 'Anything else?', multiSelect: false, allowFreeText: true });
+    render(viewOf(interaction));
+    expect(screen.queryByTestId('thread-pending-question-chip')).toBeNull();
+    expect(screen.getByText(/to continue/)).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('button', { name: /Use a worktree/ }), { key: 'Enter' });
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+  });
+});
+
 describe('question drafts across navigation', () => {
   function question(id: string): PendingInteraction {
     return {
