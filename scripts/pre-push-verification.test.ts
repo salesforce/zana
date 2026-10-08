@@ -50,6 +50,19 @@ it('skips only explicit inert prose and preserves deletion paths', () => {
   expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(['docs/guide.md', 'apps/server/src/removed.ts']) })).toMatchObject({ action: 'full' });
 });
 
+it('treats repo agent instructions as inert prose outside plugins and test inputs', () => {
+  const select = (paths: string[]) => selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(paths) });
+  expect(select(['AGENTS.md', 'CLAUDE.md'])).toMatchObject({ action: 'skip' });
+  expect(select(['apps/host-daemon/AGENTS.md', 'apps/server/src/services/inbox/CLAUDE.md', 'packages/domain/AGENTS.md', 'docs/releases/AGENTS.md', 'docs/control-sdk.md'])).toMatchObject({ action: 'skip' });
+  expect(select(['plugins/agent-city/AGENTS.md'])).toMatchObject({ action: 'full' });
+  expect(select(['apps/server/src/plugins/builtin-skills/zcc-cli/AGENTS.md'])).toMatchObject({ action: 'full' });
+  expect(select(['apps/server/src/__tests__/AGENTS.md'])).toMatchObject({ action: 'full' });
+  expect(select(['e2e/fixtures/CLAUDE.md'])).toMatchObject({ action: 'full' });
+  expect(select(['website/AGENTS.md'])).toMatchObject({ action: 'full' });
+  expect(select(['apps/app/NOTES.md'])).toMatchObject({ action: 'full' });
+  expect(select(['AGENTS.md', 'apps/host-daemon/src/pty.ts'])).toMatchObject({ action: 'full' });
+});
+
 it('uses strictest full policy for unsafe refs, bases, remote identity, and multiple objects', () => {
   expect(selectPush({ tuples: [{ ...feature, remoteRef: 'refs/heads/main' }], remoteUrl: 'https://github.com/salesforce/zana', ...services() })).toMatchObject({ action: 'full', reason: expect.stringContaining('protected') });
   expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/fork/zana', ...services() })).toMatchObject({ action: 'full', reason: expect.stringContaining('remote') });

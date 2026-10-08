@@ -16,8 +16,11 @@ const GITHUB_REPOSITORY = 'salesforce/zana';
 // Known work alias is retained for existing installs. Teams may add aliases
 // without weakening host verification through ZANA_GITHUB_SSH_ALIASES.
 const DEFAULT_GITHUB_SSH_ALIASES = ['github.com-work-public'];
-const INERT_DOC = /^(?:docs\/.+\.md|README\.md|CONTRIBUTING\.md)$/;
-const UNSAFE_DOC = /(?:^|\/)(?:AGENTS\.md|SKILL\.md|fixtures?\/|snapshots?\/|test(?:ing)?\/|test-data\/|assets\/|generated\/)/i;
+// Repo agent instructions (AGENTS.md / CLAUDE.md @AGENTS.md stubs) are read only
+// by coding agents, never by the product, so root/apps/packages/docs copies are
+// inert. plugins/** stays out: plugin dirs are path-installed and shipped.
+const INERT_DOC = /^(?:docs\/.+\.md|README\.md|CONTRIBUTING\.md|(?:(?:apps|packages|docs)\/(?:[^/]+\/)*)?(?:AGENTS|CLAUDE)\.md)$/;
+const UNSAFE_DOC = /(?:^|\/)(?:SKILL\.md|fixtures?\/|snapshots?\/|test(?:ing)?\/|test-data\/|assets\/|generated\/|builtin-skills\/|__tests__\/)/i;
 
 function git(args, { cwd = process.cwd(), encoding = 'utf8' } = {}) {
   return execFileSync('git', args, { cwd, encoding, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
