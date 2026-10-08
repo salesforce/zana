@@ -24,6 +24,7 @@
     "build:all": "turbo run build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "verify:full": "pnpm run typecheck && pnpm exec vitest run && pnpm exec vitest run --config plugins/tasks/vitest.config.ts && pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts && pnpm exec vitest run --config vitest.release-coverage.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node scripts/run-electron-e2e.mjs --build",

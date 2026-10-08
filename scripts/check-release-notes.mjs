@@ -23,7 +23,7 @@
  */
 import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
@@ -86,8 +86,14 @@ export function runReleaseNotesGuard({ root = repoRoot, tag = process.env.GITHUB
   return 0;
 }
 
-// macOS exposes temporary paths through both /var and /private/var. Compare
-// canonical paths so copied-script execution still runs its guard.
-if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
-  process.exitCode = runReleaseNotesGuard();
+/** Entry point seam stays unit-testable while preserving direct CLI behavior. */
+export function runReleaseNotesCli(
+  // macOS exposes temporary paths through both /var and /private/var.
+  // Compare canonical paths so copied-script execution still runs its guard.
+  isMain = Boolean(process.argv[1]) && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url)),
+  run = runReleaseNotesGuard,
+) {
+  if (isMain) process.exitCode = run();
 }
+
+runReleaseNotesCli();

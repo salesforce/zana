@@ -35,9 +35,10 @@ import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
 import {
-  attachProductPluginService,
   bundledPluginsRootFromDataDir,
+  createAttachedProductPluginService,
   pluginAssetRootFromService,
+  startAttachedProductPluginService,
   toPluginAppSnapshot
 } from './http/product-plugins.js';
 
@@ -123,7 +124,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
           });
         }, 100);
       });
-      plugins = await attachProductPluginService(product, {
+      plugins = createAttachedProductPluginService(product, {
         bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),
         hostAgentToolSource: createModernTeamLaunchConfigSource({
           getMcpBaseUrl: () => runtimeMcpConfig.get().mcpBaseUrl,
@@ -183,6 +184,9 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       }, 10_000);
       parentPort.postMessage({ type: 'ready', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, url: host.url });
       runtimeMcpConfig.started();
+      void startAttachedProductPluginService(product, plugins).catch((error) => {
+        console.error('[plugins] background startup failed:', error instanceof Error ? error.message : error);
+      });
     } catch (error) {
       if (hostConnectionRenewal) {
         clearInterval(hostConnectionRenewal);
@@ -547,6 +551,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     if (menubarThreadHintTimer) clearTimeout(menubarThreadHintTimer);
     menubarThreadHintTimer = null;
     if (hostConnectionRenewal) clearInterval(hostConnectionRenewal);
+    plugins?.stop();
     await close?.();
     runtimeDatabase?.close();
     parentPort.postMessage({ type: 'stopped', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION });

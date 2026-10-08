@@ -5,7 +5,7 @@
  * starts Vite; the default path starts electron-vite.
  */
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -176,6 +176,15 @@ export function prepareLocalDevEnv(processEnv = process.env, options = {}) {
   };
 }
 
+/**
+ * Vite's optimized dependencies embed resolved package files. A partial pnpm
+ * install can leave React and ReactDOM from different versions in this cache,
+ * which fails before the renderer can mount an error boundary.
+ */
+export function clearViteDependencyCache(root = repoRoot) {
+  rmSync(join(root, 'apps', 'app', 'node_modules', '.vite'), { recursive: true, force: true });
+}
+
 export function formatDevTargetBanner(prepared) {
   const dataDir = prepared.env.ZCC_DATA_DIR;
   const port = prepared.env.ZCC_SERVER_PORT;
@@ -221,6 +230,7 @@ export function isCliEntry(argv1, moduleHref = import.meta.url) {
 function runMain() {
   const target = parseDevTarget(process.argv.slice(2), process.env);
   const prepared = prepareLocalDevEnv(process.env, { target, argv: process.argv.slice(2) });
+  clearViteDependencyCache();
   const banner = formatDevTargetBanner(prepared);
   if (banner) process.stderr.write(banner);
   const child = spawnDevTurbo({
