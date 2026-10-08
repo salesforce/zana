@@ -15,7 +15,12 @@
       "source": "./src/kanban.tsx",
       "default": "./src/kanban.tsx"
     },
-    "./kanban.css": "./src/kanban.css"
+    "./kanban.css": "./src/kanban.css",
+    "./popover-picklist": {
+      "types": "./src/popover-picklist.tsx",
+      "source": "./src/popover-picklist.tsx",
+      "default": "./src/popover-picklist.tsx"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

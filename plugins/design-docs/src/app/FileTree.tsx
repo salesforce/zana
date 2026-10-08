@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import type { DesignDocDetail, DesignDocFileMeta } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
@@ -189,7 +189,8 @@ export function FileTree({
   activePath,
   onOpen,
   onPathChanged,
-  hasDraft
+  hasDraft,
+  onHide
 }: {
   doc: DesignDocDetail;
   activePath: string | null;
@@ -198,6 +199,8 @@ export function FileTree({
   onPathChanged(from: string, to: string | null): void;
   /** Whether `path` has unsaved edits open, so renaming or deleting it asks first. */
   hasDraft?(path: string): boolean;
+  /** Collapse the inline tree; absent where the tree is not a column. */
+  onHide?(): void;
 }) {
   const api = useApi();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -347,6 +350,7 @@ export function FileTree({
         <span className="dd-spacer" />
         <IconButton icon={FilePlus2} label="Add files" size={13} disabled={full} onClick={() => uploadRef.current?.click()} />
         <IconButton icon={Plus} label="New file" size={13} disabled={full} onClick={() => setCreating(true)} />
+        {onHide ? <IconButton icon={PanelLeftClose} label="Hide files" size={13} onClick={onHide} /> : null}
         <input
           ref={uploadRef}
           type="file"

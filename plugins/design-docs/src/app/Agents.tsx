@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
-import { AtSign, Bot, ChevronDown, Sparkles, Unlink } from 'lucide-react';
+import { ThreadChat, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { ArrowLeft, AtSign, Bot, ChevronDown, ExternalLink, Sparkles, Unlink } from 'lucide-react';
 import { AGENT_ACTIONS, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import type { DesignDocDetail, ThreadRole } from '../shared/contract.js';
 import { errorMessage, toast, useApi } from './api.js';
@@ -17,10 +17,41 @@ const ROLE_LABELS: Record<ThreadRole, string> = {
 /** The thread-panel action id shared by the directive card, the message action and Ask agent. */
 export const DOC_PANEL_ACTION = 'design-doc';
 
-export function AgentsPane({ doc, now }: { doc: DesignDocDetail; now: number }) {
+/**
+ * The doc's linked threads. With `onOpenChat` a thread opens embedded in the
+ * rail beside the doc; without it (the doc is already beside a thread) it
+ * navigates to the thread.
+ */
+export function AgentsPane({
+  doc,
+  now,
+  chatThreadId = null,
+  onOpenChat
+}: {
+  doc: DesignDocDetail;
+  now: number;
+  chatThreadId?: string | null;
+  onOpenChat?(threadId: string | null): void;
+}) {
   const api = useApi();
   const navigate = useZccNavigate();
   const threads = [...doc.threads].sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  const chat = onOpenChat ? threads.find((thread) => thread.threadId === chatThreadId) : undefined;
+  if (chat && onOpenChat) {
+    return (
+      <div className="dd-rail-pane dd-agents dd-agent-chat">
+        <div className="dd-agent-chat-head">
+          <IconButton icon={ArrowLeft} label="All agents" size={13} onClick={() => onOpenChat(null)} />
+          <span className="dd-agent-chat-title" title={chat.title}>
+            {chat.title}
+          </span>
+          <span className={`dd-role dd-role-${chat.role}`}>{ROLE_LABELS[chat.role]}</span>
+          <IconButton icon={ExternalLink} label="Open full thread" size={13} onClick={() => navigate.toThread(chat.threadId)} />
+        </div>
+        <ThreadChat threadId={chat.threadId} variant="compact" layout="contained" className="dd-agent-chat-body" />
+      </div>
+    );
+  }
   return (
     <div className="dd-rail-pane dd-agents">
       <div className="dd-rail-scroll">
@@ -28,7 +59,12 @@ export function AgentsPane({ doc, now }: { doc: DesignDocDetail; now: number }) 
           <ul className="dd-thread-list">
             {threads.map((thread) => (
               <li key={thread.threadId} className="dd-thread">
-                <button type="button" className="dd-thread-open" onClick={() => navigate.toThread(thread.threadId)} title="Open thread">
+                <button
+                  type="button"
+                  className="dd-thread-open"
+                  onClick={() => (onOpenChat ? onOpenChat(thread.threadId) : navigate.toThread(thread.threadId))}
+                  title={onOpenChat ? 'Open chat beside the doc' : 'Open thread'}
+                >
                   <Bot size={14} aria-hidden />
                   <span className="dd-thread-main">
                     <span className="dd-thread-title">{thread.title}</span>

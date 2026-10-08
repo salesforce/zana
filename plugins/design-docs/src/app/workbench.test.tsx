@@ -5,7 +5,8 @@ import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { UI_USER } from '../server/rpc.js';
 import type { DesignDocStore } from '../server/store.js';
 import { NavPanel, ProjectTab } from './slots.js';
-import { createHarness, type Harness } from './test-harness.js';
+import { projectOptions } from './Workbench.js';
+import { AGENT, createHarness, type Harness } from './test-harness.js';
 
 export function seed(store: DesignDocStore, input: { title: string; projectId?: string | null; summary?: string; tags?: string[]; status?: 'draft' | 'archived' }) {
   return store.create({ template: 'blank', ...input, projectId: input.projectId ?? null }, UI_USER);
@@ -21,6 +22,11 @@ async function newDocDialog() {
   const dialog = screen.getByRole('dialog', { name: 'New design doc' });
   await within(dialog).findAllByRole('radio');
   return dialog;
+}
+
+function pick(filter: 'status' | 'project', option: string | RegExp) {
+  fireEvent.click(screen.getByRole('button', { name: `Filter by ${filter}` }));
+  fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: option }));
 }
 
 function menuItem(name: string | RegExp) {
@@ -146,13 +152,15 @@ describe('doc list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
     expect(await screen.findByText('Payments API')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter (Active)' }));
-    fireEvent.click(menuItem('Archived'));
+    const statusPicker = screen.getByRole('button', { name: 'Filter by status' });
+    expect(statusPicker.textContent).toBe('Active');
+    expect(screen.queryByRole('button', { name: 'Filter by project' })).toBeNull();
+    pick('status', 'Archived');
     expect(await screen.findByText('Old idea')).toBeTruthy();
     expect(screen.queryByText('Payments API')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Filter (Archived)' }).getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: 'Filter (Archived)' }));
-    fireEvent.click(menuItem('All'));
+    expect(statusPicker.textContent).toBe('Archived');
+    expect(statusPicker.classList.contains('on')).toBe(true);
+    pick('status', 'All statuses');
     expect(await screen.findByText('Payments API')).toBeTruthy();
     expect(screen.getByText('Old idea')).toBeTruthy();
     expect(localStorage.getItem('zcc.design-docs.list-status')).toBe('"all"');
@@ -260,16 +268,19 @@ describe('doc list', () => {
     expect(screen.getByText('Unknown project')).toBeTruthy();
     expect(screen.getByText('Global')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter (Active)' }));
-    fireEvent.click(menuItem('Global docs'));
+    // Only projects with docs are offered, each with its count.
+    fireEvent.click(screen.getByRole('button', { name: 'Filter by project' }));
+    const options = within(screen.getByRole('listbox')).getAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['All projects3', 'Global docs1', 'App1']);
+    expect(options[0]!.getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(options[1]!);
     await waitFor(() => expect(screen.queryByText('Payments API')).toBeNull());
     expect(screen.getByText('Glossary')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Filter (Active)' }));
-    fireEvent.click(menuItem('App'));
+    expect(screen.getByRole('button', { name: 'Filter by project' }).textContent).toBe('Global docs');
+    pick('project', /^App/);
     expect(await screen.findByText('Payments API')).toBeTruthy();
     expect(screen.queryByText('Glossary')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Filter (Active)' }));
-    fireEvent.click(menuItem('All projects'));
+    pick('project', /^All projects/);
 
     fireEvent.click(screen.getByText('Payments API'));
     expect(harness.navigateCalls.at(-1)).toEqual({ method: 'toPluginPanel', path: 'design-docs', options: { subPath: payments.id } });
@@ -291,11 +302,50 @@ describe('doc list', () => {
     });
   });
 
+  it('keeps the picked project offered when it has no docs left', () => {
+    const projects = [
+      { id: 'p1', name: 'App' },
+      { id: 'p2', name: 'Site' }
+    ];
+    const labels = (selected: string) => projectOptions([], projects, selected).map((option) => option.label);
+    expect(labels('')).toEqual(['All projects']);
+    expect(labels('p2')).toEqual(['All projects', 'Site']);
+    expect(labels('__global__')).toEqual(['All projects', 'Global docs']);
+  });
+
   it('shows list errors', async () => {
     const harness = createHarness();
     harness.fail('list', 'database locked');
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
     expect(await screen.findByText('database locked')).toBeTruthy();
+  });
+
+  it('collapses to a rail and remembers it', async () => {
+    const harness = createHarness();
+    seed(harness.store, { title: 'Payments API', projectId: 'p1' });
+    const glossary = seed(harness.store, { title: 'Glossary', projectId: null });
+    await harness.asAgent((store) => store.writeFile(glossary.id, { path: 'README.md', content: 'Terms' }, AGENT));
+    const view = harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+
+    await screen.findByText('Payments API');
+    expect(screen.getByTitle('2 docs').textContent).toBe('2');
+    expect(screen.getByTitle('Global').textContent).toBe('Global');
+    expect(screen.getByTitle('Last edited by an agent')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Search design docs'), { target: { value: 'Payments' } });
+    expect(await screen.findByTitle('1 doc')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide doc list' }));
+    expect(screen.queryByText('Payments API')).toBeNull();
+    expect(localStorage.getItem('zcc.design-docs.list-open')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: 'New design doc' }));
+    expect(screen.getByRole('dialog', { name: 'New design doc' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    view.unmount();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show doc list' }));
+    expect(await screen.findByText('Payments API')).toBeTruthy();
+    expect(localStorage.getItem('zcc.design-docs.list-open')).toBe('true');
   });
 });
 
