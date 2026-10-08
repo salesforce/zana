@@ -13,9 +13,11 @@ import {
   showOngoingThreadWork,
   threadStatusLabel,
   threadStatusTone,
+  thinkingPeek,
   threadWorkingIndicatorLabel
 } from '../thread-timeline-model.js';
 import { useThreadWorkingPhrase } from '../useThreadWorkingPhrase.js';
+import { useWorkingElapsed } from '../useWorkingElapsed.js';
 import { ThreadActivityLabel } from './ThreadActivityLabel.js';
 
 const TODO_STATUS_SORT_RANK: Record<ThreadTimelinePendingTodoItemStatus, number> = {
@@ -133,6 +135,7 @@ export function ThreadWorkingIndicator({
   // Tools and pending operations already communicate progress; keep reconnection copy.
   const visible = ongoing && (status === 'host-reconnecting' || !hasRunningWork);
   const phrase = useThreadWorkingPhrase(ongoing);
+  const elapsed = useWorkingElapsed(visible);
   if (!visible) return null;
   const details = thinking?.text?.trim() ?? '';
   const label = status === 'host-reconnecting'
@@ -140,9 +143,11 @@ export function ThreadWorkingIndicator({
     : threadWorkingIndicatorLabel(isThinking, phrase);
   if (details) {
     return (
-      <details className="thread-working-indicator" data-testid="thread-thinking">
+      <details className="thread-working-indicator has-thinking" data-testid="thread-thinking">
         <summary className="thread-working-indicator-header">
-          <ThreadActivityLabel label={label} expandable />
+          <ThreadActivityLabel label={label} elapsed={elapsed} expandable />
+          {/* Collapsed-only preview; the full text is one click away below. */}
+          <span className="thread-thinking-peek" aria-hidden="true">{thinkingPeek(details)}</span>
         </summary>
         <div className="thread-thinking-details">{details}</div>
       </details>
@@ -150,7 +155,7 @@ export function ThreadWorkingIndicator({
   }
   return (
     <p className="thread-working-indicator thread-working-indicator-header" data-testid="thread-thinking">
-      <ThreadActivityLabel label={label} />
+      <ThreadActivityLabel label={label} elapsed={elapsed} />
     </p>
   );
 }

@@ -35557,13 +35557,9 @@ textarea.thread-command-editor {
 .thread-activity-label {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   max-width: 100%;
-  min-height: 30px;
-  padding: 4px 11px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--bg-elevated);
+  min-height: 24px;
   color: var(--ink-muted);
   font-size: 13px;
   font-weight: 500;
@@ -35575,34 +35571,71 @@ textarea.thread-command-editor {
   overflow-wrap: anywhere;
 }
 
-.thread-activity-dot {
-  flex: 0 0 6px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: thread-activity-pulse 1.8s ease-in-out infinite;
+.thread-activity-spark {
+  flex: 0 0 auto;
+  color: var(--accent);
+  fill: currentColor;
+  animation: thread-activity-spin 3s linear infinite;
 }
 
-@keyframes thread-activity-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent); }
+.thread-activity-elapsed {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes thread-activity-spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .thread-activity-dot { animation: none; }
+  .thread-activity-spark,
+  .thread-activity-label .is-shimmer { animation: none; }
+}
+
+/* Reasoning gets a quiet accent rail and a live one-line peek while collapsed. */
+.thread-working-indicator.has-thinking {
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .thread-working-indicator > summary.thread-working-indicator-header {
-  width: fit-content;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
   max-width: 100%;
-  border-radius: 16px;
+  border-radius: 6px;
   cursor: pointer;
   list-style: none;
 }
 
 .thread-working-indicator > summary.thread-working-indicator-header:hover .thread-activity-label {
-  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.thread-thinking-peek {
+  display: block;
+  max-width: min(100%, 560px);
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(90deg, #000 80%, transparent);
+  mask-image: linear-gradient(90deg, #000 80%, transparent);
+}
+
+.thread-working-indicator[open] .thread-thinking-peek {
+  display: none;
+}
+
+/* The rail already frames the expanded text; avoid a second nested border. */
+.thread-working-indicator.has-thinking .thread-thinking-details {
+  margin: 6px 0 0;
+  padding: 0;
+  border-left: 0;
 }
 
 .thread-working-indicator > summary.thread-working-indicator-header:focus-visible {

@@ -6,7 +6,9 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   THREAD_WORKING_PHRASES,
+  formatWorkingElapsed,
   nextWorkingPhraseTick,
+  thinkingPeek,
   threadStatusLabel,
   threadWorkingIndicatorLabel,
   threadWorkingPhrase,
@@ -83,5 +85,27 @@ describe('useThreadWorkingPhrase', () => {
     rerender(<Probe active />);
     expect(screen.getByText(THREAD_WORKING_PHRASES[1])).toBeTruthy();
     expect(screen.queryByText('Planning next move')).toBeNull();
+  });
+
+  it('formats the busy-span clock', () => {
+    expect(formatWorkingElapsed(0)).toBeNull();
+    expect(formatWorkingElapsed(999)).toBeNull();
+    expect(formatWorkingElapsed(Number.NaN)).toBeNull();
+    expect(formatWorkingElapsed(1_000)).toBe('1s');
+    expect(formatWorkingElapsed(59_999)).toBe('59s');
+    expect(formatWorkingElapsed(65_000)).toBe('1m 05s');
+    expect(formatWorkingElapsed(3_599_000)).toBe('59m 59s');
+    expect(formatWorkingElapsed(3_720_000)).toBe('1h 02m');
+  });
+
+  it('peeks at the newest reasoning line and keeps its tail', () => {
+    expect(thinkingPeek('')).toBe('');
+    expect(thinkingPeek('  first\n\n  second line  \n')).toBe('second line');
+    const long = `${'alpha '.repeat(40)}newest words`;
+    const peek = thinkingPeek(long);
+    expect(peek.startsWith('…alpha')).toBe(true);
+    expect(peek.endsWith('newest words')).toBe(true);
+    expect(peek.length).toBeLessThanOrEqual(161);
+    expect(thinkingPeek('x'.repeat(200))).toBe(`…${'x'.repeat(160)}`);
   });
 });

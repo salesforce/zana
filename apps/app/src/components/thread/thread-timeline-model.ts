@@ -34,6 +34,28 @@ export function threadWorkingIndicatorLabel(thinking: boolean, phrase: string): 
   return thinking ? 'Thinking…' : `${phrase}…`;
 }
 
+/** Busy-span clock: hidden for the first second, then `12s`, `1m 05s`, `1h 02m`. */
+export function formatWorkingElapsed(ms: number): string | null {
+  const seconds = Math.floor(ms / 1000);
+  if (!Number.isFinite(seconds) || seconds < 1) return null;
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+const THINKING_PEEK_MAX = 160;
+
+/** Latest streamed reasoning line, tail-clipped so the newest words stay visible. */
+export function thinkingPeek(text: string): string {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const last = lines[lines.length - 1] ?? '';
+  if (last.length <= THINKING_PEEK_MAX) return last;
+  const tail = last.slice(-THINKING_PEEK_MAX);
+  const wordStart = tail.indexOf(' ');
+  return `…${wordStart > 0 ? tail.slice(wordStart + 1) : tail}`;
+}
+
 export function isRunningThreadRuntimeDisplayStatus(status: string): boolean {
   switch (status) {
     case 'active':

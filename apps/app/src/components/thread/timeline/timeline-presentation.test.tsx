@@ -701,7 +701,9 @@ describe('conversation and banners', () => {
       <ThreadWorkingIndicator status="active" thinking={null} />
     );
     expect(plainThinking).toContain('Planning next move…');
-    expect(plainThinking).toContain('thread-activity-dot');
+    expect(plainThinking).toContain('thread-activity-spark');
+    expect(plainThinking).not.toContain('thread-thinking-peek');
+    expect(withText).toContain('thread-thinking-peek');
     expect(plainThinking).not.toContain('thread-timeline-work-chevron');
     expect(withText).toContain('thread-activity-label');
     expect(renderToStaticMarkup(
