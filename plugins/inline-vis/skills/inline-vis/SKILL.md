@@ -34,7 +34,7 @@ HTML renders in a sandboxed iframe. Markdown is rendered by the host with raw
 HTML off. Workspace files keep an "Open" action into the thread side panel;
 thread-storage previews do not.
 
-`::doc` remains the Docs vault opener card — do not use `::vis` as a vault
+`::doc` remains the Library document card — do not use `::vis` as a Library
 shortcut, and do not use `::doc` for inline HTML/Markdown preview.
 
 Use `preview_file` only when the user asked to inspect the source rather than

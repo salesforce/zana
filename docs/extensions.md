@@ -102,7 +102,7 @@ them elsewhere.
 
 | Package | Role |
 | --- | --- |
-| `plugins/docs` | Docs rail, Library, library-curator skill |
+| `plugins/docs` | Library (sidebar page + project tab), library-curator skill |
 | `slack-bridge-2ff2` | Zana for Slack — Project channels, private agent conversations, and optional report-inbox access |
 | `provider-claude-code` | Claude Code thread provider |
 | `provider-codex` | Codex thread provider |
