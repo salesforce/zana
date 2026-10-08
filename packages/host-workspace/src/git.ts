@@ -12,6 +12,7 @@ import type {
 } from '@zana-ai/zcc-domain';
 import { gitChildEnv } from './git-env.js';
 import { WorkspaceError } from './error.js';
+import { runGitClone } from './git-clone-process.js';
 
 export const GIT_TIMEOUT_MS = 20_000;
 export const GIT_MAX_BUFFER = 16 * 1024 * 1024;
@@ -523,39 +524,7 @@ export async function cloneRepository(
     throw new WorkspaceError('clone_target_exists', `clone target already exists: ${targetPath}`);
   }
   await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('git', ['clone', '--progress', remoteUrl, targetPath], {
-      cwd: dirname(targetPath),
-      env: gitChildEnv(),
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-    let leftover = '';
-    const onChunk = (buf: Buffer) => {
-      leftover += buf.toString('utf8');
-      const parts = leftover.split(/\r|\n/);
-      leftover = parts.pop() ?? '';
-      for (const line of parts) {
-        const trimmed = line.trim();
-        if (trimmed) onProgress?.(trimmed);
-      }
-    };
-    child.stdout.on('data', onChunk);
-    child.stderr.on('data', onChunk);
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new WorkspaceError('git_failed', 'git clone timed out'));
-    }, 20 * 60 * 1000);
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      reject(new WorkspaceError('git_failed', error instanceof Error ? error.message : String(error)));
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (leftover.trim()) onProgress?.(leftover.trim());
-      if (code === 0) resolve();
-      else reject(new WorkspaceError('git_failed', `git clone exited ${code ?? 'null'}`));
-    });
-  });
+  await runGitClone(remoteUrl, targetPath, onProgress);
   return targetPath;
 }
 

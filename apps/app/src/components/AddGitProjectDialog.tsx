@@ -2,6 +2,7 @@ import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, X } from 'lucide-react';
 import type { CloneProjectResult } from '@zana-ai/zcc-domain/product';
+import { explainGitCloneError, type GitCloneError } from '../lib/git-clone-error.js';
 
 interface AddGitProjectDialogProps {
   onClose: () => void;
@@ -52,7 +53,7 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
   const [nameTouched, setNameTouched] = useState(false);
   const [cloneRoot, setCloneRoot] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<GitCloneError | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
 
   useEffect(() => {
@@ -99,16 +100,11 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
         onClose();
         return;
       }
-      // Failure: surface inline. DEST_EXISTS gets a more specific hint.
       setProgress(null);
-      setError(
-        result.code === 'DEST_EXISTS'
-          ? `${result.message}. Rename the project or remove that folder, then try again.`
-          : result.message
-      );
+      setError(explainGitCloneError(result.message, result.code));
     } catch (err) {
       setProgress(null);
-      setError(err instanceof Error ? err.message : 'Clone failed');
+      setError(explainGitCloneError(err instanceof Error ? err.message : 'Clone failed'));
     } finally {
       setSubmitting(false);
     }
@@ -136,8 +132,8 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
 
         <div className="modal-body">
           <div className="modal-hint">
-            Paste a repository URL — it&rsquo;ll be cloned into your workspace and added as a
-            project. Uses your existing git auth (SSH keys, credential helper).
+            Paste a repository URL to clone and add it as a project. Uses your Git
+            credentials (SSH keys or credential helper). Private repositories need an account with access.
           </div>
 
           <label className="remote-form-row git-url-row">
@@ -181,7 +177,16 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
             </div>
           )}
 
-          {error && <div className="modal-error">{error}</div>}
+          {error && (
+            <div className="modal-error git-project-error" role="alert">
+              <strong>{error.title}</strong>
+              {error.guidance.map(line => <p key={line}>{line}</p>)}
+              <details>
+                <summary>Git details</summary>
+                <pre>{error.details}</pre>
+              </details>
+            </div>
+          )}
           {!error && progress && (
             <div className="git-clone-progress" aria-live="polite">
               <span className="git-clone-spinner" aria-hidden="true" />
@@ -195,7 +200,7 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
             Cancel
           </button>
           <button className="btn primary" disabled={!canSubmit} onClick={submit}>
-            {submitting ? 'Cloning…' : 'Clone & add'}
+            {submitting ? 'Cloning…' : error ? 'Try again' : 'Clone & add'}
           </button>
         </div>
       </div>
