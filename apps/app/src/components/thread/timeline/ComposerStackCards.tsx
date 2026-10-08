@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Send, Square } from 'lucide-react';
+import { Loader2, Send, Sparkles, Square, SquareTerminal, Workflow } from 'lucide-react';
 import type { GitHostPullRequest } from '@zana-ai/zcc-domain';
 import {
   isBackgroundAgentTaskType,
@@ -10,6 +10,7 @@ import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../../lib/product-client.js';
 import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
 import { loadWorkspaceMeta } from '../secondary-panel/threadSecondaryPanelLogic.js';
+import { formatWorkingElapsed } from '../thread-timeline-model.js';
 import { nextTurnItemText, queuedMessagePreview } from './queued-message-text.js';
 
 interface NextTurnItemView {
@@ -200,8 +201,8 @@ function backgroundActivityTitle(rows: TimelineViewWorkflowWorkRow[]): string {
   return rows.length === 1 ? 'Background command' : 'Background commands';
 }
 
-function backgroundActivityKindLabel(row: TimelineViewWorkflowWorkRow): string {
-  switch (backgroundActivityKind(row)) {
+function backgroundActivityKindLabel(kind: BackgroundActivityKind): string {
+  switch (kind) {
     case 'workflow':
       return 'Workflow';
     case 'agent':
@@ -209,6 +210,63 @@ function backgroundActivityKindLabel(row: TimelineViewWorkflowWorkRow): string {
     case 'command':
       return 'Background command';
   }
+}
+
+type BackgroundActivityKind = ReturnType<typeof backgroundActivityKind>;
+
+const BACKGROUND_ACTIVITY_ICONS = {
+  workflow: Workflow,
+  agent: Sparkles,
+  command: SquareTerminal
+} as const;
+
+const BACKGROUND_ACTIVITY_TICK_MS = 1000;
+
+/** One shared clock for every row's elapsed label. */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), BACKGROUND_ACTIVITY_TICK_MS);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+function BackgroundActivityRow({ row, now }: { row: TimelineViewWorkflowWorkRow; now: number }) {
+  const kind = backgroundActivityKind(row);
+  const Icon = BACKGROUND_ACTIVITY_ICONS[kind];
+  const kindLabel = backgroundActivityKindLabel(kind);
+  const text = row.workflowName || row.description || 'Running';
+  const elapsed = formatWorkingElapsed(now - row.startedAt);
+  const line = (
+    <>
+      <span className="thread-background-activity-icon" title={kindLabel}>
+        <Icon size={13} aria-hidden="true" />
+        <span className="sr-only">{kindLabel}: </span>
+      </span>
+      <span className={`thread-background-activity-text${kind === 'command' ? ' is-command' : ''}`}>{text}</span>
+      {kind === 'agent' && row.model ? <span className="thread-background-activity-badge">{row.model}</span> : null}
+      <Loader2 size={12} className="spin thread-background-activity-spinner" aria-hidden="true" />
+      {elapsed ? <span className="thread-background-activity-elapsed">{elapsed}</span> : null}
+    </>
+  );
+  if (kind !== 'command') {
+    return (
+      <li className="thread-background-activity-item" data-kind={kind}>
+        <div className="thread-background-activity-row">{line}</div>
+      </li>
+    );
+  }
+  return (
+    <li className="thread-background-activity-item" data-kind={kind}>
+      <details>
+        <summary className="thread-background-activity-row" title="Show full command">{line}</summary>
+        <pre className="thread-background-activity-full" data-testid="thread-background-command-full">{text}</pre>
+      </details>
+    </li>
+  );
 }
 
 export function BackgroundCommandsCard({
@@ -219,6 +277,7 @@ export function BackgroundCommandsCard({
   workflows?: TimelineViewWorkflowWorkRow[] | null;
 }) {
   const rows = [...(workflows ?? []), ...(commands ?? [])];
+  const now = useNow(rows.length > 0);
   if (rows.length === 0) return null;
   return (
     <section
@@ -227,14 +286,10 @@ export function BackgroundCommandsCard({
     >
       <header className="thread-queued-card-header">
         <span className="thread-stack-card-title">{backgroundActivityTitle(rows)}</span>
+        {rows.length > 1 ? <span className="thread-background-activity-count">{rows.length} running</span> : null}
       </header>
-      <ul className="thread-queued-list">
-        {rows.map((row) => (
-          <li key={row.id} className="thread-queued-item">
-            <span className="thread-banner-meta">{backgroundActivityKindLabel(row)}</span>
-            <span>{row.workflowName || row.description || 'Running'}</span>
-          </li>
-        ))}
+      <ul className="thread-background-activity-list">
+        {rows.map((row) => <BackgroundActivityRow key={row.id} row={row} now={now} />)}
       </ul>
     </section>
   );
