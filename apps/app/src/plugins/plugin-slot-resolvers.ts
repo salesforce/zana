@@ -9,6 +9,7 @@ import type {
 const FILE_OPENER_PIN_KEY = 'zcc.plugin.fileOpenerPins';
 const THREAD_LIST_PIN_KEY = 'zcc.plugin.threadListPin';
 const THREAD_LIST_PIN_CHANGED = 'zcc:thread-list-pin-changed';
+const HOST_RENDERED_EXTENSIONS: ReadonlySet<string> = new Set(['html', 'htm']);
 
 export function subscribeThreadListPin(listener: () => void): () => void {
   window.addEventListener(THREAD_LIST_PIN_CHANGED, listener);
@@ -110,6 +111,8 @@ export function resolveFileOpener(
     const pinned = matches.find((row) => fileOpenerKey(row) === pin);
     if (pinned) return pinned;
   }
+  // The host renders these natively, so plugin openers are opt-in via "Open with".
+  if (extension && HOST_RENDERED_EXTENSIONS.has(extension)) return null;
   return matches[0] ?? null;
 }
 

@@ -73,6 +73,23 @@ describe('plugin slot resolvers', () => {
     expect(resolveFileOpener('/tmp/note.md', [opener], 'host')).toBeNull();
   });
 
+  it('defaults HTML to the host preview unless an opener is chosen or pinned', () => {
+    const opener = {
+      id: 'code',
+      pluginId: 'editor',
+      generation: 1,
+      title: 'File Editor',
+      extensions: ['html', 'htm'],
+      component: () => null
+    };
+    expect(resolveFileOpener('/tmp/page.html', [opener])).toBeNull();
+    expect(resolveFileOpener('/tmp/PAGE.HTM', [opener])).toBeNull();
+    expect(resolveFileOpener('/tmp/page.html', [opener], 'editor/code')?.id).toBe('code');
+    writeFileOpenerPin('html', 'editor/code');
+    expect(resolveFileOpener('/tmp/page.html', [opener])?.id).toBe('code');
+    expect(resolveFileOpener('/tmp/page.html', [opener], 'host')).toBeNull();
+  });
+
   it('parses ::directive{attr} leaves', () => {
     const found = parseMessageDirectives('Hello\n::task{id=1 title="Ship it"}\nMore');
     expect(found).toHaveLength(1);
