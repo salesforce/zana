@@ -35189,38 +35189,6 @@ textarea.thread-command-editor {
   white-space: nowrap;
 }
 
-.thread-detail-heading:has(> .thread-detail-avatar) {
-  gap: 10px;
-}
-
-.thread-detail-avatar {
-  display: grid;
-  grid-template-areas: 'stack';
-  place-items: center;
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
-  color: var(--accent-blue);
-}
-
-.thread-detail-avatar > * {
-  grid-area: stack;
-}
-
-/* Overlay the status dot on the tile's corner without leaving the grid flow. */
-.thread-detail-avatar .tab-agent-dot.thread-detail-avatar-dot {
-  align-self: end;
-  justify-self: end;
-  width: 10px;
-  height: 10px;
-  margin: 0 -2px -2px 0;
-  border: 2px solid var(--bg-panel);
-  box-sizing: border-box;
-  box-shadow: none;
-}
-
 .thread-detail-title-block {
   display: flex;
   flex: 1 1 auto;

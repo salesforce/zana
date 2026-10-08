@@ -700,7 +700,7 @@ describe('expandable row and chips', () => {
     expect(header).toContain('align-items: center;');
     expect(header).toContain('flex: 1 1 auto;');
     expect(header).toContain('font-weight: 600;');
-    expect(header).toContain('.thread-detail-avatar {');
+    expect(header).not.toContain('.thread-detail-avatar');
     expect(header).toContain('.thread-detail-meta-chip {');
     expect(header).toContain('.thread-detail-search:focus-within input,');
     expect(header).toContain('.thread-detail-overflow-btn {');
@@ -713,25 +713,23 @@ describe('expandable row and chips', () => {
     const html = renderToStaticMarkup(
       <ThreadDetailHeading
         title="Check my ticket"
-        agent={{ providerId: 'claude-code', model: 'claude-opus-5[1m]', projectName: 'zcc', branchName: 'fix/header', status: 'idle' }}
+        agent={{ providerId: 'claude-code', model: 'claude-opus-5[1m]', projectName: 'zcc', branchName: 'fix/header' }}
       />
     );
     expect(html).toContain('<h1 title="Check my ticket">Check my ticket</h1>');
-    expect(html).toContain('data-testid="thread-detail-avatar"');
-    expect(html).toContain('data-tone="idle"');
+    expect(html).not.toContain('thread-detail-avatar');
     expect(html).toContain('Claude Code · Opus 5 (1M)');
     expect(html).toContain('title="Project: zcc"');
     expect(html).toContain('title="Branch: fix/header"');
   });
 
-  it('flags a waiting agent on the avatar and omits empty identity', () => {
+  it('omits empty identity', () => {
     const html = renderToStaticMarkup(
       <ThreadDetailHeading
         title="Agent"
-        agent={{ providerId: null, model: null, projectName: null, branchName: null, status: 'active', waitingOnUser: true }}
+        agent={{ providerId: null, model: null, projectName: null, branchName: null }}
       />
     );
-    expect(html).toContain('data-tone="blocked"');
     expect(html).toContain('title="Agent"');
     expect(html).not.toContain('data-testid="thread-detail-meta"');
   });
@@ -740,7 +738,7 @@ describe('expandable row and chips', () => {
     const chipsOnly = renderToStaticMarkup(
       <ThreadDetailHeading
         title="Agent"
-        agent={{ providerId: null, model: null, projectName: 'zcc', branchName: null, status: 'idle' }}
+        agent={{ providerId: null, model: null, projectName: 'zcc', branchName: null }}
       />
     );
     expect(chipsOnly).toContain('data-testid="thread-detail-meta"');

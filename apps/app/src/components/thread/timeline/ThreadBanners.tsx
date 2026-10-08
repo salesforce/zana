@@ -11,7 +11,6 @@ import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { ThreadTodoChecklist } from '../thread-todo-checklist.js';
 import { fallbackProviderOption } from '../pickers/fallback-models.js';
 import { humanThreadModelLabel } from '../pickers/thread-execution-labels.js';
-import { ProviderIcon } from '../pickers/ProviderIcon.js';
 import {
   showOngoingThreadWork,
   threadStatusLabel,
@@ -266,8 +265,6 @@ export type ThreadDetailHeadingAgent = {
   model: string | null;
   projectName: string | null;
   branchName: string | null;
-  status: string;
-  waitingOnUser?: boolean;
 };
 
 export function ThreadDetailHeading({
@@ -296,13 +293,10 @@ export function ThreadDetailHeading({
       onPointerDown={onPointerDown}
     >
       {titleTarget ? createPortal(heading, titleTarget) : identity ? (
-        <>
-          <ThreadDetailAvatar agent={identity} />
-          <div className="thread-detail-title-block">
-            {heading}
-            <ThreadDetailMeta agent={identity} />
-          </div>
-        </>
+        <div className="thread-detail-title-block">
+          {heading}
+          <ThreadDetailMeta agent={identity} />
+        </div>
       ) : heading}
       {overflowTarget ? createPortal(overflow, overflowTarget) : overflow}
     </div>
@@ -311,17 +305,6 @@ export function ThreadDetailHeading({
 
 function threadDetailHarnessName(providerId: string | null): string | null {
   return providerId ? fallbackProviderOption(providerId).displayName : null;
-}
-
-function ThreadDetailAvatar({ agent }: { agent: ThreadDetailHeadingAgent }) {
-  const harness = threadDetailHarnessName(agent.providerId) ?? 'Agent';
-  const tone = threadStatusTone(agent.status, agent.waitingOnUser);
-  return (
-    <span className="thread-detail-avatar" data-testid="thread-detail-avatar" title={harness} aria-hidden="true">
-      <ProviderIcon providerId={agent.providerId ?? ''} size={16} />
-      <span className={`tab-agent-dot agent-${tone} thread-detail-avatar-dot`} data-tone={tone} />
-    </span>
-  );
 }
 
 function ThreadDetailMeta({ agent }: { agent: ThreadDetailHeadingAgent }) {

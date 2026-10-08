@@ -864,9 +864,7 @@ export function ThreadDetail({
               providerId: threadProviderId,
               model: threadModel,
               projectName: project?.name ?? null,
-              branchName,
-              status,
-              waitingOnUser: awaitingUser
+              branchName
             }}
           />
           <ThreadDetailActions target={mobileControlsTarget}>
