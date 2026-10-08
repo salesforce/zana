@@ -32450,6 +32450,11 @@ textarea.ui-command-composer-input {
 .thread-background-activity-spinner {
   flex: none;
   color: var(--ink-muted);
+  animation: icon-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-background-activity-spinner { animation: none; }
 }
 
 .thread-background-activity-elapsed {
