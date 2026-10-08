@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   Bot,
   Calendar,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   Inbox,
   Loader2,
@@ -52,7 +54,17 @@ import { groupSessionsByTeamRun } from '../lib/teamRunOrganization.js';
 import { PaneEmptyState } from './PaneEmptyState.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { useMobileThreadControlsTarget } from './useMobileThreadTitleTarget.js';
-import { isUnreadThread } from '../lib/unread-threads.js';
+import {
+  OTHER_PROJECTS_KEY,
+  applyMonitorFilter,
+  fleetItemActivityAt,
+  formatAge,
+  isUnreadFleetItem,
+  sectionByProject,
+  sortByRecent,
+  type MonitorListFilter,
+  type MonitorListSort
+} from './agent-monitor-list.js';
 
 /**
  * The Agents "List" view: a live monitor — item list (left), the selected
@@ -115,6 +127,23 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [mobileDetailId, setMobileDetailId] = useState<string | null>(null);
   const pickedRow = useRef<HTMLButtonElement | null>(null);
+  const [filter, setFilter] = useState<MonitorListFilter>('all');
+  const [sort, setSort] = useState<MonitorListSort>('project');
+  // Finished work starts folded so it can't push live agents off-screen.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set(['done']));
+  const toggleGroup = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  // Row ages ("4m", "2h") only need minute resolution.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => (n + 1) % 1_000_000), 30_000);
+    return () => clearInterval(id);
+  }, []);
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
@@ -140,38 +169,43 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
     });
   }, [cards, executions]);
 
+  const unreadCount = useMemo(() => jobCards.filter(isUnreadFleetItem).length, [jobCards]);
+  const listCards = useMemo(() => applyMonitorFilter(jobCards, filter), [jobCards, filter]);
+
   const grouped = useMemo(() => {
+    const ordered = (groups: Array<{ key: string; label: string; cards: FleetItem[] }>) =>
+      sort === 'recent' ? groups.map((g) => ({ ...g, cards: sortByRecent(g.cards) })) : groups;
     if (organization === 'team-run') {
       const agentGroups = groupSessionsByTeamRun(
-        jobCards.filter((item): item is Extract<FleetItem, { kind: 'agent' }> => item.kind === 'agent')
+        listCards.filter((item): item is Extract<FleetItem, { kind: 'agent' }> => item.kind === 'agent')
           .map((item) => ({ session: item.card.session, item }))
       ).map((group) => ({
         key: group.key,
         label: group.label,
         cards: group.items.map(({ item }) => item)
       }));
-      const other = jobCards.filter((item) => item.kind !== 'agent');
-      return other.length
+      const other = listCards.filter((item) => item.kind !== 'agent');
+      return ordered(other.length
         ? [...agentGroups, { key: 'other-fleet', label: 'Threads and schedules', cards: other }]
-        : agentGroups;
+        : agentGroups);
     }
-    const pinnedThreads = jobCards.filter(
+    const pinnedThreads = listCards.filter(
       (item): item is Extract<FleetItem, { kind: 'thread' }> => item.kind === 'thread' && item.thread.pinnedAt != null
     );
     const byLane = new Map<LaneKey, FleetItem[]>();
-    for (const item of jobCards) {
+    for (const item of listCards) {
       if (item.kind === 'thread' && item.thread.pinnedAt != null) continue;
       const key = laneOf(item, sensitivity);
       const list = byLane.get(key) ?? [];
       list.push(item);
       byLane.set(key, list);
     }
-    return [
+    return ordered([
       { key: 'pinned', label: 'Pinned', cards: pinnedThreads },
       ...visibleAgentLanes(includeScheduled).map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] }))
     ]
-      .filter((g) => g.cards.length > 0);
-  }, [jobCards, sensitivity, includeScheduled, organization]);
+      .filter((g) => g.cards.length > 0));
+  }, [listCards, sensitivity, includeScheduled, organization, sort]);
 
   const selected = useMemo(
     () => compact
@@ -224,45 +258,109 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
       }`}
     >
       <nav className="agent-monitor-list" aria-label="Agents" hidden={compact && !!selected}>
-        {grouped.map((g) => (
-          <div key={g.key} className="agent-monitor-group">
-            <div className={`agent-monitor-group-head ${organization === 'status' ? `group-${g.key}` : 'group-team-run'}`}>
-              <span>{g.label}</span>
-              <span className="agent-monitor-group-count">{g.cards.length}</span>
-            </div>
-            {g.cards.map((item) => (
-              <AgentMonitorRow
-                key={item.id}
-                item={item}
-                laneKey={laneOf(item, sensitivity)}
-                active={item.id === selected?.id}
-                showProject={showProject}
-                onSelect={(event) => {
-                  setPickedId(item.id);
-                  if (compact) {
-                    pickedRow.current = event.currentTarget;
-                    setMobileDetailId(item.id);
-                  }
-                }}
-                onContextMenu={(e) => {
-                  if (item.kind === 'schedule') {
-                    e.preventDefault();
-                    return;
-                  }
-                  if (item.kind === 'thread') {
-                    setMenu(null);
-                    openThreadMenu(e, item.thread, setThreadMenu);
-                    return;
-                  }
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setThreadMenu(null);
-                  setMenu({ card: item.card, ...clampMenuAnchor(e) });
-                }}
-              />
+        <div className="agent-monitor-list-bar">
+          <div className="agent-monitor-chips" role="group" aria-label="Show">
+            <button
+              type="button"
+              className={`agent-monitor-chip ${filter === 'all' ? 'active' : ''}`}
+              aria-pressed={filter === 'all'}
+              onClick={() => setFilter('all')}
+            >
+              All <span className="agent-monitor-chip-count">{jobCards.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`agent-monitor-chip ${filter === 'unread' ? 'active' : ''}`}
+              aria-pressed={filter === 'unread'}
+              onClick={() => setFilter('unread')}
+            >
+              Unread <span className="agent-monitor-chip-count">{unreadCount}</span>
+            </button>
+          </div>
+          <div className="agent-monitor-sort" role="group" aria-label="Order">
+            {(['project', 'recent'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={sort === value ? 'active' : ''}
+                aria-pressed={sort === value}
+                onClick={() => setSort(value)}
+              >
+                {value === 'project' ? 'Project' : 'Recent'}
+              </button>
             ))}
           </div>
-        ))}
+        </div>
+        {grouped.length === 0 && (
+          <p className="agent-monitor-list-empty">{filter === 'unread' ? 'No unread agents.' : 'No agents.'}</p>
+        )}
+        {grouped.map((g) => {
+          const isCollapsed = collapsed.has(g.key);
+          // Project sub-sections only help when rows span several projects and
+          // the list is ordered by project; otherwise each row names its project.
+          const sections = showProject && sort === 'project' ? sectionByProject(g.cards) : null;
+          const renderRow = (item: FleetItem, rowShowsProject: boolean) => (
+            <AgentMonitorRow
+              key={item.id}
+              item={item}
+              laneKey={laneOf(item, sensitivity)}
+              active={item.id === selected?.id}
+              showProject={rowShowsProject}
+              onSelect={(event) => {
+                setPickedId(item.id);
+                if (compact) {
+                  pickedRow.current = event.currentTarget;
+                  setMobileDetailId(item.id);
+                }
+              }}
+              onContextMenu={(e) => {
+                if (item.kind === 'schedule') {
+                  e.preventDefault();
+                  return;
+                }
+                if (item.kind === 'thread') {
+                  setMenu(null);
+                  openThreadMenu(e, item.thread, setThreadMenu);
+                  return;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                setThreadMenu(null);
+                setMenu({ card: item.card, ...clampMenuAnchor(e) });
+              }}
+            />
+          );
+          return (
+            <div key={g.key} className={`agent-monitor-group ${isCollapsed ? 'is-collapsed' : ''}`}>
+              <button
+                type="button"
+                className={`agent-monitor-group-head ${organization === 'status' ? `group-${g.key}` : 'group-team-run'}`}
+                aria-expanded={!isCollapsed}
+                onClick={() => toggleGroup(g.key)}
+              >
+                <span>{g.label}</span>
+                <span className="agent-monitor-group-count">{g.cards.length}</span>
+                {isCollapsed ? <ChevronRight size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
+              </button>
+              {!isCollapsed && (sections
+                ? sections.map((section) => (
+                  <div key={section.key} className="agent-monitor-project" data-project-section={section.key}>
+                    <div className="agent-monitor-project-head">
+                      <span
+                        className="agent-monitor-project-swatch"
+                        style={section.color ? ({ '--project-color': section.color } as CSSProperties) : undefined}
+                        aria-hidden="true"
+                      />
+                      <span className="agent-monitor-project-name" title={section.label}>{section.label}</span>
+                      <span className="agent-monitor-project-count">{section.items.length}</span>
+                    </div>
+                    {section.items.map((item) => renderRow(item, section.key === OTHER_PROJECTS_KEY))}
+                  </div>
+                ))
+                : g.cards.map((item) => renderRow(item, showProject)))}
+            </div>
+          );
+        })}
       </nav>
 
       {(!compact || selected) && <AgentMonitorTerminal
@@ -318,6 +416,21 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
   const navigate = useNavigate();
   const personas = usePersonas((s) => s.personas);
   const terminals = useData((s) => s.terminals);
+  const activityAt = fleetItemActivityAt(item);
+  const age = activityAt != null ? formatAge(Date.now() - activityAt) : null;
+  const project = showProject ? (
+    <span className="agent-monitor-row-project" title={item.projectName}>
+      {item.projectColor && (
+        <span
+          className="agent-monitor-project-swatch"
+          style={{ '--project-color': item.projectColor } as CSSProperties}
+          aria-hidden="true"
+        />
+      )}
+      {item.projectName}
+    </span>
+  ) : null;
+
   if (item.kind === 'schedule') {
     return (
       <button
@@ -328,20 +441,15 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
         onContextMenu={onContextMenu}
         title={`${item.title} · ${item.projectName}`}
       >
-        <span className="agent-monitor-row-icon">
-          <Calendar size={14} aria-hidden="true" />
-        </span>
+        <span className="agent-monitor-row-lead" aria-hidden="true" />
         <span className="agent-monitor-row-text">
           <span className="agent-monitor-row-title-line">
             <span className="agent-monitor-row-title">{item.title}</span>
-            <FleetKindChip kind="schedule" />
           </span>
           <span className="agent-monitor-row-meta">
-            {showProject && (
-              <span className="agent-monitor-row-project" title={item.projectName}>
-                {item.projectName}
-              </span>
-            )}
+            <span className="agent-monitor-row-harness"><Calendar size={11} aria-hidden="true" /></span>
+            {project}
+            <FleetKindChip kind="schedule" />
             <span className="agent-monitor-row-dur">{item.task.enabled ? 'Armed' : 'Paused'}</span>
           </span>
         </span>
@@ -349,35 +457,37 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
     );
   }
   if (item.kind === 'thread') {
-    const unread = isUnreadThread(item.thread);
+    const unread = isUnreadFleetItem(item);
+    const failed = item.thread.status === 'error';
     return (
       <button
         type="button"
-        className={`agent-monitor-row is-thread lane-${laneKey} ${active ? 'active' : ''}`}
+        className={`agent-monitor-row is-thread lane-${laneKey} ${active ? 'active' : ''} ${unread ? 'is-unread' : ''}`}
         data-kind="thread"
         onClick={onSelect}
         onContextMenu={onContextMenu}
         aria-current={active ? 'true' : undefined}
         title={`${item.title} · ${item.projectName} · ${item.thread.status}`}
       >
-        <span className="agent-monitor-row-icon">
-          <ProviderIcon providerId={item.thread.providerId} size={14} />
+        <span className="agent-monitor-row-lead">
+          {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" role="img" aria-label="New activity" /> : null}
         </span>
         <span className="agent-monitor-row-text">
           <span className="agent-monitor-row-title-line">
-            <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
             <span className="agent-monitor-row-title">{item.title}</span>
-             {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" role="img" aria-label="New activity" /> : null}
-            <FleetKindChip kind="thread" />
-          </span>
-          <span className="agent-monitor-row-meta">
-            {showProject && (
-              <span className="agent-monitor-row-project" title={item.projectName}>
-                {item.projectName}
+            <span className="agent-monitor-row-trail">
+              <span className="agent-monitor-row-harness">
+                <ProviderIcon providerId={item.thread.providerId} size={11} />
               </span>
-            )}
-            <span className="agent-monitor-row-dur">{item.thread.status}</span>
+              {age && <span className="agent-monitor-row-age">{age}</span>}
+            </span>
           </span>
+          {(project || failed) && (
+            <span className="agent-monitor-row-meta">
+              {project}
+              {failed && <span className="agent-monitor-row-error">Error</span>}
+            </span>
+          )}
         </span>
       </button>
     );
@@ -401,30 +511,18 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
       aria-current={active ? 'true' : undefined}
       title={`${t.title} · ${subtitle}${showProject ? ` · ${card.projectName}` : ''}`}
     >
-      <span
-        className={`agent-monitor-row-icon tab-profile-icon profile-${t.profile} ${
-          showProject && card.projectColor ? 'project-tinted' : ''
-        }`}
-        style={
-          showProject && card.projectColor
-            ? ({ '--project-color': card.projectColor } as CSSProperties)
-            : undefined
-        }
-      >
-        {persona ? personaIcon(persona, 14) : profileIcon(t.profile, 14)}
-      </span>
+      <span className="agent-monitor-row-lead" aria-hidden="true" />
       <span className="agent-monitor-row-text">
         <span className="agent-monitor-row-title-line">
-          {!exited && <span className={`tab-agent-dot agent-${card.state}`} aria-hidden="true" />}
           <span className="agent-monitor-row-title">{t.title}</span>
-          <FleetKindChip kind="agent" />
+          {age && <span className="agent-monitor-row-age">{age}</span>}
         </span>
         <span className="agent-monitor-row-meta">
-          {showProject && (
-            <span className="agent-monitor-row-project" title={card.projectName}>
-              {card.projectName}
-            </span>
-          )}
+          <span className={`agent-monitor-row-harness tab-profile-icon profile-${t.profile}`}>
+            {persona ? personaIcon(persona, 11) : profileIcon(t.profile, 11)}
+          </span>
+          {project}
+          <FleetKindChip kind="agent" />
           <span className="agent-monitor-row-dur">{exited ? `ran ${dur}` : dur}</span>
         </span>
       </span>

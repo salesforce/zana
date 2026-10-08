@@ -80,7 +80,7 @@ describe('AgentMonitor thread selection', () => {
 
   it('marks unread Modern rows with an accessible activity dot', () => {
     const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('isUnreadThread(item.thread)');
+    expect(source).toContain('isUnreadFleetItem(item)');
     expect(source).toContain('className="thread-unread-dot"');
     expect(source).toContain('aria-label="New activity"');
   });
