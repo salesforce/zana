@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnPortablePipedProcess } from "@zana-ai/zcc-agent-process-utils";
 import { createInterface } from "node:readline";
 import { experimental_recordProviderChildIo } from "@zana-ai/zcc-provider-bridge-protocol/bridge-kit";
 import type { z } from "zod";
@@ -154,10 +155,10 @@ function parseAgentLine(line: string): ParsedAgentMessage | null {
 export function createAcpAgentConnection(
   options: CreateAcpAgentConnectionOptions,
 ): AcpAgentConnection {
-  const child: ChildProcess = spawn(options.command, options.args, {
+  const child: ChildProcess = spawnPortablePipedProcess({
+    command: options.command, args: options.args,
     cwd: options.cwd,
     env: options.env,
-    stdio: ["pipe", "pipe", "pipe"],
   });
   experimental_recordProviderChildIo(child, {
     threadId: options.recordThreadId,

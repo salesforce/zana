@@ -213,7 +213,12 @@ export type {
  * one allowlist function rather than handing them the daemon's own env
  * (incident rule: ambient env leaks).
  */
-export { sanitizeInheritedChildProcessEnv } from "@zana-ai/zcc-agent-process-utils";
+export {
+  sanitizeInheritedChildProcessEnv,
+  spawnPortableProcess as experimental_spawnPortableProcess,
+  spawnPortablePipedProcess as experimental_spawnPortablePipedProcess,
+  runPortableCommand as experimental_runPortableCommand,
+} from "@zana-ai/zcc-agent-process-utils";
 
 /**
  * The ACP launch spec: the one core wire shape a bridge parses directly. It

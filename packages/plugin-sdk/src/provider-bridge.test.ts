@@ -4,12 +4,23 @@ import {
   experimental_buildBridgeToolCallContent,
   experimental_planStepsPresentation,
   experimental_recordProviderChildIo,
+  experimental_runPortableCommand,
+  experimental_spawnPortablePipedProcess,
+  experimental_spawnPortableProcess,
   isApprovalInteractionOutcome,
   planStepsPresentation,
   userQuestionInteractionOutcomeSchema
 } from './provider-bridge.js';
 
 describe('provider-bridge facade', () => {
+  it('lets provider hosts run bounded probes through the public SDK', async () => {
+    const result = await experimental_runPortableCommand(process.execPath,
+      ['-e', 'process.stdout.write("x".repeat(16000));process.stderr.write("diagnostic")'],
+      { timeout: 5000 });
+    expect(result).toEqual({ stdout: 'x'.repeat(16000), stderr: 'diagnostic' });
+    expect(typeof experimental_spawnPortablePipedProcess).toBe('function');
+    expect(typeof experimental_spawnPortableProcess).toBe('function');
+  });
   it('exports approvalInteractionOutcomeSchema for provider host bundles', () => {
     expect(typeof approvalInteractionOutcomeSchema.parse).toBe('function');
     expect(approvalInteractionOutcomeSchema.safeParse({ payload: {}, resolution: {} }).success).toBe(false);

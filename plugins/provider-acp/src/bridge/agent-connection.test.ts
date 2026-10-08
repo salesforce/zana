@@ -6,8 +6,8 @@ import { createAcpAgentConnection, formatAcpLaunchFailure } from "./agent-connec
 import { createCodexAppServerConnection, type CodexAppServerConnection } from "../../../provider-codex/src/bridge/app-server-connection.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
-vi.mock("node:child_process", async (importOriginal) => ({
-  ...await importOriginal<typeof import("node:child_process")>(), spawn: spawnMock,
+vi.mock("@zana-ai/zcc-plugin-sdk/provider-bridge", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@zana-ai/zcc-plugin-sdk/provider-bridge")>(), experimental_spawnPortablePipedProcess: spawnMock,
 }));
 
 function start(create: typeof createAcpAgentConnection | typeof createCodexAppServerConnection) {

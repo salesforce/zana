@@ -3,7 +3,7 @@
  * executes the common bounded version probe and projects renderer-safe rows.
  */
 
-import { execFile } from 'node:child_process';
+import { runProviderCliCommand } from '../provider-cli-health.js';
 import { accessSync, constants, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
@@ -33,15 +33,11 @@ function runVersion(
   // for real CLI startup while the app or test suite is under CPU contention.
   timeoutMs = 20_000
 ): Promise<{ ok: boolean; out: string }> {
-  return new Promise((resolve) => {
-    execFile(cmd, [...args], {
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024,
-      env: { ...process.env, PATH: searchPath }
-    }, (err, stdout, stderr) => {
-      resolve({ ok: !err, out: String(stdout ?? '').trim() || String(stderr ?? '').trim() });
-    });
-  });
+  return runProviderCliCommand({ command: cmd, args, timeoutMs }, { ...process.env, PATH: searchPath })
+    .then((result) => ({
+      ok: result.errorMessage === null && result.exitCode === 0,
+      out: result.stdout.trim() || result.stderr.trim()
+    }));
 }
 
 function isExecutableFile(candidatePath: string): boolean {
@@ -85,15 +81,20 @@ export function resolveHarnessCommand(
     if (isExecutableFile(command)) return command;
     command = command.replace(/.*[/\\]/, '') || command;
   }
+  const names = process.platform === 'win32' && !/\.(exe|cmd|bat|com)$/i.test(command)
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((ext) => command + ext.toLowerCase())
+    : [command];
   for (const dir of (pathEnv ?? '').split(delimiter)) {
     if (!dir) continue;
-    const candidate = join(dir, command);
-    if (isExecutableFile(candidate)) return candidate;
+    for (const name of names) {
+      const candidate = join(dir.replace(/^"|"$/g, ''), name);
+      if (isExecutableFile(candidate)) return candidate;
+    }
   }
   const uid = options.uid ?? process.getuid?.();
   if (uid === 0) return original;
   const home = options.home ?? homedir();
-  for (const candidate of wellKnownHarnessPaths(command, home)) {
+  for (const candidate of names.flatMap((name) => wellKnownHarnessPaths(name, home))) {
     if (isExecutableFile(candidate)) return candidate;
   }
   return original;

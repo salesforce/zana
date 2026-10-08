@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { experimental_spawnPortablePipedProcess as spawnPortablePipedProcess } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { experimental_readBoundedLines, experimental_recordProviderChildIo } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import type { z } from "zod";
 
@@ -91,10 +92,10 @@ function parseChildLine(line: string): ParsedChildMessage | null {
 export function createCodexAppServerConnection(
   options: CreateCodexAppServerConnectionOptions,
 ): CodexAppServerConnection {
-  const child: ChildProcess = spawn(options.command, options.args, {
+  const child: ChildProcess = spawnPortablePipedProcess({
+    command: options.command, args: options.args,
     cwd: options.cwd,
     env: options.env,
-    stdio: ["pipe", "pipe", "pipe"],
   });
   experimental_recordProviderChildIo(child, {
     threadId: options.recordThreadId,

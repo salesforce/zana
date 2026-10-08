@@ -1093,6 +1093,9 @@ importers:
 
   packages/provider-bridge-acp:
     dependencies:
+      '@zana-ai/zcc-agent-process-utils':
+        specifier: workspace:*
+        version: link:../agent-process-utils
       '@zana-ai/zcc-domain':
         specifier: workspace:*
         version: link:../domain

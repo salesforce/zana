@@ -156,6 +156,51 @@ export function spawnPortableOutputProcess(
   return child;
 }
 
+/** Bounded CLI probes, including npm .cmd shims on Windows. */
+export function runPortableCommand(
+  command: string,
+  args: readonly string[],
+  options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv; cwd?: string },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawnPortableOutputProcess({ command, args: [...args], env: options.env, cwd: options.cwd });
+    let stdout = "";
+    let stderr = "";
+    let bytes = 0;
+    let done = false;
+    const finish = (error?: Error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve({ stdout, stderr });
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(Object.assign(new Error(`Command timed out after ${options.timeout}ms`), { killed: true }));
+    }, options.timeout);
+    const collect = (stream: "stdout" | "stderr", text: string) => {
+      if (done) return;
+      bytes += Buffer.byteLength(text);
+      if (bytes > (options.maxBuffer ?? 1024 * 1024)) {
+        child.kill("SIGKILL");
+        finish(new Error("Command output exceeded its byte limit"));
+        return;
+      }
+      if (stream === "stdout") stdout += text;
+      else stderr += text;
+    };
+    child.stdout.setEncoding("utf8").on("data", (text: string) => collect("stdout", text));
+    child.stderr.setEncoding("utf8").on("data", (text: string) => collect("stderr", text));
+    child.on("error", finish);
+    child.on("close", (code, signal) => {
+      finish(code === 0 ? undefined : Object.assign(
+        new Error(stderr.trim() || `Command exited with code ${code}, signal ${signal}`), { code, signal, stdout, stderr },
+      ));
+    });
+  });
+}
+
 export function supportsProcessGroups(): boolean {
   return process.platform !== "win32";
 }

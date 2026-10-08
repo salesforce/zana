@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { runPortableCommand, spawnPortableOutputProcess } from '@zana-ai/zcc-agent-process-utils';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
@@ -690,6 +690,20 @@ function installActionCommand(
   if (definition.installCommand.kind === 'npmGlobal') {
     return npmInstallActionCommand(definition, nodePlatform);
   }
+  if (nodePlatform === 'win32') {
+    const scriptUrl = definition.key === 'claudeCode'
+      ? 'https://claude.ai/install.ps1'
+      : 'https://cursor.com/install?win32=true';
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      '$tmp = [IO.Path]::GetTempFileName()',
+      `try { Invoke-WebRequest -UseBasicParsing -Uri '${scriptUrl}' -OutFile $tmp; & ([ScriptBlock]::Create([IO.File]::ReadAllText($tmp))) } finally { Remove-Item -LiteralPath $tmp -Force }`
+    ].join('; ');
+    return {
+      commandKind: 'shell', displayCommand: `powershell -NoProfile -Command "${script}"`,
+      command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', script]
+    };
+  }
   return downloadedShellScriptInstallActionCommand(definition.installCommand.scriptUrl);
 }
 
@@ -796,63 +810,24 @@ export async function runProviderCliCommand(
   args: RunProviderCliCommandArgs,
   env: NodeJS.ProcessEnv = process.env
 ): Promise<ProviderCliCommandResult> {
-  return await new Promise((settle) => {
-    let child;
-    try {
-      child = spawn(args.command, [...args.args], {
-        env,
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-    } catch (error) {
-      settle(createCommandResult({
-        command: args.command,
-        commandArgs: args.args,
-        stdout: '',
-        stderr: '',
-        exitCode: null,
-        signal: null,
-        errorMessage: error instanceof Error ? error.message : String(error)
-      }));
-      return;
-    }
-
-    let stdout = '';
-    let stderr = '';
-    let done = false;
-    const finish = (result: ProviderCliCommandResult) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      settle(result);
-    };
-    const timer = setTimeout(() => child.kill('SIGTERM'), args.timeoutMs);
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-    child.on('error', (error) => {
-      finish(createCommandResult({
-        command: args.command,
-        commandArgs: args.args,
-        stdout,
-        stderr,
-        exitCode: null,
-        signal: null,
-        errorMessage: error.message
-      }));
+  try {
+    const output = await runPortableCommand(args.command, args.args, { timeout: args.timeoutMs, env });
+    return createCommandResult({
+      command: args.command, commandArgs: args.args, ...output,
+      exitCode: 0, signal: null, errorMessage: null
     });
-    child.on('close', (exitCode, signal) => {
-      finish(createCommandResult({
-        command: args.command,
-        commandArgs: args.args,
-        stdout,
-        stderr,
-        exitCode,
-        signal,
-        errorMessage: null
-      }));
+  } catch (error) {
+    const failure = error instanceof Error
+      ? error as Error & { stdout?: string; stderr?: string; code?: number; signal?: string }
+      : null;
+    return createCommandResult({
+      command: args.command, commandArgs: args.args,
+      stdout: failure?.stdout ?? '', stderr: failure?.stderr ?? '',
+      exitCode: typeof failure?.code === 'number' ? failure.code : null,
+      signal: failure?.signal ?? null,
+      errorMessage: typeof failure?.code === 'number' ? null : failure?.message ?? String(error)
     });
-  });
+  }
 }
 
 export function createSpawnProviderCliCommandRunner(
@@ -1050,13 +1025,13 @@ export function createSpawnProviderCliInstallProcessSpawner(
 ): ProviderCliInstallProcessSpawner {
   return {
     spawn(args) {
-      const child = spawn(args.command, args.args, {
+      const child = spawnPortableOutputProcess({
+        command: args.command, args: args.args,
         env: {
           ...(args.env ?? env),
           CI: '1',
           npm_config_update_notifier: 'false'
         },
-        stdio: ['ignore', 'pipe', 'pipe']
       });
       return {
         stdout: child.stdout,

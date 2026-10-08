@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -44,6 +44,14 @@ function dotDirSubPaths(sub: 'bin' | 'local', home = homedir()): string[] {
 
 /** Known CLI install dirs — fallback only, when the shell query can't run. */
 export function fallbackDirs(home = homedir()): string[] {
+  if (process.platform === 'win32') {
+    return [
+      join(process.env.APPDATA || join(home, 'AppData', 'Roaming'), 'npm'),
+      join(home, '.local', 'bin'),
+      join(home, 'bin'),
+      ...dotDirSubPaths('bin', home)
+    ];
+  }
   return [
     '/usr/local/bin',
     '/opt/homebrew/bin',
@@ -207,14 +215,15 @@ function composePath(...fragments: Array<string | undefined | null>): string {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const frag of fragments) {
-    for (const dir of (frag ?? '').split(':')) {
-      if (dir && !seen.has(dir)) {
-        seen.add(dir);
+    for (const dir of (frag ?? '').split(delimiter)) {
+      const key = process.platform === 'win32' ? dir.toLowerCase() : dir;
+      if (dir && !seen.has(key)) {
+        seen.add(key);
         out.push(dir);
       }
     }
   }
-  return out.join(':');
+  return out.join(delimiter);
 }
 
 /** Append the fallback CLI dirs to `current` (deduped). Pure. */
@@ -338,8 +347,8 @@ function loginShellPath(): string | null {
  * repo/resources path must never leak into a remote session.
  */
 export function launchedPathOverrides(loginPath: string | null | undefined, launchedPath: string | undefined): string {
-  const login = new Set((loginPath ?? '').split(':').filter(Boolean));
-  return (launchedPath ?? '').split(':').filter((dir) => dir.length > 0 && !login.has(dir)).join(':');
+  const login = new Set((loginPath ?? '').split(delimiter).filter(Boolean));
+  return (launchedPath ?? '').split(delimiter).filter((dir) => dir.length > 0 && !login.has(dir)).join(delimiter);
 }
 
 export function ensureProcessPath(): void {

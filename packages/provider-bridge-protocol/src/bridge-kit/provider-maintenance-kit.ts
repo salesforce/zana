@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
+import { runPortableCommand } from "@zana-ai/zcc-agent-process-utils";
 import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { z } from "zod";
 import type {
   ProviderInstallationCommand,
@@ -11,7 +10,7 @@ import type {
   ProviderInstallationVerification,
 } from "../provider-maintenance.js";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = runPortableCommand;
 
 const CLI_PROBE_TIMEOUT_MS = 5_000;
 const INSTALLATION_CHECK_TIMEOUT_MS = 15_000;

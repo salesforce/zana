@@ -6,7 +6,8 @@
  * schemas in `../wire.ts` instead of depending on an external ACP SDK.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { experimental_spawnPortablePipedProcess as spawnPortablePipedProcess } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { experimental_readBoundedLines, experimental_recordProviderChildIo } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import type { z } from "zod";
 
@@ -113,10 +114,10 @@ function parseAgentLine(line: string): ParsedAgentMessage | null {
 export function createAcpAgentConnection(
   options: CreateAcpAgentConnectionOptions,
 ): AcpAgentConnection {
-  const child: ChildProcess = spawn(options.command, options.args, {
+  const child: ChildProcess = spawnPortablePipedProcess({
+    command: options.command, args: options.args,
     cwd: options.cwd,
     env: options.env,
-    stdio: ["pipe", "pipe", "pipe"],
   });
   experimental_recordProviderChildIo(child, {
     threadId: options.recordThreadId,

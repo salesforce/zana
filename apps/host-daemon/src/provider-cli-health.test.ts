@@ -15,6 +15,7 @@ import {
   resetProviderCliInstallLockForTests,
   resolveProviderCliUpdateCommand,
   runProviderCliInstall,
+  runProviderCliCommand,
   getProviderCliDefinition,
   shellExecTargetFromHead,
   type ProviderCliCommandResult,
@@ -22,6 +23,38 @@ import {
   type ProviderCliInstallProcessSpawner,
   type RunProviderCliCommandArgs
 } from './provider-cli-health.js';
+
+it('reports bounded probe failures without rejecting the status request', async () => {
+  const successful = await runProviderCliCommand({ command: process.execPath, args: ['-e', 'process.stdout.write("probe")'], timeoutMs: 5000 });
+  expect(successful).toMatchObject({ stdout: 'probe', exitCode: 0, errorMessage: null });
+  const missing = await runProviderCliCommand({ command: 'zcc-missing-health-probe', args: [], timeoutMs: 5000 });
+  expect(missing.errorMessage).toContain('ENOENT');
+  const failed = await runProviderCliCommand({ command: process.execPath, args: ['-e', 'process.stdout.write("partial");process.exit(1)'], timeoutMs: 5000 });
+  expect(failed).toMatchObject({ stdout: 'partial', exitCode: 1, errorMessage: null });
+});
+
+it.each(['claudeCode', 'cursor'] as const)('uses a PowerShell installer for %s on Windows', async (provider) => {
+  const runner = new FakeProviderCliCommandRunner(() => ({ exitCode: 1 }));
+  let launched: { command: string; args: string[] } | undefined;
+  const result = await runProviderCliInstall({
+    provider, actionKind: 'install', nodePlatform: 'win32', runner,
+    installProcessSpawner: {
+      spawn(args) {
+        launched = args;
+        return {
+          stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+          onError(listener) { queueMicrotask(() => listener(new Error('fixture stops before downloading'))); },
+          onClose() {}
+        };
+      }
+    }
+  });
+  expect(launched?.command).toBe('powershell.exe');
+  expect(launched?.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
+  expect(launched?.args[3]).toContain(provider === 'cursor' ? 'https://cursor.com/install?win32=true' : 'https://claude.ai/install.ps1');
+  expect(launched?.args[3]).toContain('finally { Remove-Item -LiteralPath $tmp -Force }');
+  expect(result.events.at(-1)).toMatchObject({ type: 'error' });
+});
 
 interface FakeCommandBehavior {
   stdout?: string;

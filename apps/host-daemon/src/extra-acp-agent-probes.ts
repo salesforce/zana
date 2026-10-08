@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { runProviderCliCommand } from './provider-cli-health.js';
 import { augmentPath, augmentPathWithNodePrefixes } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 
@@ -21,15 +21,8 @@ function runVersion(
   searchPath: string,
   timeoutMs = 8_000
 ): Promise<{ ok: boolean }> {
-  return new Promise((resolve) => {
-    execFile(cmd, [...args], {
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024,
-      env: { ...process.env, PATH: searchPath }
-    }, (err) => {
-      resolve({ ok: !err });
-    });
-  });
+  return runProviderCliCommand({ command: cmd, args, timeoutMs }, { ...process.env, PATH: searchPath })
+    .then((result) => ({ ok: result.errorMessage === null && result.exitCode === 0 }));
 }
 
 export async function probeExtraAcpAgents(): Promise<Array<{ providerId: string; installed: boolean }>> {

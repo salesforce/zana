@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { experimental_spawnPortableProcess as spawnPortableProcess } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { PassThrough, Writable, type Readable } from "node:stream";
 import {
   experimental_isProviderBridgeRecording,
@@ -120,7 +121,8 @@ export class PiRpcChild {
       resolveSettledExit = resolve;
     });
     const launch = resolvePiLaunch(process.env);
-    this.child = spawn(launch.command, [...launch.args, ...args.args], {
+    this.child = spawnPortableProcess({
+      command: launch.command, args: [...launch.args, ...args.args],
       cwd: args.cwd,
       env: args.env,
       stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
