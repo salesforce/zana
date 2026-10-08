@@ -71,6 +71,27 @@ it('ignores comment-only lines without losing executable strings, JSX or malform
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+it('leaves compiled plugin bundles and declared runtime assets to their sources', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zcc-build-coverage-'));
+  const dir = join(root, 'plugins/fixture');
+  mkdirSync(join(dir, 'kit'), { recursive: true }); mkdirSync(join(dir, 'scripts'), { recursive: true }); mkdirSync(join(root, 'plugins/broken'), { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ zcc: { extra: { runtimeAssets: ['page.js', 'kit/', 7] } } }));
+  writeFileSync(join(root, 'plugins/broken/package.json'), '{');
+  const files = ['app.js', 'server.mjs', 'scripts/build-app.mjs', 'scripts/other.mjs', 'page.js', 'kit/site.js', 'kitchen.js'];
+  for (const file of files) writeFileSync(join(dir, file), 'export const value = 1;');
+  writeFileSync(join(root, 'plugins/broken/app.js'), 'export const value = 1;');
+  writeFileSync(join(root, 'plugins/broken/source.js'), 'export const value = 1;');
+  const changes = new Map([...files.map(file => [`plugins/fixture/${file}`, new Set([1])] as const), ['plugins/broken/app.js', new Set([1])], ['plugins/broken/source.js', new Set([1])]]);
+  try {
+    expect(coverageFailures(changes, {}, root)).toEqual([
+      'plugins/fixture/scripts/build-app.mjs: missing coverage',
+      'plugins/fixture/scripts/other.mjs: missing coverage',
+      'plugins/fixture/kitchen.js: missing coverage',
+      'plugins/broken/source.js: missing coverage'
+    ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 it('runs the private production app suite only for affected paths and fails missing coverage', () => {
   const io = { execute: vi.fn().mockReturnValue('+++ b/apps/app/src/App.tsx\n@@ -1 +1 @@'), read: vi.fn().mockReturnValue('{}'), log: vi.fn(), error: vi.fn() };
   expect(runVerification([], {}, io)).toBe(0);

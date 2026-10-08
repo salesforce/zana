@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { bindDialog, bindDialogTrigger, bindScrollSpy, bindTabs } from './widgets.js';
-import { page, rect } from './test-window.js';
+import { page, rect } from './test/window.js';
 
 const SITE = `
   <header class="site-header"><nav>

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { KitWindow } from './dom.js';
 import { createTheme, THEME_KEY } from './theme.js';
-import { load, newWindow } from './test-window.js';
+import { load, newWindow } from './test/window.js';
 
 const BUTTONS = '<button data-kit-theme id="toggle"></button><button data-kit-theme="light" id="light"></button><button data-kit-theme="dark" id="dark"></button><button data-kit-theme="auto" id="auto"></button>';
 

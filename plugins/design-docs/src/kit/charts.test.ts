@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChartSpec } from './chart-spec.js';
 import { createChart, drawSparkline, roundedRect } from './charts.js';
 import type { KitWindow } from './dom.js';
-import { page } from './test-window.js';
+import { page } from './test/window.js';
 
 const never = () => Promise.reject(new Error('no files here'));
 

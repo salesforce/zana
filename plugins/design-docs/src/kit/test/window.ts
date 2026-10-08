@@ -1,7 +1,7 @@
 /** happy-dom windows for the kit's tests. */
 import { Window } from 'happy-dom';
 import { afterEach, vi } from 'vitest';
-import type { KitWindow } from './dom.js';
+import type { KitWindow } from '../dom.js';
 
 const windows: Window[] = [];
 afterEach(async () => {

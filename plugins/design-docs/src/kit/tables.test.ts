@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { bindClickableRows, bindFilter, bindSortable, sortTable } from './tables.js';
-import { page } from './test-window.js';
+import { page } from './test/window.js';
 
 const RUNS = `
   <input id="search" data-filter="#runs">

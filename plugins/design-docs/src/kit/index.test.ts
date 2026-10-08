@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { KitWindow } from './dom.js';
 import { createKit, KIT_VERSION } from './index.js';
-import { page } from './test-window.js';
+import { page } from './test/window.js';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 

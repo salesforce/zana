@@ -53,9 +53,24 @@ export function changedLines(diff) {
   return files;
 }
 
-function productionFile(path) {
+/**
+ * What a plugin's build emits is verified through its sources, not on its own:
+ * the compiled `app.js`/`server.mjs` and anything the manifest ships as
+ * `zcc.extra.runtimeAssets`. The build scripts themselves still need coverage.
+ */
+function pluginBuildFile(path, root) {
+  const match = /^plugins\/([^/]+)\/(.+)$/.exec(path);
+  if (!match) return false;
+  const [, id, rel] = match;
+  if (/^(app\.js|server\.mjs)$/.test(rel)) return true;
+  let assets;
+  try { assets = JSON.parse(readFileSync(resolve(root, 'plugins', id, 'package.json'), 'utf8')).zcc?.extra?.runtimeAssets; } catch { return false; }
+  return Array.isArray(assets) && assets.some(asset => typeof asset === 'string' && (rel === asset || rel.startsWith(`${asset.replace(/\/+$/, '')}/`)));
+}
+
+function productionFile(path, root) {
   return /^(apps\/.*\/src\/|packages\/.*\/src\/|plugins\/[^/]+\/|website\/(lib|app)\/|services\/|scripts\/)/.test(path) &&
-    /\.(?:[cm]?js|tsx?)$/.test(path) && !/^plugins\/[^/]+\/(app\.js|server\.mjs)$/.test(path) && !/(?:\.test\.|\.spec\.|\/vitest\.(?:config|setup)\.|\/__tests__\/|\/(test|testing|fixtures)\/|\/test-harness\.tsx?$|\/fake-[^/]+(?:\.[cm]?js|-harness\.ts)$|\.d\.ts$)/.test(path);
+    /\.(?:[cm]?js|tsx?)$/.test(path) && !pluginBuildFile(path, root) && !/(?:\.test\.|\.spec\.|\/vitest\.(?:config|setup)\.|\/__tests__\/|\/(test|testing|fixtures)\/|\/test-harness\.tsx?$|\/fake-[^/]+(?:\.[cm]?js|-harness\.ts)$|\.d\.ts$)/.test(path);
 }
 
 /** Comments do not change runtime behavior, even inside an uncovered function. */
@@ -82,7 +97,7 @@ function hasRuntime(path) {
 export function coverageFailures(changes, coverage, root = process.cwd(), threshold = 80) {
   const failures = [];
   for (const [path, lines] of changes) {
-    if (!lines.size || !productionFile(path) || !existsSync(resolve(root, path))) continue;
+    if (!lines.size || !productionFile(path, root) || !existsSync(resolve(root, path))) continue;
     const tokens = codeLines(path, readFileSync(resolve(root, path), 'utf8'));
     const changedCode = tokens ? [...lines].filter(line => tokens.has(line)) : [...lines];
     if (!changedCode.length) continue;

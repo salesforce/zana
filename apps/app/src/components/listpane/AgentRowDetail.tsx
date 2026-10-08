@@ -63,15 +63,12 @@ export function AgentRowDetail({
     remoteToolProxy: Boolean(session.remoteToolProxy)
   });
   const origin = session.scheduled ? 'Scheduled' : '';
-  const leadParts = [origin, runtime].filter(Boolean);
-  const tailParts = [subagentText, timeText].filter(Boolean);
-  const detailParts = [...leadParts, ...tailParts];
-  if (!stateText && detailParts.length === 0 && !projectName) return null;
-  const segments: ReactNode[] = [];
-  if (stateText) segments.push(<span key="state" className={agentRowStateClass(state, exited)}>{stateText}</span>);
-  if (leadParts.length) segments.push(leadParts.join(' · '));
+  // The runtime label and the time text are never empty, so every row has a
+  // lead and a tail; only the state word and the project tag are optional.
+  const segments: ReactNode[] = [[origin, runtime].filter(Boolean).join(' · ')];
+  if (stateText) segments.unshift(<span key="state" className={agentRowStateClass(state, exited)}>{stateText}</span>);
   if (projectName) segments.push(<span key="project" className="project-terminal-project">{projectName}</span>);
-  if (tailParts.length) segments.push(tailParts.join(' · '));
+  segments.push([subagentText, timeText].filter(Boolean).join(' · '));
   return (
     <span className="project-terminal-detail">
       {segments.flatMap((segment, i) => (i === 0 ? [segment] : [' · ', segment]))}

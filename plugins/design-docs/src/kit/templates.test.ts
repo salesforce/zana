@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderTemplateFiles, templateById } from '../shared/templates.js';
 import { createKit } from './index.js';
-import { load, newWindow } from './test-window.js';
+import { load, newWindow } from './test/window.js';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
