@@ -167,6 +167,22 @@ describe('startStaticHost', () => {
     });
   });
 
+  it('reloads plugin panel routes whose sub-path names a file, but not missing plugin assets', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    host = await startStaticHost({ rootDir: root });
+
+    for (const route of ['plugins/design-docs/design-docs/dd_1/spec/api.md', 'plugins/docs/panel/global/notes.md']) {
+      const response = await fetch(`${host.url}${route}`);
+      expect(response.status).toBe(200);
+      await expect(response.text()).resolves.toContain('zana');
+    }
+    // Without an asset resolver, an asset path still is not an application page.
+    await expect(fetch(`${host.url}plugins/tasks/assets/app.js`).then((response) => response.status)).resolves.toBe(404);
+    // A panel root with an extension is not a plugin route shape.
+    await expect(fetch(`${host.url}plugins/tasks/app.js`).then((response) => response.status)).resolves.toBe(404);
+  });
+
   it('pins the document base so a nested client route reloads its relative assets', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
     writeFileSync(

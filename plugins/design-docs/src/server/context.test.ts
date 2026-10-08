@@ -64,7 +64,7 @@ describe('agent instructions', () => {
 });
 
 describe('@ mentions', () => {
-  it('searches active docs in the project and resolves one into context', () => {
+  it('searches active docs in the project and resolves one into context', async () => {
     const store = new DesignDocStore(createTestDatabase());
     const doc = store.create({ title: 'Payments', projectId: 'p1', template: 'technical' }, user);
     store.create({ title: 'Payments elsewhere', projectId: 'p2', template: 'blank' }, user);
@@ -73,16 +73,16 @@ describe('@ mentions', () => {
     expect(mention.search({ query: 'pay', projectId: 'p1' })).toEqual([{ id: doc.id, label: 'Payments · Draft' }]);
     expect(mention.search('pay')).toHaveLength(2);
 
-    const { context } = mention.resolve(doc.id);
+    const { context } = await mention.resolve(doc.id);
     expect(context).toMatch(new RegExp(`^The user referenced design doc ${doc.id}`));
     expect(context).toContain('<file path="README.md"');
     expect(context).not.toContain('truncated');
   });
 
-  it('truncates a very large entry file', () => {
+  it('truncates a very large entry file', async () => {
     const store = new DesignDocStore(createTestDatabase());
     const doc = store.create({ title: 'Big', files: [{ path: 'README.md', content: 'x'.repeat(30_000) }] }, user);
     const { mention } = capture(store);
-    expect(mention.resolve(doc.id).context).toContain('(truncated — read the rest with design_doc_read)');
+    expect((await mention.resolve(doc.id)).context).toContain('(truncated — read the rest with design_doc_read)');
   });
 });

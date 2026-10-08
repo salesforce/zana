@@ -6,6 +6,7 @@
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { STATUS_LABELS, designDocDirective } from '../shared/contract.js';
 import { formatFile, formatManifest, truncate } from './format.js';
+import type { ProjectNames } from './project-names.js';
 import type { DesignDocStore } from './store.js';
 
 /** Host cap on a live instruction provider's output. */
@@ -18,7 +19,7 @@ const USAGE = [
   '## Design docs',
   'The user keeps design documents (specs, RFCs, ADRs, product docs) in the Design Docs plugin. Each doc is a small set of files — markdown, mermaid `.mmd` diagrams, self-contained `.html` mockups, code samples — rendered as formatted pages the user reviews.',
   '- Use the `design_doc_*` tools (or `zcc design-docs …` from a shell) to list, read, create and edit them. Read a doc before changing it; prefer `edits` over rewriting whole files and pass `baseRevision`.',
-  '- Treat open comments as review feedback: address them, then resolve them with a short note.',
+  '- Treat open comments as review feedback: address them, then resolve each with a short `body` saying what changed. Answer a question in its thread with `replyTo` instead of opening a new comment.',
   '- When the user asks for a design, spec, RFC or plan worth keeping, offer to write it as a design doc instead of only replying in chat.',
   `- To show a doc in your reply, write its card on its own line: ${designDocDirective('<id>')}`
 ].join('\n');
@@ -47,7 +48,8 @@ export function buildInstructions(store: DesignDocStore, projectId: string | nul
 export function registerAgentContext(
   zcc: Pick<ZccPluginApi, 'agents' | 'ui'>,
   store: DesignDocStore,
-  log: (message: string) => void = () => {}
+  log: (message: string) => void = () => {},
+  projects?: ProjectNames
 ): void {
   zcc.agents.contributeInstructions((ctx) => {
     try {
@@ -65,10 +67,11 @@ export function registerAgentContext(
       const query = typeof ctx === 'string' ? ctx : ctx.query;
       const projectId = typeof ctx === 'string' ? undefined : ctx.projectId;
       return store
-        .list({ projectId: projectId || undefined, query, status: 'active', limit: MENTION_SEARCH_LIMIT })
+        .list({ projectId: projectId || undefined, query, contents: false, status: 'active', limit: MENTION_SEARCH_LIMIT })
         .map((doc) => ({ id: doc.id, label: `${doc.title} · ${STATUS_LABELS[doc.status]}` }));
     },
-    resolve(itemId) {
+    async resolve(itemId) {
+      await projects?.refresh();
       const doc = store.get(itemId);
       const entry = doc.files.some((file) => file.path === doc.entryPath)
         ? store.readFile(doc.id, doc.entryPath)
@@ -81,7 +84,7 @@ export function registerAgentContext(
       return {
         context: [
           `The user referenced design doc ${doc.id}. Its current state:`,
-          formatManifest(doc),
+          formatManifest(doc, { projectName: projects?.name(doc.projectId) ?? null }),
           body,
           `Read other files with design_doc_read doc="${doc.id}" path="…"; edit with design_doc_write.`
         ]

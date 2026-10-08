@@ -8,11 +8,11 @@
  */
 
 export const MAX_PATH_LENGTH = 160;
-export const MAX_PATH_DEPTH = 6;
+export const MAX_PATH_DEPTH = 10;
 
 const SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/;
 
-export type FileKind = 'markdown' | 'html' | 'mermaid' | 'svg' | 'image' | 'code' | 'text';
+export type FileKind = 'markdown' | 'html' | 'mermaid' | 'svg' | 'image' | 'font' | 'code' | 'text';
 
 export class DesignDocPathError extends Error {
   constructor(message: string) {
@@ -72,6 +72,11 @@ const KIND_BY_EXTENSION: Record<string, FileKind> = {
   jpeg: 'image',
   gif: 'image',
   webp: 'image',
+  ico: 'image',
+  woff: 'font',
+  woff2: 'font',
+  ttf: 'font',
+  otf: 'font',
   txt: 'text'
 };
 
@@ -80,7 +85,15 @@ const IMAGE_MEDIA_TYPES: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   gif: 'image/gif',
-  webp: 'image/webp'
+  webp: 'image/webp',
+  ico: 'image/x-icon'
+};
+
+const FONT_MEDIA_TYPES: Record<string, string> = {
+  woff: 'font/woff',
+  woff2: 'font/woff2',
+  ttf: 'font/ttf',
+  otf: 'font/otf'
 };
 
 /** Extensions shown as syntax-highlighted code rather than plain text. */
@@ -126,11 +139,62 @@ export function codeLanguageOf(path: string): string {
 
 /** Binary files are stored base64-encoded; everything else is UTF-8 text. */
 export function isBinaryKind(kind: FileKind): boolean {
-  return kind === 'image';
+  return kind === 'image' || kind === 'font';
 }
 
 export function imageMediaTypeOf(path: string): string | null {
   return IMAGE_MEDIA_TYPES[extensionOf(path)] ?? null;
+}
+
+const TEXT_MEDIA_TYPES: Record<string, string> = {
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  js: 'text/javascript',
+  mjs: 'text/javascript',
+  json: 'application/json',
+  svg: 'image/svg+xml',
+  xml: 'application/xml',
+  csv: 'text/csv',
+  md: 'text/markdown',
+  txt: 'text/plain'
+};
+
+/** Content type for serving a doc file to a page; text files carry a UTF-8 charset. */
+export function mediaTypeOf(path: string): string {
+  const ext = extensionOf(path);
+  const binary = IMAGE_MEDIA_TYPES[ext] ?? FONT_MEDIA_TYPES[ext];
+  if (binary) return binary;
+  return `${TEXT_MEDIA_TYPES[ext] ?? 'text/plain'};charset=utf-8`;
+}
+
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * Resolve a link or image reference found in `fromPath` to a doc path, or
+ * null when it points outside the doc (a URL, an anchor, or `..` past root).
+ */
+export function resolveDocLink(fromPath: string, href: string): string | null {
+  const raw = href.trim();
+  if (!raw || raw.startsWith('#') || raw.startsWith('//') || SCHEME.test(raw)) return null;
+  const target = raw.split(/[?#]/, 1)[0]!;
+  let decoded = target;
+  try {
+    decoded = decodeURIComponent(target);
+  } catch {
+    // Keep the raw text; an invalid escape is just an unusual file name.
+  }
+  const base = decoded.startsWith('/') ? [] : fromPath.split('/').slice(0, -1);
+  for (const segment of decoded.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (!base.length) return null;
+      base.pop();
+      continue;
+    }
+    base.push(segment);
+  }
+  return base.length ? base.join('/') : null;
 }
 
 /** Sort paths so a folder's files precede its subfolders, both alphabetically. */

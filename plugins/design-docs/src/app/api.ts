@@ -16,6 +16,8 @@ import type {
   DocStatus,
   TextEdit
 } from '../shared/contract.js';
+import type { PageFile } from '../shared/frame-protocol.js';
+import type { PageRenderReport, RenderedPage } from '../shared/page.js';
 
 export interface TemplateInfo {
   id: string;
@@ -68,14 +70,23 @@ export interface DesignDocsApi {
   update(doc: string, patch: UpdateArgs): Promise<DesignDocSummary>;
   remove(doc: string): Promise<void>;
   readFile(doc: string, path: string): Promise<DesignDocFile>;
+  /** An HTML page bundled for the preview frame; `draft` renders unsaved HTML in place of the file. */
+  renderPage(doc: string, args: { path: string; draft?: string }): Promise<RenderedPage>;
+  /** A file a rendered page fetches, or null when the doc has none at that path. */
+  readPageFile(doc: string, path: string): Promise<PageFile | null>;
+  /** The page served standalone, for the system browser. */
+  pageLink(doc: string, path: string): Promise<{ url: string }>;
+  reportRender(doc: string, report: PageRenderReport): Promise<void>;
   writeFile(doc: string, args: { path: string; content: string; encoding?: 'base64'; baseRevision?: number; note?: string }): Promise<WriteResult>;
   editFile(doc: string, args: { path: string; edits: TextEdit[]; baseRevision?: number }): Promise<WriteResult>;
   deleteFile(doc: string, path: string): Promise<void>;
   renameFile(doc: string, from: string, to: string): Promise<WriteResult>;
   history(doc: string, args?: { path?: string; limit?: number }): Promise<DesignDocRevision[]>;
   revision(doc: string, id: number): Promise<RevisionContent>;
-  restore(doc: string, id: number): Promise<WriteResult>;
+  /** `baseRevision` is the file's current revision as shown, 0 when it is gone. */
+  restore(doc: string, id: number, baseRevision?: number): Promise<WriteResult>;
   addComment(doc: string, args: { body: string; path?: string; quote?: string }): Promise<DesignDocComment>;
+  replyToComment(doc: string, id: string, body: string): Promise<DesignDocComment>;
   setCommentStatus(doc: string, id: string, status: CommentStatus): Promise<DesignDocComment>;
   deleteComment(doc: string, id: string): Promise<void>;
   unlinkThread(doc: string, threadId: string): Promise<void>;
@@ -103,14 +114,19 @@ export function createApi(call: Call): DesignDocsApi {
     update: (doc, patch) => typed('update', { doc, ...patch }),
     remove: (doc) => done(typed('remove', { doc })),
     readFile: (doc, path) => typed('readFile', { doc, path }),
+    renderPage: (doc, args) => typed('renderPage', { doc, ...args }),
+    readPageFile: (doc, path) => typed('readPageFile', { doc, path }),
+    pageLink: (doc, path) => typed('pageLink', { doc, path }),
+    reportRender: (doc, report) => done(typed('reportRender', { doc, ...report })),
     writeFile: (doc, args) => typed('writeFile', { doc, ...args }),
     editFile: (doc, args) => typed('editFile', { doc, ...args }),
     deleteFile: (doc, path) => done(typed('deleteFile', { doc, path })),
     renameFile: (doc, from, to) => typed('renameFile', { doc, from, to }),
     history: (doc, args = {}) => typed('history', { doc, ...args }),
     revision: (doc, id) => typed('revision', { doc, id }),
-    restore: (doc, id) => typed('restore', { doc, id }),
+    restore: (doc, id, baseRevision) => typed('restore', { doc, id, baseRevision }),
     addComment: (doc, args) => typed('addComment', { doc, ...args }),
+    replyToComment: (doc, id, body) => typed('replyToComment', { doc, id, body }),
     setCommentStatus: (doc, id, status) => typed('setCommentStatus', { doc, id, status }),
     deleteComment: (doc, id) => done(typed('deleteComment', { doc, id })),
     unlinkThread: (doc, threadId) => done(typed('unlinkThread', { doc, threadId })),
@@ -131,6 +147,11 @@ export function errorMessage(error: unknown): string {
 
 export function isConflict(error: unknown): boolean {
   return /changed since revision/i.test(errorMessage(error));
+}
+
+/** The doc itself is gone (deleted), as opposed to a failed request. */
+export function isMissingDoc(message: string): boolean {
+  return /^design doc .* not found/i.test(message);
 }
 
 export function toast(message: string, kind: 'info' | 'error' = 'info'): void {

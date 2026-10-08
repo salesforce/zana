@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RenderReports } from './render-reports.js';
 import { createRpcHandlers, registerRpc, titleFromMarkdown, UI_USER } from './rpc.js';
-import { DesignDocStore } from './store.js';
+import { DesignDocError, DesignDocStore } from './store.js';
 import { createTestDatabase } from './test-db.js';
 
 function setup() {
@@ -20,19 +21,19 @@ function setup() {
 describe('Design Docs RPC', () => {
   it('serves templates and projects without leaking paths', async () => {
     const { call } = setup();
-    expect(call('templates').map((template: { id: string }) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'blank']);
+    expect(call('templates').map((template: { id: string }) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank']);
     expect(call('templates')[0].files).toContain('README.md');
     await expect(call('projects')).resolves.toEqual([{ id: 'p1', name: 'App' }]);
   });
 
-  it('creates, lists, gets, updates and removes docs as the user', () => {
+  it('creates, lists, gets, updates and removes docs as the user', async () => {
     const { call, changed } = setup();
-    const doc = call('create', { title: 'Search', projectId: 'p1', tags: ['ux'], status: 'review', template: 'adr' });
+    const doc = await call('create', { title: 'Search', projectId: 'p1', tags: ['ux'], status: 'review', template: 'adr' });
     expect(doc).toMatchObject({ projectId: 'p1', status: 'review', createdBy: UI_USER });
     expect(changed).toHaveBeenLastCalledWith(doc.id);
-    expect(call('create', { title: 'Global', projectId: '' }).projectId).toBeNull();
-    expect(() => call('create', { title: 'x', status: 'nope' })).toThrow(/unknown status/);
-    expect(() => call('create', { title: 'x', tags: 'a' })).toThrow(/array of strings/);
+    expect((await call('create', { title: 'Global', projectId: '' })).projectId).toBeNull();
+    await expect(call('create', { title: 'x', status: 'nope' })).rejects.toThrow(/unknown status/);
+    await expect(call('create', { title: 'x', tags: 'a' })).rejects.toThrow(/array of strings/);
 
     expect(call('list', { projectId: 'p1' })).toHaveLength(2);
     expect(call('list', { status: 'active', query: 'search', limit: 5 })).toHaveLength(1);
@@ -40,18 +41,21 @@ describe('Design Docs RPC', () => {
     expect(() => call('list', { limit: 'ten' })).toThrow(/integer/);
     expect(call('get', { doc: doc.slug }).id).toBe(doc.id);
 
-    expect(call('update', { doc: doc.id, title: 'Search v2', projectId: null }).projectId).toBeNull();
-    expect(call('update', { doc: doc.id, projectId: 'p1' }).projectId).toBe('p1');
-    expect(() => call('update', { doc: doc.id, projectId: 5 })).toThrow(/string or null/);
-    expect(() => call('update', { doc: doc.id, status: 'nope' })).toThrow(/unknown status/);
+    expect((await call('update', { doc: doc.id, title: 'Search v2', projectId: null })).projectId).toBeNull();
+    expect((await call('update', { doc: doc.id, projectId: 'p1' })).projectId).toBe('p1');
+    await expect(call('update', { doc: doc.id, projectId: 5 })).rejects.toThrow(/string or null/);
+    await expect(call('update', { doc: doc.id, status: 'nope' })).rejects.toThrow(/unknown status/);
+    // Rule 1: the renderer picks a project, the host's list decides if it exists.
+    await expect(call('update', { doc: doc.id, projectId: 'p-unknown' })).rejects.toThrow(/unknown project p-unknown/);
+    await expect(call('create', { title: 'x', projectId: 'p-unknown' })).rejects.toThrow(/unknown project/);
 
     expect(call('remove', { doc: doc.id })).toEqual({ ok: true });
     expect(call('list', {})).toHaveLength(1);
   });
 
-  it('edits files with optimistic concurrency and restores history', () => {
+  it('edits files with optimistic concurrency and restores history', async () => {
     const { call } = setup();
-    const doc = call('create', { title: 'Doc', template: 'blank' });
+    const doc = await call('create', { title: 'Doc', template: 'blank' });
     const written = call('writeFile', { doc: doc.id, path: 'README.md', content: '# One', baseRevision: 1, note: 'n' });
     expect(written.revision).toBe(2);
     expect(() => call('writeFile', { doc: doc.id, path: 'README.md', content: 5 })).toThrow(/content must be a string/);
@@ -71,9 +75,63 @@ describe('Design Docs RPC', () => {
     expect(call('restore', { doc: doc.id, id: first.id }).revision).toBe(4);
   });
 
-  it('manages comments and linked threads', () => {
+  it('renders HTML pages, saved or drafted, with the site kit behind zcc-kit/', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const kit = vi.fn((path: string) => (path === 'site.css' ? { path: `zcc-kit/${path}`, kind: 'code' as const, content: 'p{}', encoding: 'utf8' as const, revision: 0 } : null));
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, kit });
+    const doc = await rpc.create!({ title: 'Site', template: 'blank' }) as { id: string };
+    store.writeFile(doc.id, { path: 'index.html', content: '<link rel="stylesheet" href="zcc-kit/site.css"><p>hi</p>' }, UI_USER);
+    const page = rpc.renderPage!({ doc: doc.id, path: 'index.html' }) as { html: string; revision: number; deps: unknown[] };
+    expect(page.html).toContain('<style data-dd-href="zcc-kit/site.css">p{}</style>');
+    expect(page.deps).toEqual([{ path: 'zcc-kit/site.css', revision: 0 }]);
+    expect((rpc.renderPage!({ doc: doc.id, path: 'index.html', draft: '<p>new</p>' }) as { html: string }).html).toContain('<p>new</p>');
+    expect(() => rpc.renderPage!({ doc: doc.id, path: 'index.html', draft: 4 })).toThrow(/draft must be a string/);
+    const plain = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never });
+    expect((plain.renderPage!({ doc: doc.id, path: 'index.html' }) as { missing: string[] }).missing).toEqual(['zcc-kit/site.css']);
+  });
+
+  it('reads the files a page fetches, the site kit included', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const kit = vi.fn((path: string) => (path === 'site.js' ? { path: `zcc-kit/${path}`, kind: 'code' as const, content: 'go()', encoding: 'utf8' as const, revision: 0 } : null));
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, kit });
+    const doc = await rpc.create!({ title: 'Site', template: 'blank' }) as { id: string };
+    store.writeFile(doc.id, { path: 'data/runs.json', content: '[1]' }, UI_USER);
+    expect(rpc.readPageFile!({ doc: doc.id, path: './data/runs.json' })).toEqual({ kind: 'code', encoding: 'utf8', content: '[1]' });
+    expect(rpc.readPageFile!({ doc: doc.id, path: 'zcc-kit/site.js' })).toEqual({ kind: 'code', encoding: 'utf8', content: 'go()' });
+    expect(rpc.readPageFile!({ doc: doc.id, path: 'absent.json' })).toBeNull();
+    expect(rpc.readPageFile!({ doc: doc.id, path: '../escape.json' })).toBeNull();
+    expect(createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never }).readPageFile!({ doc: doc.id, path: 'zcc-kit/site.js' })).toBeNull();
+    expect(() => rpc.readPageFile!({ doc: doc.id })).toThrow(/path/);
+  });
+
+  it('links to a page served standalone', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const pageUrl = vi.fn((docId: string, path: string) => `http://127.0.0.1:8780/page?doc=${docId}&path=${path}`);
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, pageUrl });
+    const doc = await rpc.create!({ title: 'Site', template: 'blank' }) as { id: string; entryPath: string };
+    expect(rpc.pageLink!({ doc: doc.id, path: './runs/a.html' })).toEqual({ url: `http://127.0.0.1:8780/page?doc=${doc.id}&path=runs/a.html` });
+    expect(rpc.pageLink!({ doc: doc.id })).toEqual({ url: `http://127.0.0.1:8780/page?doc=${doc.id}&path=${doc.entryPath}` });
+    expect(() => rpc.pageLink!({ doc: doc.id, path: '../x.html' })).toThrow(DesignDocError);
+    expect(() => createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never }).pageLink!({ doc: doc.id })).toThrow(/not served here/);
+  });
+
+  it('keeps what the panel saw when it ran a page', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const reports = new RenderReports();
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, reports });
+    const doc = store.create({ title: 'Site', files: [{ path: 'index.html', content: '<p>Hi</p>' }] }, UI_USER);
+    const report = { doc: doc.id, path: 'index.html', revision: 1, deps: [], missing: [], problems: [{ kind: 'error', message: 'boom' }], unanchored: [] };
+    expect(rpc.reportRender!(report)).toEqual({ ok: true });
+    expect(reports.current(doc.id, store.get(doc.id).files)).toMatchObject([{ docId: doc.id, path: 'index.html', problems: [{ kind: 'error', message: 'boom' }] }]);
+    expect(() => rpc.reportRender!({ ...report, revision: 0 })).toThrow(/saved revision/);
+    expect(() => rpc.reportRender!({ ...report, doc: 'missing' })).toThrow(/not found/);
+    // Without a report store the panel's reports are accepted and dropped.
+    expect(createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never }).reportRender!(report)).toEqual({ ok: true });
+  });
+
+  it('manages comments and linked threads', async () => {
     const { call, store } = setup();
-    const doc = call('create', { title: 'Doc', template: 'blank' });
+    const doc = await call('create', { title: 'Doc', template: 'blank' });
     const comment = call('addComment', { doc: doc.id, body: 'Why?', path: 'README.md', quote: '# Doc' });
     expect(comment.author).toEqual(UI_USER);
     expect(call('setCommentStatus', { doc: doc.id, id: comment.id, status: 'resolved' }).status).toBe('resolved');
@@ -86,7 +144,7 @@ describe('Design Docs RPC', () => {
 
   it('starts a briefed agent thread and links it to the doc', async () => {
     const { call, spawn, store } = setup();
-    const doc = call('create', { title: 'Sync', projectId: 'p1', template: 'blank' });
+    const doc = await call('create', { title: 'Sync', projectId: 'p1', template: 'blank' });
 
     await expect(call('askAgent', { doc: doc.id, action: 'review', path: 'README.md', providerId: 'codex' })).resolves.toEqual({
       threadId: 'thread-42',
@@ -137,11 +195,12 @@ describe('Design Docs RPC', () => {
 
   it('validates agent requests', async () => {
     const { call, spawn } = setup();
-    const global = call('create', { title: 'Global', template: 'blank' });
+    const global = await call('create', { title: 'Global', template: 'blank' });
     await expect(call('askAgent', { doc: global.id, action: 'dance' })).rejects.toThrow(/unknown agent action/);
     await expect(call('askAgent', { doc: global.id })).rejects.toThrow(/pick an action/);
     await expect(call('askAgent', { doc: global.id, prompt: 'x'.repeat(4001) })).rejects.toThrow(/at most 4000/);
     await expect(call('askAgent', { doc: global.id, action: 'plan' })).rejects.toThrow(/choose a project/);
+    await expect(call('askAgent', { doc: global.id, action: 'plan', projectId: 'p-unknown' })).rejects.toThrow(/unknown project/);
     await expect(call('askAgent', { doc: global.id, action: 'plan', projectId: 'p1' })).resolves.toMatchObject({ projectId: 'p1' });
     expect(spawn).toHaveBeenCalledTimes(1);
   });
@@ -151,6 +210,6 @@ describe('Design Docs RPC', () => {
     const { store } = setup();
     registerRpc({ rpc: { method } } as never, { store, changed: () => {}, sdk: {} as never });
     expect(method.mock.calls.map(([name]) => name)).toContain('askAgent');
-    expect(method).toHaveBeenCalledTimes(21);
+    expect(method).toHaveBeenCalledTimes(26);
   });
 });

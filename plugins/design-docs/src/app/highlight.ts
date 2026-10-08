@@ -25,8 +25,13 @@ interface TextIndex {
   map: number[];
 }
 
+/** Text the reader never sees: script and style source, including a page's inert script blocks. */
+const HIDDEN_TEXT = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+
 function indexText(root: Node): TextIndex {
-  const walker = root.ownerDocument!.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
+  const walker = root.ownerDocument!.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */, {
+    acceptNode: (node) => (HIDDEN_TEXT.has(node.parentElement?.tagName.toUpperCase() ?? '') ? 2 /* FILTER_REJECT */ : 1 /* FILTER_ACCEPT */)
+  });
   const nodes: Text[] = [];
   const starts: number[] = [];
   let raw = '';
@@ -73,9 +78,18 @@ export function findQuoteRanges(root: Node, quotes: readonly string[]): Map<stri
   const index = indexText(root);
   if (!index.nodes.length) return found;
   for (const quote of quotes) {
-    const needle = normalizeQuote(quote);
-    if (needle.length < 2 || found.has(quote)) continue;
-    const at = index.normalized.indexOf(needle);
+    if (found.has(quote)) continue;
+    // A quote selected on a page matches as written; one taken from the source may carry markdown.
+    let needle = '';
+    let at = -1;
+    for (const candidate of new Set([quote.replace(/\s+/g, ' ').trim(), normalizeQuote(quote)])) {
+      if (candidate.length < 2) continue;
+      at = index.normalized.indexOf(candidate);
+      if (at >= 0) {
+        needle = candidate;
+        break;
+      }
+    }
     if (at < 0) continue;
     const [startNode, startOffset] = locate(index, index.map[at]!);
     const [endNode, endOffset] = locate(index, index.map[at + needle.length - 1]!);

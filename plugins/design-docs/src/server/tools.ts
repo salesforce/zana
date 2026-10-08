@@ -10,7 +10,10 @@ import {
   writeDoc,
   type OperationContext
 } from './operations.js';
-import type { DesignDocStore } from './store.js';
+import type { KitReader } from './pages.js';
+import type { ProjectNames } from './project-names.js';
+import type { RenderReports } from './render-reports.js';
+import { AGENT_FALLBACK_LABEL, CLI_AGENT_LABEL, type DesignDocStore } from './store.js';
 
 const docRef = {
   type: 'string',
@@ -32,36 +35,51 @@ export interface ToolDeps {
   store: DesignDocStore;
   changed(docId: string): void;
   actorFor(threadId: string): Promise<DocActor>;
+  projects?: ProjectNames;
+  kit?: KitReader;
+  reports?: RenderReports;
 }
 
-/** Thread titles are fetched once per thread; failures fall back to "Agent". */
+/**
+ * Thread titles are fetched once a thread has one. Until then (and when the
+ * lookup fails) the label is "Agent", which is never cached or stored over a
+ * real title. An id with no thread row is a terminal session: no link.
+ */
 export function createActorResolver(
   getThread: (threadId: string) => Promise<{ title?: string | null; titleFallback?: string | null } | null>,
   maxEntries = 200
 ): (threadId: string) => Promise<DocActor> {
   const cache = new Map<string, string>();
   return async (threadId) => {
-    let label = cache.get(threadId);
-    if (label === undefined) {
-      try {
-        const thread = await getThread(threadId);
-        label = (thread?.title || thread?.titleFallback || '').trim() || 'Agent';
-      } catch {
-        label = 'Agent';
-      }
-      if (cache.size >= maxEntries) cache.delete(cache.keys().next().value as string);
-      cache.set(threadId, label);
+    const cached = cache.get(threadId);
+    if (cached) return { kind: 'agent', label: cached, threadId };
+    let thread;
+    try {
+      thread = await getThread(threadId);
+    } catch {
+      return { kind: 'agent', label: AGENT_FALLBACK_LABEL, threadId };
     }
-    return { kind: 'agent', label, threadId };
+    if (!thread) return { kind: 'agent', label: CLI_AGENT_LABEL, threadId: null };
+    const title = (thread.title || thread.titleFallback || '').trim();
+    if (!title) return { kind: 'agent', label: AGENT_FALLBACK_LABEL, threadId };
+    if (cache.size >= maxEntries) cache.delete(cache.keys().next().value as string);
+    cache.set(threadId, title);
+    return { kind: 'agent', label: title, threadId };
   };
 }
 
 export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: ToolDeps): void {
-  const context = (ctx: PluginAgentToolContext): OperationContext => ({
-    store: deps.store,
-    changed: deps.changed,
-    projectId: ctx.projectId || null
-  });
+  const context = async (ctx: PluginAgentToolContext): Promise<OperationContext> => {
+    await deps.projects?.refresh();
+    return {
+      store: deps.store,
+      changed: deps.changed,
+      projectId: ctx.projectId || null,
+      projectName: (projectId) => deps.projects?.name(projectId) ?? null,
+      kit: deps.kit,
+      reports: deps.reports
+    };
+  };
 
   zcc.agents.registerTool({
     name: 'design_doc_list',
@@ -83,7 +101,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       additionalProperties: false
     },
     presentation: { label: { pending: 'Listing design docs', completed: 'Listed design docs' }, icon: { glyph: 'Search' } },
-    execute: (input, ctx) => listDocs(context(ctx), input)
+    execute: async (input, ctx) => listDocs(await context(ctx), input)
   });
 
   zcc.agents.registerTool({
@@ -92,6 +110,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       'Read a design doc. A design doc is a small project of files (markdown, mermaid .mmd diagrams, HTML mockups, code, images). ' +
       'Without path: returns the manifest (files with revisions, open review comments) and the entry file. ' +
       'With path: returns that file and its revision. includeAll=true returns every text file at once. ' +
+      'For an HTML page it also says which files the page uses that the doc lacks, what previews block, and, ' +
+      'from the last time the panel ran it, script errors and comments whose quote the page no longer shows. ' +
       'Always read before editing, and treat open comments as review feedback to address.',
     parameters: {
       type: 'object',
@@ -104,7 +124,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       additionalProperties: false
     },
     presentation: { label: { pending: 'Reading design doc', completed: 'Read design doc' }, icon: { glyph: 'FileText' } },
-    execute: (input, ctx) => readDoc(context(ctx), input)
+    execute: async (input, ctx) => readDoc(await context(ctx), input)
   });
 
   zcc.agents.registerTool({
@@ -113,7 +133,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       'Create a new design doc the user can review in the Design Docs panel. Pass files to write your own content, ' +
       `or a template to start from (${TEMPLATE_IDS.join(', ')}). The doc belongs to the current project unless global=true. ` +
       'Write rich GitHub-flavoured markdown: headings, tables, task lists, ```mermaid diagrams and $math$ all render. ' +
-      'Put larger diagrams in .mmd files and UI mockups in self-contained .html files.',
+      'Put larger diagrams in .mmd files and UI mockups in self-contained .html files (inline CSS and JS; nothing loads from a CDN). ' +
+      'For a web page or site that will publish to GitHub Pages, start from the report or html-design template, or link zcc-kit/site.css and zcc-kit/site.js (see the design-docs skill).',
     parameters: {
       type: 'object',
       properties: {
@@ -125,24 +146,25 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
         global: { type: 'boolean', description: 'Make the doc visible to every project.' },
         files: {
           type: 'array',
-          description: 'Initial files. Include a README.md as the entry point.',
+          description: 'Initial files. Include a README.md (a written doc) or an index.html (a site) as the entry point.',
           items: {
             type: 'object',
             properties: {
               path: { type: 'string' },
               content: { type: 'string' },
-              encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'base64 only for images.' }
+              encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'base64 only for images and fonts.' }
             },
             required: ['path', 'content'],
             additionalProperties: false
           }
-        }
+        },
+        entryPath: { type: 'string', description: 'File shown first when the doc opens; defaults to README.md, else index.html.' }
       },
       required: ['title'],
       additionalProperties: false
     },
     presentation: { label: { pending: 'Creating design doc', completed: 'Created design doc' }, icon: { glyph: 'File' } },
-    execute: async (input, ctx) => createDoc(context(ctx), input, await deps.actorFor(ctx.threadId))
+    execute: async (input, ctx) => createDoc(await context(ctx), input, await deps.actorFor(ctx.threadId))
   });
 
   zcc.agents.registerTool({
@@ -151,7 +173,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       'Change one file in a design doc. Pass exactly one of: edits (exact-match find/replace, preferred for changes), ' +
       'content (whole file; creates the file if it does not exist), delete=true, or renameTo. ' +
       'Pass baseRevision (the revision you last read) so you never overwrite a concurrent edit by the user; ' +
-      'on a conflict, re-read the file and reapply. Every write is kept in history and appears live in the panel.',
+      'on a conflict, re-read the file and reapply. Every write is kept in history and appears live in the panel. ' +
+      'Writing an HTML page returns a page check: missing files and blocked resources to fix.',
     parameters: {
       type: 'object',
       properties: {
@@ -172,7 +195,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
           }
         },
         content: { type: 'string', description: 'Full new file content.' },
-        encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'base64 only for images.' },
+        encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'base64 only for images and fonts.' },
         delete: { type: 'boolean' },
         renameTo: { type: 'string' },
         baseRevision: { type: 'integer', minimum: 0, description: 'Revision you read; 0 asserts the file is new.' },
@@ -182,7 +205,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       additionalProperties: false
     },
     presentation: { label: { pending: 'Editing design doc', completed: 'Edited design doc' }, icon: { glyph: 'EditFile' } },
-    execute: async (input, ctx) => writeDoc(context(ctx), input, await deps.actorFor(ctx.threadId))
+    execute: async (input, ctx) => writeDoc(await context(ctx), input, await deps.actorFor(ctx.threadId))
   });
 
   zcc.agents.registerTool({
@@ -203,22 +226,29 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       additionalProperties: false
     },
     presentation: { label: { pending: 'Updating design doc', completed: 'Updated design doc' }, icon: { glyph: 'EditFile' } },
-    execute: async (input, ctx) => updateDoc(context(ctx), input, await deps.actorFor(ctx.threadId))
+    execute: async (input, ctx) => updateDoc(await context(ctx), input, await deps.actorFor(ctx.threadId))
   });
 
   zcc.agents.registerTool({
     name: 'design_doc_comment',
     description:
-      'Leave a review comment on a design doc (optionally anchored to a file and a quoted passage), ' +
-      'or resolve / reopen an existing comment by id. Resolve comments once your edits address them, ' +
-      'with body explaining what changed.',
+      'Leave a review comment on a design doc (optionally anchored to a file and an exact quoted passage), ' +
+      'reply in an existing comment\'s thread (replyTo), or resolve / reopen one by id. Pass at most one of ' +
+      'replyTo, resolve or reopen. Once your edits address a comment, resolve it with body saying what changed.',
     parameters: {
       type: 'object',
       properties: {
         doc: docRef,
-        body: { type: 'string', description: 'Comment text (markdown). With resolve, posted as a reply.' },
-        path: { type: 'string', description: 'File the comment is about.' },
-        quote: { type: 'string', description: 'Exact passage the comment refers to.' },
+        body: {
+          type: 'string',
+          description: 'Comment text (markdown). Required for a new comment or replyTo; with resolve or reopen, posted as a reply.'
+        },
+        path: { type: 'string', description: 'File a new comment is about.' },
+        quote: {
+          type: 'string',
+          description: 'Exact passage of that file a new comment refers to; the panel highlights it. For an HTML page, quote the text as the page shows it, not its markup.'
+        },
+        replyTo: { type: 'string', description: 'Comment id to reply to (keeps its status).' },
         resolve: { type: 'string', description: 'Comment id to mark resolved.' },
         reopen: { type: 'string', description: 'Comment id to reopen.' }
       },
@@ -229,6 +259,6 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       label: { pending: 'Commenting on design doc', completed: 'Commented on design doc' },
       icon: { glyph: 'ListTodo' }
     },
-    execute: async (input, ctx) => commentDoc(context(ctx), input, await deps.actorFor(ctx.threadId))
+    execute: async (input, ctx) => commentDoc(await context(ctx), input, await deps.actorFor(ctx.threadId))
   });
 }

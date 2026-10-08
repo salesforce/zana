@@ -71,5 +71,8 @@ export const DESIGN_DOC_MIGRATIONS: readonly string[] = [
     last_activity_at INTEGER NOT NULL,
     PRIMARY KEY (doc_id, thread_id)
   );
-  CREATE INDEX doc_threads_by_thread ON doc_threads (thread_id);`
+  CREATE INDEX doc_threads_by_thread ON doc_threads (thread_id);`,
+  // Replies: a comment with a parent_id belongs to that root comment's thread.
+  `ALTER TABLE doc_comments ADD COLUMN parent_id TEXT;
+  CREATE INDEX doc_comments_by_parent ON doc_comments (doc_id, parent_id);`
 ];

@@ -1,10 +1,13 @@
 /**
  * Pure helpers that turn a design doc's files into something the host can
- * render: relative links and images resolved inside the doc, HTML mockups
+ * render: relative links and images resolved inside the doc, HTML pages
  * themed with Zana tokens, and code wrapped in safe fences.
  */
 import type { DesignDocFile } from '../shared/contract.js';
-import { codeLanguageOf, comparePaths, imageMediaTypeOf } from '../shared/paths.js';
+import { prependToHead } from '../shared/html-scan.js';
+import { codeLanguageOf, comparePaths, imageMediaTypeOf, resolveDocLink } from '../shared/paths.js';
+
+export { resolveDocLink };
 
 export interface DocLocation {
   docId: string | null;
@@ -21,35 +24,6 @@ export function parseSubPath(subPath: string | undefined | null): DocLocation {
 export function formatSubPath(location: DocLocation): string {
   if (!location.docId) return '';
   return location.path ? `${location.docId}/${location.path}` : location.docId;
-}
-
-const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
-
-/**
- * Resolve a link or image reference found in `fromPath` to a doc path, or
- * null when it points outside the doc (a URL, an anchor, or `..` past root).
- */
-export function resolveDocLink(fromPath: string, href: string): string | null {
-  const raw = href.trim();
-  if (!raw || raw.startsWith('#') || raw.startsWith('//') || SCHEME.test(raw)) return null;
-  const target = raw.split(/[?#]/, 1)[0]!;
-  let decoded = target;
-  try {
-    decoded = decodeURIComponent(target);
-  } catch {
-    // Keep the raw text; an invalid escape is just an unusual file name.
-  }
-  const base = decoded.startsWith('/') ? [] : fromPath.split('/').slice(0, -1);
-  for (const segment of decoded.split('/')) {
-    if (!segment || segment === '.') continue;
-    if (segment === '..') {
-      if (!base.length) return null;
-      base.pop();
-      continue;
-    }
-    base.push(segment);
-  }
-  return base.length ? base.join('/') : null;
 }
 
 function utf8ToBase64(text: string): string {
@@ -70,43 +44,28 @@ export function fileDataUrl(file: Pick<DesignDocFile, 'path' | 'kind' | 'content
 }
 
 const MARKDOWN_IMAGE = /(!\[[^\]]*\]\()\s*(<[^>]+>|[^)\s]+)(\s+"[^"]*")?\s*\)/g;
-const HTML_SRC = /(\ssrc\s*=\s*)(["'])([^"']+)\2/gi;
 
 function unwrap(target: string): string {
   return target.startsWith('<') && target.endsWith('>') ? target.slice(1, -1) : target;
 }
 
-/** Relative image paths referenced by a markdown or HTML file, in order, de-duplicated. */
-export function referencedImages(fromPath: string, source: string, kind: 'markdown' | 'html'): string[] {
+/** Relative image paths a markdown file references, in order, de-duplicated. */
+export function referencedImages(fromPath: string, source: string): string[] {
   const found = new Set<string>();
-  const pattern = kind === 'markdown' ? MARKDOWN_IMAGE : HTML_SRC;
-  for (const match of source.matchAll(pattern)) {
-    const target = kind === 'markdown' ? unwrap(match[2]!) : match[3]!;
-    const path = resolveDocLink(fromPath, target);
+  for (const match of source.matchAll(MARKDOWN_IMAGE)) {
+    const path = resolveDocLink(fromPath, unwrap(match[2]!));
     if (path) found.add(path);
   }
   return [...found];
 }
 
-/** Swap relative image references for the data URLs in `assets` (keyed by doc path). */
-export function inlineImages(
-  fromPath: string,
-  source: string,
-  kind: 'markdown' | 'html',
-  assets: ReadonlyMap<string, string>
-): string {
+/** Swap a markdown file's relative image references for the data URLs in `assets` (keyed by doc path). */
+export function inlineImages(fromPath: string, source: string, assets: ReadonlyMap<string, string>): string {
   if (!assets.size) return source;
-  if (kind === 'markdown') {
-    return source.replace(MARKDOWN_IMAGE, (whole, open: string, target: string, title = '') => {
-      const path = resolveDocLink(fromPath, unwrap(target));
-      const url = path ? assets.get(path) : undefined;
-      return url ? `${open}${url}${title})` : whole;
-    });
-  }
-  return source.replace(HTML_SRC, (whole, attr: string, quote: string, target: string) => {
-    const path = resolveDocLink(fromPath, target);
+  return source.replace(MARKDOWN_IMAGE, (whole, open: string, target: string, title = '') => {
+    const path = resolveDocLink(fromPath, unwrap(target));
     const url = path ? assets.get(path) : undefined;
-    return url ? `${attr}${quote}${url}${quote}` : whole;
+    return url ? `${open}${url}${title})` : whole;
   });
 }
 
@@ -158,8 +117,8 @@ export function readThemeTokens(root: Element | null = globalThis.document?.docu
 const CSS_VALUE = /^[^<>{};]*$/;
 
 /**
- * Wrap an HTML mockup for a sandboxed `srcdoc` frame: the Zana tokens and a
- * neutral base style come first so the mockup's own CSS still wins.
+ * Theme an HTML page that brings no CSS of its own: the Zana tokens and a
+ * neutral base style, first in the head.
  */
 export function themedHtml(html: string, tokens: Record<string, string>): string {
   const declarations = Object.entries(tokens)
@@ -171,14 +130,7 @@ html, body { margin: 0; background: var(--bg-panel, #fff); color: var(--text-pri
 body { padding: 16px; font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
 code, pre { font-family: var(--font-mono, ui-monospace, monospace); }
 a { color: var(--accent, #2f81f7); }</style>`;
-  const head = html.match(/<head[^>]*>/i);
-  if (head) {
-    const at = (head.index ?? 0) + head[0].length;
-    return html.slice(0, at) + base + html.slice(at);
-  }
-  const doctype = html.match(/^\s*<!doctype[^>]*>/i);
-  if (doctype) return doctype[0] + base + html.slice(doctype[0].length);
-  return base + html;
+  return prependToHead(html, base);
 }
 
 export interface TreeFolder {

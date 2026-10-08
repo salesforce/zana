@@ -22,7 +22,13 @@
     "app": "./app.js",
     "skills": [
       "skills"
-    ]
+    ],
+    "extra": {
+      "runtimeAssets": [
+        "page-runtime.js",
+        "kit"
+      ]
+    }
   },
   "dependencies": {
     "lucide-react": "^1.35.0"

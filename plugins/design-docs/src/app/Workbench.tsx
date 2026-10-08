@@ -7,9 +7,10 @@ import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { DOC_PANEL_ACTION } from './Agents.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
 import type { DocLocation } from './content.js';
+import { useDocActions } from './DocActions.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
-import { Dialog, IconButton, MenuItem, Popover, Spinner, StatusPill, TimeAgo } from './ui.js';
+import { ContextMenu, contextMenuPoint, Dialog, IconButton, MenuItem, Popover, Spinner, StatusPill, TimeAgo } from './ui.js';
 
 type StatusFilter = DocStatus | 'active' | 'all';
 const GLOBAL_ONLY = '__global__';
@@ -38,16 +39,30 @@ function DocRow({
   active,
   projectName,
   now,
-  onSelect
+  menuOpen,
+  onSelect,
+  onMenu
 }: {
   doc: DesignDocSummary;
   active: boolean;
   projectName: string | null;
   now: number;
+  menuOpen: boolean;
   onSelect(): void;
+  onMenu(at: { x: number; y: number }): void;
 }) {
   return (
-    <button type="button" className={`dd-doc-row${active ? ' on' : ''}`} onClick={onSelect} aria-current={active ? 'page' : undefined}>
+    <button
+      type="button"
+      className={`dd-doc-row${active ? ' on' : ''}${menuOpen ? ' dd-doc-row-menu' : ''}`}
+      onClick={onSelect}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onMenu(contextMenuPoint(event));
+      }}
+      aria-current={active ? 'page' : undefined}
+      aria-haspopup="menu"
+    >
       <span className="dd-doc-row-top">
         <span className="dd-doc-row-title">{doc.title}</span>
         <StatusPill status={doc.status} compact />
@@ -77,6 +92,7 @@ function DocList({
   projects,
   activeId,
   onSelect,
+  onDeleted,
   onNew,
   headerActions
 }: {
@@ -85,6 +101,7 @@ function DocList({
   projects: ProjectInfo[];
   activeId: string | null;
   onSelect(docId: string): void;
+  onDeleted(docId: string): void;
   onNew(): void;
   headerActions?: ReactNode;
 }) {
@@ -92,6 +109,8 @@ function DocList({
   const [status, setStatus] = usePersistentState<StatusFilter>('list-status', 'active');
   const [projectFilter, setProjectFilter] = usePersistentState<string>('list-project', '');
   const [filterOpen, setFilterOpen] = useState(false);
+  const [menu, setMenu] = useState<{ doc: DesignDocSummary; at: { x: number; y: number } } | null>(null);
+  const docActions = useDocActions(projects);
   const debounced = useDebounced(query.trim(), 200);
   const now = useNow();
   const docs = useDocs({ ...(projectId ? { projectId } : {}), ...(debounced ? { query: debounced } : {}), status });
@@ -177,10 +196,23 @@ function DocList({
             active={doc.id === activeId}
             projectName={showProjects ? (doc.projectId ? names.get(doc.projectId) ?? 'Unknown project' : 'Global') : doc.projectId ? null : 'Global'}
             now={now}
+            menuOpen={menu?.doc.id === doc.id}
             onSelect={() => onSelect(doc.id)}
+            onMenu={(at) => setMenu({ doc, at })}
           />
         ))}
       </div>
+      {menu ? (
+        <ContextMenu key={`${menu.doc.id}@${menu.at.x},${menu.at.y}`} at={menu.at} label={`Actions for ${menu.doc.title}`} onClose={() => setMenu(null)}>
+          {docActions.items(
+            menu.doc,
+            () => setMenu(null),
+            () => onDeleted(menu.doc.id),
+            menu.doc.id === activeId ? undefined : () => onSelect(menu.doc.id)
+          )}
+        </ContextMenu>
+      ) : null}
+      {docActions.dialogs}
     </div>
   );
 }
@@ -415,6 +447,9 @@ export function Workbench({
         projects={projectList}
         activeId={location.docId}
         onSelect={(docId) => onLocationChange({ docId, path: null })}
+        onDeleted={(docId) => {
+          if (docId === location.docId) onLocationChange({ docId: null, path: null });
+        }}
         onNew={() => setCreating({ template: null })}
         headerActions={headerActions}
       />

@@ -56,23 +56,17 @@ describe('images', () => {
     expect(fileDataUrl({ path: 'a.md', kind: 'markdown', content: '#', encoding: 'utf8' })).toBeNull();
   });
 
-  it('finds and inlines referenced images in markdown and html', () => {
+  it('finds and inlines the images markdown references', () => {
     const markdown = '![one](img/a.png) ![two](<img/b c.png> "Title") ![remote](https://x/y.png) ![again](img/a.png)';
-    expect(referencedImages('docs/README.md', markdown, 'markdown')).toEqual(['docs/img/a.png', 'docs/img/b c.png']);
+    expect(referencedImages('docs/README.md', markdown)).toEqual(['docs/img/a.png', 'docs/img/b c.png']);
     const assets = new Map([
       ['docs/img/a.png', 'data:A'],
       ['docs/img/b c.png', 'data:B']
     ]);
-    expect(inlineImages('docs/README.md', markdown, 'markdown', assets)).toBe(
+    expect(inlineImages('docs/README.md', markdown, assets)).toBe(
       '![one](data:A) ![two](data:B "Title") ![remote](https://x/y.png) ![again](data:A)'
     );
-    expect(inlineImages('docs/README.md', markdown, 'markdown', new Map())).toBe(markdown);
-
-    const html = `<img src="a.png"><img src='missing.png'><script src="https://x/y.js"></script>`;
-    expect(referencedImages('mock.html', html, 'html')).toEqual(['a.png', 'missing.png']);
-    expect(inlineImages('mock.html', html, 'html', new Map([['a.png', 'data:A']]))).toBe(
-      `<img src="data:A"><img src='missing.png'><script src="https://x/y.js"></script>`
-    );
+    expect(inlineImages('docs/README.md', markdown, new Map())).toBe(markdown);
   });
 });
 
@@ -194,6 +188,10 @@ describe('api client', () => {
     await api.update('d', { title: 'U' });
     await expect(api.remove('d')).resolves.toBeUndefined();
     await api.readFile('d', 'a.md');
+    await api.renderPage('d', { path: 'index.html', draft: undefined });
+    await api.readPageFile('d', 'data.json');
+    await api.pageLink('d', 'index.html');
+    await expect(api.reportRender('d', { path: 'index.html', revision: 2, deps: [], missing: [], problems: [], unanchored: [] })).resolves.toBeUndefined();
     await api.writeFile('d', { path: 'a.md', content: 'x', baseRevision: 2 });
     await api.editFile('d', { path: 'a.md', edits: [{ oldText: 'a', newText: 'b' }] });
     await api.deleteFile('d', 'a.md');
@@ -215,6 +213,10 @@ describe('api client', () => {
       ['update', { doc: 'd', title: 'U' }],
       ['remove', { doc: 'd' }],
       ['readFile', { doc: 'd', path: 'a.md' }],
+      ['renderPage', { doc: 'd', path: 'index.html' }],
+      ['readPageFile', { doc: 'd', path: 'data.json' }],
+      ['pageLink', { doc: 'd', path: 'index.html' }],
+      ['reportRender', { doc: 'd', path: 'index.html', revision: 2, deps: [], missing: [], problems: [], unanchored: [] }],
       ['writeFile', { doc: 'd', path: 'a.md', content: 'x', baseRevision: 2 }],
       ['editFile', { doc: 'd', path: 'a.md', edits: [{ oldText: 'a', newText: 'b' }] }],
       ['deleteFile', { doc: 'd', path: 'a.md' }],

@@ -1,9 +1,9 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, Home, ImagePlus, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import type { DesignDocDetail, DesignDocFileMeta } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
-import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC } from '../shared/limits.js';
-import { extensionOf, fileKindOf } from '../shared/paths.js';
+import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
+import { extensionOf, fileKindOf, isBinaryKind } from '../shared/paths.js';
 import { errorMessage, toast, useApi } from './api.js';
 import { buildTree, type TreeNode } from './content.js';
 import { ConfirmDialog, FileIcon, IconButton, MenuItem, Popover, type ConfirmRequest } from './ui.js';
@@ -32,17 +32,18 @@ export function withDefaultExtension(raw: string): string {
   return extensionOf(path) ? path : `${path}.md`;
 }
 
+/** Images and fonts are sent base64-encoded; everything else as text. */
 function readUpload(file: File): Promise<{ content: string; encoding?: 'base64' }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    const svg = file.name.toLowerCase().endsWith('.svg');
+    const binary = isBinaryKind(fileKindOf(file.name));
     reader.onerror = () => reject(reader.error ?? new Error('could not read the file'));
     reader.onload = () => {
       const result = String(reader.result ?? '');
-      resolve(svg ? { content: result } : { content: result.slice(result.indexOf(',') + 1), encoding: 'base64' });
+      resolve(binary ? { content: result.slice(result.indexOf(',') + 1), encoding: 'base64' } : { content: result });
     };
-    if (svg) reader.readAsText(file);
-    else reader.readAsDataURL(file);
+    if (binary) reader.readAsDataURL(file);
+    else reader.readAsText(file);
   });
 }
 
@@ -158,7 +159,7 @@ function FileRow({
             onRename();
           }}
         />
-        {isEntry || file.kind === 'image' ? null : (
+        {isEntry || isBinaryKind(file.kind) ? null : (
           <MenuItem
             icon={Star}
             label="Open first"
@@ -187,13 +188,16 @@ export function FileTree({
   doc,
   activePath,
   onOpen,
-  onPathChanged
+  onPathChanged,
+  hasDraft
 }: {
   doc: DesignDocDetail;
   activePath: string | null;
   onOpen(path: string): void;
   /** A file the user is looking at moved or disappeared. */
   onPathChanged(from: string, to: string | null): void;
+  /** Whether `path` has unsaved edits open, so renaming or deleting it asks first. */
+  hasDraft?(path: string): boolean;
 }) {
   const api = useApi();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -212,8 +216,8 @@ export function FileTree({
       onOpen(path);
       return;
     }
-    if (fileKindOf(path) === 'image') {
-      toast('Use “Add image” to upload a picture.', 'error');
+    if (isBinaryKind(fileKindOf(path))) {
+      toast('Use “Add files” to upload images and fonts.', 'error');
       return;
     }
     try {
@@ -224,28 +228,49 @@ export function FileTree({
     }
   };
 
-  const rename = async (from: string, to: string | null) => {
+  const rename = (from: string, to: string | null) => {
     setRenaming(null);
     if (!to || to === from) return;
-    try {
-      const result = await api.renameFile(doc.id, from, to);
-      onPathChanged(from, result.path);
-    } catch (error) {
-      toast(`Could not rename ${from}: ${errorMessage(error)}`, 'error');
+    const run = async () => {
+      try {
+        const result = await api.renameFile(doc.id, from, to);
+        onPathChanged(from, result.path);
+      } catch (error) {
+        toast(`Could not rename ${from}: ${errorMessage(error)}`, 'error');
+      }
+    };
+    if (!hasDraft?.(from)) {
+      void run();
+      return;
     }
+    setConfirm({
+      title: 'Discard unsaved changes?',
+      body: (
+        <>
+          Renaming <code>{from}</code> drops your unsaved edits to it. Save them first to keep them.
+        </>
+      ),
+      confirmLabel: 'Discard and rename',
+      danger: true,
+      run
+    });
   };
 
   const upload = async (files: FileList | null) => {
     for (const file of Array.from(files ?? [])) {
-      if (file.size > MAX_BINARY_FILE_BYTES) {
-        toast(`${file.name} is larger than ${formatBytes(MAX_BINARY_FILE_BYTES)}`, 'error');
+      const kind = fileKindOf(file.name);
+      const limit = isBinaryKind(kind) ? MAX_BINARY_FILE_BYTES : MAX_TEXT_FILE_BYTES;
+      if (file.size > limit) {
+        toast(`${file.name} is larger than ${formatBytes(limit)}`, 'error');
         continue;
       }
-      const path = `${folderOfActive || 'assets/'}${file.name.replace(/[^\w.-]+/g, '-')}`;
+      const asset = kind === 'image' || kind === 'svg' || kind === 'font';
+      const path = `${folderOfActive || (asset ? 'assets/' : '')}${file.name.replace(/[^\w.-]+/g, '-')}`;
       try {
         const body = await readUpload(file);
         await api.writeFile(doc.id, { path, ...body });
-        toast(`Added ${path}. Reference it with ![${file.name}](${path.slice(folderOfActive.length)})`);
+        const relative = path.slice(folderOfActive.length);
+        toast(kind === 'font' || !asset ? `Added ${path}` : `Added ${path}. Reference it with ![${file.name}](${relative})`);
       } catch (error) {
         toast(`Could not add ${file.name}: ${errorMessage(error)}`, 'error');
       }
@@ -259,6 +284,7 @@ export function FileTree({
       body: (
         <>
           Delete <code>{file.path}</code>? Its history is kept, so it can be recreated from History.
+          {hasDraft?.(file.path) ? ' Your unsaved edits to it will be lost.' : null}
         </>
       ),
       confirmLabel: 'Delete',
@@ -319,12 +345,11 @@ export function FileTree({
         <span className="dd-section-label">Files</span>
         <span className="dd-tree-count">{doc.files.length}</span>
         <span className="dd-spacer" />
-        <IconButton icon={ImagePlus} label="Add image" size={13} disabled={full} onClick={() => uploadRef.current?.click()} />
+        <IconButton icon={FilePlus2} label="Add files" size={13} disabled={full} onClick={() => uploadRef.current?.click()} />
         <IconButton icon={Plus} label="New file" size={13} disabled={full} onClick={() => setCreating(true)} />
         <input
           ref={uploadRef}
           type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
           multiple
           hidden
           onChange={(event) => void upload(event.target.files)}

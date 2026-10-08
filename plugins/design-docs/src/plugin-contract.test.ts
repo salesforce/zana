@@ -9,11 +9,15 @@ import { TOOL_NAMES } from './server/tools.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-function load(title = 'Architect') {
+function load(title = 'Architect', deleted = new Set<string>()) {
   const host = createFakePluginHost({
     pluginId: 'design-docs',
     database: createTestDatabase(),
-    getThread: async ({ threadId }) => ({ ...makeThreadResponse({ id: threadId }), title })
+    getThread: async ({ threadId }) => ({
+      ...makeThreadResponse({ id: threadId }),
+      title,
+      ...(deleted.has(threadId) ? { deletedAt: '2026-10-07T00:00:00.000Z' } : {})
+    })
   });
   plugin(host.zcc);
   return host.harness;
@@ -88,8 +92,33 @@ describe('design-docs plugin contract', () => {
     await harness.dispose();
   });
 
+  it('serves standalone pages and raw files over plugin HTTP, and prints their URL', async () => {
+    const harness = load();
+    expect(harness.httpRoutes.map((route) => `${route.method} ${route.path}`)).toEqual(['GET /page', 'GET /file']);
+    const created = (await harness.callRpc('create', { title: 'Site', template: 'blank' })) as { id: string };
+    await harness.callRpc('writeFile', { doc: created.id, path: 'index.html', content: '<html><head><link rel="stylesheet" href="zcc-kit/site.css"></head><body><script>1</script></body></html>' });
+    // The real host hands routes a request object and sends back the response object.
+    const call = (path: string, query: Record<string, string>) =>
+      harness.httpRoutes.find((route) => route.path === path)!.handler({ method: 'GET', path, query, body: undefined } as never) as unknown as {
+        status: number;
+        body: string;
+        headers: Record<string, string>;
+      };
+    const page = call('/page', { doc: created.id, path: 'index.html' });
+    expect(page.status).toBe(200);
+    expect(page.headers['content-security-policy']).toMatch(/^sandbox allow-scripts/);
+    expect(page.body).toContain('"endpoint":"/api/v1/plugins/design-docs/http"');
+    expect(page.body).toContain('<script type="text/x-dd-script">1</script>');
+    expect(call('/file', { doc: created.id, path: 'README.md' }).headers['content-type']).toBe('text/plain; charset=utf-8');
+
+    const preview = await harness.runCli(['preview', created.id, 'index.html']);
+    expect(preview.stdout).toContain(`/api/v1/plugins/design-docs/http/page?doc=${created.id}&path=index.html`);
+    await harness.dispose();
+  });
+
   it('keeps linked threads current from lifecycle events', async () => {
-    const harness = load('Writer');
+    const deleted = new Set<string>();
+    const harness = load('Writer', deleted);
     const id = docIdIn(
       textOf(await harness.callAgentTool('design_doc_create', { title: 'Doc', template: 'blank' }, { threadId: 'thread-x' }))
     );
@@ -99,6 +128,12 @@ describe('design-docs plugin contract', () => {
     let detail = (await harness.callRpc('get', { doc: id })) as { threads: Array<{ title: string }> };
     expect(detail.threads[0]!.title).toBe('Writer (done)');
 
+    // Archiving also sends thread.deleted; the thread can come back, so keep the link.
+    await harness.emitThreadEvent('thread.deleted', { thread: makeThreadResponse({ id: 'thread-x' }) });
+    detail = (await harness.callRpc('get', { doc: id })) as { threads: Array<{ title: string }> };
+    expect(detail.threads).toHaveLength(1);
+
+    deleted.add('thread-x');
     await harness.emitThreadEvent('thread.deleted', { thread: makeThreadResponse({ id: 'thread-x' }) });
     detail = (await harness.callRpc('get', { doc: id })) as { threads: Array<{ title: string }> };
     expect(detail.threads).toEqual([]);

@@ -1,21 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
 import { Markdown } from '@zana-ai/zcc-plugin-sdk/app';
-import { MessageSquarePlus, Monitor, Smartphone, Sparkles, Tablet } from 'lucide-react';
+import { MessageSquarePlus, Sparkles } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
 import type { FileKind } from '../shared/paths.js';
 import { toast, useApi } from './api.js';
-import {
-  codeFence,
-  fenced,
-  fileDataUrl,
-  inlineImages,
-  readThemeTokens,
-  referencedImages,
-  resolveDocLink,
-  themedHtml
-} from './content.js';
+import { codeFence, fenced, fileDataUrl, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
+import { PageFrame } from './PageFrame.js';
 
 export interface PreviewFile {
   path: string;
@@ -90,51 +82,6 @@ export function useImageAssets(docId: string, files: readonly DesignDocFileMeta[
   return assets;
 }
 
-const FRAME_WIDTHS = [
-  { id: 'full', label: 'Full width', icon: Monitor, width: null },
-  { id: 'tablet', label: 'Tablet (768px)', icon: Tablet, width: 768 },
-  { id: 'phone', label: 'Phone (390px)', icon: Smartphone, width: 390 }
-] as const;
-
-function HtmlFrame({ file, assets }: { file: PreviewFile; assets: ReadonlyMap<string, string> }) {
-  const [width, setWidth] = useState<(typeof FRAME_WIDTHS)[number]['id']>('full');
-  const srcDoc = useMemo(
-    () => themedHtml(inlineImages(file.path, file.content, 'html', assets), readThemeTokens()),
-    [file.path, file.content, assets]
-  );
-  const frameWidth = FRAME_WIDTHS.find((option) => option.id === width)!.width;
-  return (
-    <div className="dd-html-stage">
-      <div className="dd-html-toolbar" role="toolbar" aria-label="Preview width">
-        {FRAME_WIDTHS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className={`icon-btn${width === option.id ? ' on' : ''}`}
-            title={option.label}
-            aria-label={option.label}
-            aria-pressed={width === option.id}
-            onClick={() => setWidth(option.id)}
-          >
-            <option.icon size={14} aria-hidden />
-          </button>
-        ))}
-      </div>
-      <div className="dd-html-viewport">
-        <iframe
-          className={`dd-html-frame${frameWidth ? ' dd-html-frame-device' : ''}`}
-          style={frameWidth ? { width: frameWidth } : undefined}
-          // Scripts may run (interactive mockups) but the frame keeps an opaque
-          // origin: no same-origin, forms, popups or top navigation.
-          sandbox="allow-scripts"
-          srcDoc={srcDoc}
-          title={file.path}
-        />
-      </div>
-    </div>
-  );
-}
-
 interface SelectionChip {
   text: string;
   top: number;
@@ -149,7 +96,8 @@ export function FilePreview({
   onOpenPath,
   onQuote,
   onAskAbout,
-  handleRef
+  handleRef,
+  draft = false
 }: {
   docId: string;
   file: PreviewFile;
@@ -160,21 +108,23 @@ export function FilePreview({
   onQuote?(text: string): void;
   onAskAbout?(text: string): void;
   handleRef?: MutableRefObject<PreviewHandle | null>;
+  /** `file.content` is not the saved file (an editor draft, an old revision). */
+  draft?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const owner = useRef({});
   const [chip, setChip] = useState<SelectionChip | null>(null);
-  const textual = file.kind === 'markdown' || file.kind === 'html';
+  // HTML pages are bundled by the server, images included.
   const imagePaths = useMemo(
-    () => (textual ? referencedImages(file.path, file.content, file.kind as 'markdown' | 'html') : []),
-    [textual, file.path, file.content, file.kind]
+    () => (file.kind === 'markdown' ? referencedImages(file.path, file.content) : []),
+    [file.path, file.content, file.kind]
   );
   const assets = useImageAssets(docId, files, imagePaths);
   const known = useMemo(() => new Set(files.map((entry) => entry.path)), [files]);
 
   const markdown = useMemo(() => {
-    if (file.kind === 'markdown') return inlineImages(file.path, file.content, 'markdown', assets);
+    if (file.kind === 'markdown') return inlineImages(file.path, file.content, assets);
     if (file.kind === 'mermaid') return fenced(file.content, 'mermaid');
     if (file.kind === 'code') return codeFence(file.path, file.content);
     return null;
@@ -202,8 +152,10 @@ export function FilePreview({
     };
   }, [quoteKey, markdown, file.kind, file.content]);
 
+  // For HTML pages the page frame sets the handle; this effect runs after the frame's.
+  const ownsHandle = file.kind !== 'html';
   useEffect(() => {
-    if (!handleRef) return;
+    if (!handleRef || !ownsHandle) return;
     handleRef.current = {
       focusQuote(quote) {
         const root = contentRef.current;
@@ -219,7 +171,7 @@ export function FilePreview({
     return () => {
       handleRef.current = null;
     };
-  }, [handleRef]);
+  }, [handleRef, ownsHandle]);
 
   const onClickCapture = (event: ReactMouseEvent) => {
     const anchor = (event.target as Element | null)?.closest?.('a');
@@ -267,12 +219,31 @@ export function FilePreview({
 
   let body;
   if (file.kind === 'html') {
-    body = <HtmlFrame file={file} assets={assets} />;
+    body = (
+      <PageFrame
+        key={`${docId}\u0000${file.path}`}
+        docId={docId}
+        file={file}
+        files={files}
+        draft={draft}
+        quotes={quotes}
+        onOpenPath={onOpenPath}
+        onQuote={onQuote}
+        onAskAbout={onAskAbout}
+        handleRef={handleRef}
+      />
+    );
   } else if (file.kind === 'image' || file.kind === 'svg') {
     const url = fileDataUrl(file);
     body = (
       <div className="dd-image-stage">
         {url ? <img src={url} alt={file.path} /> : <span className="dd-muted">This image cannot be displayed.</span>}
+      </div>
+    );
+  } else if (file.kind === 'font') {
+    body = (
+      <div className="dd-image-stage">
+        <span className="dd-muted">Font file. Pages in this doc load it through @font-face.</span>
       </div>
     );
   } else if (markdown !== null) {

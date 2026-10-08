@@ -1,13 +1,16 @@
 /**
  * Starter file sets for a new design doc. `{{title}}` and `{{summary}}` are
- * substituted at creation time; every template has a `README.md` entry file.
+ * substituted at creation time (escaped in HTML pages). A template opens on
+ * its `entryPath`, else on `README.md`.
  */
+import { HTML_DESIGN_INDEX, REPORT_INDEX, REPORT_WEEKLY_CSV } from './site-templates.js';
 
 export interface DesignDocTemplate {
   id: string;
   label: string;
   description: string;
   files: ReadonlyArray<{ path: string; content: string }>;
+  entryPath?: string;
 }
 
 const TECHNICAL_README = `# {{title}}
@@ -240,6 +243,23 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
     ]
   },
   {
+    id: 'report',
+    label: 'Interactive report',
+    description: 'A one-page site: KPIs, charts from CSV, a sortable table. Publishes to GitHub Pages.',
+    entryPath: 'index.html',
+    files: [
+      { path: 'index.html', content: REPORT_INDEX },
+      { path: 'data/weekly.csv', content: REPORT_WEEKLY_CSV }
+    ]
+  },
+  {
+    id: 'html-design',
+    label: 'HTML design doc',
+    description: 'A technical design as a web page with section nav. Publishes to GitHub Pages.',
+    entryPath: 'index.html',
+    files: [{ path: 'index.html', content: HTML_DESIGN_INDEX }]
+  },
+  {
     id: 'blank',
     label: 'Blank',
     description: 'A single README.md to start from scratch.',
@@ -258,8 +278,13 @@ export function renderTemplateFiles(
   values: { title: string; summary: string }
 ): Array<{ path: string; content: string }> {
   const summary = values.summary.trim() || 'One-paragraph summary of the proposal.';
-  return template.files.map((file) => ({
-    path: file.path,
-    content: file.content.replaceAll('{{title}}', values.title).replaceAll('{{summary}}', summary)
-  }));
+  return template.files.map((file) => {
+    const page = /\.html?$/i.test(file.path);
+    const text = (value: string) => (page ? escapeHtml(value) : value);
+    return { path: file.path, content: file.content.replaceAll('{{title}}', text(values.title)).replaceAll('{{summary}}', text(summary)) };
+  });
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }

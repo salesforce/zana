@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject, type React
 import { Bot, Columns2, Eye, PanelRight, Pencil } from 'lucide-react';
 import type { DesignDocDetail, DesignDocFile, DesignDocRevision } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
+import { isBinaryKind } from '../shared/paths.js';
 import { FileEditor, type EditorState } from './FileEditor.js';
 import { FilePreview, type PreviewHandle } from './FilePreview.js';
 import { RevisionView } from './HistoryPane.js';
@@ -76,7 +77,7 @@ export function FilePane({
   const meta = doc.files.find((file) => file.path === path) ?? null;
   const { file, error, loading } = useStickyFile(doc.id, path, meta?.revision ?? null);
   const flash = useAgentFlash(path, meta?.revision ?? null, meta?.updatedBy);
-  const editable = meta?.kind !== 'image';
+  const editable = !meta || !isBinaryKind(meta.kind);
   const effectiveMode: ViewMode = editable ? mode : 'preview';
   const quotes = useMemo(
     () =>
@@ -94,7 +95,7 @@ export function FilePane({
   let body: ReactNode;
   if (revision) {
     body = <RevisionView key={revision.id} doc={doc} revision={revision} onClose={onCloseRevision} onOpenPath={onOpenPath} />;
-  } else if (!meta) {
+  } else if (!meta && !(file && effectiveMode !== 'preview')) {
     body = <div className="dd-center dd-muted">{path} is not in this doc anymore.</div>;
   } else if (!file) {
     body = <div className="dd-center">{error ? <div className="dd-banner dd-banner-error">{error}</div> : loading ? <Spinner label="Loading file" /> : null}</div>;
@@ -117,10 +118,11 @@ export function FilePane({
         key={`${doc.id}\u0000${path}`}
         docId={doc.id}
         file={file}
+        removed={!meta}
         split={effectiveMode === 'split'}
         onStateChange={onEditorState}
         renderPreview={(content) => (
-          <FilePreview docId={doc.id} file={{ ...file, content }} files={doc.files} onOpenPath={onOpenPath} />
+          <FilePreview docId={doc.id} file={{ ...file, content }} files={doc.files} onOpenPath={onOpenPath} draft={content !== file.content} />
         )}
       />
     );

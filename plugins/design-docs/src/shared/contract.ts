@@ -63,6 +63,13 @@ export interface DesignDocFile extends DesignDocFileMeta {
 
 export type CommentStatus = 'open' | 'resolved';
 
+export interface DesignDocReply {
+  id: string;
+  body: string;
+  author: DocActor;
+  createdAt: number;
+}
+
 export interface DesignDocComment {
   id: string;
   docId: string;
@@ -73,6 +80,8 @@ export interface DesignDocComment {
   status: CommentStatus;
   createdAt: number;
   resolvedAt: number | null;
+  /** Oldest first. Replies share the comment's anchor and status. */
+  replies: DesignDocReply[];
 }
 
 export type RevisionOp = 'create' | 'write' | 'delete' | 'rename';

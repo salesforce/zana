@@ -46,6 +46,14 @@ describe('findQuoteRanges', () => {
     expect(ranges.get('go through')!.toString()).toBe('go through');
   });
 
+  it('matches page text as written before stripping markdown, and skips script and style source', () => {
+    const script = el('script', 'const run_id = 1');
+    const root = mount(el('p', 'The run_id field'), script, el('style', 'p { color: red }'));
+    const ranges = findQuoteRanges(root, ['run_id field', 'const run_id', 'color: red']);
+    expect([...ranges.keys()]).toEqual(['run_id field']);
+    expect(ranges.get('run_id field')!.toString()).toBe('run_id field');
+  });
+
   it('returns nothing without quotes or text', () => {
     expect(findQuoteRanges(mount(el('p', 'hi')), []).size).toBe(0);
     expect(findQuoteRanges(mount(), ['hello']).size).toBe(0);

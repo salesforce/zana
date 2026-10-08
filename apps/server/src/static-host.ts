@@ -9,7 +9,7 @@ import { createProductWebSocketServer, handleProductUpgrade } from './http/produ
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './http/host-internal.js';
 import { handleInstallHttp } from './http/install-http.js';
 import { attachPairingRelay } from './http/pairing-relay-controller.js';
-import { tryServePluginAsset } from './http/plugin-assets.js';
+import { PLUGIN_ASSET_PATH, tryServePluginAsset } from './http/plugin-assets.js';
 import { videoByteRange } from './http/video-preview.js';
 
 export interface BrowserProjectSummary {
@@ -56,6 +56,17 @@ export interface StartStaticHostOptions {
 
 function isContained(rootDir: string, candidate: string): boolean {
   return candidate === rootDir || candidate.startsWith(`${rootDir}${sep}`);
+}
+
+/**
+ * `/plugins/:id/:panel/<subPath>` is a client route whose sub-path belongs to
+ * the plugin and often names a file (`spec/README.md`), so an extension there
+ * is not a missing asset. Plugin assets keep their own path.
+ */
+const PLUGIN_PANEL_ROUTE = /^\/plugins\/[^/]+\/[^/]+\/./;
+
+function isPluginPanelRoute(pathname: string): boolean {
+  return PLUGIN_PANEL_ROUTE.test(pathname) && !PLUGIN_ASSET_PATH.test(pathname);
 }
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -215,7 +226,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
       // The shell has no server-side routes yet. Falling back only for paths
       // without an extension preserves future browser routing without treating
       // missing assets as an application page.
-      if (extname(requestUrl.pathname)) {
+      if (extname(requestUrl.pathname) && !isPluginPanelRoute(requestUrl.pathname)) {
         response.writeHead(404).end();
         return;
       }

@@ -1,25 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import type { DocActor } from '../shared/contract.js';
 import {
+  LARGE_TEXT_FILE_BYTES,
   MAX_COMMENTS_PER_DOC,
   MAX_FILES_PER_DOC,
+  MAX_LARGE_TEXT_REVISIONS_PER_FILE,
   MAX_TEXT_FILE_BYTES,
   MAX_TEXT_REVISIONS_PER_FILE,
   MAX_THREAD_LINKS_PER_DOC
 } from '../shared/limits.js';
 import { formatBytes } from '../shared/display.js';
-import { DesignDocError, DesignDocStore, applyEdits, slugify } from './store.js';
+import { AGENT_FALLBACK_LABEL, DesignDocError, DesignDocStore, applyEdits, slugify } from './store.js';
 import { createTestDatabase } from './test-db.js';
 
 const user: DocActor = { kind: 'user', label: 'You', threadId: null };
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
 
-function makeStore() {
+function makeStore(options: { maxHistoryBytes?: number; frozenClock?: boolean; ids?: 'counter' | 'descending' } = {}) {
   let clock = 1_000;
   let counter = 0;
   const store = new DesignDocStore(createTestDatabase(), {
-    now: () => (clock += 10),
-    randomId: (prefix) => `${prefix}${(counter += 1).toString().padStart(4, '0')}`
+    now: () => (options.frozenClock ? clock : (clock += 10)),
+    // Descending ids make sure nothing orders by id by accident.
+    randomId: (prefix) => `${prefix}${(options.ids === 'descending' ? 9999 - (counter += 1) : (counter += 1)).toString().padStart(4, '0')}`,
+    maxHistoryBytes: options.maxHistoryBytes
   });
   return store;
 }
@@ -61,6 +65,8 @@ describe('DesignDocStore — docs', () => {
     );
     expect(doc.entryPath).toBe('spec.md');
     expect(doc.threads).toEqual([]);
+    const site = store.create({ title: 'Site', files: [{ path: 'data/a.csv', content: 'a\n1\n' }, { path: 'notes.md', content: '' }, { path: 'index.html', content: '<p>Home</p>' }] }, user);
+    expect(site.entryPath).toBe('index.html');
     expectError(() => store.create({ title: '  ' }, user), 'invalid', /title is required/);
     expectError(() => store.create({ title: 'x'.repeat(200) }, user), 'invalid', /at most/);
     expectError(() => store.create({ title: 'T', template: 'nope' }, user), 'invalid', /unknown template/);
@@ -130,6 +136,19 @@ describe('DesignDocStore — docs', () => {
     expectError(() => store.list({ status: 'nope' as never }), 'invalid');
     const [first] = store.list({ projectId: 'p1', status: 'archived' });
     expect(first).toMatchObject({ fileCount: 1, openComments: 0, tags: ['mobile-app'] });
+  });
+
+  it('matches ASCII case-insensitively, other letters as typed, and can skip file contents', () => {
+    const store = makeStore();
+    const accented = store.create({ title: 'Été planning', template: 'blank' }, user);
+    const body = store.create({ title: 'Other', template: 'blank' }, user);
+    store.writeFile(body.id, { path: 'README.md', content: 'The été rollout' }, user);
+    // LIKE folds ASCII case only, so accented letters match as typed.
+    expect(store.list({ query: 'Été' }).map((doc) => doc.id)).toEqual([accented.id]);
+    expect(store.list({ query: 'été' }).map((doc) => doc.id)).toEqual([body.id]);
+    expect(store.list({ query: 'PLANNING' }).map((doc) => doc.id)).toEqual([accented.id]);
+    expect(store.list({ query: 'rollout', contents: false })).toEqual([]);
+    expect(store.list({ query: 'rollout' }).map((doc) => doc.id)).toEqual([body.id]);
   });
 
   it('updates metadata and bumps the doc revision', () => {
@@ -288,6 +307,43 @@ describe('DesignDocStore — files', () => {
     expect(store.history(doc.id, { limit: 3 })).toHaveLength(3);
   });
 
+  it('keeps fewer revisions of large text files and stores fonts as binary', () => {
+    const store = makeStore();
+    const doc = store.create({ title: 'Site', template: 'blank' }, user);
+    const big = 'x'.repeat(LARGE_TEXT_FILE_BYTES);
+    for (let index = 0; index < MAX_LARGE_TEXT_REVISIONS_PER_FILE + 3; index += 1) {
+      store.writeFile(doc.id, { path: 'data.json', content: `${big}${index}` }, user);
+    }
+    expect(store.history(doc.id, { path: 'data.json', limit: 100 })).toHaveLength(MAX_LARGE_TEXT_REVISIONS_PER_FILE);
+
+    store.writeFile(doc.id, { path: 'assets/fonts/Inter.woff2', content: 'AAEAAA==' }, user);
+    expect(store.readFile(doc.id, 'assets/fonts/Inter.woff2')).toMatchObject({ kind: 'font', encoding: 'base64' });
+    expectError(
+      () => store.writeFile(doc.id, { path: 'a.ttf', content: 'text', encoding: 'utf8' }, user),
+      'invalid',
+      /binary file; send its bytes base64-encoded/
+    );
+    expectError(() => store.renameFile(doc.id, 'assets/fonts/Inter.woff2', 'Inter.css', user), 'invalid', /change encoding/);
+  });
+
+  it('drops the oldest history over the byte cap but keeps every path\'s newest snapshot', () => {
+    const store = makeStore({ maxHistoryBytes: 1_000 });
+    const doc = store.create({ title: 'Doc', files: [{ path: 'README.md', content: 'a'.repeat(300) }] }, user);
+    store.writeFile(doc.id, { path: 'gone.md', content: 'g'.repeat(400) }, user);
+    store.deleteFile(doc.id, 'gone.md', user);
+    for (let index = 0; index < 4; index += 1) {
+      store.writeFile(doc.id, { path: 'README.md', content: `${index}`.repeat(300) }, user);
+    }
+    const history = store.history(doc.id, { limit: 100 });
+    const total = history.reduce((sum, entry) => sum + entry.size, 0);
+    expect(total).toBeLessThanOrEqual(1_000);
+    // The deleted file's last snapshot survives, so it can still be restored.
+    const gone = history.find((entry) => entry.path === 'gone.md');
+    expect(gone).toBeDefined();
+    expect(store.revisionContent(doc.id, gone!.id).content).toBe('g'.repeat(400));
+    expect(history.find((entry) => entry.path === 'README.md')!.revision).toBe(5);
+  });
+
   it('returns every file in tree order', () => {
     const store = makeStore();
     const doc = store.create(
@@ -318,6 +374,73 @@ describe('DesignDocStore — comments and threads', () => {
     expectError(() => store.setCommentStatus(doc.id, 'c_nope', 'resolved', user), 'not_found');
     expectError(() => store.setCommentStatus(doc.id, comment.id, 'weird' as never, user), 'invalid');
     expectError(() => store.deleteComment(doc.id, 'c_nope', user), 'not_found');
+  });
+
+  it('keeps "last edited by" on content edits when people review the doc', () => {
+    const store = makeStore();
+    const doc = store.create({ title: 'Doc', template: 'blank' }, user);
+    const edited = store.summary(doc.id);
+    const comment = store.addComment(doc.id, { body: 'Why?' }, agent);
+    store.addReply(doc.id, comment.id, 'Because.', agent);
+    store.setCommentStatus(doc.id, comment.id, 'resolved', agent, 'Done.');
+    store.deleteComment(doc.id, comment.id, agent);
+    const reviewed = store.summary(doc.id);
+    expect(reviewed).toMatchObject({ updatedAt: edited.updatedAt, updatedBy: user });
+    expect(reviewed.revision).toBe(edited.revision + 4);
+  });
+
+  it('threads replies under a comment and moves comments with their file', () => {
+    const store = makeStore({ frozenClock: true, ids: 'descending' });
+    const doc = store.create({ title: 'Doc', template: 'blank' }, user);
+    const root = store.addComment(doc.id, { body: 'Why?', path: 'README.md', quote: '# Doc' }, user);
+    const first = store.addReply(doc.id, root.id, ' Because. ', agent);
+    expect(first.replies.map((reply) => reply.body)).toEqual(['Because.']);
+    const second = store.addReply(doc.id, root.id, 'And more', user);
+    // Same millisecond, ids counting down: replies still read in the order written.
+    expect(second.replies.map((reply) => reply.body)).toEqual(['Because.', 'And more']);
+    expect(second.replies[0]).toMatchObject({ author: agent });
+    expect(store.summary(doc.id).openComments).toBe(1);
+    expect(store.get(doc.id).comments).toHaveLength(1);
+
+    const replyId = second.replies[0]!.id;
+    expectError(() => store.addReply(doc.id, replyId, 'nested', user), 'invalid', new RegExp(`use its comment ${root.id}`));
+    expectError(() => store.setCommentStatus(doc.id, replyId, 'resolved', user), 'invalid');
+    expectError(() => store.addReply(doc.id, 'c_nope', 'x', user), 'not_found');
+    expectError(() => store.addReply(doc.id, root.id, ' ', user), 'invalid');
+
+    const resolved = store.setCommentStatus(doc.id, root.id, 'resolved', agent, 'Fixed in README');
+    expect(resolved).toMatchObject({ status: 'resolved' });
+    expect(resolved.replies.at(-1)!.body).toBe('Fixed in README');
+    expect(store.summary(doc.id).openComments).toBe(0);
+
+    store.renameFile(doc.id, 'README.md', 'docs/intro.md', user);
+    expect(store.get(doc.id).comments[0]!.path).toBe('docs/intro.md');
+
+    store.deleteComment(doc.id, replyId, user);
+    expect(store.get(doc.id).comments[0]!.replies).toHaveLength(2);
+    store.deleteComment(doc.id, root.id, user);
+    expect(store.get(doc.id).comments).toEqual([]);
+    // Replies went with their comment: the doc can take a full set again.
+    for (let index = 0; index < MAX_COMMENTS_PER_DOC; index += 1) store.addComment(doc.id, { body: `c${index}` }, user);
+  });
+
+  it('counts replies toward the comment cap', () => {
+    const store = makeStore();
+    const doc = store.create({ title: 'Doc', template: 'blank' }, user);
+    const root = store.addComment(doc.id, { body: 'root' }, user);
+    for (let index = 1; index < MAX_COMMENTS_PER_DOC; index += 1) store.addReply(doc.id, root.id, `r${index}`, user);
+    expectError(() => store.addReply(doc.id, root.id, 'one more', user), 'limit', /comments and replies/);
+    expectError(() => store.setCommentStatus(doc.id, root.id, 'resolved', user, 'note'), 'limit');
+    expect(store.get(doc.id).comments[0]!.status).toBe('open');
+  });
+
+  it('keeps a known thread title when an agent label falls back', () => {
+    const store = makeStore();
+    const doc = store.create({ title: 'Doc', template: 'blank' }, agent);
+    store.addComment(doc.id, { body: 'x' }, { ...agent, label: AGENT_FALLBACK_LABEL });
+    expect(store.get(doc.id).threads[0]!.title).toBe('Planner');
+    store.linkThread(doc.id, 'thread-new', AGENT_FALLBACK_LABEL, 'assistant');
+    expect(store.get(doc.id).threads.find((thread) => thread.threadId === 'thread-new')!.title).toBe(AGENT_FALLBACK_LABEL);
   });
 
   it('caps comments per doc', () => {

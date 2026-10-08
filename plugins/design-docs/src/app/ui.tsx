@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import {
   Bot,
   CheckCheck,
   FileCode,
   FileImage,
   FileText,
+  FileType,
   ListChecks,
   Loader2,
   MessageSquareText,
@@ -36,7 +37,14 @@ export function actionIcon(name: string): Icon {
 }
 
 export function FileIcon({ kind, size = 14 }: { kind: FileKind; size?: number }) {
-  const Glyph = kind === 'image' || kind === 'svg' ? FileImage : kind === 'markdown' || kind === 'text' ? FileText : FileCode;
+  const Glyph =
+    kind === 'image' || kind === 'svg'
+      ? FileImage
+      : kind === 'font'
+        ? FileType
+        : kind === 'markdown' || kind === 'text'
+          ? FileText
+          : FileCode;
   return <Glyph size={size} className={`dd-file-icon dd-kind-${kind}`} aria-hidden />;
 }
 
@@ -167,6 +175,82 @@ export function Popover({
           {children}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** Where a context menu opens: the pointer, or under the element for the context-menu key. */
+export function contextMenuPoint(event: { clientX: number; clientY: number; currentTarget: Element }): { x: number; y: number } {
+  if (event.clientX || event.clientY) return { x: event.clientX, y: event.clientY };
+  const rect = event.currentTarget.getBoundingClientRect();
+  return { x: rect.left + 12, y: rect.bottom };
+}
+
+const EDGE = 4;
+
+/**
+ * A menu at a point, opened by a right click. It stays inside the window,
+ * takes focus, moves with the arrow keys, and closes on Escape, an outside
+ * click, scrolling or resizing, then gives focus back.
+ */
+export function ContextMenu({ at, label, onClose, children }: { at: { x: number; y: number }; label: string; onClose(): void; children: ReactNode }) {
+  const ref = useDismiss(true, onClose);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const [place, setPlace] = useState(at);
+
+  useLayoutEffect(() => {
+    const menu = ref.current!;
+    const { width, height } = menu.getBoundingClientRect();
+    setPlace({
+      x: Math.max(EDGE, Math.min(at.x, window.innerWidth - width - EDGE)),
+      y: Math.max(EDGE, Math.min(at.y, window.innerHeight - height - EDGE))
+    });
+  }, [ref, at.x, at.y]);
+
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const close = (event: Event) => {
+      if (!(event.target instanceof Node && ref.current?.contains(event.target))) closeRef.current();
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('blur', close);
+      if (previous?.isConnected && (document.activeElement === document.body || ref.current?.contains(document.activeElement))) previous.focus();
+    };
+  }, [ref]);
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      event.key === 'ArrowDown' ? (index + 1) % items.length
+      : event.key === 'ArrowUp' ? (index - 1 + items.length) % items.length
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? items.length - 1
+      : -1;
+    if (event.key === 'Tab') onClose();
+    if (next < 0 || !items.length) return;
+    event.preventDefault();
+    items[next]!.focus();
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="dd-pop dd-menu dd-context-menu"
+      role="menu"
+      aria-label={label}
+      style={{ left: place.x, top: place.y }}
+      onKeyDown={onKeyDown}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      {children}
     </div>
   );
 }

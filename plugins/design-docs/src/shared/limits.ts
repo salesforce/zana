@@ -5,16 +5,20 @@ export const MAX_SUMMARY_LENGTH = 600;
 export const MAX_TAGS = 12;
 export const MAX_TAG_LENGTH = 32;
 
-export const MAX_FILES_PER_DOC = 150;
-export const MAX_TEXT_FILE_BYTES = 256 * 1024;
+/** Sized for a small static site: pages, data files, images and fonts. */
+export const MAX_FILES_PER_DOC = 500;
+export const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 export const MAX_BINARY_FILE_BYTES = 2 * 1024 * 1024;
-export const MAX_DOC_BYTES = 8 * 1024 * 1024;
+export const MAX_DOC_BYTES = 24 * 1024 * 1024;
 
 /** Revisions kept per file; older ones are pruned on write. */
 export const MAX_TEXT_REVISIONS_PER_FILE = 25;
 export const MAX_BINARY_REVISIONS_PER_FILE = 3;
+/** Text files above this size (generated data, bundles) keep fewer revisions. */
+export const LARGE_TEXT_FILE_BYTES = 256 * 1024;
+export const MAX_LARGE_TEXT_REVISIONS_PER_FILE = 5;
 /** Total snapshot bytes kept per doc; the oldest revisions go first. */
-export const MAX_HISTORY_BYTES_PER_DOC = 24 * 1024 * 1024;
+export const MAX_HISTORY_BYTES_PER_DOC = 48 * 1024 * 1024;
 
 export const MAX_COMMENT_LENGTH = 8000;
 export const MAX_QUOTE_LENGTH = 500;

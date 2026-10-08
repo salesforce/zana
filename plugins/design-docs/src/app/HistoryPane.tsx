@@ -7,7 +7,7 @@ import { errorMessage, toast, useApi, type RevisionContent } from './api.js';
 import { diffStats, foldDiff, lineDiff } from './diff.js';
 import { FilePreview } from './FilePreview.js';
 import { usePersistentState, useResource } from './hooks.js';
-import { ActorLabel, EmptyState, IconButton, Spinner, TimeAgo, type Icon } from './ui.js';
+import { ActorLabel, ConfirmDialog, EmptyState, IconButton, Spinner, TimeAgo, type ConfirmRequest, type Icon } from './ui.js';
 
 const OP_ICONS: Record<RevisionOp, Icon> = {
   create: FilePlus2,
@@ -140,6 +140,7 @@ export function RevisionView({
   const api = useApi();
   const [mode, setMode] = useState<'changes' | 'full'>(revision.op === 'write' || revision.op === 'delete' ? 'changes' : 'full');
   const [restoring, setRestoring] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const pair = useResource(`${doc.id}\u0000${revision.id}`, () => loadRevisionPair(api, doc.id, revision));
   const kind = fileKindOf(revision.path);
   const current = doc.files.find((file) => file.path === revision.path) ?? null;
@@ -155,7 +156,8 @@ export function RevisionView({
   const restore = async () => {
     setRestoring(true);
     try {
-      const result = await api.restore(doc.id, revision.id);
+      // Fails instead of overwriting if the file changed after this view opened.
+      const result = await api.restore(doc.id, revision.id, current?.revision ?? 0);
       toast(`Restored ${result.path} to revision ${revision.revision} (now rev ${result.revision})`);
       onOpenPath(result.path);
       onClose();
@@ -164,6 +166,24 @@ export function RevisionView({
     } finally {
       setRestoring(false);
     }
+  };
+
+  const askRestore = () => {
+    if (current) {
+      void restore();
+      return;
+    }
+    setConfirm({
+      title: `Recreate ${revision.path}?`,
+      body: (
+        <>
+          <code>{revision.path}</code> is no longer in this doc{revision.op === 'delete' ? '' : '; it may have been renamed'}. Recreate it with the
+          content of revision {revision.revision}?
+        </>
+      ),
+      confirmLabel: 'Recreate',
+      run: () => void restore()
+    });
   };
 
   const canDiff = diff !== null;
@@ -189,8 +209,8 @@ export function RevisionView({
             </button>
           </div>
         ) : null}
-        <button type="button" className="btn" disabled={isCurrent || restoring || !pair.data} onClick={() => void restore()}>
-          <RotateCcw size={12} aria-hidden /> {isCurrent ? 'Current' : revision.op === 'delete' ? 'Recreate file' : 'Restore'}
+        <button type="button" className="btn" disabled={isCurrent || restoring || !pair.data} onClick={askRestore}>
+          <RotateCcw size={12} aria-hidden /> {isCurrent ? 'Current' : current ? 'Restore' : 'Recreate file'}
         </button>
         <IconButton icon={X} label="Close revision" onClick={onClose} />
       </div>
@@ -211,6 +231,7 @@ export function RevisionView({
               file={{ path: revision.path, kind, content: pair.data.after.content, encoding: pair.data.after.encoding }}
               files={doc.files}
               onOpenPath={onOpenPath}
+              draft
             />
           </>
         ) : diff && diff !== 'too-large' ? (
@@ -240,6 +261,7 @@ export function RevisionView({
           </div>
         ) : null}
       </div>
+      {confirm ? <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} /> : null}
     </div>
   );
 }

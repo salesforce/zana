@@ -18,6 +18,7 @@ import {
 } from '../shared/contract.js';
 import {
   DEFAULT_LIST_LIMIT,
+  LARGE_TEXT_FILE_BYTES,
   MAX_BINARY_FILE_BYTES,
   MAX_BINARY_REVISIONS_PER_FILE,
   MAX_COMMENTS_PER_DOC,
@@ -27,6 +28,7 @@ import {
   MAX_FILES_PER_DOC,
   MAX_HISTORY_BYTES_PER_DOC,
   MAX_HISTORY_LIMIT,
+  MAX_LARGE_TEXT_REVISIONS_PER_FILE,
   MAX_LIST_LIMIT,
   MAX_NOTE_LENGTH,
   MAX_QUOTE_LENGTH,
@@ -38,7 +40,7 @@ import {
   MAX_THREAD_LINKS_PER_DOC,
   MAX_TITLE_LENGTH
 } from '../shared/limits.js';
-import { formatBytes } from '../shared/display.js';
+import { actorLabel, formatBytes } from '../shared/display.js';
 import {
   DesignDocPathError,
   comparePaths,
@@ -48,6 +50,11 @@ import {
 } from '../shared/paths.js';
 import { DEFAULT_TEMPLATE_ID, renderTemplateFiles, templateById } from '../shared/templates.js';
 import { DESIGN_DOC_MIGRATIONS } from './schema.js';
+
+/** An agent whose thread has no title yet. Never stored over a real title. */
+export const AGENT_FALLBACK_LABEL = 'Agent';
+/** A terminal session (CLI Agent) calling the CLI: there is no thread to link. */
+export const CLI_AGENT_LABEL = 'CLI agent';
 
 export type DesignDocErrorCode = 'not_found' | 'conflict' | 'invalid' | 'limit';
 
@@ -65,6 +72,8 @@ export interface ListFilter {
   /** Docs of this project plus global (project-less) docs. Omit for every doc. */
   projectId?: string | null;
   query?: string;
+  /** Also match `query` inside file contents. Default true; typeahead turns it off. */
+  contents?: boolean;
   /** `active` hides archived docs; `all` shows everything. Default `all`. */
   status?: DocStatus | 'active' | 'all';
   limit?: number;
@@ -158,6 +167,7 @@ interface CommentRow {
   status: string;
   created_at: number;
   resolved_at: number | null;
+  parent_id: string | null;
 }
 
 interface ThreadRow {
@@ -171,16 +181,19 @@ const ROLE_RANK: Record<ThreadRole, number> = { assistant: 1, reviewer: 2, edito
 
 const SUMMARY_COLUMNS = `d.*,
   (SELECT COUNT(*) FROM doc_files f WHERE f.doc_id = d.id) AS file_count,
-  (SELECT COUNT(*) FROM doc_comments c WHERE c.doc_id = d.id AND c.status = 'open') AS open_comments`;
+  (SELECT COUNT(*) FROM doc_comments c WHERE c.doc_id = d.id AND c.status = 'open' AND c.parent_id IS NULL) AS open_comments`;
 
 export interface DesignDocStoreOptions {
   now?: () => number;
   randomId?: (prefix: string) => string;
+  /** History kept per doc before the oldest snapshots go; tests lower it. */
+  maxHistoryBytes?: number;
 }
 
 export class DesignDocStore {
   private readonly now: () => number;
   private readonly randomId: (prefix: string) => string;
+  private readonly maxHistoryBytes: number;
 
   constructor(
     private readonly db: PluginDatabase,
@@ -188,6 +201,7 @@ export class DesignDocStore {
   ) {
     this.now = options.now ?? Date.now;
     this.randomId = options.randomId ?? ((prefix) => `${prefix}${randomBytes(6).toString('hex')}`);
+    this.maxHistoryBytes = options.maxHistoryBytes ?? MAX_HISTORY_BYTES_PER_DOC;
     db.migrate(DESIGN_DOC_MIGRATIONS);
   }
 
@@ -213,12 +227,18 @@ export class DesignDocStore {
     }
     const query = typeof filter.query === 'string' ? filter.query.trim() : '';
     if (query) {
-      const like = `%${escapeLike(query.toLowerCase())}%`;
-      where.push(`(lower(d.title) LIKE ? ESCAPE '\\' OR lower(d.summary) LIKE ? ESCAPE '\\'
-        OR d.slug LIKE ? ESCAPE '\\' OR lower(d.tags) LIKE ? ESCAPE '\\'
-        OR EXISTS (SELECT 1 FROM doc_files f WHERE f.doc_id = d.id AND f.encoding = 'utf8'
-          AND lower(f.content) LIKE ? ESCAPE '\\'))`);
-      params.push(like, like, like, like, like);
+      // LIKE ignores ASCII case by itself. Keep the query as typed: lowercasing
+      // it in JS would miss "Été", which SQLite cannot fold.
+      const like = `%${escapeLike(query)}%`;
+      const contents =
+        filter.contents === false
+          ? ''
+          : ` OR EXISTS (SELECT 1 FROM doc_files f WHERE f.doc_id = d.id AND f.encoding = 'utf8'
+          AND f.content LIKE ? ESCAPE '\\')`;
+      where.push(`(d.title LIKE ? ESCAPE '\\' OR d.summary LIKE ? ESCAPE '\\'
+        OR d.slug LIKE ? ESCAPE '\\' OR d.tags LIKE ? ESCAPE '\\'${contents})`);
+      params.push(like, like, like, like);
+      if (contents) params.push(like);
     }
     const limit = clampLimit(filter.limit, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
     const sql = `SELECT ${SUMMARY_COLUMNS} FROM docs d
@@ -250,11 +270,9 @@ export class DesignDocStore {
     )
       .map(toFileMeta)
       .sort((a, b) => comparePaths(a.path, b.path));
-    const comments = (
-      this.db
-        .prepare('SELECT * FROM doc_comments WHERE doc_id = ? ORDER BY created_at, id')
-        .all(row.id) as CommentRow[]
-    ).map(toComment);
+    const comments = toComments(
+      this.db.prepare('SELECT * FROM doc_comments WHERE doc_id = ? ORDER BY created_at, rowid').all(row.id) as CommentRow[]
+    );
     const threads = (
       this.db
         .prepare(
@@ -273,6 +291,7 @@ export class DesignDocStore {
     if (!isDocStatus(status)) throw new DesignDocError('invalid', `unknown status ${JSON.stringify(status)}`);
 
     let files: Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }>;
+    let templateEntry: string | undefined;
     if (input.files && input.files.length > 0) {
       files = input.files;
     } else {
@@ -281,6 +300,7 @@ export class DesignDocStore {
         throw new DesignDocError('invalid', `unknown template ${JSON.stringify(input.template)}`);
       }
       files = renderTemplateFiles(template, { title, summary });
+      templateEntry = template.entryPath;
     }
     if (files.length > MAX_FILES_PER_DOC) {
       throw new DesignDocError('limit', `a design doc holds at most ${MAX_FILES_PER_DOC} files`);
@@ -296,9 +316,12 @@ export class DesignDocStore {
     if (total > MAX_DOC_BYTES) {
       throw new DesignDocError('limit', `a design doc holds at most ${formatBytes(MAX_DOC_BYTES)}`);
     }
+    // A site opens on its home page; a written doc on its README.
     const entryPath = input.entryPath
       ? normalizePath(input.entryPath)
-      : (prepared.find((file) => file.path.toLowerCase() === 'readme.md')?.path ??
+      : (templateEntry ??
+        prepared.find((file) => file.path.toLowerCase() === 'readme.md')?.path ??
+        prepared.find((file) => file.path.toLowerCase() === 'index.html')?.path ??
         prepared.find((file) => fileKindOf(file.path) === 'markdown')?.path ??
         prepared[0]!.path);
     if (!prepared.some((file) => file.path === entryPath)) {
@@ -450,6 +473,12 @@ export class DesignDocStore {
     });
   }
 
+  /** Several files as one change: every write lands, or none does. */
+  writeFiles(ref: unknown, files: WriteFileInput[], actor: DocActor): WriteResult[] {
+    const row = this.requireRow(ref);
+    return this.db.transaction(() => files.map((file) => this.writeFile(row.id, file, actor)));
+  }
+
   /** Exact-match string edits, applied in order — the same contract as an agent Edit tool. */
   editFile(
     ref: unknown,
@@ -541,6 +570,8 @@ export class DesignDocStore {
       const moved = { path: to, content: existing.content, encoding: existing.encoding, size: existing.size };
       this.insertFile(row.id, moved, revision, at, actorJson);
       this.recordRevision(row.id, to, revision, 'rename', moved, actorJson, at, { note, renamedFrom: from });
+      // Comments follow the file so they stay anchored (and filterable) after a move.
+      this.db.prepare('UPDATE doc_comments SET path = ? WHERE doc_id = ? AND path = ?').run(to, row.id, from);
       if (row.entry_path === from) {
         this.db.prepare('UPDATE docs SET entry_path = ? WHERE id = ?').run(to, row.id);
       }
@@ -576,8 +607,11 @@ export class DesignDocStore {
     };
   }
 
-  /** Write a past snapshot back as the newest revision (recreating a deleted file). */
-  restoreRevision(ref: unknown, revisionId: unknown, actor: DocActor): WriteResult {
+  /**
+   * Write a past snapshot back as the newest revision (recreating a deleted
+   * file). `baseRevision` is the file's revision the caller saw, 0 if absent.
+   */
+  restoreRevision(ref: unknown, revisionId: unknown, actor: DocActor, options: { baseRevision?: number } = {}): WriteResult {
     const row = this.requireRow(ref);
     const revision = this.revisionRow(row.id, revisionId);
     return this.writeFile(
@@ -586,6 +620,7 @@ export class DesignDocStore {
         path: revision.path,
         content: revision.content,
         encoding: revision.encoding === 'base64' ? 'base64' : 'utf8',
+        baseRevision: options.baseRevision,
         note: `Restored revision ${revision.revision}`
       },
       actor
@@ -600,62 +635,73 @@ export class DesignDocStore {
     actor: DocActor
   ): DesignDocComment {
     const row = this.requireRow(ref);
-    const body = typeof input.body === 'string' ? input.body.trim() : '';
-    if (!body) throw new DesignDocError('invalid', 'comment body is required');
-    if (body.length > MAX_COMMENT_LENGTH) {
-      throw new DesignDocError('limit', `comment body must be at most ${MAX_COMMENT_LENGTH} characters`);
-    }
+    const body = cleanCommentBody(input.body);
     const path = input.path ? normalizePath(input.path) : null;
     if (path && !this.fileRow(row.id, path)) throw this.missingFile(row.id, path);
     const quote = typeof input.quote === 'string' && input.quote.trim() ? input.quote.trim().slice(0, MAX_QUOTE_LENGTH) : null;
     const id = this.randomId('c_');
     const at = this.now();
     this.db.transaction(() => {
-      const count = this.db.prepare('SELECT COUNT(*) AS n FROM doc_comments WHERE doc_id = ?').get(row.id) as {
-        n: number;
-      };
-      if (count.n >= MAX_COMMENTS_PER_DOC) {
-        throw new DesignDocError(
-          'limit',
-          `a design doc holds at most ${MAX_COMMENTS_PER_DOC} comments; delete resolved ones first`
-        );
-      }
-      this.db
-        .prepare(
-          `INSERT INTO doc_comments (id, doc_id, path, quote, body, author, status, created_at, resolved_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'open', ?, NULL)`
-        )
-        .run(id, row.id, path, quote, body, JSON.stringify(actor), at);
-      this.touch(row.id, actor, at);
+      this.insertComment(row.id, { id, parentId: null, path, quote, body }, actor, at);
+      this.touchReview(row.id);
       if (actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'reviewer', at);
     });
     return this.commentById(row.id, id);
   }
 
-  setCommentStatus(ref: unknown, commentId: unknown, status: CommentStatus, actor: DocActor): DesignDocComment {
+  /** Answer a comment in its thread; returns the comment with every reply. */
+  addReply(ref: unknown, commentId: unknown, rawBody: unknown, actor: DocActor): DesignDocComment {
+    const row = this.requireRow(ref);
+    const body = cleanCommentBody(rawBody);
+    const at = this.now();
+    let rootId = '';
+    this.db.transaction(() => {
+      rootId = this.rootComment(row, commentId).id;
+      this.insertComment(row.id, { id: this.randomId('c_'), parentId: rootId, path: null, quote: null, body }, actor, at);
+      this.touchReview(row.id);
+      if (actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'reviewer', at);
+    });
+    return this.commentById(row.id, rootId);
+  }
+
+  /** Resolve or reopen a comment; `note` is added as a reply in the same step. */
+  setCommentStatus(
+    ref: unknown,
+    commentId: unknown,
+    status: CommentStatus,
+    actor: DocActor,
+    note?: string | null
+  ): DesignDocComment {
     const row = this.requireRow(ref);
     if (status !== 'open' && status !== 'resolved') {
       throw new DesignDocError('invalid', `unknown comment status ${JSON.stringify(status)}`);
     }
-    const id = String(commentId ?? '');
+    const reply = typeof note === 'string' && note.trim() ? cleanCommentBody(note) : null;
     const at = this.now();
+    let rootId = '';
     this.db.transaction(() => {
-      const result = this.db
+      rootId = this.rootComment(row, commentId).id;
+      this.db
         .prepare('UPDATE doc_comments SET status = ?, resolved_at = ? WHERE doc_id = ? AND id = ?')
-        .run(status, status === 'resolved' ? at : null, row.id, id);
-      if (result.changes === 0) throw new DesignDocError('not_found', `comment ${id} not found in ${row.slug}`);
-      this.touch(row.id, actor, at);
+        .run(status, status === 'resolved' ? at : null, row.id, rootId);
+      if (reply) {
+        this.insertComment(row.id, { id: this.randomId('c_'), parentId: rootId, path: null, quote: null, body: reply }, actor, at);
+      }
+      this.touchReview(row.id);
+      if (actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'reviewer', at);
     });
-    return this.commentById(row.id, id);
+    return this.commentById(row.id, rootId);
   }
 
+  /** Delete a reply, or a comment together with its replies. */
   deleteComment(ref: unknown, commentId: unknown, actor: DocActor): void {
     const row = this.requireRow(ref);
     const id = String(commentId ?? '');
     this.db.transaction(() => {
       const result = this.db.prepare('DELETE FROM doc_comments WHERE doc_id = ? AND id = ?').run(row.id, id);
       if (result.changes === 0) throw new DesignDocError('not_found', `comment ${id} not found in ${row.slug}`);
-      this.touch(row.id, actor);
+      this.db.prepare('DELETE FROM doc_comments WHERE doc_id = ? AND parent_id = ?').run(row.id, id);
+      this.touchReview(row.id);
     });
   }
 
@@ -830,7 +876,12 @@ export class DesignDocStore {
         actorJson,
         at
       );
-    const keep = file.encoding === 'base64' ? MAX_BINARY_REVISIONS_PER_FILE : MAX_TEXT_REVISIONS_PER_FILE;
+    const keep =
+      file.encoding === 'base64'
+        ? MAX_BINARY_REVISIONS_PER_FILE
+        : file.size > LARGE_TEXT_FILE_BYTES
+          ? MAX_LARGE_TEXT_REVISIONS_PER_FILE
+          : MAX_TEXT_REVISIONS_PER_FILE;
     this.db
       .prepare(
         `DELETE FROM doc_revisions WHERE doc_id = ? AND path = ? AND id NOT IN (
@@ -846,14 +897,18 @@ export class DesignDocStore {
         n: number;
       }
     ).n;
-    if (total <= MAX_HISTORY_BYTES_PER_DOC) return;
+    if (total <= this.maxHistoryBytes) return;
+    // Keep each path's newest snapshot: it is the one just recorded, the only
+    // copy of a deleted file, and what later revision numbers continue from.
     const rows = this.db
-      .prepare('SELECT id, size FROM doc_revisions WHERE doc_id = ? ORDER BY id ASC')
+      .prepare(
+        `SELECT id, size FROM doc_revisions r WHERE doc_id = ? AND id <> (
+          SELECT MAX(id) FROM doc_revisions WHERE doc_id = r.doc_id AND path = r.path) ORDER BY id ASC`
+      )
       .all(docId) as Array<{ id: number; size: number }>;
-    let excess = total - MAX_HISTORY_BYTES_PER_DOC;
+    let excess = total - this.maxHistoryBytes;
     const drop = this.db.prepare('DELETE FROM doc_revisions WHERE id = ?');
-    // Never drop the newest snapshot: it is the one just recorded.
-    for (const row of rows.slice(0, -1)) {
+    for (const row of rows) {
       if (excess <= 0) break;
       drop.run(row.id);
       excess -= row.size;
@@ -866,12 +921,18 @@ export class DesignDocStore {
       .run(at, JSON.stringify(actor), docId);
   }
 
+  /** Review activity changes the doc but not its content, so "last edited by" stays put. */
+  private touchReview(docId: string): void {
+    this.db.prepare('UPDATE docs SET revision = revision + 1 WHERE id = ?').run(docId);
+  }
+
   private linkThreadRow(docId: string, threadId: string, title: string, role: ThreadRole, at: number): void {
     const existing = this.db
       .prepare('SELECT role, title FROM doc_threads WHERE doc_id = ? AND thread_id = ?')
       .get(docId, threadId) as { role: ThreadRole; title: string } | undefined;
     const nextRole = existing && (ROLE_RANK[existing.role] ?? 0) >= ROLE_RANK[role] ? existing.role : role;
-    const nextTitle = title.trim() || existing?.title || '';
+    const fresh = title.trim();
+    const nextTitle = (fresh === AGENT_FALLBACK_LABEL ? '' : fresh) || existing?.title || fresh;
     this.db
       .prepare(
         `INSERT INTO doc_threads (doc_id, thread_id, title, role, last_activity_at) VALUES (?, ?, ?, ?, ?)
@@ -899,9 +960,44 @@ export class DesignDocStore {
   }
 
   private commentById(docId: string, id: string): DesignDocComment {
-    return toComment(
-      this.db.prepare('SELECT * FROM doc_comments WHERE doc_id = ? AND id = ?').get(docId, id) as CommentRow
-    );
+    const rows = this.db
+      .prepare('SELECT * FROM doc_comments WHERE doc_id = ? AND (id = ? OR parent_id = ?) ORDER BY created_at, rowid')
+      .all(docId, id, id) as CommentRow[];
+    return toComments(rows)[0]!;
+  }
+
+  /** The top-level comment `commentId` names; replies are refused with a pointer to their thread. */
+  private rootComment(row: DocRow, commentId: unknown): CommentRow {
+    const id = String(commentId ?? '');
+    const comment = this.db.prepare('SELECT * FROM doc_comments WHERE doc_id = ? AND id = ?').get(row.id, id) as
+      | CommentRow
+      | undefined;
+    if (!comment) throw new DesignDocError('not_found', `comment ${id} not found in ${row.slug}`);
+    if (comment.parent_id) {
+      throw new DesignDocError('invalid', `${id} is a reply; use its comment ${comment.parent_id} instead`);
+    }
+    return comment;
+  }
+
+  private insertComment(
+    docId: string,
+    comment: { id: string; parentId: string | null; path: string | null; quote: string | null; body: string },
+    actor: DocActor,
+    at: number
+  ): void {
+    const count = this.db.prepare('SELECT COUNT(*) AS n FROM doc_comments WHERE doc_id = ?').get(docId) as { n: number };
+    if (count.n >= MAX_COMMENTS_PER_DOC) {
+      throw new DesignDocError(
+        'limit',
+        `a design doc holds at most ${MAX_COMMENTS_PER_DOC} comments and replies; delete resolved ones first`
+      );
+    }
+    this.db
+      .prepare(
+        `INSERT INTO doc_comments (id, doc_id, parent_id, path, quote, body, author, status, created_at, resolved_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, NULL)`
+      )
+      .run(comment.id, docId, comment.parentId, comment.path, comment.quote, comment.body, JSON.stringify(actor), at);
   }
 
   private uniqueSlug(base: string): string {
@@ -991,7 +1087,7 @@ function prepareContent(
   const binary = isBinaryKind(fileKindOf(path));
   const effective = encoding ?? (binary ? 'base64' : 'utf8');
   if (binary && effective !== 'base64') {
-    throw new DesignDocError('invalid', `${path} is an image; send its bytes base64-encoded`);
+    throw new DesignDocError('invalid', `${path} is a binary file; send its bytes base64-encoded`);
   }
   if (!binary && effective !== 'utf8') {
     throw new DesignDocError('invalid', `${path} is a text file; send it as UTF-8 text`);
@@ -1003,7 +1099,7 @@ function prepareContent(
     }
     const size = Buffer.from(compact, 'base64').length;
     if (size > MAX_BINARY_FILE_BYTES) {
-      throw new DesignDocError('limit', `${path} exceeds the ${formatBytes(MAX_BINARY_FILE_BYTES)} image limit`);
+      throw new DesignDocError('limit', `${path} exceeds the ${formatBytes(MAX_BINARY_FILE_BYTES)} binary file limit`);
     }
     return { path, content: compact, encoding: 'base64', size };
   }
@@ -1027,7 +1123,7 @@ function checkBaseRevision(path: string, existing: FileRow | null, baseRevision:
     throw new DesignDocError(
       'conflict',
       existing
-        ? `${path} changed since revision ${baseRevision} (now ${current}, last edited by ${parseActor(existing.updated_by).label}); re-read it and reapply your change`
+        ? `${path} changed since revision ${baseRevision} (now ${current}, last edited by ${actorLabel(parseActor(existing.updated_by))}); re-read it and reapply your change`
         : `${path} does not exist (expected revision ${baseRevision}); re-read the doc`
     );
   }
@@ -1151,18 +1247,40 @@ function toRevision(row: RevisionRow): DesignDocRevision {
   };
 }
 
-function toComment(row: CommentRow): DesignDocComment {
-  return {
-    id: row.id,
-    docId: row.doc_id,
-    path: row.path,
-    quote: row.quote,
-    body: row.body,
-    author: parseActor(row.author),
-    status: row.status === 'resolved' ? 'resolved' : 'open',
-    createdAt: row.created_at,
-    resolvedAt: row.resolved_at
-  };
+/** Group rows (ordered oldest first) into top-level comments with their replies. */
+function toComments(rows: CommentRow[]): DesignDocComment[] {
+  const roots = new Map<string, DesignDocComment>();
+  for (const row of rows) {
+    if (row.parent_id) continue;
+    roots.set(row.id, {
+      id: row.id,
+      docId: row.doc_id,
+      path: row.path,
+      quote: row.quote,
+      body: row.body,
+      author: parseActor(row.author),
+      status: row.status === 'resolved' ? 'resolved' : 'open',
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at,
+      replies: []
+    });
+  }
+  for (const row of rows) {
+    if (!row.parent_id) continue;
+    roots
+      .get(row.parent_id)
+      ?.replies.push({ id: row.id, body: row.body, author: parseActor(row.author), createdAt: row.created_at });
+  }
+  return [...roots.values()];
+}
+
+function cleanCommentBody(value: unknown): string {
+  const body = typeof value === 'string' ? value.trim() : '';
+  if (!body) throw new DesignDocError('invalid', 'comment body is required');
+  if (body.length > MAX_COMMENT_LENGTH) {
+    throw new DesignDocError('limit', `comment body must be at most ${MAX_COMMENT_LENGTH} characters`);
+  }
+  return body;
 }
 
 function toThreadLink(row: ThreadRow): DesignDocThreadLink {

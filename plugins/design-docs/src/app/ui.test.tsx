@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Sparkles, CheckCheck } from 'lucide-react';
-import { actionIcon, ActorLabel, ConfirmDialog, Dialog, EmptyState, FileIcon, IconButton, MenuItem, Popover, StatusPill } from './ui.js';
+import { actionIcon, ActorLabel, ConfirmDialog, ContextMenu, contextMenuPoint, Dialog, EmptyState, FileIcon, IconButton, MenuItem, Popover, StatusPill } from './ui.js';
 
 afterEach(cleanup);
 
@@ -98,4 +98,71 @@ it('keeps file kinds, actors and statuses recognizable with empty-state guidance
   view.rerender(<><StatusPill status="draft" /><EmptyState icon={Sparkles} title="No docs" /></>);
   expect(document.querySelector('.dd-status-compact')).toBeNull();
   expect(document.querySelector('.dd-empty-body')).toBeNull();
+});
+
+it('opens a context menu at the pointer, or under the element from the keyboard', () => {
+  const target = document.createElement('button');
+  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ left: 20, bottom: 90 } as DOMRect);
+  expect(contextMenuPoint({ clientX: 5, clientY: 0, currentTarget: target })).toEqual({ x: 5, y: 0 });
+  expect(contextMenuPoint({ clientX: 0, clientY: 0, currentTarget: target })).toEqual({ x: 32, y: 90 });
+});
+
+it('keeps a context menu in the window, moves with the keys, and gives focus back', () => {
+  const close = vi.fn();
+  const row = document.createElement('button');
+  document.body.append(row);
+  row.focus();
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 200, height: 120 } as DOMRect);
+  const items = (
+    <>
+      <MenuItem label="One" onSelect={() => undefined} />
+      <MenuItem label="Two" onSelect={() => undefined} />
+      <MenuItem label="Three" onSelect={() => undefined} />
+    </>
+  );
+  const view = render(<ContextMenu at={{ x: window.innerWidth - 10, y: window.innerHeight - 10 }} label="Actions" onClose={close}>{items}</ContextMenu>);
+  const menu = screen.getByRole('menu', { name: 'Actions' });
+  expect(menu.style.left).toBe(`${window.innerWidth - 204}px`);
+  expect(menu.style.top).toBe(`${window.innerHeight - 124}px`);
+  const [one, two, three] = screen.getAllByRole('menuitem');
+  expect(document.activeElement).toBe(one);
+  fireEvent.keyDown(menu, { key: 'ArrowUp' });
+  expect(document.activeElement).toBe(three);
+  fireEvent.keyDown(menu, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(one);
+  fireEvent.keyDown(menu, { key: 'End' });
+  expect(document.activeElement).toBe(three);
+  fireEvent.keyDown(menu, { key: 'Home' });
+  fireEvent.keyDown(menu, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(two);
+  fireEvent.keyDown(menu, { key: 'a' });
+  expect(document.activeElement).toBe(two);
+  expect(fireEvent.contextMenu(menu)).toBe(false);
+
+  // Scrolling inside the menu keeps it; scrolling the page, resizing, blur and Tab close it.
+  fireEvent.scroll(menu);
+  expect(close).not.toHaveBeenCalled();
+  fireEvent.scroll(window);
+  fireEvent.resize(window);
+  fireEvent.blur(window);
+  fireEvent.keyDown(menu, { key: 'Tab' });
+  expect(close).toHaveBeenCalledTimes(4);
+
+  view.unmount();
+  expect(document.activeElement).toBe(row);
+  row.remove();
+  vi.restoreAllMocks();
+});
+
+it('opens a context menu near the top left as asked, and leaves focus that moved elsewhere', () => {
+  const elsewhere = document.createElement('input');
+  document.body.append(elsewhere);
+  const view = render(<ContextMenu at={{ x: 1, y: 2 }} label="Empty" onClose={() => undefined}>{null}</ContextMenu>);
+  const menu = screen.getByRole('menu', { name: 'Empty' });
+  expect([menu.style.left, menu.style.top]).toEqual(['4px', '4px']);
+  fireEvent.keyDown(menu, { key: 'ArrowDown' });
+  elsewhere.focus();
+  view.unmount();
+  expect(document.activeElement).toBe(elsewhere);
+  elsewhere.remove();
 });

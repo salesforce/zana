@@ -11,19 +11,17 @@ import {
   type DesignDocFile,
   type DesignDocFileMeta,
   type DesignDocRevision,
-  type DesignDocSummary,
-  type DocActor
+  type DesignDocSummary
 } from '../shared/contract.js';
-import { formatBytes, relativeTime } from '../shared/display.js';
+import { actorLabel, formatBytes, relativeTime } from '../shared/display.js';
+import type { PageProblem } from '../shared/frame-protocol.js';
+import type { PageBundle } from '../shared/page.js';
+import type { RenderReport } from './render-reports.js';
 
-export { relativeTime };
+export { actorLabel, relativeTime };
 
 /** Upper bound for one agent-facing bundle; larger docs are read per file. */
 export const MAX_BUNDLE_CHARS = 120_000;
-
-export function actorLabel(actor: DocActor): string {
-  return actor.kind === 'agent' ? `agent "${actor.label}"` : actor.label;
-}
 
 export function summaryLine(doc: DesignDocSummary, now = Date.now()): string {
   const parts = [
@@ -46,18 +44,32 @@ function fileLine(file: DesignDocFileMeta, entryPath: string, now: number): stri
   return `- ${file.path}${entry} — ${file.kind}, ${formatBytes(file.size)}, rev ${file.revision}, ${actorLabel(file.updatedBy)} ${relativeTime(file.updatedAt, now)}`;
 }
 
+/** A comment and its replies, indented underneath. */
 export function commentLine(comment: DesignDocComment, now = Date.now()): string {
   const where = comment.path ? ` on ${comment.path}` : '';
   const quote = comment.quote ? ` › "${truncate(comment.quote, 120)}"` : '';
   const status = comment.status === 'resolved' ? ' [resolved]' : '';
-  return `- [${comment.id}]${where}${quote}${status} ${actorLabel(comment.author)}, ${relativeTime(comment.createdAt, now)}: ${comment.body}`;
+  return [
+    `- [${comment.id}]${where}${quote}${status} ${actorLabel(comment.author)}, ${relativeTime(comment.createdAt, now)}: ${comment.body}`,
+    ...comment.replies.map(
+      (reply) => `  ↳ reply ${actorLabel(reply.author)}, ${relativeTime(reply.createdAt, now)}: ${reply.body.replace(/\n/g, '\n    ')}`
+    )
+  ].join('\n');
 }
 
-export function formatManifest(doc: DesignDocDetail, now = Date.now()): string {
+export interface ManifestOptions {
+  now?: number;
+  /** The doc's project name, when known; agents otherwise see its id. */
+  projectName?: string | null;
+}
+
+export function formatManifest(doc: DesignDocDetail, options: ManifestOptions = {}): string {
+  const now = options.now ?? Date.now();
+  const project = doc.projectId ? (options.projectName ?? doc.projectId) : 'global (all projects)';
   const lines = [
     `# ${doc.title}`,
     `id: ${doc.id} · slug: ${doc.slug} · status: ${doc.status} · doc revision ${doc.revision}`,
-    `project: ${doc.projectId ?? 'global (all projects)'} · created by ${actorLabel(doc.createdBy)} · updated ${relativeTime(doc.updatedAt, now)} by ${actorLabel(doc.updatedBy)}`
+    `project: ${project} · created by ${actorLabel(doc.createdBy)} · updated ${relativeTime(doc.updatedAt, now)} by ${actorLabel(doc.updatedBy)}`
   ];
   if (doc.summary) lines.push(`summary: ${doc.summary}`);
   if (doc.tags.length) lines.push(`tags: ${doc.tags.join(', ')}`);
@@ -71,7 +83,7 @@ export function formatManifest(doc: DesignDocDetail, now = Date.now()): string {
 
 export function formatFile(file: DesignDocFile): string {
   if (file.encoding === 'base64') {
-    return `<file path="${file.path}" revision="${file.revision}" kind="${file.kind}" encoding="base64" size="${formatBytes(file.size)}">(binary image, not shown as text)</file>`;
+    return `<file path="${file.path}" revision="${file.revision}" kind="${file.kind}" encoding="base64" size="${formatBytes(file.size)}">(binary ${file.kind}, not shown as text)</file>`;
   }
   return `<file path="${file.path}" revision="${file.revision}" kind="${file.kind}">\n${file.content}\n</file>`;
 }
@@ -84,14 +96,14 @@ export function formatFile(file: DesignDocFile): string {
 export function formatBundle(
   doc: DesignDocDetail,
   files: DesignDocFile[],
-  options: { maxChars?: number; now?: number } = {}
+  options: ManifestOptions & { maxChars?: number } = {}
 ): string {
   const maxChars = options.maxChars ?? MAX_BUNDLE_CHARS;
   const ordered = [
     ...files.filter((file) => file.path === doc.entryPath),
     ...files.filter((file) => file.path !== doc.entryPath)
   ];
-  const parts = [formatManifest(doc, options.now)];
+  const parts = [formatManifest(doc, options)];
   let used = parts[0]!.length;
   const omitted: string[] = [];
   for (const file of ordered) {
@@ -107,6 +119,40 @@ export function formatBundle(
     parts.push(`(${omitted.length} file(s) omitted to stay within size limits — read them by path: ${omitted.join(', ')})`);
   }
   return parts.join('\n\n');
+}
+
+const PROBLEM_LABELS: Record<PageProblem['kind'], string> = { error: 'Error', missing: 'Missing', blocked: 'Blocked' };
+
+function problemLine(problem: PageProblem): string {
+  const where = problem.source ? ` (${problem.source}${problem.line ? `:${problem.line}` : ''})` : '';
+  return `- ${PROBLEM_LABELS[problem.kind]}: ${truncate(problem.message, 300)}${where}`;
+}
+
+/** What rendering a page found: files it uses that the doc lacks, and what previews block. */
+export function formatPageCheck(page: Pick<PageBundle, 'missing' | 'warnings'> & { path: string }): string | null {
+  if (!page.missing.length && !page.warnings.length) return null;
+  return [
+    `Page check for ${page.path}:`,
+    ...page.missing.map((path) => `- Missing: the page uses ${path}, which is not a file in this doc.`),
+    ...page.warnings.map((warning) => `- Blocked: ${warning}`)
+  ].join('\n');
+}
+
+/** The problems a panel run found, and the open comments whose quote the page did not show. */
+export function renderReportIssues(report: RenderReport, comments: readonly DesignDocComment[]): string[] {
+  const unanchored = new Set(report.unanchored);
+  const lost = comments.filter((comment) => comment.status === 'open' && comment.path === report.path && comment.quote && unanchored.has(comment.quote));
+  return [
+    ...report.problems.map(problemLine),
+    ...lost.map((comment) => `- Comment ${comment.id} quotes "${truncate(comment.quote!, 120)}", which the page does not show.`)
+  ];
+}
+
+/** What the panel saw when it last ran a page. */
+export function formatRenderReport(report: RenderReport, comments: readonly DesignDocComment[], now = Date.now()): string {
+  const head = `The Design Docs panel ran ${report.path} (rev ${report.revision}) ${relativeTime(report.at, now)}`;
+  const issues = renderReportIssues(report, comments);
+  return issues.length ? [`${head}:`, ...issues].join('\n') : `${head} without problems.`;
 }
 
 export function formatHistory(revisions: DesignDocRevision[], now = Date.now()): string {

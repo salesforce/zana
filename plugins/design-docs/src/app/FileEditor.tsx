@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { AlertTriangle, RotateCcw, Save } from 'lucide-react';
+import { AlertTriangle, FileWarning, RotateCcw, Save } from 'lucide-react';
 import type { DesignDocFile } from '../shared/contract.js';
 import { errorMessage, isConflict, toast, useApi, type WriteResult } from './api.js';
 import { ActorLabel, Spinner } from './ui.js';
@@ -22,6 +22,7 @@ interface Conflict {
 export function FileEditor({
   docId,
   file,
+  removed = false,
   split,
   renderPreview,
   onStateChange,
@@ -29,6 +30,8 @@ export function FileEditor({
 }: {
   docId: string;
   file: DesignDocFile;
+  /** The file was deleted or renamed under the draft; saving puts it back. */
+  removed?: boolean;
   split: boolean;
   renderPreview(content: string): ReactNode;
   onStateChange?(state: EditorState): void;
@@ -62,11 +65,13 @@ export function FileEditor({
   }, [dirty, saving, onStateChange]);
 
   const save = useCallback(
-    async (baseRevision = saved.revision) => {
+    async (baseRevision?: number) => {
       if (saving) return;
       setSaving(true);
       try {
-        const result = await api.writeFile(docId, { path: file.path, content: draft, baseRevision });
+        // Revision 0 recreates a removed file, unless someone already did.
+        const base = baseRevision ?? (removed ? 0 : saved.revision);
+        const result = await api.writeFile(docId, { path: file.path, content: draft, baseRevision: base });
         setSaved({ content: draft, revision: result.revision });
         setConflict(null);
         onSaved?.(result);
@@ -81,7 +86,7 @@ export function FileEditor({
         setSaving(false);
       }
     },
-    [api, docId, draft, file.path, file.updatedBy, onSaved, saved.revision, saving]
+    [api, docId, draft, file.path, file.updatedBy, onSaved, removed, saved.revision, saving]
   );
 
   const loadLatest = async () => {
@@ -115,6 +120,14 @@ export function FileEditor({
 
   return (
     <div className="dd-editor">
+      {removed && dirty && !conflict ? (
+        <div className="dd-banner dd-banner-warn" role="alert">
+          <FileWarning size={14} aria-hidden />
+          <span className="dd-banner-text">
+            {file.path} was deleted or renamed while you were editing. Save puts it back with your edits; Revert drops them.
+          </span>
+        </div>
+      ) : null}
       {conflict ? (
         <div className="dd-banner dd-banner-warn" role="alert">
           <AlertTriangle size={14} aria-hidden />

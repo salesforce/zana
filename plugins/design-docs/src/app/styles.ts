@@ -190,6 +190,7 @@ export const DESIGN_DOCS_STYLES = `
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
   font-size: 13px;
 }
+.dd-context-menu { position: fixed; z-index: 60; }
 .dd-pop-end { right: 0; }
 .dd-pop-start { left: 0; }
 .dd-menu-item {
@@ -410,8 +411,9 @@ textarea.dd-doc-summary { display: block; }
 }
 .dd-tag-add { border-style: dashed; cursor: pointer; }
 .dd-tag-add:hover { color: var(--text-primary); }
-.dd-tag-remove { display: none; padding: 0; margin-left: 2px; border: 0; background: none; color: inherit; cursor: pointer; }
-.dd-tag:hover .dd-tag-remove { display: inline-flex; }
+/* Collapsed, not display:none, so keyboard users can still tab to it. */
+.dd-tag-remove { display: inline-flex; width: 0; overflow: hidden; opacity: 0; padding: 0; margin-left: 0; border: 0; background: none; color: inherit; cursor: pointer; }
+.dd-tag:hover .dd-tag-remove, .dd-tag-remove:focus-visible { width: 10px; margin-left: 2px; opacity: 1; }
 .dd-tag-input { width: 140px; height: 22px; padding: 0 6px; font-size: 12px; }
 .dd-doc-body { position: relative; display: flex; flex: 1 1 auto; min-height: 0; }
 
@@ -547,8 +549,24 @@ textarea.dd-doc-summary { display: block; }
 }
 .dd-image-stage img { max-width: 100%; max-height: 100%; border-radius: 4px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); }
 .dd-html-stage { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.dd-html-toolbar { display: flex; justify-content: center; gap: 2px; padding: 4px; border-bottom: 1px solid var(--border); background: var(--bg-base); }
-.dd-html-viewport { display: flex; justify-content: center; flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--bg-base); }
+.dd-html-toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg-base); }
+.dd-html-status { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
+.dd-html-widths { display: inline-flex; gap: 2px; }
+.dd-html-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.dd-html-viewport { position: relative; display: flex; justify-content: center; flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--bg-base); }
+.dd-page-badge { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--accent-gold) 40%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--accent-gold) 12%, transparent); color: var(--text-primary); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.dd-page-badge svg { color: var(--accent-gold); }
+.dd-page-badge:hover { background: color-mix(in srgb, var(--accent-gold) 20%, transparent); }
+.dd-page-problems { width: min(440px, 80vw); max-height: 320px; overflow: auto; }
+.dd-page-problems ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.dd-page-problem { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; padding: 6px 8px; border-radius: 5px; font-size: 12px; line-height: 1.45; }
+.dd-page-problem:hover { background: var(--bg-hover); }
+.dd-page-problem-kind { grid-row: span 2; align-self: start; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: var(--bg-hover); }
+.dd-page-problem-error .dd-page-problem-kind { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.dd-page-problem-missing .dd-page-problem-kind { color: var(--accent-gold); background: color-mix(in srgb, var(--accent-gold) 14%, transparent); }
+.dd-page-problem-blocked .dd-page-problem-kind { color: var(--accent-blue); background: color-mix(in srgb, var(--accent-blue) 12%, transparent); }
+.dd-page-problem-message { overflow-wrap: anywhere; }
+.dd-page-problem-source { grid-column: 2; font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; overflow-wrap: anywhere; }
 .dd-html-frame { flex: 1 1 auto; width: 100%; height: 100%; min-height: 360px; border: 0; background: var(--bg-panel); }
 .dd-html-frame-device { flex: 0 0 auto; margin: 16px; height: calc(100% - 32px); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); }
 
@@ -619,7 +637,7 @@ textarea.dd-doc-summary { display: block; }
 
 /* ── Rail ───────────────────────────────────────────────────────────── */
 .dd-rail { display: flex; flex-direction: column; flex: 0 0 320px; width: 320px; min-height: 0; border-left: 1px solid var(--border); background: var(--bg-base); }
-.dd-doc-compact .dd-rail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 15; width: min(340px, 100%); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25); }
+.dd-rail-floating .dd-rail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 15; width: min(340px, 100%); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25); }
 .dd-rail-tabs { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 36px; padding: 0 6px; border-bottom: 1px solid var(--border); }
 .dd-rail-tab {
   display: inline-flex;
@@ -647,6 +665,7 @@ textarea.dd-doc-summary { display: block; }
 .dd-comment-anchor { display: flex; flex-direction: column; gap: 3px; width: 100%; margin: 6px 0 2px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
 .dd-comment-anchor:disabled { cursor: default; }
 .dd-comment-path { color: var(--text-dim); font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; }
+.dd-comment-path-gone { font-style: italic; }
 .dd-comment-quote {
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -661,6 +680,13 @@ textarea.dd-doc-summary { display: block; }
 .dd-comment-anchor:hover:not(:disabled) .dd-comment-quote { color: var(--text-primary); }
 .dd-comment-body .inbox-md { font-size: 12.5px; line-height: 1.55; }
 .dd-comment-body .inbox-md p { margin: 4px 0 6px; }
+.dd-replies { margin: 2px 0 6px; padding: 0 0 0 10px; border-left: 1px solid var(--border); list-style: none; }
+.dd-reply { padding: 4px 0 0; }
+.dd-reply .dd-comment-head { font-size: 11.5px; }
+.dd-reply .icon-btn { width: 20px; height: 20px; }
+.dd-reply-composer { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.dd-reply-composer .dd-composer-input { min-height: 48px; }
+.dd-reply-buttons { display: inline-flex; gap: 6px; }
 .dd-resolved { margin-top: 8px; }
 .dd-disclosure { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px; padding: 2px 0; border: 0; background: none; color: var(--text-muted); font-size: 12px; cursor: pointer; }
 .dd-composer { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; padding: 10px; border-top: 1px solid var(--border); }
@@ -709,9 +735,6 @@ textarea.dd-doc-summary { display: block; }
 .dd-card-meta code { color: var(--text-muted); font-size: 11.5px; }
 
 /* ── Narrow workbench ───────────────────────────────────────────────── */
-@media (max-width: 1180px) {
-  .dd-workbench .dd-rail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 15; box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25); }
-}
 @media (max-width: 900px) {
   .dd-list { flex-basis: 220px; width: 220px; }
   .dd-tree { flex-basis: 180px; width: 180px; }

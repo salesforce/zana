@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Archive, ArchiveRestore, Check, Copy, FolderInput, Globe, Hash, MoreHorizontal, Plus, Trash2, X } from 'lucide-react';
-import { DOC_STATUSES, designDocDirective, type DesignDocDetail, type DocStatus } from '../shared/contract.js';
+import { Check, Globe, Hash, MoreHorizontal, Plus, X } from 'lucide-react';
+import { DOC_STATUSES, type DesignDocDetail, type DocStatus } from '../shared/contract.js';
+import { useDocActions } from './DocActions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TAG_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
-import { ActorLabel, ConfirmDialog, Dialog, IconButton, MenuItem, Popover, StatusPill, TimeAgo, type ConfirmRequest } from './ui.js';
+import { ActorLabel, IconButton, MenuItem, Popover, StatusPill, TimeAgo } from './ui.js';
 
 /** Text that reads as text until clicked, then edits in place (Enter saves, Escape cancels). */
 export function EditableText({
@@ -167,63 +168,6 @@ function StatusMenu({ status, onChange }: { status: DocStatus; onChange(status: 
   );
 }
 
-function MoveDialog({
-  doc,
-  projects,
-  onClose,
-  onMove
-}: {
-  doc: DesignDocDetail;
-  projects: ProjectInfo[];
-  onClose(): void;
-  onMove(projectId: string | null): Promise<void>;
-}) {
-  const [target, setTarget] = useState(doc.projectId ?? '');
-  return (
-    <Dialog
-      title="Move design doc"
-      onClose={onClose}
-      footer={
-        <>
-          <button type="button" className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            disabled={target === (doc.projectId ?? '')}
-            onClick={() => void onMove(target || null).then(onClose)}
-          >
-            Move
-          </button>
-        </>
-      }
-    >
-      <label className="dd-field">
-        <span className="dd-field-label">Project</span>
-        <select className="dd-input dd-select" value={target} onChange={(event) => setTarget(event.target.value)}>
-          <option value="">Global — every project's agents can see it</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="dd-muted dd-field-help">Agents are told about the docs of the project they run in, plus global docs.</p>
-    </Dialog>
-  );
-}
-
-async function copy(text: string, what: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast(`Copied ${what}`);
-  } catch {
-    toast(`Could not copy ${what}`, 'error');
-  }
-}
-
 export function DocHeader({
   doc,
   projects,
@@ -240,8 +184,7 @@ export function DocHeader({
 }) {
   const api = useApi();
   const [menu, setMenu] = useState(false);
-  const [moving, setMoving] = useState(false);
-  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const docActions = useDocActions(projects);
   const project = doc.projectId ? projects.find((entry) => entry.id === doc.projectId) : null;
 
   const update = async (patch: UpdateArgs) => {
@@ -253,7 +196,6 @@ export function DocHeader({
     }
   };
 
-  const archived = doc.status === 'archived';
   return (
     <header className={`dd-doc-header${compact ? ' dd-doc-header-compact' : ''}`}>
       <div className="dd-doc-title-row">
@@ -273,68 +215,7 @@ export function DocHeader({
           className="dd-menu"
           anchor={<IconButton icon={MoreHorizontal} label="More actions" active={menu} onClick={() => setMenu(!menu)} />}
         >
-          <MenuItem
-            icon={Copy}
-            label="Copy chat reference"
-            hint="Paste into any thread"
-            onSelect={() => {
-              setMenu(false);
-              void copy(designDocDirective(doc.id), 'reference');
-            }}
-          />
-          <MenuItem
-            icon={Hash}
-            label="Copy id"
-            hint={doc.slug}
-            onSelect={() => {
-              setMenu(false);
-              void copy(doc.id, 'id');
-            }}
-          />
-          <MenuItem
-            icon={FolderInput}
-            label="Move to project…"
-            onSelect={() => {
-              setMenu(false);
-              setMoving(true);
-            }}
-          />
-          <MenuItem
-            icon={archived ? ArchiveRestore : Archive}
-            label={archived ? 'Unarchive' : 'Archive'}
-            onSelect={() => {
-              setMenu(false);
-              void update({ status: archived ? 'draft' : 'archived' }).catch(() => undefined);
-            }}
-          />
-          <MenuItem
-            icon={Trash2}
-            label="Delete…"
-            danger
-            onSelect={() => {
-              setMenu(false);
-              setConfirm({
-                title: 'Delete design doc',
-                body: (
-                  <>
-                    Delete <strong>{doc.title}</strong> with its {doc.files.length} file{doc.files.length === 1 ? '' : 's'}, comments and history? This
-                    cannot be undone. Archive it instead to keep it out of agents' way.
-                  </>
-                ),
-                confirmLabel: 'Delete',
-                danger: true,
-                run: async () => {
-                  try {
-                    await api.remove(doc.id);
-                    toast(`Deleted “${doc.title}”`);
-                    onDeleted();
-                  } catch (error) {
-                    toast(`Could not delete: ${errorMessage(error)}`, 'error');
-                  }
-                }
-              });
-            }}
-          />
+          {docActions.items(doc, () => setMenu(false), onDeleted)}
         </Popover>
       </div>
       {compact ? null : (
@@ -360,15 +241,7 @@ export function DocHeader({
           <ActorLabel actor={doc.updatedBy} /> <TimeAgo at={doc.updatedAt} now={Date.now()} />
         </span>
       </div>
-      {moving ? (
-        <MoveDialog
-          doc={doc}
-          projects={projects}
-          onClose={() => setMoving(false)}
-          onMove={(projectId) => update({ projectId }).catch(() => undefined)}
-        />
-      ) : null}
-      {confirm ? <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} /> : null}
+      {docActions.dialogs}
     </header>
   );
 }

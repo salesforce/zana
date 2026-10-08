@@ -2,18 +2,28 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, FileWarning, History, MessageSquare, Bot, X } from 'lucide-react';
 import type { DesignDocComment, DesignDocDetail, DesignDocRevision } from '../shared/contract.js';
 import { AgentsPane, AskAgentButton, type AskRequest } from './Agents.js';
-import { CommentsPane } from './CommentsPane.js';
+import { isMissingDoc, toast } from './api.js';
+import { CommentsPane, type PendingQuote } from './CommentsPane.js';
 import { DocHeader } from './DocHeader.js';
 import type { EditorState } from './FileEditor.js';
 import { FilePane, type ViewMode } from './FilePane.js';
 import type { PreviewHandle } from './FilePreview.js';
 import { FileTree } from './FileTree.js';
 import { HistoryPane } from './HistoryPane.js';
-import { useDoc, useNow, usePersistentState, useProjects } from './hooks.js';
+import { useDoc, useNow, usePersistentState, useProjects, useWidthTier } from './hooks.js';
 import { ConfirmDialog, EmptyState, FileIcon, IconButton, Popover, Spinner, type ConfirmRequest } from './ui.js';
 
 export type DocLayout = 'workbench' | 'compact';
 type RailTab = 'comments' | 'history' | 'agents';
+
+/**
+ * Doc widths that fit the file tree (220px) and then also the rail (320px)
+ * beside a readable file. Below them the tree becomes a dropdown and the
+ * rail floats over the file.
+ */
+const TREE_INLINE_MIN = 640;
+const RAIL_INLINE_MIN = 1100;
+const DOC_BREAKPOINTS = [TREE_INLINE_MIN, RAIL_INLINE_MIN] as const;
 
 /** The file to show: the requested one, else the entry file, else the first. */
 export function resolveActivePath(doc: Pick<DesignDocDetail, 'files' | 'entryPath'>, requested: string | null): string | null {
@@ -31,6 +41,8 @@ function Rail({
   now,
   pendingQuote,
   onClearQuote,
+  commentDraft,
+  onCommentDraft,
   onFocusComment,
   selectedRevision,
   onSelectRevision,
@@ -41,8 +53,10 @@ function Rail({
   onTab(tab: RailTab): void;
   activePath: string | null;
   now: number;
-  pendingQuote: string | null;
+  pendingQuote: PendingQuote | null;
   onClearQuote(): void;
+  commentDraft: string;
+  onCommentDraft(value: string): void;
   onFocusComment(comment: DesignDocComment): void;
   selectedRevision: number | null;
   onSelectRevision(revision: DesignDocRevision): void;
@@ -84,6 +98,8 @@ function Rail({
           now={now}
           pendingQuote={pendingQuote}
           onClearQuote={onClearQuote}
+          draft={commentDraft}
+          onDraft={onCommentDraft}
           onFocusComment={onFocusComment}
         />
       ) : tab === 'history' ? (
@@ -95,7 +111,19 @@ function Rail({
   );
 }
 
-function FileSwitcher({ doc, activePath, onOpen, onPathChanged }: { doc: DesignDocDetail; activePath: string | null; onOpen(path: string): void; onPathChanged(from: string, to: string | null): void }) {
+function FileSwitcher({
+  doc,
+  activePath,
+  onOpen,
+  onPathChanged,
+  hasDraft
+}: {
+  doc: DesignDocDetail;
+  activePath: string | null;
+  onOpen(path: string): void;
+  onPathChanged(from: string, to: string | null): void;
+  hasDraft(path: string): boolean;
+}) {
   const [open, setOpen] = useState(false);
   const active = doc.files.find((file) => file.path === activePath);
   return (
@@ -120,6 +148,7 @@ function FileSwitcher({ doc, activePath, onOpen, onPathChanged }: { doc: DesignD
           onOpen(path);
         }}
         onPathChanged={onPathChanged}
+        hasDraft={hasDraft}
       />
     </Popover>
   );
@@ -151,21 +180,55 @@ export function DocView({
   const projects = useProjects();
   const now = useNow();
   const compact = layout === 'compact';
+  const [measureRef, tier] = useWidthTier(DOC_BREAKPOINTS);
+  // Unmeasured counts as wide: keep every column until there is clearly no room.
+  const treeInline = !compact && (tier ?? DOC_BREAKPOINTS.length) >= 1;
+  const railInline = !compact && (tier ?? DOC_BREAKPOINTS.length) >= 2;
   const [mode, setMode] = usePersistentState<ViewMode>('view-mode', 'preview');
-  const [railOpen, setRailOpen] = usePersistentState(compact ? 'rail-compact' : 'rail', !compact);
+  // Separate memories: closing the floating rail must not hide the inline one.
+  const [inlineRailOpen, setInlineRailOpen] = usePersistentState<boolean>('rail', true);
+  const [floatingRailOpen, setFloatingRailOpen] = usePersistentState<boolean>('rail-compact', false);
+  const railOpen = railInline ? inlineRailOpen : floatingRailOpen;
+  const setRailOpen = railInline ? setInlineRailOpen : setFloatingRailOpen;
   const [tab, setTab] = usePersistentState<RailTab>('rail-tab', 'comments');
-  const [pendingQuote, setPendingQuote] = useState<string | null>(null);
+  const [pendingQuote, setPendingQuote] = useState<PendingQuote | null>(null);
+  // Here rather than in the rail so it survives switching tabs or closing a floating rail.
+  const [commentDraft, setCommentDraft] = useState('');
   const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
   const [revision, setRevision] = useState<DesignDocRevision | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [focus, setFocus] = useState<{ path: string; quote: string; nonce: number } | null>(null);
   const editor = useRef<EditorState>({ dirty: false, saving: false });
+  // Mirrors editor.current.dirty for rendering; the ref answers synchronous checks.
+  const [dirty, setDirty] = useState(false);
   const previewHandle = useRef<PreviewHandle | null>(null);
+  const shownPath = useRef<string | null>(null);
+  // The path a save just put back, until the doc reloads with it.
+  const recreating = useRef<string | null>(null);
   const data = doc.data;
-  const activePath = data ? resolveActivePath(data, path) : null;
+  const resolvedPath = data ? resolveActivePath(data, path) : null;
+  // An agent deleted or renamed the file being edited: stay on it so the draft
+  // is not swapped for another file. FilePane offers to save it back.
+  const shownMissing = !!data && !!shownPath.current && !data.files.some((file) => file.path === shownPath.current);
+  if (!shownMissing) recreating.current = null;
+  const keepDraft = shownMissing && (dirty || recreating.current === shownPath.current);
+  const activePath = keepDraft ? shownPath.current : resolvedPath;
+  shownPath.current = activePath;
+  const deletedElsewhere = !!data && !!doc.error && isMissingDoc(doc.error);
+  const latest = useRef({ onDeleted, title: data?.title ?? '' });
+  latest.current = { onDeleted, title: data?.title ?? latest.current.title };
 
   const onEditorState = useCallback((state: EditorState) => {
+    // A save finished; if it recreated the shown file, the reload has not caught up yet.
+    if (editor.current.saving && !state.saving && !state.dirty) recreating.current = shownPath.current;
     editor.current = state;
+    setDirty(state.dirty);
+  }, []);
+
+  const dropDraft = useCallback(() => {
+    editor.current = { dirty: false, saving: false };
+    recreating.current = null;
+    setDirty(false);
   }, []);
 
   /** Run `action` now, or after the user agrees to drop unsaved edits. */
@@ -180,11 +243,11 @@ export function DocView({
       confirmLabel: 'Discard',
       danger: true,
       run: () => {
-        editor.current = { dirty: false, saving: false };
+        dropDraft();
         action();
       }
     });
-  }, []);
+  }, [dropDraft]);
 
   const openPath = useCallback(
     (next: string) => {
@@ -199,6 +262,13 @@ export function DocView({
     },
     [activePath, guard, onOpenPath]
   );
+
+  // Deleted by an agent or in another window: leave instead of showing a stale copy.
+  useEffect(() => {
+    if (!deletedElsewhere) return;
+    toast(`“${latest.current.title}” was deleted`);
+    latest.current.onDeleted();
+  }, [deletedElsewhere]);
 
   // Scroll to a comment's quote once its file has rendered (mermaid and images settle late).
   useEffect(() => {
@@ -228,11 +298,15 @@ export function DocView({
     );
   }
 
-  const focusComment = (comment: DesignDocComment) => {
-    if (comment.path && comment.path !== activePath) openPath(comment.path);
-    if (mode !== 'preview') setMode('preview');
-    if (comment.quote) setFocus({ path: comment.path ?? activePath ?? '', quote: comment.quote, nonce: Date.now() });
-  };
+  const focusComment = (comment: DesignDocComment) =>
+    guard(() => {
+      setRevision(null);
+      if (comment.path && comment.path !== activePath) onOpenPath(comment.path);
+      if (mode !== 'preview') setMode('preview');
+      // A floating rail covers the passage it is about to scroll to.
+      if (!railInline) setRailOpen(false);
+      if (comment.quote) setFocus({ path: comment.path ?? activePath ?? '', quote: comment.quote, nonce: Date.now() });
+    });
 
   const selectRevision = (entry: DesignDocRevision) =>
     guard(() => {
@@ -245,9 +319,14 @@ export function DocView({
     else setMode(next);
   };
 
+  /** The tree renamed or deleted a file; it already asked before dropping a draft. */
   const pathChanged = (from: string, to: string | null) => {
-    if (from === activePath) onOpenPath(to, true);
+    if (from !== activePath) return;
+    dropDraft();
+    onOpenPath(to, true);
   };
+
+  const hasDraft = (file: string) => file === activePath && editor.current.dirty;
 
   const rail = (
     <Rail
@@ -258,15 +337,17 @@ export function DocView({
       now={now}
       pendingQuote={pendingQuote}
       onClearQuote={() => setPendingQuote(null)}
+      commentDraft={commentDraft}
+      onCommentDraft={setCommentDraft}
       onFocusComment={focusComment}
       selectedRevision={revision?.id ?? null}
       onSelectRevision={selectRevision}
-      onClose={compact ? () => setRailOpen(false) : undefined}
+      onClose={railInline ? undefined : () => setRailOpen(false)}
     />
   );
 
   return (
-    <div className={`dd-doc dd-doc-${layout}${railOpen ? ' dd-rail-open' : ''}`}>
+    <div ref={measureRef} className={`dd-doc dd-doc-${layout}${railOpen ? ' dd-rail-open' : ''}${railInline ? '' : ' dd-rail-floating'}`}>
       <DocHeader
         doc={data}
         projects={projects.data ?? []}
@@ -280,7 +361,7 @@ export function DocView({
         }
       />
       <div className="dd-doc-body">
-        {compact ? null : <FileTree doc={data} activePath={activePath} onOpen={openPath} onPathChanged={pathChanged} />}
+        {treeInline ? <FileTree doc={data} activePath={activePath} onOpen={openPath} onPathChanged={pathChanged} hasDraft={hasDraft} /> : null}
         {activePath ? (
           <FilePane
             doc={data}
@@ -294,13 +375,17 @@ export function DocView({
             previewHandle={previewHandle}
             onOpenPath={openPath}
             onQuote={(text) => {
-              setPendingQuote(text);
+              setPendingQuote({ path: activePath, text });
               setTab('comments');
               setRailOpen(true);
             }}
             onAskAbout={(text) => setAskRequest({ prompt: `About this passage in ${activePath}:\n> ${text.replace(/\n/g, '\n> ')}\n\n`, nonce: Date.now() })}
             onEditorState={onEditorState}
-            leading={compact ? <FileSwitcher doc={data} activePath={activePath} onOpen={openPath} onPathChanged={pathChanged} /> : null}
+            leading={
+              treeInline ? null : (
+                <FileSwitcher doc={data} activePath={activePath} onOpen={openPath} onPathChanged={pathChanged} hasDraft={hasDraft} />
+              )
+            }
           />
         ) : (
           <div className="dd-file-pane dd-center">

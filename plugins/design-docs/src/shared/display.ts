@@ -1,4 +1,13 @@
 /** Small display helpers shared by the agent-facing text and the UI. */
+import type { DocActor } from './contract.js';
+
+/**
+ * How agent-facing text names who did something. The UI labels the user
+ * "You", which an agent would read as itself, so users are "the user" here.
+ */
+export function actorLabel(actor: DocActor): string {
+  return actor.kind === 'agent' ? `agent "${actor.label}"` : 'the user';
+}
 
 export function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MiB`;

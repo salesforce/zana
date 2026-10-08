@@ -175,8 +175,16 @@ function readParams(params: PluginThreadPanelProps['params']): { docId: string |
   };
 }
 
-/** The doc beside a conversation: watch an agent's edits land and review them. */
-export function ThreadPanel({ params, projectId }: PluginThreadPanelProps) {
+/**
+ * The doc beside a conversation: watch an agent's edits land and review them.
+ * The host reuses one panel across tabs, so a new doc in `params` starts fresh.
+ */
+export function ThreadPanel(props: PluginThreadPanelProps) {
+  const { docId, path } = readParams(props.params);
+  return <ThreadPanelBody key={`${docId}\u0000${path}`} {...props} />;
+}
+
+function ThreadPanelBody({ params, projectId }: PluginThreadPanelProps) {
   const navigate = useZccNavigate();
   const initial = readParams(params);
   const [location, setLocation] = useState(initial);

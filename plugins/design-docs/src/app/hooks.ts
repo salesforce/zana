@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import {
   CHANGED_CHANNEL,
@@ -154,6 +154,28 @@ export function usePersistentState<T extends string | boolean>(key: string, init
     [key]
   );
   return [value, update];
+}
+
+/**
+ * How many of the ascending `breakpoints` the element is at least as wide as.
+ * Re-renders only when that count changes, not on every pixel of a resize.
+ * `null` until there is a real width to measure. Attach the returned callback
+ * as the element's `ref`; it follows the element across remounts.
+ */
+export function useWidthTier(breakpoints: readonly number[]): [(element: HTMLElement | null) => void, number | null] {
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const [tier, setTier] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!element) return;
+    const measure = (width: number) => setTier(width > 0 ? breakpoints.filter((min) => width >= min).length : null);
+    // Measure before paint so a narrow panel never flashes the wide layout.
+    measure(element.getBoundingClientRect().width);
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => measure(entries[0]?.contentRect.width ?? 0));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element, breakpoints]);
+  return [setElement, tier];
 }
 
 /** Re-render every minute so "2m ago" labels stay honest. */
