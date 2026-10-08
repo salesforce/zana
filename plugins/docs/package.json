@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Cross-project Docs rail and per-project Library — durable findings, decisions, and ideas.",
+  "description": "Per-project and global Library — durable findings, decisions, and ideas.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
@@ -13,8 +13,8 @@
     "package": "node --import tsx scripts/build-app.mjs"
   },
   "zcc": {
-    "name": "Docs",
-    "description": "Durable project knowledge: Docs rail, per-project Library, and the library-curator skill",
+    "name": "Library",
+    "description": "Durable project knowledge: a per-project and global Library of Markdown notes, plus the library-curator skill",
     "branding": { "icon": "Library" },
     "server": "./server.mjs",
     "app": "./app.js",

@@ -1,5 +1,5 @@
 /**
- * Docs app-module (renderer). Lives under `apps/app/src` so Vite's renderer
+ * Library app-module (renderer). Lives under `apps/app/src` so Vite's renderer
  * root owns the Monaco graph (workers imported from `plugins/` are served as
  * `/@fs/` and get mis-optimized). The disk package `plugins/docs` still owns
  * skills, the `::doc` card / document side panel, and auto-install.
@@ -10,7 +10,7 @@ import { DocsPanel } from './DocsPanel.js';
 
 export const docsModule: AppModule = {
   id: 'docs',
-  title: 'Docs',
+  title: 'Library',
   icon: 'Library',
   titleLabel: 'Library',
   panel: DocsPanel,

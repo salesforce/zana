@@ -22,13 +22,13 @@ describe('docs plugin contract', () => {
     expect(manifest.projectTab?.global).toBe(true);
   });
 
-  it('registers a compiled Docs rail + Library project tab under the renderer root', () => {
+  it('registers a compiled Library rail + Library project tab under the renderer root', () => {
     const src = readFileSync(
       join(root, '../../apps/app/src/views/library/module.ts'),
       'utf8'
     );
     expect(src).toMatch(/id:\s*'docs'/);
-    expect(src).toMatch(/title:\s*'Docs'/);
+    expect(src).toMatch(/title:\s*'Library'/);
     expect(src).toMatch(/icon:\s*'Library'/);
     expect(src).toMatch(/label:\s*'Library'/);
     expect(src).toMatch(/global:\s*true/);
@@ -59,7 +59,7 @@ describe('docs plugin contract', () => {
     ]);
     harness.sdk.stub('library.read', async () => ({ ok: true, content: 'Use PKCE.' }));
     await plugin(zcc);
-    expect(harness.mentionProviders[0]).toMatchObject({ id: 'note', label: 'Docs' });
+    expect(harness.mentionProviders[0]).toMatchObject({ id: 'note', label: 'Library' });
     await expect(harness.mentionProviders[0]!.search({ query: 'auth', projectId: 'p1' })).resolves.toEqual([
       { id: 'project:p1:findings/auth.md', label: 'Auth findings' }
     ]);

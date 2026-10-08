@@ -1,14 +1,14 @@
-Keep your notes, plans, and reports as plain Markdown files on disk, and edit them inside ZCC. Documents stay ordinary files in folders you choose, on this machine or on any connected host.
+Keep durable project knowledge in a Library that you and your agents share: findings, decisions, runbooks, postmortems and ideas, as Markdown. Each project has its own Library, and a global Library holds notes that apply everywhere.
+
+Writing a spec, RFC or ADR to review? Use the Design Docs plugin. The Library is for notes and findings that agents look up and build on.
 
 ## What you get
 
-- A Docs panel with a folder tree, search, and a rich Markdown editor. Tables, images, and YAML frontmatter are supported.
-- Vaults. Each vault is a folder on a host. A new install starts with a Personal vault at `~/Notes`. Add vaults on other machines that are enrolled as ZCC hosts.
-- Full HTML pages and embedded HTML blocks render in a sandboxed frame. Keep interactive reports next to your notes.
-- A Markdown opener for `.md` files from file links. Make it the default under Settings.
-- `@` mentions. Type `@` in the composer to attach a document. The agent gets its current content at send time.
-- Document cards in agent replies. The card opens the document in the thread side panel, with autosave.
+- A Library page in the sidebar and a Library tab in each project, with a folder tree, search, tags, and a rich Markdown editor. Tables, images and YAML frontmatter are supported.
+- A Markdown opener for `.md` files from file links.
+- `@` mentions. Type `@` in the composer and pick from the Library group to attach a document. The agent gets its current content at send time.
+- Library cards in agent replies. A card opens the document beside the conversation.
 
 ## For agents
 
-Agents get the `docs` skill and the `zcc docs` command. They list vaults with `zcc docs vaults` and read files with `zcc docs read`. They edit with `zcc docs pull`, `zcc docs status`, and `zcc docs push`. Push uses version checks, so a concurrent edit is reported as a conflict instead of being overwritten.
+Agents get the `library-curator` skill and the `library_list`, `library_read`, `library_write` and `library_remove` tools. They check the Library before repeating work, and save findings worth keeping.

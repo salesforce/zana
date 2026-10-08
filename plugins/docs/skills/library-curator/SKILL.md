@@ -7,7 +7,9 @@ description: Discover, maintain, and curate durable project knowledge in the Zan
 
 Use the Zana Library for durable, reusable project knowledge.
 Use the project inbox for notifications and historical reports. Use repository
-`docs/` for source-controlled product documentation. Do not create duplicate
+`docs/` for source-controlled product documentation. Use the Design Docs
+plugin (`design_doc_*` tools), not the Library, for specs, RFCs, ADRs and
+designs the user reviews. Do not create duplicate
 documents when an existing canonical document can be improved instead.
 
 ## When to load

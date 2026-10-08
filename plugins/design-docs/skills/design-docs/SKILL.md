@@ -10,6 +10,10 @@ together. Each doc is a small project of files, rendered as formatted pages
 in the Design Docs panel. The user sees your edits appear live and can undo
 any of them from History.
 
+Design docs are separate from the Library. Save notes, findings, runbooks and
+postmortems to the Library with the `library_*` tools (see `library-curator`).
+Keep design docs for specs, RFCs, ADRs and designs the user reviews.
+
 ## Model
 
 - **Doc**: id (`dd_…`), title, summary, status, tags, project (or global),

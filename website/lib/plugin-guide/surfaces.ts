@@ -90,7 +90,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           '`global: false` hides the global sidebar entry.'
         ],
         apiSymbols: ['PluginAppSlots.projectTab', 'PluginProjectTabRegistration'],
-        firstParty: ['Docs', 'Salesforce']
+        firstParty: ['Library', 'Salesforce']
       },
       {
         id: 'experimental_agentsView',
@@ -247,7 +247,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         summary: 'Render `::name{attr}` leaves in markdown.',
         apiSymbols: ['PluginAppSlots.messageDirective'],
         bullets: ['Id must be a kebab-case directive name.'],
-        firstParty: ['Docs', 'Tasks', 'Workflows']
+        firstParty: ['Library', 'Tasks', 'Workflows']
       },
       {
         id: 'messageAction',
@@ -263,7 +263,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         summary: 'Open a previewed file by extension.',
         apiSymbols: ['PluginAppSlots.fileOpener'],
         bullets: ['Listed in thread file preview “Open with”.'],
-        firstParty: ['Docs', 'Salesforce']
+        firstParty: ['Library', 'Salesforce']
       }
     ]
   },
@@ -342,7 +342,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         summary: 'Declare MCP servers on the manifest.',
         bullets: ['`command` is basename-only.'],
         apiSymbols: ['PluginManifest.mcpServers'],
-        firstParty: ['Docs']
+        firstParty: ['Library']
       },
       {
         id: 'settings-define',

@@ -21,6 +21,7 @@ const USAGE = [
   '- Use the `design_doc_*` tools (or `zcc design-docs …` from a shell) to list, read, create and edit them. Read a doc before changing it; prefer `edits` over rewriting whole files and pass `baseRevision`.',
   '- Treat open comments as review feedback: address them, then resolve each with a short `body` saying what changed. Answer a question in its thread with `replyTo` instead of opening a new comment.',
   '- When the user asks for a design, spec, RFC or plan worth keeping, offer to write it as a design doc instead of only replying in chat.',
+  '- Design docs are not the Library: save notes, findings, runbooks and postmortems with the `library_*` tools, and keep design docs for specs, RFCs, ADRs and designs the user reviews.',
   `- To show a doc in your reply, write its card on its own line: ${designDocDirective('<id>')}`
 ].join('\n');
 

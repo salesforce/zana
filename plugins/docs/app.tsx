@@ -24,7 +24,7 @@ injectStyles();
 export default definePluginApp((app) => {
   app.slots.fileOpener({
     id: 'md',
-    title: 'Docs',
+    title: 'Library',
     extensions: ['md', 'mdx'],
     component: DocsOpener
   });
@@ -34,7 +34,7 @@ export default definePluginApp((app) => {
   });
   app.slots.threadPanelAction({
     id: 'document',
-    title: 'Document',
+    title: 'Library document',
     icon: 'Library',
     layout: 'flush',
     scopes: ['thread', 'agent-session'],

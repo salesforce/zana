@@ -43,7 +43,7 @@ describe('mergeModules', () => {
 
     usePluginAppModules.getState().setSnapshot([], new Set(['docs']));
 
-    expect(getMergedModule('docs')?.title).toBe('Docs');
+    expect(getMergedModule('docs')?.title).toBe('Library');
   });
 
   it('does not let a failed matching plugin app authorize a compiled companion', () => {

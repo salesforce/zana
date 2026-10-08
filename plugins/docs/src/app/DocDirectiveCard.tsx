@@ -49,7 +49,7 @@ export function DocDirectiveCard(props: PluginMessageDirectiveProps) {
         disabled={workspace && typeof props.openWorkspaceFile !== 'function'}
         title={document.path}
       >
-        <span className="plugin-directive-card-kind">Docs</span>
+        <span className="plugin-directive-card-kind">Library</span>
         <span className="plugin-directive-card-title">{document.title}</span>
       </button>
       {workspace ? null : (
