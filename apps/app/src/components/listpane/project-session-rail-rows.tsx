@@ -21,6 +21,7 @@ export function ProjectAgentRailRow({
   projectId,
   routeProjectId,
   projectRemote = false,
+  projectName,
   isUnread,
   active,
   onOpen,
@@ -30,6 +31,8 @@ export function ProjectAgentRailRow({
   projectId: string;
   routeProjectId: string | null;
   projectRemote?: boolean;
+  /** Shown in the detail line when the rail is flat (no parent project row). */
+  projectName?: string;
   isUnread: boolean;
   active: boolean;
   onOpen: () => void;
@@ -74,7 +77,7 @@ export function ProjectAgentRailRow({
         </span>
         <span className="project-terminal-text">
           <span className="project-terminal-name">{title}</span>
-          <AgentRowDetail session={session} projectRemote={projectRemote} />
+          <AgentRowDetail session={session} projectRemote={projectRemote} projectName={projectName} />
         </span>
         {indicator.miniMap ? (
           <SplitPaneMiniMap slots={indicator.miniMap} label={`${title} split position`} />
@@ -89,6 +92,7 @@ export function ProjectThreadRailRow({
   thread,
   active,
   routeProjectId,
+  projectName,
   onOpen,
   onContextMenu
 }: {
@@ -96,6 +100,8 @@ export function ProjectThreadRailRow({
   active: boolean;
   projectId: string;
   routeProjectId: string | null;
+  /** Shown in the detail line when the rail is flat (no parent project row). */
+  projectName?: string;
   onOpen: () => void;
   onContextMenu: (e: MouseEvent) => void;
 }) {
@@ -144,6 +150,12 @@ export function ProjectThreadRailRow({
           <span className="project-terminal-detail">
             <span className={threadRailStatusClass(status)}>{status}</span>
             {` · ${fleetKindLabel('thread')}`}
+            {projectName ? (
+              <>
+                {' · '}
+                <span className="project-terminal-project">{projectName}</span>
+              </>
+            ) : null}
           </span>
         </span>
         {indicator.miniMap ? (

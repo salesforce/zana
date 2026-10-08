@@ -40,6 +40,13 @@ describe('AgentRowDetail', () => {
     expect(html).not.toContain('Thread');
   });
 
+  it('tags the row with its project right after the runtime in the flat rail', () => {
+    h.status = 'idle';
+    h.subagents = 0;
+    const html = renderToStaticMarkup(<AgentRowDetail session={session()} projectName="local-core" />);
+    expect(html).toMatch(/Claude Code · Local · <span class="project-terminal-project">local-core<\/span> · started/);
+  });
+
   it('marks an SSH project as Remote host', () => {
     h.status = 'working';
     h.subagents = 0;

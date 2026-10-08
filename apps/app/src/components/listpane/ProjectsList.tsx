@@ -49,11 +49,11 @@ import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCar
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
-import { useThreads } from '../../thread-store.js';
+import { useThreads, type ThreadListItem } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
-import { railThreadsForProject, threadIsLiveForRail } from '../fleet-item.js';
+import { railThreadsForProject, threadIsLiveForRail, threadTitle } from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
 import { beginProjectDrag, PROJECT_DRAG_MIME, projectFromDrag } from '../../lib/project-drag.js';
 import { composerProjectLabel, isRemoteWorkspaceProject, isScratchWorkspaceProject } from '../composer-project-default.js';
@@ -113,6 +113,11 @@ type SidebarProjectSort = 'manual' | 'recent' | 'created' | 'alphabetical';
 
 const SIDEBAR_PROJECT_SORT_KEY = 'zcc.sidebarProjectSort';
 const SIDEBAR_PROJECTS_SECTION_KEY = 'sidebar:projects';
+const SIDEBAR_PROJECT_VIEW_KEY = 'zcc.sidebarProjectView';
+
+/** `projects` nests sessions under each project; `agents` hides the project
+ *  rows and lists every thread / CLI agent flat, tagged with its project. */
+type SidebarProjectView = 'projects' | 'agents';
 const SIDEBAR_PROJECTS_TREE_ID = 'sidebar-projects-tree';
 
 function readSidebarProjectSort(): SidebarProjectSort {
@@ -120,6 +125,15 @@ function readSidebarProjectSort(): SidebarProjectSort {
   const value = localStorage.getItem(SIDEBAR_PROJECT_SORT_KEY);
   return value === 'recent' || value === 'created' || value === 'alphabetical' ? value : 'manual';
 }
+
+function readSidebarProjectView(): SidebarProjectView {
+  if (typeof localStorage === 'undefined') return 'projects';
+  return localStorage.getItem(SIDEBAR_PROJECT_VIEW_KEY) === 'agents' ? 'agents' : 'projects';
+}
+
+type FlatRailItem =
+  | { kind: 'thread'; project: Project; thread: ThreadListItem; at: number }
+  | { kind: 'agent'; project: Project; session: TerminalSession; at: number };
 
 function SortableProject({
   project,
@@ -280,6 +294,7 @@ export function ProjectsList({
   const sidebarAddRef = useRef<HTMLDivElement | null>(null);
   const sidebarOrganizeRef = useRef<HTMLDivElement | null>(null);
   const [sidebarProjectSort, setSidebarProjectSort] = useState<SidebarProjectSort>(readSidebarProjectSort);
+  const [sidebarProjectView, setSidebarProjectViewState] = useState<SidebarProjectView>(readSidebarProjectView);
   const [refreshing, setRefreshing] = useState(false);
   const launchCreateProjectAction = (action: (typeof createProjectActions)[number]) => {
     setSidebarAddOpen(false);
@@ -455,6 +470,42 @@ export function ProjectsList({
         (p.tag?.toLowerCase().includes(q) ?? false)
     );
   }, [sortedProjects, scopedProjectId, hideIdleProjects, selectedId, filter, terminals, liveThreadsByProject]);
+
+  // "Agents only" is a sidebar presentation; a scoped window keeps its tree.
+  const agentsOnly = inSidebar && !scopedProjectId && sidebarProjectView === 'agents';
+  const setSidebarView = (view: SidebarProjectView) => {
+    setSidebarProjectViewState(view);
+    localStorage.setItem(SIDEBAR_PROJECT_VIEW_KEY, view);
+    setSidebarOrganizeOpen(false);
+  };
+
+  // Flat rail: every nestable session across the (idle-filtered) projects,
+  // newest first. The text filter matches the session title or project name.
+  const flatItems = useMemo<FlatRailItem[]>(() => {
+    if (!agentsOnly) return [];
+    const q = filter.trim().toLowerCase();
+    let source = sortedProjects;
+    if (hideIdleProjects) source = source.filter((p) => projectHasRunningAgents(p));
+    const items: FlatRailItem[] = [];
+    for (const project of source) {
+      const projectMatches = !q || composerProjectLabel(project).toLowerCase().includes(q)
+        || project.name.toLowerCase().includes(q);
+      for (const thread of railThreadsByProject.get(project.id) ?? []) {
+        if (!projectMatches && !threadTitle(thread).toLowerCase().includes(q)) continue;
+        items.push({ kind: 'thread', project, thread, at: thread.updatedAt ?? thread.createdAt });
+      }
+      const sessions = projectNavigationSessions(
+        projectRailTerminals(terminals[project.id]),
+        projectNavigationOrganization
+      );
+      for (const session of sessions) {
+        const title = session.cohort?.executionJobTitle?.trim() || session.title;
+        if (!projectMatches && !title.toLowerCase().includes(q)) continue;
+        items.push({ kind: 'agent', project, session, at: session.createdAt });
+      }
+    }
+    return items.sort((a, b) => b.at - a.at);
+  }, [agentsOnly, filter, sortedProjects, hideIdleProjects, railThreadsByProject, terminals, liveThreadsByProject, projectNavigationOrganization]);
 
   // Keep every project in one uninterrupted tree. Display order stays stable
   // from the persisted project ordering or the selected sort preference.
@@ -907,7 +958,7 @@ export function ProjectsList({
             <>
               <div className="sidebar-projects-menu-wrap" ref={sidebarOrganizeRef}>
                 <button
-                  className={`icon-btn ${hideIdleProjects ? 'on' : ''}`}
+                  className={`icon-btn ${hideIdleProjects || agentsOnly ? 'on' : ''}`}
                   aria-label="Organize projects"
                   aria-haspopup="menu"
                   aria-expanded={sidebarOrganizeOpen}
@@ -922,6 +973,22 @@ export function ProjectsList({
                 </button>
                 {sidebarOrganizeOpen && (
                   <div className="sidebar-projects-organize-menu" role="menu" aria-label="Organize projects">
+                    <span className="sidebar-projects-menu-label">Show</span>
+                    {([
+                      ['projects', 'Projects'],
+                      ['agents', 'Agents only']
+                    ] as const).map(([view, label]) => (
+                      <button
+                        key={view}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={sidebarProjectView === view}
+                        onClick={() => setSidebarView(view)}
+                      >
+                        <span>{label}</span>
+                        {sidebarProjectView === view && <Check size={14} aria-hidden="true" />}
+                      </button>
+                    ))}
                     <span className="sidebar-projects-menu-label">Sort by</span>
                     {([
                       ['manual', 'Manual order'],
@@ -1097,8 +1164,8 @@ export function ProjectsList({
           <div className={inSidebar ? 'sidebar-projects-filter list-filter' : 'list-filter'}>
             <Search size={14} className="list-filter-icon" aria-hidden="true" />
             <input
-              placeholder="Filter projects"
-              aria-label="Filter projects"
+              placeholder={agentsOnly ? 'Filter agents' : 'Filter projects'}
+              aria-label={agentsOnly ? 'Filter agents' : 'Filter projects'}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               onKeyDown={(event) => {
@@ -1148,6 +1215,53 @@ export function ProjectsList({
             Add a <strong>Folder</strong>, <strong>Git</strong> repo, or <strong>Remote</strong>{' '}
             box above — or drop a folder here.
           </div>
+        ) : agentsOnly ? (
+          flatItems.length === 0 ? (
+            <div className="list-empty" role="status">
+              {filter.trim() ? <>No agents match &ldquo;{filter}&rdquo;.</> : 'No agents yet.'}
+              <br />
+              <button type="button" className="list-empty-link" onClick={() => setSidebarView('projects')}>
+                Show projects
+              </button>
+            </div>
+          ) : (
+            <div className="project-terminals project-terminals--flat" role="list" aria-label="Agents">
+              {flatItems.map((item) => {
+                const projectName = composerProjectLabel(item.project);
+                if (item.kind === 'thread') {
+                  const { thread } = item;
+                  return (
+                    <ProjectThreadRailRow
+                      key={thread.id}
+                      thread={thread}
+                      active={activeThreadId === thread.id}
+                      projectId={item.project.id}
+                      routeProjectId={scopedProjectId}
+                      projectName={projectName}
+                      onOpen={() => navigate(getThreadRoutePath(thread.id, scopedProjectId))}
+                      onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}
+                    />
+                  );
+                }
+                const { session } = item;
+                const activeTab = selectedId === item.project.id ? selectedTabId[item.project.id] : undefined;
+                return (
+                  <ProjectAgentRailRow
+                    key={session.id}
+                    session={session}
+                    isUnread={!!unread[session.id] && activeTab !== session.id}
+                    active={activeSessionId === session.id}
+                    onOpen={() => navigate(getAgentSessionRoutePath(session.id, scopedProjectId))}
+                    onContextMenu={(e) => openAgentCardMenu(e, session, item.project)}
+                    projectId={item.project.id}
+                    routeProjectId={scopedProjectId}
+                    projectRemote={Boolean(item.project.remote)}
+                    projectName={projectName}
+                  />
+                );
+              })}
+            </div>
+          )
         ) : visibleProjects.length === 0 ? (
           filter.trim() ? (
             <div className="list-empty" role="status">No projects match &ldquo;{filter}&rdquo;.</div>

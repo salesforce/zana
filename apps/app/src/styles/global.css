@@ -2673,6 +2673,10 @@ body.resizing-col {
   color: var(--text-dim);
 }
 
+.project-terminal-project {
+  color: var(--text-muted);
+}
+
 /* Unread output: brighten + embolden the session name (Slack/Linear style)
    instead of a second status dot, which collided with the agent-state dot. */
 .project-terminal-row.unread .project-terminal-name {
@@ -4494,6 +4498,27 @@ body.resizing-col {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.git-project-error p {
+  margin: 6px 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.git-project-error summary {
+  margin-top: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.git-project-error pre {
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 /* The URL field is the primary input — let it span full width below its label

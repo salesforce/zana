@@ -110,6 +110,14 @@
   border-left: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
 }
 
+/* "Agents only" rail: no parent project row, so no tree guide or indent —
+   each row carries its project name in the detail line instead. */
+.sidebar .sidebar-projects .project-terminals.project-terminals--flat {
+  margin: 2px 0 4px;
+  padding-left: 0;
+  border-left: 0;
+}
+
 /* Make hover actions reachable with Tab as well. Opacity keeps their space
    reserved, so revealing them never changes the project-name width. */
 .sidebar .sidebar-projects .project-spawn {
