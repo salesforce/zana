@@ -18,6 +18,13 @@ export const KIT_DIR = 'zcc-kit';
 /** What the kit ships; an exported site gets a copy of each. */
 export const KIT_FILES = ['site.css', 'site.js'] as const;
 
+/** A file of a doc as a static site: what export writes and Download zips. */
+export interface SiteFile {
+  path: string;
+  content: string;
+  encoding: 'utf8' | 'base64';
+}
+
 /** Bytes of data: URLs (images, fonts) one render inlines; the rest load on demand. */
 export const PAGE_ASSET_BUDGET = 12 * 1024 * 1024;
 

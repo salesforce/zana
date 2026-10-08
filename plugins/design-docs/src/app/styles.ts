@@ -14,9 +14,10 @@ export const DESIGN_DOCS_STYLES = `
   color: var(--text-primary);
   font-size: 13px;
 }
-.dd-root *, .dd-root *::before, .dd-root *::after { box-sizing: border-box; }
-.dd-root button { font: inherit; color: inherit; }
-.dd-root :focus-visible { outline: 2px solid var(--focus-ring, var(--accent-blue)); outline-offset: 1px; }
+.dd-root *, .dd-root *::before, .dd-root *::after,
+.dd-dialog-backdrop *, .dd-context-menu * { box-sizing: border-box; }
+.dd-root button, .dd-dialog-backdrop button, .dd-context-menu button { font: inherit; color: inherit; }
+.dd-root :focus-visible, .dd-dialog-backdrop :focus-visible, .dd-context-menu :focus-visible { outline: 2px solid var(--focus-ring, var(--accent-blue)); outline-offset: 1px; }
 .dd-spacer { flex: 1 1 auto; min-width: 0; }
 .dd-muted { color: var(--text-muted); }
 .dd-center { display: flex; align-items: center; justify-content: center; flex: 1 1 auto; min-height: 120px; padding: 16px; }

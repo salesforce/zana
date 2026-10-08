@@ -104,6 +104,20 @@ describe('Design Docs RPC', () => {
     expect(() => rpc.readPageFile!({ doc: doc.id })).toThrow(/path/);
   });
 
+  it('hands over the doc as a static site for download, the kit its pages load included', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const kit = vi.fn((path: string) => ({ path: `zcc-kit/${path}`, kind: 'code' as const, content: `/* ${path} */`, encoding: 'utf8' as const, revision: 0 }));
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, kit });
+    const doc = await rpc.create!({ title: 'Pay Site', template: 'blank' }) as { id: string; slug: string };
+    store.writeFile(doc.id, { path: 'index.html', content: '<script src="zcc-kit/site.js"></script>' }, UI_USER);
+    store.writeFile(doc.id, { path: 'logo.png', content: 'iVBORw0K', encoding: 'base64' }, UI_USER);
+    const site = rpc.siteFiles!({ doc: doc.slug }) as { slug: string; files: Array<{ path: string; encoding: string }> };
+    expect(site.slug).toBe(doc.slug);
+    expect(site.files.map((file) => file.path)).toEqual(['index.html', 'logo.png', 'README.md', 'zcc-kit/site.css', 'zcc-kit/site.js', '.nojekyll']);
+    expect(site.files.find((file) => file.path === 'logo.png')!.encoding).toBe('base64');
+    expect(() => rpc.siteFiles!({ doc: 'nope' })).toThrow(/not found/);
+  });
+
   it('links to a page served standalone', async () => {
     const store = new DesignDocStore(createTestDatabase());
     const pageUrl = vi.fn((docId: string, path: string) => `http://127.0.0.1:8780/page?doc=${docId}&path=${path}`);
@@ -210,6 +224,6 @@ describe('Design Docs RPC', () => {
     const { store } = setup();
     registerRpc({ rpc: { method } } as never, { store, changed: () => {}, sdk: {} as never });
     expect(method.mock.calls.map(([name]) => name)).toContain('askAgent');
-    expect(method).toHaveBeenCalledTimes(26);
+    expect(method).toHaveBeenCalledTimes(27);
   });
 });

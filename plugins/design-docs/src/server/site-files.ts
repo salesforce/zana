@@ -3,14 +3,10 @@
  * what `zcc design-docs export --out` writes and `import` reads.
  */
 import type { DesignDocFile } from '../shared/contract.js';
-import { KIT_DIR, KIT_FILES } from '../shared/page.js';
+import { KIT_DIR, KIT_FILES, type SiteFile } from '../shared/page.js';
 import type { KitReader } from './pages.js';
 
-export interface SiteFile {
-  path: string;
-  content: string;
-  encoding: 'utf8' | 'base64';
-}
+export type { SiteFile };
 
 /** Tells GitHub Pages to serve the files as they are rather than run Jekyll (which drops `_folders`). */
 export const NO_JEKYLL = '.nojekyll';

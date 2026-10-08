@@ -216,6 +216,38 @@ describe('doc list', () => {
     expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
   });
 
+  it('downloads a doc as a zip from the right-click menu and the header menu', async () => {
+    const harness = createHarness();
+    const blobs: Blob[] = [];
+    const saved: string[] = [];
+    const urls = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+    Object.assign(URL, { createObjectURL: (blob: Blob) => (blobs.push(blob), 'blob:zip'), revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download);
+    });
+    try {
+      const doc = seed(harness.store, { title: 'Payments API', projectId: 'p1' });
+      openInProjectTab(harness, doc.id);
+      await screen.findByTitle('Edit title');
+
+      fireEvent.contextMenu(screen.getByText('Payments API', { selector: '.dd-doc-row-title' }).closest('button')!);
+      fireEvent.click(menuItem(/Download \.zip/));
+      await waitFor(() => expect(saved).toEqual([`${doc.slug}.zip`]));
+      expect(blobs[0]!.type).toBe('application/zip');
+      const bytes = new Uint8Array(await blobs[0]!.arrayBuffer());
+      expect(new TextDecoder().decode(bytes)).toContain(`${doc.slug}/README.md`);
+
+      harness.fail('siteFiles', 'disk on fire');
+      fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+      fireEvent.click(menuItem(/Download \.zip/));
+      await waitFor(() => expect(harness.toasts.at(-1)).toEqual({ message: 'Could not download the doc: disk on fire', kind: 'error' }));
+      expect(saved).toHaveLength(1);
+    } finally {
+      click.mockRestore();
+      Object.assign(URL, urls);
+    }
+  });
+
   it('shows every project in the nav panel with a project filter, and navigates by URL', async () => {
     const harness = createHarness();
     const payments = seed(harness.store, { title: 'Payments API', projectId: 'p1' });

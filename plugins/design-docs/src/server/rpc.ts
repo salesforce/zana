@@ -12,6 +12,7 @@ import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
 import { asInput, optionalString, requiredString } from './operations.js';
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
+import { siteFiles } from './site-files.js';
 import { DesignDocError, type DesignDocStore } from './store.js';
 
 export const UI_USER: DocActor = { kind: 'user', label: 'You', threadId: null };
@@ -175,6 +176,12 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       }
       const file = docPageReader(store, doc.id, deps.kit ?? NO_KIT)(path);
       return file ? { kind: file.kind, encoding: file.encoding, content: file.content } : null;
+    },
+
+    /** The doc as `export --out` writes it, for "Download". */
+    siteFiles: (raw) => {
+      const doc = store.summary(requiredString(asInput(raw), 'doc'));
+      return { slug: doc.slug, files: siteFiles(store.readAllFiles(doc.id), deps.kit ?? NO_KIT) };
     },
 
     pageLink: (raw) => {

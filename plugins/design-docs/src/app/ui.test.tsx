@@ -28,6 +28,22 @@ it('dismisses open menus only outside their boundary or on Escape, using the cur
   expect(latest).toHaveBeenCalledTimes(2);
 });
 
+it('portals dialogs and context menus to document.body so a transformed panel cannot clip them', () => {
+  const { container } = render(
+    <div style={{ transform: 'translateZ(0)' }}>
+      <Dialog title="Portalled" onClose={() => undefined}>Body</Dialog>
+      <ContextMenu at={{ x: 4, y: 4 }} label="Portalled menu" onClose={() => undefined}><MenuItem label="Item" onSelect={() => undefined} /></ContextMenu>
+    </div>
+  );
+  const backdrop = screen.getByRole('dialog', { name: 'Portalled' }).parentElement!;
+  expect(backdrop.classList.contains('dd-dialog-backdrop')).toBe(true);
+  expect(backdrop.parentElement).toBe(document.body);
+  expect(container.contains(backdrop)).toBe(false);
+  const menu = screen.getByRole('menu', { name: 'Portalled menu' });
+  expect(menu.parentElement).toBe(document.body);
+  expect(container.contains(menu)).toBe(false);
+});
+
 it('closes dialogs through their controls, Escape or backdrop while retaining interior clicks', () => {
   const close = vi.fn();
   const view = render(<Dialog title="Review" onClose={close} wide footer={<span>Footer</span>}><button>Interior</button></Dialog>);

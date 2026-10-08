@@ -17,6 +17,7 @@ import {
   X,
   type LucideProps
 } from 'lucide-react';
+import { toBody } from './portal.js';
 import { STATUS_LABELS, type DocActor, type DocStatus } from '../shared/contract.js';
 import { relativeTime } from '../shared/display.js';
 import type { FileKind } from '../shared/paths.js';
@@ -240,7 +241,7 @@ export function ContextMenu({ at, label, onClose, children }: { at: { x: number;
     items[next]!.focus();
   };
 
-  return (
+  return toBody(
     <div
       ref={ref}
       className="dd-pop dd-menu dd-context-menu"
@@ -349,7 +350,7 @@ export function Dialog({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
-  return (
+  return toBody(
     <div
       className="dd-dialog-backdrop"
       onMouseDown={(event) => {

@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { Archive, ArchiveRestore, Copy, FolderInput, FolderOpen, Hash, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Copy, Download, FolderInput, FolderOpen, Hash, Trash2 } from 'lucide-react';
 import { designDocDirective, type DesignDocSummary } from '../shared/contract.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
+import { saveBytes, siteZip } from './download.js';
 import { ConfirmDialog, Dialog, MenuItem, type ConfirmRequest } from './ui.js';
 
 function MoveDialog({
@@ -82,6 +83,15 @@ export function useDocActions(projects: ProjectInfo[]): {
     }
   };
 
+  const download = async (doc: DesignDocSummary) => {
+    try {
+      const site = await api.siteFiles(doc.id);
+      saveBytes(`${site.slug}.zip`, siteZip(site.slug, site.files), 'application/zip');
+    } catch (error) {
+      toast(`Could not download the doc: ${errorMessage(error)}`, 'error');
+    }
+  };
+
   const items = (doc: DesignDocSummary, close: () => void, onDeleted: () => void, onOpen?: () => void) => {
     const archived = doc.status === 'archived';
     const run = (action: () => void) => () => {
@@ -93,6 +103,7 @@ export function useDocActions(projects: ProjectInfo[]): {
         {onOpen ? <MenuItem icon={FolderOpen} label="Open" onSelect={run(onOpen)} /> : null}
         <MenuItem icon={Copy} label="Copy chat reference" hint="Paste into any thread" onSelect={run(() => void copy(designDocDirective(doc.id), 'reference'))} />
         <MenuItem icon={Hash} label="Copy id" hint={doc.slug} onSelect={run(() => void copy(doc.id, 'id'))} />
+        <MenuItem icon={Download} label="Download .zip" hint={`${doc.slug}.zip`} onSelect={run(() => void download(doc))} />
         <MenuItem icon={FolderInput} label="Move to project…" onSelect={run(() => setMoving(doc))} />
         <MenuItem
           icon={archived ? ArchiveRestore : Archive}

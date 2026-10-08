@@ -17,7 +17,7 @@ import type {
   TextEdit
 } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
-import type { PageRenderReport, RenderedPage } from '../shared/page.js';
+import type { PageRenderReport, RenderedPage, SiteFile } from '../shared/page.js';
 
 export interface TemplateInfo {
   id: string;
@@ -76,6 +76,8 @@ export interface DesignDocsApi {
   readPageFile(doc: string, path: string): Promise<PageFile | null>;
   /** The page served standalone, for the system browser. */
   pageLink(doc: string, path: string): Promise<{ url: string }>;
+  /** The doc as a static site: its files, the kit its pages load, and `.nojekyll`. */
+  siteFiles(doc: string): Promise<{ slug: string; files: SiteFile[] }>;
   reportRender(doc: string, report: PageRenderReport): Promise<void>;
   writeFile(doc: string, args: { path: string; content: string; encoding?: 'base64'; baseRevision?: number; note?: string }): Promise<WriteResult>;
   editFile(doc: string, args: { path: string; edits: TextEdit[]; baseRevision?: number }): Promise<WriteResult>;
@@ -117,6 +119,7 @@ export function createApi(call: Call): DesignDocsApi {
     renderPage: (doc, args) => typed('renderPage', { doc, ...args }),
     readPageFile: (doc, path) => typed('readPageFile', { doc, path }),
     pageLink: (doc, path) => typed('pageLink', { doc, path }),
+    siteFiles: (doc) => typed('siteFiles', { doc }),
     reportRender: (doc, report) => done(typed('reportRender', { doc, ...report })),
     writeFile: (doc, args) => typed('writeFile', { doc, ...args }),
     editFile: (doc, args) => typed('editFile', { doc, ...args }),
