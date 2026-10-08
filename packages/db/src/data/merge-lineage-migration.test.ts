@@ -33,7 +33,7 @@ it.each(['fresh', 'v26', 'main27', 'main28', 'candidate27'])('preserves data and
       .toEqual(['dispatch_admission_generations', 'plugin_interactions', 'thread_events_user_history_idx', 'threads_visible_project_idx'].map(name => ({ name })));
     if (lineage === 'v26' || lineage === 'candidate27') insertInteraction();
     expect(db.sqlite.prepare('SELECT version FROM runtime_schema_migrations WHERE version >= 27 ORDER BY version').all())
-      .toEqual([{ version: 27 }, { version: 28 }, { version: 29 }]);
+      .toEqual([{ version: 27 }, { version: 28 }, { version: 29 }, { version: 30 }]);
     db.close();
     db = openDatabase(file);
     expect(db.sqlite.prepare("SELECT status FROM plugin_interactions WHERE id = 'retained'").get()).toEqual({ status: 'pending' });

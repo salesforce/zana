@@ -20,6 +20,9 @@ export function openDatabase(file: string): ZccDatabase {
   chmodSync(directory, 0o700);
   const sqlite = createSqliteDatabase(file);
   chmodSync(file, 0o600);
+  // Takes effect only before the first table exists, so new databases can
+  // return freed pages; existing ones keep their mode until a manual VACUUM.
+  sqlite.pragma('auto_vacuum = INCREMENTAL');
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
   sqlite.pragma('busy_timeout = 5000');

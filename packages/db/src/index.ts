@@ -13,6 +13,11 @@ export { hydrateConversationOutputs, maintainConversationHistory, CONVERSATION_O
 export { maintainConversationEventHistory, CONVERSATION_PRUNING_POLICIES, CONVERSATION_PRUNING_BATCH_SIZE } from './data/conversation-pruning.js';
 export type { ConversationPruningPolicy } from './data/conversation-pruning.js';
 export {
+  compactArchivedConversations, reclaimFreeDatabasePages,
+  ARCHIVED_CONVERSATION_LOG_TYPES, ARCHIVED_CONVERSATION_KEPT_ITEM_KINDS
+} from './data/conversation-archive-retention.js';
+export type { ArchivedConversationCompactionResult } from './data/conversation-archive-retention.js';
+export {
   createHostId,
   createHostSessionId,
   createEnvironmentId,

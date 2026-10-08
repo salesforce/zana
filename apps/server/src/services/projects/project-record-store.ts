@@ -38,7 +38,9 @@ export class ProjectRecordStore<T extends RecordValue> implements MetadataPersis
     const projects = this.deps.projects();
     const local = this.localProjects();
     const localIds = new Set(local.map(p => p.id));
-    const foreign = projects.filter(p => !localIds.has(p.id));
+    // A legacy SSH project has no metadata owner (projectMetadataLocation always
+    // rejects it), so polling it only repeats the same failure every refresh.
+    const foreign = projects.filter(p => !localIds.has(p.id) && !p.remote);
     const foreignIds = new Set(foreign.map(p => p.id));
     for (const id of this.snapshots.keys()) if (!foreignIds.has(id)) { this.snapshots.delete(id); this.revisions.delete(id); }
     const records = this.deps.local.list(local);

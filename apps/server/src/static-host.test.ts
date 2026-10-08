@@ -349,4 +349,21 @@ describe('startStaticHost', () => {
     host = await startStaticHost({ rootDir: root, port: occupied });
     expect(Number(new URL(host.url).port)).toBe(occupied);
   });
+  it('tracks API requests until the response starts, without query strings', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-diagnostics-'));
+    mediaRoots.push(root);
+    writeFileSync(join(root, 'index.html'), '<main>App</main>');
+    const tracked: string[] = [];
+    let ended = 0;
+    host = await startStaticHost({
+      rootDir: root,
+      diagnostics: { track: (label) => { tracked.push(label); return () => { ended++; }; } }
+    });
+    const api = await fetch(`${host.url}api/v1/threads/98c8a9af-4fe0-4d13-ab55-ae8554916f1f/timeline?token=secret`, { method: 'POST' });
+    await api.text();
+    const page = await fetch(`${host.url}index.html`);
+    await page.text();
+    expect(tracked).toEqual(['POST /api/v1/threads/:id/timeline']);
+    expect(ended).toBe(1);
+  });
 });

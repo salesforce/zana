@@ -1,7 +1,7 @@
 import { protectPreviewServer } from '../../../services/mobile-relay/protected-ports.mjs';
 import { createReadStream, existsSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 import { handleProductHttp } from './http/product-api.js';
 import type { ProductHttpContext } from './http/product-context.js';
@@ -11,6 +11,7 @@ import { handleInstallHttp } from './http/install-http.js';
 import { attachPairingRelay } from './http/pairing-relay-controller.js';
 import { PLUGIN_ASSET_PATH, tryServePluginAsset } from './http/plugin-assets.js';
 import { videoByteRange } from './http/video-preview.js';
+import { diagnosticRouteLabel, type RuntimeDiagnostics } from './services/diagnostics/runtime-stalls.js';
 
 export interface BrowserProjectSummary {
   id: string;
@@ -52,6 +53,25 @@ export interface StartStaticHostOptions {
    * Origin-guarded; host-daemon tokens never reach the renderer.
    */
   product?: ProductHttpContext;
+  /** Records API/internal request latency for stall attribution in server.log. */
+  diagnostics?: Pick<RuntimeDiagnostics, 'track'>;
+}
+
+/** Time to response start: streaming endpoints flush headers early and stay open. */
+function trackResponseStart(
+  diagnostics: Pick<RuntimeDiagnostics, 'track'>,
+  request: { method?: string; url?: string },
+  response: ServerResponse
+): void {
+  const finish = diagnostics.track(diagnosticRouteLabel(request.method, request.url));
+  let ended = false;
+  const end = () => { if (!ended) { ended = true; finish(); } };
+  const writeHead = response.writeHead;
+  response.writeHead = function (this: ServerResponse, ...args: Parameters<ServerResponse['writeHead']>) {
+    end();
+    return writeHead.apply(this, args);
+  } as ServerResponse['writeHead'];
+  response.once('close', end);
 }
 
 function isContained(rootDir: string, candidate: string): boolean {
@@ -153,6 +173,9 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   const hostWss = options.product ? createHostDaemonWebSocketServer() : null;
   const server = createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://zcc.local');
+    if (options.diagnostics && (requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/internal/'))) {
+      trackResponseStart(options.diagnostics, request, response);
+    }
     if (options.product && await handleHostInternalHttp(request, response, options.product)) {
       return;
     }

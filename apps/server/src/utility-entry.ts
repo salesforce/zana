@@ -12,6 +12,7 @@ import { readProjectHistory } from './services/projects/project-history.js';
 import type { ProductHttpContext } from './http/product-context.js';
 import { installRuntimeLog } from '@zana-ai/zcc-process-utils';
 import { startStaticHost } from './static-host.js';
+import { createRuntimeDiagnostics, diagnosticRuntimeLabel } from './services/diagnostics/runtime-stalls.js';
 import { toBrowserProjectSummaries } from './browser-bootstrap.js';
 import { createProductHttpContext } from './http/product-context.js';
 import type { ProductHub } from './http/product-hub.js';
@@ -76,14 +77,18 @@ let threadDb: ZccDatabase | null = null;
 let menubarThreads: ReturnType<typeof createMenubarThreadSource> | null = null;
 let disposeMenubarThreadHints: (() => void) | null = null;
 let menubarThreadHintTimer: NodeJS.Timeout | null = null;
+// One process-wide monitor; started once the runtime log is installed so stalls land in server.log.
+const diagnostics = createRuntimeDiagnostics();
 parentPort.on('message', ({ data }) => {
-  void dispatchRuntimeMessage(data, reply => parentPort.postMessage(reply), handleRuntimeMessage);
+  const end = diagnostics.track(diagnosticRuntimeLabel(data));
+  void dispatchRuntimeMessage(data, reply => parentPort.postMessage(reply), handleRuntimeMessage).finally(end);
 });
 
 async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void> {
   if (message.type === 'start' && message.rendererRoot && !close) {
     try {
       installRuntimeLog(message.dataDir, 'server', import.meta.url);
+      diagnostics.start();
       version = message.version ?? '';
       projects = createProjectStore({
         projectsFile: join(message.dataDir, 'projects.json'),
@@ -154,7 +159,8 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
           projects: toBrowserProjectSummaries(projects?.list() ?? [])
         }),
         pluginAssetRoot: (pluginId) => pluginAssetRootFromService(plugins ?? undefined, pluginId),
-        product
+        product,
+        diagnostics
       });
       close = host.close;
       terminalExecution = createTerminalExecutionService({
@@ -188,6 +194,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         console.error('[plugins] background startup failed:', error instanceof Error ? error.message : error);
       });
     } catch (error) {
+      diagnostics.stop();
       if (hostConnectionRenewal) {
         clearInterval(hostConnectionRenewal);
         hostConnectionRenewal = null;
@@ -551,6 +558,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     if (menubarThreadHintTimer) clearTimeout(menubarThreadHintTimer);
     menubarThreadHintTimer = null;
     if (hostConnectionRenewal) clearInterval(hostConnectionRenewal);
+    diagnostics.stop();
     plugins?.stop();
     await close?.();
     runtimeDatabase?.close();

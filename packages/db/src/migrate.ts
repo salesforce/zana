@@ -461,6 +461,13 @@ export function migrate(database: SqliteDatabase): void {
     "CREATE INDEX IF NOT EXISTS thread_events_user_history_idx ON thread_events(created_at DESC, id DESC) WHERE type = 'client/turn/requested'",
     "CREATE INDEX IF NOT EXISTS threads_visible_project_idx ON threads(project_id, updated_at DESC) WHERE visibility = 'visible'"
   ]);
+  if (!applied.has(30)) applyVersion(database, 30, [
+    `CREATE TABLE IF NOT EXISTS conversation_archive_compactions (
+      thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+      compacted_through INTEGER NOT NULL,
+      compacted_at INTEGER NOT NULL
+    )`
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

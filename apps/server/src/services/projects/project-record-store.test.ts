@@ -23,6 +23,14 @@ describe('original-owner record persistence', () => {
     expect(local.list.mock.calls[0][0].map(p => p.id)).toEqual(['local', 'legacy']);
     expect(request).toHaveBeenCalledWith({ action: 'list', kind: 'followups', projectId: 'foreign' });
   });
+  it('does not poll legacy SSH projects, which have no metadata owner', async () => {
+    const { store, projects, request, log } = fixture();
+    projects.push({ ...project('ssh', 'b'), remote: { host: 'devbox' } });
+    expect(await store.load()).toEqual([record()]);
+    expect(await store.load()).toEqual([record()]);
+    expect(request.mock.calls.map(([r]) => r.projectId)).toEqual(['foreign', 'foreign']);
+    expect(log).not.toHaveBeenCalled();
+  });
   it('keeps the last snapshot on failed refresh and removes a forgotten project', async () => {
     const { store, request, projects, log } = fixture();
     await store.load(); request.mockRejectedValue(new Error('offline'));

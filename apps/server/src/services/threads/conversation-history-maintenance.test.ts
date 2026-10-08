@@ -3,12 +3,18 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startConversationHistoryMaintenance } from './conversation-history-maintenance.js';
-import { maintainConversationHistory, maintainConversationEventHistory, type ZccDatabase } from '@zana-ai/zcc-db';
-vi.mock('@zana-ai/zcc-db', () => ({ CONVERSATION_PRUNING_POLICIES: ['rate-limits', 'context-usage', 'token-usage', 'deltas', 'background'], maintainConversationHistory: vi.fn(), maintainConversationEventHistory: vi.fn() }));
+import { compactArchivedConversations, maintainConversationHistory, maintainConversationEventHistory, reclaimFreeDatabasePages, type ZccDatabase } from '@zana-ai/zcc-db';
+vi.mock('@zana-ai/zcc-db', () => ({
+  CONVERSATION_PRUNING_POLICIES: ['rate-limits', 'context-usage', 'token-usage', 'deltas', 'background'],
+  maintainConversationHistory: vi.fn(), maintainConversationEventHistory: vi.fn(),
+  compactArchivedConversations: vi.fn(), reclaimFreeDatabasePages: vi.fn()
+}));
 beforeEach(() => {
   vi.useFakeTimers();
   vi.mocked(maintainConversationHistory).mockReset().mockReturnValue({ snapshots: 0, outputs: 0, scannedSnapshots: 0 });
   vi.mocked(maintainConversationEventHistory).mockReset().mockImplementation((_db, policy) => [{ policy: policy!, threadId: null, scanned: 0, removed: 0 }]);
+  vi.mocked(compactArchivedConversations).mockReset().mockReturnValue({ threadId: null, scanned: 0, removed: 0 });
+  vi.mocked(reclaimFreeDatabasePages).mockReset().mockReturnValue(0);
 });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 it('survives a transient failure and disposes its single timer', () => {
@@ -85,7 +91,27 @@ it('drains 10,000 completed deltas in yielded batches while retaining the final 
 it('continues a full scanned snapshot batch even when every row is a protected keeper', () => {
   vi.mocked(maintainConversationHistory).mockReturnValueOnce({ outputs: 0, snapshots: 0, scannedSnapshots: 32 });
   const stop = startConversationHistoryMaintenance({} as ZccDatabase);
-  vi.advanceTimersByTime(30_006);
+  vi.advanceTimersByTime(30_008);
   expect(maintainConversationHistory).toHaveBeenCalledTimes(2);
   stop();
+});
+
+it('compacts archived threads, then reclaims free pages, each until it reports no more work', () => {
+  vi.mocked(compactArchivedConversations)
+    .mockReturnValueOnce({ threadId: 'old', scanned: 64, removed: 60 })
+    .mockReturnValueOnce({ threadId: 'old', scanned: 3, removed: 1 });
+  vi.mocked(reclaimFreeDatabasePages).mockReturnValueOnce(64).mockReturnValueOnce(64).mockReturnValueOnce(12);
+  const stop = startConversationHistoryMaintenance({} as ZccDatabase);
+  vi.advanceTimersByTime(30_020);
+  expect(compactArchivedConversations).toHaveBeenCalledTimes(3);
+  expect(reclaimFreeDatabasePages).toHaveBeenCalledTimes(4);
+  const order = [
+    ...vi.mocked(compactArchivedConversations).mock.invocationCallOrder.map(at => ({ at, job: 'archive' })),
+    ...vi.mocked(reclaimFreeDatabasePages).mock.invocationCallOrder.map(at => ({ at, job: 'vacuum' }))
+  ].sort((a, b) => a.at - b.at).map(({ job }) => job);
+  expect(order).toEqual(['archive', 'vacuum', 'archive', 'vacuum', 'archive', 'vacuum', 'vacuum']);
+  expect(vi.mocked(maintainConversationEventHistory).mock.invocationCallOrder.at(-1)!)
+    .toBeLessThan(vi.mocked(compactArchivedConversations).mock.invocationCallOrder[0]!);
+  stop();
+  expect(vi.getTimerCount()).toBe(0);
 });
