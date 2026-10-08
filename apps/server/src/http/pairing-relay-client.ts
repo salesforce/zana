@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { isLoopbackHttpHost } from '../browser-bootstrap.js';
-import { isAllowedHttp, isAllowedWs, normalizePairingPath } from './pairing-allowlist.js';
+import { isAllowedHttp, isAllowedWs, resolvePairingTarget } from './pairing-allowlist.js';
 import {
   BODY_CHUNK,
   FLAG,
@@ -164,9 +164,9 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
       return;
     }
     const method = (meta.method ?? 'GET').toUpperCase();
-    const url = meta.url ?? '/';
-    const path = normalizePairingPath(new URL(url, 'http://127.0.0.1').pathname);
-    if (!isAllowedHttp(method, path)) {
+    // Check the allowlist against the URL actually fetched, pinned to loopback.
+    const target = resolvePairingTarget(meta.url ?? '/', loopbackOrigin());
+    if (!target || !isAllowedHttp(method, target.path)) {
       send(TYPE.HTTP_RES, FLAG.META, frame.streamId, encodeJsonPayload({
         status: 403,
         headers: [['content-type', 'application/json; charset=utf-8']]
@@ -181,10 +181,13 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
     }
     const headers = headerPairsToFetch(meta.headers ?? [], loopbackHost());
     try {
-      const response = await fetchImpl(new URL(url, `${loopbackOrigin()}/`), {
+      // Never follow redirects: a 3xx would reach a destination the allowlist
+      // never saw. It is relayed back to the caller as-is.
+      const response = await fetchImpl(target.url, {
         method,
         headers,
-        body: method === 'GET' || method === 'HEAD' ? undefined : new Uint8Array(body)
+        body: method === 'GET' || method === 'HEAD' ? undefined : new Uint8Array(body),
+        redirect: 'manual'
       });
       const hasBody = Boolean(response.body) && method !== 'HEAD';
       send(
@@ -235,16 +238,15 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
       send(TYPE.WS_CLOSE, FLAG.FIN, frame.streamId, encodeJsonPayload({ code: 1002, reason: 'protocol' }));
       return;
     }
-    const url = meta.url ?? '/';
-    const path = normalizePairingPath(new URL(url, 'http://127.0.0.1').pathname);
-    if (!isAllowedWs(path)) {
+    const target = resolvePairingTarget(meta.url ?? '/', loopbackOrigin());
+    if (!target || !isAllowedWs(target.path)) {
       send(TYPE.WS_CLOSE, FLAG.FIN, frame.streamId, encodeJsonPayload({ code: 1008, reason: 'not allowed' }));
       return;
     }
     const headers = headerPairsToFetch(meta.headers ?? [], loopbackHost());
-    const wsUrl = new URL(url, `${loopbackOrigin()}/`);
+    const wsUrl = target.url;
     wsUrl.protocol = 'ws:';
-    const child = new WsImpl(wsUrl, { headers, perMessageDeflate: false });
+    const child = new WsImpl(wsUrl, { headers, perMessageDeflate: false, followRedirects: false });
     const queued: Array<{ payload: Buffer; binary: boolean }> = [];
     wsQueues.set(frame.streamId, queued);
     remoteSockets.set(frame.streamId, child);

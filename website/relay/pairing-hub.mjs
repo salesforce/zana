@@ -1,6 +1,7 @@
 import { isAllowedHttp, isAllowedWs, normalizePairingPath } from './allowlist.mjs';
 import { createPairingSession } from './pairing-session.mjs';
 import {
+  isOriginFormTarget,
   isRelaySessionId,
   mintRelaySessionId,
   parseRelaySessionPath,
@@ -112,6 +113,10 @@ export function createPairingHub(options = {}) {
     const pathname = normalizePairingPath(parsedUrl.pathname);
     const method = request.method ?? 'GET';
     const prefixed = parseRelaySessionPath(pathname);
+    // Refuse authority-bearing targets (`//host/…`) before they reach a laptop.
+    if (prefixed ? !isOriginFormTarget(prefixed.rest) : isAllowedHttp(method, pathname) && !isOriginFormTarget(request.url)) {
+      return { handled: true, status: 400, error: 'invalid_request_target' };
+    }
     if (prefixed) {
       const entry = sessions.get(prefixed.sessionId);
       if (!entry?.session.hasLaptop()) {
@@ -131,6 +136,9 @@ export function createPairingHub(options = {}) {
     const parsedUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
     const pathname = normalizePairingPath(parsedUrl.pathname);
     const prefixed = parseRelaySessionPath(pathname);
+    if (prefixed ? !isOriginFormTarget(prefixed.rest) : isAllowedWs(pathname) && !isOriginFormTarget(request.url)) {
+      return { handled: true, status: 400, reason: 'Bad Request' };
+    }
     if (prefixed) {
       if (!isAllowedWs(prefixed.rest)) return { handled: false };
       const entry = sessions.get(prefixed.sessionId);

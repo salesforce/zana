@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { PAIRING_ALLOWLIST, isAllowedHttp, isAllowedWs } from './pairing-allowlist.js';
+import { PAIRING_ALLOWLIST, isAllowedHttp, isAllowedWs, resolvePairingTarget } from './pairing-allowlist.js';
 import { FLAG, TYPE, decodeFrame, encodeFrame } from './pairing-relay-protocol.js';
 
 const jsonPath = join(
@@ -37,6 +37,49 @@ describe('pairing relay allowlist guard', () => {
     expect(isAllowedWs('/_zcc/relay')).toBe(false);
     expect(isAllowedWs('/ws')).toBe(false);
     expect(isAllowedHttp('POST', '/install.sh')).toBe(false);
+  });
+});
+
+describe('resolvePairingTarget', () => {
+  const origin = 'http://127.0.0.1:8781';
+
+  it('pins origin-form targets to the product origin and keeps the query', () => {
+    const target = resolvePairingTarget('/internal/hosts/enroll?x=1', origin);
+    expect(target?.url.toString()).toBe('http://127.0.0.1:8781/internal/hosts/enroll?x=1');
+    expect(target?.path).toBe('/internal/hosts/enroll');
+    expect(resolvePairingTarget('/internal/hosts/ws/', origin)?.path).toBe('/internal/hosts/ws');
+  });
+
+  it('rejects authority-bearing, backslash, absolute, and control-character targets', () => {
+    for (const bad of [
+      '//127.0.0.1:9999/internal/hosts/enroll',
+      '///127.0.0.1:9999/internal/hosts/enroll',
+      '/\\127.0.0.1:9999/internal/hosts/enroll',
+      '/\\/127.0.0.1/internal/hosts/enroll',
+      '/internal\\hosts/enroll',
+      'http://127.0.0.1:9999/internal/hosts/enroll',
+      'internal/hosts/enroll',
+      '/\t/127.0.0.1:9999/internal/hosts/enroll',
+      '/internal/hosts/enroll\n',
+      '',
+      undefined,
+      42
+    ]) {
+      expect(resolvePairingTarget(bad, origin), String(bad)).toBeNull();
+    }
+  });
+
+  it('resolves dot segments so the allowlist sees the destination path', () => {
+    const target = resolvePairingTarget('/internal/hosts/enroll/../../../api/terminals', origin);
+    expect(target?.url.origin).toBe(origin);
+    expect(target?.path).toBe('/api/terminals');
+    expect(isAllowedHttp('POST', target!.path)).toBe(false);
+    const encoded = resolvePairingTarget('/internal/hosts/enroll/%2e%2e/%2e%2e/%2e%2e/api/terminals', origin);
+    expect(encoded?.path).toBe('/api/terminals');
+  });
+
+  it('allows a query string that contains slashes', () => {
+    expect(resolvePairingTarget('/install.sh?next=//evil.example/x', origin)?.url.host).toBe('127.0.0.1:8781');
   });
 });
 

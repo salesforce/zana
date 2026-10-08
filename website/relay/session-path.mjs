@@ -28,6 +28,19 @@ export function parseRelaySessionPath(pathname) {
   return { sessionId: match[1], rest: normalizePairingPath(rest) };
 }
 
+/**
+ * True for an origin-form request target (`/path?query`). Authority-bearing
+ * targets (`//host/…`, `/\\host/…`) or control characters could make the
+ * laptop contact a host other than its product server, so the hub refuses them.
+ * @param {unknown} target
+ */
+export function isOriginFormTarget(target) {
+  if (typeof target !== 'string' || !target.startsWith('/')) return false;
+  const pathAndQuery = target.split(/[?#]/u, 1)[0] ?? '';
+  if (pathAndQuery.startsWith('//') || pathAndQuery.includes('\\')) return false;
+  return !/[\u0000- \u007f]/u.test(target);
+}
+
 export function isJoinHttp(method, pathname) {
   const path = normalizePairingPath(pathname);
   const verb = (method ?? 'GET').toUpperCase();

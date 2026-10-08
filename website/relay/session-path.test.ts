@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_JOIN_TTL_MS,
   isJoinHttp,
+  isOriginFormTarget,
   isRelaySessionId,
   mintRelaySessionId,
   pairingSessionServerUrl,
@@ -29,6 +30,23 @@ describe('relay session path', () => {
     expect(parseRelaySessionPath(`/t/${id}`)).toEqual({ sessionId: id, rest: '/' });
     expect(parseRelaySessionPath('/install.sh')).toBeNull();
     expect(parseRelaySessionPath('/t/not-a-session/install.sh')).toBeNull();
+  });
+
+  it('keeps an authority override in the stripped remainder so the hub can refuse it', () => {
+    const id = 'zcrs_abcdefghijklmnopqr1234';
+    const parsed = parseRelaySessionPath(`/t/${id}//127.0.0.1:9/internal/hosts/enroll`);
+    expect(parsed?.rest).toBe('//127.0.0.1:9/internal/hosts/enroll');
+    expect(isOriginFormTarget(parsed?.rest)).toBe(false);
+  });
+
+  it('accepts only origin-form request targets', () => {
+    expect(isOriginFormTarget('/install.sh')).toBe(true);
+    expect(isOriginFormTarget('/install.sh?next=//evil.example')).toBe(true);
+    expect(isOriginFormTarget('//evil.example/internal/hosts/enroll')).toBe(false);
+    expect(isOriginFormTarget('/\\evil.example/internal/hosts/enroll')).toBe(false);
+    expect(isOriginFormTarget('/\t/evil.example/internal/hosts/enroll')).toBe(false);
+    expect(isOriginFormTarget('http://evil.example/internal/hosts/enroll')).toBe(false);
+    expect(isOriginFormTarget(undefined)).toBe(false);
   });
 
   it('classifies join HTTP vs runtime paths', () => {
