@@ -220,3 +220,38 @@ it('keeps the existing document and shows a failed-refresh status', async () => 
   expect((await view.findByRole('status')).textContent).toContain('offline');
   expect(view.getByRole('heading', { name: 'Original' })).toBeTruthy();
 });
+
+describe('HTML file preview', () => {
+  it('renders HTML in a sandboxed frame by default and toggles to the source', async () => {
+    mocks.hostFileContent.mockResolvedValue({ content: '<h1>Mock</h1>', encoding: 'utf8' });
+    const view = render(<ThreadFilePreviewTab path="mockups/page.html" threadId="t1" />);
+    const frame = await view.findByTestId('thread-file-preview-html');
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(frame.getAttribute('srcdoc')).toBe('<h1>Mock</h1>');
+    expect(view.getByTestId('thread-file-preview-mode-preview').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(view.getByTestId('thread-file-preview-mode-code'));
+    expect(view.queryByTestId('thread-file-preview-html')).toBeNull();
+    expect(view.getByTestId('thread-file-preview').textContent).toContain('<h1>Mock</h1>');
+    expect(view.getByTestId('thread-file-preview-mode-code').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(view.getByTestId('thread-file-preview-mode-preview'));
+    expect(view.getByTestId('thread-file-preview-html')).toBeTruthy();
+  });
+
+  it('opens on the source when a line is targeted and forgets the choice for another file', async () => {
+    mocks.hostFileContent.mockResolvedValue({ content: '<p>a</p>\n<p>b</p>', encoding: 'utf8' });
+    const view = render(<ThreadFilePreviewTab path="a.htm" threadId="t1" lineNumber={2} />);
+    await view.findByTestId('thread-file-preview-focus-line');
+    expect(view.queryByTestId('thread-file-preview-html')).toBeNull();
+    view.rerender(<ThreadFilePreviewTab path="b.html" threadId="t1" />);
+    expect(await view.findByTestId('thread-file-preview-html')).toBeTruthy();
+  });
+
+  it('offers no HTML toggle for other file types', async () => {
+    mocks.hostFileContent.mockResolvedValue({ content: 'plain', encoding: 'utf8' });
+    const view = render(<ThreadFilePreviewTab path="notes.txt" threadId="t1" />);
+    await waitFor(() => expect(view.getByTestId('thread-file-preview').textContent).toContain('plain'));
+    expect(view.queryByTestId('thread-file-preview-mode-code')).toBeNull();
+  });
+});

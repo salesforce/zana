@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { Copy, FileText } from 'lucide-react';
+import { Code2, Copy, Eye, FileText } from 'lucide-react';
 import { product } from '../../../lib/product-client.js';
 import { DocContent } from '../../MarkdownContent.js';
 import { DocumentPdfButton } from '../../DocumentPdfButton.js';
@@ -127,13 +127,34 @@ export function FilePreviewLineList({
   );
 }
 
+export type HtmlPreviewMode = 'code' | 'preview';
+
+export function isHtmlPreviewPath(path: string): boolean {
+  return /\.html?$/i.test(path);
+}
+
+export function ThreadHtmlPreviewFrame({ path, content }: { path: string; content: string }) {
+  // Scripts run in an opaque origin: no same-origin access to the app or its IPC.
+  return (
+    <iframe
+      className="thread-file-preview-html"
+      data-testid="thread-file-preview-html"
+      title={path}
+      sandbox="allow-scripts"
+      srcDoc={content}
+    />
+  );
+}
+
 export function ThreadFilePreviewChrome({
   path,
   matches,
   selectedKey,
   onSelect,
   documentContent = null,
-  statusBadge = null
+  statusBadge = null,
+  htmlMode = null,
+  onHtmlModeChange
 }: {
   path: string;
   matches: readonly PluginFileOpenerRegistration[];
@@ -141,6 +162,8 @@ export function ThreadFilePreviewChrome({
   onSelect: (key: string) => void;
   documentContent?: string | null;
   statusBadge?: ReturnType<typeof planDocumentBadge>;
+  htmlMode?: HtmlPreviewMode | null;
+  onHtmlModeChange?: (mode: HtmlPreviewMode) => void;
 }) {
   const { name, dir } = previewPathParts(path);
   const [copied, setCopied] = useState(false);
@@ -153,6 +176,23 @@ export function ThreadFilePreviewChrome({
       </span>
       {statusBadge ? <PlanStatusBadge badge={statusBadge} /> : null}
       <div className="thread-file-preview-chrome-actions">
+        {htmlMode && onHtmlModeChange ? (
+          <div className="thread-file-preview-mode" role="group" aria-label="HTML view">
+            {(['code', 'preview'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={htmlMode === mode ? 'active' : undefined}
+                aria-pressed={htmlMode === mode}
+                data-testid={`thread-file-preview-mode-${mode}`}
+                onClick={() => onHtmlModeChange(mode)}
+              >
+                {mode === 'code' ? <Code2 size={12} aria-hidden /> : <Eye size={12} aria-hidden />}
+                {mode === 'code' ? 'Code' : 'Preview'}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {/\.(md|mdx|markdown)$/i.test(path) && (
           <DocumentPdfButton path={path} title={name} content={documentContent} />
         )}
@@ -231,6 +271,11 @@ export function ThreadFilePreviewTab({
   const OpenerComponent = opener?.component;
   const matches = matchingFileOpeners(path, openers);
   const videoSrc = videoContentType(path) ? videoPreviewUrl(path, threadId, storage, projectId) : null;
+  // A line jump means "show me the source", so it opens on Code.
+  const [htmlChoice, setHtmlChoice] = useState<{ scope: string; mode: HtmlPreviewMode } | null>(null);
+  const htmlMode: HtmlPreviewMode | null = isHtmlPreviewPath(path) && !opener && !livePlan
+    ? (htmlChoice?.scope === contentScope ? htmlChoice.mode : lineNumber != null && lineNumber > 0 ? 'code' : 'preview')
+    : null;
 
   const liveDocument = livePlan
     ? (planDocument ?? {
@@ -287,6 +332,8 @@ export function ThreadFilePreviewTab({
       selectedKey={opener ? fileOpenerKey(opener) : 'host'}
       statusBadge={liveBadge}
       documentContent={error ? null : liveDocument?.markdown ?? content}
+      htmlMode={htmlMode}
+      onHtmlModeChange={(mode) => setHtmlChoice({ scope: contentScope, mode })}
       onSelect={(next) => {
         setSelection({ scope: openerScope, key: next });
         const extension = fileExtensionOf(path);
@@ -309,6 +356,8 @@ export function ThreadFilePreviewTab({
   }
   const hostPreview = videoSrc ? (
     <ThreadVideoPreview key={`${videoSrc}:${previewRevision}`} src={videoSrc} path={path} />
+  ) : htmlMode === 'preview' && content !== null ? (
+    <ThreadHtmlPreviewFrame path={path} content={content} />
   ) : (
     <ThreadFilePreviewView
       path={path}

@@ -1,6 +1,6 @@
 import { type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ListTodo, Loader2, X } from 'lucide-react';
+import { ChevronDown, Folder, GitBranch, ListTodo, Loader2, X } from 'lucide-react';
 import type {
   ActiveThinking,
   ThreadTimelineGoal,
@@ -9,6 +9,9 @@ import type {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { ThreadTodoChecklist } from '../thread-todo-checklist.js';
+import { fallbackProviderOption } from '../pickers/fallback-models.js';
+import { humanThreadModelLabel } from '../pickers/thread-execution-labels.js';
+import { ProviderIcon } from '../pickers/ProviderIcon.js';
 import {
   showOngoingThreadWork,
   threadStatusLabel,
@@ -258,13 +261,23 @@ export function ThreadDetailActions({ target, children }: { target?: HTMLElement
   return target ? createPortal(actions, target) : actions;
 }
 
+export type ThreadDetailHeadingAgent = {
+  providerId: string | null;
+  model: string | null;
+  projectName: string | null;
+  branchName: string | null;
+  status: string;
+  waitingOnUser?: boolean;
+};
+
 export function ThreadDetailHeading({
   title,
   titleTarget,
   overflowTarget,
   overflow,
   onPointerDown,
-  draggable
+  draggable,
+  agent
 }: {
   title: string;
   titleTarget?: HTMLElement | null;
@@ -272,16 +285,66 @@ export function ThreadDetailHeading({
   overflow?: ReactNode;
   onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
   draggable?: boolean;
+  agent?: ThreadDetailHeadingAgent;
 }) {
+  const heading = <h1 title={title}>{title}</h1>;
+  // The phone shell owns a single-row title, so identity stays desktop-only.
+  const identity = agent && !titleTarget ? agent : null;
   return (
     <div
       className={`thread-detail-heading${draggable ? ' split-pane-drag-handle' : ''}`}
       onPointerDown={onPointerDown}
     >
-      {titleTarget
-        ? createPortal(<h1 title={title}>{title}</h1>, titleTarget)
-        : <h1 title={title}>{title}</h1>}
+      {titleTarget ? createPortal(heading, titleTarget) : identity ? (
+        <>
+          <ThreadDetailAvatar agent={identity} />
+          <div className="thread-detail-title-block">
+            {heading}
+            <ThreadDetailMeta agent={identity} />
+          </div>
+        </>
+      ) : heading}
       {overflowTarget ? createPortal(overflow, overflowTarget) : overflow}
+    </div>
+  );
+}
+
+function threadDetailHarnessName(providerId: string | null): string | null {
+  return providerId ? fallbackProviderOption(providerId).displayName : null;
+}
+
+function ThreadDetailAvatar({ agent }: { agent: ThreadDetailHeadingAgent }) {
+  const harness = threadDetailHarnessName(agent.providerId) ?? 'Agent';
+  const tone = threadStatusTone(agent.status, agent.waitingOnUser);
+  return (
+    <span className="thread-detail-avatar" data-testid="thread-detail-avatar" title={harness} aria-hidden="true">
+      <ProviderIcon providerId={agent.providerId ?? ''} size={16} />
+      <span className={`tab-agent-dot agent-${tone} thread-detail-avatar-dot`} data-tone={tone} />
+    </span>
+  );
+}
+
+function ThreadDetailMeta({ agent }: { agent: ThreadDetailHeadingAgent }) {
+  const identity = [
+    threadDetailHarnessName(agent.providerId),
+    agent.model ? humanThreadModelLabel(agent.model, agent.providerId ?? undefined) : null
+  ].filter(Boolean).join(' · ');
+  if (!identity && !agent.projectName && !agent.branchName) return null;
+  return (
+    <div className="thread-detail-meta" data-testid="thread-detail-meta">
+      {identity ? <span className="thread-detail-meta-identity" title={identity}>{identity}</span> : null}
+      {agent.projectName ? (
+        <span className="thread-detail-meta-chip" title={`Project: ${agent.projectName}`}>
+          <Folder size={11} aria-hidden="true" />
+          <span>{agent.projectName}</span>
+        </span>
+      ) : null}
+      {agent.branchName ? (
+        <span className="thread-detail-meta-chip" title={`Branch: ${agent.branchName}`}>
+          <GitBranch size={11} aria-hidden="true" />
+          <span>{agent.branchName}</span>
+        </span>
+      ) : null}
     </div>
   );
 }

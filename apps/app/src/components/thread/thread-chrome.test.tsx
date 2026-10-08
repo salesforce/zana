@@ -699,12 +699,54 @@ describe('expandable row and chips', () => {
     );
     expect(header).toContain('align-items: center;');
     expect(header).toContain('flex: 1 1 auto;');
-    expect(header).toContain('font-weight: 500;');
+    expect(header).toContain('font-weight: 600;');
+    expect(header).toContain('.thread-detail-avatar {');
+    expect(header).toContain('.thread-detail-meta-chip {');
     expect(header).toContain('.thread-detail-search:focus-within input,');
     expect(header).toContain('.thread-detail-overflow-btn {');
     expect(header).toContain('.thread-detail-overflow-menu {');
     expect(header).toContain('z-index: 110;');
     expect(header).not.toContain('position: absolute;');
+  });
+
+  it('shows the agent identity next to the title on desktop', () => {
+    const html = renderToStaticMarkup(
+      <ThreadDetailHeading
+        title="Check my ticket"
+        agent={{ providerId: 'claude-code', model: 'claude-opus-5[1m]', projectName: 'zcc', branchName: 'fix/header', status: 'idle' }}
+      />
+    );
+    expect(html).toContain('<h1 title="Check my ticket">Check my ticket</h1>');
+    expect(html).toContain('data-testid="thread-detail-avatar"');
+    expect(html).toContain('data-tone="idle"');
+    expect(html).toContain('Claude Code · Opus 5 (1M)');
+    expect(html).toContain('title="Project: zcc"');
+    expect(html).toContain('title="Branch: fix/header"');
+  });
+
+  it('flags a waiting agent on the avatar and omits empty identity', () => {
+    const html = renderToStaticMarkup(
+      <ThreadDetailHeading
+        title="Agent"
+        agent={{ providerId: null, model: null, projectName: null, branchName: null, status: 'active', waitingOnUser: true }}
+      />
+    );
+    expect(html).toContain('data-tone="blocked"');
+    expect(html).toContain('title="Agent"');
+    expect(html).not.toContain('data-testid="thread-detail-meta"');
+  });
+
+  it('keeps location chips when the harness is unknown', () => {
+    const chipsOnly = renderToStaticMarkup(
+      <ThreadDetailHeading
+        title="Agent"
+        agent={{ providerId: null, model: null, projectName: 'zcc', branchName: null, status: 'idle' }}
+      />
+    );
+    expect(chipsOnly).toContain('data-testid="thread-detail-meta"');
+    expect(chipsOnly).not.toContain('thread-detail-meta-identity');
+    expect(chipsOnly).not.toContain('Branch:');
+
   });
 
   it('passes waitingOnUser through the status badge', () => {

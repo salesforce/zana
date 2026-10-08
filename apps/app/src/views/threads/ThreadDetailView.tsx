@@ -860,6 +860,14 @@ export function ThreadDetail({
                 : undefined
             }
             overflow={mobileControlsTarget ? null : overflow}
+            agent={{
+              providerId: threadProviderId,
+              model: threadModel,
+              projectName: project?.name ?? null,
+              branchName,
+              status,
+              waitingOnUser: awaitingUser
+            }}
           />
           <ThreadDetailActions target={mobileControlsTarget}>
             {(!mobileControlsTarget || mobileSearchOpen) && <ThreadDetailSearch

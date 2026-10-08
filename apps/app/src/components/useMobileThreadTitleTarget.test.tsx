@@ -89,3 +89,12 @@ it('retains the action handler when it renders in the shell', () => {
   expect(target.childElementCount).toBe(0);
   target.remove();
 });
+
+it('keeps only the plain title when the phone shell hosts it', () => {
+  const target = document.createElement('div');
+  const view = render(<ThreadDetailHeading title="Phone" titleTarget={target}
+    agent={{ providerId: 'claude-code', model: null, projectName: 'zcc', branchName: null, status: 'idle' }} />);
+  expect(target.querySelector('h1')?.textContent).toBe('Phone');
+  expect(target.querySelector('[data-testid="thread-detail-meta"]')).toBeNull();
+  expect(view.container.querySelector('[data-testid="thread-detail-avatar"]')).toBeNull();
+});
