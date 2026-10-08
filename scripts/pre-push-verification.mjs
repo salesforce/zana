@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
  * Fail-closed local verification for pre-push. A verified inert-docs change is
- * the only no-test fast path until each production owner has a proven complete
- * test inventory. All other selections run the CI unit-test configuration union
- * in an isolated clone of the exact object being pushed.
+ * the only no-test fast path. Feature branches otherwise run change-aware tests
+ * in an isolated clone of the exact object being pushed. CI remains merge authority.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -21,6 +20,14 @@ const DEFAULT_GITHUB_SSH_ALIASES = ['github.com-work-public'];
 // inert. plugins/** stays out: plugin dirs are path-installed and shipped.
 const INERT_DOC = /^(?:docs\/.+\.md|README\.md|CONTRIBUTING\.md|(?:(?:apps|packages|docs)\/(?:[^/]+\/)*)?(?:AGENTS|CLAUDE)\.md)$/;
 const UNSAFE_DOC = /(?:^|\/)(?:SKILL\.md|fixtures?\/|snapshots?\/|test(?:ing)?\/|test-data\/|assets\/|generated\/|builtin-skills\/|__tests__\/)/i;
+export const ESCALATE_FULL = [
+  /^(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/,
+  /(?:^|\/)tsconfig[^/]*\.json$/,
+  /(?:^|\/)vitest[^/]*\.config\.[^/]+$/,
+  /(?:^|\/)electron\.vite\.config\.[^/]+$/,
+  /^(?:scripts|\.github|\.githooks|packages\/domain)\//,
+];
+export const FAST_CHANGED_PATH_LIMIT = 200;
 
 function git(args, { cwd = process.cwd(), encoding = 'utf8' } = {}) {
   return execFileSync('git', args, { cwd, encoding, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -82,6 +89,12 @@ function inertDocs(paths) {
   return paths.length > 0 && paths.every((path) => INERT_DOC.test(path) && !UNSAFE_DOC.test(path));
 }
 
+function fullEscalation(paths) {
+  if (paths.length > FAST_CHANGED_PATH_LIMIT) return `more than ${FAST_CHANGED_PATH_LIMIT} changed paths`;
+  const path = paths.find((candidate) => ESCALATE_FULL.some((pattern) => pattern.test(candidate)));
+  return path ? `path requires full verification: ${path}` : null;
+}
+
 /**
  * Pure selection policy. `hasObject`, `mergeBase`, and `isAncestor` are injected
  * so tests can exercise force/new-branch behavior without a network or repo.
@@ -91,6 +104,7 @@ export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBa
   if (!githubRepository(remoteUrl, aliases)) return { action: 'full', reason: 'remote is not verified GitHub salesforce/zana' };
   const paths = new Set();
   const oids = new Set();
+  const bases = new Set();
   for (const tuple of tuples) {
     if (ZERO_OID.test(tuple.localOid)) continue; // deletion contributes no tests
     if (protectedRef(tuple.remoteRef)) return { action: 'full', reason: `protected ref ${tuple.remoteRef}` };
@@ -99,20 +113,27 @@ export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBa
       if (!hasObject('origin/main')) return { action: 'full', reason: 'new branch has no local origin/main base' };
       const base = mergeBase('origin/main', tuple.localOid);
       if (!base) return { action: 'full', reason: 'new branch has no sound merge base' };
+      bases.add(base);
       for (const path of changed(base, tuple.localOid)) paths.add(path);
     } else {
       if (!hasObject(tuple.remoteOid)) return { action: 'full', reason: `remote base ${tuple.remoteOid} is unavailable locally` };
       if (!isAncestor(tuple.remoteOid, tuple.localOid)) return { action: 'full', reason: `non-ancestor update for ${tuple.remoteRef}` };
+      bases.add(tuple.remoteOid);
       for (const path of changed(tuple.remoteOid, tuple.localOid)) paths.add(path);
     }
     oids.add(tuple.localOid);
   }
   if (!oids.size) return { action: 'skip', reason: 'ref deletion only', paths: [] };
   if (oids.size !== 1) return { action: 'full', reason: 'multiple distinct pushed commits require separate snapshots', oids: [...oids] };
+  if (bases.size !== 1) return { action: 'full', reason: 'multiple remote bases require full verification', oids: [...oids] };
   const resultPaths = [...paths].sort();
-  if (inertDocs(resultPaths)) return { action: 'skip', reason: 'verified inert prose only', paths: resultPaths, oid: [...oids][0] };
-  // No production owner is proven complete yet. Conservative fallback is required.
-  return { action: 'full', reason: resultPaths.length ? 'path owner is not in complete fast-path inventory' : 'empty diff cannot establish safe selection', paths: resultPaths, oid: [...oids][0] };
+  const oid = [...oids][0];
+  const base = [...bases][0];
+  if (inertDocs(resultPaths)) return { action: 'skip', reason: 'verified inert prose only', paths: resultPaths, oid, base };
+  const escalation = fullEscalation(resultPaths);
+  if (escalation) return { action: 'full', reason: escalation, paths: resultPaths, oid, base, feature: true };
+  if (!resultPaths.length) return { action: 'full', reason: 'empty diff cannot establish safe selection', paths: resultPaths, oid, base, feature: true };
+  return { action: 'fast', reason: 'feature branch change-aware verification', paths: resultPaths, oid, base, feature: true };
 }
 
 export function configuredAliases(run, configured = process.env.ZANA_GITHUB_SSH_ALIASES) {
@@ -127,7 +148,7 @@ export function configuredAliases(run, configured = process.env.ZANA_GITHUB_SSH_
   return aliases;
 }
 
-export function runFullVerification({ oid, root = process.cwd(), run = spawnSync, log = console.log }) {
+export function withSnapshot({ oid, root = process.cwd(), run = spawnSync, log = console.log }, verify) {
   if (!oid) throw new Error('no pushed object available for snapshot verification');
   const snapshot = mkdtempSync(join(tmpdir(), 'zana-pre-push-'));
   try {
@@ -138,26 +159,66 @@ export function runFullVerification({ oid, root = process.cwd(), run = spawnSync
     if (fetch.status !== 0) throw new Error(`could not fetch pushed object ${oid}`);
     const checkout = run('git', ['checkout', '--detach', oid], { cwd: snapshot, stdio: 'inherit' });
     if (checkout.status !== 0) throw new Error(`could not check out pushed object ${oid}`);
-    const install = run('pnpm', ['install', '--frozen-lockfile'], { cwd: snapshot, stdio: 'inherit' });
-    if (install.status !== 0) throw new Error('snapshot dependency install failed');
-    const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
-    if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
-    log('pre-push: pnpm verify:full');
-    const result = run('pnpm', ['verify:full'], { cwd: snapshot, stdio: 'inherit' });
-    if (result.status !== 0) throw new Error('verification failed: pnpm verify:full');
+    return verify(snapshot);
   } finally {
     rmSync(snapshot, { recursive: true, force: true });
   }
 }
 
-export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, run = spawnSync } = {}) {
+export function runFullVerification({ oid, root = process.cwd(), run = spawnSync, log = console.log }) {
+  return withSnapshot({ oid, root, run, log }, (snapshot) => {
+    log('pre-push: full (est. install)');
+    const install = run('pnpm', ['install', '--frozen-lockfile'], { cwd: snapshot, stdio: 'inherit' });
+    if (install.status !== 0) throw new Error('snapshot dependency install failed');
+    log('pre-push: full (est. Slack runtime assets)');
+    const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
+    if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
+    log('pre-push: full (est. verify:full)');
+    const result = run('pnpm', ['verify:full'], { cwd: snapshot, stdio: 'inherit' });
+    if (result.status !== 0) throw new Error('verification failed: pnpm verify:full');
+  });
+}
+
+function guardTests(snapshot, run) {
+  const result = run('fd', ['-e', 'ts', 'guard\\.test'], { cwd: snapshot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.status !== 0) throw new Error('could not list source-text guard tests');
+  return result.stdout.trim().split('\n').filter(Boolean).sort();
+}
+
+export function runFastVerification({ oid, base, paths = [], root = process.cwd(), run = spawnSync, log = console.log }) {
+  if (!base) throw new Error('no base object available for fast verification');
+  return withSnapshot({ oid, root, run, log }, (snapshot) => {
+    log('pre-push: fast (est. install)');
+    const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
+    if (install.status !== 0) throw new Error('snapshot dependency install failed');
+    if (paths.some((path) => path.startsWith('plugins/slack-bridge-2ff2/'))) {
+      log('pre-push: fast (est. Slack runtime assets)');
+      const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
+      if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
+    }
+    log('pre-push: fast (est. typecheck)');
+    const typecheck = run('pnpm', ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' });
+    if (typecheck.status !== 0) throw new Error('verification failed: pnpm run typecheck');
+    log(`pre-push: fast (est. vitest --changed ${base.slice(0, 12)})`);
+    const changed = run('pnpm', ['exec', 'vitest', 'run', '--changed', base], { cwd: snapshot, stdio: 'inherit' });
+    if (changed.status !== 0) throw new Error('verification failed: vitest --changed');
+    const guards = guardTests(snapshot, run);
+    if (guards.length) {
+      log(`pre-push: fast (est. ${guards.length} source-text guard tests)`);
+      const guardRun = run('pnpm', ['exec', 'vitest', 'run', ...guards], { cwd: snapshot, stdio: 'inherit' });
+      if (guardRun.status !== 0) throw new Error('verification failed: source-text guard tests');
+    }
+  });
+}
+
+export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnSync, prePush = process.env.ZANA_PRE_PUSH } = {}) {
   if (!remoteUrl) {
     error('pre-push: Git did not provide remote URL; aborting push.');
     return 1;
   }
   const tuples = parseTuples(input);
   const runGit = (args) => gitOk(args, { cwd: root });
-  const selection = select({
+  let selection = select({
     tuples,
     remoteUrl,
     aliases: configuredAliases(run),
@@ -166,11 +227,19 @@ export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = 
     isAncestor: (left, right) => runGit(['merge-base', '--is-ancestor', left, right]) !== null,
     changed: (base, oid) => changedPaths(base, oid, runGit),
   });
+  if (prePush === 'fast' && selection.action === 'full' && selection.feature && selection.oid && selection.base) {
+    selection = { ...selection, action: 'fast', reason: `${selection.reason}; ZANA_PRE_PUSH=fast override` };
+  }
   log(`pre-push: ${selection.action}; ${selection.reason}`);
   if (selection.paths?.length) log(`pre-push: selected paths:\n${selection.paths.map((path) => `  ${path}`).join('\n')}`);
   if (selection.action === 'abort') return 1;
   if (selection.action === 'skip') return 0;
   try {
+    if (selection.action === 'fast') {
+      fastVerify({ oid: selection.oid, base: selection.base, paths: selection.paths, root, log, run });
+      return 0;
+    }
+    if (selection.feature) log('pre-push: full verification selected; CI runs this suite too. Set ZANA_PRE_PUSH=fast to use change-aware verification.');
     const oids = selection.oids ?? (selection.oid ? [selection.oid] : [...new Set((tuples ?? [])
       .filter((tuple) => !ZERO_OID.test(tuple.localOid)).map((tuple) => tuple.localOid))]);
     if (!oids.length) throw new Error('no pushed object available for full verification');

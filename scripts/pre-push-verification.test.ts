@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { changedPaths, configuredAliases, githubRepository, parseTuples, runFullVerification, runPrePush, selectPush } from './pre-push-verification.mjs';
+import { changedPaths, configuredAliases, ESCALATE_FULL, FAST_CHANGED_PATH_LIMIT, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush } from './pre-push-verification.mjs';
 
 const OID = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -43,24 +43,33 @@ it('preserves both sides of rename and copy records', () => {
   ]);
 });
 
-it('skips only explicit inert prose and preserves deletion paths', () => {
+it('skips only explicit inert prose and selects fast for ordinary feature source', () => {
   expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(['docs/guide.md', 'README.md']) })).toMatchObject({ action: 'skip' });
-  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(['docs/fixtures/example.md']) })).toMatchObject({ action: 'full' });
-  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(['apps/server/src/removed.ts']) })).toMatchObject({ action: 'full' });
-  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(['docs/guide.md', 'apps/server/src/removed.ts']) })).toMatchObject({ action: 'full' });
+  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(['docs/fixtures/example.md']) })).toMatchObject({ action: 'fast' });
+  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(['apps/server/src/removed.ts']) })).toMatchObject({ action: 'fast', oid: OID, base: BASE });
+  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(['docs/guide.md', 'apps/server/src/removed.ts']) })).toMatchObject({ action: 'fast' });
 });
 
 it('treats repo agent instructions as inert prose outside plugins and test inputs', () => {
   const select = (paths: string[]) => selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(paths) });
   expect(select(['AGENTS.md', 'CLAUDE.md'])).toMatchObject({ action: 'skip' });
   expect(select(['apps/host-daemon/AGENTS.md', 'apps/server/src/services/inbox/CLAUDE.md', 'packages/domain/AGENTS.md', 'docs/releases/AGENTS.md', 'docs/control-sdk.md'])).toMatchObject({ action: 'skip' });
-  expect(select(['plugins/agent-city/AGENTS.md'])).toMatchObject({ action: 'full' });
-  expect(select(['apps/server/src/plugins/builtin-skills/zcc-cli/AGENTS.md'])).toMatchObject({ action: 'full' });
-  expect(select(['apps/server/src/__tests__/AGENTS.md'])).toMatchObject({ action: 'full' });
-  expect(select(['e2e/fixtures/CLAUDE.md'])).toMatchObject({ action: 'full' });
-  expect(select(['website/AGENTS.md'])).toMatchObject({ action: 'full' });
-  expect(select(['apps/app/NOTES.md'])).toMatchObject({ action: 'full' });
-  expect(select(['AGENTS.md', 'apps/host-daemon/src/pty.ts'])).toMatchObject({ action: 'full' });
+  expect(select(['plugins/agent-city/AGENTS.md'])).toMatchObject({ action: 'fast' });
+  expect(select(['apps/server/src/plugins/builtin-skills/zcc-cli/AGENTS.md'])).toMatchObject({ action: 'fast' });
+  expect(select(['apps/server/src/__tests__/AGENTS.md'])).toMatchObject({ action: 'fast' });
+  expect(select(['e2e/fixtures/CLAUDE.md'])).toMatchObject({ action: 'fast' });
+  expect(select(['website/AGENTS.md'])).toMatchObject({ action: 'fast' });
+  expect(select(['apps/app/NOTES.md'])).toMatchObject({ action: 'fast' });
+  expect(select(['AGENTS.md', 'apps/host-daemon/src/pty.ts'])).toMatchObject({ action: 'fast' });
+});
+
+it('escalates fast tier for explicit infrastructure paths and large changes', () => {
+  expect(ESCALATE_FULL).toHaveLength(5);
+  for (const path of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tsconfig.build.json', 'vitest.workspace.config.ts', 'electron.vite.config.mts', 'scripts/build.mjs', '.github/workflows/ci.yml', '.githooks/pre-push', 'packages/domain/src/index.ts']) {
+    expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services([path]) })).toMatchObject({ action: 'full', reason: expect.stringContaining(path) });
+  }
+  const paths = Array.from({ length: FAST_CHANGED_PATH_LIMIT + 1 }, (_, index) => `apps/server/src/${index}.ts`);
+  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(paths) })).toMatchObject({ action: 'full', reason: expect.stringContaining(`${FAST_CHANGED_PATH_LIMIT}`) });
 });
 
 it('uses strictest full policy for unsafe refs, bases, remote identity, and multiple objects', () => {
@@ -68,6 +77,7 @@ it('uses strictest full policy for unsafe refs, bases, remote identity, and mult
   expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/fork/zana', ...services() })).toMatchObject({ action: 'full', reason: expect.stringContaining('remote') });
   expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(), isAncestor: () => false })).toMatchObject({ action: 'full', reason: expect.stringContaining('non-ancestor') });
   expect(selectPush({ tuples: [feature, { ...feature, localOid: 'c'.repeat(40), remoteRef: 'refs/heads/other' }], remoteUrl: 'https://github.com/salesforce/zana', ...services() })).toMatchObject({ action: 'full', reason: expect.stringContaining('multiple') });
+  expect(selectPush({ tuples: [feature, { ...feature, remoteRef: 'refs/heads/other', remoteOid: 'c'.repeat(40) }], remoteUrl: 'https://github.com/salesforce/zana', ...services() })).toMatchObject({ action: 'full', reason: expect.stringContaining('bases') });
   expect(selectPush({ tuples: [{ ...feature, remoteRef: 'refs/changes/1' }], remoteUrl: 'https://github.com/salesforce/zana', ...services() })).toMatchObject({ action: 'full', reason: expect.stringContaining('unknown') });
 });
 
@@ -98,6 +108,59 @@ it('falls back to every pushed object when a conservative selection omits oids',
   expect(runPrePush({ input, remoteUrl: 'https://github.com/salesforce/zana', select: () => ({ action: 'full', reason: 'protected ref' }), verify, run: () => ({ status: 1 }), log: vi.fn(), error: vi.fn() })).toBe(0);
   expect(verify).toHaveBeenCalledWith(expect.objectContaining({ oid: OID }));
   expect(verify).toHaveBeenCalledWith(expect.objectContaining({ oid: second }));
+});
+
+it('runs fast verification through snapshot with exact changed and guard commands', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-'));
+  const snapshots: string[] = [];
+  const run = vi.fn((command, args) => {
+    if (command === 'git' && args[0] === 'clone') snapshots.push(args.at(-1)!);
+    if (command === 'fd') return { status: 0, stdout: 'apps/app/src/__tests__/rule6.guard.test.ts\nscripts/install-seam.guard.test.ts\n' };
+    return { status: 0 };
+  });
+  try {
+    runFastVerification({ oid: OID, base: BASE, paths: ['plugins/slack-bridge-2ff2/src/index.ts'], root, run, log: vi.fn() });
+    expect(run.mock.calls.map(([command, args]) => [command, args])).toEqual([
+      ['git', ['clone', '--no-local', '--no-checkout', root, snapshots[0]]],
+      ['git', ['fetch', '--no-tags', root, OID]],
+      ['git', ['checkout', '--detach', OID]],
+      ['pnpm', ['install', '--frozen-lockfile', '--prefer-offline']],
+      ['pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package']],
+      ['pnpm', ['run', 'typecheck']],
+      ['pnpm', ['exec', 'vitest', 'run', '--changed', BASE]],
+      ['fd', ['-e', 'ts', 'guard\\.test']],
+      ['pnpm', ['exec', 'vitest', 'run', 'apps/app/src/__tests__/rule6.guard.test.ts', 'scripts/install-seam.guard.test.ts']],
+    ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it.each([
+  ['install', 4, 'snapshot dependency install failed'],
+  ['typecheck', 5, 'verification failed: pnpm run typecheck'],
+  ['changed vitest', 6, 'verification failed: vitest --changed'],
+  ['guard discovery', 7, 'could not list source-text guard tests'],
+])('fast verification fails when %s fails', (_stage, failedCall, message) => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-failure-'));
+  let calls = 0;
+  const run = vi.fn((command) => {
+    calls += 1;
+    if (calls === failedCall) return { status: 1 };
+    if (command === 'fd') return { status: 0, stdout: '' };
+    return { status: 0 };
+  });
+  try {
+    expect(() => runFastVerification({ oid: OID, base: BASE, root, run, log: vi.fn() })).toThrow(message);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('permits fast override only for feature full selection', () => {
+  const fastVerify = vi.fn();
+  const fullVerify = vi.fn();
+  const options = { input: '', remoteUrl: 'https://github.com/salesforce/zana', run: () => ({ status: 1 }), log: vi.fn(), error: vi.fn(), verify: fullVerify, fastVerify, prePush: 'fast' };
+  expect(runPrePush({ ...options, select: () => ({ action: 'full', reason: 'package.json', oid: OID, base: BASE, paths: ['package.json'], feature: true }) })).toBe(0);
+  expect(fastVerify).toHaveBeenCalledWith(expect.objectContaining({ oid: OID, base: BASE }));
+  expect(runPrePush({ ...options, select: () => ({ action: 'full', reason: 'protected', oid: OID, base: BASE }) })).toBe(0);
+  expect(fullVerify).toHaveBeenCalledWith(expect.objectContaining({ oid: OID }));
 });
 
 it('creates a private detached snapshot, runs named full union, and cleans it up', () => {

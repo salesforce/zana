@@ -39,6 +39,23 @@ Direct `playwright test` runs the same global setup. The wrapper invokes the
 installed Playwright CLI with the current Node executable, without an extra
 package-manager process or a destructive “restore ABI” finally block.
 
+## Pre-push verification
+
+Pre-push runs from a detached snapshot of pushed commit. Inert prose changes
+skip checks. Feature branches run `fast`: install, typecheck, changed-test
+selection, and every source-text guard test. Protected refs and changes to
+build/test infrastructure run `full`, same local union as before. CI remains
+merge authority and always runs full unit and affected E2E suites.
+
+`ZANA_PRE_PUSH=fast git push` permits fast tier when feature change otherwise
+escalates to full; it never overrides protected-ref policy. For SSH connection
+backstop, add this to SSH config used by `github.com-work-public`:
+
+```sshconfig
+Host github.com-work-public
+  ServerAliveInterval 30
+```
+
 ## Regression checks
 
 - `scripts/sqlite-preparation.test.ts`: concurrent real Node/Electron probes,
