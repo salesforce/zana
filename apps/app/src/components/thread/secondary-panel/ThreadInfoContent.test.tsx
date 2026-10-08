@@ -39,7 +39,7 @@ describe('ThreadInfoRows', () => {
         />
       </MemoryRouter>
     );
-    expect(html).toContain('This checkout');
+    expect(html).toContain('Worktree');
     expect(html).not.toContain('data-testid="thread-info-directory"');
     expect(html).not.toContain('data-testid="thread-info-git"');
     expect(html).not.toContain('data-testid="thread-info-pr"');

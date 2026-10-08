@@ -254,7 +254,7 @@ export function threadCardRuntimeLabel(
     ? 'Local agent · remote tools'
     : remoteHost
       ? 'Remote host'
-      : thread.isWorktree ? 'This checkout' : 'Local';
+      : thread.isWorktree ? 'Worktree' : 'Local';
   return `${harness} · ${runtime}`;
 }
 

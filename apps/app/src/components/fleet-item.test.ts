@@ -222,7 +222,7 @@ describe('fleet items', () => {
     expect(threadHarnessLabel('custom-agent')).toBe('Custom Agent');
     expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }))).toBe('Claude Code · Local');
     expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle', isWorktree: true }))).toBe(
-      'Claude Code · This checkout'
+      'Claude Code · Worktree'
     );
     expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }), true)).toBe(
       'Claude Code · Local agent · remote tools'

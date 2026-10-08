@@ -21,7 +21,7 @@ export { copyText };
 export function environmentLabel(isWorktree: boolean, environmentName?: string | null): string {
   const named = environmentName?.trim();
   if (named) return named;
-  return isWorktree ? 'This checkout' : 'Local';
+  return isWorktree ? 'Worktree' : 'Local';
 }
 
 export type ThreadSshStatus = 'checking' | 'connected' | 'unreachable';

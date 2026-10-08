@@ -38,7 +38,7 @@ import { emptySecondaryPanelState } from './threadSecondaryPanelState.js';
 describe('threadSecondaryPanelLogic', () => {
   it('labels environments', () => {
     expect(environmentLabel(false)).toBe('Local');
-    expect(environmentLabel(true)).toBe('This checkout');
+    expect(environmentLabel(true)).toBe('Worktree');
     expect(environmentLabel(false, ' Staging ')).toBe('Staging');
     expect(environmentNameFromList([{ id: 'e1', name: 'Dev' }], 'e1')).toBe('Dev');
     expect(environmentNameFromList([{ id: 'e1' }], 'missing')).toBeNull();

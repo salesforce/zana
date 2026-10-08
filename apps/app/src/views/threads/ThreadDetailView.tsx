@@ -1024,7 +1024,7 @@ export function ThreadDetail({
                 status={status}
                 inFlightRetry={inFlightRetry}
                 sendBlocked={pendingInteractions.length > 0}
-                environmentLabel={isWorktree ? 'This checkout' : 'Local'}
+                environmentLabel={isWorktree ? 'Worktree' : 'Local'}
                 contextWindowUsage={contextWindow}
                 providerId={threadProviderId ?? undefined}
                 model={threadModel}
