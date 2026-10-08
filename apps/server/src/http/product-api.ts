@@ -3481,9 +3481,8 @@ export async function handleProductHttp(
       const providerId = requestUrl.searchParams.get('providerId') ?? undefined;
       const streaming = requestUrl.searchParams.get('stream') === '1';
       const providerIds = [...new Set(requestUrl.searchParams.getAll('providerId'))];
-      if (streaming && (providerIds.length === 0 || providerIds.length > 16
-        || providerIds.some((id) => !getThreadProvider(id)))) {
-        sendJson(response, 400, { message: 'Supply between 1 and 16 registered providers' });
+      if (streaming && (providerIds.length === 0 || providerIds.length > 16 || providerIds.some((id) => !id))) {
+        sendJson(response, 400, { message: 'Supply between 1 and 16 providers' });
         return true;
       }
       const forceRefresh = requestUrl.searchParams.get('refresh') === '1';
@@ -3517,7 +3516,11 @@ export async function handleProductHttp(
         let listed: Awaited<ReturnType<ProductHttpContext['modelCatalogs']['read']>> | null = null;
         let listError: ThreadModelLoadErrorCode | null = null;
         let listErrorDetail: string | null = null;
-        if (providerId) {
+        // Plugins may unregister between the roster read and discovery. Return
+        // that provider's unavailable result without poisoning the whole batch
+        // or sending an unregistered provider to the host.
+        const provider = providerId ? getThreadProvider(providerId) : undefined;
+        if (providerId && provider && !provider.unavailableReason) {
           try {
             const hostId = ctx.hostHub.resolveHostId(discoveryHostId);
             if (forceRefresh) {
@@ -3525,7 +3528,6 @@ export async function handleProductHttp(
               invalidateHarnessModelCatalog(providerId);
               await ctx.cliAgentOps?.invalidateModelCatalog?.(providerId);
             }
-            const provider = getThreadProvider(providerId);
             listed = await ctx.modelCatalogs.read({
               hostId,
               providerId,

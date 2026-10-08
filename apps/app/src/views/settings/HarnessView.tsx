@@ -811,9 +811,9 @@ export function HarnessView({
     if (settingsAnchor === 'harness-thread') setPane('thread');
   }, [settingsAnchor]);
 
-  const runCheck = () => {
+  const runCheck = (refreshModels = true) => {
     setChecking(true);
-    Promise.resolve(refresh()).finally(() => setChecking(false));
+    Promise.resolve(refresh({ refreshModels })).finally(() => setChecking(false));
   };
 
   const refreshCliStatus = useCallback(async () => {
@@ -831,7 +831,7 @@ export function HarnessView({
   // Re-probe whenever the AI Harness tab mounts so a CLI installed since boot
   // (or a changed binary path) is reflected without a full app restart.
   useEffect(() => {
-    runCheck();
+    runCheck(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 
@@ -1127,7 +1127,7 @@ export function HarnessView({
               Update all ({actionable.length})
             </button>
           ) : null}
-          <button type="button" className="cred-btn" onClick={runCheck} disabled={checking}>
+          <button type="button" className="cred-btn" onClick={() => runCheck()} disabled={checking}>
             <RefreshCw size={14} className={checking ? 'harness-recheck-spin' : undefined} aria-hidden />
             {checking ? 'Checking…' : 'Check status'}
           </button>

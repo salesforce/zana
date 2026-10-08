@@ -109,6 +109,19 @@ describe('probeInstalledProviderHealth', () => {
     expect(result).toEqual({});
   });
 
+  it('skips broken plugins so their unavailable bridges cannot fail healthy installation probes', async () => {
+    handles.push(registerThreadProvider('broken-plugin', {
+      id: 'broken-health-fixture', displayName: 'Broken', visibility: 'installed', capabilities
+    }, null, 'host build failed'));
+    handles.push(registerThreadProvider('provider-acp', {
+      id: FIXTURE_ID, displayName: 'Healthy', visibility: 'installed', capabilities
+    }));
+    const call = vi.fn(async () => healthResult('ready'));
+    const result = await probeInstalledProviderHealth({ hub: hub(call), artifacts });
+    expect(result).toEqual({ [FIXTURE_ID]: true });
+    expect(call).toHaveBeenCalledOnce();
+  });
+
   it('falls back to an empty map when the daemon does not know provider.health', async () => {
     handles.push(registerThreadProvider('provider-acp', {
       id: FIXTURE_ID,

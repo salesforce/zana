@@ -29,7 +29,7 @@ export async function probeInstalledProviderHealth(input: {
   artifacts: Pick<PluginHostArtifactRegistry, 'get'>;
 }): Promise<Record<string, boolean>> {
   const installedIds = listThreadProviders()
-    .filter((provider) => provider.visibility === 'installed')
+    .filter((provider) => provider.visibility === 'installed' && !provider.unavailableReason)
     .map((provider) => provider.id);
   if (installedIds.length === 0) return {};
 

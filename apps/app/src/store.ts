@@ -59,7 +59,7 @@ import {
 } from './lib/safe-local-storage.js';
 import { product } from './lib/product-client.js';
 import { subscribeProductEvent } from './lib/product-ws.js';
-import { prefetchThreadModelCatalog, reloadThreadModelCatalog, modelDiscoveryConfigKey, invalidateModelCatalogs } from './components/thread/pickers/thread-model-catalog.js';
+import { prefetchThreadModelCatalog, reloadThreadModelCatalog, threadModelCatalogForHost, modelDiscoveryConfigKey, invalidateModelCatalogs } from './components/thread/pickers/thread-model-catalog.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
   getExtensionsTabRoutePath,
@@ -1610,8 +1610,8 @@ interface DataState {
    *  until `refreshHarnessStatus` runs; the launcher gates a harness profile on
    *  `enabled && installed`, showing an enabled-but-missing harness greyed-out. */
   harnessStatus: HarnessVerifyResult[];
-  /** Re-probe every harness family's `<binary> --version` and cache the result. */
-  refreshHarnessStatus: () => Promise<void>;
+  /** Re-probe installations; automatic checks reuse fresh default-host models. */
+  refreshHarnessStatus: (options?: { refreshModels?: boolean }) => Promise<void>;
   /** Last external-editor verification snapshot (Settings → Editor). Empty until
    *  `refreshEditorStatus` runs. */
   editorStatus: EditorVerifyResult[];
@@ -2153,14 +2153,16 @@ export const useData = create<DataState>((set, get) => ({
     void prefetchThreadModelCatalog().catch(() => undefined);
   },
 
-  async refreshHarnessStatus() {
+  async refreshHarnessStatus(options) {
     try {
       const status = await product.harness.verify();
       set({ harnessStatus: status });
     } catch {
       set({ harnessStatus: [] });
     }
-    await reloadThreadModelCatalog().catch(() => undefined);
+    await (options?.refreshModels === false
+      ? threadModelCatalogForHost().ensure()
+      : reloadThreadModelCatalog()).catch(() => undefined);
   },
 
   async refreshEditorStatus() {
@@ -2398,7 +2400,7 @@ export const useData = create<DataState>((set, get) => ({
       // Probe which code harnesses are actually installed so the launcher can
       // gate the profile picker on enabled && installed (fire-and-forget — an
       // empty result just leaves every enabled harness selectable, as before).
-      get().refreshHarnessStatus();
+      get().refreshHarnessStatus({ refreshModels: false });
 
       // Hydrate live terminals from main. Sessions otherwise only reach the
       // renderer via `sessionUpdated` pushes, so any pty already running before

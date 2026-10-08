@@ -84,11 +84,13 @@ describe('Harness setup layout', () => {
     let finish!: () => void;
     state.refresh.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
     render(<View />);
+    expect(state.refresh).toHaveBeenCalledWith({ refreshModels: false });
     expect(screen.getByText('Checking installation and sign-in…')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Checking…' }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => { finish(); });
     fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
     await waitFor(() => expect(state.refresh).toHaveBeenCalledTimes(2));
+    expect(state.refresh).toHaveBeenLastCalledWith({ refreshModels: true });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Check status' })).toBeTruthy());
   });
 

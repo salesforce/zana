@@ -86,11 +86,55 @@ it('preserves the JSON API for roster reads and individual provider retries', as
   expect(f.ctx.modelCatalogs.invalidate).not.toHaveBeenCalled();
 });
 
-it.each(['empty', 'unknown', 'too-many', 'project', 'offline'])('rejects invalid or unavailable discovery before streaming: %s', async (kind) => {
+it('isolates an unregistered provider while returning every registered provider normally', async () => {
+  const f = fixture();
+  f.query.append('providerId', 'removed-plugin');
+  await f.request(f.query);
+  expect(f.response.writeHead.mock.calls[0][0]).toBe(200);
+  const rows = f.chunks.map(chunk => JSON.parse(chunk));
+  expect(rows).toHaveLength(8);
+  expect(rows.find(row => row.providerId === 'removed-plugin').options).toMatchObject({
+    models: [], selectedOnlyModels: [],
+    modelLoadError: { providerId: 'removed-plugin', code: 'provider_unavailable' }
+  });
+  expect(rows.filter(row => row.options.modelLoadError === null)).toHaveLength(7);
+  expect(f.read).toHaveBeenCalledTimes(7);
+  expect(f.ctx.modelCatalogs.invalidate).toHaveBeenCalledTimes(7);
+});
+
+it('handles a plugin unregistering during the installation probe without discovering it on the host', async () => {
+  const f = fixture();
+  f.rpc.mockImplementationOnce(async () => {
+    handles[0].unregister();
+    return { providers: [] };
+  });
+  await f.request(f.query);
+  const rows = f.chunks.map(chunk => JSON.parse(chunk));
+  expect(rows.find(row => row.providerId === f.ids[0]).options.modelLoadError.code).toBe('provider_unavailable');
+  expect(rows.filter(row => row.options.modelLoadError === null)).toHaveLength(6);
+  expect(f.read).toHaveBeenCalledTimes(6);
+  expect(f.read.mock.calls.some(([input]) => input.providerId === f.ids[0])).toBe(false);
+});
+
+it('skips a registered provider whose plugin could not load without dropping its diagnostic', async () => {
+  const f = fixture();
+  handles.push(registerThreadProvider('broken-plugin', {
+    id: f.ids[0], displayName: 'Broken', visibility: 'installed',
+    capabilities: { permissionModes: ['full'], supportsServiceTier: false, fork: 'none' }
+  }, null, 'host artifact failed to build'));
+  await f.request(f.query);
+  const rows = f.chunks.map(chunk => JSON.parse(chunk));
+  expect(rows.find(row => row.providerId === f.ids[0]).options.modelLoadError).toMatchObject({
+    code: 'provider_unavailable', detail: expect.stringContaining('host artifact failed to build')
+  });
+  expect(f.read).toHaveBeenCalledTimes(6);
+});
+
+it.each(['empty', 'empty-id', 'too-many', 'project', 'offline'])('rejects invalid or unavailable discovery before streaming: %s', async (kind) => {
   const f = fixture();
   let status = 400;
   if (kind === 'empty') f.query.delete('providerId');
-  if (kind === 'unknown') f.query.append('providerId', 'missing');
+  if (kind === 'empty-id') f.query.append('providerId', '');
   if (kind === 'too-many') for (let i = 0; i < 17; i++) f.query.append('providerId', `extra-${i}`);
   if (kind === 'project') { f.query.set('projectId', 'unregistered'); status = 404; }
   if (kind === 'offline') { f.rpc.mockRejectedValue(new HostUnavailableError()); status = 503; }

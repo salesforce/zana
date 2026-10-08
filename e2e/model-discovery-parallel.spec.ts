@@ -15,7 +15,7 @@ test.use({
     for (const name of ['.zshrc', '.bashrc', '.bash_profile']) writeFileSync(join(home, name), shellInit);
     for (const name of ['cursor-agent', 'opencode', 'grok', 'mastracode']) {
       writeFileSync(join(bin, name), `#!${process.execPath}
-if (process.argv.includes('--version')) { console.log(${JSON.stringify(`${name} 2026.09.28`)}); process.exit(0); }
+if (process.argv.includes('--version') || process.argv.includes('--help')) { console.log(${JSON.stringify(`${name} 2026.09.28`)}); process.exit(0); }
 const { existsSync, appendFileSync } = await import('node:fs');
 appendFileSync(${JSON.stringify(join(home, 'parallel-started.log'))}, ${JSON.stringify(`${name}\n`)});
 const deadline = Date.now() + 60000;
@@ -37,12 +37,19 @@ await import(${JSON.stringify(new URL('../plugins/provider-codex/src/bridge/fake
   }
 });
 
-test('Codex models reach the picker while four other provider processes are still discovering', async ({ app, home }) => {
+test('Codex models reach the picker while four other provider processes are still discovering', async ({ app, home }, testInfo) => {
   const win = app.window;
   const streams: string[][] = [];
+  const discoveryEvents: string[] = [];
+  const startedAt = Date.now();
   win.on('request', request => {
     const url = new URL(request.url());
+    if (url.pathname.endsWith('/execution-options')) discoveryEvents.push(`${Date.now() - startedAt} request ${url.search}`);
     if (url.searchParams.get('stream') === '1') streams.push(url.searchParams.getAll('providerId'));
+  });
+  win.on('response', response => {
+    const url = new URL(response.url());
+    if (url.pathname.endsWith('/execution-options')) discoveryEvents.push(`${Date.now() - startedAt} response ${response.status()} ${url.search}`);
   });
   try {
     await win.reload();
@@ -59,7 +66,20 @@ test('Codex models reach the picker while four other provider processes are stil
     await win.getByTestId('model-reasoning-provider-acp-opencode').click();
     await expect(win.getByTestId('model-reasoning-picker-menu').getByText('Loading models', { exact: true })).toHaveCount(0);
     await expect(win.getByTestId('model-reasoning-picker-menu').getByRole('button').first()).toBeVisible();
+
+    // A cached roster can outlive a plugin registration during an upgrade.
+    // Exercise the real API, host discovery and Electron renderer together.
+    const discovery = await win.evaluate(async () => {
+      const response = await fetch('/api/v1/system/execution-options?stream=1&providerId=codex&providerId=removed-provider');
+      return { status: response.status, rows: (await response.text()).trim().split('\n').map(line => JSON.parse(line)) };
+    });
+    expect(discovery.status).toBe(200);
+    expect(discovery.rows.find(row => row.providerId === 'removed-provider').options.modelLoadError.code).toBe('provider_unavailable');
+    const codex = discovery.rows.find(row => row.providerId === 'codex').options;
+    expect(codex.modelLoadError).toBeNull();
+    expect(codex.models.some((model: { displayName: string }) => model.displayName === 'Fake model')).toBe(true);
   } finally {
     writeFileSync(join(home, 'parallel-release'), 'cleanup');
+    await testInfo.attach('model-discovery-events', { body: discoveryEvents.join('\n'), contentType: 'text/plain' });
   }
 });
