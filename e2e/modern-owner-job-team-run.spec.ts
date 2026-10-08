@@ -98,6 +98,13 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
       return result.value.id;
     }, projectDir);
 
+    await expect.poll(async () => window.evaluate(async () => {
+      const response = await fetch('/api/v1/threads/providers');
+      if (!response.ok) throw new Error(`Provider catalog failed: ${response.status}`);
+      const body = await response.json();
+      return body.providers.map((provider: { id: string }) => provider.id);
+    }), { timeout: 30_000, intervals: [500] }).toContain('acp-opencode');
+
     // Create a REAL ACP (Modern) conversation thread as the owner. `plan` is a
     // generic ACP session mode; `fake/default` is the fake agent's own model.
     const threadId = await window.evaluate(async ({ projectId }) => {
