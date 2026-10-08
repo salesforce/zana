@@ -482,7 +482,7 @@ function AgentMonitorTerminal({
       >
         {thread ? (
           <div className="agent-monitor-thread" data-testid="agent-monitor-thread">
-            <ThreadDetail key={thread.id} threadId={thread.id} embedded mobileTitleInShell={Boolean(onBack)} />
+            <ThreadDetail key={thread.id} threadId={thread.id} embedded showSecondaryPanel mobileTitleInShell={Boolean(onBack)} />
           </div>
         ) : agent ? (
           <AgentMonitorSession

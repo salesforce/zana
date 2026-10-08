@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach,expect,it,vi } from 'vitest';
-const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),timeline:vi.fn(),upsert:vi.fn()}));
+import { afterEach,describe,expect,it,vi } from 'vitest';
+const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),timeline:vi.fn(),upsert:vi.fn(),panelOpen:false}));
 vi.mock('../../lib/product-client.js',() => ({product:{threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
 vi.mock('../../lib/product-ws.js',() => ({subscribeProductReconnect:(fn:any) => {h.reconnect=fn;return h.off;}}));
 vi.mock('../../thread-store.js',async original => ({...await original<any>(),useThreads:Object.assign((pick:any) => pick({threads:[],upsert:h.upsert}),{getState:() => ({threads:[],upsert:h.upsert})})}));
@@ -10,7 +10,9 @@ vi.mock('../../store.js',() => ({useData:(pick:any) => pick({projects:[]})}));
 vi.mock('../../hooks/useRouteState.js',() => ({useRouteState:() => ({threadId:'a',isProjectFocused:false})}));
 vi.mock('../../hooks/useCompactLayout.js',() => ({useCompactLayout:() => false}));
 vi.mock('../../components/useMobileThreadTitleTarget.js',() => ({useMobileThreadTitleTarget:() => null,useMobileThreadActionsTarget:() => null,useMobileThreadControlsTarget:() => null}));
-vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js',() => ({useThreadSecondaryPanel:() => ({state:{tabs:[],isOpen:false,isMaximized:false,activeId:null},open:() => {}})}));
+vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js',() => ({useThreadSecondaryPanel:() => ({state:{tabs:[],isOpen:h.panelOpen,isMaximized:false,activeId:null,widthPx:320},open:() => {}})}));
+vi.mock('../../components/thread/secondary-panel/ThreadSecondaryPanel.js',() => ({ThreadSecondaryPanel:({children}:any) => <aside data-testid="secondary-panel">{children}</aside>}));
+vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js',() => ({BrowserTabDeck:() => null}));
 vi.mock('../../components/thread/secondary-panel/useInAppBrowserPanel.js',() => ({useInAppBrowserPanel:() => {}}));
 vi.mock('../../lib/use-desktop-browser-reveal.js',() => ({useDesktopBrowserReveal:() => {}}));
 vi.mock('../../components/thread/secondary-panel/useThreadOpenFileSignal.js',() => ({useThreadOpenFileSignal:() => {},dispatchThreadOpenFile:() => {}}));
@@ -28,7 +30,7 @@ vi.mock('../../components/thread/pending-interactions/ChildThreadPendingBanners.
 vi.mock('../../plugins/PluginThreadHeaderActions.js',() => ({PluginThreadHeaderActions:() => null}));
 vi.mock('../../plugins/thread-panel-owner.js',() => ({ThreadPanelOwnerProvider:({children}:any) => children}));
 import { ThreadDetail } from './ThreadDetailView.js';
-afterEach(() => {cleanup();vi.useRealTimers();vi.clearAllMocks();});
+afterEach(() => {cleanup();vi.useRealTimers();vi.clearAllMocks();h.panelOpen=false;});
 it('wires bounded continuous refresh, matching filters, reconnect and unmount cancellation through the real detail effect',async () => {
   vi.useFakeTimers();
   h.get.mockResolvedValue({thread:{id:'a',title:'Loaded thread',status:'idle',createdAt:1}});
@@ -170,4 +172,33 @@ it('reports a failed older-page request without discarding the current messages'
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Older history disconnected'));
   expect(screen.getByText('1 rows')).toBeTruthy();
   expect((screen.getByRole('button', { name: 'Load older' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+describe('secondary panel when embedded',() => {
+  const load=() => {h.get.mockResolvedValue({thread:{id:'a',title:'Panel thread',status:'idle',createdAt:1}});h.timeline.mockResolvedValue({rows:[],maxSeq:0,status:'idle',activeThinking:null});};
+  it('hides the panel and its toggle by default (plugin-hosted chats)',async () => {
+    load();h.panelOpen=true;
+    render(<MemoryRouter><ThreadDetail threadId="a" embedded/></MemoryRouter>);
+    await act(async () => {});
+    expect(screen.queryByTestId('secondary-panel')).toBeNull();
+    expect(screen.getByTestId('thread-detail').className).not.toContain('is-secondary-open');
+    h.panelOpen=false;cleanup();
+    render(<MemoryRouter><ThreadDetail threadId="a" embedded/></MemoryRouter>);
+    await act(async () => {});
+    expect(screen.queryByTestId('thread-secondary-show')).toBeNull();
+  });
+  it('renders the panel when an embedded host opts in (Agents List view)',async () => {
+    load();h.panelOpen=true;
+    render(<MemoryRouter><ThreadDetail threadId="a" embedded showSecondaryPanel/></MemoryRouter>);
+    await act(async () => {});
+    expect(screen.getByTestId('secondary-panel')).toBeTruthy();
+    expect(screen.getByTestId('thread-detail').className).toContain('is-secondary-open');
+  });
+  it('offers the show toggle when an embedded host opts in and the panel is closed',async () => {
+    load();
+    render(<MemoryRouter><ThreadDetail threadId="a" embedded showSecondaryPanel/></MemoryRouter>);
+    await act(async () => {});
+    expect(screen.getByTestId('thread-secondary-show')).toBeTruthy();
+    expect(screen.queryByTestId('secondary-panel')).toBeNull();
+  });
 });

@@ -107,6 +107,7 @@ export function ThreadDetail({
   threadId,
   timelineEnabled = true,
   embedded = false,
+  showSecondaryPanel = !embedded,
   mobileTitleInShell = false,
   modal = false,
   leadingContent,
@@ -116,6 +117,12 @@ export function ThreadDetail({
   threadId: string;
   timelineEnabled?: boolean;
   embedded?: boolean;
+  /**
+   * Render the right-hand secondary panel and its "Show right panel" toggle.
+   * Defaults to off when `embedded` (plugin-hosted chats are too narrow);
+   * hosts with room for it, like the Agents List view, opt back in.
+   */
+  showSecondaryPanel?: boolean;
   /** A focused mobile list detail shares the shell header while retaining its list. */
   mobileTitleInShell?: boolean;
   /** Hosted in the thread inspector modal; dialog close/fullscreen live on the modal header. */
@@ -560,7 +567,7 @@ export function ThreadDetail({
 
   const pin = activePinnedView(panel.state);
   const closable = activeClosableTab(panel.state);
-  const panelOpen = hostedSecondary ? false : panel.state.isOpen;
+  const panelOpen = hostedSecondary || !showSecondaryPanel ? false : panel.state.isOpen;
   const bounded = embedded || pane?.isBoundedPane === true;
   const planDocument = resolveThreadPlanDocument({
     promptMode,
@@ -575,7 +582,7 @@ export function ThreadDetail({
     pane?.isSplitPane ? 'thread-detail-view--split-pane' : '',
     pane?.isFocused === false ? 'is-pane-inactive' : '',
     panelOpen ? 'is-secondary-open' : '',
-    !hostedSecondary && panel.state.isMaximized ? 'is-secondary-maximized' : ''
+    !hostedSecondary && showSecondaryPanel && panel.state.isMaximized ? 'is-secondary-maximized' : ''
   ].filter(Boolean).join(' ');
 
   let panelBody = null;
@@ -889,7 +896,7 @@ export function ThreadDetail({
                 <X size={14} />
               </button>
             ) : null}
-            {!panel.state.isOpen && !embedded ? (
+            {!panel.state.isOpen && showSecondaryPanel ? (
               <button
                 type="button"
                 className="icon-btn"
@@ -1026,7 +1033,7 @@ export function ThreadDetail({
           </div>
         </div>
       </div>
-      {hostedSecondary || embedded ? null : secondaryPanelNode}
+      {hostedSecondary || !showSecondaryPanel ? null : secondaryPanelNode}
       </div>
     </section>
     </ThreadPanelOwnerProvider>
