@@ -6,15 +6,15 @@ import { buildPlugin } from '../../../packages/plugin-build/src/build-plugin.ts'
 import { getPluginBuildToolchain } from '../../../packages/plugin-build/src/toolchain.ts';
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const repoRoot = join(pluginRoot, '../..');
 
 /**
  * Bundles the scripts rendered pages load, outside the app bundle: the page
  * runtime and the site kit. Each is a self-contained IIFE with no imports.
  */
-export async function buildPageAssets(root = pluginRoot, outDir = root) {
+export async function buildPageAssets(root, outDir) {
   const esbuild = await import((await getPluginBuildToolchain()).esbuild);
-  const shared = { bundle: true, format: 'iife', platform: 'browser', legalComments: 'none', logLevel: 'warning' };
+  // Source-path comments in the output are relative to the plugin, whatever the cwd.
+  const shared = { absWorkingDir: root, bundle: true, format: 'iife', platform: 'browser', legalComments: 'none', logLevel: 'warning' };
   // The page runtime runs inside rendered pages, not in the app.
   await esbuild.build({
     ...shared,
@@ -33,8 +33,11 @@ export async function buildPageAssets(root = pluginRoot, outDir = root) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
-  const version = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).version ?? '0.0.0';
-  await buildPlugin(pluginRoot, String(version));
-  await buildPageAssets();
+/** The plugin's full build: app and server bundles, then the page assets. */
+export async function buildApp(root, outDir) {
+  const { version } = JSON.parse(readFileSync(join(root, '../../package.json'), 'utf8'));
+  await buildPlugin(root, String(version));
+  await buildPageAssets(root, outDir);
 }
+
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) await buildApp(pluginRoot, pluginRoot);
