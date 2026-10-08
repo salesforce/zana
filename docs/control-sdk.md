@@ -8,7 +8,7 @@ It is **not** a Playwright replacement, **not** part of plugin-sdk, and **not**
 a new `zcc control` namespace. Plugin origin stays `plugin`. This client always
 stamps `origin: 'sdk'`.
 
-Operator surface: [`docs/cli.md`](./cli.md). Coupling note: `CLAUDE.md`
+Operator surface: [`docs/cli.md`](./cli.md). Coupling note: `AGENTS.md`
 (“Verify threads / CLI Agents still launch” → `pnpm live:mode-reasoning`
 then `pnpm live:memory`).
 
@@ -271,12 +271,27 @@ OpenCode launches with native role `build` and no catalog `--model`.
 
 ### Mode and reasoning (`pnpm live:mode-reasoning`)
 
+Launches Claude Code, Cursor, Codex, and OpenCode on both surfaces (Modern
+threads and CLI Agents) under each distinct mode and reasoning value.
 Additive (each mode once, each reasoning once), not cartesian. Asserts the spawn
-stays alive then `stop()` — no PONG or wait-until-idle. Missing harnesses
-`console.warn` and skip. Keep this suite off `pnpm live:matrix`.
+stays alive then `stop()` — no PONG, file write, or wait-until-idle. Missing
+harnesses `console.warn` and skip — an empty verify that finishes in
+milliseconds is a false green. Unattended DENIED for `accept-edits` / some
+`interactive` mappings is expected, not a crash. Keep this suite off
+`pnpm live:matrix`.
 
-Required after spawn / mode / reasoning changes on threads or CLI Agents
-(see `CLAUDE.md`). Follow with `pnpm live:memory` on the same attach.
+Prerequisites: attached app on `:8780` (or `:8781`), Electron + matching
+product-server credential, enrolled host-daemon, host shell
+(`unset ZCC_SESSION_ID`).
+
+Required after spawn / mode / reasoning / stop / plugin catalog injection
+changes on threads or CLI Agents (see `AGENTS.md`): thread
+create/send/wait/execution options (`acpMode`, `reasoningLevel`,
+`permissionMode`), CLI Agent HTTP (`/api/v1/cli-agents`, `term.create`,
+`harnessRouting` / `executionState` / `modelLevel` / native roles), host-daemon
+harness providers, `PtyManager.create()`, Control SDK launch/wait, plugin
+session instructions, and `zcc thread` / `zcc agent` commands. Follow with
+`pnpm live:memory` on the same attach.
 
 ### Desktop browser (`pnpm live:browser`)
 
@@ -294,20 +309,23 @@ A connected host that answers `desktop_browser_unavailable` is a **failure**
 `pnpm live:matrix`. Native chrome (find-in-page, Take over)
 stays `e2e/desktop-browser-broker.spec.ts`.
 
-Required after desktop-browser product HTTP, broker lease/CDP, or
-`zcc browser` changes (see `CLAUDE.md`).
+Required after desktop-browser product HTTP, broker lease/CDP, capture,
+cookie import-source redaction, or `zcc browser` / `experimental_desktopBrowsers`
+changes (see `AGENTS.md`).
 
 ### Memory plugin (`pnpm live:memory`)
 
-Against an attached app with the Memory plugin installed and `running`:
-product-HTTP CLI (add / catalog / search / get / isolate / forget), then a
+Against an attached app with the Memory plugin installed and `running`
+(`Zcc.launch({ isolated: true })` is not enough — the plugin must already be
+installed): product-HTTP CLI via `POST /api/v1/plugins/memory/cli` (add /
+catalog / search / get / isolate / forget), then a
 tagged hidden Claude Code thread that must quote a seeded catalog summary
 from `contributeInstructions` (no tools). Missing plugin or harness
 `console.warn` and skip — an empty verify that finishes in milliseconds is a
 false green. Keep this off `pnpm live:matrix`.
 
 Required after Memory plugin CLI, catalog injection, or `zcc memory` changes,
-and after thread / CLI Agent spawn changes (see `CLAUDE.md`).
+and after thread / CLI Agent spawn changes (see `AGENTS.md`).
 
 ## CLI mapping
 

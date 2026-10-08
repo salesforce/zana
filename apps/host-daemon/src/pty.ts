@@ -1059,7 +1059,7 @@ export class PtyManager extends EventEmitter {
     // A resolved native role pins its own model — suppress any host-injected
     // `--model` (per-tab / persona / project / global routing) so the forced
     // catalog model can't override the agent's pin (ProviderModelNotFoundError /
-    // exit 64). See CLAUDE.md OpenCode coupling note + provider.nativeRolePinsModel.
+    // exit 64). See apps/host-daemon/AGENTS.md (OpenCode role/model) + provider.nativeRolePinsModel.
     const suppressModelForRole = Boolean(roleTarget.targetId && provider.nativeRolePinsModel);
     const metadata = provider.launchMetadata({
       model: modelTarget,

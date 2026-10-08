@@ -1,6 +1,6 @@
 /**
  * Feed noise classifier — the OPTIONAL LLM demotion behind the `routine` feed
- * category (default OFF; see `feedCategories.ts` header + CLAUDE.md coupling).
+ * category (default OFF; see `packages/domain/src/feed-categories.ts` header + apps/server/src/services/feed/AGENTS.md).
  *
  * The renderer asks main (only when the feature is enabled and the Inbox is
  * open) which of the current inbox reports are ROUTINE "task done" chatter that

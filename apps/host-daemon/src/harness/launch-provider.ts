@@ -290,7 +290,7 @@ export interface LaunchProvider {
    * a role target resolves — forcing a catalog model alongside `--agent <role>`
    * overrides the agent's pin and dies with a provider-model-not-found error on
    * any install whose model inventory differs from the shipped snapshot. Default
-   * false; only OpenCode overrides. See CLAUDE.md OpenCode coupling note.
+   * false; only OpenCode overrides. See apps/host-daemon/AGENTS.md (OpenCode role/model).
    */
   readonly nativeRolePinsModel?: boolean;
 

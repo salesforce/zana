@@ -22,7 +22,7 @@
  * shape, a new concept), you MUST:
  *   1. Add a {@link FeedCategory} entry below with a deliberate `grouped` value.
  *   2. Teach {@link classifyEntry} how to recognise it.
- *   3. Note the coupling in CLAUDE.md ("Feed category registry" coupling note).
+ *   3. Note the coupling in packages/domain/AGENTS.md (Feed categories).
  * If you skip this, the entry falls through to the `report` default, which is
  * `grouped: false` ON PURPOSE — a brand-new concept surfaces LOUDLY rather than
  * getting silently swallowed as noise. Getting it wrong is visible, not silent.

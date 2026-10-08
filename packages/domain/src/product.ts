@@ -4669,7 +4669,7 @@ export interface FollowUpResume {
  * How a follow-up came to exist. Host-stamped from trusted context (the idle
  * verdict, the authenticated MCP session, or the UI) — never from agent
  * free-text — so provenance can't be spoofed. Mirrors the `PersonaSource`
- * host-stamping idiom (CLAUDE.md coupling notes).
+ * host-stamping idiom (apps/desktop/src/extensions/AGENTS.md).
  *
  * The `agent` / `idle-triage` variants additionally carry {@link FollowUpResume}
  * coordinates, host-resolved from the live pty at create time. They power the
