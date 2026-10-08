@@ -5,11 +5,13 @@ import {
 } from '@zana-ai/zcc-db';
 import {
   environmentActionSchema,
+  type EnvironmentAction,
   resolveEnvironmentMergeBaseBranch,
   workspaceDiffTargetSchema
 } from '@zana-ai/zcc-domain';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
+import { cachedWorkspaceStatus, workspaceStatusCacheFor } from './workspace-status-cache.js';
 
 function requireEnvironment(ctx: ProductHttpContext, id: string): EnvironmentRow {
   const environment = getEnvironment(ctx.db, id);
@@ -31,10 +33,7 @@ function workspaceContext(environment: EnvironmentRow) {
 
 export async function environmentStatus(ctx: ProductHttpContext, id: string) {
   const environment = requireEnvironment(ctx, id);
-  return ctx.hostHub.callHostOnlineRpc({
-    hostId: environment.hostId,
-    command: { type: 'workspace.status', ...workspaceContext(environment) }
-  });
+  return cachedWorkspaceStatus(ctx, { hostId: environment.hostId, ...workspaceContext(environment) });
 }
 
 const DIFF_FILES_MAX_FILES = 400;
@@ -210,9 +209,23 @@ export async function runEnvironmentAction(ctx: ProductHttpContext, id: string, 
     throw new ThreadCreateError(400, 'invalid_action', 'environment action is invalid');
   }
   const ctxArgs = workspaceContext(environment);
-  switch (parsed.data.action) {
+  try {
+    return await runParsedEnvironmentAction(ctx, environment, parsed.data, ctxArgs);
+  } finally {
+    // Commits, merges and PR actions change what status reports.
+    workspaceStatusCacheFor(ctx).invalidate(environment.hostId, ctxArgs.workspacePath);
+  }
+}
+
+async function runParsedEnvironmentAction(
+  ctx: ProductHttpContext,
+  environment: EnvironmentRow,
+  action: EnvironmentAction,
+  ctxArgs: ReturnType<typeof workspaceContext>
+) {
+  switch (action.action) {
     case 'commit': {
-      const message = parsed.data.message ?? `ZCC commit on ${environment.branchName ?? 'workspace'}`;
+      const message = action.message ?? `ZCC commit on ${environment.branchName ?? 'workspace'}`;
       const result = await ctx.hostHub.callHostOnlineRpc({
         hostId: environment.hostId,
         command: { type: 'workspace.commit', ...ctxArgs, message }
@@ -225,8 +238,8 @@ export async function runEnvironmentAction(ctx: ProductHttpContext, id: string, 
         command: {
           type: 'workspace.squash_merge',
           ...ctxArgs,
-          targetBranch: parsed.data.targetBranch,
-          message: parsed.data.message ?? `Squash merge ${environment.branchName ?? 'branch'}`
+          targetBranch: action.targetBranch,
+          message: action.message ?? `Squash merge ${environment.branchName ?? 'branch'}`
         }
       });
       return { ok: true as const, action: 'squash_merge' as const, ...(result as object) };
@@ -246,19 +259,19 @@ export async function runEnvironmentAction(ctx: ProductHttpContext, id: string, 
     case 'pull_request_merge':
       await ctx.hostHub.callHostOnlineRpc({
         hostId: environment.hostId,
-        command: { type: 'workspace.pull_request_merge', ...ctxArgs, method: parsed.data.method }
+        command: { type: 'workspace.pull_request_merge', ...ctxArgs, method: action.method }
       });
-      return { ok: true as const, action: 'pull_request_merge' as const, method: parsed.data.method, message: 'pull request merged' };
+      return { ok: true as const, action: 'pull_request_merge' as const, method: action.method, message: 'pull request merged' };
     case 'pull_request_create': {
       const result = await ctx.hostHub.callHostOnlineRpc({
         hostId: environment.hostId,
         command: {
           type: 'workspace.pull_request_create',
           ...ctxArgs,
-          title: parsed.data.title,
-          body: parsed.data.body,
-          base: parsed.data.base,
-          draft: parsed.data.draft
+          title: action.title,
+          body: action.body,
+          base: action.base,
+          draft: action.draft
         }
       });
       return { ok: true as const, action: 'pull_request_create' as const, ...(result as object) };

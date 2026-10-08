@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { setPriority } from 'node:os';
 import { lstat, mkdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import type {
@@ -18,6 +19,8 @@ export const GIT_TIMEOUT_MS = 20_000;
 export const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 export const DEFAULT_MAX_DIFF_BYTES = 256 * 1024;
 export const DEFAULT_MAX_FILES = 400;
+/** `nice` value for background git scans (0 = normal, 19 = lowest). */
+export const GIT_LOW_PRIORITY = 10;
 
 /**
  * Truncates `value` to at most `maxBytes` UTF-8 bytes on a codepoint boundary.
@@ -47,7 +50,8 @@ function runGitProcess(
   timeoutMs: number,
   maxBuffer: number,
   overflow: 'throw' | 'truncate',
-  extraEnv?: NodeJS.ProcessEnv
+  extraEnv?: NodeJS.ProcessEnv,
+  lowPriority = false
 ): Promise<GitCommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {
@@ -55,6 +59,11 @@ function runGitProcess(
       env: { ...gitChildEnv(), ...extraEnv },
       stdio: ['ignore', 'pipe', 'pipe']
     });
+    if (lowPriority && child.pid !== undefined) {
+      // Background scans yield the CPU to interactive work. Best effort: the
+      // child may already have exited, or the platform may refuse.
+      try { setPriority(child.pid, GIT_LOW_PRIORITY); } catch { /* ignore */ }
+    }
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let size = 0;
@@ -123,6 +132,8 @@ export async function runGit(
     allowFail?: boolean;
     overflow?: 'throw' | 'truncate';
     extraEnv?: NodeJS.ProcessEnv;
+    /** Lower the child's CPU priority (background scans). */
+    lowPriority?: boolean;
   } = {}
 ): Promise<GitCommandResult> {
   if (!isAbsolute(cwd)) {
@@ -134,7 +145,8 @@ export async function runGit(
     options.timeoutMs ?? GIT_TIMEOUT_MS,
     options.maxBuffer ?? GIT_MAX_BUFFER,
     options.overflow ?? 'throw',
-    options.extraEnv
+    options.extraEnv,
+    options.lowPriority
   );
   if (result.code !== 0 && !options.allowFail && !result.truncated) {
     throw new WorkspaceError('git_failed', result.stderr.trim() || `git ${args.join(' ')} failed`);
@@ -379,32 +391,64 @@ function porcelainKind(code: string): WorkspaceFileStatus['kind'] {
   return 'modified';
 }
 
-export async function readWorkspaceStatus(cwd: string, maxFiles = DEFAULT_MAX_FILES): Promise<WorkspaceStatus> {
-  const discovered = await discoverWorkspace(cwd);
-  if (!discovered.isGitRepo) {
-    return {
-      path: cwd,
-      isGitRepo: false,
-      isWorktree: false,
-      branchName: null,
-      defaultBranch: null,
-      defaultBranchRelation: null,
-      originDefaultBranch: null,
-      checkout: { kind: 'unknown', reason: 'not a git repo' },
-      operation: { kind: 'none' },
-      ahead: null,
-      behind: null,
-      dirty: false,
-      files: [],
-      filesTruncated: false
-    };
-  }
-  const status = await runGit(cwd, ['status', '--porcelain=v1', '-z', '-b', '-uall', '--', '.'], {
-    overflow: 'truncate'
-  });
+export interface PorcelainEntry {
+  code: string;
+  path: string;
+}
+
+export interface PorcelainStatus {
+  ahead: number | null;
+  behind: number | null;
+  entries: PorcelainEntry[];
+  truncated: boolean;
+}
+
+/** Status fields that come from refs, not from scanning the work tree. */
+export type WorkspaceStatusHead = Omit<WorkspaceStatus, 'ahead' | 'behind' | 'dirty' | 'files' | 'filesTruncated' | 'untracked'>;
+
+const NOT_A_GIT_REPO_STATUS: Omit<WorkspaceStatus, 'path'> = {
+  isGitRepo: false,
+  isWorktree: false,
+  branchName: null,
+  defaultBranch: null,
+  defaultBranchRelation: null,
+  originDefaultBranch: null,
+  checkout: { kind: 'unknown', reason: 'not a git repo' },
+  operation: { kind: 'none' },
+  ahead: null,
+  behind: null,
+  dirty: false,
+  files: [],
+  filesTruncated: false
+};
+
+export function notAGitRepoStatus(cwd: string): WorkspaceStatus {
+  return { path: cwd, ...NOT_A_GIT_REPO_STATUS };
+}
+
+/**
+ * Runs `git status` for the work tree under `cwd`. `untracked: 'no'` skips
+ * the untracked-file walk, which is the only part of status that scales with
+ * the size of the tree rather than with the number of changes.
+ */
+export async function runWorkspacePorcelainStatus(
+  cwd: string,
+  untracked: 'all' | 'no',
+  options: { timeoutMs?: number; lowPriority?: boolean } = {}
+): Promise<PorcelainStatus> {
+  const status = await runGit(
+    cwd,
+    // Read-only: never take the index lock, so a killed scan cannot leave
+    // `.git/index.lock` behind and never blocks the user's own git commands.
+    ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-b', `-u${untracked}`, '--', '.'],
+    { overflow: 'truncate', timeoutMs: options.timeoutMs, lowPriority: options.lowPriority }
+  );
   const prefixResult = await runGit(cwd, ['rev-parse', '--show-prefix'], { maxBuffer: 4096 });
-  const prefix = prefixResult.stdout.replace(/\r?\n$/, '');
-  const lines = status.stdout.split('\0').filter(Boolean);
+  return parsePorcelainStatus(status.stdout, prefixResult.stdout.replace(/\r?\n$/, ''), Boolean(status.truncated));
+}
+
+export function parsePorcelainStatus(stdout: string, prefix: string, truncated = false): PorcelainStatus {
+  const lines = stdout.split('\0').filter(Boolean);
   const header = lines.find((line) => line.startsWith('## ')) ?? '';
   let ahead: number | null = 0;
   let behind: number | null = 0;
@@ -414,18 +458,28 @@ export async function readWorkspaceStatus(cwd: string, maxFiles = DEFAULT_MAX_FI
   if (behindMatch) behind = Number(behindMatch[1]);
   // -z preserves spaces, quotes and newlines; rename/copy records carry a
   // second NUL-delimited source path that must not become another file.
-  const fileLines: Array<{ code: string; path: string }> = [];
+  const entries: PorcelainEntry[] = [];
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!;
     if (line.startsWith('## ')) continue;
     const code = line.slice(0, 2), repositoryPath = line.slice(3);
     if (code.includes('R') || code.includes('C')) index++;
     if (!repositoryPath.startsWith(prefix)) continue;
-    fileLines.push({ code, path: repositoryPath.slice(prefix.length) });
+    entries.push({ code, path: repositoryPath.slice(prefix.length) });
   }
-  const files: WorkspaceFileStatus[] = fileLines.slice(0, maxFiles).map(({ code, path }) => ({
+  return { ahead, behind, entries, truncated };
+}
+
+export function toWorkspaceFileStatuses(entries: PorcelainEntry[], maxFiles: number): WorkspaceFileStatus[] {
+  return entries.slice(0, maxFiles).map(({ code, path }) => ({
     path, kind: porcelainKind(code), staged: code[0] !== ' ' && code[0] !== '?', additions: null, deletions: null
   }));
+}
+
+export async function readWorkspaceStatusHead(
+  cwd: string,
+  discovered: Awaited<ReturnType<typeof discoverWorkspace>>
+): Promise<WorkspaceStatusHead> {
   const originDefault = await readOriginDefaultBranch(cwd);
   return {
     path: cwd,
@@ -436,12 +490,22 @@ export async function readWorkspaceStatus(cwd: string, maxFiles = DEFAULT_MAX_FI
     defaultBranchRelation: await defaultBranchRelation(cwd, discovered.branchName, originDefault),
     originDefaultBranch: originDefault,
     checkout: await getCheckoutRef(cwd),
-    operation: await getWorkspaceGitOperation(cwd),
-    ahead,
-    behind,
-    dirty: fileLines.length > 0,
-    files,
-    filesTruncated: fileLines.length > maxFiles || Boolean(status.truncated)
+    operation: await getWorkspaceGitOperation(cwd)
+  };
+}
+
+/** One-shot status including a full untracked scan (no caching). */
+export async function readWorkspaceStatus(cwd: string, maxFiles = DEFAULT_MAX_FILES): Promise<WorkspaceStatus> {
+  const discovered = await discoverWorkspace(cwd);
+  if (!discovered.isGitRepo) return notAGitRepoStatus(cwd);
+  const status = await runWorkspacePorcelainStatus(cwd, 'all');
+  return {
+    ...await readWorkspaceStatusHead(cwd, discovered),
+    ahead: status.ahead,
+    behind: status.behind,
+    dirty: status.entries.length > 0,
+    files: toWorkspaceFileStatuses(status.entries, maxFiles),
+    filesTruncated: status.entries.length > maxFiles || status.truncated
   };
 }
 

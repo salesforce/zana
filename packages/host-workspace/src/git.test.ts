@@ -3,7 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceError } from './error.js';
-import { readWorkspaceDiff, readWorkspaceStatus, runGit, truncateToMaxBytes } from './git.js';
+import {
+  notAGitRepoStatus,
+  parsePorcelainStatus,
+  readWorkspaceDiff,
+  readWorkspaceStatus,
+  runGit,
+  runWorkspacePorcelainStatus,
+  truncateToMaxBytes
+} from './git.js';
 import {
   parseNameStatusSourceEntries,
   parseNumstatEntriesZ,
@@ -188,4 +196,36 @@ it('scopes status to nested folders and preserves renamed and quoted filenames',
   const status = await readWorkspaceStatus(sub);
   expect(status.files.map(row => [row.path, row.kind])).toEqual(expect.arrayContaining([['new name.txt', 'renamed'], ['quoted "name" -> file.txt', 'untracked']]));
   expect(status.files).toHaveLength(2);
+});
+
+describe('porcelain status helpers', () => {
+  it('parses branch counts, renames and the subdirectory prefix', () => {
+    const stdout = [
+      '## main...origin/main [ahead 2, behind 3]',
+      'R  sub/new.txt', 'sub/old.txt',
+      '?? sub/untracked.txt',
+      ' M outside.txt'
+    ].join('\0') + '\0';
+    expect(parsePorcelainStatus(stdout, 'sub/', true)).toEqual({
+      ahead: 2,
+      behind: 3,
+      entries: [{ code: 'R ', path: 'new.txt' }, { code: '??', path: 'untracked.txt' }],
+      truncated: true
+    });
+    expect(parsePorcelainStatus('', '')).toEqual({ ahead: 0, behind: 0, entries: [], truncated: false });
+  });
+
+  it('builds a not-a-repo status for the path', () => {
+    expect(notAGitRepoStatus('/tmp/plain')).toMatchObject({ path: '/tmp/plain', isGitRepo: false, dirty: false, files: [] });
+  });
+
+  it('skips untracked files with -uno and runs low-priority scans', async () => {
+    const repo = await initRepo();
+    await writeFile(join(repo, 'README.md'), 'edit\n');
+    await writeFile(join(repo, 'scratch.txt'), 'new\n');
+    const trackedOnly = await runWorkspacePorcelainStatus(repo, 'no');
+    expect(trackedOnly.entries).toEqual([{ code: ' M', path: 'README.md' }]);
+    const full = await runWorkspacePorcelainStatus(repo, 'all', { lowPriority: true, timeoutMs: 30_000 });
+    expect(full.entries).toEqual(expect.arrayContaining([{ code: '??', path: 'scratch.txt' }]));
+  });
 });

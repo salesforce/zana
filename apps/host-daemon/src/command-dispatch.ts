@@ -53,7 +53,6 @@ import { verifyHarnesses } from './harness/harness-verify.js';
 import { registrationFor, invalidateHarnessModelCatalog } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
 import { readConfinedFileRange } from './read-file-range.js';
-import { watchWorkspacePath } from './workspace-fs-watch.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
 import { completeCodexInference } from './codex-inference-complete.js';
 import { getProviderCliStatus, runProviderCliInstall } from './provider-cli-health.js';
@@ -1049,7 +1048,6 @@ export async function dispatchHostCommand(
       }
     case 'workspace.status':
       try {
-        watchWorkspacePath(command.workspacePath);
         return await workspaceStatus(command.workspacePath);
       } catch (error) {
         mapWorkspaceError(error);

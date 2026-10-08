@@ -16,11 +16,11 @@ import {
   listLocalBranches,
   pathExists,
   readWorkspaceDiff,
-  readWorkspaceStatus,
   squashMergeInto,
   switchBranch
 } from './git.js';
 import { readWorkspaceDiffFiles, readWorkspaceDiffPatch } from './git-diff.js';
+import { createWorkspaceStatusService } from './workspace-status.js';
 import { withCheckoutMutationLock } from './checkout-mutation-lock.js';
 import {
   createWorktree,
@@ -32,6 +32,10 @@ import { resolveAdditionalWorkspaceWriteRoots } from './workspace-write-roots.js
 import { PROJECT_CHECKOUTS_DIR_NAME } from '@zana-ai/zcc-domain';
 import { killProcessesWithCwdUnder } from '@zana-ai/zcc-agent-process-utils';
 import { join } from 'node:path';
+
+// One per host process: coalescing and the scan budget only work if every
+// caller shares the same instance.
+const workspaceStatusService = createWorkspaceStatusService();
 
 export type UnmanagedCheckout =
   | { kind: 'existing'; name: string }
@@ -119,13 +123,15 @@ export async function destroyWorkspace(args: {
   if (args.workspaceProvisionType === 'personal') {
     const { rm } = await import('node:fs/promises');
     await rm(args.path, { recursive: true, force: true });
+    workspaceStatusService.forget(args.path);
     return;
   }
   await removeWorktree({ path: args.path, sourcePath: args.sourcePath, force: true });
+  workspaceStatusService.forget(args.path);
 }
 
 export async function workspaceStatus(path: string): Promise<WorkspaceStatus> {
-  return readWorkspaceStatus(path);
+  return workspaceStatusService.status(path);
 }
 
 export async function workspaceDiff(path: string, target: WorkspaceDiffTarget) {
@@ -150,11 +156,19 @@ export async function workspaceDiffPatch(
 }
 
 export async function workspaceCommit(path: string, message: string, noVerify = false) {
-  return withCheckoutMutationLock(path, () => commitAll(path, message, noVerify));
+  try {
+    return await withCheckoutMutationLock(path, () => commitAll(path, message, noVerify));
+  } finally {
+    workspaceStatusService.invalidate(path);
+  }
 }
 
 export async function workspaceSquashMerge(path: string, targetBranch: string, message: string) {
-  return withCheckoutMutationLock(path, () => squashMergeInto(path, targetBranch, message));
+  try {
+    return await withCheckoutMutationLock(path, () => squashMergeInto(path, targetBranch, message));
+  } finally {
+    workspaceStatusService.invalidate(path);
+  }
 }
 
 export async function workspaceBranches(path: string, limit?: number) {

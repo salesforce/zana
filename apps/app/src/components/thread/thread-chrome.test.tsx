@@ -6,6 +6,7 @@ import type { WorkspaceFileStatus } from '@zana-ai/zcc-domain';
 import {
   ThreadWorkspaceBanner,
   ThreadWorkspaceBannerView,
+  untrackedScanNote,
   workspaceFileCountLabel,
   workspaceFileStatText
 } from './ThreadWorkspaceBanner.js';
@@ -91,6 +92,26 @@ describe('workspace banner', () => {
     expect(html).toContain('title="apps/app/src/components/AgentBoard.tsx"');
     expect(html).not.toContain('Workspace changed');
     expect(html).not.toContain('View all');
+  });
+
+  it('notes when a large repository has not scanned new files recently', () => {
+    const scan = (state: 'fresh' | 'stale' | 'pending' | 'unavailable', scannedAt: number | null = null) =>
+      ({ state, scannedAt, durationMs: 40_000, slow: true });
+    expect(untrackedScanNote(undefined)).toBeNull();
+    expect(untrackedScanNote(scan('fresh'))).toBeNull();
+    expect(untrackedScanNote(scan('stale', 100_000), 130_000)).toBeNull();
+    expect(untrackedScanNote(scan('stale', 0), 5 * 60_000)).toBe('New files as of 5 min ago (large repository)');
+    expect(untrackedScanNote(scan('pending'))).toBe('Scanning for new files… (large repository)');
+    expect(untrackedScanNote(scan('stale'))).toBe('Scanning for new files… (large repository)');
+    expect(untrackedScanNote(scan('unavailable'))).toBe('New files not shown: scan timed out (large repository)');
+
+    const html = renderToStaticMarkup(
+      <ThreadWorkspaceBannerView files={[file({ path: 'a.ts' })]} untrackedNote="Scanning for new files… (large repository)" onOpenDiff={() => undefined} />
+    );
+    expect(html).toContain('data-testid="thread-workspace-untracked-note"');
+    expect(renderToStaticMarkup(
+      <ThreadWorkspaceBannerView files={[file({ path: 'a.ts' })]} onOpenDiff={() => undefined} />
+    )).not.toContain('thread-workspace-untracked-note');
   });
 
   it('sits inside the composer dock as the top of the same rounded box', () => {

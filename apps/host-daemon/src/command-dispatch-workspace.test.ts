@@ -10,7 +10,6 @@ const workspace = vi.hoisted(() => Object.fromEntries([
 vi.mock('@zana-ai/zcc-host-workspace', async importOriginal => ({
   ...await importOriginal<object>(), ...workspace
 }));
-vi.mock('./workspace-fs-watch.js', () => ({ watchWorkspacePath: vi.fn() }));
 
 const path = '/fixture/authorized-checkout';
 const target = { type: 'uncommitted' };

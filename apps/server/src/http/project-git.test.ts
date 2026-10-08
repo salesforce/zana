@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { openDatabase, upsertHost, createEnvironment } from '@zana-ai/zcc-db';
 import { projectGit } from './project-git.js';
+import { workspaceStatusCacheFor } from '../services/environments/workspace-status-cache.js';
 let dir: string, db: ReturnType<typeof openDatabase>;
 const rpc = vi.fn(); let ctx: any;
 beforeEach(() => {
@@ -34,7 +35,10 @@ it.each([
 });
 it('handles non-repositories and returns current branch markers', async () => {
   rpc.mockResolvedValueOnce({ isGitRepo: false }); expect(await projectGit(ctx, { operation: 'status', path: '/checkout', scope })).toBeNull();
-  rpc.mockResolvedValueOnce({ isGitRepo: false }); expect(await projectGit(ctx, { operation: 'branches', path: '/checkout', scope })).toEqual([]);
+  // Status is shared for a short window; a second read reuses it.
+  expect(await projectGit(ctx, { operation: 'branches', path: '/checkout', scope })).toEqual([]);
+  expect(rpc).toHaveBeenCalledTimes(1);
+  workspaceStatusCacheFor(ctx).invalidate('remote', '/checkout');
   rpc.mockResolvedValueOnce({ isGitRepo: true, branchName: 'main' }).mockResolvedValueOnce({ branches: ['main', 'feature'] });
   expect(await projectGit(ctx, { operation: 'branches', path: '/checkout', scope })).toEqual([{ name: 'main', current: true }, { name: 'feature', current: false }]);
   expect(await projectGit(ctx, { operation: 'worktrees', path: '/checkout', scope })).toEqual([expect.objectContaining({ path: '/checkout', isMain: true })]);

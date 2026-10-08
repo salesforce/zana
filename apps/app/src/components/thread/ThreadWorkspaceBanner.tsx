@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronRight, FileCode, FilePlus, FileText } from 'lucide-react';
-import type { WorkspaceFileStatus, WorkspaceStatus } from '@zana-ai/zcc-domain';
+import type { WorkspaceFileStatus, WorkspaceStatus, WorkspaceUntrackedScan } from '@zana-ai/zcc-domain';
 import { formatDiffStatsText } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
 import {
@@ -29,6 +29,22 @@ export function workspaceFileStatText(file: WorkspaceFileStatus): string {
   return workspaceFileKindLetter(file.kind);
 }
 
+/**
+ * Large checkouts scan untracked files in the background, so the list may
+ * omit or lag on new files. Returns a short note for that case, else null.
+ */
+export function untrackedScanNote(untracked: WorkspaceUntrackedScan | undefined, now = Date.now()): string | null {
+  if (!untracked || untracked.state === 'fresh') return null;
+  if (untracked.state === 'stale' && untracked.scannedAt !== null) {
+    const minutes = Math.floor(Math.max(0, now - untracked.scannedAt) / 60_000);
+    // A recent background scan is as good as fresh; don't nag.
+    if (minutes < 1) return null;
+    return `New files as of ${minutes} min ago (large repository)`;
+  }
+  if (untracked.state === 'unavailable') return 'New files not shown: scan timed out (large repository)';
+  return 'Scanning for new files… (large repository)';
+}
+
 function FileStat({ file }: { file: WorkspaceFileStatus }) {
   const text = workspaceFileStatText(file);
   const added = file.additions ?? 0;
@@ -55,10 +71,12 @@ function fileGlyph(name: string, kind: WorkspaceFileStatus['kind']): ReactNode {
 export function ThreadWorkspaceBannerView({
   files,
   filesTruncated,
+  untrackedNote,
   onOpenDiff
 }: {
   files: WorkspaceFileStatus[];
   filesTruncated?: boolean;
+  untrackedNote?: string | null;
   onOpenDiff: (path?: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -113,6 +131,9 @@ export function ThreadWorkspaceBannerView({
         {truncated ? (
           <li className="thread-workspace-file-more">More changes…</li>
         ) : null}
+        {untrackedNote ? (
+          <li className="thread-workspace-file-more" data-testid="thread-workspace-untracked-note">{untrackedNote}</li>
+        ) : null}
       </ul>
     </div>
   );
@@ -149,6 +170,7 @@ export function ThreadWorkspaceBanner({
     <ThreadWorkspaceBannerView
       files={status.files}
       filesTruncated={status.filesTruncated}
+      untrackedNote={untrackedScanNote(status.untracked)}
       onOpenDiff={onOpenDiff}
     />
   );

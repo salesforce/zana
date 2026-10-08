@@ -33,6 +33,7 @@ import { readNdjsonEvents } from './ndjson-events.js';
 import { subscribeProductEvent } from './product-ws.js';
 import { readHttpLibrary, subscribeHttpLibrary, mutateHttpLibrary, readHttpLibrarySnapshot, subscribeHttpLibrarySnapshot } from './http-library.js';
 import { readConversationJson } from './conversation-read.js';
+import { createEnvironmentStatusClient } from './environment-status-client.js';
 
 function noopSubscribe(_cb: unknown): () => void {
   return () => {};
@@ -68,6 +69,12 @@ const pluginAppListeners = new Set<(entries: PluginAppEntry[]) => void>();
 function emitPluginApps(apps: PluginAppEntry[]): void {
   for (const listener of pluginAppListeners) listener(apps);
 }
+
+// Module-level: httpProduct() is rebuilt per access, but every status poller
+// must share one client for coalescing and backoff to work.
+const environmentStatusClient = createEnvironmentStatusClient({
+  fetchStatus: (environmentId) => apiJson(`/environments/${encodeURIComponent(environmentId)}/status`)
+});
 
 function httpProduct(): Pick<
   CcApi,
@@ -925,9 +932,7 @@ function httpProduct(): Pick<
         );
         return body.environments;
       },
-      status: async (environmentId) => {
-        return apiJson(`/environments/${encodeURIComponent(environmentId)}/status`);
-      },
+      status: (environmentId) => environmentStatusClient.status(environmentId),
       diff: async (environmentId, target) => {
         const suffix = target ? `?target=${encodeURIComponent(JSON.stringify(target))}` : '';
         return apiJson(`/environments/${encodeURIComponent(environmentId)}/diff${suffix}`);
@@ -945,10 +950,14 @@ function httpProduct(): Pick<
         return apiJson(`/environments/${encodeURIComponent(environmentId)}/pull-request`);
       },
       action: async (environmentId, action) => {
-        return apiJson(`/environments/${encodeURIComponent(environmentId)}/actions`, {
-          method: 'POST',
-          body: JSON.stringify(action)
-        });
+        try {
+          return await apiJson(`/environments/${encodeURIComponent(environmentId)}/actions`, {
+            method: 'POST',
+            body: JSON.stringify(action)
+          });
+        } finally {
+          environmentStatusClient.invalidate(environmentId);
+        }
       },
       cancelProvision: async (environmentId) => {
         return apiJson(`/environments/${encodeURIComponent(environmentId)}/provision/cancel`, {

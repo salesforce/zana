@@ -6,6 +6,7 @@ import type { ProductHttpContext } from './product-context.js';
 import { authorizeScopedPath, parseProjectFileScope, ProjectFsError } from './project-fs-via-host.js';
 import { resolveProjectHost } from './project-host.js';
 import { isSafeRelPath } from './library-via-host.js';
+import { cachedWorkspaceStatus } from '../services/environments/workspace-status-cache.js';
 
 const inputSchema = z.object({
   operation: z.enum(['status', 'head', 'discard', 'branches', 'worktrees']),
@@ -36,7 +37,7 @@ export async function projectGit(ctx: ProductHttpContext, input: unknown) {
       .filter(environment => environment.path && environment.status === 'ready' && environment.workspaceProvisionType === 'managed-worktree')
       .map(environment => ({ path: environment.path!, branch: environment.branchName, head: null, bare: false, detached: !environment.branchName, isMain: false } satisfies Worktree))];
   }
-  const status = await ctx.hostHub.callHostOnlineRpc<WorkspaceStatus>({ hostId, command: { type: 'workspace.status', workspacePath: source.root, workspaceProvisionType: 'unmanaged' } });
+  const status = await cachedWorkspaceStatus<WorkspaceStatus>(ctx, { hostId, workspacePath: source.root, workspaceProvisionType: 'unmanaged' });
   if (body.operation === 'branches') {
     if (!status.isGitRepo) return [];
     const result = await ctx.hostHub.callHostOnlineRpc<{ branches: string[] }>({ hostId, command: { type: 'host.list_branches', workspacePath: source.root, workspaceProvisionType: 'unmanaged', limit: 500 } });

@@ -98,6 +98,22 @@ export function buildManagedBranchName(args: { threadId: string; branchSlug?: st
   return slug ? `${MANAGED_BRANCH_PREFIX}/${slug}-${args.threadId}` : `${MANAGED_BRANCH_PREFIX}/${args.threadId}`;
 }
 
+/**
+ * How fresh the untracked part of a workspace status is. Large repositories
+ * scan untracked files in the background instead of on every request:
+ * `fresh` = scanned for this response, `stale` = reused from an earlier scan
+ * (`scannedAt`), `pending` = no scan has finished yet, `unavailable` = the
+ * last scan failed or timed out. `slow` marks a checkout whose scans exceed
+ * the inline budget, so its untracked files refresh on a longer cadence.
+ */
+export const workspaceUntrackedScanSchema = z.object({
+  state: z.enum(['fresh', 'stale', 'pending', 'unavailable']),
+  scannedAt: z.number().nullable(),
+  durationMs: z.number().nonnegative().nullable(),
+  slow: z.boolean()
+}).strict();
+export type WorkspaceUntrackedScan = z.infer<typeof workspaceUntrackedScanSchema>;
+
 export const workspaceStatusSchema = z.object({
   path: z.string().min(1),
   isGitRepo: z.boolean(),
@@ -112,7 +128,9 @@ export const workspaceStatusSchema = z.object({
   behind: z.number().int().nonnegative().nullable(),
   dirty: z.boolean(),
   files: z.array(workspaceFileStatusSchema),
-  filesTruncated: z.boolean()
+  filesTruncated: z.boolean(),
+  // Optional so hosts that predate background untracked scans still validate.
+  untracked: workspaceUntrackedScanSchema.optional()
 }).strict();
 export type WorkspaceStatus = z.infer<typeof workspaceStatusSchema>;
 
