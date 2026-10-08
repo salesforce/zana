@@ -33,6 +33,7 @@ import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import type { ProductHttpContext } from './product-context.js';
 import { unmanagedAttachRefusal } from '../services/threads/workspace-path-claims.js';
 import { managedPathOnHost } from '../services/threads/host-managed-path.js';
+import { threadStartCwd } from '../services/threads/thread-start-cwd.js';
 import { resolvePersonalTargetPathOnHost } from '../services/threads/host-personal-path.js';
 import {
   boundRemoteHostId,
@@ -407,7 +408,7 @@ async function startThreadOnHost(
         .map((text) => ({ type: 'text' as const, text, mentions: [] })),
       cwd: args.dropCwd || (args.project.remote && !remoteToolProxy)
         ? undefined
-        : args.input.cwd,
+        : threadStartCwd(getEnvironment(ctx.db, args.environmentId), args.input.cwd),
       title: args.thread.title ?? undefined,
       extraArgs: args.input.extraArgs,
       harnessRouting: args.input.harnessRouting,

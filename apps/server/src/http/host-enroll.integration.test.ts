@@ -615,6 +615,39 @@ describe('host enroll hub and thread create', () => {
     expect(archived.status).toBe(200);
   });
 
+  it('starts a worktree thread in the worktree even when the composer sends the project cwd', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken, dataDir } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    const commands: HostRpcRequestMessage[] = [];
+    await openHostSocket(enrolled, instanceId, (request, reply) => {
+      commands.push(request);
+      defaultRpcHandler(projectRoot)(request, reply);
+    });
+    await waitForHost(enrolled.hostId);
+
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'proj-1',
+        providerId: 'claude',
+        input: ['ship it'],
+        environment: { kind: 'worktree' },
+        cwd: projectRoot
+      })
+    }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect(spawned.status).toBe(201);
+    const provision = commands.find((row) => row.command.type === 'environment.provision');
+    const worktreePath = (provision?.command as { targetPath?: string }).targetPath;
+    expect(worktreePath).toContain(`${dataDir}/worktrees/`);
+    await vi.waitFor(() => {
+      const start = commands.find((row) => row.command.type === 'thread.start');
+      expect((start?.command as { cwd?: string }).cwd).toBe(worktreePath);
+    });
+  });
+
   it('assigns server-side event sequence and rejects a stale instanceId', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
     const { enrollToken } = await startServer(projectRoot);
