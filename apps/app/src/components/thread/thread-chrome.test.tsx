@@ -803,7 +803,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain('thread-detail-main');
     expect(source).toContain('thread-detail-split');
     expect(source).toContain('<ThreadSecondaryPanel');
-    const mountAt = source.indexOf('{hostedSecondary || embedded ? null : secondaryPanelNode}');
+    const mountAt = source.indexOf('{hostedSecondary || !showSecondaryPanel ? null : secondaryPanelNode}');
     const splitAt = source.indexOf('className="thread-detail-split"');
     const mainAt = source.indexOf('className="thread-detail-main"');
     const bodyAt = source.indexOf('className="thread-detail-body"');
