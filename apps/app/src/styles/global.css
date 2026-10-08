@@ -38083,6 +38083,13 @@ textarea.thread-command-editor {
   min-height: 0;
 }
 
+/* With the secondary panel open the show button is hidden and shell right-edge
+   controls sit over that panel, so the trailing reserve would only leave an
+   empty gutter between the plugin and the panel. */
+.plugin-panel-host-layout.is-secondary-open > .split-plugin-main .module-panel-slot {
+  padding-right: 0;
+}
+
 .plugin-panel-host-show {
   position: absolute;
   top: 8px;
