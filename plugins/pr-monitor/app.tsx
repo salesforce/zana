@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { callPluginRpc, definePluginApp, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
-import PrMonitorPanel from './src/app/PrMonitorPanel.js';
+import PrMonitorPanel, { type PanelUiRequest } from './src/app/PrMonitorPanel.js';
 import { createPluginPanelHost, setBadgeRefresh } from './src/app/adapter.js';
-import { PRS_CHANGED_CHANNEL } from './lib/realtime.js';
+import { PANEL_UI_CHANNEL, PRS_CHANGED_CHANNEL, parsePanelUiAction } from './lib/realtime.js';
 import type { MonitoredPr, PrStatusDelta } from './lib/types.js';
 import { MONITORED_COUNT_CACHE_KEY, MONITORED_PRS_CACHE_KEY } from './lib/types.js';
 import { statusLabel } from './src/app/formatHelpers.js';
@@ -44,9 +44,14 @@ function Panel() {
     host.cache.set(MONITORED_COUNT_CACHE_KEY, prs.length);
     host.cache.refreshBadge?.();
   });
+  const [uiRequest, setUiRequest] = useState<PanelUiRequest | null>(null);
+  useRealtime(PANEL_UI_CHANNEL, (payload) => {
+    const action = parsePanelUiAction(payload);
+    if (action) setUiRequest((prev) => ({ seq: (prev?.seq ?? 0) + 1, action }));
+  });
   return (
     <div style={panelRootStyle}>
-      <PrMonitorPanel host={host} />
+      <PrMonitorPanel host={host} uiRequest={uiRequest} />
     </div>
   );
 }

@@ -19,7 +19,8 @@ export type ClosableSecondaryTabKind =
   | 'terminal'
   | 'explorer'
   | 'inbox'
-  | 'plugin';
+  | 'plugin'
+  | 'agent';
 
 export interface ClosableSecondaryTab {
   id: string;
@@ -28,6 +29,8 @@ export interface ClosableSecondaryTab {
   path?: string;
   url?: string;
   sessionId?: string;
+  /** Agent tab: the thread its composer started; absent while still composing. */
+  threadId?: string;
   moduleId?: string;
   actionId?: string;
   pluginId?: string;
@@ -102,6 +105,7 @@ function isTabKind(value: unknown): value is ClosableSecondaryTabKind {
     || value === 'explorer'
     || value === 'inbox'
     || value === 'plugin'
+    || value === 'agent'
   );
 }
 
@@ -115,6 +119,7 @@ function parseTab(value: unknown): ClosableSecondaryTab | null {
     ...(typeof value.path === 'string' ? { path: value.path } : {}),
     ...(typeof value.url === 'string' ? { url: value.url } : {}),
     ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
+    ...(typeof value.threadId === 'string' && value.threadId.length > 0 ? { threadId: value.threadId } : {}),
     ...(typeof value.moduleId === 'string' ? { moduleId: value.moduleId } : {}),
     ...(typeof value.actionId === 'string' ? { actionId: value.actionId } : {}),
     ...(typeof value.pluginId === 'string' ? { pluginId: value.pluginId } : {}),
@@ -324,6 +329,8 @@ function matchExistingTab(
     if (input.kind === 'explorer' || input.kind === 'inbox') return true;
     if (input.kind === 'file-preview' || input.kind === 'storage-preview') return tab.path === input.path;
     if (input.kind === 'terminal') return tab.sessionId === input.sessionId;
+    // A blank agent composer is reused; each started conversation is its own tab.
+    if (input.kind === 'agent') return (tab.threadId ?? null) === (input.threadId ?? null);
     if (input.kind === 'plugin') {
       if (input.actionId) {
         return (
@@ -392,6 +399,7 @@ function patchAlreadyApplied(
   if (patch.path !== undefined && patch.path !== tab.path) return false;
   if (patch.url !== undefined && patch.url !== tab.url) return false;
   if (patch.sessionId !== undefined && patch.sessionId !== tab.sessionId) return false;
+  if (patch.threadId !== undefined && patch.threadId !== tab.threadId) return false;
   if (patch.moduleId !== undefined && patch.moduleId !== tab.moduleId) return false;
   if (patch.actionId !== undefined && patch.actionId !== tab.actionId) return false;
   if (patch.pluginId !== undefined && patch.pluginId !== tab.pluginId) return false;

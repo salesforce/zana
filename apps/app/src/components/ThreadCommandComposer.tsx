@@ -102,6 +102,10 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   /** Focus the prompt after mounting (hub/browse create-plugin seed). */
   autoFocus?: boolean;
   onCreated?: (threadId: string) => void;
+  /** Overrides the "open new threads" preference; side-panel composers stay put. */
+  navigateOnCreate?: boolean;
+  /** New threads are bound to this plugin panel (its agent tools and context). */
+  pluginPanel?: { pluginId: string; panel: string };
   onRunTerminal?: (command: string | null) => Promise<void>;
   /** Sticky requested mode from `thread_execution_state` (plan/goal/agent or native ACP id). */
   executionModeRequested?: string | null;
@@ -129,6 +133,8 @@ export function ThreadCommandComposer({
   initialText,
   autoFocus = false,
   onCreated,
+  navigateOnCreate: navigateOnCreateOverride,
+  pluginPanel,
   onRunTerminal,
   executionModeRequested = null,
   serviceTier: initialServiceTier,
@@ -198,10 +204,11 @@ export function ThreadCommandComposer({
   const composerSendMode = useData((s) => s.composerSendMode);
   const setComposerSendMode = useData((s) => s.setComposerSendMode);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [navigateOnCreate] = useBooleanPreference(
+  const [navigateOnCreatePreference] = useBooleanPreference(
     NAVIGATE_TO_THREAD_ON_CREATE_KEY,
     NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT
   );
+  const navigateOnCreate = navigateOnCreateOverride ?? navigateOnCreatePreference;
   const [expanded, setExpanded] = useState(false);
   const composerRoot = useRef<HTMLDivElement>(null);
   const expandedTitleId = useId();
@@ -563,7 +570,7 @@ export function ThreadCommandComposer({
           const created = await product.threads.create({projectId:selected!.id, providerId:resolvedProviderId!, input,
             hostId, environment:selected!.quickAgent && foreignHost ? {kind:'personal'} : workspace,
             cwd:foreignHost ? undefined : selected!.path, permissionMode, serviceTier, model:options.model, reasoningLevel:options.reasoningLevel,
-            acpMode:selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue});
+            acpMode:selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue, pluginPanel});
           if (!created.ok) throw new Error(created.message ?? 'Could not send voice message');
           upsertThread(created.value);
           if (currentVoiceOwner.current === voiceOwner) {
@@ -689,7 +696,8 @@ export function ThreadCommandComposer({
         serviceTier,
         model: options.model,
         reasoningLevel: options.reasoningLevel,
-        acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
+        acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue,
+        pluginPanel
       });
       if (!created.ok) {
         setError(created.message ?? 'Could not create thread');

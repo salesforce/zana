@@ -494,6 +494,8 @@ export interface CcApi {
       reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
       serviceTier?: string;
       acpMode?: string;
+      /** Started from a plugin page's side-panel Agent tab; main validates the plugin. */
+      pluginPanel?: { pluginId: string; panel: string };
     }): Promise<Result<{
       id: string;
       projectId: string;

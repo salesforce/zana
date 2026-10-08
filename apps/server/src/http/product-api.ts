@@ -47,6 +47,7 @@ import {
 } from '@zana-ai/zcc-domain/product';
 import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
+import { resolvePluginPanelBinding } from './plugin-panel-binding.js';
 import { terminalOutputSlice } from './terminal-output-buffer.js';
 import {
   conversationThreadView,
@@ -2197,6 +2198,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
+        const pluginPanel = resolvePluginPanelBinding(body, ctx.plugins);
         const thread = await createConversationFromRequest(ctx, {
           projectId: typeof body.projectId === 'string' ? body.projectId : '',
           providerId: typeof body.providerId === 'string' ? body.providerId : 'claude-code',
@@ -2236,7 +2238,8 @@ export async function handleProductHttp(
                   );
                 }
               })()
-            : {})
+            : {}),
+          ...pluginPanel
         });
         sendJson(response, 201, { ok: true, value: conversationThreadView(ctx, thread), thread: conversationThreadView(ctx, thread) });
       } catch (error) {

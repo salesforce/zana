@@ -1,5 +1,5 @@
 import { useId, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { ChevronDown, FileText, FolderTree, Globe, Inbox, Puzzle, Search, Terminal } from 'lucide-react';
+import { Bot, ChevronDown, FileText, FolderTree, Globe, Inbox, Puzzle, Search, Terminal } from 'lucide-react';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { resolveIcon } from '../../../lib/resolveIcon.js';
 import './thread-new-tab.css';
@@ -38,6 +38,7 @@ export function ThreadNewTabView({
   recents = [],
   onOpenFile,
   onOpenBrowser,
+  onOpenAgent,
   onOpenExplorer,
   onOpenInbox,
   onStartTerminal,
@@ -55,6 +56,8 @@ export function ThreadNewTabView({
   recents?: readonly ThreadRecentItem[];
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
+  /** Plugin-panel hosts only: start a conversation without leaving the page. */
+  onOpenAgent?: () => void;
   onOpenExplorer?: () => void;
   onOpenInbox?: () => void;
   onStartTerminal?: () => void;
@@ -72,6 +75,7 @@ export function ThreadNewTabView({
     search.split(/\s+/).every((term) => terms.some((value) => value.toLocaleLowerCase().includes(term)));
   const visibleRecents = recents.slice(0, THREAD_RECENT_ITEMS_VISIBLE_LIMIT);
   const essentials = [
+    { id: 'agent', title: 'New agent', icon: Bot, visible: Boolean(onOpenAgent), run: onOpenAgent },
     { id: 'browser', title: 'Open browser', icon: Globe, visible: desktop, run: onOpenBrowser },
     { id: 'explorer', title: 'Open Explorer', icon: FolderTree, visible: allowExplorer, run: onOpenExplorer },
     { id: 'inbox', title: 'Open Inbox', icon: Inbox, visible: allowInbox, run: onOpenInbox },
@@ -208,6 +212,7 @@ export function ThreadNewTabPage({
   threadId,
   onOpenFile,
   onOpenBrowser,
+  onOpenAgent,
   onOpenExplorer,
   onOpenInbox,
   onStartTerminal,
@@ -221,6 +226,7 @@ export function ThreadNewTabPage({
   threadId?: string | null;
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
+  onOpenAgent?: () => void;
   onOpenExplorer?: () => void;
   onOpenInbox?: () => void;
   onStartTerminal?: () => void;
@@ -318,6 +324,7 @@ export function ThreadNewTabPage({
       }))}
       onOpenFile={onOpenFile}
       onOpenBrowser={onOpenBrowser}
+      onOpenAgent={onOpenAgent}
       onOpenExplorer={onOpenExplorer}
       onOpenInbox={onOpenInbox}
       onStartTerminal={onStartTerminal}

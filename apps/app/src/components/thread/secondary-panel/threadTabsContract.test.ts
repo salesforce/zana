@@ -70,6 +70,10 @@ describe('thread tabs contract mapping', () => {
     expect(contractTabToClosable({ id: 'info', kind: 'thread-info' })).toBeNull();
   });
 
+  it('keeps agent tabs local to the panel', () => {
+    expect(closableTabToContract({ id: 'agent:1', kind: 'agent', title: 'Agent', threadId: 't1' })).toBeNull();
+  });
+
   it('replaces closable tabs from a server snapshot', () => {
     const next = applyContractTabs(emptySecondaryPanelState(), [{
       id: 'file-preview:1',

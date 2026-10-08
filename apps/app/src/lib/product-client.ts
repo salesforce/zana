@@ -685,7 +685,8 @@ function httpProduct(): Pick<
             model: input.model,
             reasoningLevel: input.reasoningLevel,
             serviceTier: input.serviceTier,
-            acpMode: input.acpMode
+            acpMode: input.acpMode,
+            pluginPanel: input.pluginPanel
           })
         });
         const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['create']>> & {

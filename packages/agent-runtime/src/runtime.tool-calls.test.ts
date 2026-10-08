@@ -104,6 +104,52 @@ describe("createAgentRuntime tool calls", () => {
     await runtime.shutdown();
   });
 
+  it("passes tool_args JSON through as the tool call arguments", async () => {
+    const calls: unknown[] = [];
+    const events: ThreadEvent[] = [];
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath: tmpDir,
+      onEvent: (event) => events.push(event),
+      onToolCall: async (req) => {
+        calls.push(req.arguments);
+        return { contentItems: [{ type: "inputText", text: "ok" }], success: true };
+      },
+      adapterFactory: () => createFakeAdapter(scriptPath),
+    });
+    await runtime.startThread({
+      environmentId: "env-1",
+      threadId: "t1",
+      projectId: "p1",
+      providerId: "fake",
+      options: fullRuntimeOptions,
+    });
+    const args = Buffer.from(JSON.stringify({ action: "reveal", pr: "#42" })).toString("base64url");
+    for (const [index, text] of [
+      `call_tool:my_test_tool tool_args:${args}`,
+      "call_tool:my_test_tool tool_args:bm90LWpzb24",
+      `call_tool:my_test_tool tool_args:${Buffer.from("[1]").toString("base64url")}`,
+    ].entries()) {
+      await runtime.runTurn({
+        clientRequestId: `creq_33333333${index}a`,
+        threadId: "t1",
+        input: [promptTextInput({ text })],
+        options: fullRuntimeOptions,
+      });
+      await waitForRuntimeState({
+        events,
+        label: `tool call ${index} completed`,
+        predicate: () =>
+          calls.length === index + 1 &&
+          events.filter((event) => event.type === "turn/completed").length === index + 1,
+        providerId: "fake",
+        runtime,
+      });
+    }
+
+    expect(calls).toEqual([{ action: "reveal", pr: "#42" }, {}, {}]);
+    await runtime.shutdown();
+  });
+
   it("resolves unresolved provider tool call turn ids from the active turn", async () => {
     const toolCalls: Array<{
       threadId: string;

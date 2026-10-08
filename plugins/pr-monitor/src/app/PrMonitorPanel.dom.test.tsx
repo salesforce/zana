@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ModuleHost, ProjectInfo } from './host.js';
-import PrMonitorPanel from './PrMonitorPanel.js';
+import PrMonitorPanel, { type PanelUiRequest } from './PrMonitorPanel.js';
 import {
   type MonitoredPr,
   type PrMonitorSettings,
@@ -907,3 +907,36 @@ beforeEach(() => {
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList);
 });
 afterEach(() => vi.restoreAllMocks());
+
+describe('PrMonitorPanel agent view requests', () => {
+  it('filters the board and reveals a PR when the panel agent asks', async () => {
+    const { host } = makeStatefulHost();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const render = (uiRequest: PanelUiRequest | null) => act(() => {
+      root.render(<PrMonitorPanel host={host} uiRequest={uiRequest} />);
+    });
+    render(null);
+    cleanup = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    await flush();
+    expect(container.querySelectorAll('.prm-board-card')).toHaveLength(1);
+
+    render({ seq: 1, action: { action: 'filter', repos: ['other/repo'], query: '' } });
+    await flush();
+    expect(container.querySelectorAll('.prm-board-card')).toHaveLength(0);
+
+    // Reveal drops a repo scope that would hide the PR, then opens its details.
+    render({ seq: 2, action: { action: 'reveal', url: makePr().url } });
+    await flush();
+    expect(container.querySelectorAll('.prm-board-card')).toHaveLength(1);
+    expect(document.querySelector('.prm-detail-sidebar')).toBeTruthy();
+
+    render({ seq: 3, action: { action: 'filter', repos: [], query: 'no such change' } });
+    await flush();
+    expect(container.querySelectorAll('.prm-board-card')).toHaveLength(0);
+  });
+});

@@ -57,6 +57,18 @@ describe('ThreadNewTabPage', () => {
     expect(product.fs.walkFiles).toHaveBeenCalledOnce();
   });
 
+  it('lists New agent only for hosts that can open one', () => {
+    const onOpenAgent = vi.fn();
+    const view = render(<ThreadNewTabPage projectId={null} cwd={null} onOpenFile={vi.fn()}
+      onOpenBrowser={vi.fn()} onOpenPlugin={vi.fn()} onOpenAgent={onOpenAgent} />);
+    fireEvent.click(screen.getByTestId('thread-new-tab-agent'));
+    expect(onOpenAgent).toHaveBeenCalledOnce();
+    view.unmount();
+    render(<ThreadNewTabPage projectId={null} cwd={null} onOpenFile={vi.fn()}
+      onOpenBrowser={vi.fn()} onOpenPlugin={vi.fn()} />);
+    expect(screen.queryByTestId('thread-new-tab-agent')).toBeNull();
+  });
+
   it('ignores a pending scan after the panel switches to a terminal', async () => {
     let resolve!: (files: { path: string; rel: string }[]) => void;
     vi.mocked(product.fs.walkFiles).mockReturnValueOnce(new Promise((done) => { resolve = done; }));

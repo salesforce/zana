@@ -299,6 +299,30 @@ describe('thread secondary panel state', () => {
     expect(addClosableTab(inbox, { kind: 'inbox', title: 'Inbox' }).tabs).toHaveLength(1);
   });
 
+  it('reuses a blank agent composer but keeps each started conversation in its own tab', () => {
+    const blank = addClosableTab(emptySecondaryPanelState(), { kind: 'agent', title: 'Agent' });
+    expect(addClosableTab(blank, { kind: 'agent', title: 'Agent' }).tabs).toHaveLength(1);
+    const started = patchClosableTab(blank, blank.activeId, { threadId: 't1' });
+    const another = addClosableTab(started, { kind: 'agent', title: 'Agent' });
+    expect(another.tabs.map((tab) => tab.threadId)).toEqual(['t1', undefined]);
+    const back = addClosableTab(another, { kind: 'agent', title: 'Agent', threadId: 't1' });
+    expect(back.tabs).toHaveLength(2);
+    expect(back.activeId).toBe(blank.activeId);
+  });
+
+  it('round-trips an agent tab thread id and drops an empty one', () => {
+    const parsed = parseSecondaryPanelState({
+      version: 1,
+      isOpen: true,
+      activeId: 'agent:1',
+      tabs: [
+        { id: 'agent:1', kind: 'agent', title: 'Agent', threadId: 't1' },
+        { id: 'agent:2', kind: 'agent', title: 'Agent', threadId: '' }
+      ]
+    });
+    expect(parsed.tabs.map((tab) => [tab.kind, tab.threadId])).toEqual([['agent', 't1'], ['agent', undefined]]);
+  });
+
   it.each(['file-preview', 'storage-preview'] as const)('refreshes an explicit repeated %s while retaining the tab identity', (kind) => {
     const opened = addClosableTab(emptySecondaryPanelState(), { kind, path: 'report.md', title: 'Report', lineNumber: 3 });
     const repeated = addClosableTab(opened, { kind, path: 'report.md', title: 'Report' });
