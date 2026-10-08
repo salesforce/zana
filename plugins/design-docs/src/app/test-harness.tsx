@@ -3,15 +3,21 @@
  * test runtime, so UI tests exercise the same validation and live refresh
  * (`changed` → realtime) the app does.
  */
-import { act, render, type RenderResult } from '@testing-library/react';
+import { act, cleanup, configure, render, type RenderResult } from '@testing-library/react';
 import { createElement, useEffect, useRef, type ReactElement } from 'react';
-import { vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import { installTestPluginRuntime, type NavigateCall, type RpcCall } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { RenderReports } from '../server/render-reports.js';
 import { createRpcHandlers } from '../server/rpc.js';
 import { DesignDocStore } from '../server/store.js';
 import { createTestDatabase } from '../server/test-db.js';
 import { CHANGED_CHANNEL, type DocActor } from '../shared/contract.js';
+
+// The root `pnpm test` run does not load this plugin's vitest.setup.ts, so the
+// harness registers the same per-test DOM reset for every file that uses it.
+configure({ asyncUtilTimeout: 4_000 });
+afterEach(() => cleanup());
+beforeEach(() => window.localStorage.clear());
 
 export const AGENT: DocActor = { kind: 'agent', label: 'Architect', threadId: 'thread-agent' };
 export const PROJECTS = [
