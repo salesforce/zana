@@ -155,13 +155,21 @@ it('combines complementary root and package coverage even when local ids differ'
   expect(mergeCoverage([])).toEqual({});
 });
 
-it('keeps the existing required CI check as an always-running gate over both jobs', () => {
+it('keeps the existing required CI check as an always-running gate over every job', () => {
   const workflow = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8');
   expect(workflow).toContain('name: Typecheck and test');
-  expect(workflow).toContain('needs: [unit, e2e]');
+  expect(workflow).toContain('needs: [unit, unit-packages, coverage, e2e]');
   expect(workflow).toContain('if: always()');
   expect(workflow).toContain('test "$UNIT_RESULT" = success');
+  expect(workflow).toContain('test "$PACKAGES_RESULT" = success');
+  expect(workflow).toContain('test "$COVERAGE_RESULT" = success');
   expect(workflow).toContain('test "$BOUNDARY_RESULT" = success');
+  expect(workflow).toContain('fail-fast: false');
+  expect(workflow).toContain('shard: [1, 2, 3, 4]');
+  expect(workflow).toContain('vitest run --shard=${{ matrix.shard }}/4 --coverage');
+  expect(workflow).toContain('needs: [unit, unit-packages]');
+  expect(workflow).toContain('merge-multiple: true');
+  expect(workflow).toContain('coverage/root-1/coverage-final.json coverage/root-2/coverage-final.json coverage/root-3/coverage-final.json coverage/root-4/coverage-final.json');
   expect(workflow).not.toContain('continue-on-error: true');
   expect(workflow).toContain('plugins/tasks/vitest.config.ts --coverage');
   expect(workflow).toContain('pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts --coverage');

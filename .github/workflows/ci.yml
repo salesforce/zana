@@ -27,8 +27,67 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The root suite runs files serially (vitest.config.ts maxWorkers: 1) because
+  # it spawns real bridges, shells and PTYs. Shard it across runners instead:
+  # each shard is its own VM, so serial-within-shard isolation is preserved.
   unit:
-    name: Typecheck and unit tests
+    name: Unit tests (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # Coverage locations must match PR-head source lines. The E2E job
+          # below stays on GitHub's synthetic merge to validate integration.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # node-pty / better-sqlite3 are native; pnpm runs their install
+      # scripts. distutils was dropped from Python 3.12 stdlib, so pin 3.11
+      # where node-gyp can still import it (matches release.yml).
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The diagram tests exercise the same local asset shipped in the plugin.
+      # A clean unit-test checkout has not run the production plugin build.
+      - name: Prepare Slack runtime assets
+        run: pnpm --filter zcc-plugin-slack-bridge-2ff2 package
+
+      - name: Install Chrome for Slack diagram tests
+        run: pnpm --dir plugins/slack-bridge-2ff2 exec puppeteer browsers install chrome
+
+      # The real Chromium diagram test needs the same sandbox support as Electron.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Unit tests with coverage
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/root-${{ matrix.shard }}
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-coverage-root-${{ matrix.shard }}
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  unit-packages:
+    name: Typecheck and package unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -58,21 +117,6 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
-      # The diagram tests exercise the same local asset shipped in the plugin.
-      # A clean unit-test checkout has not run the production plugin build.
-      - name: Prepare Slack runtime assets
-        run: pnpm --filter zcc-plugin-slack-bridge-2ff2 package
-
-      - name: Install Chrome for Slack diagram tests
-        run: pnpm --dir plugins/slack-bridge-2ff2 exec puppeteer browsers install chrome
-
-      # The real Chromium diagram test needs the same sandbox support as Electron.
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      - name: Unit tests with coverage
-        run: pnpm exec vitest run --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/root
-
       - name: Tasks tests with package configuration and coverage
         run: pnpm exec vitest run --config plugins/tasks/vitest.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory="$GITHUB_WORKSPACE/coverage/tasks"
 
@@ -82,20 +126,51 @@ jobs:
       - name: Release package coverage
         run: pnpm exec vitest run --config vitest.release-coverage.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/release
 
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-coverage-packages
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Merge every shard's coverage before applying the changed-code floor:
+  # scripts/ci-verification.mjs sums hit counts per location across reports.
+  coverage:
+    name: Changed-code coverage
+    runs-on: ubuntu-latest
+    needs: [unit, unit-packages]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # Coverage locations must match PR-head source lines. The E2E job
+          # below stays on GitHub's synthetic merge to validate integration.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Download coverage reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: unit-coverage-*
+          path: coverage
+          merge-multiple: true
+
       - name: Enforce changed-code coverage
-        run: node scripts/ci-verification.mjs --coverage coverage/root/coverage-final.json coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json
+        run: node scripts/ci-verification.mjs --coverage coverage/root-1/coverage-final.json coverage/root-2/coverage-final.json coverage/root-3/coverage-final.json coverage/root-4/coverage-final.json coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json
         env:
           CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Upload coverage reports on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: unit-coverage
-          path: coverage/*/coverage-final.json
-          retention-days: 7
-          if-no-files-found: ignore
 
   # Every affected seam is exercised in the built app; failures fail CI.
   # Keep model-spending live attach suites outside unattended CI.
@@ -154,17 +229,21 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # Preserve the existing required check name while making both jobs load-bearing.
+  # Preserve the existing required check name while making every job load-bearing.
   verify:
     name: Typecheck and test
     runs-on: ubuntu-latest
-    needs: [unit, e2e]
+    needs: [unit, unit-packages, coverage, e2e]
     if: always()
     steps:
       - name: Require unit and production-boundary verification
         env:
           UNIT_RESULT: ${{ needs.unit.result }}
+          PACKAGES_RESULT: ${{ needs.unit-packages.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
           BOUNDARY_RESULT: ${{ needs.e2e.result }}
         run: |
           test "$UNIT_RESULT" = success
+          test "$PACKAGES_RESULT" = success
+          test "$COVERAGE_RESULT" = success
           test "$BOUNDARY_RESULT" = success
