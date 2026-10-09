@@ -10,7 +10,7 @@ import { projectGit } from './project-git.js';
 import { usesConnect } from '../services/hosts/connect-enrollment.js';
 import { handleSharedProductApi } from './shared-product-api.js';
 import { projectSources } from '@zana-ai/zcc-domain/project';
-import { getPrimaryHost } from '@zana-ai/zcc-db';
+import { getPrimaryHost, countConversationThreadsForQuit } from '@zana-ai/zcc-db';
 import { handleProjectSourcesApi } from './project-sources-api.js';
 import { resolveProjectHost } from './project-host.js';
 import { mutateProjectFile } from './project-file-mutations.js';
@@ -1203,6 +1203,11 @@ export async function handleProductHttp(
         ? listConversationThreadsByProject(ctx.db, projectId)
         : listVisibleConversationThreads(ctx.db);
       sendJson(response, 200, { threads: conversationThreadViews(ctx, threads) });
+      return true;
+    }
+
+    if (path === '/api/v1/system/quit-state' && method === 'GET') {
+      sendJson(response, 200, { activeThreads: countConversationThreadsForQuit(ctx.db) });
       return true;
     }
 

@@ -1,3 +1,4 @@
+import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
 import { runtimeLibraryAgentApi } from './runtime/library-agent-api.js';
@@ -8800,44 +8801,37 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+const quitGuard = createQuitGuard({
+  isConfirmed: () => quitConfirmed,
+  setConfirmed: () => { quitConfirmed = true; },
+  shouldConfirm: () => store.getConfig().confirmQuitOnLiveSessions !== false,
+  terminalCount: () => ptys.liveCount(),
+  threadCount: () => readQuitThreadCount(productServerUrl()),
+  confirm: async (count, unknownThreads) => {
+    const opts = {
+      type: 'warning' as const,
+      buttons: ['Quit', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: unknownThreads
+        ? 'Quit and end running sessions?'
+        : `Quit and end ${count} running session${count > 1 ? 's' : ''}?`,
+      detail: unknownThreads
+        ? 'Agent activity could not be checked. Quitting will interrupt any running agents and terminate terminals.'
+        : 'Quitting will interrupt running agents and terminate terminals, including background sessions.'
+    };
+    const parent = mainWindow();
+    const result = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    return result.response === 0;
+  },
+  quit: () => app.quit(),
+  log: (error) => logMainError('quit activity check', error)
+});
+
 app.on('before-quit', (event) => {
-  // Guard the user's running work: if any ptys are still alive, make quitting
-  // a deliberate choice instead of silently killing in-flight agents and
-  // background sessions (the previous behavior). Sessions aren't persisted, so
-  // quitting really does end them.
-  //
-  // Auto-update interaction: a downloaded update installs on quit
-  // (`autoInstallOnAppQuit`). Squirrel's quit hook runs *after* this handler, so
-  // preventing the quit here (user clicks Cancel on the live-sessions prompt)
-  // also cancels the install. `prepareQuitForUpdate` sets `quitConfirmed` so
-  // "Restart now" skips this prompt — that button is the confirmation.
-  if (!quitConfirmed) {
-    const live = ptys.liveCount();
-    // The guard is opt-out: a user who churns through many short-lived sessions
-    // can silence the prompt via `confirmQuitOnLiveSessions: false` (Settings),
-    // in which case we quit immediately and just tear the live sessions down.
-    const confirmOnLive = store.getConfig().confirmQuitOnLiveSessions !== false;
-    if (live > 0 && confirmOnLive) {
-      const opts = {
-        type: 'warning' as const,
-        buttons: ['Quit', 'Cancel'],
-        defaultId: 1,
-        cancelId: 1,
-        message: `Quit and end ${live} running session${live > 1 ? 's' : ''}?`,
-        detail:
-          'Terminals (including background ones) are not saved between launches. Quitting will terminate them.'
-      };
-      const parent = mainWindow();
-      const choice = parent
-        ? dialog.showMessageBoxSync(parent, opts)
-        : dialog.showMessageBoxSync(opts);
-      if (choice === 1) {
-        event.preventDefault();
-        return;
-      }
-    }
-    quitConfirmed = true;
-  }
+  // Keep services alive while the authoritative activity probe and confirmation run.
+  // Update restarts set quitConfirmed after their own consent and bypass this guard.
+  if (!quitGuard.allowQuit(event)) return;
   runtimeRecovery.dispose();
   // Quit can bypass a usable per-window close transition. Clear native maximize
   // state here too, so macOS cannot restore a maximized window on next launch.

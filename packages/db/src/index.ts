@@ -83,6 +83,7 @@ export {
   createConversationThread,
   getConversationThread,
   listConversationThreadsByProject,
+  countConversationThreadsForQuit,
   listLiveConversationThreads,
   listLiveConversationThreadsForHost,
   listConversationThreadsForHost,

@@ -1,15 +1,16 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Page, TestInfo } from '@playwright/test';
+import type { ElectronApplication, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { DEFAULT_PR_MONITOR_SETTINGS, type MonitoredPr } from '../plugins/pr-monitor/lib/types.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
-async function shot(win: Page, testInfo: TestInfo, name: string) {
+async function shot(electron: ElectronApplication, win: Page, testInfo: TestInfo, name: string) {
   const dir = process.env.ZCC_E2E_SHOT_DIR;
   const path = dir ? join(dir, `${name}.png`) : testInfo.outputPath(`${name}.png`);
-  await win.screenshot({ path });
+  await captureElectronScreenshot(electron, win, path);
 }
 
 test('a plugin page opens an agent side panel from its launcher and New Tab', async ({ app, home }, testInfo) => {
@@ -50,11 +51,11 @@ test('a plugin page opens an agent side panel from its launcher and New Tab', as
   const launcher = win.getByTestId('plugin-panel-agent-show');
   await expect(launcher).toBeVisible();
   await expect(win.getByTestId('plugin-panel-secondary-show')).toBeVisible();
-  await shot(win, testInfo, '1-plugin-launchers');
+  await shot(app.electron, win, testInfo, '1-plugin-launchers');
 
   await launcher.click();
   await expect(win.getByTestId('panel-agent-tab-composer')).toBeVisible();
-  await shot(win, testInfo, '2-agent-composer');
+  await shot(app.electron, win, testInfo, '2-agent-composer');
 
   // The panel's composer binds its thread to PR Monitor, whose tools then drive the board.
   const toolArgs = Buffer.from(JSON.stringify({ action: 'reveal', pr: '#42' })).toString('base64url');
@@ -67,7 +68,7 @@ test('a plugin page opens an agent side panel from its launcher and New Tab', as
   const detail = win.locator('.prm-detail-sidebar');
   await expect(detail).toContainText('fix/checkout', { timeout: 30_000 });
   await expect(win.getByText(pr.title, { exact: true }).last()).toBeVisible();
-  await shot(win, testInfo, '3-agent-revealed-pr');
+  await shot(app.electron, win, testInfo, '3-agent-revealed-pr');
   await win.keyboard.press('Escape');
   await expect(detail).toBeHidden();
   await expect(chat.getByText('Tool called: pr_monitor_panel').first()).toBeVisible({ timeout: 30_000 });
@@ -94,11 +95,11 @@ test('a plugin page opens an agent side panel from its launcher and New Tab', as
   }, projectId);
   expect(rejected).toBe(409);
   await win.waitForTimeout(1_500);
-  await shot(win, testInfo, '3b-agent-chat');
+  await shot(app.electron, win, testInfo, '3b-agent-chat');
 
   await win.getByTestId('thread-secondary-new-tab').click();
   await expect(win.getByTestId('thread-new-tab-agent')).toBeVisible();
-  await shot(win, testInfo, '4-new-tab-agent-entry');
+  await shot(app.electron, win, testInfo, '4-new-tab-agent-entry');
   await win.getByTestId('thread-new-tab-agent').click();
   await expect(win.getByTestId('panel-agent-tab-composer')).toBeVisible();
 

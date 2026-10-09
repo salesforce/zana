@@ -169,6 +169,18 @@ export function queryConversationThreads(
   return (db.sqlite.prepare(sql).all(...params, limit, offset) as ConversationThreadSqlRow[]).map(toThread);
 }
 
+/** Include hidden agents and unresolved interactions without materializing a growing roster. */
+export function countConversationThreadsForQuit(db: ZccDatabase): number {
+  const row = db.sqlite.prepare(`SELECT COUNT(*) AS count FROM threads
+    WHERE archived_at IS NULL AND (
+      status IN ('starting', 'active', 'stopping') OR EXISTS (
+        SELECT 1 FROM pending_interactions AS pending
+        WHERE pending.thread_id = threads.id AND pending.status IN ('pending', 'resolving')
+      )
+    )`).get() as { count: number };
+  return row.count;
+}
+
 export function listLiveConversationThreads(db: ZccDatabase): ConversationThreadRow[] {
   return (db.sqlite.prepare(
     `SELECT * FROM threads
