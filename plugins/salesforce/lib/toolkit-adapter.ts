@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import catalog from '../vendor/catalog.json';
 import type { SalesforceSdk } from './sdk-contract.js';
 import type { SalesforceToolCallContext, SalesforceToolProvider, ToolkitDescription, ToolkitRuntime } from './tool-provider-contract.js';
+import { jsonPreview } from './preview-json.js';
 import { confinedToolkitPath, isLocalToolkitCall, prepareToolkitInput, redactToolkitResult, toolkitRequiresApproval } from './toolkit-policy.js';
 
 const descriptions = catalog.tools as unknown as ToolkitDescription[];
@@ -23,6 +24,13 @@ export function providerTools(provider: SalesforceToolProvider, salesforceReady:
 }
 export interface ToolkitScope { projectId: string; workspace: string; orgAlias: string; }
 interface SavedRun { projectId: string; workspace: string; org: string | null; runFile: string; resultFile: string; directory: string; }
+
+/** Approval line, e.g. "sf_metadata deploy.start · 6 source paths on dev"; the card renders the details. */
+export function toolkitSummary(name: string, input: Record<string, unknown>, orgAlias?: string): string {
+  const paths = [input.source_paths, input.source_dirs].find(Array.isArray) as unknown[] | undefined;
+  const count = paths?.length ? ` · ${paths.length} source path${paths.length === 1 ? '' : 's'}` : '';
+  return `${name} ${String(input.action ?? input.verb)}${count}${orgAlias ? ` on ${orgAlias}` : ' (local project)'}`;
+}
 
 /** Host adapter; the optional execution package is accessed only through loadRuntime. */
 export class SalesforceToolkitAdapter {
@@ -73,11 +81,11 @@ export class SalesforceToolkitAdapter {
       if (resumeId && (!saved || saved.projectId !== scope.projectId || saved.workspace !== workspace || saved.org !== (org?.orgId ?? null))) return failure('scope_mismatch', 'Resume belongs to another project/org or has expired.');
       const effects = toolkitRequiresApproval(description, input);
       const fingerprint = createHash('sha256').update(JSON.stringify({ name, input, workspace, orgId: org?.orgId ?? null, resumeId })).digest('hex');
-      const summary = `${name} ${String(input.action ?? input.verb)} in ${scope.projectId}${org ? ` on ${org.alias}` : ' (local project)'}`;
+      const summary = toolkitSummary(name, input, org?.alias);
       const decision = await this.deps.sdk.confirm({
         ...(effects ? { kind: 'org.write' as const } : {}),
         orgAlias: org?.alias ?? '(local project)', orgId: org?.orgId, orgKind: org?.kind ?? 'sandbox',
-        summary, fingerprint, preview: JSON.stringify(redactToolkitResult(input)).slice(0, 8_000)
+        summary, fingerprint, preview: jsonPreview(redactToolkitResult(input))
       }, context.threadId ?? '');
       if (!decision.approved) return failure('refused', `Operator ${decision.reason} ${summary}.`);
       controller.signal.throwIfAborted();

@@ -1,9 +1,10 @@
 import { registerSalesforcePanels } from './panels.js';
 import type { ComponentType } from 'react';
-import { definePluginApp, useComposerView, useZccContext, useZccNavigate, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, useComposerView, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { AgentforcePlaygroundPanel } from './src/app/AgentScriptPanel.js';
 import { AgentforcePreviewPanel } from './src/app/AgentforcePreviewPanel.js';
 import { CreateSalesforceProjectDialog } from './src/app/CreateSalesforceProjectDialog.js';
+import { GuardrailReview } from './src/app/GuardrailReview.js';
 import { OrgPicker } from './src/app/OrgPicker.js';
 import { SalesforceOrgsPanel } from './src/app/SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './src/app/SalesforceProjectTab.js';
@@ -16,44 +17,6 @@ function hostReact() {
 function pluginHost() {
   return (globalThis as { __ZCC_PLUGIN_HOST__?: { callRpc(pluginId: string, method: string, args?: unknown): Promise<unknown> } })
     .__ZCC_PLUGIN_HOST__;
-}
-
-function SalesforceGuardrailForm(props: PluginPendingInteractionProps) {
-  const React = hostReact();
-  if (!React) return null;
-  const payload =
-    props.interaction.payload && typeof props.interaction.payload === 'object'
-      ? (props.interaction.payload as Record<string, string>)
-      : {};
-  return React.createElement(
-    'div',
-    { style: { display: 'grid', gap: 8 } },
-    React.createElement('p', { style: { margin: 0 } }, payload.summary || 'Confirm this Salesforce action.'),
-    payload.orgAlias
-      ? React.createElement(
-          'p',
-          { style: { margin: 0, color: 'var(--text-muted)' } },
-          `${payload.orgAlias} · ${payload.orgKind || 'unknown'}${payload.orgId ? ` · ${payload.orgId}` : ''}`
-        )
-      : null,
-    payload.preview
-      ? React.createElement(
-          'pre',
-          { style: { whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', margin: 0 } },
-          String(payload.preview)
-        )
-      : null,
-    React.createElement(
-      'div',
-      { style: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 } },
-      React.createElement(
-        'button',
-        { type: 'button', className: 'btn primary', onClick: () => void props.submit({ approved: true }) },
-        'Allow this action'
-      ),
-      React.createElement('button', { type: 'button', className: 'btn', onClick: () => void props.cancel() }, 'Deny')
-    )
-  );
 }
 
 function SalesforceComposerBanner(props: { pluginId?: string }) {
@@ -235,7 +198,7 @@ export default definePluginApp((app) => {
   });
   app.slots.pendingInteraction({
     id: 'salesforce-guardrail',
-    component: SalesforceGuardrailForm
+    component: GuardrailReview
   });
   app.composer.customize({
     id: 'salesforce-banner',

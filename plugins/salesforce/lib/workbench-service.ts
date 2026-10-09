@@ -10,6 +10,7 @@ import {
   inputText,
   type ProjectContexts,
 } from "./project-context.js";
+import { jsonPreview } from "./preview-json.js";
 import type { ExplorerKv } from "./soql-history.js";
 import type { SalesforceSdk } from "./sdk-contract.js";
 import type { SalesforceDeps, ToolResult } from "./types.js";
@@ -337,11 +338,21 @@ export class WorkbenchService {
         orgId: row.org.orgId,
         orgKind: row.org.kind,
         kind: mutates ? "org.write" : undefined,
-        summary: `${row.kind} on ${row.org.alias}: ${components.join(", ") || "tracked changes"}`,
-        preview:
-          row.kind === "retrieve.start"
-            ? "Selected org metadata will overwrite matching local files. Commit or back up local changes before approving."
-            : components.join("\n"),
+        summary: `${row.kind} on ${row.org.alias}: ${components.length ? `${components.length} component${components.length === 1 ? "" : "s"}` : "tracked changes"}`,
+        preview: jsonPreview({
+          action: row.kind,
+          target_org: row.org.alias,
+          ...(row.kind === "deploy.start" || row.kind === "deploy.validate"
+            ? { test_level: "RunSpecifiedTests", tests: raw.tests }
+            : {}),
+          components,
+          ...(row.kind === "retrieve.start"
+            ? {
+                warning:
+                  "Selected org metadata will overwrite matching local files. Commit or back up local changes before approving.",
+              }
+            : {}),
+        }),
       },
       threadId,
     );

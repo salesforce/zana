@@ -402,6 +402,10 @@ describe("workbench evidence and operations", () => {
       }),
       "",
     );
+    expect(JSON.parse(f.sdk.confirm.mock.lastCall![0].preview)).toMatchObject({
+      action: "retrieve.start",
+      components: ["ApexClass:One"],
+    });
     expect(f.sdk.execSf).not.toHaveBeenCalled();
     let finish!: (value: never) => void;
     f.apex.mockImplementation(

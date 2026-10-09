@@ -258,7 +258,10 @@ export default function plugin(zcc: ZccPluginApi) {
 Prefer `query` / `queryMore` / `describeGlobal` / `describeSObject` / `limits` for REST.
 Use `request({ alias })` when you must hit a non-default org. Use `execSf` for CLI
 escape hatches (`sf agent …`, `sf project generate`). Mutations go through
-`confirm({ kind: 'org.write', … }, threadId)` and fail closed.
+`confirm({ kind: 'org.write', … }, threadId)` and fail closed. A `preview` that is a
+JSON object (build it with `jsonPreview` from `lib/preview-json.ts` so long arrays are
+elided instead of cut) renders as fields, a component table for source paths or
+`Type:Name` members, and a highlighted `warning`; any other text is shown verbatim.
 
 ```ts
 const org = await sf.connect();
