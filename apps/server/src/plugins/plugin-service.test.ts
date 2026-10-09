@@ -1685,7 +1685,7 @@ describe('listBundledPluginCatalog', () => {
   it('catalogues first-party plugins from the repo plugins/ tree', () => {
     const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
     const out = listBundledPluginCatalog(pluginsRoot);
-    expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Docs')).toBe(true);
+    expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Library')).toBe(true);
     expect(out.find((entry) => entry.id === 'docs')?.overview).toContain('## What you get');
     expect(out.find((entry) => entry.id === 'posthog-analytics')?.description).toBe(
       'Anonymous usage analytics. Never sends prompts or replies.'
