@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent } from "@testing-library/react";
+import { act, cleanup, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@zana-ai/zcc-plugin-sdk/testing/app";
 import { PI_EXTENSION_UI_KIND } from "./src/extension-ui-contract.js";
@@ -136,5 +136,71 @@ describe("pi extension ui interaction", () => {
     );
     fireEvent.click(view.getByText("Cancel"));
     await vi.waitFor(() => expect(cancel).toHaveBeenCalled());
+  });
+
+  it("selects an option with its number key", async () => {
+    const submit = vi.fn(async () => undefined);
+    const view = render(
+      {
+        requestId: "ui-5",
+        method: "select",
+        options: ["Allow once", "Allow for this session", "Block"],
+      },
+      { submit },
+    );
+    expect(view.getByText("3")).toBeDefined();
+    const form = view.container.querySelector("form")!;
+    fireEvent.keyDown(form, { key: "2" });
+    fireEvent.keyDown(form, { key: "9" });
+    fireEvent.keyDown(form, { key: "1", metaKey: true });
+    fireEvent.click(view.getByText("Submit"));
+    await vi.waitFor(() =>
+      expect(submit).toHaveBeenCalledWith("Allow for this session"),
+    );
+  });
+
+  it("keeps the line breaks of a multi-line message", () => {
+    const view = render({
+      requestId: "ui-6",
+      method: "confirm",
+      message: "Reason: deletes data\nOrg: prod",
+    });
+    const message = view.getByText(/Reason: deletes data/);
+    expect(message.style.whiteSpace).toBe("pre-wrap");
+  });
+
+  it("replaces the dialog once Pi's timeout has passed", async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn(async () => undefined);
+      const view = render(
+        {
+          requestId: "ui-7",
+          method: "select",
+          options: ["A"],
+          expiresAt: Date.now() + 1_000,
+        },
+        { cancel },
+      );
+      expect(view.getByText("A")).toBeDefined();
+      await act(async () => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(view.getByText(/expired before it was answered/)).toBeDefined();
+      expect(view.queryByText("Submit")).toBeNull();
+      fireEvent.click(view.getByText("Dismiss"));
+      expect(cancel).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders an already-expired dialog as expired", () => {
+    const view = render({
+      requestId: "ui-8",
+      method: "confirm",
+      expiresAt: Date.now() - 1,
+    });
+    expect(view.getByText(/expired before it was answered/)).toBeDefined();
   });
 });

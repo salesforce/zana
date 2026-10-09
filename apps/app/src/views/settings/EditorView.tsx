@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, RefreshCw, Code2, ChevronRight, FolderOpen, TerminalSquare } from 'lucide-react';
 import type { AppConfig, EditorVerifyResult, OpenTarget } from '@zana-ai/zcc-domain/product';
 import { useData } from '@/store';
 import { CursorIcon } from '@/components/icons/CursorIcon';
 import { IntelliJIcon } from '@/components/icons/IntelliJIcon';
 import { Section, Field, ToggleSwitch } from '@/components/settings/FormFields';
+import { RevealContext } from '@/lib/settings-search/reveal';
 
 /**
  * Settings → Editor. Configures the `OpenerButtons` "open in editor / terminal"
@@ -18,6 +19,9 @@ import { Section, Field, ToggleSwitch } from '@/components/settings/FormFields';
  * DISTINCT from the coding-CLI harnesses (`cursor-agent`/`codex`/`pi`) under the
  * AI Harness tab.
  */
+
+/** Settings-search target for the re-check button row (a bare div, not a FormFields primitive). */
+const RECHECK_TARGET = { searchId: 'editor.recheck' };
 
 const GLYPHS: Record<OpenTarget, (size: number) => React.ReactElement> = {
   cursor: (s) => <CursorIcon size={s} />,
@@ -34,6 +38,7 @@ const GLYPHS: Record<OpenTarget, (size: number) => React.ReactElement> = {
  * a preferred-app override.
  */
 function OpenerRow({
+  searchId,
   anchorId,
   target,
   name,
@@ -43,6 +48,8 @@ function OpenerRow({
   onToggle,
   advanced
 }: {
+  /** Settings-search entry id; its `-binary` / `-app` overrides live in the Advanced block. */
+  searchId: string;
   anchorId: string;
   target: OpenTarget;
   name: string;
@@ -53,11 +60,17 @@ function OpenerRow({
   advanced?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  // A search result inside this row's Advanced block expands it before scrolling.
+  const reveal = useContext(RevealContext);
+  useEffect(() => {
+    if (advanced && reveal.reveal === 'advanced' && reveal.target?.startsWith(`${searchId}-`)) setOpen(true);
+  }, [advanced, reveal, searchId]);
   const glyph = GLYPHS[target];
   return (
     <div
       className={`opener-row${shown ? '' : ' opener-row--off'}`}
       id={`settings-anchor-${anchorId}`}
+      data-settings-target={searchId}
     >
       <div className="opener-row-head">
         {advanced ? (
@@ -149,9 +162,10 @@ export function EditorView({
     label: string,
     help: string,
     key: keyof AppConfig,
-    placeholder: string
+    placeholder: string,
+    { searchId }: { searchId: string }
   ) => (
-    <Field label={label} help={help} mono>
+    <Field searchId={searchId} label={label} help={help} mono>
       <input
         type="text"
         value={(config[key] as string | undefined) ?? ''}
@@ -166,11 +180,13 @@ export function EditorView({
   return (
     <Section
       anchorId="editor-status"
+      searchId="editor.bar-intro"
       title="Open-in-editor bar"
       help="Choose which buttons appear in the “open in editor / terminal” bar throughout the app, and how each one launches. The install check shows whether an editor’s command-line launcher is on your PATH — a missing launcher is why an “open in…” button would fail."
     >
       <div className="opener-list">
         <OpenerRow
+          searchId="editor.cursor"
           anchorId="editor-cursor"
           target="cursor"
           name="Cursor"
@@ -180,13 +196,14 @@ export function EditorView({
           onToggle={(on) => setShown('cursor', on)}
           advanced={
             <>
-              {override('CLI launcher', 'Command run to open a path. Blank ⇒ ‘cursor’ on your PATH.', 'editorCursorBinary', 'cursor')}
-              {override('macOS app name', 'Fallback (‘open -a <name>’) when the CLI launcher isn’t found. Blank ⇒ ‘Cursor’.', 'editorCursorApp', 'Cursor')}
+              {override('CLI launcher', 'Command run to open a path. Blank ⇒ ‘cursor’ on your PATH.', 'editorCursorBinary', 'cursor', { searchId: 'editor.cursor-binary' })}
+              {override('macOS app name', 'Fallback (‘open -a <name>’) when the CLI launcher isn’t found. Blank ⇒ ‘Cursor’.', 'editorCursorApp', 'Cursor', { searchId: 'editor.cursor-app' })}
             </>
           }
         />
 
         <OpenerRow
+          searchId="editor.code"
           anchorId="editor-code"
           target="code"
           name="VS Code"
@@ -196,13 +213,14 @@ export function EditorView({
           onToggle={(on) => setShown('code', on)}
           advanced={
             <>
-              {override('CLI launcher', 'Command run to open a path. Blank ⇒ ‘code’ on your PATH.', 'editorCodeBinary', 'code')}
-              {override('macOS app name', 'Fallback (‘open -a <name>’) when the CLI launcher isn’t found. Blank ⇒ ‘Visual Studio Code’.', 'editorCodeApp', 'Visual Studio Code')}
+              {override('CLI launcher', 'Command run to open a path. Blank ⇒ ‘code’ on your PATH.', 'editorCodeBinary', 'code', { searchId: 'editor.code-binary' })}
+              {override('macOS app name', 'Fallback (‘open -a <name>’) when the CLI launcher isn’t found. Blank ⇒ ‘Visual Studio Code’.', 'editorCodeApp', 'Visual Studio Code', { searchId: 'editor.code-app' })}
             </>
           }
         />
 
         <OpenerRow
+          searchId="editor.intellij"
           anchorId="editor-intellij"
           target="intellij"
           name="IntelliJ IDEA"
@@ -212,13 +230,14 @@ export function EditorView({
           onToggle={(on) => setShown('intellij', on)}
           advanced={
             <>
-              {override('CLI launcher', 'Command run to open a path. Blank ⇒ ‘idea’ on your PATH.', 'editorIntellijBinary', 'idea')}
-              {override('macOS app name', 'Fallback (‘open -a <name>’) when the CLI launcher isn’t found. Blank ⇒ ‘IntelliJ IDEA’.', 'editorIntellijApp', 'IntelliJ IDEA')}
+              {override('CLI launcher', 'Command run to open a path. Blank ⇒ ‘idea’ on your PATH.', 'editorIntellijBinary', 'idea', { searchId: 'editor.intellij-binary' })}
+              {override('macOS app name', 'Fallback (‘open -a <name>’) when the CLI launcher isn’t found. Blank ⇒ ‘IntelliJ IDEA’.', 'editorIntellijApp', 'IntelliJ IDEA', { searchId: 'editor.intellij-app' })}
             </>
           }
         />
 
         <OpenerRow
+          searchId="editor.finder"
           anchorId="editor-finder"
           target="finder"
           name="Finder"
@@ -228,6 +247,7 @@ export function EditorView({
         />
 
         <OpenerRow
+          searchId="editor.terminal"
           anchorId="editor-terminal"
           target="terminal"
           name="Terminal"
@@ -238,12 +258,13 @@ export function EditorView({
             'Preferred terminal app',
             'macOS app name launched via ‘open -a <name>’. Blank ⇒ auto-pick iTerm → WezTerm → Alacritty → Terminal.',
             'terminalApp',
-            'iTerm'
+            'iTerm',
+            { searchId: 'editor.terminal-app' }
           )}
         />
       </div>
 
-      <div className="cred-actions">
+      <div className="cred-actions" data-settings-target={RECHECK_TARGET.searchId}>
         <button type="button" className="cred-btn" onClick={runCheck} disabled={checking}>
           <RefreshCw size={14} className={checking ? 'harness-recheck-spin' : undefined} aria-hidden />
           {checking ? 'Checking…' : 'Re-check installs'}

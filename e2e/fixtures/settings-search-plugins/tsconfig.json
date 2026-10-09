@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@zana-ai/zcc-plugin-sdk": ["../../../packages/plugin-sdk/src/index.ts"],
+      "@zana-ai/zcc-plugin-sdk/server": ["../../../packages/plugin-sdk/src/server.ts"]
+    }
+  },
+  "include": ["normal/server.ts", "secret/server.ts"]
+}

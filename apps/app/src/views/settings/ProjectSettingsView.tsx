@@ -52,7 +52,7 @@ export function ProjectSettingsView({
 }: ProjectTabProps) {
   if (!project) {
     return (
-      <Section title="No project selected">
+      <Section title="No project selected" searchId="project.landing">
         <p className="settings-help">
           Select a project in the sidebar to manage its CLI flags, MCP servers, and config files.
         </p>
@@ -134,6 +134,8 @@ export function ProjectExecutionConsentSettings({
 
   return (
     <Section
+      anchorId="project-execution-consent"
+      searchId="project.execution-consent"
       title="Execution consent"
       help="Execution consent lets a matching harness use an approved execution mode in this project without asking again. It is not a reusable harness preference; revoking affects this project only."
     >
@@ -291,6 +293,8 @@ export function ProjectProcessesSection({ project }: { project: Project }) {
 
   return (
     <Section
+      anchorId="project-processes"
+      searchId="project.processes"
       title="Running processes"
       help="Processes whose current working directory is inside this project. Archiving a conversation does not stop leftover servers here; stop selected processes explicitly."
     >
@@ -400,6 +404,8 @@ export function ProjectWorktreeSettings({
 
   return (
     <Section
+      anchorId="project-worktrees"
+      searchId="project.worktrees"
       title="Git worktrees"
       help="Choose whether new agents for this project use separate branches and checkouts. This project setting overrides the global Agents default."
     >
@@ -614,10 +620,12 @@ export function ProjectHarnessSettings({
 
   return (
     <Section
+      anchorId="project-harnesses"
+      searchId="project.harnesses"
       title="AI harnesses"
       help="Project settings apply after Global defaults and before Persona and Agent choices: Global → Project → Persona → Agent. Later choices take priority when a setting cannot be combined."
     >
-      <Field label="Default harness">
+      <Field label="Default harness" searchId="project.default-harness">
         {descriptors === null || !settingsReady ? (
           <Skeleton width="180px" height="28px" />
         ) : (
@@ -690,7 +698,7 @@ export function ProjectHarnessSettings({
                   <p className="settings-help">Launch and routing settings affect Zana-created sessions only.</p>
                   <fieldset disabled={unavailable} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
                   {!!descriptor.targets?.providers?.length && (
-                    <Field label="Default Provider" help={descriptor.targets.providerModelRelationship === 'fixed-provider'
+                    <Field searchId="project.default-provider" label="Default Provider" help={descriptor.targets.providerModelRelationship === 'fixed-provider'
                       ? `${descriptor.label} uses this fixed provider.`
                       : 'Selects which provider’s models appear below. Combined provider/model harnesses encode this choice in the model id.'}>
                       <PopoverPicklist
@@ -718,7 +726,7 @@ export function ProjectHarnessSettings({
                     </Field>
                   )}
                   {!!descriptor.targets?.models.length && (
-                    <Field label="Default Model Level" help={`Native ${descriptor.label} models with portable mappings.`}>
+                    <Field searchId="project.default-model-level" label="Default Model Level" help={`Native ${descriptor.label} models with portable mappings.`}>
                       <PopoverPicklist
                         value={routing?.modelTargetId ?? ''}
                         ariaLabel="Default model level"
@@ -738,7 +746,7 @@ export function ProjectHarnessSettings({
                     </Field>
                   )}
                   {executionMapping && id !== 'codex' && (
-                    <Field label="Default Execution State" help={`Native ${descriptor.label} policies with portable mappings.`}>
+                    <Field searchId="project.default-execution-state" label="Default Execution State" help={`Native ${descriptor.label} policies with portable mappings.`}>
                       <PopoverPicklist
                         value={routing?.executionState ?? ''}
                         ariaLabel="Default execution state"
@@ -906,6 +914,7 @@ export function ProjectWorktreeIsolationField({
   const selected = value === true ? 'on' : value === false ? 'off' : 'inherit';
   return (
     <Field
+      searchId="project.worktree-isolation"
       label="Worktree isolation"
       help="Controls the initial Worktree choice for new agents in this project. Main still verifies the folder is a Git repository before creating a worktree."
     >
@@ -954,6 +963,7 @@ function CodexProjectLaunchFields({
   return (
     <>
       <Field
+        searchId="project.codex-sandbox-policy"
         label="Default Sandbox Policy"
         help="Controls filesystem and command isolation for this project. Bracketed text shows which portable Persona/Agent Execution State normally selects this policy."
       >
@@ -967,6 +977,7 @@ function CodexProjectLaunchFields({
         />
       </Field>
       <Field
+        searchId="project.codex-approval-policy"
         label="Default Approval Policy"
         help="Controls when Codex asks before acting in this project. Bracketed text shows which portable Persona/Agent Execution State normally selects this policy."
       >
@@ -992,7 +1003,7 @@ function PiProjectLaunchFields({
 }) {
   return (
     <>
-      <Field label="Default Provider" help="Passed to PI as --provider. Leave blank to inherit the Global PI provider.">
+      <Field searchId="project.pi-provider" label="Default Provider" help="Passed to PI as --provider. Leave blank to inherit the Global PI provider.">
         <input
           type="text"
           value={settings.piProvider ?? ''}
@@ -1000,7 +1011,7 @@ function PiProjectLaunchFields({
           onChange={(event) => save({ piProvider: event.target.value.trim() || undefined })}
         />
       </Field>
-      <Field label="Default Model" help="Passed to PI as --model. Leave blank to inherit the Global PI model.">
+      <Field searchId="project.pi-model" label="Default Model" help="Passed to PI as --model. Leave blank to inherit the Global PI model.">
         <input
           type="text"
           value={settings.piModel ?? ''}
@@ -1008,7 +1019,7 @@ function PiProjectLaunchFields({
           onChange={(event) => save({ piModel: event.target.value.trim() || undefined })}
         />
       </Field>
-      <Field label="Default Thinking Level" help="Passed to PI as --thinking. Leave Default selected to inherit PI's native behavior.">
+      <Field searchId="project.pi-thinking" label="Default Thinking Level" help="Passed to PI as --thinking. Leave Default selected to inherit PI's native behavior.">
         <PopoverPicklist
           value={settings.piThinking ?? 'default'}
           ariaLabel="Default thinking level"
@@ -1059,10 +1070,13 @@ function ProjectRemoteSettings({
 
   return (
     <Section
+      anchorId="project-remote"
+      searchId="project.remote-connection"
       title="Remote connection"
       help={`SSH: ${project.remote?.user ? `${project.remote.user}@` : ''}${project.remote?.host}. Agents run on this machine and execute file and shell tools on the remote over SSH.`}
     >
       <Field
+        searchId="project.remote-start-path"
         label="Remote start path"
         mono
         help="The directory this project's Explorer and remote tools open in on the remote host. Leave blank to use the global default remote path, then the remote $HOME."
@@ -1094,6 +1108,7 @@ function ClaudeProjectLaunchFields({
   return (
     <>
       <Field
+        searchId="project.append-system-prompt"
         label="Append system prompt"
         help="Additive: appended after Global prompt text and before Persona and Agent prompt text."
       >
@@ -1112,6 +1127,7 @@ function ClaudeProjectLaunchFields({
 
 
       <TextArgsField
+        searchId="project.extra-args"
         label="Extra args"
         help="Applied after Global args and before Persona and Agent args. Later settings take priority when the same option appears more than once."
         values={settings.extraArgs ?? []}
@@ -1120,6 +1136,7 @@ function ClaudeProjectLaunchFields({
       />
 
       <ChipField
+        searchId="project.add-dirs"
         label="Add dirs"
         help="Combined with directories from Global, Persona, and Agent settings."
         values={settings.addDirs ?? []}
@@ -1128,6 +1145,7 @@ function ClaudeProjectLaunchFields({
       />
 
       <ChipField
+        searchId="project.allowed-tools"
         label="Allowed tools"
         help="Combined and deduplicated with allowed tools from Global, Persona, and Agent settings."
         values={settings.allowedTools ?? []}
@@ -1136,6 +1154,7 @@ function ClaudeProjectLaunchFields({
       />
 
       <ChipField
+        searchId="project.denied-tools"
         label="Denied tools"
         help="Combined and deduplicated across every level. Earlier denials remain in effect."
         values={settings.deniedTools ?? []}
@@ -1303,18 +1322,18 @@ export function ProjectCodexSettings({
   const settings = result.settings;
   return <>
     <div className="settings-btn-row"><button className="settings-btn" onClick={() => void load()}>Reload</button></div>
-    <Field label="Model" help="Project `.codex/config.toml` model override. Models come from Codex's account-visible catalog.">
+    <Field searchId="project.codex-model" label="Model" help="Project `.codex/config.toml` model override. Models come from Codex's account-visible catalog.">
       <select value={settings.model ?? ''} onChange={(e) => void save({ model: e.target.value || undefined })}>
         <option value="">Unset</option>
         {modelOptions(descriptor, settings.model).map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
       </select>
     </Field>
-    <Field label="Approval policy">
+    <Field searchId="project.codex-approval" label="Approval policy">
       <select value={settings.approvalPolicy ?? ''} onChange={(e) => void save({ approvalPolicy: (e.target.value || undefined) as CodexProjectSettings['approvalPolicy'] })}>
         <option value="">Unset</option><option value="untrusted">Untrusted</option><option value="on-request">On request</option><option value="never">Never</option>
       </select>
     </Field>
-    <Field label="Sandbox mode">
+    <Field searchId="project.codex-sandbox-mode" label="Sandbox mode">
       <select value={settings.sandboxMode ?? ''} onChange={(e) => void save({ sandboxMode: (e.target.value || undefined) as CodexProjectSettings['sandboxMode'] })}>
         <option value="">Unset</option><option value="read-only">Read-only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Danger full access</option>
       </select>
@@ -1344,8 +1363,8 @@ export function ProjectOpenCodeSettings({
   if (!result) return <StencilForm label="Loading OpenCode settings" />;
   if (result.state === 'invalid' || result.state === 'io-error') return <p className="modal-error">{result.message}</p>;
   const settings = result.settings;
-  const modelField = (label: string, key: 'model' | 'smallModel', help: string) => (
-    <Field label={label} help={help}>
+  const modelField = ({ label, key, help, searchId }: { label: string; key: 'model' | 'smallModel'; help: string; searchId: string }) => (
+    <Field label={label} help={help} searchId={searchId}>
       <select value={settings[key] ?? ''} onChange={(e) => void save({ [key]: e.target.value || undefined })}>
         <option value="">Unset</option>
         {modelOptions(descriptor, settings[key]).map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
@@ -1354,9 +1373,9 @@ export function ProjectOpenCodeSettings({
   );
   return <>
     <div className="settings-btn-row"><button className="settings-btn" onClick={() => void load()}>Reload</button></div>
-    {modelField('Model', 'model', 'Project `opencode.json` model override.')}
-    {modelField('Small model', 'smallModel', 'Model for lightweight OpenCode tasks.')}
-    <Field label="Default agent" help="Primary agent used when no `--agent` is selected.">
+    {modelField({ label: 'Model', key: 'model', help: 'Project `opencode.json` model override.', searchId: 'project.opencode-model' })}
+    {modelField({ label: 'Small model', key: 'smallModel', help: 'Model for lightweight OpenCode tasks.', searchId: 'project.opencode-small-model' })}
+    <Field searchId="project.opencode-default-agent" label="Default agent" help="Primary agent used when no `--agent` is selected.">
       <select value={settings.defaultAgent ?? ''} onChange={(e) => void save({ defaultAgent: e.target.value || undefined })}>
         <option value="">Unset</option>
         {roleOptions(descriptor, settings.defaultAgent).map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
@@ -1464,7 +1483,7 @@ function ClaudeScopeCardInner({
         <p className="settings-help">{subtitle}</p>
       </header>
 
-      <Field label="Default permission mode">
+      <Field searchId="project.claude-permission-mode" label="Default permission mode">
         <PopoverPicklist
           value={perm.defaultMode ?? ''}
           ariaLabel="Default permission mode"
@@ -1492,7 +1511,7 @@ function ClaudeScopeCardInner({
         />
       </Field>
 
-      <Field label="Model" help="Top-level `model` override (e.g. opus, sonnet, haiku).">
+      <Field searchId="project.claude-model" label="Model" help="Top-level `model` override (e.g. opus, sonnet, haiku).">
         <input
           type="text"
           value={modelDraft}
@@ -1508,6 +1527,7 @@ function ClaudeScopeCardInner({
       </Field>
 
       <ChipField
+        searchId="project.claude-allow"
         label="Allow"
         help="permissions.allow — pre-approved tool patterns. Examples: Bash(git:*), Edit, Read."
         values={perm.allow ?? []}
@@ -1523,6 +1543,7 @@ function ClaudeScopeCardInner({
       />
 
       <ChipField
+        searchId="project.claude-deny"
         label="Deny"
         help="permissions.deny — blocked tool patterns. Examples: Bash(rm:*)."
         values={perm.deny ?? []}
@@ -1538,6 +1559,7 @@ function ClaudeScopeCardInner({
       />
 
       <ChipField
+        searchId="project.claude-additional-dirs"
         label="Additional directories"
         help="permissions.additionalDirectories — extra paths claude can read/write outside the project root."
         values={perm.additionalDirectories ?? []}

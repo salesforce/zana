@@ -246,3 +246,69 @@
     gap: 12px;
   }
 }
+
+/* Settings search results (rail) */
+.sidebar.settings-pane .settings-results {
+  padding: 0 10px 24px;
+}
+
+.sidebar.settings-pane .settings-result {
+  display: block;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.sidebar.settings-pane .settings-result[aria-selected='true'],
+.sidebar.settings-pane .settings-result:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.14));
+}
+
+.sidebar.settings-pane .settings-result-label {
+  display: block;
+  font-weight: 500;
+}
+
+.sidebar.settings-pane .settings-result-crumb,
+.sidebar.settings-pane .settings-result-gate,
+.sidebar.settings-pane .settings-result-value {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.sidebar.settings-pane .settings-result-snippet {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.sidebar.settings-pane .settings-result mark {
+  background: var(--accent-soft, rgba(255, 200, 0, 0.35));
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* Jump target pulse: a 1.2 s outline, static under reduced motion. */
+@keyframes settings-search-flash {
+  0% { outline-color: var(--accent, #4c8dff); }
+  100% { outline-color: transparent; }
+}
+
+.settings-search-flash {
+  outline: 2px solid var(--accent, #4c8dff);
+  outline-offset: 2px;
+  border-radius: 6px;
+  animation: settings-search-flash 1.2s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-search-flash {
+    animation: none;
+  }
+}

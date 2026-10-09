@@ -5,10 +5,13 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import {
   BRIDGE_JSON_RPC_ERRORS,
@@ -17,6 +20,7 @@ import {
   THREAD_DELTA_GRAMMAR_V3,
   THREAD_DELTA_NOTIFICATION_METHOD,
   bridgeRequestEnvelopeSchema,
+  buildShellEnvOverrides,
   createBridgeIo,
   createBridgeLineHandler,
   createPendingToolCallTracker,
@@ -203,6 +207,10 @@ interface ThreadSession {
 
 let sessionSerialCounter = 0;
 const THREAD_STOP_CLOSE_TIMEOUT_MS = 8_000;
+// Mirrors the host's PROMPT_ATTACHMENT_MAX_BYTES: an image is inlined into a
+// single base64 prompt line, so an unbounded file would bloat it past
+// what Pi and the line reader accept.
+const LOCAL_IMAGE_MAX_BYTES = 35 * 1024 * 1024;
 
 const { send, sendResult, sendError } = createBridgeIo<
   BridgeEventNotification | BridgeToolCallRequest | InteractionUiRequest
@@ -548,10 +556,12 @@ async function handleRequest(
       );
       break;
     case "thread/start":
+      // A fresh Pi session handle: reusing the thread id would reopen the
+      // previous `<threadId>.jsonl` after the context is cleared.
       await handleThreadConstruction(
         request.id,
         request.params.threadId,
-        request.params.threadId,
+        `pi_${randomUUID()}`,
         toPiSessionParams(request.params),
       );
       break;
@@ -1039,6 +1049,15 @@ async function reconcileTurnOptions(
 ): Promise<ThreadSession> {
   const turnOptions = buildPiTurnOptions(options);
   const construction = threadSession.construction;
+  // A later turn may carry new provider env (credentials, endpoints); the
+  // child only reads it at spawn, so a change rebuilds the session.
+  const shellEnvOverrides =
+    options.envVars && Object.keys(options.envVars).length > 0
+      ? { ZCC_THREAD_ID: threadId, ...buildShellEnvOverrides(options.envVars) }
+      : undefined;
+  const environmentChanged =
+    shellEnvOverrides !== undefined &&
+    !isDeepStrictEqual(shellEnvOverrides, construction.shellEnvOverrides);
   const changedModelRequest =
     turnOptions.model !== undefined && turnOptions.model !== construction.model
       ? turnOptions.model
@@ -1046,7 +1065,11 @@ async function reconcileTurnOptions(
   const thinkingLevelChanged =
     turnOptions.thinkingLevel !== undefined &&
     turnOptions.thinkingLevel !== construction.thinkingLevel;
-  if (changedModelRequest === undefined && !thinkingLevelChanged) {
+  if (
+    !environmentChanged &&
+    changedModelRequest === undefined &&
+    !thinkingLevelChanged
+  ) {
     return threadSession;
   }
   const nextModel =
@@ -1058,11 +1081,12 @@ async function reconcileTurnOptions(
     (threadSession.constructionModel === undefined ||
       threadSession.constructionModel.provider !== nextModel.provider ||
       threadSession.constructionModel.id !== nextModel.id);
-  if (!modelChanged && !thinkingLevelChanged) {
+  if (!environmentChanged && !modelChanged && !thinkingLevelChanged) {
     return threadSession;
   }
   const replacement = await rebuildThreadSession(threadId, threadSession, {
     ...construction,
+    ...(shellEnvOverrides === undefined ? {} : { shellEnvOverrides }),
     ...(turnOptions.model === undefined ? {} : { model: turnOptions.model }),
     ...(turnOptions.thinkingLevel === undefined
       ? {}
@@ -1265,11 +1289,19 @@ function extractInput(input: TurnStartParams["input"]): ExtractedInput {
         }
       }
     } else if (typed.type === "localImage" && typeof typed.path === "string") {
+      let unavailable = "unreadable";
       try {
-        const data = readFileSync(typed.path).toString("base64");
-        const mimeType = typed.mimeType ?? mimeTypeFromExtension(typed.path);
-        images.push({ type: "image", data, mimeType });
+        if (statSync(typed.path).size > LOCAL_IMAGE_MAX_BYTES) {
+          unavailable = "too large";
+        } else {
+          const data = readFileSync(typed.path).toString("base64");
+          const mimeType = typed.mimeType ?? mimeTypeFromExtension(typed.path);
+          images.push({ type: "image", data, mimeType });
+          continue;
+        }
       } catch {}
+      // Tell the model an image was attached rather than dropping it silently.
+      chunks.push(`[Attached image not sent (${unavailable}): ${typed.path}]`);
     } else if (typed.type === "localFile" && typeof typed.path === "string") {
       chunks.push(`[Attached file: ${typed.path}]`);
     }

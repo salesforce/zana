@@ -9,8 +9,9 @@ test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 test('Performance shows real utility metrics, heartbeat, charts and refresh failures in built Electron', async ({ app }, testInfo) => {
   const win = app.window;
   await win.getByRole('link', { name: 'Settings', exact: true }).click();
-  await win.getByRole('textbox', { name: 'Search settings' }).fill('daemon');
-  await win.getByTestId('settings-nav-performance').click();
+  await win.getByRole('combobox', { name: 'Search settings' }).fill('daemon');
+  // A query shows ranked result rows (not the nav list); open the Performance page result.
+  await win.getByRole('option').filter({ hasText: 'Performance' }).first().click();
   const panel = win.getByTestId('performance-view');
   await expect(panel).toBeVisible();
   await expect.poll(async () => {

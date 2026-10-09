@@ -11,6 +11,7 @@ export function RemoteMachineDefaultsList() {
   return (
     <Section
       anchorId="legacy-agent-remote-defaults"
+      searchId="machines.remote-defaults"
       title="Remote defaults"
       help="Each enrolled machine has its own start path for SSH projects that do not set a per-project Remote start path. Edit the path on Machines."
     >

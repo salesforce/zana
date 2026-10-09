@@ -54,6 +54,7 @@ export function DoctorSection() {
     <Section title="Doctor">
       {error && <p className="modal-error">{error}</p>}
       <SettingsActionRow
+        searchId="global.call-doctor"
         label="Call Doctor Agent"
         help="Verifies ~/.zcc, runtime extensions, and consent — then fixes what it safely can. It won’t add features or change behaviour."
       >

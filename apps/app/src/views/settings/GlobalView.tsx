@@ -21,7 +21,7 @@ export function GlobalView({
   return (
     <>
       <Section anchorId="appearance" title="Appearance">
-        <Field label="Theme" help="Choose how Zana looks on this device." layout="row">
+        <Field searchId="global.theme" label="Theme" help="Choose how Zana looks on this device." layout="row">
           <PopoverPicklist
             value={config.theme}
             ariaLabel="Theme"
@@ -42,16 +42,19 @@ export function GlobalView({
 
       <Section
         anchorId="debug"
+        searchId="global.debug-intro"
         title="Debug"
         help="Diagnostics for agent timelines and provider wires. Off by default."
       >
         <CheckboxField
+          searchId="global.show-diagnostic-events"
           label="Show diagnostic events"
           help="Surface provider/unhandled timeline rows and routine environment-provisioning noise. Development builds also force unhandled provider rows on."
           checked={(config.showDiagnosticEvents ?? config.showUnhandledProviderEvents) ?? false}
           onChange={(v) => onUpdate({ showDiagnosticEvents: v, showUnhandledProviderEvents: v })}
         />
         <CheckboxField
+          searchId="global.record-provider-traffic"
           label="Record provider traffic"
           help="Write raw provider/ACP lines as NDJSON under the app data directory (provider-recordings/raw). Can include prompts and paths. New agent turns pick this up; already-running sessions keep their current setting."
           checked={config.providerBridgeRecordingEnabled ?? false}
@@ -59,8 +62,9 @@ export function GlobalView({
         />
       </Section>
 
-      <Section title="Help">
+      <Section title="Help" searchId="global.help-intro">
         <SettingsActionRow
+          searchId="global.replay-walkthrough"
           label="Replay walkthrough"
           help="For new users: starting a conversation, the CLI Agent composer, adding a project, and creating a schedule."
         >
@@ -74,6 +78,7 @@ export function GlobalView({
           </button>
         </SettingsActionRow>
         <SettingsActionRow
+          searchId="global.check-setup"
           label="Check setup"
           help="Verify agent and Salesforce CLIs are installed."
         >

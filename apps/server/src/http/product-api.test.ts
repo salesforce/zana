@@ -2279,6 +2279,37 @@ describe('product HTTP plugins', () => {
     await expect(after.json()).resolves.toEqual({ apps: [] });
   });
 
+  it('omits secret plugin setting values when asked (?secrets=omit) and keeps descriptors', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-secrets-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const settings = {
+      descriptors: {
+        apiKey: { type: 'string' as const, label: 'API key', secret: true },
+        region: { type: 'string' as const, label: 'Region' }
+      },
+      values: { apiKey: 'sk-live-should-not-leave', region: 'eu' } as Record<string, string | boolean | undefined>
+    };
+    server.ctx.plugins = {
+      snapshot: () => [],
+      callRpc: async () => undefined,
+      getSettings: () => settings,
+      setSettings: async () => {}
+    } as never;
+
+    const redacted = await fetch(`${server.url}api/v1/plugin-apps/demo/settings?secrets=omit`);
+    const body = await redacted.json();
+    expect(body.descriptors).toEqual(settings.descriptors);
+    expect(body.values).toEqual({ region: 'eu' });
+    expect(JSON.stringify(body)).not.toContain('sk-live-should-not-leave');
+
+    // Without the flag the Configure page keeps its existing contract.
+    const full = await fetch(`${server.url}api/v1/plugin-apps/demo/settings`);
+    await expect(full.json()).resolves.toEqual(settings);
+  });
+
   it('calls plugin RPC and reads or writes settings', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-rpc-'));
     server = await startTestProductServer({

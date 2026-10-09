@@ -1,0 +1,14 @@
+{
+  "name": "zcc-plugin-settings-search-normal",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "zcc": ">=1.0.0", "zccPluginSdk": ">=0.1.0" },
+  "zcc": {
+    "name": "Settings Search Normal",
+    "description": "Disposable test-only fixture with ordinary zcc.settings.define settings for the Settings search E2E.",
+    "branding": { "icon": "FlaskConical" },
+    "server": "./server.ts",
+    "extra": { "notes": "Test-only fixture. Never ship to the marketplace or under plugins/." }
+  },
+  "devDependencies": { "@zana-ai/zcc-plugin-sdk": "0.1.0" }
+}

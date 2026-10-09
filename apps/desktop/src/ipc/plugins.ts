@@ -5,6 +5,7 @@ import { ctx } from './ctx.js';
 import { listMcpServersAll, revealMcpServer, setMcpServerEnabledById } from '@zana-ai/zcc-server/services/mcp/mcp-catalogue';
 import { listMcpServers, setMcpServerEnabled } from '@zana-ai/zcc-server/services/mcp/mcp';
 import { listPlugins, revealPlugin, setPluginEnabled } from '@zana-ai/zcc-server/services/extensions/plugins';
+import { wantsSecretsOmitted, withoutSecretValues } from '@zana-ai/zcc-server/plugins/plugin-settings-redaction';
 import type { Result } from '@zana-ai/zcc-domain/product';
 import {
   listPluginAppsFromProductServer,
@@ -221,9 +222,13 @@ export function registerPluginsIpc(): void {
   );
   ctx.safeHandle(
     IPC.pluginApps.getSettings,
-    async (pluginId: string) => {
-      if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.getPluginSettings(pluginId);
-      return getPluginSettingsFromProductServer(pluginId);
+    async (pluginId: string, options?: unknown) => {
+      const snapshot = ctx.runtimeSupervisor
+        ? await ctx.runtimeSupervisor.getPluginSettings(pluginId)
+        : await getPluginSettingsFromProductServer(pluginId);
+      // Same redaction as the HTTP route: Settings search asks for it, so stored
+      // secrets never reach the (untrusted) renderer just to be discarded there.
+      return wantsSecretsOmitted(options) ? withoutSecretValues(snapshot) : snapshot;
     },
     () => ({ descriptors: {}, values: {} })
   );

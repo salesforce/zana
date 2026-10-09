@@ -558,3 +558,66 @@ describe('MachineCard', () => {
     );
   });
 });
+
+describe('remote and project search entries', () => {
+  const snapshot = (config: Record<string, unknown>, settings?: Record<string, unknown>) => ({
+    config: config as unknown as AppConfig,
+    project: settings ? { id: 'p', settings: settings as never } : undefined
+  });
+  const load = async () => {
+    const mods = await Promise.all([
+      import('../../lib/settings-search/entries/machines.js'),
+      import('../../lib/settings-search/entries/connectivity.js'),
+      import('../../lib/settings-search/entries/phone.js'),
+      import('../../lib/settings-search/entries/remote-access.js'),
+      import('../../lib/settings-search/entries/project.js')
+    ]);
+    return mods.flatMap((m) => [...m.entries]);
+  };
+  const valueOf = (entries: Awaited<ReturnType<typeof load>>, id: string, snap: ReturnType<typeof snapshot>) =>
+    entries.find((e) => e.id === id)?.value?.(snap);
+
+  it('reads only non-secret values and none for secret-looking entries', async () => {
+    const entries = await load();
+    const { findSecretValueViolations } = await import('../../lib/settings-search/secrets.js');
+    expect(findSecretValueViolations(entries)).toEqual([]);
+    expect(new Set(entries.map((e) => e.id)).size).toBe(entries.length);
+    const on = snapshot({ publicAppUrl: 'https://z.example', remoteDefaultPath: '/srv/w', remoteMcpEnabled: true, mobileGatewayEnabled: true });
+    expect(valueOf(entries, 'machines.public-app-url', on)).toBe('https://z.example');
+    expect(valueOf(entries, 'connectivity.default-remote-path', on)).toBe('/srv/w');
+    expect(valueOf(entries, 'connectivity.remote-mcp', on)).toBe('On');
+    expect(valueOf(entries, 'remote-access.toggle', on)).toBe('On');
+    const off = snapshot({});
+    expect(valueOf(entries, 'machines.public-app-url', off)).toBeUndefined();
+    expect(valueOf(entries, 'connectivity.default-remote-path', off)).toBeUndefined();
+    expect(valueOf(entries, 'connectivity.remote-mcp', off)).toBe('Off');
+    expect(valueOf(entries, 'remote-access.toggle', off)).toBe('Off');
+  });
+
+  it('maps project settings to display values and tolerates a missing project', async () => {
+    const entries = await load();
+    const withSettings = snapshot({}, {
+      addDirs: ['/a'], allowedTools: ['Read'], deniedTools: ['Bash(rm:*)'], codexSandbox: 'read-only', codexApproval: 'never',
+      piProvider: 'anthropic', piModel: 'm', piThinking: 'high', worktreeIsolation: true
+    });
+    expect(valueOf(entries, 'project.add-dirs', withSettings)).toEqual(['/a']);
+    expect(valueOf(entries, 'project.allowed-tools', withSettings)).toEqual(['Read']);
+    expect(valueOf(entries, 'project.denied-tools', withSettings)).toEqual(['Bash(rm:*)']);
+    expect(valueOf(entries, 'project.codex-sandbox-policy', withSettings)).toBe('read-only');
+    expect(valueOf(entries, 'project.codex-approval-policy', withSettings)).toBe('never');
+    expect(valueOf(entries, 'project.pi-provider', withSettings)).toBe('anthropic');
+    expect(valueOf(entries, 'project.pi-model', withSettings)).toBe('m');
+    expect(valueOf(entries, 'project.pi-thinking', withSettings)).toBe('high');
+    expect(valueOf(entries, 'project.worktree-isolation', withSettings)).toBe('Always use worktrees');
+    expect(valueOf(entries, 'project.worktree-isolation', snapshot({}, { worktreeIsolation: false }))).toBe('Never use worktrees');
+    expect(valueOf(entries, 'project.worktree-isolation', snapshot({}, {}))).toBeUndefined();
+    expect(valueOf(entries, 'project.add-dirs', snapshot({}, { addDirs: [] }))).toBeUndefined();
+    expect(valueOf(entries, 'project.add-dirs', snapshot({}))).toBeUndefined();
+  });
+
+  it('renders SearchTarget as a flashable box carrying the entry id', async () => {
+    const { SearchTarget } = await import('./MachineCard.js');
+    expect(renderToStaticMarkup(<SearchTarget searchId="x.inline">a</SearchTarget>)).toContain('data-settings-target="x.inline"');
+    expect(renderToStaticMarkup(<SearchTarget searchId="x.block" block>a</SearchTarget>)).toMatch(/^<div data-settings-target="x.block"/);
+  });
+});

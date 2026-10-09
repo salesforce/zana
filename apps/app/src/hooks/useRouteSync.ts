@@ -80,7 +80,12 @@ export function useRouteSync(): void {
     if (current.settingsTab !== decoded.settingsTab) {
       patch.settingsTab = decoded.settingsTab as SettingsTab;
     }
-    if (current.settingsAnchor !== decoded.settingsAnchor) {
+    // A pending anchor set by the Settings rail/search must survive a route
+    // change that carries no hash: the cross-page jump used to lose its target
+    // here. SettingsView clears it once it has scrolled.
+    const keepPendingAnchor =
+      decoded.settingsAnchor === null && current.settingsAnchor !== null && decoded.nav === 'settings';
+    if (!keepPendingAnchor && current.settingsAnchor !== decoded.settingsAnchor) {
       patch.settingsAnchor = decoded.settingsAnchor;
     }
     if (current.extensionsTab !== decoded.extensionsTab) {

@@ -214,8 +214,8 @@ export function AboutView({
 
   return (
     <>
-      <Section title="About" help="App version and updates.">
-        <Field label="Version" mono>
+      <Section searchId="about.app" anchorId="about-app" title="About" help="App version and updates.">
+        <Field searchId="about.version" label="Version" mono>
           <input type="text" value={version || '…'} readOnly spellCheck={false} />
         </Field>
         <UpdateStatusCard />
@@ -236,6 +236,7 @@ export function AboutView({
       </Section>
 
       <Section
+        searchId="about.credits"
         title="Credits"
         help="Where Zana’s architecture and product ideas come from."
         anchorId="about-credits"
@@ -256,10 +257,13 @@ export function AboutView({
       </Section>
 
       <Section
+        searchId="about.developer"
+        anchorId="about-developer"
         title="Developer"
         help="Diagnostics for testing the update flow. Off by default; intended for QA and development."
       >
         <CheckboxField
+          searchId="about.update-simulation"
           label="Enable update simulation (dev/QA)"
           help="Reveals a “Simulate update” button that walks the full available → downloading → downloaded flow WITHOUT contacting the release feed or downloading anything. Nothing is actually installed — the “Restart now” button is a no-op while simulating. Off by default."
           checked={simEnabled}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { machineSearchId } from '@/lib/settings-search/providers/machines';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -20,6 +21,26 @@ import {
 import { ProviderCliUpdateHint } from './ProviderCliUpdateHint.js';
 import { machineCanReconnect, machineCanRelaunchLocal } from './machine-reconnect.js';
 import { machineConnectionCopy, permissionLabel } from './machine-status.js';
+
+/**
+ * Settings-search target for raw markup that is not built from a form primitive:
+ * renders `data-settings-target` on a real box so a result can scroll to,
+ * flash and focus it.
+ */
+export function SearchTarget({
+  searchId,
+  block = false,
+  children
+}: {
+  searchId: string;
+  /** Block wrapper (div) instead of the default inline-flex span. */
+  block?: boolean;
+  children: React.ReactNode;
+}) {
+  return block
+    ? <div data-settings-target={searchId}>{children}</div>
+    : <span data-settings-target={searchId} style={{ display: 'inline-flex' }}>{children}</span>;
+}
 
 function StatusIcon({ tone }: { tone: ProviderCliTone | 'error' }) {
   if (tone === 'ok') return <CheckCircle2 size={15} aria-hidden="true" />;
@@ -189,7 +210,7 @@ export function MachineCard({
   }, [host.defaultWorkspacePath]);
 
   return (
-    <li className={`machine-card${host.status === 'connected' ? ' machine-card--online' : ''}`}>
+    <li className={`machine-card${host.status === 'connected' ? ' machine-card--online' : ''}`} data-settings-target={machineSearchId(host.id)}>
       <div className="machine-card-header">
         <span
           className={`machine-status-dot${host.status === 'connected' ? ' machine-status-dot--on' : ''}`}
@@ -224,7 +245,7 @@ export function MachineCard({
           </p>
         </div>
         <div className="machine-card-actions">
-          <label className="machines-ceiling">
+          <label className="machines-ceiling" data-settings-target="machines.permission-ceiling">
             <span>Permission ceiling</span>
             <select
               value={host.maxPermissionMode}
@@ -243,6 +264,7 @@ export function MachineCard({
             className="settings-btn"
             onClick={onRenameStart}
             aria-label={`Rename ${host.name}`}
+            data-settings-target="machines.machine-actions"
           >
             <Pencil size={13} aria-hidden="true" />
             Rename
@@ -294,7 +316,7 @@ export function MachineCard({
         </div>
       </div>
       {host.isPrimary ? null : (
-        <div className="settings-field settings-field--mono machine-card-workspace">
+        <SearchTarget searchId="machines.default-workspace-path" block><div className="settings-field settings-field--mono machine-card-workspace">
           <label>
             <span className="settings-label">Default workspace path</span>
             <input
@@ -311,7 +333,7 @@ export function MachineCard({
             Start path for SSH projects on this machine that do not set their own.
             Leave blank to fall through to Connectivity’s global default, then the remote home directory.
           </p>
-        </div>
+        </div></SearchTarget>
       )}
       {host.status === 'connected' ? (
         <>

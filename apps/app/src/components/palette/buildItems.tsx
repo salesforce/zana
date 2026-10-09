@@ -28,7 +28,7 @@ import { cliAgentRestartConfirm } from '../agentCardActions.js';
 import { refreshModelsWithToast } from '../thread/pickers/model-refresh.js';
 
 /** A category a palette item belongs to, used for empty-query grouping. */
-export type PaletteCategory = 'Projects' | 'Threads' | 'Tabs' | 'Actions' | 'Extensions';
+export type PaletteCategory = 'Projects' | 'Threads' | 'Tabs' | 'Actions' | 'Extensions' | 'Settings';
 
 export interface PaletteItem {
   key: string;

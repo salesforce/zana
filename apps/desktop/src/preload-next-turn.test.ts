@@ -47,3 +47,12 @@ it('exposes schedule get and reload through their distinct product IPC channels'
   await expect(api.scheduler.reload('schedule-1')).resolves.toEqual({ ok: true, value: { id: 'schedule-1', name: 'Reloaded' } });
   expect(electron.invoke.mock.calls).toEqual([[IPC.scheduler.get, 'schedule-1'], [IPC.scheduler.reload, 'schedule-1']]);
 });
+
+it('forwards plugin settings read options to the getSettings IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({ descriptors: {}, values: {} });
+  await api.pluginApps.getSettings('plug', { omitSecrets: true });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.pluginApps.getSettings, 'plug', { omitSecrets: true });
+});

@@ -8,6 +8,7 @@ export const PALETTE_SCOPES = [
   { id: 'projects', label: 'Projects' },
   { id: 'threads', label: 'Threads' },
   { id: 'tabs', label: 'CLI agents' },
+  { id: 'settings', label: 'Settings' },
   { id: 'commands', label: 'Commands' }
 ] as const;
 export type PaletteScope = typeof PALETTE_SCOPES[number]['id'];
@@ -20,23 +21,31 @@ export interface ScoredRow {
 
 export const CATEGORY_LABELS: Record<PaletteSection, string> = {
   Recent: 'Recently used', Projects: 'Projects', Threads: 'Threads',
-  Tabs: 'CLI agents', Actions: 'Commands', Extensions: 'Plugin commands'
+  Tabs: 'CLI agents', Actions: 'Commands', Extensions: 'Plugin commands', Settings: 'Settings'
 };
 export const CATEGORY_SCOPE: Record<PaletteCategory, PaletteScope> = {
-  Projects: 'projects', Threads: 'threads', Tabs: 'tabs', Actions: 'commands', Extensions: 'commands'
+  Projects: 'projects', Threads: 'threads', Tabs: 'tabs', Actions: 'commands', Extensions: 'commands', Settings: 'settings'
 };
 const LANDING_CAP: Record<PaletteCategory, number> = {
-  Projects: 5, Threads: 5, Tabs: 5, Actions: 6, Extensions: 5
+  Projects: 5, Threads: 5, Tabs: 5, Actions: 6, Extensions: 5, Settings: 5
 };
 export const MAX_PALETTE_RESULTS = 100;
+/** The `settings` scope shows up to this many results (the Settings engine's own cap). */
+export const MAX_SETTINGS_RESULTS = 60;
 
 /** Search only available items: stale usage records never resurrect a destination. */
 export function searchPaletteItems(
-  items: PaletteItem[], query: string, scope: PaletteScope, recents: UsageMap, now = Date.now()
+  items: PaletteItem[], query: string, scope: PaletteScope, recents: UsageMap, now = Date.now(),
+  /** Settings rows already ranked by the Settings engine; shown only for a non-empty query. */
+  settingsItems: readonly PaletteItem[] = []
 ): { rows: ScoredRow[]; total: number; overflow: Partial<Record<PaletteCategory, number>> } {
   const candidates = items.filter((item) => scope === 'all'
     || (scope === 'favorites' ? item.favorite : CATEGORY_SCOPE[item.category] === scope));
   const q = query.trim();
+  if (q && scope === 'settings') {
+    const rows = settingsItems.slice(0, MAX_SETTINGS_RESULTS).map((item) => ({ item, section: 'Settings' as const }));
+    return { rows, total: rows.length, overflow: {} };
+  }
   if (q) {
     const scored = candidates.flatMap((item, idx) => {
       const labelMatch = fuzzyScore(item.label, q);
@@ -53,10 +62,15 @@ export function searchPaletteItems(
       return score === -Infinity ? [] : [{ item, idx, score, labelMatchIdx, boost: recencyBoost(item.key, recents, now) }];
     });
     scored.sort((a, b) => b.score - a.score || b.boost - a.boost || a.idx - b.idx);
-    return {
-      rows: scored.slice(0, MAX_PALETTE_RESULTS).map(({ item, labelMatchIdx }) => ({ item, labelMatchIdx, section: item.category })),
-      total: scored.length, overflow: {}
-    };
+    const rows: ScoredRow[] = scored.slice(0, MAX_PALETTE_RESULTS)
+      .map(({ item, labelMatchIdx }) => ({ item, labelMatchIdx, section: item.category }));
+    const overflow: Partial<Record<PaletteCategory, number>> = {};
+    if (scope === 'all' && settingsItems.length > 0) {
+      const cap = LANDING_CAP.Settings;
+      rows.push(...settingsItems.slice(0, cap).map((item) => ({ item, section: 'Settings' as const })));
+      if (settingsItems.length > cap) overflow.Settings = settingsItems.length - cap;
+    }
+    return { rows, total: scored.length + (scope === 'all' ? settingsItems.length : 0), overflow };
   }
 
   const recentItems = scope === 'all' ? candidates

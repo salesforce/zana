@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { settingsNavGroups } from '@/lib/settings-nav-search';
 import { SETTINGS_GROUPS, SETTINGS_SECTIONS, SETTINGS_SUBSECTIONS } from '@/views/settings/SettingsView';
 
 describe('Settings subsection navigation', () => {
@@ -221,16 +222,12 @@ describe('Settings subsection navigation', () => {
   });
 
   it('keeps Settings navigation without installed-module jump links', () => {
-    const source = readFileSync(
-      fileURLToPath(new URL('../listpane/SettingsPane.tsx', import.meta.url)),
-      'utf8'
-    );
-    expect(source).toContain('data-testid={`settings-nav-${section.id}`}');
-    expect(source).toContain('settings-search');
-    expect(source).toContain('filterSettingsNav');
-    expect(source).toContain('settings-subsection-list');
-    expect(source).toContain('setSettingsAnchor(sub.id)');
-    expect(source).not.toContain('selectSettingsExtension');
+    // Behaviour-level: the rail offers exactly the registered sections (plus
+    // Project settings), and no installed-module (extension) jump targets.
+    const rail = settingsNavGroups(SETTINGS_GROUPS, SETTINGS_SECTIONS);
+    const railSections = rail.flatMap((group) => group.sections);
+    expect(railSections.map((s) => s.id).sort()).toEqual([...SETTINGS_SECTIONS.map((s) => s.id), 'project'].sort());
+    expect(railSections.some((s) => s.id.startsWith('ext') || s.id.startsWith('plugin'))).toBe(false);
   });
 
   it('mounts plugin settings sections on the plugin detail page, not Global', () => {

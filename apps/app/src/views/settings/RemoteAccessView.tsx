@@ -8,6 +8,7 @@ import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { ConnectCodePairing } from './ConnectCodePairing.js';
 import { ToggleSwitch } from '../../components/settings/FormFields.js';
+import { SearchTarget } from './MachineCard.js';
 import './remote-access.css';
 
 type Status = Awaited<ReturnType<typeof product.mobile.status>>;
@@ -96,23 +97,24 @@ export function RemoteAccessView({ config, onConfigDraft }: {
   return <section className="remote-access-card" aria-label="Remote access setup">
     <header className="remote-access-heading"><Smartphone size={32} aria-hidden="true" />
       <div><h1>Remote access</h1><p>Publish this Zana instance at your-name.zana-ide.com, or open an existing instance below.</p></div>
-      <ToggleSwitch label="Remote access" checked={linked && enabled} disabled={busy || !linked || !!statusError} onChange={value => void run(() => updateEnabled(value))} />
+      <ToggleSwitch searchId="remote-access.toggle" label="Remote access" checked={linked && enabled} disabled={busy || !linked || !!statusError} onChange={value => void run(() => updateEnabled(value))} />
     </header>
     {disconnected && !linked && <p className="remote-access-flash" role="status"><Check size={16} aria-hidden="true" /> Remote access disconnected</p>}
     {statusError ? <p role="alert">{statusError}</p> : !status ? <p role="status">Checking connection…</p> : !linked ? <>
       {status.error && status.connection?.mode !== 'unconfigured' && <p role="alert">{status.error}</p>}
-      <ConnectCodePairing onPaired={async () => {
+      <SearchTarget searchId="remote-access.connect-code" block><ConnectCodePairing onPaired={async () => {
         setDisconnected(false);
         try { await updateEnabled(true); }
         catch (err) { setError(errorText(err)); }
         await refresh();
-      }} />
+      }} /></SearchTarget>
     </> : <>
       <p className="remote-access-status" role="status">
         <span className={`remote-access-dot${connected ? ' connected' : ''}`} aria-hidden="true" />
         {connected ? 'Connected' : !enabled ? 'Remote access is off' : status.error ? 'Connection needs attention' : status.relayState === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}
       </p>
       {status.error && <p role="alert">{status.error}</p>}
+      <SearchTarget searchId="remote-access.browser-address" block>
       {browserUrl ? <div className="remote-access-address">
         <span>Your browser address</span><code>{browserUrl}</code>
         <div className="remote-access-actions">
@@ -127,12 +129,15 @@ export function RemoteAccessView({ config, onConfigDraft }: {
         <p>Choose a permanent name such as <code>your-name.zana-ide.com</code> on your account page, then return here.</p>
         <a className="btn" href={`${accountUrl}/connect/`} target="_blank" rel="noreferrer">Choose your address <ExternalLink size={14} aria-hidden="true" /></a>
       </div>}
+      </SearchTarget>
       {addressError && <p role="alert">{addressError}</p>}
+      <SearchTarget searchId="remote-access.account-links" block>
       <div className="remote-access-actions">
         <a className="btn" href={`${accountUrl}/connect/`} target="_blank" rel="noreferrer">Manage account</a>
         <Link className="btn" to="/settings/phone">Add a phone</Link>
         <Link className="btn" to="/settings/machines">Add an execution machine</Link>
       </div>
+      </SearchTarget>
       <p className="settings-help">Keep this computer awake and Zana running. Sign in to your account to open its address. Turning access off also disconnects paired phones until you enable it again.</p>
       {confirmDisconnect ? <div className="remote-access-disconnect">
         <p>Disconnect this computer from your account? Browser and phone access will stop. You can sign in again later.</p>
@@ -147,7 +152,7 @@ export function RemoteAccessView({ config, onConfigDraft }: {
         <button type="button" className="btn" disabled={busy} onClick={() => setConfirmDisconnect(false)}>Cancel</button>
       </div> : <button type="button" className="btn" disabled={busy} onClick={() => setConfirmDisconnect(true)}>Disconnect…</button>}
     </>}
-    <details className="remote-access-advanced"><summary>Open an existing Zana instead</summary><SharedInstancePicker /></details>
+    <SearchTarget searchId="remote-access.shared-instance" block><details className="remote-access-advanced"><summary>Open an existing Zana instead</summary><SharedInstancePicker /></details></SearchTarget>
     {error && <p role="alert">{error}</p>}
     {statusError && <button type="button" className="btn" onClick={() => void refresh()}>Try again</button>}
     <SharedPreviews />

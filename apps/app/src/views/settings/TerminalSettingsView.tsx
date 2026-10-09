@@ -10,6 +10,9 @@ import {
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 
+/** Settings-search target for the tmux runtime-status row (a bare div, not a FormFields primitive). */
+const TMUX_STATUS_TARGET = { searchId: 'terminal.tmux-status' };
+
 /**
  * Terminal settings — everything scoped to the embedded terminal itself
  * (appearance, the shell/binary it launches, and tmux-backed durability).
@@ -57,6 +60,7 @@ export function TerminalSettingsView({
     <>
       <Section anchorId="terminal-appearance" title="Appearance">
         <Field
+          searchId="terminal.theme"
           label="Terminal theme"
           layout="row"
           help="Color palette for the terminal, independent of the app theme. ‘Auto’ follows the app’s light/dark mode. Applies live to open terminals."
@@ -69,7 +73,7 @@ export function TerminalSettingsView({
             options={TERMINAL_THEME_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
           />
         </Field>
-        <Field label="Terminal font size" help="Range 10–20. Affects new tabs." layout="row">
+        <Field searchId="terminal.font-size" label="Terminal font size" help="Range 10–20. Affects new tabs." layout="row">
           <input
             type="number"
             min={10}
@@ -88,7 +92,7 @@ export function TerminalSettingsView({
       </Section>
 
       <Section anchorId="terminal-shell" title="Shell">
-        <Field label="Default shell" help="Path to the shell launched for shell tabs." mono>
+        <Field searchId="terminal.default-shell" label="Default shell" help="Path to the shell launched for shell tabs." mono>
           <input
             type="text"
             value={config.shell}
@@ -99,6 +103,7 @@ export function TerminalSettingsView({
         </Field>
 
         <CheckboxField
+          searchId="terminal.wheel-scroll"
           label="Mouse wheel scrolls full-screen programs"
           help="When on (default), the mouse wheel scrolls inside pagers like less, man and git. Turn OFF if scrolling a shell prompt cycles through your command history instead of paging — the wheel then does nothing in those programs (use their keys, or tmux 'mouse on', to scroll). Applies immediately to open terminals."
           checked={config.terminalWheelArrowsEnabled ?? true}
@@ -108,10 +113,12 @@ export function TerminalSettingsView({
 
       <Section
         anchorId="terminal-clipboard"
+        searchId="terminal.clipboard-intro"
         title="Clipboard"
         help="Control whether terminal output may change your system clipboard."
       >
         <CheckboxField
+          searchId="terminal.clipboard-write"
           label="Allow terminal output to write the clipboard (OSC 52)"
           help="When on (default), a program in a local or remote terminal can copy text to your system clipboard via the OSC 52 escape sequence (a visible notification always fires). Turn OFF to refuse these writes — a clipboard-poisoning defense so untrusted process output can’t silently replace a copied command or address. Clipboard reads by terminal programs are always refused, regardless of this setting."
           checked={config.terminalClipboardWriteEnabled ?? true}
@@ -121,10 +128,12 @@ export function TerminalSettingsView({
 
       <Section
         anchorId="terminal-tmux"
+        searchId="terminal.tmux-intro"
         title="tmux"
         help="Session durability backed by tmux."
       >
         <Field
+          searchId="terminal.tmux-persistence"
           label="tmux session persistence"
           layout="row"
           help="Back sessions with tmux so they survive an app restart or a dropped SSH connection. A durability feature, not a speed-up — it does not make terminals faster. Needs tmux installed; ignored on Windows or when tmux is absent. Off: never wrap. Remote only: wrap SSH sessions only — the strongest use case (surviving a dropped link) — and skip the extra tmux server for local runs that don't need it. All sessions: wrap local and remote (the default)."
@@ -141,7 +150,7 @@ export function TerminalSettingsView({
             ]}
           />
         </Field>
-        <div className="settings-field">
+        <div className="settings-field" data-settings-target={TMUX_STATUS_TARGET.searchId}>
           <span className="settings-label">Runtime status</span>
           {checkingTmux ? (
             <span className="settings-help" role="status">Checking tmux…</span>

@@ -98,4 +98,34 @@ describe('palette search', () => {
     expect(run([item('hello')], '   ').rows).toHaveLength(1);
     expect(run([item('hello')], 'xyz').rows).toEqual([]);
   });
+
+  describe('Settings scope', () => {
+    const settings = Array.from({ length: 8 }, (_, i) => item(`settings:s.${i}`, 'Settings', { label: `Setting ${i}` }));
+
+    it('appends a capped Settings tail with an overflow count after the ranked rows in All', () => {
+      const result = searchPaletteItems([item('Design project')], 'Design', 'all', {}, 1000, settings);
+      expect(result.rows.map((r) => r.section)).toEqual(['Projects', ...Array(5).fill('Settings')]);
+      expect(result.overflow).toEqual({ Settings: 3 });
+      expect(result.total).toBe(9);
+    });
+
+    it('has no overflow when the hits fit', () => {
+      expect(run([], 'x', 'all').overflow).toEqual({});
+      expect(searchPaletteItems([], 'x', 'all', {}, 1000, settings.slice(0, 3)).overflow).toEqual({});
+    });
+
+    it('shows up to 60 Settings results in the settings scope and ignores other items', () => {
+      const many = Array.from({ length: 70 }, (_, i) => item(`settings:m.${i}`, 'Settings'));
+      const result = searchPaletteItems([item('Design project')], 'q', 'settings', {}, 1000, many);
+      expect(result.rows).toHaveLength(60);
+      expect(result.rows.every((r) => r.section === 'Settings')).toBe(true);
+    });
+
+    it('shows no Settings rows for an empty query or other scopes', () => {
+      expect(searchPaletteItems([], '', 'all', {}, 1000, settings).rows).toEqual([]);
+      expect(searchPaletteItems([], '', 'settings', {}, 1000, settings).rows).toEqual([]);
+      expect(searchPaletteItems([], 'x', 'threads', {}, 1000, settings).rows).toEqual([]);
+    });
+  });
 });
+

@@ -685,7 +685,8 @@ function httpProduct(): Pick<
             model: input.model,
             reasoningLevel: input.reasoningLevel,
             serviceTier: input.serviceTier,
-            acpMode: input.acpMode
+            acpMode: input.acpMode,
+            pluginPanel: input.pluginPanel
           })
         });
         const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['create']>> & {
@@ -1165,8 +1166,8 @@ function httpProduct(): Pick<
         );
         return body.value;
       },
-      getSettings: async (pluginId) =>
-        apiJson(`/plugin-apps/${encodeURIComponent(pluginId)}/settings`),
+      getSettings: async (pluginId, options) =>
+        apiJson(`/plugin-apps/${encodeURIComponent(pluginId)}/settings${options?.omitSecrets ? '?secrets=omit' : ''}`),
       setSettings: async (pluginId, values) => {
         const payload: Record<string, string | number | boolean | null> = {};
         for (const [key, value] of Object.entries(values)) {

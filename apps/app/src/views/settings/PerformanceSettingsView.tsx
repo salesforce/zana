@@ -12,6 +12,9 @@ import { formatDuration, formatMemory, performanceTrend, workloadTrend, THREAD_S
 import { usePerformance } from './use-performance.js';
 import './performance.css';
 
+/** Search target for the machine picker, which is not a FormFields row. */
+const MACHINE_PICKER = { searchId: 'performance.machine' };
+
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return <div className="performance-metric"><dt>{label}</dt><dd>{value}</dd><p>{detail}</p></div>;
 }
@@ -56,7 +59,7 @@ export function PerformanceSettingsView() {
     } catch { setCopyStatus('Could not copy diagnostics'); }
   };
   return <div className="performance-view" data-testid="performance-view">
-    <div className="performance-toolbar">
+    <div className="performance-toolbar" data-settings-target={MACHINE_PICKER.searchId}>
       <label>Machine<select aria-label="Performance machine" value={host?.id ?? ''} disabled={!hosts.length} onChange={event => { setSelectedId(event.target.value); setCopyStatus(''); }}>
         {!hosts.length && <option value="">No machines available</option>}
         {hosts.map(item => <option key={item.id} value={item.id}>{item.name}{item.isPrimary ? ' · primary' : ''}</option>)}
@@ -79,7 +82,7 @@ export function PerformanceSettingsView() {
       <Metric label="Process age" value={daemon && state.resources ? formatDuration(state.resources.sampledAt - daemon.createdAt) : 'Unavailable'} detail="Time since this daemon process started" />
       <Metric label="Threads in progress" value={summary ? `${summary.workload.activeThreads}${summary.workload.truncated ? '+' : ''}` : 'Unavailable'} detail={summaryStale || !connected ? 'Last known workload' : 'Starting, active, waiting or stopping; includes hidden threads'} />
     </dl>
-    <Section title="Daemon trends" anchorId="performance-trends" help="Samples every five seconds while this page is visible. Up to ten minutes are kept for the selected machine; gaps break the line.">
+    <Section title="Daemon trends" anchorId="performance-trends" searchId="performance.trends" help="Samples every five seconds while this page is visible. Up to ten minutes are kept for the selected machine; gaps break the line.">
       <div className="performance-charts"><Trend history={state.history} metric="cpuPercent" label="CPU" /><Trend history={state.history} metric="memoryBytes" label="Memory" /></div>
     </Section>
     <Section title="Current work" anchorId="performance-work">
@@ -105,7 +108,7 @@ export function PerformanceSettingsView() {
         <p className="settings-help">Showing {summary.threads.length} of {summary.workload.activeThreads}{summary.workload.truncated ? '+' : ''} threads. Waiting threads appear first.</p>
       </> : <p className="settings-help">{connected && !summaryStale ? 'No threads in progress.' : 'No threads in the last sample.'}</p>)}
     </Section>
-    <Section title="Product server" help="The server handles application data and history. Its resource use is measured separately from the execution daemon.">
+    <Section title="Product server" anchorId="performance-server" searchId="performance.server" help="The server handles application data and history. Its resource use is measured separately from the execution daemon.">
       <dl className="performance-facts"><div><dt>CPU</dt><dd>{server ? cpu(server.cpuPercent) : 'Unavailable'}</dd></div><div><dt>Memory</dt><dd>{formatMemory(server?.memoryBytes)}</dd></div><div><dt>Process age</dt><dd>{server && state.resources ? formatDuration(state.resources.sampledAt - server.createdAt) : 'Unavailable'}</dd></div></dl>
     </Section>
     <Section title="Connection & diagnostics" anchorId="performance-connection">

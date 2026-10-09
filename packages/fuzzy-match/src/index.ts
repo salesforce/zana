@@ -829,3 +829,5 @@ export function fuzzyMatchText<T>(
     args.limit,
   );
 }
+
+export { typoDistance, typoMaxEdits } from "./typo.js";

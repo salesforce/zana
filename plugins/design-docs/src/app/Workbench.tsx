@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
-import { Bot, DraftingCompass, FileText, Filter, MessageSquare, Plus, Search, Sparkles, X } from 'lucide-react';
+import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
+import { Bot, CircleDot, DraftingCompass, FileText, FolderOpen, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Sparkles, X } from 'lucide-react';
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
@@ -10,12 +11,43 @@ import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
-import { ContextMenu, contextMenuPoint, Dialog, IconButton, MenuItem, Popover, Spinner, StatusPill, TimeAgo } from './ui.js';
+import { ContextMenu, contextMenuPoint, Dialog, IconButton, Spinner, StatusPill, TimeAgo } from './ui.js';
 
 type StatusFilter = DocStatus | 'active' | 'all';
 const GLOBAL_ONLY = '__global__';
 
 const BRIEF_LIMIT = MAX_AGENT_PROMPT_LENGTH - 600;
+
+const STATUS_OPTIONS: PopoverPicklistOption<StatusFilter>[] = [
+  { value: 'active', label: 'Active', description: 'Everything except archived' },
+  ...DOC_STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] })),
+  { value: 'all', label: 'All statuses' }
+];
+
+function countedOption(value: string, label: string, count: number): PopoverPicklistOption<string> {
+  return {
+    value,
+    label,
+    content: (
+      <span className="dd-pick-row">
+        <span className="dd-pick-label">{label}</span>
+        <span className="dd-pick-count">{count}</span>
+      </span>
+    )
+  };
+}
+
+/** Project choices: only those with docs in the list, with counts, plus the current pick. */
+export function projectOptions(docs: DesignDocSummary[], projects: ProjectInfo[], selected: string): PopoverPicklistOption<string>[] {
+  const counts = new Map<string | null, number>();
+  for (const doc of docs) counts.set(doc.projectId, (counts.get(doc.projectId) ?? 0) + 1);
+  const options = [countedOption('', 'All projects', docs.length)];
+  if (counts.has(null) || selected === GLOBAL_ONLY) options.push(countedOption(GLOBAL_ONLY, 'Global docs', counts.get(null) ?? 0));
+  for (const project of projects) {
+    if (counts.has(project.id) || selected === project.id) options.push(countedOption(project.id, project.name, counts.get(project.id) ?? 0));
+  }
+  return options;
+}
 
 export function draftingPrompt(brief: string): string {
   return [
@@ -69,7 +101,11 @@ function DocRow({
       </span>
       {doc.summary ? <span className="dd-doc-row-summary">{doc.summary}</span> : null}
       <span className="dd-doc-row-meta">
-        {projectName !== null ? <span className="dd-doc-row-project">{projectName}</span> : null}
+        {projectName !== null ? (
+          <span className="dd-doc-row-project" title={projectName}>
+            {projectName}
+          </span>
+        ) : null}
         <span title={`${doc.fileCount} files`}>
           <FileText size={11} aria-hidden /> {doc.fileCount}
         </span>
@@ -78,7 +114,11 @@ function DocRow({
             <MessageSquare size={11} aria-hidden /> {doc.openComments}
           </span>
         ) : null}
-        {doc.updatedBy.kind === 'agent' ? <Bot size={11} aria-label="Last edited by an agent" /> : null}
+        {doc.updatedBy.kind === 'agent' ? (
+          <span title="Last edited by an agent">
+            <Bot size={11} aria-label="Last edited by an agent" />
+          </span>
+        ) : null}
         <span className="dd-spacer" />
         <TimeAgo at={doc.updatedAt} now={now} />
       </span>
@@ -94,6 +134,7 @@ function DocList({
   onSelect,
   onDeleted,
   onNew,
+  onCollapse,
   headerActions
 }: {
   projectId: string | null;
@@ -103,12 +144,12 @@ function DocList({
   onSelect(docId: string): void;
   onDeleted(docId: string): void;
   onNew(): void;
+  onCollapse(): void;
   headerActions?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = usePersistentState<StatusFilter>('list-status', 'active');
   const [projectFilter, setProjectFilter] = usePersistentState<string>('list-project', '');
-  const [filterOpen, setFilterOpen] = useState(false);
   const [menu, setMenu] = useState<{ doc: DesignDocSummary; at: { x: number; y: number } } | null>(null);
   const docActions = useDocActions(projects);
   const debounced = useDebounced(query.trim(), 200);
@@ -121,16 +162,25 @@ function DocList({
     return all.filter((doc) => (projectFilter === GLOBAL_ONLY ? doc.projectId === null : doc.projectId === projectFilter));
   }, [docs.data, showProjects, projectFilter]);
   const filtered = status !== 'active' || (showProjects && !!projectFilter);
-  const statusLabel = status === 'active' ? 'Active' : status === 'all' ? 'All' : STATUS_LABELS[status];
+  const projectChoices = useMemo(
+    () => (showProjects ? projectOptions(docs.data ?? [], projects, projectFilter) : []),
+    [showProjects, docs.data, projects, projectFilter]
+  );
 
   return (
     <div className="dd-list">
       <div className="dd-list-head">
         <span className="dd-list-title">Design docs</span>
+        {docs.data ? (
+          <span className="dd-list-count" title={`${visible.length} ${visible.length === 1 ? 'doc' : 'docs'}`}>
+            {visible.length}
+          </span>
+        ) : null}
         <span className="dd-spacer" />
         <button type="button" className="btn primary dd-new" onClick={onNew}>
           <Plus size={13} aria-hidden /> New
         </button>
+        <IconButton icon={PanelLeftClose} label="Hide doc list" onClick={onCollapse} />
         {headerActions}
       </div>
       <div className="dd-list-tools">
@@ -143,41 +193,30 @@ function DocList({
             </button>
           ) : null}
         </label>
-        <Popover
-          open={filterOpen}
-          onClose={() => setFilterOpen(false)}
-          className="dd-menu"
-          anchor={<IconButton icon={Filter} label={`Filter (${statusLabel})`} active={filtered || filterOpen} onClick={() => setFilterOpen(!filterOpen)} />}
-        >
-          <div className="dd-menu-section">Status</div>
-          {(['active', ...DOC_STATUSES, 'all'] as StatusFilter[]).map((option) => (
-            <MenuItem
-              key={option}
-              label={option === 'active' ? 'Active (not archived)' : option === 'all' ? 'All' : STATUS_LABELS[option]}
-              checked={option === status}
-              onSelect={() => {
-                setStatus(option);
-                setFilterOpen(false);
-              }}
-            />
-          ))}
-          {showProjects ? (
-            <>
-              <div className="dd-menu-section">Project</div>
-              {[{ id: '', name: 'All projects' }, { id: GLOBAL_ONLY, name: 'Global docs' }, ...projects].map((option) => (
-                <MenuItem
-                  key={option.id || 'all'}
-                  label={option.name}
-                  checked={option.id === projectFilter}
-                  onSelect={() => {
-                    setProjectFilter(option.id);
-                    setFilterOpen(false);
-                  }}
-                />
-              ))}
-            </>
-          ) : null}
-        </Popover>
+      </div>
+      <div className="dd-list-filters">
+        <PopoverPicklist
+          ariaLabel="Filter by status"
+          value={status}
+          options={STATUS_OPTIONS}
+          onChange={setStatus}
+          searchable={false}
+          triggerClassName={`launch-model-picker-trigger dd-pick${status !== 'active' ? ' on' : ''}`}
+          triggerIcon={<CircleDot size={12} aria-hidden />}
+        />
+        {showProjects ? (
+          <PopoverPicklist
+            ariaLabel="Filter by project"
+            value={projectFilter}
+            options={projectChoices}
+            onChange={setProjectFilter}
+            searchable={projectChoices.length > 8}
+            searchPlaceholder="Search projects…"
+            minWidth={220}
+            triggerClassName={`launch-model-picker-trigger dd-pick${projectFilter ? ' on' : ''}`}
+            triggerIcon={<FolderOpen size={12} aria-hidden />}
+          />
+        ) : null}
       </div>
       <div className="dd-list-scroll">
         {docs.error ? <div className="dd-banner dd-banner-error">{docs.error}</div> : null}
@@ -437,22 +476,32 @@ export function Workbench({
   const projects = useProjects();
   const templates = useTemplates();
   const [creating, setCreating] = useState<{ template: string | null } | null>(null);
+  const [listOpen, setListOpen] = usePersistentState<boolean>('list-open', true);
   const projectList = projects.data ?? [];
 
   return (
     <div className="dd-root dd-workbench">
-      <DocList
-        projectId={variant === 'project' ? projectId : null}
-        showProjects={variant === 'global'}
-        projects={projectList}
-        activeId={location.docId}
-        onSelect={(docId) => onLocationChange({ docId, path: null })}
-        onDeleted={(docId) => {
-          if (docId === location.docId) onLocationChange({ docId: null, path: null });
-        }}
-        onNew={() => setCreating({ template: null })}
-        headerActions={headerActions}
-      />
+      {listOpen ? (
+        <DocList
+          projectId={variant === 'project' ? projectId : null}
+          showProjects={variant === 'global'}
+          projects={projectList}
+          activeId={location.docId}
+          onSelect={(docId) => onLocationChange({ docId, path: null })}
+          onDeleted={(docId) => {
+            if (docId === location.docId) onLocationChange({ docId: null, path: null });
+          }}
+          onNew={() => setCreating({ template: null })}
+          onCollapse={() => setListOpen(false)}
+          headerActions={headerActions}
+        />
+      ) : (
+        <nav className="dd-list-collapsed" aria-label="Design docs">
+          <IconButton icon={PanelLeftOpen} label="Show doc list" onClick={() => setListOpen(true)} />
+          <IconButton icon={Plus} label="New design doc" onClick={() => setCreating({ template: null })} />
+          {headerActions}
+        </nav>
+      )}
       <main className="dd-main">
         {location.docId ? (
           <DocView

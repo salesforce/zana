@@ -33,6 +33,8 @@ export function ProjectSourcesSettings({ project, onSaved }: { project: Project;
   }
   const available = hosts.filter(host => !sources.some(source => source.hostId === host.id));
   return <Section
+    anchorId="project-checkouts"
+    searchId="project.checkouts"
     title="Checkouts on your machines"
     help="Use this same project on different machines. Each machine keeps its own files and Git changes. Shared history and project settings stay with this Zana instance."
   >
@@ -51,13 +53,13 @@ export function ProjectSourcesSettings({ project, onSaved }: { project: Project;
       </li>;
     })}</ul>
     <div className="project-checkout-add">
-      <Field label="Machine">
+      <Field label="Machine" searchId="project.checkout-machine">
         <select aria-label="Checkout machine" value={hostId} onChange={event => setHostId(event.target.value)} disabled={busy || available.length === 0}>
           <option value="">{available.length === 0 ? 'No other machines' : 'Choose a machine'}</option>
           {available.map(host => <option key={host.id} value={host.id} disabled={host.status !== 'connected'}>{host.name}{host.status !== 'connected' ? ' (offline)' : ''}</option>)}
         </select>
       </Field>
-      <Field label="Existing folder" mono>
+      <Field label="Existing folder" mono searchId="project.checkout-folder">
         <input aria-label="Checkout folder" value={path} onChange={event => setPath(event.target.value)} placeholder="/home/you/projects/my-project" disabled={busy} />
       </Field>
       <button type="button" className="settings-btn settings-btn--primary" disabled={busy || !hostId || !path.startsWith('/')} onClick={() => void mutate()}>Add checkout</button>

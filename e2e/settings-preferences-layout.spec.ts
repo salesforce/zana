@@ -1,4 +1,5 @@
 import { test, expect, launchApp } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -35,12 +36,12 @@ test('Settings presents grouped preferences and keeps search, persistence, and r
     await win.getByRole('listbox', { name: 'Theme' }).getByRole('option', { name: mode, exact: true }).click();
     await expect(win.locator('html')).toHaveAttribute('data-theme', mode.toLowerCase());
     await expect.poll(() => win.evaluate(() => window.cc.config.get())).toMatchObject({ theme: mode.toLowerCase() });
-    await win.screenshot({ path: testInfo.outputPath(`settings-${mode.toLowerCase()}.png`), animations: 'disabled' });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath(`settings-${mode.toLowerCase()}.png`));
   }
 
-  const search = win.getByRole('textbox', { name: 'Search settings' });
+  const search = win.getByRole('combobox', { name: 'Search settings' });
   await search.fill('dark');
-  await win.getByTestId('settings-nav-global-appearance').click();
+  await win.getByTestId('settings-result-global.theme').click();
   await expect(heading).toBeInViewport();
   await search.fill('zz-no-settings-match');
   await expect(win.getByRole('status').filter({ hasText: 'No matching settings' })).toBeVisible();
@@ -63,7 +64,7 @@ test('Settings presents grouped preferences and keeps search, persistence, and r
   expect(await panel.evaluate((el) => el.clientWidth)).toBeLessThanOrEqual(600);
   expect((await theme.boundingBox())!.y).toBeGreaterThan((await themeLabel.boundingBox())!.y);
   await panel.evaluate((el) => { el.scrollTop = 0; });
-  await win.screenshot({ path: testInfo.outputPath('settings-narrow.png'), animations: 'disabled' });
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('settings-narrow.png'));
   await win.getByRole('link', { name: 'Back to app' }).click();
   await expect(win).toHaveURL(/\/inbox$/);
 });
@@ -118,7 +119,7 @@ test('Inbox keeps readable titles, report markers, and keyboard selection in bot
       expect(await row.locator('.inbox-row-title').evaluate((el) => getComputedStyle(el).fontSize)).toBe('13px');
       expect(await detail.locator('.inbox-detail-title').evaluate((el) => getComputedStyle(el).fontSize)).toBe('22px');
       expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
-      await win.screenshot({ path: testInfo.outputPath(`inbox-${theme}.png`), animations: 'disabled' });
+      await captureElectronScreenshot(app.electron, win, testInfo.outputPath(`inbox-${theme}.png`));
     }
   } finally {
     await app.electron.close();

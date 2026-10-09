@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
@@ -199,6 +199,23 @@ describe('Modern composer voice submission', () => {
       cwd: '/tmp/project', environment: { kind: 'unmanaged' }, input: [{ type: 'text', text: 'Spoken words', mentions: [] }] }));
     expect(onCreated).toHaveBeenCalledWith('created');
     expect(h.clear).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [undefined, '/threads/created'],
+    [false, '/']
+  ])('lets navigateOnCreate=%s override the open-on-create preference', async (navigateOnCreate, expected) => {
+    h.navigateOnCreate = true;
+    function LocationProbe() { return <output data-testid="location">{useLocation().pathname}</output>; }
+    render(
+      <MemoryRouter>
+        <ThreadCommandComposer project={h.project} navigateOnCreate={navigateOnCreate} />
+        <LocationProbe />
+      </MemoryRouter>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe(expected));
   });
 
   it('does not clear or navigate a different thread after a delayed recording submission', async () => {

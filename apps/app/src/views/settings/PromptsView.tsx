@@ -174,7 +174,7 @@ export function PromptsView() {
 
   return (
     <div className="prompts-tab">
-      <section className="settings-section">
+      <Target as="section" className="settings-section" searchId="prompts.intro">
         <h3>Prompts</h3>
         <p className="settings-help settings-section-help">
           Reusable LLM micro-calls the app runs — like a sub-agent: a prompt in, one answer out.
@@ -205,7 +205,7 @@ export function PromptsView() {
               <p className="settings-help">Select a prompt to view and edit it.</p>
             ) : (
               <>
-                <PField label="Label">
+                <PField searchId="prompts.label" label="Label">
                   <input
                     type="text"
                     className="settings-input-full"
@@ -215,7 +215,7 @@ export function PromptsView() {
                   />
                 </PField>
 
-                <PField label="Description" help="Optional — shown to you, not the model.">
+                <PField searchId="prompts.description" label="Description" help="Optional — shown to you, not the model.">
                   <input
                     type="text"
                     className="settings-input-full"
@@ -226,7 +226,7 @@ export function PromptsView() {
                 </PField>
 
                 <div className="prompts-row">
-                  <PField label="Provider">
+                  <PField searchId="prompts.provider" label="Provider">
                     <PopoverPicklist
                       value={draft.provider ?? 'claude-cli'}
                       ariaLabel="Provider"
@@ -240,7 +240,7 @@ export function PromptsView() {
                       }))}
                     />
                   </PField>
-                  <PField label="Model">
+                  <PField searchId="prompts.model" label="Model">
                     <input
                       type="text"
                       className="settings-input-full"
@@ -252,7 +252,7 @@ export function PromptsView() {
                   </PField>
                 </div>
 
-                <PField label="System prompt" help="The instruction sent to the model.">
+                <PField searchId="prompts.system-prompt" label="System prompt" help="The instruction sent to the model.">
                   <textarea
                     rows={4}
                     value={draft.systemPrompt}
@@ -262,6 +262,7 @@ export function PromptsView() {
                 </PField>
 
                 <PField
+                  searchId="prompts.user-template"
                   label="User template"
                   help="The user turn. {{prompt}} is filled with the first instruction."
                 >
@@ -274,7 +275,7 @@ export function PromptsView() {
                 </PField>
 
                 <div className="prompts-row">
-                  <PField label="Max output chars">
+                  <PField searchId="prompts.max-output-chars" label="Max output chars">
                     <input
                       type="number"
                       className="settings-input-full"
@@ -288,7 +289,7 @@ export function PromptsView() {
                       }
                     />
                   </PField>
-                  <PField label="Timeout (ms)">
+                  <PField searchId="prompts.timeout" label="Timeout (ms)">
                     <input
                       type="number"
                       className="settings-input-full"
@@ -304,7 +305,7 @@ export function PromptsView() {
                   </PField>
                 </div>
 
-                <div className="prompts-actions">
+                <Target className="prompts-actions" searchId="prompts.actions">
                   <button type="button" className="btn primary" disabled={!dirty} onClick={onSave}>
                     {saved ? 'Saved' : 'Save'}
                   </button>
@@ -322,7 +323,7 @@ export function PromptsView() {
                     <FolderOpen size={13} />
                     Reveal folder
                   </button>
-                </div>
+                </Target>
 
                 {saveError && (
                   <p className="prompts-test-error" role="alert">
@@ -330,7 +331,7 @@ export function PromptsView() {
                   </p>
                 )}
 
-                <div className="prompts-test">
+                <Target className="prompts-test" searchId="prompts.test">
                   <h4 className="prompts-test-heading">Test</h4>
                   {templateVars.length === 0 ? (
                     <p className="settings-help">
@@ -383,12 +384,12 @@ export function PromptsView() {
                       )}
                     </div>
                   )}
-                </div>
+                </Target>
               </>
             )}
           </div>
         </div>
-      </section>
+      </Target>
     </div>
   );
 }
@@ -419,10 +420,15 @@ const VAR_HELP: Record<string, string> = {
   lastTurn: 'The last message the agent wrote — what idle-triage classifies.'
 };
 
+/** Settings-search target wrapper for blocks that are not a field (intro, actions, test panel). */
+function Target({ searchId, as: Tag = 'div', className, children }: { searchId: string; as?: 'div' | 'section'; className?: string; children: ReactNode }) {
+  return <Tag className={className} data-settings-target={searchId}>{children}</Tag>;
+}
+
 /** Local field wrapper matching the settings CSS classes (helpers aren't exported). */
-function PField({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
+function PField({ label, help, searchId, children }: { label: string; help?: ReactNode; searchId?: string; children: ReactNode }) {
   return (
-    <div className="settings-field">
+    <div className="settings-field" data-settings-target={searchId}>
       <label>
         <span className="settings-label">{label}</span>
         {children}

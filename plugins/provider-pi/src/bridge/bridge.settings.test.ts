@@ -47,7 +47,8 @@ it(
       instructionMode: "append",
       options: OPTIONS,
     });
-    expect(start.result).toMatchObject({ providerThreadId: threadId });
+    expect(start.result).toMatchObject({ providerThreadId: expect.stringMatching(/^pi_/u) });
+    const { providerThreadId } = start.result as { providerThreadId: string };
     await harness.request(2, "turn/start", {
       threadId,
       providerThreadId: threadId,
@@ -76,16 +77,16 @@ it(
     });
     const resume = await harness.request(5, "thread/resume", {
       threadId,
-      providerThreadId: threadId,
+      providerThreadId,
       cwd: harness.workspaceDir,
       instructionMode: "append",
       options: { ...OPTIONS, model: "fake-provider/fake-model" },
     });
-    expect(resume.result).toMatchObject({ providerThreadId: threadId });
+    expect(resume.result).toMatchObject({ providerThreadId });
     const fork = await harness.request(6, "thread/fork", {
       threadId: "thr_settings_fork",
       cwd: harness.workspaceDir,
-      sourceProviderThreadId: threadId,
+      sourceProviderThreadId: providerThreadId,
       options: OPTIONS,
       instructionMode: "append",
     });

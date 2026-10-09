@@ -6,6 +6,7 @@ export function Section({
   help,
   anchorId,
   flush,
+  searchId,
   children
 }: {
   title: string;
@@ -17,6 +18,8 @@ export function Section({
    *  sections whose children are self-contained cards (the visual unit), so the
    *  chrome doesn't nest a card inside a card. */
   flush?: boolean;
+  /** Settings-search entry id; rendered as `data-settings-target` so a result can reveal this row. */
+  searchId?: string;
   children: React.ReactNode;
 }) {
   const headingId = useId();
@@ -24,6 +27,7 @@ export function Section({
     <section
       className={`settings-section${flush ? ' settings-section--flush' : ''}`}
       id={anchorId ? `settings-anchor-${anchorId}` : undefined}
+      data-settings-target={searchId}
       aria-labelledby={headingId}
     >
       <h3 id={headingId}>{title}</h3>
@@ -38,6 +42,7 @@ export function Field({
   help,
   mono,
   layout = 'stack',
+  searchId,
   children
 }: {
   label: string;
@@ -46,10 +51,12 @@ export function Field({
   mono?: boolean;
   /** Compact preferences pair a short control with its label and description. */
   layout?: 'stack' | 'row';
+  /** Settings-search entry id (`data-settings-target`). */
+  searchId?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className={`settings-field${mono ? ' settings-field--mono' : ''}${layout === 'row' ? ' settings-field--row' : ''}`}>
+    <div data-settings-target={searchId} className={`settings-field${mono ? ' settings-field--mono' : ''}${layout === 'row' ? ' settings-field--row' : ''}`}>
       <label>
         <span className="settings-label">{label}</span>
         {children}
@@ -69,17 +76,21 @@ export function ToggleSwitch({
   onChange,
   label,
   disabled,
-  describedBy
+  describedBy,
+  searchId
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   disabled?: boolean;
   describedBy?: string;
+  /** Settings-search entry id (`data-settings-target`). */
+  searchId?: string;
 }) {
   return (
     <button
       type="button"
+      data-settings-target={searchId}
       role="switch"
       aria-checked={checked}
       aria-label={label}
@@ -99,17 +110,20 @@ export function CheckboxField({
   help,
   checked,
   onChange,
-  disabled
+  disabled,
+  searchId
 }: {
   label: string;
   help?: React.ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  /** Settings-search entry id (`data-settings-target`). */
+  searchId?: string;
 }) {
   const helpId = useId();
   return (
-    <div className="settings-field settings-field--toggle">
+    <div data-settings-target={searchId} className="settings-field settings-field--toggle">
       <div className="settings-toggle-row">
         <div className="settings-toggle-copy">
           <span className="settings-label">{label}</span>
@@ -131,14 +145,17 @@ export function CheckboxField({
 export function SettingsActionRow({
   label,
   help,
+  searchId,
   children
 }: {
   label: string;
   help?: React.ReactNode;
+  /** Settings-search entry id (`data-settings-target`). */
+  searchId?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="settings-field settings-field--action">
+    <div data-settings-target={searchId} className="settings-field settings-field--action">
       <div className="settings-action-row">
         <div className="settings-action-copy">
           <span className="settings-label">{label}</span>
@@ -155,12 +172,15 @@ export function ChipField({
   help,
   values,
   placeholder,
+  searchId,
   onChange
 }: {
   label: string;
   help?: React.ReactNode;
   values: string[];
   placeholder?: string;
+  /** Settings-search entry id (`data-settings-target`). */
+  searchId?: string;
   onChange: (vals: string[]) => void;
 }) {
   const [input, setInput] = useState('');
@@ -188,7 +208,7 @@ export function ChipField({
   const remove = (i: number) => onChange(values.filter((_, idx) => idx !== i));
 
   return (
-    <div className="settings-field">
+    <div data-settings-target={searchId} className="settings-field">
       <span className="settings-label">{label}</span>
       <div
         className="settings-chip-input"
@@ -263,12 +283,15 @@ export function TextArgsField({
   help,
   values,
   placeholder,
+  searchId,
   onChange
 }: {
   label: string;
   help?: React.ReactNode;
   values: string[];
   placeholder?: string;
+  /** Settings-search entry id (`data-settings-target`). */
+  searchId?: string;
   onChange: (vals: string[]) => void;
 }) {
   const [input, setInput] = useState(values.join(' '));
@@ -289,7 +312,7 @@ export function TextArgsField({
   };
 
   return (
-    <div className="settings-field settings-field--mono">
+    <div data-settings-target={searchId} className="settings-field settings-field--mono">
       <span className="settings-label">{label}</span>
       <input
         type="text"

@@ -7,6 +7,9 @@ import { ThreadBrowserTab } from '../../components/thread/secondary-panel/Thread
 import './shared-previews.css';
 
 const labels: Record<PreviewView['status'], string> = { ready: 'Ready', connecting: 'Connecting…', offline: 'Machine offline', 'server-not-responding': 'Start your dev server', 'update-required': 'Update required', disabled: 'Remote access is off' };
+/** Settings-search target (a bare section, not a FormFields primitive). */
+const SHARED_PREVIEWS_TARGET = { searchId: 'remote-access.shared-previews' };
+
 export function SharedPreviews() {
   const [data, setData] = useState<PreviewList>();
   const [hosts, setHosts] = useState<Array<{ id: string; name: string }>>([]);
@@ -41,7 +44,7 @@ export function SharedPreviews() {
     catch (err) { setError(err instanceof Error ? err.message : 'Could not update preview'); }
     finally { setBusy(false); }
   };
-  return <section className="shared-previews" aria-labelledby="shared-previews-title">
+  return <section className="shared-previews" aria-labelledby="shared-previews-title" data-settings-target={SHARED_PREVIEWS_TARGET.searchId}>
     <h2 id="shared-previews-title">Shared previews</h2>
     <p>Open a running web app on your phone or another computer. Each address requires your Connect account. Shares expire after eight hours; sharing again renews them.</p>
     {!data ? <p role="status">Loading previews…</p> : <>

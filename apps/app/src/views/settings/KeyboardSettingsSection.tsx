@@ -24,6 +24,7 @@ export function KeyboardSettingsSection() {
   return (
     <Section
       anchorId="keyboard"
+      searchId="keyboard.shortcuts-intro"
       title="Shortcuts"
       help="Remap New Chat, the palette, Quick Open, the explorer, and Settings. Press ⌘/ to see every shortcut."
     >
@@ -31,7 +32,7 @@ export function KeyboardSettingsSection() {
         const binding = bindings.find((row) => row.command === command.command);
         const label = binding ? formatAppShortcut(binding.shortcut, platform) : 'Disabled';
         return (
-          <Field key={command.command} label={command.label} help={command.help}>
+          <Field key={command.command} searchId={`keyboard.${command.command}`} label={command.label} help={command.help}>
             <div className="settings-keyboard-row">
               <button
                 type="button"
@@ -68,6 +69,7 @@ export function KeyboardSettingsSection() {
         );
       })}
       <SettingsActionRow
+        searchId="keyboard.all-shortcuts"
         label="All shortcuts"
         help="The full list, including chords that are not remappable here. Press ⌘/ from anywhere."
       >

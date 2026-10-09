@@ -1,4 +1,10 @@
-import { useMemo, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import {
   definePluginApp,
   type PluginPendingInteractionProps,
@@ -54,7 +60,10 @@ interface ParsedRequest {
   message?: string;
   placeholder?: string;
   prefill?: string;
+  expiresAt?: number;
 }
+
+const MAX_SHORTCUT_OPTIONS = 9;
 
 function parseRequest(payload: unknown): ParsedRequest | null {
   if (typeof payload !== "object" || payload === null) return null;
@@ -77,6 +86,21 @@ function ExtensionUiInteraction({
   const [text, setText] = useState(request?.prefill ?? "");
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const expiresAt = request?.expiresAt;
+  const [expired, setExpired] = useState(
+    () => expiresAt !== undefined && expiresAt <= Date.now(),
+  );
+
+  useEffect(() => {
+    if (expiresAt === undefined) return;
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      setExpired(true);
+      return;
+    }
+    const timer = setTimeout(() => setExpired(true), remaining);
+    return () => clearTimeout(timer);
+  }, [expiresAt]);
 
   if (!request) {
     return (
@@ -102,6 +126,40 @@ function ExtensionUiInteraction({
     })();
   };
 
+  if (expired) {
+    return (
+      <div style={{ display: "grid", gap: 8 }}>
+        <p style={{ margin: 0 }}>
+          This request expired before it was answered, so Pi continued without
+          it.
+        </p>
+        <button type="button" onClick={() => void cancel()}>
+          Dismiss
+        </button>
+      </div>
+    );
+  }
+
+  const options = request.options ?? [];
+
+  const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (
+      request.method !== "select" ||
+      busy ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    ) {
+      return;
+    }
+    const index = Number.parseInt(event.key, 10) - 1;
+    const option =
+      index >= 0 && index < MAX_SHORTCUT_OPTIONS ? options[index] : undefined;
+    if (option === undefined) return;
+    event.preventDefault();
+    setSelected(option);
+  };
+
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     if (request.method === "confirm") return;
@@ -113,24 +171,39 @@ function ExtensionUiInteraction({
   };
 
   return (
-    <form onSubmit={onSubmit} style={{ display: "grid", gap: 8 }}>
-      {request.message ? <p style={{ margin: 0 }}>{request.message}</p> : null}
+    <form
+      onSubmit={onSubmit}
+      onKeyDown={onKeyDown}
+      style={{ display: "grid", gap: 8 }}
+    >
+      {request.message ? (
+        <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{request.message}</p>
+      ) : null}
       {request.method === "select" ? (
         <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0 }}>
-          {(request.options ?? []).map((option) => (
-            <label
-              key={option}
-              style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}
-            >
-              <input
-                type="radio"
-                name={request.requestId}
-                checked={selected === option}
-                onChange={() => setSelected(option)}
-              />
-              <span>{option}</span>
-            </label>
-          ))}
+          {options.map((option, index) => {
+            const shortcut =
+              index < MAX_SHORTCUT_OPTIONS ? String(index + 1) : undefined;
+            return (
+              <label
+                key={option}
+                style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}
+              >
+                <input
+                  type="radio"
+                  name={request.requestId}
+                  checked={selected === option}
+                  aria-keyshortcuts={shortcut}
+                  autoFocus={index === 0}
+                  onChange={() => setSelected(option)}
+                />
+                <span>{option}</span>
+                {shortcut ? (
+                  <kbd style={{ marginLeft: "auto", opacity: 0.6 }}>{shortcut}</kbd>
+                ) : null}
+              </label>
+            );
+          })}
         </fieldset>
       ) : null}
       {request.method === "input" ? (

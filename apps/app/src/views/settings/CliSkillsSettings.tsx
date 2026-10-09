@@ -129,13 +129,9 @@ export function CliSkillsSettings() {
   return (
     <Section
       anchorId="cli-skills"
+      searchId="global.cli-skills-intro"
       title="CLI skills"
-      help={
-        <>
-          Give agents outside Zana the <code>zcc-cli</code> skill. Each machine
-          stores a copy in <code>~/.agents/skills</code> and <code>~/.claude/skills</code>.
-        </>
-      }
+      help="Give agents outside Zana the zcc-cli skill. Each machine stores a copy in ~/.agents/skills and ~/.claude/skills."
     >
       <CliSkillsMachinePanel
         machines={machines}

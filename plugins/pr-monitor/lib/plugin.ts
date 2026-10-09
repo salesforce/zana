@@ -6,9 +6,10 @@ import { inboxDeliveriesForDeltas, isInterestingDelta } from './inbox-delivery.j
 import { defaultPrMonitorDataDir, migrateLegacyKv } from './migrate.js';
 import { computeNotifyDelivery } from './notify.js';
 import { setupPrMonitor } from './pr-main.js';
-import { PRS_CHANGED_CHANNEL } from './realtime.js';
+import { PANEL_UI_CHANNEL, PRS_CHANGED_CHANNEL } from './realtime.js';
 import { invokeRpc } from './rpc.js';
 import { SyncCoordinator, type SyncJobState } from './sync-coordinator.js';
+import { isPanelAgentThread, PANEL_AGENT_INSTRUCTIONS, READ_TOOL_NAMES, registerPrMonitorTools, TOOL_NAMES } from './tools.js';
 import {
   DEFAULT_PR_MONITOR_SETTINGS,
   SETTINGS_STORAGE_KEY,
@@ -33,6 +34,8 @@ export interface PrMonitorPluginDeps {
   pollIntervalMs?: number;
   /** Test seam so background-inbox coverage never spawns `gh`. */
   pollAll?: () => Promise<PollAllResult>;
+  /** How long `pr_monitor_sync` waits for the job before returning. */
+  syncWaitMs?: number;
 }
 
 const MIN_POLL_MINUTES = 15;
@@ -144,6 +147,20 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
     return startSync(repos);
   });
   zcc.rpc.method('syncStatus', async (args) => coordinator.status((args as { id?: unknown })?.id));
+
+  registerPrMonitorTools(zcc, {
+    methods,
+    startSync,
+    syncStatus: (id) => coordinator.status(id),
+    prsChanged: (prs) => zcc.realtime.publish(PRS_CHANGED_CHANNEL, { prs, deltas: [], inAppDeltas: [] }),
+    panelAction: (action) => zcc.realtime.publish(PANEL_UI_CHANNEL, action),
+    syncWaitMs: deps.syncWaitMs
+  });
+  // The side-panel Agent tab gets the full toolset and board context; every
+  // other conversation can still read the board.
+  zcc.agents.configure((context) => isPanelAgentThread(context, zcc.pluginId)
+    ? { tools: [...TOOL_NAMES], instructions: PANEL_AGENT_INSTRUCTIONS }
+    : { tools: [...READ_TOOL_NAMES] });
 
   if (deps.startBackground === false) return;
 

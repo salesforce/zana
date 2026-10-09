@@ -7,6 +7,7 @@ import { usePersonas, useUi } from '@/store';
 import { personaIcon } from '@/lib/profileIcon';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { personaRoutingSummary } from '@/lib/personaRouting';
+import { personaSearchId } from '@/lib/settings-search/providers/catalogues';
 import { PersonaEditor, RevealPersonasButton } from '@/components/PersonaEditor';
 
 /**
@@ -372,7 +373,7 @@ function PersonaRow({
   const meta = personaRoutingSummary(persona);
 
   return (
-    <li className="skills-row skills-row--clickable" onContextMenu={onContextMenu}>
+    <li className="skills-row skills-row--clickable" onContextMenu={onContextMenu} data-settings-target={personaSearchId(persona.id)}>
       <button
         type="button"
         className="skills-row-open"

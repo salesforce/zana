@@ -16,22 +16,26 @@ export function InboxSettingsView({
   return (
     <Section
       anchorId="inbox-general"
+      searchId="inbox.inbox-intro"
       title="Inbox"
       help="How the inbox presents itself, which tools agents may call without prompting, and where PDF downloads land."
     >
       <CheckboxField
+        searchId="inbox.show-guidance"
         label="Show inbox guidance"
         help="Hint cards in the inbox view."
         checked={config.inboxGuidanceEnabled ?? true}
         onChange={(v) => onUpdate({ inboxGuidanceEnabled: v })}
       />
       <CheckboxField
+        searchId="inbox.trust-zcc-tools"
         label="Trust all ZCC tools"
         help="Pre-authorize every zcc-inbox tool for terminal agents this app launches, so they’re never prompted to use them (messaging peers, pushing to your inbox, the library, follow-ups, and more). On by default, which also pre-approves privileged tools — remote shell exec and library delete — for ordinary sessions, not just autonomous team runs. Turn it off if you'd rather approve those the first time they're used. Applies to sessions started after you toggle it."
         checked={config.trustZccToolsEnabled ?? true}
         onChange={(v) => onUpdate({ trustZccToolsEnabled: v })}
       />
       <Field
+        searchId="inbox.pdf-download-folder"
         label="PDF download folder"
         help="Folder that inbox “Download as PDF” saves into. Leave blank for your Downloads folder. Must be an absolute path."
         mono

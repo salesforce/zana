@@ -31,6 +31,7 @@
     }
   },
   "dependencies": {
+    "@zana-ai/zcc-ui": "workspace:*",
     "lucide-react": "^1.35.0"
   },
   "devDependencies": {

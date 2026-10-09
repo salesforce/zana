@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -63,7 +64,7 @@ async function expectEveryChildGone(expectedSpawns: number): Promise<void> {
   }
 }
 
-async function startThread(threadId: string): Promise<void> {
+async function startThread(threadId: string): Promise<string> {
   const response = await harness.startThread(threadId, {
     dynamicTools: [
       {
@@ -76,7 +77,8 @@ async function startThread(threadId: string): Promise<void> {
       },
     ],
   });
-  expect(response.result).toMatchObject({ providerThreadId: threadId });
+  expect(response.result).toMatchObject({ providerThreadId: expect.stringMatching(/^pi_/u) });
+  return (response.result as { providerThreadId: string }).providerThreadId;
 }
 
 it("stop{release} ends the child", async () => {
@@ -122,16 +124,16 @@ it("stop{interrupt} of a live run ends the child, and the turn settled before th
 }, 90_000);
 
 it("discard ends the child and removes the session file", async () => {
-  await startThread("thr_lc_discard");
+  const providerThreadId = await startThread("thr_lc_discard");
   const sessionFile = join(
     harness.workspaceDir,
     "sessions",
-    "thr_lc_discard.jsonl",
+    `${providerThreadId}.jsonl`,
   );
   expect(existsSync(sessionFile)).toBe(true);
   const discard = await harness.request((nextId += 1), "thread/discard", {
     threadId: "thr_lc_discard",
-    providerThreadId: "thr_lc_discard",
+    providerThreadId,
   });
   expect(discard.result).toEqual({ ok: true });
   expect(existsSync(sessionFile)).toBe(false);
@@ -243,6 +245,43 @@ it("accepts a prompt containing only a local image", async () => {
     ),
   ).toBe(true);
 });
+
+it.each([
+  ["unreadable", (path: string) => path],
+  [
+    "too large",
+    (path: string) => {
+      writeFileSync(path, "");
+      truncateSync(path, 36 * 1024 * 1024);
+      return path;
+    },
+  ],
+] as const)(
+  "tells the model when a local image is %s instead of dropping it",
+  async (reason, prepare) => {
+    const threadId = `thr_image_${reason.replace(" ", "_")}`;
+    await harness.startThread(threadId);
+    const imagePath = prepare(join(harness.workspaceDir, `${threadId}.png`));
+
+    const response = await harness.request((nextId += 1), "turn/start", {
+      threadId,
+      providerThreadId: threadId,
+      clientRequestId: "creq_234567abce",
+      input: [{ type: "localImage", path: imagePath, mimeType: "image/png" }],
+      options: FULL_PERMISSION_OPTIONS,
+    });
+
+    expect(response.result).toEqual({ threadId });
+    await harness.waitForTurnBoundary(threadId);
+    expect(
+      harness
+        .deltasOf(threadId)
+        .filter((delta) => delta.kind === "item.textDelta")
+        .map((delta) => String(delta.text))
+        .join(""),
+    ).toContain(`[Attached image not sent (${reason}): ${imagePath}]`);
+  },
+);
 
 it("a child's tool and prompt files go with the child after release and failed construction", async () => {
   await harness.startThread("thr_lc_scratch", {

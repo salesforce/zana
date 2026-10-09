@@ -56,3 +56,14 @@ describe('keyboard shortcut helpers', () => {
     });
   });
 });
+
+describe('keyboard search provider', () => {
+  it('yields one entry per remappable command, matching the rendered searchId', async () => {
+    const { keyboardSearchProvider } = await import('../../lib/settings-search/providers/keyboard.js');
+    const entries = keyboardSearchProvider({ config: {} as never });
+    expect(entries.map((e) => e.id)).toEqual(REMAPPABLE_COMMANDS.map((c) => `keyboard.${c.command}`));
+    expect(entries[0]).toMatchObject({ section: 'keyboard', anchor: 'keyboard', label: REMAPPABLE_COMMANDS[0].label, help: REMAPPABLE_COMMANDS[0].help });
+    const html = renderToStaticMarkup(<KeyboardSettingsSection />);
+    for (const e of entries) expect(html).toContain(`data-settings-target="${e.id}"`);
+  });
+});

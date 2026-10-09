@@ -7,6 +7,7 @@ import { useTeams, useData, useUi, usePersonas } from '@/store';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { personaIcon } from '@/lib/profileIcon';
+import { squadSearchId } from '@/lib/settings-search/providers/catalogues';
 import { SquadEditor } from '@/components/SquadEditor';
 
 /**
@@ -507,7 +508,7 @@ function TeamRow({
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <li className="skills-row skills-row--clickable team-row" onContextMenu={onContextMenu}>
+    <li className="skills-row skills-row--clickable team-row" onContextMenu={onContextMenu} data-settings-target={squadSearchId(team.id)}>
       <div className="team-row-header">
         <button
           type="button"

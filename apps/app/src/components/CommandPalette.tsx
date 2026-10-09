@@ -21,7 +21,8 @@ import { useThreads } from '../thread-store.js';
 import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { buildThreadPaletteItems } from './palette/threadItems.js';
-import { CATEGORY_LABELS, searchPaletteItems, type PaletteScope, type ScoredRow } from './palette/searchItems.js';
+import { CATEGORY_LABELS, MAX_SETTINGS_RESULTS, searchPaletteItems, type PaletteScope, type ScoredRow } from './palette/searchItems.js';
+import { useSettingsPaletteItems } from '../lib/settings-search/palette.js';
 import { PaletteFrame, paletteOptionProps } from './palette/PaletteFrame.js';
 import { favoritePaletteKeys } from './palette/favoriteItems.js';
 
@@ -343,7 +344,21 @@ export function CommandPalette({ onClose }: Props) {
     ...coreItems
   ].map((item) => ({ ...item, favorite: favorites.has(item.key) })),
   [threads, projects, coreItems, onClose, navigate, route.focusedProjectId, favorites]);
-  const search = useMemo(() => searchPaletteItems(items, query, scope, getRecents()), [items, query, scope]);
+  // Settings rows come straight from the Settings engine (not through the
+  // label fuzzy filter), and only for a typed query in All / Settings.
+  const settingsActive = !fileMode && !launchMode && !slashMode && query.trim() !== '' && (scope === 'all' || scope === 'settings');
+  const settingsProjectId = route.focusedProjectId ?? selectedProject?.id ?? null;
+  const settingsItems = useSettingsPaletteItems({
+    query,
+    active: settingsActive,
+    projectId: settingsProjectId,
+    limit: MAX_SETTINGS_RESULTS,
+    navigate: (path) => { onClose(); void navigate(path); }
+  });
+  const search = useMemo(
+    () => searchPaletteItems(items, query, scope, getRecents(), Date.now(), settingsItems),
+    [items, query, scope, settingsItems]
+  );
   const { rows, overflow } = search;
   const chooseScope = (next: PaletteScope) => {
     setScope(next);
@@ -574,7 +589,7 @@ export function CommandPalette({ onClose }: Props) {
               (t, b) => void launchInTarget(t, b))
           : slashMode
             ? renderSlashRows(slashRows, slashCommands, selectedProject !== null, activeIsClaude, activeIdx, setActiveIdx, runSlash)
-            : renderCommandRows(rows, showHeaders, activeIdx, setActiveIdx, runItem, overflow, scope, query)}
+            : renderCommandRows(rows, showHeaders, activeIdx, setActiveIdx, runItem, overflow, scope, query, chooseScope)}
     </PaletteFrame>
   );
 }
@@ -711,7 +726,8 @@ function renderCommandRows(
   runItem: (item: PaletteItem) => void,
   overflow: Partial<Record<PaletteCategory, number>>,
   scope: PaletteScope,
-  query: string
+  query: string,
+  onScope: (scope: PaletteScope) => void
 ) {
   if (rows.length === 0) return (
     <div className="palette-empty">
@@ -747,7 +763,22 @@ function renderCommandRows(
     </button>
   );
 
-  if (!showHeaders) return rows.map(renderRow);
+  if (!showHeaders) {
+    // A typed query keeps one flat ranked list; only the Settings tail of "All" gets a header.
+    const first = scope === 'all' ? rows.findIndex((row) => row.section === 'Settings') : -1;
+    if (first < 0) return rows.map(renderRow);
+    const more = overflow.Settings;
+    return rows.flatMap((row, i) => i === first ? [
+      <div key="hdr:Settings" className="palette-section">
+        <span>{CATEGORY_LABELS.Settings}</span>
+        {more ? (
+          <button type="button" className="palette-section-more" onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onScope('settings')}>+{more} more in Settings</button>
+        ) : null}
+      </div>,
+      renderRow(row, i)
+    ] : [renderRow(row, i)]);
+  }
 
   // Empty-query: insert non-interactive section headers between category
   // groups. Headers live OUTSIDE the row index space — `data-idx` stays aligned

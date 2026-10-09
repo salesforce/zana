@@ -205,6 +205,7 @@ export function BrowserSettingsSectionContent({
       <Section
         title="Browsers"
         anchorId="browsers"
+        searchId="browser.import-intro"
         help="Bring signed-in sessions from a browser on this machine into the in-app browser, so previews and agent tabs open already logged in. Cookie values never leave the desktop main process."
       >
         {supported ? (

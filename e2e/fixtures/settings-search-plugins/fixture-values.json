@@ -1,0 +1,22 @@
+{
+  "normal": {
+    "name": "Settings Search Normal",
+    "stringLabel": "Relay endpoint",
+    "stringDescription": "Fixture-only quokka gateway address used by the settings search spec.",
+    "stringValue": "https://relay.fixture.test/quokka",
+    "selectLabel": "Delivery strategy",
+    "selectOptions": ["fast", "balanced", "thorough"],
+    "selectValue": "thorough",
+    "numberLabel": "Retry budget",
+    "numberValue": 7,
+    "booleanLabel": "Emit wombat traces"
+  },
+  "secret": {
+    "name": "Settings Search Secret",
+    "secretLabel": "Fixture access phrase",
+    "secretDescription": "Fixture-only secret. Its value must never be searchable.",
+    "secretValue": "hunter2-fixture-dummy-0000",
+    "plainLabel": "Fixture region",
+    "plainValue": "ap-southeast-fixture"
+  }
+}

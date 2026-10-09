@@ -494,6 +494,8 @@ export interface CcApi {
       reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
       serviceTier?: string;
       acpMode?: string;
+      /** Started from a plugin page's side-panel Agent tab; main validates the plugin. */
+      pluginPanel?: { pluginId: string; panel: string };
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -1545,7 +1547,8 @@ export interface CcApi {
     onChanged(cb: (entries: PluginAppEntry[]) => void): () => void;
     setEnabled(id: string, enabled: boolean): Promise<Result<true>>;
     callRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
-    getSettings(pluginId: string): Promise<PluginSettingsSnapshot>;
+    /** `omitSecrets` drops `secret: true` values server-side (descriptors stay). */
+    getSettings(pluginId: string, options?: { omitSecrets?: boolean }): Promise<PluginSettingsSnapshot>;
     setSettings(
       pluginId: string,
       values: Record<string, string | number | boolean | undefined>

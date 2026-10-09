@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
+  setSettingsAnchor: vi.fn(),
   navigate: vi.fn(), close: vi.fn(), selectTab: vi.fn(), projectView: vi.fn(), setNav: vi.fn(), exitProjectFocus: vi.fn(),
   createTerminal: vi.fn(async () => null), focusedProjectId: null as string | null,
   project: { id: 'p1', name: 'Design system', path: '/design', tag: 'design', favorite: false },
@@ -15,15 +16,20 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('../../../lib/product-client.js', () => ({ product: {
   commands: { list: async () => h.commands }, fs: { walkFiles: async () => h.files },
-  ssh: { listHosts: async () => [] }
+  ssh: { listHosts: async () => [] },
+  config: { get: async () => ({}), onChanged: () => () => {} },
+  hosts: { list: async () => [] },
+  projectSettings: { get: async () => ({}), onChanged: () => () => {} }
 } }));
 vi.mock('../../../store.js', () => ({
-  useData: (selector: (state: unknown) => unknown) => selector({
+  // Same shape as the zustand store: Settings search runtime providers read and subscribe to it.
+  useData: Object.assign((selector: (state: unknown) => unknown) => selector({
     projects: [h.project], terminals: {}, createTerminal: h.createTerminal
-  }),
+  }), { getState: () => ({ projects: [h.project], harnessStatus: [] }), subscribe: () => () => {} }),
   useUi: Object.assign((selector: (state: unknown) => unknown) => selector({
     selectedProjectId: h.selectedProjectId, selectedTabId: {}, projectView: {}, recentFiles: {},
-    selectTab: h.selectTab, setProjectView: h.projectView, setNav: h.setNav, nav: 'inbox'
+    selectTab: h.selectTab, setProjectView: h.projectView, setNav: h.setNav, nav: 'inbox',
+    setSettingsAnchor: h.setSettingsAnchor
   }), { getState: () => ({ enterProjectFocus: vi.fn(), exitProjectFocus: h.exitProjectFocus }) }),
   useScheduler: (selector: (state: unknown) => unknown) => selector({ tasks: [] }),
   usePersonas: (selector: (state: unknown) => unknown) => selector({ personas: [] }),
@@ -169,4 +175,38 @@ describe('command palette integration', () => {
     expect(h.exitProjectFocus).toHaveBeenCalledWith('/settings');
     expect(h.close).toHaveBeenCalledTimes(1);
   });
+
+  it('appends a capped Settings section for a typed query and keeps recents keyed by entry id', async () => {
+    render(<CommandPalette onClose={h.close} />);
+    const input = screen.getByRole('combobox');
+    expect(screen.queryByText('Settings', { selector: '.palette-section span' })).toBeNull();
+    fireEvent.change(input, { target: { value: 'heartbeat' } });
+    await waitFor(() => expect(document.querySelector('.palette-section')).toBeTruthy());
+    expect(document.querySelector('.palette-section span')?.textContent).toBe('Settings');
+    const options = screen.getAllByRole('option');
+    expect(options.length).toBeLessThanOrEqual(5);
+    const first = options[0];
+    fireEvent.click(first);
+    expect(h.close).toHaveBeenCalledTimes(1);
+    expect(h.navigate).toHaveBeenCalledWith(expect.stringMatching(/^\/settings\/agents#/));
+    expect(localStorage.getItem('zcc.paletteRecents')).toContain('settings:agents.');
+  });
+
+  it('switches to the Settings scope from the overflow link and lists more results', async () => {
+    render(<CommandPalette onClose={h.close} />);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'agent' } });
+    const more = await screen.findByRole('button', { name: /more in Settings/ });
+    const capped = screen.getAllByRole('option').length;
+    fireEvent.click(more);
+    expect(screen.getByRole('button', { name: 'Settings', exact: true }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(capped);
+  });
+
+  it('shows no Settings rows for an empty query, even in the Settings scope', () => {
+    render(<CommandPalette onClose={h.close} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings', exact: true }));
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+    expect(screen.getByText('No results found')).toBeTruthy();
+  });
 });
+

@@ -31,7 +31,7 @@ import {
 import { Dialog } from './Dialog.js';
 import { usePrCompactLayout } from './PrMobile.js';
 import { SetupGate } from './SetupGate.js';
-import { PrTileList, TERMINAL_STATUSES, type SortField, type SortDir, type ListViewMode } from './PrTileList.js';
+import { PrTileList, TERMINAL_STATUSES, type SortField, type SortDir, type ListViewMode, type PrListRequest } from './PrTileList.js';
 import { PullPrModal } from './PullPrModal.js';
 import { SyncFilterMenu } from './SyncFilterMenu.js';
 import { SettingsView } from './SettingsView.js';
@@ -43,6 +43,7 @@ import {
   SYNC_STATUS_POLL_INTERVAL_MS,
   type SyncJobState,
 } from '../../lib/sync-coordinator.js';
+import type { PrPanelUiAction } from '../../lib/realtime.js';
 
 type SubTab = 'prs' | 'settings';
 
@@ -56,7 +57,20 @@ interface StoredSort {
   dir: SortDir;
 }
 
-export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
+/** An agent request for this view; `seq` makes a repeated identical request distinct. */
+export type PanelUiRequest = { seq: number; action: PrPanelUiAction };
+
+/** `owner/repo` from a PR URL, or null. */
+function repoOfPrUrl(url: string): string | null {
+  try {
+    const [owner, repo] = new URL(url).pathname.split('/').filter(Boolean);
+    return owner && repo ? `${owner}/${repo}` : null;
+  } catch {
+    return null;
+  }
+}
+
+export default function PrMonitorPanel({ host, uiRequest }: { host: ModuleHost; uiRequest?: PanelUiRequest | null }) {
   const compact = usePrCompactLayout();
   const [actionsOpen, setActionsOpen] = useState(false);
   const [settings, setSettings] = useState<PrMonitorSettings | null>(null);
@@ -553,6 +567,23 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
     [host]
   );
 
+  // Agent view requests: filter swaps the repo scope + search; reveal opens a
+  // PR's details, dropping a repo scope that would hide it.
+  const [listRequest, setListRequest] = useState<PrListRequest | null>(null);
+  useEffect(() => {
+    if (!uiRequest) return;
+    const { seq, action } = uiRequest;
+    setSubTab('prs');
+    if (action.action === 'filter') {
+      setRepoScope(action.repos);
+      setListRequest({ seq, query: action.query });
+      return;
+    }
+    const repo = repoOfPrUrl(action.url)?.toLowerCase();
+    setRepoScope((prev) => (prev.length > 0 && !prev.some((r) => r.toLowerCase() === repo) ? [] : prev));
+    setListRequest({ seq, revealUrl: action.url });
+  }, [uiRequest]);
+
   // Apply the header repo filter (R-LIST-002 / AC-LIST-2.4).
   // Empty scope = "All repositories" = no filter.
   const visiblePrs = useMemo(() => {
@@ -804,6 +835,7 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
             onBulkSetFavorite={(urls, favorite) => void bulkSetFavorite(urls, favorite)}
             viewMode={viewMode}
             onViewModeChange={changeViewMode}
+            request={listRequest}
           />
         )}
         {subTab === 'settings' && settingsLoaded && (

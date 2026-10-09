@@ -24,11 +24,13 @@ export function AgentsSettingsView({
 
       <Section
         anchorId="git-worktrees"
+        searchId="agents.git-worktrees.intro"
         title="Git worktrees"
         help="Give parallel agents separate branches and checkouts under ~/.zcc/worktrees so they cannot overwrite each other's files. Available for local Git projects; each launch can override this default in the workspace picker."
       >
         <CheckboxField
           label="Prefer a new git worktree by default"
+          searchId="agents.worktree-default"
           help="Pre-selects New worktree in the agent workspace picker. Project settings can override this global default."
           checked={config.worktreeIsolationDefault ?? false}
           onChange={(v) => onUpdate({ worktreeIsolationDefault: v })}
@@ -38,11 +40,13 @@ export function AgentsSettingsView({
       {/* Agent tabs — presentation of agent/claude tabs. */}
       <Section
         anchorId="agent-tabs"
+        searchId="agents.agent-tabs.intro"
         title="Tabs"
         help="How agent tabs are presented."
       >
         <CheckboxField
           label="Auto-name tabs"
+          searchId="agents.auto-name-tabs"
           help="Name a Claude tab or a conversation from its first instruction via the tab-namer prompt (edit it under Prompts). Off falls back to Claude’s idle title for tabs, and to a short prompt snippet for agents."
           checked={config.autoRenameTabs ?? true}
           onChange={(v) => onUpdate({ autoRenameTabs: v })}
@@ -51,11 +55,13 @@ export function AgentsSettingsView({
 
       <Section
         anchorId="teams"
+        searchId="agents.teams.intro"
         title="Squads"
         help="How concurrent Squad runs are organized across Agents surfaces. Each run stays distinct even when it uses the same Squad."
       >
         <Field
           label="Agents list organization"
+          searchId="agents.list-organization"
           help="By status keeps Working, Needs you, and Idle sections. By Squad run keeps each orchestrator and its workers together."
         >
           <PopoverPicklist
@@ -71,6 +77,7 @@ export function AgentsSettingsView({
         </Field>
         <Field
           label="Project navigation organization"
+          searchId="agents.project-navigation"
           help="Sessions shows every agent. Squad runs shows one orchestrator row per run and hides worker rows from project navigation."
         >
           <PopoverPicklist
@@ -86,6 +93,7 @@ export function AgentsSettingsView({
         </Field>
         <Field
           label="Flow All view"
+          searchId="agents.flow-all-view"
           help="Combined canvas preserves the current merged graph. Separate Squad runs renders one bounded graph per run; run tabs remain available in both modes."
         >
           <PopoverPicklist
@@ -101,6 +109,7 @@ export function AgentsSettingsView({
         </Field>
         <Field
           label="Default plan mode"
+          searchId="agents.default-plan-mode"
           help="Starting selection for a new Squad launch. Infer derives the plan from the goal; Plan provided seeds work units from a plan given in the goal or an attached source, dispatching immediately."
         >
           <PopoverPicklist
@@ -120,11 +129,13 @@ export function AgentsSettingsView({
           (delay / sensitivity / side-list promotion) only show when it's on. */}
       <Section
         anchorId="agent-attention"
+        searchId="agents.agent-attention.intro"
         title="Agent attention"
         help="How the app decides which idle agents are waiting on you and where they surface."
       >
         <CheckboxField
           label="Idle-agent triage"
+          searchId="agents.idle-triage"
           help="When an agent goes idle, classify why — waiting on you, done, or paused — and badge it on the Agents board. Uses the idle-triage prompt (edit under Prompts). Off by default: it spends tokens, one claude call per idle spell."
           checked={config.idleTriageEnabled ?? false}
           onChange={(v) => onUpdate({ idleTriageEnabled: v })}
@@ -133,6 +144,7 @@ export function AgentsSettingsView({
           <>
             <Field
               label="Need Attention idle delay (seconds)"
+              searchId="agents.idle-triage-delay"
               help="How long an agent must stay idle before it's triaged (filters the 1–2s idle flicker between tool calls). Range 10–600."
             >
               <input
@@ -152,6 +164,7 @@ export function AgentsSettingsView({
             </Field>
             <Field
               label="Need Attention sensitivity"
+              searchId="agents.idle-triage-sensitivity"
               help="How aggressively a triaged idle agent jumps to the “Needs you” lane. High surfaces almost any non-done idle agent; Medium only genuine questions; Low only high-confidence questions."
             >
               <PopoverPicklist
@@ -172,6 +185,7 @@ export function AgentsSettingsView({
             </Field>
             <CheckboxField
               label="Promote triaged agents to “Needs you” in the side list"
+              searchId="agents.triage-needs-you"
               help="Also surface a triage-flagged idle agent in the left-side agents list’s “Needs you” group (matching the Agents board), at the sensitivity above. Off by default: the side list’s “Needs you” then holds only agents blocked on a real prompt, and a triaged idle agent stays under Idle."
               checked={config.agentListNeedsYouFromTriage ?? false}
               onChange={(v) => onUpdate({ agentListNeedsYouFromTriage: v })}
@@ -180,18 +194,21 @@ export function AgentsSettingsView({
         )}
         <CheckboxField
           label="Quiet questions while working"
+          searchId="agents.quiet-questions"
           help="Hold a blocking agent question (an inbox_push question marked blocking) while its agent is still working, and surface it the moment the agent goes idle — so a busy fleet doesn’t fill your inbox with half-relevant questions it often resolves itself first. A plain status report or a soft/optional question always appears immediately. Spends no tokens; can only ever delay a question, never drop one. On by default."
           checked={config.heldQuestionsEnabled ?? true}
           onChange={(v) => onUpdate({ heldQuestionsEnabled: v })}
         />
         <CheckboxField
           label="Interactive question form"
+          searchId="agents.structured-questions"
           help="When an agent question (in the agent modal, inbox, or a follow-up) carries answer options, render them as an interactive form — lettered choices, an optional ‘Other…’ row, Skip/Continue — instead of plain text with a free-text reply box. On by default. Turn off if the form feels overwhelming: the question then shows as plain markdown with a simple reply box everywhere (the options are still listed in the text). A display choice only — it never changes what the agent receives."
           checked={config.structuredQuestionsEnabled ?? true}
           onChange={(v) => onUpdate({ structuredQuestionsEnabled: v })}
         />
         <CheckboxField
           label="Auto-link report files to the inbox"
+          searchId="agents.auto-report-link"
           help="When an agent writes a report-looking markdown file (a report/summary/analysis/audit name, or any bare .md dropped at the project root) but never calls inbox_push itself, link it to the inbox automatically as soon as the agent goes idle — so it still shows up in that session’s Report tab. Pure filename match, spends no tokens. On by default."
           checked={config.autoReportLinkEnabled ?? true}
           onChange={(v) => onUpdate({ autoReportLinkEnabled: v })}
@@ -200,11 +217,13 @@ export function AgentsSettingsView({
 
       <Section
         anchorId="scheduled"
+        searchId="agents.scheduled.intro"
         title="Scheduled"
         help="How schedules and their live runs show up in Agent View. The Scheduler panel remains the editor; this also puts armed jobs in the Agents board Scheduled column."
       >
         <CheckboxField
           label="Include scheduled agents in Agent View"
+          searchId="agents.scheduled-in-agent-view"
           help="Show scheduled agents on the Agents board, list, and flow: waiting jobs and armed schedules in a Scheduled column, working or blocked runs in Working, finished runs in Done. Off hides every scheduled session from Agent View, including one that is currently working. On by default. Scheduled runs never appear under a project in the sidebar — use Agent View or the Scheduler panel."
           checked={config.includeScheduledAgentsInAgentView ?? true}
           onChange={(v) => onUpdate({ includeScheduledAgentsInAgentView: v })}
@@ -216,23 +235,27 @@ export function AgentsSettingsView({
           even registered, so they take effect on the next app launch. */}
       <Section
         anchorId="agent-automation"
+        searchId="agents.agent-automation.intro"
         title="Agent automation"
         help="Bulk and agent-driven actions that close or launch sessions. All off by default."
       >
         <CheckboxField
           label="Agent self-close (MCP)"
+          searchId="agents.self-close"
           help="Let a running agent close its own session via the close_session / close_session_with_summary MCP tools — the with-summary variant writes the agent’s own note to the inbox first. Off by default; takes effect on the next app launch. The agent can only ever close itself, never another session."
           checked={config.agentSelfCloseEnabled ?? false}
           onChange={(v) => onUpdate({ agentSelfCloseEnabled: v })}
         />
         <CheckboxField
           label="Agent close-idle-peers (MCP)"
+          searchId="agents.close-idle-peers"
           help="Let a running agent close every OTHER idle agent via the close_idle_agents MCP tool — its own project by default, or all projects on request. Each closed agent’s work is summarized to the inbox first (one claude call per agent) and the wrap-up is handed back so the agent can store it. The caller never closes itself. Off by default; takes effect on the next app launch."
           checked={config.closeIdlePeersEnabled ?? false}
           onChange={(v) => onUpdate({ closeIdlePeersEnabled: v })}
         />
         <CheckboxField
           label="Agent launch-squad (MCP)"
+          searchId="agents.launch-squad"
           help="Let a running agent launch a Squad via the launch_team MCP tool — opening one tab per slot (workers first, then an orchestrator handed the workers’ session ids to delegate with). Launches into the agent’s own project by default, or a named one. Off by default; takes effect on the next app launch. Operator Squad launches remain available through the New-agent launcher."
           checked={config.teamLaunchEnabled ?? false}
           onChange={(v) => onUpdate({ teamLaunchEnabled: v })}
@@ -243,11 +266,13 @@ export function AgentsSettingsView({
           (delay / max nudges / message) only show when it's on. */}
       <Section
         anchorId="agent-heartbeat"
+        searchId="agents.agent-heartbeat.intro"
         title="Agent heartbeat"
         help="Keep an opted-in agent moving by typing a nudge when it sits idle. Off by default — it types into a live session and spends tokens."
       >
         <CheckboxField
           label="Agent heartbeat"
+          searchId="agents.heartbeat"
           help="Show a per-agent “Heartbeat” toggle in the agent inspector. When on for an agent, the app types a nudge into it after it sits idle for the delay below, so it keeps working without you. Never applies to background (scheduled/hidden) agents. Off by default — it types into a live session and spends tokens."
           checked={config.heartbeatEnabled ?? false}
           onChange={(v) => onUpdate({ heartbeatEnabled: v })}
@@ -256,6 +281,7 @@ export function AgentsSettingsView({
           <>
             <Field
               label="Heartbeat idle delay (seconds)"
+              searchId="agents.heartbeat-delay"
               help="How long an agent must stay idle before a nudge fires (also the interval between repeat nudges). Range 10–600."
             >
               <input
@@ -278,6 +304,7 @@ export function AgentsSettingsView({
             </Field>
             <Field
               label="Heartbeat max nudges"
+              searchId="agents.heartbeat-max-nudges"
               help="After this many consecutive nudges with no progress, heartbeat turns itself off for that agent and posts an inbox notice. Range 1–100."
             >
               <input
@@ -300,6 +327,7 @@ export function AgentsSettingsView({
             </Field>
             <Field
               label="Heartbeat message"
+              searchId="agents.heartbeat-message"
               help="The text typed into an idle agent on each nudge (submitted like an inbox reply). Leave blank to use the built-in default."
             >
               <textarea
@@ -313,6 +341,7 @@ export function AgentsSettingsView({
         )}
         <Field
           label="Squad idle timeout (minutes, 0 = no timeout)"
+          searchId="agents.squad-idle-timeout"
           help="How long a Squad run may go WITHOUT making progress before timing out. Worker output and heartbeats reset the clock, so a long but healthy run is never cut off — only a stalled one times out. Set to 0 to disable completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
         >
           <input
@@ -343,6 +372,7 @@ export function AgentsSettingsView({
         </Field>
         <Field
           label="Max autonomous rounds (0 = unlimited)"
+          searchId="agents.max-autonomous-rounds"
           help="Maximum number of turns an autonomous squad can take before stopping. Set to 0 for unlimited. Default is 30. Range 0 (unlimited) or 1–1000."
         >
           <input
@@ -363,6 +393,7 @@ export function AgentsSettingsView({
         </Field>
         <CheckboxField
           label="Keep Mac awake while agents work"
+          searchId="agents.keep-awake"
           help="Stop macOS from idle-sleeping while any agent is actively working, so you can lock the screen and walk away without killing an in-flight turn. Only the system stays awake — the display can still sleep. Releases shortly after all agents go quiet. On by default."
           checked={config.keepAwakeWhileWorking !== false}
           onChange={(v) => onUpdate({ keepAwakeWhileWorking: v })}
@@ -374,23 +405,27 @@ export function AgentsSettingsView({
           KEEPS an agent going) — this CLOSES one that's done sitting idle. */}
       <Section
         anchorId="auto-close-idle"
+        searchId="agents.auto-close-idle.intro"
         title="Idle handling & follow-ups"
         help="What happens to an agent that sits idle: close it on a timer, and keep any question it parked as a durable follow-up. Off by default — auto-close ends live sessions. Never touches background (scheduled/hidden) or delegating agents."
       >
         <CheckboxField
           label="Follow-ups"
+          searchId="agents.follow-ups"
           help="Show the Follow-ups tab in a project — durable parked questions surfaced from idle-triage and auto-close, so a question an agent raised isn't lost. Off ⇒ the Follow-ups project tab is removed."
           checked={config.followUpsEnabled ?? false}
           onChange={(v) => onUpdate({ followUpsEnabled: v })}
         />
         <CheckboxField
           label="Confirm before quitting with live sessions"
+          searchId="agents.confirm-quit"
           help="On by default. When quitting the app with terminals or agents still running, show a “Quit and end N running session(s)?” prompt so you don’t lose in-flight work (sessions aren’t saved between launches). Turn off to quit immediately without the prompt — the live sessions are still terminated, just without asking."
           checked={config.confirmQuitOnLiveSessions !== false}
           onChange={(v) => onUpdate({ confirmQuitOnLiveSessions: v })}
         />
         <CheckboxField
           label="Auto-close idle agents"
+          searchId="agents.auto-close-idle-agents"
           help="When on, any non-background agent that stays idle for the dwell below is closed automatically (exit code 0). The agent you’re actively viewing is spared, as is one still delegating to sub-agents. If it had parked a question, that becomes a durable follow-up before the close (and is surfaced in the inbox). Off by default. Also toggleable from the sidebar."
           checked={config.autoCloseIdleEnabled ?? false}
           onChange={(v) => onUpdate({ autoCloseIdleEnabled: v })}
@@ -399,6 +434,7 @@ export function AgentsSettingsView({
           <>
             <Field
               label="Idle dwell before close (minutes)"
+              searchId="agents.auto-close-idle-minutes"
               help="How long an agent must stay continuously idle before it's auto-closed. A human keystroke into the tab within this window also spares it. Range 1–240."
             >
               <input
@@ -424,6 +460,7 @@ export function AgentsSettingsView({
             </Field>
             <CheckboxField
               label="Post a breadcrumb to the inbox on auto-close"
+              searchId="agents.auto-close-notify-inbox"
               help="Off by default. An idle auto-close is routine and is already recorded in the Activity Feed and the Agents tab, so no inbox notice is posted unless you turn this on. When on, each close leaves a folded entry in the inbox's collapsed “Agent closed” section. (A close that preserved a parked question always surfaces its follow-up regardless.)"
               checked={config.autoCloseIdleNotifyInbox ?? false}
               onChange={(v) => onUpdate({ autoCloseIdleNotifyInbox: v })}
@@ -434,11 +471,13 @@ export function AgentsSettingsView({
 
       <Section
         anchorId="legacy-agent"
+        searchId="agents.legacy-agent.intro"
         title="CLI Agent"
         help="Resource ceilings for PTY (CLI Agent) terminal sessions so many or runaway agents can't exhaust this machine."
       >
         <Field
           label="Max live sessions"
+          searchId="agents.max-live-sessions"
           help={`Hard cap on how many terminal sessions can run at once (visible, hidden, and scheduled alike). Leave blank to auto-size from this machine’s RAM — a long agent on a large-context model can hold several GB, so too many at once can exhaust memory. Range ${SESSION_MEMORY_DEFAULTS.minLiveSessions}–${SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling}.`}
         >
           <input
@@ -472,6 +511,7 @@ export function AgentsSettingsView({
         </Field>
         <Field
           label="Agent heap limit (MB)"
+          searchId="agents.heap-limit"
           help={`Per-session memory ceiling for claude agents, passed via NODE_OPTIONS=--max-old-space-size and inherited by any subagents the session spawns. Bounds a runaway agent so it fails its own turn instead of taking the whole app down. Default ${SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB}. Set to 0 to disable (let V8 auto-size). Takes effect on the next session launch.`}
         >
           <input
@@ -502,6 +542,7 @@ export function AgentsSettingsView({
           sub-settings (LLM tier, deny patterns) only show once it's armed. */}
       <Section
         anchorId="overseer"
+        searchId="agents.overseer.intro"
         title="Overseer (fallback auto-approve)"
         help={
           autoModeOn
@@ -511,6 +552,7 @@ export function AgentsSettingsView({
       >
         <Field
           label="Mode"
+          searchId="agents.overseer-mode"
           help="Off: no hook installed, fully inert. Dry-run: logs what it WOULD auto-approve (in the terminal) but still prompts you — try this first. On: auto-approvals take effect."
         >
           <PopoverPicklist
@@ -531,6 +573,7 @@ export function AgentsSettingsView({
           <>
             <CheckboxField
               label="LLM judgment tier"
+              searchId="agents.overseer-llm-tier"
               help="For calls the static safe-list doesn’t cover, ask a quick claude micro-call (overseer-judge prompt, edit under Prompts) whether it’s safe to auto-approve. Off by default — it spends tokens, one call per unresolved tool call. Anything it isn’t confident about still prompts you."
               checked={config.overseerLlmTierEnabled ?? false}
               onChange={(v) => onUpdate({ overseerLlmTierEnabled: v })}
@@ -538,6 +581,7 @@ export function AgentsSettingsView({
             {config.overseerLlmTierEnabled && (
               <CheckboxField
                 label="Deep judgment (think harder)"
+                searchId="agents.overseer-deep-tier"
                 help="When the fast judge isn’t sure but the call looks probably safe, take a second, more careful look with a stronger model before deciding. Approves more of the safe-but-nuanced calls (a scoped edit, a build/test command) at the cost of a few extra seconds and tokens on those calls only — the agent waits a little longer just on the escalated ones. Same conservative bar; anything it still isn’t confident about prompts you."
                 checked={config.overseerDeepTierEnabled ?? false}
                 onChange={(v) => onUpdate({ overseerDeepTierEnabled: v })}
@@ -545,6 +589,7 @@ export function AgentsSettingsView({
             )}
             <Field
               label="Extra deny patterns"
+              searchId="agents.overseer-deny-patterns"
               help="One substring per line (added on top of the built-in guardrails). A match — against the tool name or its input — forces the normal prompt and skips the LLM tier. Use for anything you never want auto-approved."
             >
               <textarea
@@ -563,6 +608,7 @@ export function AgentsSettingsView({
             </Field>
             <Field
               label="Recent decisions"
+              searchId="agents.overseer-recent"
               help="A live, read-only view of the latest tool calls the cascade decided for current sessions (newest first, bounded). In dry-run these are what it WOULD have auto-approved; switch to On once they look right."
             >
               <OverseerRecentPane dryRun={config.overseerMode === 'dryRun'} />
@@ -576,10 +622,11 @@ export function AgentsSettingsView({
           extra rule fields take a lot of space. */}
       <Section
         anchorId="auto-mode"
+        searchId="agents.auto-mode.intro"
         title="Auto mode"
         help={
           <>
-            Launch every claude agent in Claude Code&rsquo;s native{' '}
+            Launch every claude agent in Claude Code’s native{' '}
             <strong>auto mode</strong> — a server-side classifier reviews each tool
             call, blocking anything irreversible, destructive, or aimed outside
             your environment while skipping the routine permission prompts. Unlike
@@ -587,7 +634,7 @@ export function AgentsSettingsView({
             guardrail that both allows and blocks. On by default. Applies to new
             sessions; an explicitly-chosen permission mode (global, persona,
             project, or per-tab) overrides it for that launch, and agents on a model
-            that can&rsquo;t support auto mode fall back automatically.{' '}
+            that can’t support auto mode fall back automatically.{' '}
             <a
               href="https://code.claude.com/docs/en/permission-modes#eliminate-prompts-with-auto-mode"
               target="_blank"
@@ -595,12 +642,12 @@ export function AgentsSettingsView({
             >
               Docs
             </a>
-            .
           </>
         }
       >
         <CheckboxField
           label="Use auto mode by default"
+          searchId="agents.auto-mode-enabled"
           help="When on, new claude agents launch with --permission-mode auto (and the enable flag on Bedrock/Vertex/Foundry). When off, agents use your default permission mode and the Overseer fallback above (if armed)."
           checked={autoModeOn}
           onChange={(v) => onUpdate({ autoModeEnabled: v })}
@@ -609,6 +656,7 @@ export function AgentsSettingsView({
           <>
             <Field
               label="Trusted environment"
+              searchId="agents.auto-mode-environment"
               help="One rule per line, added on top of Claude Code's built-in defaults (they're never replaced). Natural-language descriptions of repos, buckets, domains, and services the classifier should treat as inside your boundary, so routine internal operations stop getting blocked. Example: “Source control: github.com/my-org and all repos under it”."
             >
               <textarea
@@ -627,6 +675,7 @@ export function AgentsSettingsView({
             </Field>
             <Field
               label="Allow rules"
+              searchId="agents.auto-mode-allow"
               help="Exceptions to the built-in soft-block rules (one per line, additive). Use when the classifier repeatedly flags a routine pattern the defaults don't cover. Example: “Writing to s3://my-scratch/ is allowed: ephemeral bucket with a 7-day lifecycle”."
             >
               <textarea
@@ -645,6 +694,7 @@ export function AgentsSettingsView({
             </Field>
             <Field
               label="Extra soft-deny rules"
+              searchId="agents.auto-mode-soft-deny"
               help="Destructive actions specific to your environment that user intent can still clear (one per line, additive to the defaults). Example: “Never run database migrations outside the migrations CLI, even against dev databases”."
             >
               <textarea
@@ -663,6 +713,7 @@ export function AgentsSettingsView({
             </Field>
             <Field
               label="Extra hard-deny rules"
+              searchId="agents.auto-mode-hard-deny"
               help="Unconditional security boundaries — user intent and allow rules never override these (one per line, additive to the defaults). Example: “Never send repository contents to third-party code-review APIs”."
             >
               <textarea
@@ -681,6 +732,7 @@ export function AgentsSettingsView({
             </Field>
             <CheckboxField
               label="Classify all shell commands"
+              searchId="agents.auto-mode-classify-shell"
               help="Route every Bash/PowerShell command through the classifier while auto mode is active, even ones a narrow allow rule would approve instantly. More coverage, a little more latency per shell command. Off by default."
               checked={config.autoModeClassifyAllShell ?? false}
               onChange={(v) => onUpdate({ autoModeClassifyAllShell: v })}

@@ -134,6 +134,7 @@ export class PiRpcSession {
     steering: [],
   };
   private autoRetryInProgress = false;
+  private heldAgentEnd: PiRpcEvent | null = null;
   private terminalSteerSettlement: Promise<void> | null = null;
   private readonly pendingRunSettlements: PendingRunSettlement[] = [];
   private readonly channelReplies = new Map<string, ChannelReply>();
@@ -257,7 +258,22 @@ export class PiRpcSession {
         if (child === this.child) this.handleExit(info);
       },
       recordThreadId: this.options.recordThreadId,
-      ...(onExtensionUiRequest ? { onExtensionUiRequest } : {}),
+      ...(onExtensionUiRequest
+        ? {
+            onExtensionUiRequest: (request: Record<string, unknown>) => {
+              // A child discarded by a construction retry must not raise a
+              // prompt whose answer would be written to its replacement.
+              if (child === this.child) {
+                onExtensionUiRequest(request);
+              } else if (
+                typeof request.id === "string" ||
+                typeof request.id === "number"
+              ) {
+                child.respondToExtensionUi(request.id, { cancelled: true });
+              }
+            },
+          }
+        : {}),
     });
     this.child = child;
 
@@ -552,13 +568,40 @@ export class PiRpcSession {
         if (leafId !== null) {
           this.lastKnownLeafId = leafId;
         }
-        this.onEvent({
+        const delivered: PiRpcEvent = {
           ...event,
           ...(this.lastKnownLeafId === null
             ? {}
             : { providerCheckpointId: this.lastKnownLeafId }),
-        });
-        this.settleRun(event);
+        };
+        if (event.willRetry === true) {
+          this.onEvent(delivered);
+          return;
+        }
+        // Pi may still continue this run (an agent_before_settle extension,
+        // queued input), so the turn ends at agent_settled, not here.
+        this.heldAgentEnd = delivered;
+      });
+      return;
+    }
+    if (event.type === "agent_start") {
+      this.deliverInOrder(() => {
+        const held = this.takeHeldAgentEnd();
+        if (held !== null) {
+          this.onEvent({ ...held, continued: true });
+        }
+        this.onEvent(event);
+      });
+      return;
+    }
+    if (event.type === "agent_settled") {
+      this.deliverInOrder(() => {
+        const held = this.takeHeldAgentEnd();
+        if (held === null) {
+          return;
+        }
+        this.onEvent(held);
+        this.settleRun(held);
       });
       return;
     }
@@ -576,6 +619,12 @@ export class PiRpcSession {
     this.deliverInOrder(() => {
       this.onEvent(event);
     });
+  }
+
+  private takeHeldAgentEnd(): PiRpcEvent | null {
+    const held = this.heldAgentEnd;
+    this.heldAgentEnd = null;
+    return held;
   }
 
   private deliverInOrder(deliver: () => void | Promise<void>): Promise<void> {
@@ -770,6 +819,7 @@ export class PiRpcSession {
       this.agentEndLeafWaiter = null;
       leafWaiter(null);
     }
+    this.heldAgentEnd = null;
     this.rejectPendingInputConsumptions("Pi exited before input was consumed");
     for (const pending of this.pendingRunSettlements.splice(0)) {
       pending.resolve({ error: new PiRpcChildExitedError(info) });
@@ -788,7 +838,7 @@ export class PiRpcSession {
     ) {
       this.isProcessing = true;
     }
-    if (event.type === "agent_end" && event.willRetry !== true) {
+    if (event.type === "agent_settled") {
       this.isProcessing = false;
     }
     if (event.type === "compaction_end" && event.reason === "manual") {
@@ -855,10 +905,8 @@ export class PiRpcSession {
   }
 
   private observeTerminalSteerSettlement(event: PiRpcEvent): void {
-    if (event.type === "agent_end") {
-      if (event.willRetry !== true) {
-        this.scheduleTerminalSteerSettlement();
-      }
+    if (event.type === "agent_settled") {
+      this.scheduleTerminalSteerSettlement();
       return;
     }
     if (event.type === "auto_retry_start") {

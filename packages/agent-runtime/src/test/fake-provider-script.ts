@@ -35,6 +35,8 @@ interface TurnPlan {
   questionRequested: boolean;
   responseText: string;
   toolName: string | null;
+  /** `tool_args:<base64url JSON object>`; `{}` when absent or malformed. */
+  toolArguments: JsonRecord;
   toolTurnIdMode: ToolTurnIdMode;
 }
 
@@ -227,12 +229,22 @@ function parseTurnPlan(inputText: string): TurnPlan {
     questionRequested: Boolean(userQuestionMatch),
     responseText: inputText ? `Response to: ${inputText}` : "Response complete",
     toolName,
+    toolArguments: parseToolArguments(inputText),
     toolTurnIdMode,
   };
 }
 
-function buildToolArguments(_toolName: string): JsonRecord {
-  return {};
+function parseToolArguments(inputText: string): JsonRecord {
+  const match = /(?:^|\s)tool_args:([A-Za-z0-9_-]+)(?:\s|$)/.exec(inputText);
+  if (!match) return {};
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(match[1], "base64url").toString("utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as JsonRecord)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function clearActiveTurn(thread: ThreadState): void {
@@ -481,7 +493,7 @@ function beginTurn(threadId: string, input: unknown, clientRequestId?: string, o
       providerThreadId: thread.providerThreadId,
       callId: `call-${toolCallId}`,
       tool: plan.toolName,
-      arguments: buildToolArguments(plan.toolName),
+      arguments: plan.toolArguments,
     };
     params.turnId = plan.toolTurnIdMode === "active" ? turnId : null;
     pendingToolCalls.set(toolCallId, {

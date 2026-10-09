@@ -102,6 +102,7 @@ function AutosavingPluginSetting({
   return (
     <div
       className="plugin-setting-row"
+      data-plugin-setting-key={settingKey}
       data-control-placement={placement}
       data-has-description={descriptor.description ? 'true' : undefined}
     >

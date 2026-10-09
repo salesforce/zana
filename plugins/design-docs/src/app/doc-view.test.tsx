@@ -160,6 +160,26 @@ describe('previewing files', () => {
     expect(treeFile('flow.mmd')).toBeTruthy();
   });
 
+  it('hides the file tree behind the file switcher and remembers it', async () => {
+    const harness = createHarness();
+    const doc = richDoc(harness);
+    renderDoc(harness, doc.id);
+    await findPane('README.md');
+    fireEvent.click(within(tree()).getByRole('button', { name: 'Hide files' }));
+    expect(screen.queryByRole('navigation', { name: 'Files' })).toBeNull();
+    expect(localStorage.getItem('zcc.design-docs.tree')).toBe('false');
+
+    // The switcher's tree is a popover, so it offers no Hide.
+    fireEvent.click(screen.getByTitle('Files in this doc'));
+    expect(within(tree()).queryByRole('button', { name: 'Hide files' })).toBeNull();
+    fireEvent.click(treeFile('flow.mmd'));
+    await findPane('diagrams/flow.mmd');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show files' }));
+    expect(within(tree()).getByRole('button', { name: 'Hide files' })).toBeTruthy();
+    expect(localStorage.getItem('zcc.design-docs.tree')).toBe('true');
+  });
+
   it('flashes who updated the file when an agent edit lands', async () => {
     const harness = createHarness();
     const doc = simpleDoc(harness);
@@ -799,11 +819,34 @@ describe('agents', () => {
     await findPane('README.md');
     fireEvent.click(screen.getByRole('tab', { name: /Agents/ }));
     const rail = screen.getByRole('complementary', { name: 'Comments, history and agents' });
-    const opens = within(rail).getAllByTitle('Open thread');
+    const opens = within(rail).getAllByTitle('Open chat beside the doc');
     expect(opens).toHaveLength(2);
     expect(within(rail).getByText('Reviewer')).toBeTruthy();
+
+    // The chat opens in the rail and the doc stays open.
     fireEvent.click(within(rail).getByText('Reviewer run').closest('button')!);
+    expect(within(rail).getByTestId('plugin-thread-chat').getAttribute('data-thread-id')).toBe('thread-9');
+    expect(rail.classList.contains('dd-rail-chat')).toBe(true);
+    expect(pane('README.md')).not.toBeNull();
+    expect(harness.navigateCalls).toEqual([]);
+    fireEvent.click(within(rail).getByRole('button', { name: 'Open full thread' }));
     expect(harness.navigateCalls.at(-1)).toEqual({ method: 'toThread', threadId: 'thread-9' });
+
+    // The open chat survives switching tabs, and Back returns to the list.
+    fireEvent.click(screen.getByRole('tab', { name: /History/ }));
+    expect(rail.classList.contains('dd-rail-chat')).toBe(false);
+    fireEvent.click(screen.getByRole('tab', { name: /Agents/ }));
+    expect(within(rail).getByTestId('plugin-thread-chat')).toBeTruthy();
+    fireEvent.click(within(rail).getByRole('button', { name: 'All agents' }));
+    expect(within(rail).queryByTestId('plugin-thread-chat')).toBeNull();
+
+    // Unlinking the open thread drops its chat.
+    fireEvent.click(within(rail).getByText('Drafting').closest('button')!);
+    await harness.asAgent((store) => store.unlinkThread(doc.id, 'thread-8'));
+    await waitFor(() => expect(within(rail).queryByTestId('plugin-thread-chat')).toBeNull());
+    harness.store.linkThread(doc.id, 'thread-8', 'Drafting', 'author');
+    harness.emit({ docId: doc.id });
+    await within(rail).findByText('Drafting');
 
     harness.fail('unlinkThread', 'nope');
     fireEvent.click(within(rail).getAllByRole('button', { name: 'Unlink thread' })[0]!);
@@ -812,6 +855,19 @@ describe('agents', () => {
     for (const button of within(rail).getAllByRole('button', { name: 'Unlink thread' })) fireEvent.click(button);
     expect(await within(rail).findByText('No agents yet')).toBeTruthy();
     expect(harness.store.get(doc.id).threads).toEqual([]);
+  });
+
+  it('navigates to the thread when the doc already sits beside one', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    harness.store.linkThread(doc.id, 'thread-9', 'Reviewer run', 'reviewer');
+    renderDoc(harness, doc.id, { layout: 'compact' });
+    await findPane('README.md');
+    fireEvent.click(screen.getByRole('button', { name: /comments & history/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Agents/ }));
+    fireEvent.click(screen.getByTitle('Open thread'));
+    expect(harness.navigateCalls.at(-1)).toEqual({ method: 'toThread', threadId: 'thread-9' });
+    expect(screen.queryByTestId('plugin-thread-chat')).toBeNull();
   });
 
   it('starts an agent from an action or a custom request', async () => {

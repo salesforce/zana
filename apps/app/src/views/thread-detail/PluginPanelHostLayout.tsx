@@ -1,10 +1,11 @@
 import { type ReactNode, useRef } from 'react';
-import { PanelRight } from 'lucide-react';
+import { Bot, PanelRight } from 'lucide-react';
 import { getDesktopBrowserApi } from '../../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
+import { PanelAgentTab } from '../../components/thread/secondary-panel/PanelAgentTab.js';
 import { useSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import {
   activeClosableTab
@@ -47,9 +48,26 @@ function PluginPanelBrowserHost({
   });
   const closable = activeClosableTab(panel.state);
   const panelOpen = panel.state.isOpen;
+  const newAgent = () => panel.addTab({ kind: 'agent', title: 'Agent' });
+  // Return to the latest conversation rather than stacking blank composers.
+  const showAgent = () => {
+    const latest = panel.state.tabs.filter((tab) => tab.kind === 'agent').at(-1);
+    if (latest) panel.activateTab(latest.id);
+    else newAgent();
+  };
 
   let panelBody = null;
-  if (closable?.kind === 'new-tab') {
+  if (closable?.kind === 'agent') {
+    const tabId = closable.id;
+    panelBody = (
+      <PanelAgentTab
+        key={tabId}
+        threadId={closable.threadId}
+        pluginPanel={{ pluginId, panel: panelPath }}
+        onCreated={(threadId) => panel.patchTab(tabId, { threadId })}
+      />
+    );
+  } else if (closable?.kind === 'new-tab') {
     panelBody = (
       <ThreadNewTabPage
         projectId={null}
@@ -58,6 +76,7 @@ function PluginPanelBrowserHost({
         allowSidecarTerminal={false}
         onOpenFile={() => undefined}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: '' })}
+        onOpenAgent={newAgent}
         onOpenPlugin={() => undefined}
       />
     );
@@ -73,16 +92,28 @@ function PluginPanelBrowserHost({
       <div className="split-plugin-main">
         {children}
         {panelOpen ? null : (
-          <button
-            type="button"
-            className="icon-btn plugin-panel-host-show"
-            title="Show right panel"
-            aria-label="Show right panel"
-            data-testid="plugin-panel-secondary-show"
-            onClick={panel.open}
-          >
-            <PanelRight size={14} />
-          </button>
+          <div className="plugin-panel-host-launchers">
+            <button
+              type="button"
+              className="icon-btn"
+              title="Show right panel"
+              aria-label="Show right panel"
+              data-testid="plugin-panel-secondary-show"
+              onClick={panel.open}
+            >
+              <PanelRight size={14} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              title="Ask an agent"
+              aria-label="Ask an agent"
+              data-testid="plugin-panel-agent-show"
+              onClick={showAgent}
+            >
+              <Bot size={14} />
+            </button>
+          </div>
         )}
       </div>
       {panelOpen ? (

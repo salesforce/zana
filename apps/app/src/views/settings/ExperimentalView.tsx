@@ -19,44 +19,51 @@ export function ExperimentalView({
 }) {
   return (
     <>
-      <Section title="Provider service tiers" help="Control whether providers offer non-default tiers.">
-        <CheckboxField label="Disable non-default service tiers" checked={config.providerServiceTiersDisabled ?? false}
+      <Section searchId="experimental.provider-service-tiers" anchorId="provider-service-tiers" title="Provider service tiers" help="Control whether providers offer non-default tiers.">
+        <CheckboxField searchId="experimental.disable-service-tiers" label="Disable non-default service tiers" checked={config.providerServiceTiersDisabled ?? false}
           help="Hide tier choices and reject non-default tier requests on this instance." onChange={v => onUpdate({providerServiceTiersDisabled:v})} />
       </Section>
-      <Section title="Plugin recovery" help="Temporarily suspend installed plugins while diagnosing a problem.">
-        <CheckboxField label="Plugin safe mode"
+      <Section searchId="experimental.plugin-recovery" anchorId="plugin-recovery" title="Plugin recovery" help="Temporarily suspend installed plugins while diagnosing a problem.">
+        <CheckboxField searchId="experimental.plugin-safe-mode" label="Plugin safe mode"
           help="Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved."
           checked={config.pluginSafeMode ?? false} onChange={v => onUpdate({ pluginSafeMode: v })} />
       </Section>
       <Section
+        searchId="experimental.experimental-features"
+        anchorId="experimental-features"
         title="Experimental features"
         help="Opt-in features under active evaluation. They’re off by default and may change or be removed. Enabling one reveals its own settings here."
       >
         <CheckboxField
+          searchId="experimental.goals"
           label="Goals"
           help="Show the Goals tab in a project — persistent objectives with falsifiable success criteria that spawn worker sessions and self-evaluate until met. An experiment under active evaluation. Off ⇒ the Goals project tab is removed."
           checked={config.goalsEnabled ?? false}
           onChange={(v) => onUpdate({ goalsEnabled: v })}
         />
         <CheckboxField
+          searchId="experimental.catch-up-summary"
           label="Catch-up summary"
           help="Experimental — when an agent sits idle or is waiting on a choice, precompute a quick catch-up summary under the terminal using the fastest model. Also shows the manual 'Summarize to inbox' button in the agent modal. Off ⇒ both are hidden."
           checked={config.catchUpSummaryEnabled ?? false}
           onChange={(v) => onUpdate({ catchUpSummaryEnabled: v })}
         />
         <CheckboxField
+          searchId="experimental.classic-session-view"
           label="Classic session view"
           help="Skip the inspector overlay. Opening a CLI agent or thread — from the Agents canvas, favorites, a launch peek, or the menu bar — goes to the full session or thread page. Off by default: a click still peeks without leaving the current surface."
           checked={config.classicSessionViewEnabled ?? false}
           onChange={(v) => onUpdate({ classicSessionViewEnabled: v })}
         />
         <CheckboxField
+          searchId="experimental.feed-noise-classifier"
           label="Feed-noise classifier"
           help="Experimental — a fast-model micro-call that DEMOTES routine 'task done' reports (comment-only, no docs/question/goal) into a folded 'Routine' section of the inbox feed, so high-value reports stay inline. Advisory only: it never hides a report with docs, an idea, a question, or a goal outcome, and a missing verdict just leaves everything inline. Off by default — each inbox change may trigger a background call on your own key."
           checked={config.feedNoiseClassifierEnabled ?? false}
           onChange={(v) => onUpdate({ feedNoiseClassifierEnabled: v })}
         />
         <CheckboxField
+          searchId="experimental.in-app-terminals"
           label="Keep agent terminals in ZCC"
           help="When an agent would open Terminal.app, iTerm, or another standalone terminal, open a ZCC shell in this thread’s side panel instead. Off by default. Applies to new sessions only."
           checked={config.inAppAgentTerminalsEnabled ?? false}
@@ -65,11 +72,13 @@ export function ExperimentalView({
       </Section>
 
       <Section
+        searchId="experimental.extension-llm"
         anchorId="extension-llm"
         title="Extension LLM calls"
         help="Master switch for the brokered ctx.llm capability extensions can request. Off by default — a net-new egress + cost surface. When off, every ctx.llm call from any extension resolves to a degraded failure regardless of that extension's own permission grant."
       >
         <CheckboxField
+          searchId="experimental.allow-extension-llm"
           label="Allow extensions to make LLM calls"
           help="When enabled, extensions granted the llm permission can invoke ctx.llm. When disabled, all such calls fail closed, even for extensions with the permission granted."
           checked={config.extensionLlmEnabled ?? false}
@@ -78,11 +87,13 @@ export function ExperimentalView({
       </Section>
 
       <Section
+        searchId="experimental.microvm-isolation"
         anchorId="harness-microvm"
         title="microVM isolation (experimental)"
         help="Offer the microVM execution environment in the New Agent modal — an agent runs inside a hardware-isolated microVM (microsandbox / libkrun) instead of under the OS kernel sandbox. Off by default while the runtime bakes. Requires Apple Silicon / KVM / WHP; on unsupported hardware the launcher shows it disabled. When a launch requests it but the runtime is unavailable, it fails closed with a visible notice — never a silent downgrade."
       >
         <CheckboxField
+          searchId="experimental.microvm"
           label="Offer the microVM environment"
           help="When enabled, the New Agent modal's isolation picker gains a ‘microVM’ option alongside Off."
           checked={config.microVmEnabled ?? false}
@@ -91,11 +102,13 @@ export function ExperimentalView({
       </Section>
 
       <Section
+        searchId="experimental.voice-input"
         anchorId="voice-input"
         title="Voice input (dictation)"
         help="Push-to-talk dictation. Audio is transcribed through Codex ChatGPT login on this machine (`codex login`). An OpenAI API key is only an optional fallback."
       >
         <CheckboxField
+          searchId="experimental.voice-input-enabled"
           label="Enable voice input (dictation)"
           help="Shows the mic button in the prompt composer so you can dictate instead of type. The agent composer already includes a mic."
           checked={config.voiceInputEnabled ?? false}
@@ -108,7 +121,7 @@ export function ExperimentalView({
               If Codex is not signed in, it can fall back to <strong>OPENAI_API_KEY</strong> or the
               OpenAI key under Settings → LLM Providers.
             </p>
-            <Field label="Fallback transcription model">
+            <Field searchId="experimental.voice-model" label="Fallback transcription model">
               <PopoverPicklist
                 value={config.voiceModel ?? 'gpt-transcribe'}
                 ariaLabel="Transcription model"
@@ -122,7 +135,7 @@ export function ExperimentalView({
                 ]}
               />
             </Field>
-            <Field label="Language" help="ISO-639-1 code (e.g. 'en', 'fr'). Leave empty for auto-detect.">
+            <Field searchId="experimental.voice-language" label="Language" help="ISO-639-1 code (e.g. 'en', 'fr'). Leave empty for auto-detect.">
               <input
                 type="text"
                 placeholder="auto-detect"
@@ -136,11 +149,13 @@ export function ExperimentalView({
       </Section>
 
       <Section
+        searchId="experimental.menubar-popover-section"
         anchorId="menubar-popover"
         title="Menu-bar popover (macOS)"
         help="Replace the plain menu-bar dropdown with a clean popover card: a glanceable, cross-project view of every agent — who needs you, who's working, today's spend — with footer nav. macOS only; takes effect on the next menu-bar click. On by default; off falls straight back to the native menu."
       >
         <CheckboxField
+          searchId="experimental.menubar-popover"
           label="Use the menu-bar popover"
           help="When enabled, clicking the menu-bar icon opens the popover card instead of the native dropdown menu."
           checked={config.menubarPopoverEnabled ?? true}

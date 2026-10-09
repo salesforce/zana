@@ -20,6 +20,12 @@ describe('claudeBinary Settings Editor Guard', () => {
       }
     }
 
-    expect(offenders).toEqual(['HarnessView.tsx']);
+    // The key table moved out of the view (so the search index can share it
+    // without importing the view). The view must still be the ONLY editor: it
+    // consumes the shared table, and no other settings file names the key.
+    expect(offenders).toEqual([]);
+    expect(readFileSync(join(SETTINGS_DIR, 'HarnessView.tsx'), 'utf8')).toContain('HARNESS_BINARY_KEY');
+    const owner = readFileSync(join(SETTINGS_DIR, '..', '..', 'lib', 'settings-search', 'providers', 'harness.ts'), 'utf8');
+    expect(owner).toContain("claude: 'claudeBinary'");
   });
 });

@@ -21,23 +21,27 @@ export function AgentGuidanceSettings({
   return (
     <Section
       anchorId="agent-guidance"
+      searchId="agents.agent-guidance.intro"
       title="Agent guidance"
       help="These apply to the next launch. Already-running agents keep their current prompt and skills."
     >
       <CheckboxField
         label="Inject product introduction and RULES.md"
+        searchId="agents.inject-product-guidance"
         help="Inbox, mesh, library, and follow-up guidance, plus ~/.zcc/RULES.md and project .zcc/RULES.md."
         checked={injectGuidance}
         onChange={(v) => onUpdate({ injectProductGuidance: v })}
       />
       <CheckboxField
         label="Inject remote-access instructions"
+        searchId="agents.inject-remote-instructions"
         help="Connect / remote tool-proxy instructions. Independent of the product introduction."
         checked={injectRemote}
         onChange={(v) => onUpdate({ injectRemoteInstructions: v })}
       />
       <CheckboxField
         label="Inject bundled skills"
+        searchId="agents.inject-bundled-skills"
         help="Shipped product skills (CLI, Inbox, Browser, …). Turning this off keeps per-skill picks."
         checked={injectSkills}
         onChange={(v) => onUpdate({ injectBundledSkills: v })}

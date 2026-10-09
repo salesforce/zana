@@ -66,6 +66,8 @@ export const TERMINAL_STATUSES: PrRollupStatus[] = ['closed-merged', 'closed-aba
 
 export type SortField = 'updated' | 'created' | 'status' | 'statusUpdated' | 'favorites';
 export type SortDir = 'asc' | 'desc';
+/** A one-shot view change from outside the list (the panel agent); `seq` makes repeats distinct. */
+export type PrListRequest = { seq: number; query?: string; revealUrl?: string };
 export type { ListViewMode };
 
 const SORT_FIELDS: Array<{ id: SortField; label: string; title: string }> = [
@@ -136,6 +138,7 @@ interface Props {
   /** List vs kanban. Default list so isolated toolbar tests keep their surface. */
   viewMode?: ListViewMode;
   onViewModeChange?: (mode: ListViewMode) => void;
+  request?: PrListRequest | null;
 }
 
 /** Whether a PR has an unseen status change (the "unread" model, AC-LIST-10.1). */
@@ -215,6 +218,7 @@ export function PrTileList({
   onBulkSetFavorite,
   viewMode: viewModeProp = 'list',
   onViewModeChange,
+  request,
 }: Props) {
   const compact = usePrCompactLayout();
   const [tab, setTab] = useState<SegmentTab>('all');
@@ -360,6 +364,12 @@ export function PrTileList({
     () => emptyActiveColumnCount(groupPrsByStatus(shown)),
     [shown]
   );
+
+  useEffect(() => {
+    if (!request) return;
+    if (request.query !== undefined) setQuery(request.query);
+    if (request.revealUrl) setDetailUrl(request.revealUrl);
+  }, [request]);
 
   const detailPr = detailUrl ? prs.find((p) => p.url === detailUrl) : undefined;
   useEffect(() => {

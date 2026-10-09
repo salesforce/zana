@@ -1,23 +1,25 @@
 import { Link } from 'react-router-dom';
 import { Section } from '@/components/settings/FormFields';
+import { SearchTarget } from './MachineCard.js';
 import './phone-settings.css';
 
 export function PhoneView() {
   return (
     <Section
       anchorId="phone"
+      searchId="phone.mobile"
       title="Mobile"
       help="Use your projects and agents from your phone’s browser."
     >
-      <section className="phone-app-notice" aria-labelledby="phone-app-title">
+      <SearchTarget searchId="phone.app-notice" block><section className="phone-app-notice" aria-labelledby="phone-app-title">
         <div className="phone-app-heading">
           <h2 id="phone-app-title">Zana mobile app</h2>
           <span className="phone-coming-soon">Coming soon</span>
         </div>
         <p className="settings-help">In the meantime, use Zana in your mobile browser. No app installation is needed.</p>
-      </section>
+      </section></SearchTarget>
 
-      <section className="phone-browser-guide" aria-labelledby="phone-browser-title">
+      <SearchTarget searchId="phone.browser-guide" block><section className="phone-browser-guide" aria-labelledby="phone-browser-title">
         <h2 id="phone-browser-title">Use Zana in your mobile browser</h2>
         <ol className="phone-browser-steps" aria-label="Mobile browser setup">
           <li>
@@ -36,7 +38,7 @@ export function PhoneView() {
           </li>
         </ol>
         <p className="phone-browser-note">Keep this computer awake, Zana running, and Remote access enabled. Your phone can connect over Wi-Fi or cellular internet.</p>
-      </section>
+      </section></SearchTarget>
     </Section>
   );
 }

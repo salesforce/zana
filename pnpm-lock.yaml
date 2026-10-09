@@ -1321,6 +1321,9 @@ importers:
 
   plugins/design-docs:
     dependencies:
+      '@zana-ai/zcc-ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       lucide-react:
         specifier: ^1.35.0
         version: 1.47.0(react@19.3.0)

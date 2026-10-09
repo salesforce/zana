@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type {
@@ -72,6 +74,39 @@ function turnStart(
 }
 
 it(
+  "rebuilds the session with environment from a later turn",
+  async () => {
+    const threadId = "thr_turn_options_env";
+    const envLog = join(harness.workspaceDir, "env.log");
+    const options = (marker: string) => ({
+      ...MINI,
+      envVars: { FAKE_PI_ENV_LOG: envLog, FAKE_PI_ENV_MARKER: marker },
+    });
+    await harness.startThread(threadId, { options: options("first") });
+
+    expect(
+      (await turnStart(1, threadId, "first", options("first"))).error,
+    ).toBeUndefined();
+    let seen = await harness.waitForTurnBoundary(threadId, 0);
+    expect(
+      (await turnStart(2, threadId, "second", options("second"))).error,
+    ).toBeUndefined();
+    seen = await harness.waitForTurnBoundary(threadId, seen);
+    expect(
+      (await turnStart(3, threadId, "third", options("second"))).error,
+    ).toBeUndefined();
+    await harness.waitForTurnBoundary(threadId, seen);
+
+    expect(readFileSync(envLog, "utf8").trim().split("\n")).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(sessionReplacements(threadId)).toHaveLength(1);
+  },
+  TURN_OPTIONS_TEST_TIMEOUT_MS,
+);
+
+it(
   "rebuilds the session on the model a later turn carries",
   async () => {
     const threadId = "thr_turn_options_model";
@@ -91,7 +126,7 @@ it(
     expect(sessionReplacements(threadId)).toEqual([
       {
         threadId,
-        providerThreadId: threadId,
+        providerThreadId: expect.stringMatching(/^pi_/u),
         reason: expect.stringContaining("Execution settings changed"),
         contextLost: false,
       },

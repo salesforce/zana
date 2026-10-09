@@ -68,10 +68,12 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
     <>
       <Section
         anchorId="launch-surfaces"
+        searchId="composer.launch-surfaces-intro"
         title="Launch surfaces"
         help="Choose which composers New Chat and New agent offer. At least Modern or CLI Agent must stay on."
       >
         <CheckboxField
+          searchId="composer.cli-agent"
           label="CLI Agent"
           help="PTY coding-CLI session. Shown first in the launch switcher."
           checked={surfaces.showCliAgent}
@@ -79,6 +81,7 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
           onChange={(showCliAgent) => updateSurfaces({ showCliAgent })}
         />
         <CheckboxField
+          searchId="composer.modern"
           label="Modern"
           help="HTTP conversation timeline."
           checked={surfaces.showModern}
@@ -86,6 +89,7 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
           onChange={(showModern) => updateSurfaces({ showModern })}
         />
         <CheckboxField
+          searchId="composer.squad"
           label="Squad"
           help="Show durable Squad mode."
           checked={surfaces.showTeam}
@@ -95,28 +99,33 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
 
       <Section
         anchorId="composer"
+        searchId="composer.composer-intro"
         title="Composer"
         help="Composer and markdown behavior for new and running agents."
       >
         <CheckboxField
+          searchId="composer.full-access"
           label="Full access by default"
           help="Start new Modern and CLI agents in Full mode (YOLO): no sandbox or approval prompts. Off starts in Approve for me when available, otherwise Accept Edits. You can change permissions in the composer before launching."
           checked={fullAccessByDefault}
           onChange={setFullAccessByDefault}
         />
         <CheckboxField
+          searchId="composer.navigate-on-create"
           label="Navigate to agents on creation"
           help="Open a new agent as soon as you send the first message. Off keeps you on the current page."
           checked={navigateOnCreate}
           onChange={setNavigateOnCreate}
         />
         <CheckboxField
+          searchId="composer.markdown-in-prompt"
           label="Markdown in the prompt box"
           help="Allow headings, lists, and emphasis in the composer. Mentions still work either way."
           checked={markdownInPrompt}
           onChange={setMarkdownInPrompt}
         />
         <Field
+          searchId="composer.default-launch-mode"
           label="Default launch mode"
           layout="row"
           help="New Chat and New agent open on this surface. Switching the segmented control also updates this default."
@@ -130,6 +139,7 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
           />
         </Field>
         <Field
+          searchId="composer.send-mode"
           label="Send mode"
           layout="row"
           help="Auto sends immediately when idle and queues while running (Cmd/Ctrl+Enter steers). Steer uses Enter to steer a running turn (Cmd/Ctrl+Enter queues). Queue always waits for the current turn to finish. Default is Auto."
@@ -155,12 +165,14 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
           />
         </Field>
         <CheckboxField
+          searchId="composer.rewrite-localhost"
           label="Rewrite localhost links"
           help="Replace localhost and 127.0.0.1 in agent markdown links with this window’s hostname so a remote viewer reaches the machine they’re looking at."
           checked={rewriteLocalhost}
           onChange={setRewriteLocalhost}
         />
         <SettingsActionRow
+          searchId="composer.reload-slash-commands"
           label="Reload slash commands"
           help="Refresh the / menu from installed plugin skills. On desktop this also re-deploys bundled skills and project MCP configs."
         >

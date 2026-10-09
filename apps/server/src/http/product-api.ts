@@ -1,4 +1,5 @@
 import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
+import { withoutSecretValues } from '../plugins/plugin-settings-redaction.js';
 import { handlePreviewsApi } from './previews-api.js';
 import { libraryDocumentOperation } from '../services/library/library-documents.js';
 import { LibraryDocumentRequestSchema, LIBRARY_DOCUMENT_BODY_LIMIT } from '@zana-ai/zcc-contracts/library-documents';
@@ -47,6 +48,7 @@ import {
 } from '@zana-ai/zcc-domain/product';
 import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
+import { resolvePluginPanelBinding } from './plugin-panel-binding.js';
 import { terminalOutputSlice } from './terminal-output-buffer.js';
 import {
   conversationThreadView,
@@ -267,13 +269,15 @@ async function handlePluginAppRpc(
 async function handlePluginAppSettingsGet(
   response: ServerResponse,
   ctx: ProductHttpContext,
-  id: string
+  id: string,
+  options: { omitSecrets: boolean }
 ): Promise<void> {
   if (!ctx.plugins) {
     sendJson(response, 503, { error: 'plugin host is unavailable' });
     return;
   }
-  sendJson(response, 200, ctx.plugins.getSettings(id));
+  const snapshot = ctx.plugins.getSettings(id);
+  sendJson(response, 200, options.omitSecrets ? withoutSecretValues(snapshot) : snapshot);
 }
 
 async function handlePluginAppSettingsSet(
@@ -2197,6 +2201,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
+        const pluginPanel = resolvePluginPanelBinding(body, ctx.plugins);
         const thread = await createConversationFromRequest(ctx, {
           projectId: typeof body.projectId === 'string' ? body.projectId : '',
           providerId: typeof body.providerId === 'string' ? body.providerId : 'claude-code',
@@ -2236,7 +2241,8 @@ export async function handleProductHttp(
                   );
                 }
               })()
-            : {})
+            : {}),
+          ...pluginPanel
         });
         sendJson(response, 201, { ok: true, value: conversationThreadView(ctx, thread), thread: conversationThreadView(ctx, thread) });
       } catch (error) {
@@ -2952,7 +2958,9 @@ export async function handleProductHttp(
     }
     const pluginAppSettings = routeParams(path, '/api/v1/plugin-apps/:id/settings');
     if (pluginAppSettings && method === 'GET') {
-      await handlePluginAppSettingsGet(response, ctx, pluginAppSettings.id);
+      await handlePluginAppSettingsGet(response, ctx, pluginAppSettings.id, {
+        omitSecrets: requestUrl.searchParams.get('secrets') === 'omit'
+      });
       return true;
     }
     if (pluginAppSettings && method === 'POST') {
