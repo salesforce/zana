@@ -56,3 +56,10 @@ it('forwards plugin settings read options to the getSettings IPC channel', async
   await api.pluginApps.getSettings('plug', { omitSecrets: true });
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.pluginApps.getSettings, 'plug', { omitSecrets: true });
 });
+
+it('answers side-panel conversation calls with empty results until main serves them over HTTP', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  await expect(api.threads.panelConversations('notes', 'board')).resolves.toEqual([]);
+  await expect(api.threads.openAsThread('thread-1')).resolves.toEqual({ thread: {} });
+});

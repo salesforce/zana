@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { archiveConversationThread, createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost, appendConversationThreadEvent } from '@zana-ai/zcc-db';
+import { archiveConversationThread, createConversationThread, createEnvironment, insertThreadPluginMetadata, updateConversationThreadStatus, upsertHost, appendConversationThreadEvent } from '@zana-ai/zcc-db';
 import { turnScope } from '@zana-ai/zcc-domain/thread-runtime';
 import { EMPTY_THREAD_ACTIVITY } from '@zana-ai/zcc-thread-view';
 import { startProductServer, type ProductServer } from './product-server.js';
@@ -2021,6 +2021,43 @@ describe('product HTTP plugin thread metadata', () => {
       `${server.url}api/v1/threads/${child.id}/plugin-metadata?pluginId=notes`
     );
     await expect(inherited.json()).resolves.toEqual({});
+  });
+});
+
+describe('product HTTP plugin side-panel conversations', () => {
+  it('lists a panel\'s conversations and opens one as a thread', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-panel-threads-http-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    server.ctx.plugins = { get: (id: string) => (id === 'notes' ? { id } : undefined) } as never;
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, { projectId: 'proj-1', hostId: host.id, path: '/tmp/proj' });
+    const make = (originPluginId: string | null) => createConversationThread(server!.ctx.db, {
+      projectId: 'proj-1', hostId: host.id, environmentId: environment.id, providerId: 'claude-code',
+      originPluginId, visibility: 'hidden'
+    });
+    const panelThread = make('notes');
+    insertThreadPluginMetadata(server.ctx.db, { threadId: panelThread.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board' } } });
+    const plain = make(null);
+
+    const listed = await fetch(`${server.url}api/v1/plugins/notes/panel-threads?panel=board`);
+    expect(listed.status).toBe(200);
+    const body = await listed.json() as { threads: Array<{ id: string; visibility: string }> };
+    expect(body.threads.map((row) => [row.id, row.visibility])).toEqual([[panelThread.id, 'hidden']]);
+    expect((await fetch(`${server.url}api/v1/plugins/ghost/panel-threads`)).status).toBe(404);
+    expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?limit=0`)).status).toBe(400);
+
+    const updated: unknown[] = [];
+    const dispose = server.ctx.hub.subscribe('threads:updated', (payload) => updated.push(payload));
+    const post = (id: string) => fetch(`${server!.url}api/v1/threads/${id}/open-as-thread`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+    });
+    expect((await post('missing')).status).toBe(404);
+    expect((await post(plain.id)).status).toBe(409);
+    const opened = await post(panelThread.id);
+    dispose();
+    expect(opened.status).toBe(200);
+    await expect(opened.json()).resolves.toMatchObject({ thread: { id: panelThread.id, visibility: 'visible' } });
+    expect(updated).toEqual([expect.objectContaining({ id: panelThread.id, visibility: 'visible' })]);
   });
 });
 

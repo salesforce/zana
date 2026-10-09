@@ -47,13 +47,17 @@ export function composerProjectOptions<T extends Pick<Project, 'quickAgent' | 'r
  * selection. Remote projects require an explicit pick or pinned launch, so an
  * old remote sidebar selection cannot silently change the execution machine.
  * A pinned project-view launch never consults this — it passes
- * `pinnedId` into `resolveComposerProjectId` instead.
+ * `pinnedId` into `resolveComposerProjectId` instead. A plugin side-panel
+ * composer skips both: its conversation is about the plugin page, not the
+ * last project, so it lands in the scratch workspace.
  */
 export function preferredComposerProjectId(input: {
   projects: readonly ComposerProject[];
   lastProjectId?: string | null;
   selectedProjectId?: string | null;
+  pluginPanel?: boolean;
 }): string | undefined {
+  if (input.pluginPanel) return undefined;
   return [input.lastProjectId, input.selectedProjectId].find((id): id is string =>
     Boolean(id && input.projects.some((project) => project.id === id && !isRemoteWorkspaceProject(project))));
 }

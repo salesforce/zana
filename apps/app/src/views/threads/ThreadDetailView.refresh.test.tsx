@@ -210,3 +210,12 @@ it('carries visibility into the roster upsert so a hidden panel chat stays off t
   render(<MemoryRouter><ThreadDetail threadId="a" embedded/></MemoryRouter>);
   await waitFor(() => expect(h.upsert).toHaveBeenCalledWith(expect.objectContaining({ id: 'a', visibility: 'hidden' })));
 });
+
+it('leaves the roster alone when the detail record has no id', async () => {
+  cleanup();h.upsert.mockReset();
+  h.get.mockResolvedValue({ thread: { title: 'Loading', status: 'idle' } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle', activeThinking: null });
+  render(<MemoryRouter><ThreadDetail threadId="a" embedded/></MemoryRouter>);
+  await screen.findByText('Loading');
+  expect(h.upsert).not.toHaveBeenCalled();
+});

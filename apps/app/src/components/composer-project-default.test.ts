@@ -109,6 +109,14 @@ describe('resolveComposerProjectId', () => {
 });
 
 describe('preferredComposerProjectId', () => {
+  it('ignores last-used and sidebar picks for a plugin side-panel composer', () => {
+    expect(preferredComposerProjectId({ projects: [alpha, scratch, coreRepo],
+      lastProjectId: 'alpha',
+      selectedProjectId: 'core-repo',
+      pluginPanel: true
+    })).toBeUndefined();
+  });
+
   it('prefers last-used over a leftover sidebar selection', () => {
     expect(preferredComposerProjectId({ projects: [alpha, scratch, coreRepo],
       lastProjectId: 'alpha',
