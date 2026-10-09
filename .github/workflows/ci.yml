@@ -123,6 +123,11 @@ jobs:
       - name: Pi provider tests with package configuration and coverage
         run: pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory="$GITHUB_WORKSPACE/coverage/pi"
 
+      # build-plugin-server.test.ts bundles from the SDK's built dist. The old
+      # single job built it as a side effect of earlier steps; do it explicitly.
+      - name: Build plugin SDK runtime
+        run: pnpm --filter @zana-ai/zcc-plugin-sdk build
+
       - name: Release package coverage
         run: pnpm exec vitest run --config vitest.release-coverage.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/release
 
