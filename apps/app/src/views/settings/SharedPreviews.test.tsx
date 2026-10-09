@@ -12,7 +12,7 @@ let data: any;
 beforeEach(() => {
   vi.clearAllMocks(); h.desktop = true; data = { enabled: true, shares: [] };
   h.api.mockImplementation(async (path, opts) => {
-    if (path === '/hosts') return [{ id: 'remote', name: 'Remote' }];
+    if (path === '/hosts') return [{ id: 'primary', name: 'laptop.local', isPrimary: true }, { id: 'remote', name: 'Remote' }];
     if (opts?.method === 'POST') data.shares = [share];
     if (opts?.method === 'DELETE') data.shares = [];
     return { ...data };
@@ -31,6 +31,19 @@ it('shares on the selected machine, copies, opens in-app and revokes', async () 
   fireEvent.click(screen.getByText('Open preview')); expect(screen.getByTestId('in-app-preview').textContent).toBe(share.url);
   fireEvent.click(screen.getByText('Close preview')); expect(h.detach).toHaveBeenCalledWith(`shared-preview:${share.url}`);
   fireEvent.click(screen.getByText('Stop sharing 5173')); await screen.findByText('No shared previews.');
+});
+it('lists the primary host once, as the Zana computer default', async () => {
+  render(<SharedPreviews />); await screen.findByText('No shared previews.');
+  const options = Array.from((screen.getByLabelText('Machine') as HTMLSelectElement).options).map(o => [o.value, o.textContent]);
+  expect(options).toEqual([['', 'Zana computer (laptop.local)'], ['remote', 'Remote']]);
+  fireEvent.change(screen.getByLabelText('Port'), { target: { value: '5173' } });
+  fireEvent.click(screen.getByText('Share preview')); await screen.findByText('Laptop:5173');
+  expect(h.api).toHaveBeenCalledWith('/previews', { method: 'POST', body: JSON.stringify({ port: 5173 }) });
+});
+it('keeps the plain default label when no primary host is enrolled', async () => {
+  h.api.mockImplementation(async path => path === '/hosts' ? [{ id: 'remote', name: 'Remote' }] : { ...data });
+  render(<SharedPreviews />); await screen.findByText('No shared previews.');
+  expect(screen.getByRole('option', { name: 'Zana computer' })).toBeTruthy();
 });
 it('allows web/mobile management, offers private links and explains missing addresses', async () => {
   h.desktop = false; data.shares = [share]; render(<SharedPreviews />);

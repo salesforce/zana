@@ -10,9 +10,11 @@ const labels: Record<PreviewView['status'], string> = { ready: 'Ready', connecti
 /** Settings-search target (a bare section, not a FormFields primitive). */
 const SHARED_PREVIEWS_TARGET = { searchId: 'remote-access.shared-previews' };
 
+type PreviewHost = { id: string; name: string; isPrimary?: boolean };
+
 export function SharedPreviews() {
   const [data, setData] = useState<PreviewList>();
-  const [hosts, setHosts] = useState<Array<{ id: string; name: string }>>([]);
+  const [hosts, setHosts] = useState<PreviewHost[]>([]);
   const [hostId, setHostId] = useState('');
   const [port, setPort] = useState(() => {
     const candidate = new URLSearchParams(window.location.search).get('previewPort') ?? '';
@@ -24,7 +26,7 @@ export function SharedPreviews() {
   const [copied, setCopied] = useState<string>();
   useEffect(() => { if (opened) return () => getDesktopBrowserApi()?.detach(`shared-preview:${opened}`); }, [opened]);
   const refresh = useCallback(async () => {
-    const [next, machines] = await Promise.all([apiJson<PreviewList>('/previews'), apiJson<Array<{ id: string; name: string }>>('/hosts')]);
+    const [next, machines] = await Promise.all([apiJson<PreviewList>('/previews'), apiJson<PreviewHost[]>('/hosts')]);
     return { next, machines };
   }, []);
   useEffect(() => {
@@ -44,13 +46,16 @@ export function SharedPreviews() {
     catch (err) { setError(err instanceof Error ? err.message : 'Could not update preview'); }
     finally { setBusy(false); }
   };
+  // The primary host is the Zana computer itself; list it once, as the default.
+  const primary = hosts.find(host => host.isPrimary);
+  const otherHosts = hosts.filter(host => !host.isPrimary);
   return <section className="shared-previews" aria-labelledby="shared-previews-title" data-settings-target={SHARED_PREVIEWS_TARGET.searchId}>
     <h2 id="shared-previews-title">Shared previews</h2>
     <p>Open a running web app on your phone or another computer. Each address requires your Connect account. Shares expire after eight hours; sharing again renews them.</p>
     {!data ? <p role="status">Loading previews…</p> : <>
       {!data.enabled && <p>Turn on Remote access on the Zana computer to share a preview.</p>}
       <form className="shared-previews-form" onSubmit={event => { event.preventDefault(); void change('POST', { port: Number(port), ...(hostId ? { hostId } : {}) }); }}>
-        <label>Machine<select value={hostId} onChange={event => setHostId(event.target.value)}><option value="">Zana computer</option>{hosts.map(host => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>
+        <label>Machine<select value={hostId} onChange={event => setHostId(event.target.value)}><option value="">{primary ? `Zana computer (${primary.name})` : 'Zana computer'}</option>{otherHosts.map(host => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>
         <label>Port<input type="number" min={1024} max={65535} step={1} required placeholder="5173" value={port} onChange={event => setPort(event.target.value)} /></label>
         <button className="btn primary" disabled={busy || !data.enabled}>Share preview</button>
       </form>
