@@ -1,6 +1,6 @@
 import {
   PI_EXTENSION_UI_KIND,
-  piExtensionUiPayloadDataSchema,
+  fitExtensionUiRequestToHost,
   piExtensionUiRequestSchema,
   piExtensionUiResolutionSchema,
   resolveExtensionUiResponseFields,
@@ -25,10 +25,14 @@ interface PendingExtensionUiRequest {
     requestId: string | number,
     fields: PiExtensionUiResponseFields,
   ) => void;
+  /** Set once Pi's own `timeout` resolved the dialog; a late answer is dropped. */
+  expired: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface ExtensionUiCoordinatorOptions {
   sendInteractionRequest: (request: InteractionUiRequest) => void;
+  now?: () => number;
 }
 
 export interface HandleExtensionUiRequestArgs {
@@ -61,7 +65,19 @@ export function createExtensionUiCoordinator(
   options: ExtensionUiCoordinatorOptions,
 ): ExtensionUiCoordinator {
   const pending = new Map<string, PendingExtensionUiRequest>();
+  const now = options.now ?? Date.now;
   let nextRequestId = 0;
+
+  const settle = (
+    interactionId: string,
+    entry: PendingExtensionUiRequest,
+  ): void => {
+    if (entry.timer !== null) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    pending.delete(interactionId);
+  };
 
   return {
     handle(args) {
@@ -77,23 +93,30 @@ export function createExtensionUiCoordinator(
         return;
       }
       const request: PiExtensionUiRequest = parsed.data;
-      const data = piExtensionUiPayloadDataSchema.parse({
-        requestId: String(request.id),
-        method: request.method,
-        ...(request.options ? { options: request.options } : {}),
-        ...(request.message !== undefined ? { message: request.message } : {}),
-        ...(request.placeholder !== undefined
-          ? { placeholder: request.placeholder }
-          : {}),
-        ...(request.prefill !== undefined ? { prefill: request.prefill } : {}),
-      });
+      const display = fitExtensionUiRequestToHost(request, now());
+      if (!display) {
+        args.respond(request.id, { cancelled: true });
+        return;
+      }
       nextRequestId += 1;
       const interactionId = `pi-ui-${nextRequestId}`;
-      pending.set(interactionId, {
+      const entry: PendingExtensionUiRequest = {
         scope: args.scope,
         request,
         respond: args.respond,
-      });
+        expired: false,
+        timer: null,
+      };
+      if (request.timeout !== undefined) {
+        // Pi resolves the dialog to its default when `timeout` elapses and
+        // discards any later response, so the answer would be meaningless.
+        entry.timer = setTimeout(() => {
+          entry.timer = null;
+          entry.expired = true;
+        }, request.timeout);
+        entry.timer.unref?.();
+      }
+      pending.set(interactionId, entry);
       try {
         options.sendInteractionRequest({
           jsonrpc: "2.0",
@@ -105,13 +128,13 @@ export function createExtensionUiCoordinator(
             turnId: null,
             payload: {
               kind: PI_EXTENSION_UI_KIND,
-              title: request.title,
-              data,
+              title: display.title,
+              data: display.data,
             },
           },
         });
       } catch {
-        pending.delete(interactionId);
+        settle(interactionId, entry);
         args.respond(request.id, { cancelled: true });
       }
     },
@@ -121,7 +144,10 @@ export function createExtensionUiCoordinator(
       if (!entry) {
         return false;
       }
-      pending.delete(String(response.id));
+      settle(String(response.id), entry);
+      if (entry.expired) {
+        return true;
+      }
       const parsed = piExtensionUiResolutionSchema.safeParse(response.result);
       entry.respond(
         entry.request.id,
@@ -137,8 +163,10 @@ export function createExtensionUiCoordinator(
         if (entry.scope !== scope) {
           continue;
         }
-        pending.delete(interactionId);
-        entry.respond(entry.request.id, { cancelled: true });
+        settle(interactionId, entry);
+        if (!entry.expired) {
+          entry.respond(entry.request.id, { cancelled: true });
+        }
       }
     },
   };

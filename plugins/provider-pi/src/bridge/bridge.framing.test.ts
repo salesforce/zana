@@ -43,7 +43,7 @@ it("carries U+2028/U+2029 through stdout events, RPC responses, and both channel
       },
     ],
   });
-  expect(start.result).toMatchObject({ providerThreadId: threadId });
+  expect(start.result).toMatchObject({ providerThreadId: expect.stringMatching(/^pi_/u) });
 
   const text = `alpha${LINE_SEPARATOR}beta${PARAGRAPH_SEPARATOR}gamma`;
   await harness.request(2, "turn/start", {

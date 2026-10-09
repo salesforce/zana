@@ -60,3 +60,64 @@ it("auto-cancels extension dialogs in a helper session without a UI handler", as
     }
   }
 });
+
+it("does not surface a dialog from a child discarded by an auth retry", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bb-pi-retired-ui-"));
+  const counter = join(dir, "attempts");
+  const script = `
+    const fs = require("node:fs");
+    const attempt = fs.existsSync(${JSON.stringify(counter)})
+      ? Number(fs.readFileSync(${JSON.stringify(counter)}, "utf8")) + 1
+      : 1;
+    fs.writeFileSync(${JSON.stringify(counter)}, String(attempt));
+    const input = require("node:readline").createInterface({ input: process.stdin });
+    const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+    input.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.type === "get_state") {
+        send({ type: "response", id: message.id, success: true, data: {
+          model: { provider: attempt === 1 ? "unknown" : "test", id: "test" },
+          isStreaming: false, isCompacting: false,
+        } });
+        fs.writeSync(3, JSON.stringify({ kind: "ready" }) + "\\n");
+      }
+    });
+    process.on("SIGTERM", () => {
+      send({ type: "extension_ui_request", id: "ui-stale", method: "confirm", title: "Stale?" });
+      setTimeout(() => process.exit(0), 50);
+    });
+    if (attempt > 1) input.on("close", () => process.exit(0));
+  `;
+  vi.stubEnv(PI_BRIDGE_COMMAND_ENV, process.execPath);
+  vi.stubEnv(PI_BRIDGE_ARGS_ENV, JSON.stringify(["-e", script, "--"]));
+  vi.stubEnv("ZCC_PI_BRIDGE_READINESS_TIMEOUT_MS", "1000");
+  const onExtensionUiRequest = vi.fn();
+  const session = new PiRpcSession(
+    {
+      cwd: dir,
+      sessionFilePath: join(dir, "session.jsonl"),
+      sessionDir: dir,
+      scratchDir: dir,
+      extensionPath: join(dir, "extension.mjs"),
+      recordThreadId: "thr_retired_ui",
+      noSession: true,
+      onExtensionUiRequest,
+    },
+    async () => ({ content: "", isError: true }),
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    await session.start();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(readFileSync(counter, "utf8")).toBe("2");
+    expect(onExtensionUiRequest).not.toHaveBeenCalled();
+  } finally {
+    try {
+      await session.closeGracefully(1000);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});

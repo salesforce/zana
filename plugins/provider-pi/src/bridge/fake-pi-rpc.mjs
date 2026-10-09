@@ -37,7 +37,9 @@
  *   (tool_execution_start/end). A prompt while a run is live is queued and
  *   surfaces through `queue_update`, the way pi's follow-up queue does; it
  *   runs after the live run ends. `/hold` opens a run that never ends until
- *   `abort`; `/fail-run` ends the run with an assistant error.
+ *   `abort`; `/fail-run` ends the run with an assistant error. Every run
+ *   ends with agent_settled; `/continue` runs a second agent_start..agent_end
+ *   first, the way pi 0.87 continues for an agent_before_settle extension.
  * - `abort`: ends a live run with stopReason "aborted".
  * - `--version` prints FAKE_PI_VERSION (default 0.84.0) and exits.
  * - `compact`: compaction_start/end {reason: "manual"}; before any turn ran
@@ -100,6 +102,12 @@ const extensionPath = flag("--extension");
 const processLogPath = process.env.FAKE_PI_PROCESS_LOG;
 const commandLogPath = process.env.FAKE_PI_COMMAND_LOG;
 const promptDumpPath = process.env.FAKE_PI_PROMPT_DUMP;
+if (process.env.FAKE_PI_ENV_LOG) {
+  appendFileSync(
+    process.env.FAKE_PI_ENV_LOG,
+    `${process.env.FAKE_PI_ENV_MARKER ?? ""}\n`,
+  );
+}
 if (sessionFile !== undefined) {
   mkdirSync(dirname(sessionFile), { recursive: true });
   if (!existsSync(sessionFile)) {
@@ -330,6 +338,16 @@ async function runExtensionTool(name, toolArgs) {
 }
 
 async function runPrompt(text) {
+  await runAgent(text);
+  if (text === "/continue") {
+    // An agent_before_settle extension asking for one more provider request:
+    // pi runs a second agent_start..agent_end before it settles.
+    await runAgent("continued by extension");
+  }
+  event({ type: "agent_settled" });
+}
+
+async function runAgent(text) {
   isStreaming = true;
   turnCounter += 1;
   await emitExtensionEvent("agent_start");

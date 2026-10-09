@@ -232,6 +232,44 @@ describe("pi delta translation equivalence", () => {
     expect(events.some((event) => event.type === "provider/error")).toBe(false);
   });
 
+  it("a continued agent_end closes its message but keeps the turn open", () => {
+    const harness = createHarness();
+    harness.translate(loadFixture("agent-start.json"));
+    const turnId = harness.openTurnId();
+
+    const events = harness.translate({
+      ...loadFixture("agent-end-with-message.json"),
+      continued: true,
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "item/completed",
+        item: expect.objectContaining({ type: "agentMessage" }),
+      }),
+    );
+    expect(events.some((event) => event.type === "turn/completed")).toBe(false);
+    expect(harness.openTurnId()).toBe(turnId);
+    expect(harness.translate(loadFixture("agent-start.json"))).toEqual([]);
+    expect(harness.openTurnId()).toBe(turnId);
+  });
+
+  it("a continued agent_end error reports the error without failing the turn", () => {
+    const harness = createHarness();
+    harness.translate(loadFixture("agent-start.json"));
+    const turnId = harness.openTurnId();
+
+    const events = harness.translate({
+      ...createPiAgentErrorEvent("transient", false),
+      continued: true,
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({ type: "provider/error", detail: "transient" }),
+    ]);
+    expect(harness.openTurnId()).toBe(turnId);
+  });
+
   it("completes extension-triggered turns when agent_end includes string custom content", () => {
     const harness = createHarness();
     harness.translate(loadFixture("agent-start.json"));
@@ -1104,6 +1142,30 @@ describe("pi delta translation equivalence", () => {
     );
   });
 
+  it("tool_execution_start with edit batch args marks the change as an update", () => {
+    const harness = createHarness();
+    harness.translate(loadFixture("agent-start.json"));
+
+    const events = harness.translate({
+      type: "tool_execution_start",
+      toolCallId: "tool-edit-batch",
+      toolName: "edit",
+      args: {
+        path: "src/app.ts",
+        edits: [{ oldText: "before", newText: "after" }],
+      },
+    } as AgentSessionEvent);
+
+    const started = events.find(
+      (event): event is Extract<ThreadEvent, { type: "item/started" }> =>
+        event.type === "item/started",
+    );
+    expect(started?.item).toMatchObject({
+      type: "fileChange",
+      changes: [{ path: "src/app.ts", kind: "update" }],
+    });
+  });
+
   it("tool_execution_start with content-only write args marks the change as an add", () => {
     const harness = createHarness();
     harness.translate(loadFixture("agent-start.json"));
@@ -1589,6 +1651,34 @@ describe("pi delta translation equivalence", () => {
       firstTokenUsage?.tokenUsage.last,
     );
     expect(secondTokenUsage?.tokenUsage.modelContextWindow).toBe(123_456);
+  });
+
+  it("keeps the usage report when a cache count is malformed", () => {
+    const harness = createHarness();
+    harness.translate(loadFixture("agent-start.json"));
+    const fixture = loadFixture("agent-end-with-message.json") as {
+      messages: { usage: Record<string, unknown> }[];
+    };
+    const message = fixture.messages[0]!;
+    const events = harness.translate({
+      ...fixture,
+      messages: [
+        { ...message, usage: { ...message.usage, cacheRead: -5, cacheWrite: "x" } },
+      ],
+    } as never);
+
+    const tokenUsage = events.find(
+      (
+        event,
+      ): event is Extract<ThreadEvent, { type: "thread/tokenUsage/updated" }> =>
+        event.type === "thread/tokenUsage/updated",
+    );
+    expect(tokenUsage?.tokenUsage.last).toMatchObject({
+      totalTokens: 7736,
+      inputTokens: 4200,
+      cachedInputTokens: 0,
+      outputTokens: 156,
+    });
   });
 
   it("maps bridge context-window usage updates into the meter event", () => {

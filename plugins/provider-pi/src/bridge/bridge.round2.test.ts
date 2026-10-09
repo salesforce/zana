@@ -49,7 +49,7 @@ function turnStart(
 it("a child that dies mid-run does not take the bridge down: the next write is answered, not thrown", async () => {
   const threadId = "thr_r2_epipe";
   expect((await harness.startThread(threadId)).result).toMatchObject({
-    providerThreadId: threadId,
+    providerThreadId: expect.stringMatching(/^pi_/u),
   });
   turnStart(threadId, "/die", "creq_ab23456789");
   await harness.waitForDelta(
@@ -68,7 +68,7 @@ it("a child that dies mid-run does not take the bridge down: the next write is a
     message: expect.stringMatching(/No active Pi session|pi exited/u),
   });
   expect((await harness.startThread("thr_r2_epipe_next")).result).toMatchObject(
-    { providerThreadId: "thr_r2_epipe_next" },
+    { providerThreadId: expect.stringMatching(/^pi_/u) },
   );
 }, 90_000);
 
@@ -291,7 +291,7 @@ it("recovers from one transient model mismatch by respawning", async () => {
   const response = await harness.startThread(threadId, {
     options: { ...FULL_PERMISSION_OPTIONS, model: "fake-provider/fake-mini" },
   });
-  expect(response.result).toMatchObject({ providerThreadId: threadId });
+  expect(response.result).toMatchObject({ providerThreadId: expect.stringMatching(/^pi_/u) });
   const log = harness.readProcessLog();
   expect(log.spawned).toHaveLength(2);
   const deadline = Date.now() + 10_000;
@@ -436,4 +436,26 @@ it("resumes at the requested cwd when the session header's cwd was removed", asy
     command: "pwd",
     cwd: harness.workspaceDir,
   });
+}, 90_000);
+
+it("keeps one turn open while Pi continues a run before agent_settled", async () => {
+  const threadId = "thr_r2_continue";
+  await harness.startThread(threadId);
+  turnStart(threadId, "/continue", "creq_gh23456789");
+  await harness.waitForTurnBoundary(threadId);
+  const deltas = harness.deltasOf(threadId);
+  const boundaryIndex = deltas.findIndex((d) => d.kind === "turn.boundary");
+  // The first run's agent_end (leaf-1) must not close the turn; the turn
+  // closes after the continuation, at its checkpoint.
+  expect(deltas[boundaryIndex]).toMatchObject({
+    status: "completed",
+    providerCheckpointId: "leaf-2",
+  });
+  const text = deltas
+    .slice(0, boundaryIndex)
+    .filter((d) => d.kind === "item.textDelta")
+    .map((d) => String(d.text))
+    .join("");
+  expect(text).toContain("Response to: /continue");
+  expect(text).toContain("Response to: continued by extension");
 }, 90_000);

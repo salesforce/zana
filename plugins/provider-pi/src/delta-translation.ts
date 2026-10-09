@@ -74,8 +74,9 @@ const piAssistantUsageSchema = z
   .object({
     input: z.number().optional(),
     output: z.number().optional(),
-    cacheRead: z.number().optional(),
-    cacheWrite: z.number().optional(),
+    // A malformed cache count must not discard the whole usage report.
+    cacheRead: z.number().nonnegative().optional().catch(undefined),
+    cacheWrite: z.number().nonnegative().optional().catch(undefined),
     totalTokens: z.number().optional(),
   })
   .passthrough();
@@ -125,6 +126,9 @@ const piAgentEndEventSchema = z
     messages: z.array(piConversationMessageSchema),
     providerCheckpointId: z.string().min(1).optional(),
     willRetry: z.boolean().default(false),
+    // Set by the session when Pi started another run before agent_settled:
+    // the turn stays open for that continuation.
+    continued: z.boolean().default(false),
   })
   .passthrough();
 
@@ -257,7 +261,12 @@ function classifyPiToolUse(
       changes: [
         {
           path: parsed.data.path,
-          kind: parsed.data.oldText === undefined ? "add" : "update",
+          // `edit` always targets an existing file, even when its arguments
+          // carry a multi-edit list instead of a single `oldText`.
+          kind:
+            toolName === "edit" || parsed.data.oldText !== undefined
+              ? "update"
+              : "add",
           ...(parsed.data.oldText === undefined
             ? {}
             : { oldText: parsed.data.oldText }),
@@ -691,7 +700,7 @@ export function createPiDeltaTranslator(
               kind: "provider.error",
               message: "Provider error",
               detail: lastAssistant.errorMessage,
-              settlesTurn: true,
+              ...(piEvent.data.continued ? {} : { settlesTurn: true }),
             },
           ];
         }
@@ -722,6 +731,9 @@ export function createPiDeltaTranslator(
             last: usage,
             modelContextWindow: resolveModelContextWindow(lastAssistant),
           });
+        }
+        if (piEvent.data.continued) {
+          return deltas;
         }
         deltas.push({
           kind: "turn.boundary",
