@@ -75,3 +75,38 @@ describe('playground bridge', () => {
     expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'revealLine', line: 3 })).toBe(true);
   });
 });
+
+describe('studio bridge messages', () => {
+  const m = <T extends object>(body: T) => ({ source: PLAYGROUND_BRIDGE_SOURCE, ...body });
+  const comment = { id: 'c', path: 'a.agent', line: 1, endLine: 2, quote: 'q', body: 'b', author: { kind: 'user', name: 'me' }, createdAt: 1 };
+  const diag = { line: 1, column: 1, endLine: 1, endColumn: 2, severity: 'warning', message: 'm' };
+  const rejects = (guard: (v: unknown) => boolean, base: object, changes: object[]) => {
+    expect(guard(m(base))).toBe(true);
+    for (const change of changes) expect(guard(m({ ...base, ...change }))).toBe(false);
+  };
+
+  it('accepts snapshot diagnostics up to 200 and rejects invalid ones', () => {
+    const snap = { type: 'snapshot', content: 'x', issues: 1 };
+    rejects(isPlaygroundToHost, { ...snap, diagnostics: Array(200).fill(diag) }, [{ diagnostics: Array(201).fill(diag) }, { diagnostics: [{ ...diag, severity: 'x' }] }, { diagnostics: 'no' }]);
+    expect(isPlaygroundToHost(m(snap))).toBe(true);
+  });
+  it('validates cursor and selection', () => {
+    rejects(isPlaygroundToHost, { type: 'cursor', line: 3, column: 2, selection: { startLine: 3, endLine: 4, text: 'abc' } }, [{ line: 0 }, { column: 1.5 }, { selection: { startLine: 4, endLine: 3, text: '' } }, { selection: { startLine: 1, endLine: 1, text: 'x'.repeat(2001) } }, { selection: 'x' }]);
+    expect(isPlaygroundToHost(m({ type: 'cursor', line: 1, column: 1 }))).toBe(true);
+  });
+  it('validates proposalResolved with the outcome shape', () => {
+    rejects(isPlaygroundToHost, { type: 'proposalResolved', proposalId: 'p1', outcome: 'partial', acceptedHunks: 1, rejectedHunks: 1, content: 'x', sha256: 'abc' }, [{ proposalId: '' }, { proposalId: 5 }, { outcome: 'nope' }, { acceptedHunks: -1 }, { content: 3 }, { content: 'x'.repeat(180_001) }]);
+  });
+  it('validates commentAction, askSelection and saveRequest', () => {
+    rejects(isPlaygroundToHost, { type: 'commentAction', kind: 'add', line: 1, endLine: 2, quote: 'q' }, [{ kind: 'delete' }, { line: 0 }, { endLine: 0 }, { quote: 1 }, { quote: 'x'.repeat(2001) }]);
+    rejects(isPlaygroundToHost, { type: 'askSelection', action: 'explain-selection', startLine: 1, endLine: 2, text: 't' }, [{ action: '' }, { action: 'x'.repeat(65) }, { startLine: 3 }, { text: 'x'.repeat(2001) }, { text: 1 }]);
+    expect(isPlaygroundToHost(m({ type: 'saveRequest' }))).toBe(true);
+  });
+  it('validates host messages for proposals, comments, hits and layout', () => {
+    rejects(isHostToPlayground, { type: 'proposeEdit', proposalId: 'p', content: 'c', summary: 's', actor: 'a' }, [{ proposalId: '' }, { content: 1 }, { content: 'x'.repeat(180_001) }, { summary: 'x'.repeat(1001) }, { actor: 3 }]);
+    rejects(isHostToPlayground, { type: 'clearProposal', proposalId: 'p' }, [{ proposalId: 1 }]);
+    rejects(isHostToPlayground, { type: 'setComments', comments: [comment] }, [{ comments: [{ ...comment, line: 0 }] }, { comments: 'x' }, { comments: Array(501).fill(comment) }]);
+    rejects(isHostToPlayground, { type: 'setHits', lines: [1, 2] }, [{ lines: [0] }, { lines: 'x' }, { lines: Array(1001).fill(1) }]);
+    rejects(isHostToPlayground, { type: 'setLayout', compact: true }, [{ compact: 'yes' }]);
+  });
+});

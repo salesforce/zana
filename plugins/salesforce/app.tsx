@@ -1,4 +1,5 @@
 import { registerSalesforcePanels } from './panels.js';
+import { registerStudioDirectives } from './src/app/directives/index.js';
 import type { ComponentType } from 'react';
 import { definePluginApp, useComposerView, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { AgentforcePlaygroundPanel } from './src/app/AgentScriptPanel.js';
@@ -135,6 +136,7 @@ function AgentFileOpener(props: {
 
 export default definePluginApp((app) => {
   registerSalesforcePanels(app);
+  registerStudioDirectives(app);
   app.slots.settingsSection({
     id: 'orgs',
     title: 'Connected orgs',

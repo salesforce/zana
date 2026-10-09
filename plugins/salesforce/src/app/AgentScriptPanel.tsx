@@ -1,4 +1,4 @@
-import { controlText, useSalesforceControl } from './useSalesforceControl.js';
+import { useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { callPluginRpc, useSettings, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import {
@@ -14,13 +14,12 @@ import { parseAgentforcePanelPath } from './agentforce-panel-params.js';
 import { OrgPicker } from './OrgPicker.js';
 import { AgentScriptDocumentBar } from './AgentScriptDocumentBar.js';
 import {
-  isPlaygroundToHost,
   PLAYGROUND_ASSET_SRC,
-  PLAYGROUND_BRIDGE_SOURCE,
   readDocumentTheme,
-  type HostToPlayground,
   type PlaygroundFileRef
 } from './playground-bridge.js';
+import { usePlaygroundBridge } from './studio/usePlaygroundBridge.js';
+import { createStudioCommandExecutor } from './studio/studio-commands.js';
 import {
   PLAYGROUND_LOAD_ERROR,
   PLAYGROUND_READY_MS,
@@ -33,7 +32,7 @@ import { fetchConnectedOrg } from './org-rpc.js';
 import { AgentforceLabPanel } from './AgentforceLabPanel.js';
 import { AgentforceStudioSplit } from './AgentforceStudioSplit.js';
 import { AGENTFORCE_STUDIO_STYLES } from './agentforce-studio-styles.js';
-import { AGENT_SCRIPT_TOOLS, AgentScriptTools, useAgentScriptTools } from './AgentScriptTools.js';
+import { AgentScriptTools, useAgentScriptTools } from './AgentScriptTools.js';
 import { OrgAgentsPanel } from './OrgAgentsPanel.js';
 import { AgentScriptGraphPanel } from './AgentScriptGraphPanel.js';
 import { AgentforcePreviewPanel } from './AgentforcePreviewPanel.js';
@@ -91,14 +90,6 @@ type StatusPayload = {
   agentScriptDialect?: AgentScriptDialect;
   defaultOrg?: string;
 };
-
-function postToPlayground(frame: HTMLIFrameElement | null, message: HostToPlayground): void {
-  try {
-    frame?.contentWindow?.postMessage(message, window.location.origin);
-  } catch {
-    // iframe may still be about:blank (tests) or not yet same-origin
-  }
-}
 
 function FileTree({
   nodes,
@@ -184,7 +175,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const projectId = props.projectId ?? context.projectId ?? undefined;
   const initialPath = parseAgentforcePanelPath(props.params) ?? props.subPath ?? null;
   const settings = useSettings();
-  const frameRef = useRef<HTMLIFrameElement>(null);
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [files, setFiles] = useState<PlaygroundFileRef[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPath || null);
@@ -196,6 +186,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [draftWarning, setDraftWarning] = useState(false);
   const draftScope = projectId ?? `root:${String(settings.values?.projectRoot ?? '')}`;
   const activeDraft = useRef('');
+  const { frameRef, send, handlers: bridgeHandlers } = usePlaygroundBridge(activeDraft);
   const fileEpoch = useRef(0);
   const alive = useRef(true);
   const saving = useRef(false);
@@ -221,8 +212,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   }, [openTool]);
   const revealLine = useCallback((line: number) => {
     setSelectedActionId(null);
-    postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'revealLine', line });
-  }, []);
+    send.revealLine(line);
+  }, [send]);
   const [issues, setIssues] = useState(0);
   const [fileQuery, setFileQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -243,13 +234,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     if (current !== orgEpoch.current) return null;
     const next = payload.ok ? payload.org : null;
     setOrg(next);
-    postToPlayground(frameRef.current, {
-      source: PLAYGROUND_BRIDGE_SOURCE,
-      type: 'setOrg',
-      org: next
-    });
+    send.setOrg(next);
     return next;
-  }, [pluginId, projectId]);
+  }, [pluginId, projectId, send]);
 
   const refreshFiles = useCallback(async () => {
     const listed = (await callPluginRpc(pluginId, 'agentFiles.list', rpcArgs())) as {
@@ -313,9 +300,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         setExampleId(example?.id ?? 'support-bot');
         setSha256(undefined);
         setDirty(false);
-        postToPlayground(frameRef.current, {
-          source: PLAYGROUND_BRIDGE_SOURCE,
-          type: 'setFile',
+        send.setFile({
           draftKey: activeDraft.current,
           path: null,
           content: example?.source ?? '',
@@ -341,9 +326,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       setExampleId('');
       setSha256(result.file.sha256);
       setDirty(false);
-      postToPlayground(frameRef.current, {
-        source: PLAYGROUND_BRIDGE_SOURCE,
-        type: 'setFile',
+      send.setFile({
         draftKey: activeDraft.current,
         path: result.file.path,
         content: result.file.content,
@@ -353,36 +336,28 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       });
       return true;
     },
-    [dialect, pluginId, rpcArgs, draftScope]
+    [dialect, pluginId, rpcArgs, draftScope, send]
   );
+
+  const executeCommand = createStudioCommandExecutor({
+    getSource: () => source,
+    isBusyOrDirty: () => dirty || busy,
+    refreshFiles,
+    openFile: path => openFile(path),
+    setFileQuery,
+    revealLine,
+    tools
+  });
 
   useSalesforceControl({ pluginId, projectId, orgAlias: org?.alias, threadId: context.threadId ?? undefined, surface: 'agentforce', enabled: playgroundReady,
     commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal'],
     state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: tools.state, filter: fileQuery }),
-    execute: async ({ command, input }) => {
-      if (command === 'state') return input.includeSource === true ? { source } : {};
-      if (command === 'file.open') {
-        if (dirty || busy) throw Error('Save the current draft before switching files.');
-        const path = controlText(input, 'path');
-        await refreshFiles();
-        if (!await openFile(path)) throw Error('Could not open the requested file.');
-        return { path };
-      }
-      if (command === 'file.filter') { setFileQuery(controlText(input, 'query', 200)); openTool('files'); return; }
-      if (command === 'editor.reveal') {
-        if (!Number.isInteger(input.line) || Number(input.line) < 1) throw Error('Provide a positive, 1-based line.');
-        revealLine(Number(input.line)); return { revealedLine: input.line };
-      }
-      if (command === 'panel.show' || command === 'panel.hide') { tools.setOpen(command === 'panel.show'); return; }
-      const tool = AGENT_SCRIPT_TOOLS.find(row => row.id === input.tool);
-      if (!tool) throw Error('Choose a known Agentforce tool.');
-      if (command === 'panel.open') openTool(tool.id); else tools.close(tool.id);
-    },
+    execute: executeCommand,
   });
 
   const save = useCallback(() => {
-    postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'flushSave' });
-  }, []);
+    send.flushSave();
+  }, [send]);
 
   const persistFromPlayground = useCallback(
     async (path: string, content: string, key = activeDraft.current, create = false) => {
@@ -407,7 +382,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           } else {
             setSha256(result.file.sha256);
             setDirty(Boolean(remaining && remaining.content !== content));
-            postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'saved', draftKey: key, content, sha256: result.file.sha256 });
+            send.saved({ draftKey: key, content, sha256: result.file.sha256 });
           }
         }
         if (alive.current) await refreshFiles();
@@ -418,67 +393,47 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         if (alive.current) setBusy(false);
       }
     },
-    [pluginId, refreshFiles, rpcArgs, saveEnabled, sha256, openFile, draftScope]
+    [pluginId, refreshFiles, rpcArgs, saveEnabled, sha256, openFile, draftScope, send]
   );
 
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      if (event.source !== frameRef.current?.contentWindow) return;
-      if (!isPlaygroundToHost(event.data)) return;
-      const message = event.data;
-      if ('draftKey' in message && message.draftKey && message.draftKey !== activeDraft.current) return;
-      if (message.type === 'snapshot') {
-        const nextActions = message.actions ?? [];
-        setSource(message.content); setIssues(message.issues); setActions(nextActions);
-        setActionTabs(tabs => tabs.filter(tab => tab.action.id.startsWith('dependency:') || nextActions.some(action => action.id === tab.action.id)));
-        setSelectedActionId(id => id?.startsWith('dependency:') || nextActions.some(action => action.id === id) ? id : null);
-        return;
-      }
-      if (message.type === 'openAction') {
-        const action = actions.find(row => row.id === message.id);
-        if (action) openAction(action);
-        return;
-      }
-      if (message.type === 'ready') {
-        setPlaygroundReady(true);
-        setIframeError(false);
-        setPlaygroundTimedOut(false);
-        postToPlayground(frameRef.current, {
-          source: PLAYGROUND_BRIDGE_SOURCE,
-          type: 'init',
-          dialect,
-          theme: readDocumentTheme(),
-          examples: AGENT_SCRIPT_EXAMPLES,
-          files,
-          saveEnabled,
-          view: 'script',
-          org
-        });
-        void refreshOrg();
-        const queued = projectId ? takeQueuedAgentScriptOpen(projectId) : null;
-        const last = recalledAgentSelection(draftScope);
-        const file = initialPath || queued || (last?.startsWith('file:') ? last.slice(5) : null);
-        void openFile(file, last?.startsWith('example:') ? last.slice(8) : undefined);
-        return;
-      }
-      if (message.type === 'dirty') {
-        setDirty(message.dirty);
-        if (message.draftKey) setSha256(message.baseSha);
-        setDraftWarning(message.persisted === false);
-        return;
-      }
-      if (message.type === 'requestOpen') {
-        void openFile(message.path);
-        return;
-      }
-      if (message.type === 'persist') {
-        void persistFromPlayground(message.path, message.content, message.draftKey, message.create);
-      }
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [dialect, files, openFile, persistFromPlayground, projectId, initialPath, refreshOrg, saveEnabled, org, actions, openAction, draftScope]);
+  bridgeHandlers.current = {
+    onSnapshot: message => {
+      const nextActions = message.actions ?? [];
+      setSource(message.content); setIssues(message.issues); setActions(nextActions);
+      setActionTabs(tabs => tabs.filter(tab => tab.action.id.startsWith('dependency:') || nextActions.some(action => action.id === tab.action.id)));
+      setSelectedActionId(id => id?.startsWith('dependency:') || nextActions.some(action => action.id === id) ? id : null);
+    },
+    onOpenAction: id => {
+      const action = actions.find(row => row.id === id);
+      if (action) openAction(action);
+    },
+    onReady: () => {
+      setPlaygroundReady(true);
+      setIframeError(false);
+      setPlaygroundTimedOut(false);
+      send.init({
+        dialect,
+        theme: readDocumentTheme(),
+        examples: AGENT_SCRIPT_EXAMPLES,
+        files,
+        saveEnabled,
+        view: 'script',
+        org
+      });
+      void refreshOrg();
+      const queued = projectId ? takeQueuedAgentScriptOpen(projectId) : null;
+      const last = recalledAgentSelection(draftScope);
+      const file = initialPath || queued || (last?.startsWith('file:') ? last.slice(5) : null);
+      void openFile(file, last?.startsWith('example:') ? last.slice(8) : undefined);
+    },
+    onDirty: message => {
+      setDirty(message.dirty);
+      if (message.draftKey) setSha256(message.baseSha);
+      setDraftWarning(message.persisted === false);
+    },
+    onRequestOpen: path => { void openFile(path); },
+    onPersist: message => { void persistFromPlayground(message.path, message.content, message.draftKey, message.create); }
+  };
 
   useEffect(() => {
     if (!projectId || !playgroundReady) return;
@@ -499,19 +454,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     const onError = () => setIframeError(true);
     frame.addEventListener('error', onError);
     return () => frame.removeEventListener('error', onError);
-  }, []);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    const observer = new MutationObserver(() => {
-      postToPlayground(frameRef.current, {
-        source: PLAYGROUND_BRIDGE_SOURCE,
-        type: 'setTheme',
-        theme: readDocumentTheme()
-      });
-    });
-    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => observer.disconnect();
   }, []);
 
   const tree = useMemo(
@@ -553,7 +495,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       {newAgentOpen && <NewAgentDialog pluginId={pluginId} projectId={projectId} onClose={() => setNewAgentOpen(false)} onCreated={async file => { await refreshFiles(); await openFile(file.path); openTool('files'); }} />}
       {saveAsOpen && <SaveAgentDialog busy={busy} error={error} onClose={() => setSaveAsOpen(false)} onSave={path => {
         setBusy(true); setError(null);
-        postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'flushSave', path, create: true });
+        send.flushSave({ path, create: true });
       }} />}
       {draftWarning && <div className="sf-as-banner is-error" role="alert">Local recovery is unavailable for this draft. Save it to a project file before leaving.</div>}
       {hint ? <div className="sf-as-banner">{hint}</div> : null}

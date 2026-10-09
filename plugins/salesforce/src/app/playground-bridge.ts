@@ -2,6 +2,15 @@ import type { PlaygroundView } from '../../lib/agent-script-chrome.js';
 import type { AgentScriptDialect, PublicOrgView } from '../../lib/types.js';
 import type { AgentScriptExample } from '../../lib/agent-script-model.js';
 import type { AgentAction } from '../../lib/agent-action-model.js';
+import {
+  isProposalOutcome,
+  isStudioComment,
+  isStudioDiagnostics,
+  STUDIO_LIMITS,
+  type ProposalOutcome,
+  type StudioComment,
+  type StudioDiagnostic
+} from '../../lib/studio-contract.js';
 
 export const PLAYGROUND_BRIDGE_SOURCE = 'zcc-salesforce-agentscript';
 
@@ -14,10 +23,15 @@ export interface PlaygroundFileRef {
 export type PlaygroundToHost =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'ready' }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'dirty'; dirty: boolean; draftKey?: string; baseSha?: string; persisted?: boolean }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'snapshot'; draftKey?: string; content: string; issues: number; actions?: AgentAction[] }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'snapshot'; draftKey?: string; content: string; issues: number; actions?: AgentAction[]; diagnostics?: StudioDiagnostic[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'openAction'; id: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'requestOpen'; path: string }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'persist'; path: string; content: string; draftKey?: string; create?: boolean };
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'persist'; path: string; content: string; draftKey?: string; create?: boolean }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'cursor'; line: number; column: number; selection?: { startLine: number; endLine: number; text: string } }
+  | ({ source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'proposalResolved'; proposalId: string; content: string } & ProposalOutcome)
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'commentAction'; kind: 'add' | 'open'; line: number; endLine: number; quote: string }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'askSelection'; action: string; startLine: number; endLine: number; text: string }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saveRequest' };
 
 export type HostToPlayground =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'graph'; content: string; visible: boolean; theme: 'light' | 'dark' }
@@ -50,7 +64,12 @@ export type HostToPlayground =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setFiles'; files: PlaygroundFileRef[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setOrg'; org: PublicOrgView | null }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saved'; sha256: string; draftKey?: string; content?: string }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'flushSave'; path?: string; create?: boolean };
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'flushSave'; path?: string; create?: boolean }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'proposeEdit'; proposalId: string; content: string; summary: string; actor: string }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'clearProposal'; proposalId: string }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setComments'; comments: StudioComment[] }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setHits'; lines: number[] }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setLayout'; compact: boolean };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
@@ -67,9 +86,27 @@ export function isPlaygroundToHost(value: unknown): value is PlaygroundToHost {
   if (value.type === 'ready') return true;
   if (value.type === 'openAction') return typeof value.id === 'string';
   if (value.type === 'dirty') return typeof value.dirty === 'boolean';
-  if (value.type === 'snapshot') return typeof value.content === 'string' && value.content.length <= 180_000 && typeof value.issues === 'number' && Number.isFinite(value.issues) && (value.actions === undefined || (Array.isArray(value.actions) && value.actions.length <= 250 && value.actions.every(isAction)));
+  if (value.type === 'snapshot') return typeof value.content === 'string' && value.content.length <= 180_000 && typeof value.issues === 'number' && Number.isFinite(value.issues) && (value.actions === undefined || (Array.isArray(value.actions) && value.actions.length <= 250 && value.actions.every(isAction))) && (value.diagnostics === undefined || isStudioDiagnostics(value.diagnostics, 200));
+  if (value.type === 'cursor') return isPositive(value.line) && isPositive(value.column) && (value.selection === undefined || isSelection(value.selection));
+  if (value.type === 'proposalResolved') return isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= 180_000 && isProposalOutcome(value);
+  if (value.type === 'commentAction') return ['add', 'open'].includes(String(value.kind)) && isPositive(value.line) && isPositive(value.endLine) && Number(value.endLine) >= Number(value.line) && typeof value.quote === 'string' && value.quote.length <= STUDIO_LIMITS.quote;
+  if (value.type === 'askSelection') return typeof value.action === 'string' && value.action.length > 0 && value.action.length <= 64 && isSelection(value);
+  if (value.type === 'saveRequest') return true;
   if (value.type === 'requestOpen') return typeof value.path === 'string';
   return value.type === 'persist' && typeof value.path === 'string' && typeof value.content === 'string';
+}
+
+function isPositive(value: unknown): boolean {
+  return Number.isInteger(value) && Number(value) >= 1;
+}
+
+function isProposalId(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0 && value.length <= 200;
+}
+
+function isSelection(value: unknown): boolean {
+  return isRecord(value) && isPositive(value.startLine) && isPositive(value.endLine) && Number(value.endLine) >= Number(value.startLine)
+    && typeof value.text === 'string' && value.text.length <= STUDIO_LIMITS.selectionText;
 }
 
 function isAction(value: unknown): value is AgentAction {
@@ -94,7 +131,12 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     value.type === 'setFiles' ||
     value.type === 'setOrg' ||
     value.type === 'saved' ||
-    value.type === 'flushSave'
+    value.type === 'flushSave' ||
+    (value.type === 'proposeEdit' && isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= 180_000 && typeof value.summary === 'string' && value.summary.length <= 1000 && typeof value.actor === 'string' && value.actor.length <= 200) ||
+    (value.type === 'clearProposal' && isProposalId(value.proposalId)) ||
+    (value.type === 'setComments' && Array.isArray(value.comments) && value.comments.length <= 500 && value.comments.every(isStudioComment)) ||
+    (value.type === 'setHits' && Array.isArray(value.lines) && value.lines.length <= 1000 && value.lines.every(isPositive)) ||
+    (value.type === 'setLayout' && typeof value.compact === 'boolean')
   );
 }
 

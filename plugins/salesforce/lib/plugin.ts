@@ -5,6 +5,13 @@ import type { SalesforceToolCallContext, ToolkitRuntime } from './tool-provider-
 import { WorkbenchResults } from './workbench-results.js';
 import { WORKBENCH_ACTIONS, actionCatalog, actionInput, actionParameters, isWorkbenchAction, workbenchActionNames } from './workbench-actions.js';
 import { WorkbenchControl } from './workbench-control.js';
+import { registerControlRpc, uiCommandReadsOrg } from './workbench-control-rpc.js';
+import { rpcString, type StudioServerContext } from './studio-server-context.js';
+import { registerStudioAssistant } from './studio-threads.js';
+import { registerStudioContext } from './studio-view.js';
+import { registerStudioComments } from './studio-comments.js';
+import { registerStudioPreview } from './scenario-suites.js';
+import { registerStudioExplorer } from './studio-explorer.js';
 import { createAgentDraft, draftDestination, DRAFT_PROJECT } from './agent-drafts.js';
 import type { AgentDraftInput } from './agent-draft-contract.js';
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
@@ -99,6 +106,10 @@ import {
   type SalesforceDeps,
   type ToolResult
 } from './types.js';
+
+/** SDK types re-exported for lib/studio-server-context.ts (this file is the only lib file that may import the SDK). */
+export type SalesforceHostApi = ZccPluginApi;
+export type SalesforceHostToolContext = PluginAgentToolContext;
 
 const SETTINGS = {
   toolProvider: {
@@ -597,14 +608,6 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerRpc('query.result', async args => ({ ok: true, result: queryResults.get(contexts.current()?.projectId ?? '', (await sdk.connect()).orgId, rpcString(args, 'resultId')) }));
   const control = new WorkbenchControl();
   zcc.onDispose(() => control.dispose());
-  const controlScope = () => contexts.current()?.projectId ?? 'global';
-  registerRpc('control.register', args => ({ ok: true, ...control.register(controlScope(), args, contexts.current()?.settings.defaultOrg ?? '') }));
-  registerRpc('control.poll', args => { control.assertTarget(controlScope(), rpcString(args, 'viewId'), contexts.current()?.settings.defaultOrg ?? ''); return { ok: true, ...control.poll(controlScope(), args) }; });
-  registerRpc('control.close', args => { control.close(controlScope(), rpcString(args, 'viewId')); return { ok: true }; });
-  registerRpc('control.ack', args => ({ ok: true, ...control.acknowledge(controlScope(), args) }));
-  registerRpc('control.views', () => ({ ok: true, views: control.list(controlScope()) }));
-  registerRpc('control.command', args => ({ ok: true, ...control.request(controlScope(), args) }));
-  registerRpc('control.result', args => ({ ok: true, ...control.result(controlScope(), rpcString(args, 'commandId')) }));
 
   const invokeAction = async (action: string, input: unknown, ctx: PluginAgentToolContext): Promise<unknown> => {
     try {
@@ -619,8 +622,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         if (deps.exists(join(String(data.outputDir), data.name))) throw Error('That project folder already exists.');
       }
       if (action === 'ui.command') control.assertTarget(ctx.projectId, String(data.viewId), (await readSettings()).defaultOrg);
-      const commandInput = data.input as Record<string, unknown> | undefined;
-      const uiReadsOrg = action === 'ui.command' && (['object.select', 'record.open', 'log.open'].includes(String(data.command)) || (data.command === 'view.open' && commandInput?.view !== 'agentforce') || (data.command === 'panel.open' && ['agents', 'org-preview'].includes(String(commandInput?.tool))));
+      const uiReadsOrg = action === 'ui.command' && uiCommandReadsOrg(data.command, data.input as Record<string, unknown> | undefined);
       const [method, policy] = WORKBENCH_ACTIONS[action];
       if (policy === 'org' || uiReadsOrg || (policy === 'conditional' && data.origin === 'org')) {
         const { mediated } = await mediateOrgRead(ctx, sdk, `Salesforce ${action}`);
@@ -647,6 +649,13 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     return Promise.resolve({ ok: false, error: 'Unknown Salesforce tool.' });
   };
   registerRpc('actions.run', args => invokeAction(rpcString(args, 'action'), (args as { input?: unknown })?.input, { projectId: contexts.current()?.projectId ?? '', threadId: rpcString(args, 'threadId'), signal: new AbortController().signal }));
+  const studio: StudioServerContext = { zcc, registerRpc, contexts, control, lab, sdk, readSettings, deps, invokeAction };
+  registerControlRpc(studio);
+  registerStudioAssistant(studio);
+  registerStudioContext(studio);
+  registerStudioComments(studio);
+  registerStudioPreview(studio);
+  registerStudioExplorer(studio);
   zcc.agents.registerTool({
     desktopOnly: ['ui.views', 'ui.command', 'ui.result'],
     name: 'sf_workbench',
@@ -1771,12 +1780,6 @@ async function listOrgsSafe(
       ? 'Salesforce CLI (sf) was not found on PATH. Install it, then check again.'
       : 'Could not read Salesforce CLI connections. Check the CLI, then try again.' };
   }
-}
-
-function rpcString(args: unknown, key: string): string {
-  if (!args || typeof args !== 'object') return '';
-  const value = (args as Record<string, unknown>)[key];
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 function agentFilesFailure(error: unknown): { ok: false; code: string; error: string } {
