@@ -138,6 +138,11 @@ test('recording preserves large UTF-8 provider output, resumed turns, and app sh
 
 test('Stop reaps a SIGTERM-resistant ACP child through the built provider', async ({ app }) => {
   test.setTimeout(120_000);
+  await expect.poll(() => app.window.evaluate(async () => {
+    const response = await fetch('/api/v1/threads/providers');
+    if (!response.ok) throw new Error(`Provider catalog failed: ${response.status}`);
+    return (await response.json()).providers.map((provider: { id: string }) => provider.id);
+  }), { timeout: 30_000 }).toContain('acp-opencode');
   const root = join(app.home, 'acp-stop-project');
   mkdirSync(root);
   const threadId = await app.window.evaluate(async path => {

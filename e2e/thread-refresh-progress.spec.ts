@@ -25,7 +25,17 @@ test('thread timeline refreshes throughout continuous provider events and render
   await detail.getByTestId('thread-command-send').click();
   // A trailing-only 100ms debounce shows no progress while these events continue.
   await expect(timeline).toContainText('Refresh progress', { timeout: 4000 });
-  await expect.poll(() => reads, { timeout: 7000 }).toBeGreaterThanOrEqual(12);
+  const progress = () => timeline.evaluate(node => Math.max(0,
+    ...Array.from((node.textContent ?? '').matchAll(/Refresh progress (\d+)/g), match => Number(match[1]))
+  ));
+  // Verify successive visible updates, rather than a fixed request rate that
+  // depends on the runner's response and rendering speed.
+  let previous = await progress();
+  for (let checkpoint = 0; checkpoint < 3; checkpoint++) {
+    await expect.poll(progress, { timeout: 3000 }).toBeGreaterThan(previous);
+    previous = await progress();
+    expect(await window.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, id)).toBe('active');
+  }
   const duringStream = reads;
   expect(await window.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, id)).toBe('active');
   await expect(timeline).toContainText('Refresh stream complete', { timeout: 15_000 });

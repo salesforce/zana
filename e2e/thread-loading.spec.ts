@@ -7,6 +7,12 @@ import { CONVERSATION_READ_RETRIES, CONVERSATION_READ_TIMEOUT_MS } from '../apps
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, isolateBundledCatalog: true });
 
+// Gates are released in each test's finally block. Drain their route handlers
+// while the page is alive so response reads cannot outlive fixture teardown.
+test.afterEach(async ({ app }) => {
+  await app.window.unrouteAll({ behavior: 'wait' });
+});
+
 async function createLoadingThread(window: Page, home: string) {
   const projectPath = join(home, 'loading-project');
   mkdirSync(projectPath);
