@@ -108,6 +108,7 @@ ${STUDIO_TOKENS}.sf-as { container-type: inline-size; background:var(--sf-surfac
 .sf-strip-spacer { flex:1; }
 .sf-explorer-col { display:flex; flex-direction:column; width:236px; flex-shrink:0; min-height:0; border-right:1px solid var(--sf-border); background:var(--sf-bg); }
 .sf-explorer-col[hidden] { display:none; }
+.sf-explorer-col:has(> .sf-as-explorer.is-collapsed) { width:auto; }
 .sf-etabs { display:flex; flex-shrink:0; overflow-x:auto; border-bottom:1px solid var(--sf-border); background:var(--sf-bg); scrollbar-width:none; }
 .sf-etab { display:inline-flex; align-items:center; flex-shrink:0; border-right:1px solid var(--sf-border); color:var(--sf-muted); }
 .sf-etab.is-active { color:var(--sf-text); box-shadow:inset 0 -2px 0 var(--sf-accent); background:color-mix(in srgb,var(--sf-accent) 8%,transparent); }

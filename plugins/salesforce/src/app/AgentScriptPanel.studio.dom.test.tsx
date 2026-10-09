@@ -215,6 +215,23 @@ describe('AgentScriptPanel studio layout', () => {
     if (scenario) await act(async () => { fireEvent.click(scenario); });
   });
 
+  it('reloads comments when the active file is opened again', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    const comment = { id: 'c1', path: 'force-app/bots/QC.agent', line: 2, endLine: 2, quote: 'a', body: 'why?', author: { kind: 'user', name: 'You' }, createdAt: 1 };
+    rpc.mockImplementation(async (_p: string, method: string, args?: any) => {
+      if (method === 'studio.comments.list') return { ok: true, comments: [comment] };
+      if (method === 'agentFiles.read') return { ok: true, file: { path: args?.path, content: SOURCE, sha256: SHA } };
+      return { ok: true };
+    });
+    const entry = [...el.querySelectorAll<HTMLElement>('[data-testid="salesforce-agent-script-explorer"] button')].find(n => n.textContent?.includes('QC'))!;
+    await act(async () => { fireEvent.click(entry); });
+    await flush();
+    const last = sent(el).filter((m: any) => m.type === 'setComments').at(-1);
+    expect(last?.comments).toEqual([comment]);
+    expect(el.querySelector('.sf-explorer-col [data-testid="salesforce-agent-script-explorer"]')).toBeTruthy();
+  });
+
   it('opens focused files and lines from panel params', async () => {
     const el = await mount();
     el.remove();

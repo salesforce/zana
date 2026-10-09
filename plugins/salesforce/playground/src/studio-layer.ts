@@ -30,11 +30,14 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
  * comment glyphs with inline bodies, preview-hit dots and the selection chip. All geometry comes from the pure
  * helpers in proposal.ts / studio-helpers.ts / lib/line-diff.ts.
  */
+/** Height of the spacer row that holds a hunk's Accept/Reject buttons. */
+const HUNK_ROW_PX = 26;
+
 export class StudioLayer {
   private session: ProposalSession | null = null;
   private zoneIds: string[] = [];
   private hunkWidgets: Monaco.editor.IContentWidget[] = [];
-  private bar: Monaco.editor.IOverlayWidget | null = null;
+  private bar: HTMLElement | null = null;
   private readonly delDecorations: Monaco.editor.IEditorDecorationsCollection;
   private readonly markDecorations: Monaco.editor.IEditorDecorationsCollection;
   private commentZoneIds: string[] = [];
@@ -146,33 +149,45 @@ export class StudioLayer {
       range: new this.monaco.Range(row.deleteRange!.startLine, 1, row.deleteRange!.endLine, 1),
       options: { isWholeLine: true, className: 'sf-del', linesDecorationsClassName: 'sf-del-gutter' }
     })));
+    const lineCount = model.getLineCount();
+    // Each hunk gets an empty spacer row above it so its Accept/Reject widget never covers code (CodeLens-style).
+    // The spacer sorts before the hunk's added lines when both sit after the same line.
+    const anchorAfter = (row: (typeof layout)[number]) => Math.min(row.widgetLine - 1, lineCount);
     this.editor.changeViewZones(accessor => {
       for (const row of layout) {
+        this.zoneIds.push(accessor.addZone({ afterLineNumber: anchorAfter(row), ordinal: 0, heightInPx: HUNK_ROW_PX, domNode: el('div', 'sf-hunk-spacer'), suppressMouseDown: true }));
         if (row.addLines.length === 0) continue;
         const node = el('div', 'sf-add-zone');
         for (const text of row.addLines) node.appendChild(el('div', 'sf-add-line', text === '' ? ' ' : text));
-        this.zoneIds.push(accessor.addZone({ afterLineNumber: Math.min(row.zoneAfterLine, model.getLineCount()), heightInLines: row.addLines.length, domNode: node, suppressMouseDown: true }));
+        this.zoneIds.push(accessor.addZone({ afterLineNumber: Math.min(row.zoneAfterLine, lineCount), ordinal: 1, heightInLines: row.addLines.length, domNode: node, suppressMouseDown: true }));
       }
     });
+    const { ABOVE, BELOW } = this.monaco.editor.ContentWidgetPositionPreference;
     for (const row of layout) {
       const node = el('div', 'sf-hunk-widget');
       node.appendChild(button('Accept', 'sf-btn is-accept', () => this.acceptHunk(row.index)));
       node.appendChild(button('Reject', 'sf-btn', () => this.rejectHunk(row.index)));
+      const after = anchorAfter(row);
+      // Below the line before the hunk lands in the spacer; a hunk at line 1 sits above line 1 (its spacer is first).
       const widget: Monaco.editor.IContentWidget = {
         getId: () => `sf.hunk.${session.proposalId}.${row.index}`,
         getDomNode: () => node,
-        getPosition: () => ({ position: { lineNumber: Math.min(row.widgetLine, model.getLineCount()), column: 1 }, preference: [this.monaco.editor.ContentWidgetPositionPreference.ABOVE, this.monaco.editor.ContentWidgetPositionPreference.BELOW] })
+        getPosition: () => after >= 1
+          ? { position: { lineNumber: after, column: 1 }, preference: [BELOW] }
+          : { position: { lineNumber: 1, column: 1 }, preference: [ABOVE] }
       };
       this.editor.addContentWidget(widget);
       this.hunkWidgets.push(widget);
     }
+    // The summary bar is a strip above the editor, not an overlay, so it never hides the first lines.
     const bar = el('div', 'sf-proposal-bar');
     bar.appendChild(el('span', 'sf-proposal-title', `${session.actor}: ${session.summary}`.slice(0, 160)));
     bar.appendChild(el('span', 'sf-proposal-count', proposalLabel(session.hunks.length)));
     bar.appendChild(button('Reject all', 'sf-btn', () => this.rejectAll()));
     bar.appendChild(button('Accept all', 'sf-btn is-accept', () => this.acceptAll()));
-    this.bar = { getId: () => 'sf.proposal.bar', getDomNode: () => bar, getPosition: () => ({ preference: this.monaco.editor.OverlayWidgetPositionPreference.TOP_RIGHT_CORNER }) };
-    this.editor.addOverlayWidget(this.bar);
+    const container = this.editor.getContainerDomNode();
+    container.parentElement?.insertBefore(bar, container);
+    this.bar = bar;
   }
 
   private clearProposalVisuals(): void {
@@ -181,7 +196,7 @@ export class StudioLayer {
     this.zoneIds = [];
     for (const widget of this.hunkWidgets) this.editor.removeContentWidget(widget);
     this.hunkWidgets = [];
-    if (this.bar) this.editor.removeOverlayWidget(this.bar);
+    this.bar?.remove();
     this.bar = null;
   }
 

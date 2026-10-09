@@ -37,7 +37,7 @@ export function StudioShell({ layout, tier, top, activity, explorer, children, q
     {top}
     <div className="sf-studio-row">
       {activity}
-      {explorer}
+      {explorer && <div className="sf-explorer-col">{explorer}</div>}
       <div className="sf-studio-main">{children}</div>
     </div>
     {quickOpen && <QuickOpen items={quickItems} onPick={onQuickPick} onClose={() => onQuickOpenChange(false)} />}

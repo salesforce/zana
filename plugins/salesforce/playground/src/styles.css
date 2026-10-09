@@ -382,8 +382,12 @@ body.is-resizing-split iframe {
 .sf-add-zone { background: rgba(46, 160, 67, 0.16); border-left: 3px solid #2ea043; box-sizing: border-box; overflow: hidden; font-family: var(--monaco-monospace-font, monospace); font-size: 13px; }
 .sf-add-line { white-space: pre; padding-left: 6px; line-height: 19px; color: var(--ide-text-primary); }
 .sf-hunk-widget, .sf-proposal-bar, .sf-selection-chip { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border: 1px solid var(--ide-border-strong); border-radius: 6px; background: var(--ide-surface-elevated); color: var(--ide-text-primary); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; z-index: 30; }
-.sf-hunk-widget { opacity: 0.9; margin-left: 56px; }
-.sf-proposal-bar { margin: 6px 14px 0 0; padding: 4px 8px; gap: 8px; max-width: 80%; }
+.sf-hunk-widget { opacity: 0.95; margin-top: 2px; padding: 1px 3px; box-shadow: none; flex-direction: row; flex-wrap: nowrap; width: max-content; white-space: nowrap; }
+.sf-hunk-widget .sf-btn { line-height: 16px; }
+.sf-hunk-spacer { background: transparent; }
+.sf-proposal-bar { padding: 5px 10px; gap: 8px; border-width: 0 0 1px; border-radius: 0; box-shadow: none; min-width: 0; }
+.sf-proposal-bar .sf-proposal-title { flex: 1; min-width: 0; }
+.pane.editor:has(> .sf-proposal-bar) { grid-template-rows: auto minmax(0,1fr); }
 .sf-proposal-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ide-text-muted); }
 .sf-proposal-count { color: var(--ide-text-subtle); white-space: nowrap; }
 .sf-btn { border: 1px solid var(--ide-border-strong); border-radius: 4px; background: var(--ide-surface-hover); color: var(--ide-text-primary); font: inherit; padding: 1px 8px; cursor: pointer; }

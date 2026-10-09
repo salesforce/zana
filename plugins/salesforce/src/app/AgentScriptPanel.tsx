@@ -208,6 +208,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [cursor, setCursor] = useState<{ line: number; column: number } | undefined>(undefined);
   const [selection, setSelection] = useState<{ startLine: number; endLine: number; text: string } | undefined>(undefined);
   const [comments, setComments] = useState<StudioComment[]>([]);
+  // Bumped on every successful file read so comments reload even when the same path is reopened.
+  const [fileLoads, setFileLoads] = useState(0);
   const [addComment, setAddComment] = useState<{ line: number; endLine: number; quote: string } | null>(null);
   const [commentBody, setCommentBody] = useState('');
   const [fixBusy, setFixBusy] = useState(false);
@@ -397,6 +399,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         readOnly: false,
         sha256: result.file.sha256
       });
+      setFileLoads(count => count + 1);
       return true;
     },
     [compact, dialect, openTab, patch, pluginId, rpcArgs, draftScope, send, settleProposals]
@@ -419,11 +422,11 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     const path = activePathRef.current;
     if (!projectId || !path) { setComments([]); return; }
     try {
-      const result = (await callPluginRpc(pluginId, STUDIO_RPC.comments, { projectId, path, includeResolved: true, content: sourceRef.current })) as { ok?: boolean; comments?: StudioComment[] };
+      const result = (await callPluginRpc(pluginId, STUDIO_RPC.comments, { projectId, path, includeResolved: true, content: sourceRef.current || undefined })) as { ok?: boolean; comments?: StudioComment[] };
       if (alive.current && activePathRef.current === path && result?.ok !== false && Array.isArray(result?.comments)) setComments(result.comments);
     } catch { /* comments are optional */ }
   }, [pluginId, projectId]);
-  useEffect(() => { void loadComments(); }, [loadComments, activePath]);
+  useEffect(() => { void loadComments(); }, [loadComments, activePath, fileLoads]);
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const changed = payload as { projectId?: string; path?: string; kind?: string } | null;
     if (changed?.kind === 'comments' && (!changed.projectId || changed.projectId === projectId)) void loadComments();
