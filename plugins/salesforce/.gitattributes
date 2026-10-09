@@ -1,0 +1,3 @@
+# Pinned toolkit release: build-toolkit.mjs verifies these bytes against
+# release-manifest.json, so never let checkout rewrite line endings.
+vendor/** -text
