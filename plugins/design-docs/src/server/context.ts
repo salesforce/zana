@@ -20,7 +20,7 @@ const USAGE = [
   'The user keeps design documents (specs, RFCs, ADRs, product docs) in the Design Docs plugin. Each doc is a small set of files — markdown, mermaid `.mmd` diagrams, self-contained `.html` mockups, code samples — rendered as formatted pages the user reviews.',
   '- Use the `design_doc_*` tools (or `zcc design-docs …` from a shell) to list, read, create and edit them. Read a doc before changing it; prefer `edits` over rewriting whole files and pass `baseRevision`.',
   '- Treat open comments as review feedback: address them, then resolve each with a short `body` saying what changed. Answer a question in its thread with `replyTo` instead of opening a new comment.',
-  '- When the user asks for a design, spec, RFC or plan worth keeping, offer to write it as a design doc instead of only replying in chat.',
+  '- Create a design doc only when the user explicitly asks for one (a design doc, spec, RFC or ADR). Brainstorming, exploring an idea, planning a change or small fixes stay in chat; do not create a doc or offer one for them.',
   '- Design docs are not the Library: save notes, findings, runbooks and postmortems with the `library_*` tools, and keep design docs for specs, RFCs, ADRs and designs the user reviews.',
   `- To show a doc in your reply, write its card on its own line: ${designDocDirective('<id>')}`
 ].join('\n');

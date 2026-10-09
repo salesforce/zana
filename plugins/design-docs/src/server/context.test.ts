@@ -28,6 +28,13 @@ describe('agent instructions', () => {
     expect(text).toMatch(/no design docs for this project yet\.$/);
   });
 
+  it('keeps doc creation opt-in instead of offering docs for brainstorming', () => {
+    const text = buildInstructions(new DesignDocStore(createTestDatabase()), 'p1');
+    expect(text).toContain('only when the user explicitly asks for one');
+    expect(text).toContain('do not create a doc or offer one');
+    expect(text).not.toContain('offer to write it as a design doc');
+  });
+
   it('lists active project + global docs and stays inside the budget', () => {
     const store = new DesignDocStore(createTestDatabase());
     store.create({ title: 'Hidden', projectId: 'p2', template: 'blank' }, user);

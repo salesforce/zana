@@ -1,6 +1,6 @@
 ---
 name: design-docs
-description: Read, write, review and enrich the user's design documents (specs, RFCs, ADRs, product and API docs) in the Design Docs plugin. Use when the user mentions a design doc, spec, RFC or ADR, asks you to draft, review, update or check a design against the code, or when a plan you produce is worth keeping as a document.
+description: Read, write, review and enrich the user's design documents (specs, RFCs, ADRs, product and API docs) in the Design Docs plugin. Use when the user mentions a design doc, spec, RFC or ADR, or asks you to draft, review, update or check a design doc against the code. Do not use it to brainstorm, plan or discuss changes in chat.
 ---
 
 # design-docs - work on the user's design documents
@@ -13,6 +13,10 @@ any of them from History.
 Design docs are separate from the Library. Save notes, findings, runbooks and
 postmortems to the Library with the `library_*` tools (see `library-curator`).
 Keep design docs for specs, RFCs, ADRs and designs the user reviews.
+
+Only create a design doc when the user asks for one. Brainstorming, exploring
+an idea, planning a change or discussing a small fix happen in chat: answer
+there, and do not create a doc or offer to write one.
 
 ## Model
 
