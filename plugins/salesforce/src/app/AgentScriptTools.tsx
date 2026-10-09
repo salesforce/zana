@@ -9,6 +9,8 @@ export const AGENT_SCRIPT_TOOLS = [
   { id: 'test', title: 'Tests', description: 'Run scenarios and review evaluations', icon: 'M9 3h6 M10 3v7L4 20h16l-6-10V3 M7 16h10' },
   { id: 'actions', title: 'Actions', description: 'Inspect Apex, Flow, inputs, and outputs', icon: 'm8 6-6 6 6 6 M16 6l6 6-6 6 M14 3l-4 18' },
   { id: 'org-preview', title: 'Org preview', description: 'Talk to an agent in your connected org', icon: 'M7 18h11a4 4 0 0 0 0-8 6 6 0 0 0-11-3 5.5 5.5 0 0 0 0 11Z' },
+  { id: 'assistant', title: 'Assistant', description: 'Ask an agent about this file, with the screen as context', icon: 'M4 5h16v11H9l-5 4z' },
+  { id: 'comments', title: 'Comments', description: 'Review notes anchored to lines of this agent', icon: 'M4 4h16v12H8l-4 4z M8 9h8 M8 12h5' },
 ] as const;
 export type AgentScriptTool = typeof AGENT_SCRIPT_TOOLS[number]['id'];
 type ToolState = { tabs: AgentScriptTool[]; active: AgentScriptTool | 'new'; open: boolean };
@@ -43,19 +45,29 @@ export function useAgentScriptTools(scope: string) {
   };
 }
 
-export function AgentScriptTools({ tools, render }: {
+export function AgentScriptTools({ tools, render, hiddenTools = [], chrome = true, open }: {
   tools: ReturnType<typeof useAgentScriptTools>;
   render: (id: AgentScriptTool, visible: boolean) => ReactNode;
+  /** Tools shown elsewhere in this layout (kept mounted, but without a tab or picker entry). */
+  hiddenTools?: readonly AgentScriptTool[];
+  /** False when an external strip switches tools (compact layout). */
+  chrome?: boolean;
+  /** Overrides the persisted open flag (compact layouts show the panel only for a non-editor tool). */
+  open?: boolean;
 }) {
   const prefix = useId();
   const strip = useRef<HTMLDivElement>(null);
-  const { state } = tools;
+  const isOpen = open ?? tools.state.open;
+  const visibleTabs = tools.state.tabs.filter(id => !hiddenTools.includes(id));
+  const active = tools.state.active !== 'new' && hiddenTools.includes(tools.state.active) ? visibleTabs[0] ?? 'new' : tools.state.active;
+  const state = { ...tools.state, tabs: visibleTabs, active, open: isOpen };
   useEffect(() => {
     strip.current?.querySelector('[aria-selected=true]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [state.active, state.open]);
   const title = (id: AgentScriptTool) => AGENT_SCRIPT_TOOLS.find(tool => tool.id === id)!.title;
+  const pickable = AGENT_SCRIPT_TOOLS.filter(tool => !hiddenTools.includes(tool.id));
   return <aside className="af-tools" aria-label="AgentScript side panel" hidden={!state.open}>
-    <div className="thread-secondary-chrome">
+    {chrome && <div className="thread-secondary-chrome">
       <div className="thread-secondary-tabs" role="tablist" aria-label="AgentScript tools" ref={strip}>
         {state.tabs.map(id => <span className={`thread-secondary-tab${state.active === id ? ' is-active' : ''}`} key={id}>
           <button type="button" className="thread-secondary-tab-label" title={title(id)} role="tab" id={`${prefix}-${id}`} aria-controls={`${prefix}-${id}-panel`} aria-selected={state.active === id}
@@ -72,15 +84,15 @@ export function AgentScriptTools({ tools, render }: {
         <button type="button" className="thread-secondary-pin" aria-label="Add side panel tab" title="Add a tool" onClick={() => tools.select('new')}><Plus size={15} aria-hidden="true" /></button>
         <button type="button" className="thread-secondary-pin" aria-label="Hide side panel" title="Hide side panel" onClick={tools.toggle}><PanelRight size={15} aria-hidden="true" /></button>
       </div>
-    </div>
-    {state.active === 'new' && <div className="af-tool-picker">
+    </div>}
+    {chrome && state.active === 'new' && <div className="af-tool-picker">
       <h2>Add a tool</h2><p>Open beside your AgentScript editor.</p>
-      <div>{AGENT_SCRIPT_TOOLS.map(tool => <button type="button" key={tool.id} onClick={() => tools.openTool(tool.id)}>
+      <div>{pickable.map(tool => <button type="button" key={tool.id} onClick={() => tools.openTool(tool.id)}>
         <svg className="af-tool-icon" aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d={tool.icon} /></svg><span><strong>{tool.title}</strong><small>{tool.description}</small></span>
         {state.tabs.includes(tool.id) && <span className="af-tool-open">Open</span>}
       </button>)}</div>
     </div>}
-    {state.tabs.map(id => <div key={id} className="af-tool-content" role="tabpanel" id={`${prefix}-${id}-panel`} aria-labelledby={`${prefix}-${id}`} hidden={state.active !== id}>
+    {tools.state.tabs.map(id => <div key={id} className="af-tool-content" role="tabpanel" id={`${prefix}-${id}-panel`} aria-labelledby={`${prefix}-${id}`} hidden={state.active !== id}>
       {render(id, state.open && state.active === id)}
     </div>)}
   </aside>;

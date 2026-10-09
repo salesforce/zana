@@ -93,6 +93,26 @@ export function parseGuardrailPreview(preview: string): GuardrailPreview | null 
   return { fields, ...(warning ? { warning } : {}), raw: JSON.stringify(value, null, 2) };
 }
 
+export type ComponentTarget =
+  | { kind: 'agent'; path: string }
+  | { kind: 'flow'; apiName: string }
+  | { kind: 'apex'; apiName: string };
+
+/** Which Studio surface can show this component: .agent -> playground, Flow -> flow map, Apex -> read-only source. */
+export function componentTarget(component: GuardrailComponent): ComponentTarget | null {
+  const type = component.type.toLowerCase().replace(/\s+/g, '');
+  const name = component.name.trim();
+  if (!name) return null;
+  if (type === 'aiauthoringbundle') {
+    const path = component.path;
+    if (/\.(agent|afscript)$/i.test(path)) return { kind: 'agent', path };
+    return path.includes('/') ? { kind: 'agent', path: `${path.replace(/\/$/, '')}/${name}.agent` } : null;
+  }
+  if (type === 'flow' || type === 'flowdefinition') return { kind: 'flow', apiName: name };
+  if (type === 'apexclass' || type === 'apextrigger') return { kind: 'apex', apiName: name };
+  return null;
+}
+
 /** Maps `.../force-app/main/default/<folder>/<name>...` to its metadata type and API name. */
 export function describeSourcePath(path: string): GuardrailComponent {
   const relative = projectRelative(path);

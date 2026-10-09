@@ -54,3 +54,52 @@ export function parseAgentScriptSource(source: string, dialect: AgentScriptDiale
     graph
   };
 }
+
+export interface AgentSourceLocations {
+  /** Topic / subagent / start_agent name -> 1-based declaration line (first wins). */
+  topics: Record<string, number>;
+  /** Action name -> 1-based declaration line (first wins). */
+  actions: Record<string, number>;
+}
+
+const LOCATION_CAP = 500;
+const HEADER = /^[ \t]*(start_agent|topic|subagent)(?:[ \t]+([A-Za-z_]\w*))?[ \t]*:/;
+const ACTIONS_HEADER = /^[ \t]*actions[ \t]*:[ \t]*(?:#.*)?$/;
+const ACTION_DECL = /^[ \t]+([A-Za-z_]\w*)[ \t]*:[ \t]*(?:#.*)?$/;
+const indentOf = (line: string) => line.length - line.trimStart().length;
+
+/**
+ * Maps topic and action names to source lines so trace steps can jump to code. Names come from a header
+ * scan; the parsed AST fills in action lines the scan missed. Never throws on malformed source.
+ */
+export function sourceLocations(source: string, dialect: AgentScriptDialect = 'agentforce'): AgentSourceLocations {
+  const topics: Record<string, number> = Object.create(null);
+  const actions: Record<string, number> = Object.create(null);
+  const lines = source.split(/\r?\n/);
+  let actionsIndent = -1; // indent of the open `actions:` block, -1 when outside one
+  let declIndent = -1; // indent of declarations inside that block
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    const header = HEADER.exec(line);
+    if (header) {
+      const name = header[2] ?? (header[1] === 'start_agent' ? 'start_agent' : '');
+      if (name && !(name in topics) && Object.keys(topics).length < LOCATION_CAP) topics[name] = i + 1;
+      actionsIndent = -1;
+      continue;
+    }
+    const indent = indentOf(line);
+    if (ACTIONS_HEADER.test(line)) { actionsIndent = indent; declIndent = -1; continue; }
+    if (actionsIndent < 0) continue;
+    if (indent <= actionsIndent) { actionsIndent = -1; continue; }
+    if (declIndent < 0) declIndent = indent;
+    const decl = indent === declIndent ? ACTION_DECL.exec(line) : null;
+    if (decl && !(decl[1]! in actions) && Object.keys(actions).length < LOCATION_CAP) actions[decl[1]!] = i + 1;
+  }
+  try {
+    for (const action of parseAgentScriptSource(source, dialect).actions) {
+      if (action.line > 0 && !(action.name in actions) && Object.keys(actions).length < LOCATION_CAP) actions[action.name] = action.line;
+    }
+  } catch { /* the header scan above is still useful on malformed source */ }
+  return { topics, actions };
+}

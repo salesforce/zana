@@ -1,5 +1,7 @@
-import type { PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
-import { parseGuardrailPreview, type GuardrailField } from './guardrail-preview.js';
+import { useState } from 'react';
+import { useZccNavigate, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { AGENTFORCE_PLAYGROUND_ACTION } from './agentforce-panel-params.js';
+import { componentTarget, parseGuardrailPreview, type ComponentTarget, type GuardrailField } from './guardrail-preview.js';
 
 const STYLES = `
 .sf-guard { display:grid; gap:10px; min-width:0; }
@@ -19,6 +21,9 @@ const STYLES = `
 .sf-guard details summary { cursor:pointer; color:var(--text-muted); font-size:12px; }
 .sf-guard pre { margin:6px 0 0; max-height:220px; overflow:auto; white-space:pre-wrap; }
 .sf-guard-warning { padding:7px 10px; border-radius:6px; border:1px solid color-mix(in srgb,var(--danger,#d93025) 35%,transparent); background:color-mix(in srgb,var(--danger,#d93025) 8%,transparent); }
+.sf-guard-link { all:unset; cursor:pointer; color:var(--accent); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; overflow-wrap:anywhere; }
+.sf-guard-link:hover, .sf-guard-link:focus-visible { text-decoration:underline; }
+.sf-guard-running { padding:7px 10px; border-radius:6px; color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,transparent); }
 .sf-guard-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:2px; }
 `;
 
@@ -31,6 +36,20 @@ export function GuardrailReview(props: PluginPendingInteractionProps) {
       : {};
   const preview = payload.preview ? parseGuardrailPreview(String(payload.preview)) : null;
   const orgKind = payload.orgKind || 'unknown';
+  const navigate = useZccNavigate();
+  const [allowed, setAllowed] = useState(false);
+  const openTarget = (target: ComponentTarget) => {
+    const threadId = props.interaction.threadId;
+    navigate.openThreadPanel({
+      actionId: AGENTFORCE_PLAYGROUND_ACTION,
+      title: target.kind === 'agent' ? 'Playground' : target.kind === 'flow' ? 'Flow map' : 'Apex (read-only)',
+      params:
+        target.kind === 'agent'
+          ? { path: target.path }
+          : { apiName: target.apiName, tool: 'actions', ...(target.kind === 'apex' ? { readOnly: '1' } : {}) },
+      ...(threadId ? { threadId } : {})
+    });
+  };
   return (
     <div className="sf-guard" data-testid="salesforce-guardrail">
       <style>{STYLES}</style>
@@ -57,7 +76,7 @@ export function GuardrailReview(props: PluginPendingInteractionProps) {
               ))}
             </div>
           ) : null}
-          {preview.fields.map(field => (field.kind === 'components' ? <ComponentTable key={field.key} field={field} /> : null))}
+          {preview.fields.map(field => (field.kind === 'components' ? <ComponentTable key={field.key} field={field} onOpen={openTarget} /> : null))}
           <details>
             <summary>Raw payload</summary>
             <pre className="sf-guard-mono">{preview.raw}</pre>
@@ -66,18 +85,27 @@ export function GuardrailReview(props: PluginPendingInteractionProps) {
       ) : payload.preview ? (
         <pre className="sf-guard-mono">{String(payload.preview)}</pre>
       ) : null}
-      <div className="sf-guard-actions">
-        <button
-          type="button"
-          className={RISKY_ORG_KINDS.has(orgKind) ? 'btn danger' : 'btn primary'}
-          onClick={() => void props.submit({ approved: true })}
-        >
-          Allow this action
-        </button>
-        <button type="button" className="btn" onClick={() => void props.cancel()}>
-          Deny
-        </button>
-      </div>
+      {allowed ? (
+        <p className="sf-guard-running" role="status" data-testid="salesforce-guardrail-running">
+          Running… the agent will post the operation card.
+        </p>
+      ) : (
+        <div className="sf-guard-actions">
+          <button
+            type="button"
+            className={RISKY_ORG_KINDS.has(orgKind) ? 'btn danger' : 'btn primary'}
+            onClick={() => {
+              setAllowed(true);
+              void props.submit({ approved: true });
+            }}
+          >
+            Allow this action
+          </button>
+          <button type="button" className="btn" onClick={() => void props.cancel()}>
+            Deny
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -100,7 +128,7 @@ function FieldRow({ field }: { field: Exclude<GuardrailField, { kind: 'component
   );
 }
 
-function ComponentTable({ field }: { field: Extract<GuardrailField, { kind: 'components' }> }) {
+function ComponentTable({ field, onOpen }: { field: Extract<GuardrailField, { kind: 'components' }>; onOpen: (target: ComponentTarget) => void }) {
   return (
     <div>
       <p className="sf-guard-muted">
@@ -108,12 +136,23 @@ function ComponentTable({ field }: { field: Extract<GuardrailField, { kind: 'com
       </p>
       <table className="sf-guard-components">
         <tbody>
-          {field.value.map((component, index) => (
-            <tr key={index} title={component.path}>
-              <td>{component.type}</td>
-              <td className="sf-guard-mono">{component.name}</td>
-            </tr>
-          ))}
+          {field.value.map((component, index) => {
+            const target = componentTarget(component);
+            return (
+              <tr key={index} title={component.path}>
+                <td>{component.type}</td>
+                <td className="sf-guard-mono">
+                  {target ? (
+                    <button type="button" className="sf-guard-link" onClick={() => onOpen(target)} title={target.kind === 'apex' ? 'View source (read-only)' : target.kind === 'flow' ? 'Open flow map' : 'Open in playground'}>
+                      {component.name}
+                    </button>
+                  ) : (
+                    component.name
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {field.more ? <p className="sf-guard-muted">+{field.more} more not shown</p> : null}

@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { SalesforceDeps } from '../lib/types.js';
 import { STUDIO_RPC } from '../lib/studio-contract.js';
 import { notImplemented, registerStubRpcs, rpcFailure, rpcString } from '../lib/studio-server-context.js';
-import { registerStudioAssistant } from '../lib/studio-threads.js';
-import { registerStudioContext } from '../lib/studio-view.js';
-import { registerStudioComments } from '../lib/studio-comments.js';
-import { registerStudioPreview } from '../lib/scenario-suites.js';
-import { registerStudioExplorer } from '../lib/studio-explorer.js';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
+import { createSalesforcePlugin } from '../lib/plugin.js';
+import { createNodeDeps } from '../lib/node-deps.js';
 import { WORKBENCH_ACTIONS } from '../lib/workbench-actions.js';
 
 function collect(register: (studio: any) => void) {
@@ -24,17 +26,26 @@ describe('studio server seams', () => {
     const names = collect(studio => registerStubRpcs(studio, ['a', 'b']));
     expect([...names.keys()]).toEqual(['a', 'b']);
   });
-  it.each([
-    ['assistant', registerStudioAssistant, [STUDIO_RPC.askAgent, STUDIO_RPC.threads, STUDIO_RPC.unlink]],
-    ['context', registerStudioContext, [STUDIO_RPC.viewPublish, STUDIO_RPC.viewGet]],
-    ['comments', registerStudioComments, [STUDIO_RPC.comments, STUDIO_RPC.commentAdd, STUDIO_RPC.commentResolve]],
-    ['preview', registerStudioPreview, [STUDIO_RPC.trace, STUDIO_RPC.suites, STUDIO_RPC.suiteSave, STUDIO_RPC.suiteRun]],
-    ['explorer', registerStudioExplorer, [STUDIO_RPC.explorer]],
-  ] as const)('%s stub registers its RPCs as not_implemented', (_name, register, expected) => {
-    const names = collect(register);
-    expect([...names.keys()]).toEqual(expected);
-    for (const handler of names.values()) expect(handler({})).toMatchObject({ ok: false, code: 'not_implemented' });
-  });
+  it('registers every studio RPC with a real (non-stub) handler', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'sf-studio-rpcs-')));
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p', name: 'Project', path: root }] });
+    try {
+      const deps = createNodeDeps();
+      deps.execSf = vi.fn<SalesforceDeps['execSf']>(async () => ({ code: 1, stderr: 'no org', stdout: '' }));
+      deps.request = vi.fn<SalesforceDeps['request']>(async () => ({ status: 404, json: {}, text: '' }));
+      await createSalesforcePlugin(zcc, deps);
+      for (const name of Object.values(STUDIO_RPC)) {
+        const result = await harness.callRpc(name, { projectId: 'p' }).catch((error: Error) => {
+          expect(error.message).not.toMatch(/unknown rpc/);
+          return null;
+        });
+        expect(result ?? {}).not.toMatchObject({ code: 'not_implemented' });
+      }
+    } finally {
+      await harness.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
   it('maps the new workbench actions onto registered studio RPCs', () => {
     expect(WORKBENCH_ACTIONS['view.state']).toEqual([STUDIO_RPC.viewGet, 'local', expect.any(String)]);
     expect(WORKBENCH_ACTIONS['comments.list'][0]).toBe(STUDIO_RPC.comments);

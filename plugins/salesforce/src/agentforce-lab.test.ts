@@ -115,3 +115,66 @@ describe('scenario and verdict contracts', () => {
     expect(parseLabVerdict('```json\n{"outcome":"fail","reason":"Out of scope","evidence":["Turn 2: unrelated response"]}\n```').outcome).toBe('fail');
   });
 });
+
+describe('Agentforce lab trace', () => {
+  const plan = { plan: [{ type: 'UpdateTopicStep', topic: 'orders' }, { type: 'FunctionStep', function: { name: 'Find', input: { id: 1 }, output: { token: 'S' } } }, { type: 'PlannerResponseStep', message: 'ok' }] };
+  async function ready(overrides?: (path: string) => Record<string, unknown> | Error) {
+    const h = setup();
+    const base = h.request.getMockImplementation()!;
+    h.request.mockImplementation(async (token, path, body, host, signal) => {
+      if (path.includes('/plans/')) { const out = overrides?.(path) ?? plan; if (out instanceof Error) throw out; return { host: 'test.api.salesforce.com' as SfapHost, body: out }; }
+      return base(token, path, body, host, signal);
+    });
+    const session = await h.lab.start(h.args);
+    await h.lab.send({ id: session.id, text: 'Hello' });
+    return { ...h, session };
+  }
+  it('GETs the plan on the pinned host, normalizes it, maps lines and caches per session', async () => {
+    const { lab, request, session } = await ready();
+    const trace = await lab.trace({ id: session.id, planId: 'plan1', path: 'Bot.agent' });
+    expect(trace).toMatchObject({ runId: session.id, planId: 'plan1', available: true, turn: 1 });
+    expect(trace.steps.map(s => s.kind)).toEqual(['topic', 'action', 'response']);
+    expect(trace.steps[1]!.outputPreview).toBe('token: ••••');
+    const call = request.mock.calls.at(-1)!;
+    expect(call[1]).toBe('/einstein/ai-agent/v1.1/preview/sessions/remote%2F1/plans/plan1');
+    expect(call[2]).toBeUndefined(); // GET
+    expect(call[3]).toBe('test.api.salesforce.com');
+    const before = request.mock.calls.length;
+    expect(await lab.trace({ id: session.id, planId: 'plan1' })).toBe(trace);
+    expect(request.mock.calls.length).toBe(before);
+    expect(JSON.stringify(trace)).not.toMatch(/PRIVATE/);
+  });
+  it('defaults to the latest turn plan when planId is omitted', async () => {
+    const { lab, session, request } = await ready();
+    const trace = await lab.trace({ id: session.id });
+    expect(trace).toMatchObject({ available: true, planId: 'plan1' });
+    expect(request.mock.calls.at(-1)![1]).toContain('/plans/plan1');
+  });
+  it('degrades to available:false for rehearsal, unknown runs, 404, errors and exhausted budgets', async () => {
+    const h = await ready(() => new Error('Salesforce Preview API returned HTTP 404. missing'));
+    expect(await h.lab.trace({ id: h.session.id, planId: 'p' })).toMatchObject({ available: false, reason: expect.stringContaining('HTTP 404') });
+    expect(await h.lab.trace({ id: 'nope', planId: 'p' })).toMatchObject({ available: false, reason: expect.stringContaining('expired') });
+    expect(await h.lab.trace({})).toMatchObject({ available: false });
+    const boom = await ready(() => new Error('network down'));
+    expect(await boom.lab.trace({ id: boom.session.id, planId: 'p' })).toMatchObject({ available: false, reason: 'network down' });
+    const empty = await ready(() => ({}));
+    expect(await empty.lab.trace({ id: empty.session.id, planId: 'p' })).toMatchObject({ available: false, reason: expect.stringContaining('no steps') });
+    const rehearsal = setup();
+    const r = await rehearsal.lab.start({ ...rehearsal.args, engine: 'rehearsal' });
+    await rehearsal.lab.send({ id: r.id, text: 'Hi' });
+    const before = rehearsal.request.mock.calls.length;
+    expect(await rehearsal.lab.trace({ id: r.id })).toMatchObject({ available: false, reason: expect.stringMatching(/^Approximation/) });
+    expect(rehearsal.request.mock.calls.length).toBe(before);
+    const noPlan = setup();
+    const s = await noPlan.lab.start(noPlan.args);
+    expect(await noPlan.lab.trace({ id: s.id })).toMatchObject({ available: false, reason: expect.stringContaining('no completed turn') });
+    const budget = await ready(() => ({}));
+    for (let i = 0; i < 200; i++) await budget.lab.trace({ id: budget.session.id, planId: `p${i}` });
+    expect(await budget.lab.trace({ id: budget.session.id, planId: 'late' })).toMatchObject({ available: false, reason: expect.stringContaining('budget') });
+  });
+  it('still serves traces after the run ended', async () => {
+    const { lab, session } = await ready();
+    lab.end({ id: session.id });
+    expect((await lab.trace({ id: session.id, planId: 'plan1' })).available).toBe(true);
+  });
+});

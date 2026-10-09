@@ -375,3 +375,26 @@ body.is-resizing-split iframe {
 
 .ide.graph-preview { grid-template-rows: auto minmax(0, 1fr); min-width: 0; }
 .graph-preview .pane-header { flex-wrap: wrap; gap: 6px; }
+
+/* ---- Studio: agent edit proposals, review comments, selection chip ---------------------------------------------- */
+.monaco-editor .sf-del { background: rgba(224, 62, 62, 0.16); text-decoration: line-through; text-decoration-color: rgba(224, 62, 62, 0.55); }
+.monaco-editor .sf-del-gutter { background: var(--ide-danger); width: 3px !important; margin-left: 3px; }
+.sf-add-zone { background: rgba(46, 160, 67, 0.16); border-left: 3px solid #2ea043; box-sizing: border-box; overflow: hidden; font-family: var(--monaco-monospace-font, monospace); font-size: 13px; }
+.sf-add-line { white-space: pre; padding-left: 6px; line-height: 19px; color: var(--ide-text-primary); }
+.sf-hunk-widget, .sf-proposal-bar, .sf-selection-chip { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border: 1px solid var(--ide-border-strong); border-radius: 6px; background: var(--ide-surface-elevated); color: var(--ide-text-primary); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; z-index: 30; }
+.sf-hunk-widget { opacity: 0.9; margin-left: 56px; }
+.sf-proposal-bar { margin: 6px 14px 0 0; padding: 4px 8px; gap: 8px; max-width: 80%; }
+.sf-proposal-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ide-text-muted); }
+.sf-proposal-count { color: var(--ide-text-subtle); white-space: nowrap; }
+.sf-btn { border: 1px solid var(--ide-border-strong); border-radius: 4px; background: var(--ide-surface-hover); color: var(--ide-text-primary); font: inherit; padding: 1px 8px; cursor: pointer; }
+.sf-btn:hover { background: var(--ide-accent-soft); border-color: var(--ide-accent); }
+.sf-btn.is-accept { border-color: var(--ide-accent); color: var(--ide-accent); }
+.sf-btn:focus-visible { outline: 2px solid var(--ide-accent); outline-offset: 1px; }
+.monaco-editor .sf-comment-glyph { margin-left: 4px; width: 12px !important; height: 12px !important; margin-top: 3px; border-radius: 3px 3px 3px 0; background: var(--ide-accent); cursor: pointer; }
+.monaco-editor .sf-comment-glyph.is-resolved { background: var(--ide-text-subtle); opacity: 0.6; }
+.monaco-editor .sf-hit-glyph { margin-left: 6px; width: 8px !important; height: 8px !important; margin-top: 5px; border-radius: 50%; background: var(--ide-warning); }
+.sf-comment-zone { background: var(--ide-accent-soft); border-left: 3px solid var(--ide-accent); box-sizing: border-box; padding: 2px 8px; overflow: auto; color: var(--ide-text-primary); font: 12px/1.45 ui-sans-serif, system-ui, sans-serif; }
+.sf-comment-author { color: var(--ide-text-muted); font-weight: 600; }
+.sf-comment-body { white-space: pre-wrap; }
+.ide.compact .statusbar-right { display: none; }
+.as-node.is-focused { outline: 2px solid var(--ide-accent); outline-offset: 2px; }

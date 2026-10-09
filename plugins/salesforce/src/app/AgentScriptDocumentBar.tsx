@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Bot, Check, Circle, Cloud, CopyPlus, PanelRight, Save } from 'lucide-react';
+import { Bot, Check, Circle, Cloud, CopyPlus, Hammer, PanelRight, Rocket, Save, Search } from 'lucide-react';
 import { breadcrumbSegments } from '../../lib/agent-script-file-tree.js';
 
 type DocumentBarProps = {
@@ -17,6 +17,14 @@ type DocumentBarProps = {
   onSave: () => void;
   onSaveAs: () => void;
   onShowPanel: () => void;
+  /** Studio layout: Compile / Publish hand the file to the agent; QuickOpen is the compact file switcher. */
+  onCompile?: () => void;
+  onPublish?: () => void;
+  onQuickOpen?: () => void;
+  /** Show the Cmd/Ctrl+S hint on the Save button (wide layout). */
+  shortcutHint?: boolean;
+  /** Hide the "show side panel" button when an external strip owns tool switching. */
+  hidePanelToggle?: boolean;
 };
 
 export function AgentScriptDocumentBar(props: DocumentBarProps) {
@@ -41,10 +49,13 @@ export function AgentScriptDocumentBar(props: DocumentBarProps) {
     </div>
     <div className="af-document-actions">
       {props.headerActions}
+      {props.onQuickOpen && <button type="button" className="icon-btn" title="Go to file (⌘P)" aria-label="Go to file" onClick={props.onQuickOpen}><Search size={15} aria-hidden="true" /></button>}
+      {props.onCompile && <button type="button" className="sf-as-save" data-testid="salesforce-agent-script-compile" title="Compile and diagnose with the agent" disabled={!props.path} onClick={props.onCompile}><Hammer size={13} aria-hidden="true" />Compile</button>}
       {props.orgPicker && <div className="af-document-org"><Cloud size={14} aria-hidden="true" />{props.orgPicker}</div>}
-      <button type="button" className={`sf-as-save${props.dirty && !props.saveDisabled ? ' is-dirty' : ''}`} data-testid="salesforce-agent-script-save" aria-label="Save Agentforce file" title="Save Agentforce file (⌘S / Ctrl+S)" hidden={!props.path} disabled={props.saveDisabled} onClick={props.onSave}><Save size={13} aria-hidden="true" />{props.busy ? 'Saving…' : 'Save'}</button>
+      <button type="button" className={`sf-as-save${props.dirty && !props.saveDisabled ? ' is-dirty' : ''}`} data-testid="salesforce-agent-script-save" aria-label="Save Agentforce file" title="Save Agentforce file (⌘S / Ctrl+S)" hidden={!props.path} disabled={props.saveDisabled} onClick={props.onSave}><Save size={13} aria-hidden="true" />{props.busy ? 'Saving…' : 'Save'}{props.shortcutHint && <kbd className="sf-kbd">⌘S</kbd>}</button>
       <button type="button" className="sf-as-save" disabled={props.saveAsDisabled} onClick={props.onSaveAs}><CopyPlus size={13} aria-hidden="true" />Save as…</button>
-      {!props.panelOpen && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={props.onShowPanel}><PanelRight size={15} aria-hidden="true" /></button>}
+      {props.onPublish && <button type="button" className="sf-as-save" data-testid="salesforce-agent-script-publish" title="Review and publish to the org as an inactive version" disabled={!props.path || props.dirty} onClick={props.onPublish}><Rocket size={13} aria-hidden="true" />Publish</button>}
+      {!props.panelOpen && !props.hidePanelToggle && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={props.onShowPanel}><PanelRight size={15} aria-hidden="true" /></button>}
     </div>
   </div>;
 }

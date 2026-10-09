@@ -115,6 +115,18 @@ export function usePlaygroundBridge(activeDraft: MutableRefObject<string>): UseP
     return () => window.removeEventListener('message', onMessage);
   }, [activeDraft]);
 
+  // The iframe posts saveRequest for focused-editor shortcuts; the host covers the rest of the window.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return;
+      if (!handlers.current.onSaveRequest) return;
+      event.preventDefault();
+      handlers.current.onSaveRequest();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
     const observer = new MutationObserver(() => send.setTheme(readDocumentTheme()));

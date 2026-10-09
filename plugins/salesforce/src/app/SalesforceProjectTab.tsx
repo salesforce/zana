@@ -44,6 +44,16 @@ const VIEWS: Array<[WorkbenchView, string]> = [
   ["agentforce", "Agentforce"],
 ];
 
+const VIEW_IDS = VIEWS.map(([id]) => id);
+const viewKey = (projectId: string) => `salesforce:project-tab:${projectId}`;
+/** The project tab last used in this project (untrusted storage: unknown values fall back to Overview). */
+export function readProjectView(projectId: string): WorkbenchView {
+  try {
+    const stored = localStorage.getItem(viewKey(projectId));
+    return VIEW_IDS.find(id => id === stored) ?? "overview";
+  } catch { return "overview"; }
+}
+
 export function SalesforceProjectTab(props: {
   pluginId: string;
   projectId: string;
@@ -58,7 +68,11 @@ export function SalesforceProjectTab(props: {
     context.threadId ?? undefined,
   );
   const status = useResource<WorkbenchStatus>(call, "status");
-  const [view, setView] = useState<WorkbenchView>("overview");
+  const [view, setViewState] = useState<WorkbenchView>(() => readProjectView(props.projectId));
+  const setView = (next: WorkbenchView) => {
+    setViewState(next);
+    try { localStorage.setItem(viewKey(props.projectId), next); } catch { /* optional */ }
+  };
   const [orgsOpen, setOrgsOpen] = useState(false);
   const [loginRequest, setLoginRequest] = useState(0);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
@@ -68,7 +82,7 @@ export function SalesforceProjectTab(props: {
   const doctorGeneration = useRef(0);
   useEffect(() => {
     setDoctor(null);
-    setView("overview");
+    setViewState(readProjectView(props.projectId));
     setOrgsOpen(false);
     setLoginRequest(0);
   }, [props.projectId]);

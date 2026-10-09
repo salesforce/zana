@@ -279,7 +279,8 @@ describe('AgentScriptPanel', () => {
   it('accepts draft snapshots only from its iframe and preserves labs between workflow views', async () => {
     const el = await mount();
     await openTool(el, 'Preview');
-    const start = el.querySelector<HTMLButtonElement>('.af-primary')!;
+    // Preview is the PreviewWorkbench (WS-6); its Start button replaced the lab's .af-primary.
+    const start = el.querySelector<HTMLButtonElement>('[data-testid="pw-start"]')!;
     expect(start.disabled).toBe(true);
     const data = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'snapshot', content: 'start_agent:\n', issues: 0 };
     await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data })); });

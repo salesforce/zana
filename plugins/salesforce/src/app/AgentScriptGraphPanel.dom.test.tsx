@@ -38,3 +38,19 @@ it('surfaces an asset failure or timeout and recovers on a late ready message', 
   fireEvent.error(frame);
   expect(screen.getByRole('alert')).toBeTruthy();
 });
+
+it('retries a failed load by remounting the frame and forwards compact + focus', () => {
+  vi.useFakeTimers();
+  const view = render(<AgentScriptGraphPanel source="s" visible onOpenAction={() => {}} compact focusNode="billing" focusSeq={2} />);
+  const first = screen.getByTitle('AgentScript graph') as HTMLIFrameElement;
+  act(() => vi.advanceTimersByTime(12_000));
+  fireEvent.click(screen.getByText('Retry'));
+  const second = screen.getByTitle('AgentScript graph') as HTMLIFrameElement;
+  expect(second).not.toBe(first);
+  expect(screen.queryByRole('alert')).toBeNull();
+  const post = vi.spyOn(second.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+  fireEvent(window, new MessageEvent('message', { origin: location.origin, source: second.contentWindow, data: { source, type: 'ready' } }));
+  expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'graph', compact: true, focus: 'billing', focusSeq: 2 }), location.origin);
+  view.rerender(<AgentScriptGraphPanel source="s" visible onOpenAction={() => {}} compact focusNode="refunds" focusSeq={3} />);
+  expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ focus: 'refunds', focusSeq: 3 }), location.origin);
+});

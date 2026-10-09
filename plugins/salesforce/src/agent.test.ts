@@ -67,6 +67,9 @@ describe('sf_agent parse and inspect', () => {
     const response = 'Complete Salesforce response. '.repeat(700);
     expect(compactPreviewDigest({ sessionId: 's1', messages: [{ message: response }, { type: 'Text', message: 'END' }] })).toMatchObject({ sessionId: 's1', response: `${response}\nEND` });
     expect(compactPreviewDigest({ messages: [{ message: 'x'.repeat(40_000) }] }).response).toHaveLength(32_000);
+    expect(compactPreviewDigest({ sessionId: 's1', planId: 'plan-top', response: 'hi' })).toMatchObject({ planId: 'plan-top' });
+    expect(compactPreviewDigest({ messages: [{ message: 'a' }, { message: 'b', planId: 'plan-msg' }] })).toMatchObject({ planId: 'plan-msg' });
+    expect(compactPreviewDigest({ response: 'no plan' })).not.toHaveProperty('planId');
     expect(compactPreviewDigest({ messages: [null, {}, { message: 1 }] }).response).toBe('');
   });
 

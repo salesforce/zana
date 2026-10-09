@@ -3,6 +3,8 @@ import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import { DEFAULT_LAB_MODEL, LAB_SCENARIOS, parseLabScenario, type LabEngine, type LabScenario, type LabSnapshot, type LabVerdict } from '../../lib/agentforce-lab-contract.js';
 import { Bot, FlaskConical } from './components/icons.js';
 import { LoadingState } from './components/SalesforceState.js';
+import { TracePanel } from './preview/TracePanel.js';
+import type { TurnTrace } from '../../lib/studio-contract.js';
 
 export function AgentforceLabPanel(props: { pluginId: string; projectId?: string; source: string; mode: 'rehearse' | 'test'; fileLabel: string; hidden?: boolean }) {
   const [engine, setEngine] = useState<LabEngine>('preview');
@@ -16,6 +18,7 @@ export function AgentforceLabPanel(props: { pluginId: string; projectId?: string
   const [error, setError] = useState('');
   const [runSource, setRunSource] = useState('');
   const [setupOpen, setSetupOpen] = useState(true);
+  const [traces, setTraces] = useState<Record<string, TurnTrace>>({});
   const active = useRef<LabSnapshot | null>(null);
   const locked = useRef(false);
   const cancelled = useRef(false);
@@ -57,7 +60,7 @@ export function AgentforceLabPanel(props: { pluginId: string; projectId?: string
   }
   async function begin(test: boolean) {
     if (active.current && !active.current.closed) await rpc('end', { id: active.current.id });
-    setVerdict(null); setSession(null); active.current = null;
+    setVerdict(null); setSession(null); setTraces({}); active.current = null;
     const selected = test ? parseLabScenario(scenario) : undefined;
     if (selected) setSetupOpen(false);
     runDetails.current = { source: props.source, file: props.fileLabel, scenario: selected };
@@ -87,6 +90,14 @@ export function AgentforceLabPanel(props: { pluginId: string; projectId?: string
     if (cancelled.current || !alive.current) return;
     setVerdict(evaluation.verdict);
     setStatus('Run complete');
+  }
+  async function loadTrace(planId: string) {
+    if (!session || traces[planId]) return;
+    try {
+      const result = await callPluginRpc(props.pluginId, 'agentLab.trace', { projectId: props.projectId, id: session.id, planId }) as { ok?: boolean; data?: TurnTrace; error?: string };
+      const trace: TurnTrace = result?.ok && result.data ? result.data : { runId: session.id, turn: 0, planId, available: false, reason: result?.error || 'Trace request failed.', steps: [] };
+      if (alive.current) setTraces(prev => ({ ...prev, [planId]: trace }));
+    } catch (err) { if (alive.current) setTraces(prev => ({ ...prev, [planId]: { runId: session.id, turn: 0, planId, available: false, reason: err instanceof Error ? err.message : String(err), steps: [] } })); }
   }
   async function stop() {
     cancelled.current = true;
@@ -137,7 +148,7 @@ export function AgentforceLabPanel(props: { pluginId: string; projectId?: string
       {session && <div className="af-run-meta"><span>{session.engine === 'preview' ? 'Preview API' : 'AI approximation'}</span><span>{session.orgAlias}</span><span title={session.sourceHash}>Draft {session.sourceHash.slice(0, 7)}</span></div>}
       <div className="af-transcript" role="log" aria-label="Rehearsal conversation" data-testid="agentforce-lab-transcript">
         {!session?.turns.length && (busy ? <LoadingState compact art="agents" label="Starting your conversation…" /> : <div className="af-welcome"><span className="af-welcome-orbit"><Bot /></span><h3>{testing ? 'Put your agent to the test' : 'Every great agent starts with a conversation'}</h3><p>{testing ? 'Choose a customer and a goal. AI will play the customer, then review the conversation against your criteria.' : 'Ask a real question, follow up, and see how your agent handles the conversation.'}</p><span className="af-welcome-tag">{props.fileLabel || 'Current draft'}</span></div>)}
-        {session?.turns.map((turn, index) => <article key={index} className={`af-message is-${turn.role}`}><div className="af-message-meta"><strong>{turn.role === 'agent' ? 'Agentforce' : testing ? 'AI customer' : 'You'}</strong>{turn.latencyMs !== undefined && <span>{(turn.latencyMs / 1000).toFixed(1)}s</span>}</div><div className="af-message-text">{turn.text}</div>{turn.planId && <details className="af-plan"><summary>Runtime evidence</summary><span>Plan {turn.planId}</span></details>}</article>)}
+        {session?.turns.map((turn, index) => <article key={index} className={`af-message is-${turn.role}`}><div className="af-message-meta"><strong>{turn.role === 'agent' ? 'Agentforce' : testing ? 'AI customer' : 'You'}</strong>{turn.latencyMs !== undefined && <span>{(turn.latencyMs / 1000).toFixed(1)}s</span>}</div><div className="af-message-text">{turn.text}</div>{turn.planId && <details className="af-plan" onToggle={e => { if (e.currentTarget.open && session?.engine === 'preview') void loadTrace(turn.planId!); }}><summary>Runtime evidence</summary><span>Plan {turn.planId}</span>{session?.engine === 'preview' && <TracePanel trace={traces[turn.planId] ?? null} loading={!traces[turn.planId]} />}</details>}</article>)}
       </div>
       {verdict && <section className={`af-verdict is-${verdict.outcome}`} aria-label="AI evaluation"><div><strong>{verdict.outcome === 'pass' ? 'Criteria met' : verdict.outcome === 'fail' ? 'Needs attention' : 'More evidence needed'}</strong><span>AI assessment</span></div><p>{verdict.reason}</p><ul>{verdict.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul><small>Advisory result · not release approval</small></section>}
     </div>

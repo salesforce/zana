@@ -22,8 +22,29 @@ export function isPlaceholderAgentGraph(nodes: readonly AgentGraphNode[]): boole
   return nodes.length === 0 || (nodes.length === 1 && nodes[0]?.id === 'empty');
 }
 
-export function layoutAgentGraph(nodes: readonly AgentGraphNode[]): LaidOutAgentGraphNode[] {
+export interface AgentGraphLayoutOptions {
+  /** Narrow containers: stack every node in one column (start, topics, actions) instead of rank rows. */
+  compact?: boolean;
+}
+
+/** Finds the node a `graph.focus {node}` command refers to: exact id, then label, then case-insensitive label. */
+export function resolveFocusNode(nodes: readonly AgentGraphNode[], query: string | null | undefined): AgentGraphNode | null {
+  const text = (query ?? '').trim();
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  return nodes.find(node => node.id === text) ?? nodes.find(node => node.label === text) ?? nodes.find(node => node.label.toLowerCase() === lower) ?? null;
+}
+
+export function layoutAgentGraph(nodes: readonly AgentGraphNode[], options: AgentGraphLayoutOptions = {}): LaidOutAgentGraphNode[] {
   if (isPlaceholderAgentGraph(nodes)) return [];
+  if (options.compact) {
+    const ordered = [...nodes].sort((a, b) => RANK[a.kind] - RANK[b.kind]);
+    return ordered.map((node, index) => ({
+      ...node,
+      x: ORIGIN_X - AGENT_GRAPH_NODE_WIDTH / 2,
+      y: ORIGIN_Y + index * (AGENT_GRAPH_NODE_HEIGHT + GAP_Y / 2)
+    }));
+  }
   const buckets: AgentGraphNode[][] = [[], [], []];
   for (const node of nodes) {
     buckets[RANK[node.kind]]!.push(node);

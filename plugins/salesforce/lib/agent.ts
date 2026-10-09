@@ -311,11 +311,17 @@ export function compactPreviewDigest(payload: unknown, utterance?: string): Reco
           : Array.isArray(row.messages)
             ? row.messages.map((m) => m && typeof m === 'object' && typeof m.message === 'string' ? m.message : '').filter(Boolean).join('\n')
             : '';
+  // planId is kept for the trace view; CLI traces are unverified so the UI treats it as optional evidence.
+  const planSource = typeof row.planId === 'string' ? row.planId
+    : Array.isArray(row.messages) ? row.messages.map((m) => (m && typeof m === 'object' ? (m as { planId?: unknown }).planId : undefined)).find((p) => typeof p === 'string')
+    : undefined;
+  const planId = typeof planSource === 'string' && planSource ? planSource.slice(0, 256) : undefined;
   return {
     sessionId,
     utterance: utterance?.slice(0, 200),
     response: response.slice(0, 32_000),
-    topic: typeof row.topic === 'string' ? row.topic : undefined
+    topic: typeof row.topic === 'string' ? row.topic : undefined,
+    ...(planId ? { planId } : {})
   };
 }
 

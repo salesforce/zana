@@ -1,11 +1,13 @@
-import { Background, Controls, Handle, Position, ReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
+import { useEffect } from 'react';
+import { Background, Controls, Handle, Position, ReactFlow, useReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { AgentGraphEdge, AgentGraphNode, AgentGraphNodeKind } from '../../lib/agent-script-model.js';
 import {
   AGENT_GRAPH_NODE_HEIGHT,
   AGENT_GRAPH_NODE_WIDTH,
   isPlaceholderAgentGraph,
-  layoutAgentGraph
+  layoutAgentGraph,
+  resolveFocusNode
 } from '../../lib/agent-script-graph-layout.js';
 
 const KIND_META: Record<AgentGraphNodeKind, { title: string; subtitle: string }> = {
@@ -40,12 +42,12 @@ function IconBadge({ kind }: { kind: AgentGraphNodeKind }) {
   );
 }
 
-type GraphNode = Node<{ label: string; kind: AgentGraphNodeKind; openAction?: () => void }, 'agent'>;
+type GraphNode = Node<{ label: string; kind: AgentGraphNodeKind; focused?: boolean; openAction?: () => void }, 'agent'>;
 
 function AgentNode({ data }: NodeProps<GraphNode>) {
   const meta = KIND_META[data.kind];
   return (
-    <div className={`as-node as-node--${data.kind}`} role={data.openAction ? 'button' : undefined} tabIndex={data.openAction ? 0 : undefined} aria-label={data.openAction ? `Inspect ${data.label}` : undefined} onClick={data.openAction} onKeyDown={event => { if (data.openAction && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); data.openAction(); } }} style={data.openAction ? { cursor: 'pointer' } : undefined}>
+    <div className={`as-node as-node--${data.kind}${data.focused ? ' is-focused' : ''}`} role={data.openAction ? 'button' : undefined} tabIndex={data.openAction ? 0 : undefined} aria-label={data.openAction ? `Inspect ${data.label}` : undefined} onClick={data.openAction} onKeyDown={event => { if (data.openAction && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); data.openAction(); } }} style={data.openAction ? { cursor: 'pointer' } : undefined}>
       <Handle type="target" position={Position.Top} className="as-node-handle" />
       <span className="as-node-icon">
         <IconBadge kind={data.kind} />
@@ -61,7 +63,18 @@ function AgentNode({ data }: NodeProps<GraphNode>) {
 
 const nodeTypes = { agent: AgentNode };
 
-export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEdge[]; visible?: boolean; onOpenAction?: (id: string) => void }) {
+/** Child of <ReactFlow>: centres the viewport on the node named by `graph.focus`. */
+function FocusNode({ id, seq }: { id: string | null; seq?: number }) {
+  const flow = useReactFlow();
+  useEffect(() => {
+    if (!id) return;
+    const timer = window.setTimeout(() => { void flow.fitView({ nodes: [{ id }], duration: 250, padding: 1.2, maxZoom: 1.2 }); }, 50);
+    return () => window.clearTimeout(timer);
+  }, [flow, id, seq]);
+  return null;
+}
+
+export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEdge[]; visible?: boolean; compact?: boolean; focus?: string | null; focusSeq?: number; onOpenAction?: (id: string) => void }) {
   if (isPlaceholderAgentGraph(props.nodes)) {
     return (
       <div className="graph-empty" role="status">
@@ -69,13 +82,14 @@ export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEd
       </div>
     );
   }
-  const nodes: GraphNode[] = layoutAgentGraph(props.nodes).map((node) => ({
+  const focusId = resolveFocusNode(props.nodes, props.focus)?.id ?? null;
+  const nodes: GraphNode[] = layoutAgentGraph(props.nodes, { compact: props.compact }).map((node) => ({
     id: node.id,
     type: 'agent',
     selectable: Boolean(node.actionId),
     focusable: false,
     position: { x: node.x, y: node.y },
-    data: { label: node.label, kind: node.kind, openAction: node.actionId && props.onOpenAction ? () => props.onOpenAction!(node.actionId!) : undefined },
+    data: { label: node.label, kind: node.kind, focused: node.id === focusId, openAction: node.actionId && props.onOpenAction ? () => props.onOpenAction!(node.actionId!) : undefined },
     style: { width: AGENT_GRAPH_NODE_WIDTH, height: AGENT_GRAPH_NODE_HEIGHT },
     sourcePosition: Position.Bottom,
     targetPosition: Position.Top
@@ -107,6 +121,7 @@ export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEd
     >
       <Background gap={18} size={1} color="var(--graph-dot)" />
       <Controls showInteractive={false} />
+      <FocusNode id={focusId} seq={props.focusSeq} />
     </ReactFlow>
   );
 }

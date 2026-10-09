@@ -1,9 +1,25 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type PointerEvent } from 'react';
 import { DEFAULT_SPLIT_RATIO, MIN_SPLIT_RATIO, MAX_SPLIT_RATIO, splitRatioFromClientX, splitRatioFromKey } from '../../lib/agent-script-split.js';
 
-/** Pointer capture keeps resizing continuous while crossing the Monaco iframe. */
-export function AgentforceStudioSplit({ editor, children, open }: { editor: ReactNode; children: ReactNode; open: boolean }) {
-  const [ratio, setRatio] = useState(DEFAULT_SPLIT_RATIO);
+/** Persisted ratios are untrusted storage: clamp, and fall back to the default for anything that is not a finite number. */
+export function readSplitRatio(key: string | undefined): number {
+  if (!key) return DEFAULT_SPLIT_RATIO;
+  try {
+    const value = Number(JSON.parse(localStorage.getItem(key) ?? 'null'));
+    return Number.isFinite(value) && value >= MIN_SPLIT_RATIO && value <= MAX_SPLIT_RATIO ? value : DEFAULT_SPLIT_RATIO;
+  } catch { return DEFAULT_SPLIT_RATIO; }
+}
+
+/**
+ * Pointer capture keeps resizing continuous while crossing the Monaco iframe.
+ * `mode` keeps both children mounted while showing one: compact layouts show the editor or the tools, never both.
+ * `storageKey` persists the ratio.
+ */
+export function AgentforceStudioSplit({ editor, children, open, mode = 'split', storageKey }: {
+  editor: ReactNode; children: ReactNode; open: boolean; mode?: 'split' | 'editor' | 'panel'; storageKey?: string;
+}) {
+  const [ratio, setRatio] = useState(() => readSplitRatio(storageKey));
+  useEffect(() => { if (storageKey) { try { localStorage.setItem(storageKey, JSON.stringify(ratio)); } catch { /* optional */ } } }, [storageKey, ratio]);
   const [dragging, setDragging] = useState(false);
   const workspace = useRef<HTMLDivElement>(null);
   const pointer = useRef<number | null>(null);
@@ -18,9 +34,9 @@ export function AgentforceStudioSplit({ editor, children, open }: { editor: Reac
     setDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
-  return <div ref={workspace} className="af-workspace" data-panel-open={open} data-resizing={dragging} style={{ '--af-editor-ratio': ratio } as CSSProperties}>
+  return <div ref={workspace} className="af-workspace" data-panel-open={open} data-mode={mode} data-resizing={dragging} style={{ '--af-editor-ratio': ratio } as CSSProperties}>
     <div className="sf-as-stage">{editor}</div>
-    {open && <div
+    {open && mode === 'split' && <div
       className="af-workspace-divider" role="separator" tabIndex={0}
       aria-label="Resize editor and side panel" aria-orientation="vertical"
       aria-valuemin={Math.round(MIN_SPLIT_RATIO * 100)} aria-valuemax={Math.round(MAX_SPLIT_RATIO * 100)} aria-valuenow={Math.round(ratio * 100)}

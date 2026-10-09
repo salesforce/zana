@@ -3,18 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { editor } from 'monaco-editor';
 import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
 import { queryAgentScriptLsp } from '../../lib/agent-script-lsp.js';
-import { dialectLabel, normalizePlaygroundView, type PlaygroundView } from '../../lib/agent-script-chrome.js';
-import {
-  DEFAULT_SPLIT_RATIO,
-  splitRatioFromClientX,
-  splitRatioFromKey
-} from '../../lib/agent-script-split.js';
+import { dialectLabel } from '../../lib/agent-script-chrome.js';
 import type { AgentScriptDialect, PublicOrgView } from '../../lib/types.js';
-import {
-  graphFromAgentSource,
-  type AgentGraphEdge,
-  type AgentGraphNode
-} from '../../lib/agent-script-model.js';
 import {
   isHostToPlayground,
   PLAYGROUND_BRIDGE_SOURCE,
@@ -22,7 +12,8 @@ import {
 } from '../../src/app/playground-bridge.js';
 import { orgSessionLabel } from '../../lib/org-session.js';
 import { applyDiagnostics, ensureAgentScriptMonaco, setAgentScriptLspDialect } from './editor';
-import { AgentGraph } from './graph';
+import { StudioLayer } from './studio-layer';
+import { toStudioDiagnostics } from './studio-helpers';
 import type { AgentAction } from '../../lib/agent-action-model';
 
 function postToHost(message: Record<string, unknown>): void {
@@ -38,17 +29,11 @@ export default function App() {
   const dialectRef = useRef<AgentScriptDialect>('agentforce');
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [dialect, setDialect] = useState<AgentScriptDialect>('agentforce');
-  const [view, setView] = useState<PlaygroundView>('script');
-  const [graph, setGraph] = useState<{ nodes: AgentGraphNode[]; edges: AgentGraphEdge[] }>({
-    nodes: [],
-    edges: []
-  });
+  const [compact, setCompact] = useState(false);
+  const layerRef = useRef<StudioLayer | null>(null);
   const [issueCount, setIssueCount] = useState(0);
   const [errorCount, setErrorCount] = useState(0);
   const [org, setOrg] = useState<PublicOrgView | null>(null);
-  const [splitRatio, setSplitRatio] = useState(DEFAULT_SPLIT_RATIO);
-  const splitRef = useRef<HTMLDivElement>(null);
-  const draggingRef = useRef(false);
 
   const draftRef = useRef<{ key?: string; baseSha?: string; baseline: string; applying: boolean }>({ baseline: '', applying: false });
   const publishDraft = (content: string) => {
@@ -67,10 +52,9 @@ export default function App() {
     actionsRef.current = parsed.actions;
     const lsp = queryAgentScriptLsp({ source, dialect: nextDialect, query: 'diagnostics' });
     const diagnostics = lsp.ok ? lsp.result.diagnostics : parsed.diagnostics;
-    setGraph(parsed.graph.nodes.length > 0 ? parsed.graph : graphFromAgentSource(source));
     setIssueCount(diagnostics.length);
     setErrorCount(diagnostics.filter((row) => row.severity === 'error').length);
-    postToHost({ type: 'snapshot', draftKey: draftRef.current.key, content: source, issues: diagnostics.length, actions: parsed.actions });
+    postToHost({ type: 'snapshot', draftKey: draftRef.current.key, content: source, issues: diagnostics.length, actions: parsed.actions, diagnostics: toStudioDiagnostics(diagnostics) });
     if (modelRef.current) applyDiagnostics(modelRef.current, diagnostics);
   }, []);
 
@@ -101,9 +85,12 @@ export default function App() {
       hideCursorInOverviewRuler: true,
       wordBasedSuggestions: 'off',
       quickSuggestions: true,
-      fixedOverflowWidgets: true
+      fixedOverflowWidgets: true,
+      glyphMargin: true
     });
     editorRef.current = instance;
+    const layer = new StudioLayer(host, instance, postToHost);
+    layerRef.current = layer;
     const sub = instance.onDidChangeModelContent(() => {
       if (draftRef.current.applying) return;
       publishDraft(instance.getValue());
@@ -120,6 +107,8 @@ export default function App() {
     return () => {
       sub.dispose();
       targetClick.dispose();
+      layer.dispose();
+      layerRef.current = null;
       instance.dispose();
       model.dispose();
     };
@@ -135,7 +124,6 @@ export default function App() {
   const applyHostMessage = useCallback(
     (message: HostToPlayground) => {
       if (message.type === 'revealLine') {
-        setView('script');
         editorRef.current?.revealLineInCenter(message.line);
         editorRef.current?.setPosition({ lineNumber: message.line, column: 1 });
         editorRef.current?.focus();
@@ -144,7 +132,6 @@ export default function App() {
       if (message.type === 'init') {
         setTheme(message.theme);
         setDialect(message.dialect);
-        if (message.view) setView(normalizePlaygroundView(message.view));
         if ('org' in message) setOrg(message.org ?? null);
         return;
       }
@@ -156,8 +143,24 @@ export default function App() {
         setTheme(message.theme);
         return;
       }
-      if (message.type === 'setView') {
-        setView(normalizePlaygroundView(message.view));
+      if (message.type === 'proposeEdit') {
+        layerRef.current?.setProposal(message);
+        return;
+      }
+      if (message.type === 'clearProposal') {
+        layerRef.current?.clearProposal(message.proposalId);
+        return;
+      }
+      if (message.type === 'setComments') {
+        layerRef.current?.setComments(message.comments);
+        return;
+      }
+      if (message.type === 'setHits') {
+        layerRef.current?.setHits(message.lines);
+        return;
+      }
+      if (message.type === 'setLayout') {
+        setCompact(message.compact);
         return;
       }
       if (message.type === 'setDialect') {
@@ -174,6 +177,7 @@ export default function App() {
         setDialect(nextDialect);
         draftRef.current = { key: message.draftKey, baseline: message.content, baseSha: recovered?.baseSha ?? message.sha256, applying: true };
         const value = recovered?.content ?? message.content;
+        layerRef.current?.onFileSwitched();
         const model = modelRef.current;
         if (model && model.getValue() !== value) model.setValue(value);
         draftRef.current.applying = false;
@@ -208,71 +212,15 @@ export default function App() {
     return () => window.removeEventListener('message', onMessage);
   }, [applyHostMessage]);
 
-  const applySplitFromClientX = useCallback((clientX: number) => {
-    const rect = splitRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setSplitRatio(splitRatioFromClientX(clientX, rect.left, rect.width));
-  }, []);
-
   useEffect(() => {
-    const onMove = (event: PointerEvent) => {
-      if (!draggingRef.current) return;
-      event.preventDefault();
-      applySplitFromClientX(event.clientX);
-    };
-    const onUp = () => {
-      draggingRef.current = false;
-      document.body.classList.remove('is-resizing-split');
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
-    };
-  }, [applySplitFromClientX]);
+    editorRef.current?.updateOptions({ fontSize: compact ? 13 : 14, lineNumbers: compact ? 'off' : 'on' });
+  }, [compact]);
 
   return (
-    <div
-      className={`ide ${theme}`}
-      data-view={view}
-      data-testid="agent-script-ide"
-      style={{ ['--split-editor' as string]: String(splitRatio) }}
-    >
-      <div className="split" ref={splitRef}>
+    <div className={`ide ${theme}${compact ? ' compact' : ''}`} data-view="script" data-testid="agent-script-ide">
+      <div className="split">
         <section className="pane editor">
           <div className="pane-body" id="editor-host" />
-        </section>
-        <div
-          className="split-handle"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize Script and Graph"
-          aria-valuemin={28}
-          aria-valuemax={72}
-          aria-valuenow={Math.round(splitRatio * 100)}
-          tabIndex={0}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            draggingRef.current = true;
-            document.body.classList.add('is-resizing-split');
-            applySplitFromClientX(event.clientX);
-          }}
-          onDoubleClick={() => setSplitRatio(DEFAULT_SPLIT_RATIO)}
-          onKeyDown={(event) => {
-            const next = splitRatioFromKey(splitRatio, event.key);
-            if (next == null) return;
-            event.preventDefault();
-            setSplitRatio(next);
-          }}
-        />
-        <section className="pane graph">
-          <header className="pane-header"><span>Conversation map</span><span className="pane-kicker">{graph.nodes.filter(n => n.kind === 'topic').length} topics · {graph.nodes.filter(n => n.kind === 'action').length} actions</span></header>
-          <div className="pane-body">
-            <AgentGraph nodes={graph.nodes} edges={graph.edges} visible={view !== 'script'} onOpenAction={id => postToHost({ type: 'openAction', id })} />
-          </div>
         </section>
       </div>
       <footer className="statusbar">
