@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { listHosts } from '@zana-ai/zcc-db';
@@ -242,7 +243,17 @@ createServer((_req, res) => {
     expect(downloaded.equals(readFileSync(tarball))).toBe(true);
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-install-data-'));
     const script = join(dirname(fileURLToPath(import.meta.url)), '../assets/install-machine.sh');
-    const port = 41000 + Math.floor(Math.random() * 1000);
+    // Probe an available port; a random number can collide with the product
+    // server or an ephemeral client socket on the shared CI runner.
+    const portProbe = createServer();
+    await new Promise<void>((resolve, reject) => {
+      portProbe.once('error', reject);
+      portProbe.listen(0, '127.0.0.1', resolve);
+    });
+    const address = portProbe.address();
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP port');
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => portProbe.close(error => error ? reject(error) : resolve()));
     const result = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve) => {
       const child = spawn('sh', [
         script,
