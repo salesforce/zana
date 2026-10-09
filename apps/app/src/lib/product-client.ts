@@ -801,6 +801,15 @@ function httpProduct(): Pick<
           method: 'PATCH',
           body: JSON.stringify({ title })
         }),
+      panelConversations: async (pluginId, panel) => {
+        const query = panel ? `?${new URLSearchParams({ panel })}` : '';
+        const body = await apiJson<{ threads: Awaited<ReturnType<CcApi['threads']['panelConversations']>> }>(
+          `/plugins/${encodeURIComponent(pluginId)}/panel-threads${query}`
+        );
+        return body.threads;
+      },
+      openAsThread: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/open-as-thread`, { method: 'POST', body: '{}' }),
       conversationOutline: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/conversation-outline`),
       timelineTurnSummaryDetails: async (threadId, query) => {

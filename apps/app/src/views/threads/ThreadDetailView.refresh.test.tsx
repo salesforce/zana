@@ -202,3 +202,11 @@ describe('secondary panel when embedded',() => {
     expect(screen.queryByTestId('secondary-panel')).toBeNull();
   });
 });
+
+it('carries visibility into the roster upsert so a hidden panel chat stays off the Agents list', async () => {
+  cleanup();h.upsert.mockReset();
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Panel chat', status: 'idle', createdAt: 1, visibility: 'hidden' } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle', activeThinking: null });
+  render(<MemoryRouter><ThreadDetail threadId="a" embedded/></MemoryRouter>);
+  await waitFor(() => expect(h.upsert).toHaveBeenCalledWith(expect.objectContaining({ id: 'a', visibility: 'hidden' })));
+});

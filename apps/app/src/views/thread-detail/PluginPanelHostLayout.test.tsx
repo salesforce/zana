@@ -23,20 +23,25 @@ vi.mock('../../plugins/plugin-slots.js', () => ({
   listNewThreadPanelActions: () => emptyActions
 }));
 vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
-  PanelAgentTab: ({ threadId, pluginPanel, onCreated }: {
+  PanelAgentTab: ({ threadId, pluginPanel, onCreated, onOpenConversation }: {
     threadId?: string;
-    pluginPanel?: { pluginId: string; panel: string };
+    pluginPanel?: { pluginId: string; panel: string; view?: string };
     onCreated: (threadId: string) => void;
+    onOpenConversation?: (conversation: { id: string; title: string | null; updatedAt: number }) => void;
   }) => (
     threadId
       ? <div data-testid="agent-chat">{threadId}</div>
       : (
-        <button
-          type="button"
-          data-testid="agent-composer"
-          data-binding={`${pluginPanel?.pluginId}/${pluginPanel?.panel}`}
-          onClick={() => onCreated('t-new')}
-        >Send</button>
+        <>
+          <button
+            type="button"
+            data-testid="agent-composer"
+            data-binding={`${pluginPanel?.pluginId}/${pluginPanel?.panel}/${pluginPanel?.view ?? '-'}`}
+            onClick={() => onCreated('t-new')}
+          >Send</button>
+          <button type="button" data-testid="agent-reopen-old" onClick={() => onOpenConversation?.({ id: 'old', title: 'Old chat', updatedAt: 1 })}>old</button>
+          <button type="button" data-testid="agent-reopen-new" onClick={() => onOpenConversation?.({ id: 't-new', title: null, updatedAt: 1 })}>new</button>
+        </>
       )
   )
 }));
@@ -80,6 +85,8 @@ describe('pluginPanelBrowserOwnerId', () => {
     expect(pluginPanelBrowserOwnerId('docs', 'panel')).toBe('plugin-panel:docs:panel');
   });
 });
+
+const tabLabels = () => screen.getAllByRole('button', { name: /^Close / }).map((row) => row.getAttribute('aria-label'));
 
 describe('PluginPanelHostLayout', () => {
   it('renders children without a host panel when the desktop browser is unavailable', () => {
@@ -129,12 +136,50 @@ describe('PluginPanelHostLayout', () => {
       </PluginPanelHostLayout>
     );
     fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
-    expect(screen.getByTestId('agent-composer').getAttribute('data-binding')).toBe('pr-monitor/panel');
+    expect(screen.getByTestId('agent-composer').getAttribute('data-binding')).toBe('pr-monitor/panel/-');
     fireEvent.click(screen.getByTestId('agent-composer'));
     expect(screen.getByTestId('agent-chat').textContent).toBe('t-new');
     fireEvent.click(screen.getByTestId('thread-secondary-hide'));
     fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
     expect(screen.getByTestId('agent-chat').textContent).toBe('t-new');
+    view.unmount();
+    desktop.api = null;
+  });
+
+  it('binds the agent to the page\'s current view', () => {
+    desktop.api = desktopApi();
+    const view = render(
+      <PluginPanelHostLayout pluginId="pr-monitor" panelPath="panel" subPath="pr/acme/app/12">
+        <div>slot:pr</div>
+      </PluginPanelHostLayout>
+    );
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').getAttribute('data-binding')).toBe('pr-monitor/panel/pr/acme/app/12');
+    view.unmount();
+    desktop.api = null;
+  });
+
+  it('reopens a recent conversation in the composer tab, or focuses the tab that has it', () => {
+    desktop.api = desktopApi();
+    const view = render(
+      <PluginPanelHostLayout pluginId="pr-monitor" panelPath="panel">
+        <div>slot:pr</div>
+      </PluginPanelHostLayout>
+    );
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    fireEvent.click(screen.getByTestId('agent-composer'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('t-new');
+    // A second, blank composer tab.
+    fireEvent.click(screen.getByTestId('thread-secondary-new-tab'));
+    fireEvent.click(screen.getByTestId('thread-new-tab-agent'));
+    fireEvent.click(screen.getByTestId('agent-reopen-new'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('t-new');
+    expect(tabLabels()).toEqual(['Close Agent', 'Close Agent']);
+    // Back on the blank composer, an older conversation takes over that tab.
+    fireEvent.click(screen.getAllByTitle('Agent')[1]!);
+    fireEvent.click(screen.getByTestId('agent-reopen-old'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('old');
+    expect(tabLabels()).toEqual(['Close Agent', 'Close Old chat']);
     view.unmount();
     desktop.api = null;
   });

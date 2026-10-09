@@ -104,8 +104,12 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   onCreated?: (threadId: string) => void;
   /** Overrides the "open new threads" preference; side-panel composers stay put. */
   navigateOnCreate?: boolean;
-  /** New threads are bound to this plugin panel (its agent tools and context). */
-  pluginPanel?: { pluginId: string; panel: string };
+  /**
+   * New threads are bound to this plugin panel (its agent tools and context).
+   * They start in the Default Project rather than the last-used one, so a
+   * question about a plugin page never runs inside an unrelated repo.
+   */
+  pluginPanel?: { pluginId: string; panel: string; view?: string };
   onRunTerminal?: (command: string | null) => Promise<void>;
   /** Sticky requested mode from `thread_execution_state` (plan/goal/agent or native ACP id). */
   executionModeRequested?: string | null;
@@ -163,7 +167,9 @@ export function ThreadCommandComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
+  const preferredProjectId = pluginPanel
+    ? null
+    : preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
   const ensureScratchRef = useRef(false);
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
   const defaultHarness = useData((s) => s.defaultHarness);

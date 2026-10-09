@@ -400,6 +400,7 @@ export function ThreadDetail({
         serviceTier?: string | null;
         permissionMode?: string | null;
         parentThreadId?: string | null;
+        visibility?: ThreadListItem['visibility'];
         originKind?: unknown;
         hasPendingInteraction?: boolean;
         updatedAt?: number;
@@ -440,6 +441,7 @@ export function ThreadDetail({
           isWorktree: thread.isWorktree ?? false,
           archivedAt: thread.archivedAt ?? null,
           parentThreadId: thread.parentThreadId ?? null,
+          visibility: thread.visibility,
           hasPendingInteraction: Boolean(thread.hasPendingInteraction),
           lastReadSeq: typeof timeline?.lastReadSeq === 'number' ? timeline.lastReadSeq : existing?.lastReadSeq ?? null,
           maxSeq: typeof timeline?.maxSeq === 'number' ? timeline.maxSeq : existing?.maxSeq ?? 0,

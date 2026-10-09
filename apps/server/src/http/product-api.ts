@@ -48,7 +48,7 @@ import {
 } from '@zana-ai/zcc-domain/product';
 import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
-import { resolvePluginPanelBinding } from './plugin-panel-binding.js';
+import { pluginPanelThreads, resolvePluginPanelBinding, revealPluginPanelThread } from './plugin-panel-binding.js';
 import { terminalOutputSlice } from './terminal-output-buffer.js';
 import {
   conversationThreadView,
@@ -1206,6 +1206,17 @@ export async function handleProductHttp(
       return true;
     }
 
+    const panelThreads = routeParams(path, '/api/v1/plugins/:id/panel-threads');
+    if (panelThreads && method === 'GET') {
+      const listed = pluginPanelThreads(ctx.db, ctx.plugins, panelThreads.id ?? '', requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('panel'));
+      if (!listed.ok) {
+        sendJson(response, listed.status, { error: listed.message });
+        return true;
+      }
+      sendJson(response, 200, { threads: conversationThreadViews(ctx, listed.threads) });
+      return true;
+    }
+
     if (path === '/api/v1/system/quit-state' && method === 'GET') {
       sendJson(response, 200, { activeThreads: countConversationThreadsForQuit(ctx.db) });
       return true;
@@ -1325,6 +1336,18 @@ export async function handleProductHttp(
       await renameConversationOnHost(ctx, updated, title);
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, updated));
       sendJson(response, 200, { thread: conversationThreadView(ctx, updated) });
+      return true;
+    }
+
+    const threadReveal = routeParams(path, '/api/v1/threads/:id/open-as-thread');
+    if (threadReveal && method === 'POST') {
+      const revealed = revealPluginPanelThread(ctx.db, threadReveal.id ?? '');
+      if (!revealed.ok) {
+        sendJson(response, revealed.status, { error: revealed.message });
+        return true;
+      }
+      ctx.hub.emit('threads:updated', conversationThreadView(ctx, revealed.thread));
+      sendJson(response, 200, { thread: conversationThreadView(ctx, revealed.thread) });
       return true;
     }
 

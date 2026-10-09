@@ -7,6 +7,7 @@ import {
   HOST_SESSION_TOOLS_MAX,
   invokePluginAgentTool,
   LIVE_INSTRUCTION_MAX,
+  panelAgentGrounding,
   packHostSessionTooling,
   resolvePluginSessionTools,
   safePackPluginSession,
@@ -226,6 +227,74 @@ describe('resolvePluginSessionTools', () => {
         }
       })
     ]);
+  });
+});
+
+describe('panel agent grounding', () => {
+  const panelCtx = { threadId: 'thr-1', projectId: 'proj-1', origin: { kind: null, pluginId: 'tasks' } };
+
+  it('grounds the origin plugin\'s panel thread first, naming its page, view and selected tools', async () => {
+    const session = await resolvePluginSessionTools([
+      source({ pluginId: 'notes', tools: [tool('note_search')], extraInstructions: ['Notes rule.'] }),
+      source({
+        pluginId: 'tasks',
+        name: 'Tasks',
+        description: 'Track work\n  items.',
+        tools: [tool('task_list'), tool('task_update')],
+        pluginMetadata: { panelAgent: { panel: 'board', view: 'ABC-12' } },
+        configurers: [() => ({ tools: ['task_list'], instructions: 'Tasks rule.' })]
+      })
+    ], panelCtx);
+    const parts = session.instructions!.split('\n\n');
+    expect(parts[0]).toBe(
+      'You are the assistant in the side panel next to the "Tasks" plugin page in Zana '
+      + '(plugin id `tasks`, panel `board`, view `ABC-12` when this conversation started). '
+      + 'Tasks: Track work items. '
+      + 'The user is looking at that page while talking to you, so read their questions in its context. '
+      + 'Prefer Tasks\'s own tools over guessing: task_list. '
+      + 'You cannot see the page itself; ask the user when you need something that is only on screen.'
+    );
+    expect(parts.slice(1)).toEqual(['Notes rule.', 'Tasks rule.']);
+  });
+
+  it('still grounds a panel thread when the plugin selects no tools', async () => {
+    const session = await resolvePluginSessionTools([
+      source({
+        pluginId: 'tasks',
+        tools: [tool('task_list')],
+        pluginMetadata: { panelAgent: { panel: 'board' } },
+        configurers: [() => ({ tools: [] })]
+      })
+    ], panelCtx);
+    expect(session.tools).toEqual([]);
+    expect(session.instructions).toContain('next to the "tasks" plugin page in Zana (plugin id `tasks`, panel `board`).');
+    expect(session.instructions).toContain('tasks gives you no tools of its own');
+  });
+
+  it('does not ground threads from other plugins or without a panel binding', async () => {
+    const otherOrigin = await resolvePluginSessionTools([
+      source({ pluginId: 'tasks', tools: [tool('task_list')], pluginMetadata: { panelAgent: { panel: 'board' } } })
+    ], { ...panelCtx, origin: { kind: null, pluginId: 'notes' } });
+    expect(otherOrigin.instructions).toBeUndefined();
+    const unbound = await resolvePluginSessionTools([
+      source({ pluginId: 'tasks', tools: [tool('task_list')], pluginMetadata: {} })
+    ], panelCtx);
+    expect(unbound.instructions).toBeUndefined();
+  });
+
+  it.each([null, 'board', ['board']])('ignores a malformed panelAgent binding: %j', (panelAgent) => {
+    expect(panelAgentGrounding({ pluginId: 'tasks', pluginMetadata: { panelAgent } }, [])).toBeNull();
+  });
+
+  it('omits fields the binding lacks and caps the manifest description', () => {
+    const text = panelAgentGrounding({
+      pluginId: 'tasks',
+      name: 'Tasks',
+      description: 'd'.repeat(900),
+      pluginMetadata: { panelAgent: { panel: 7 } }
+    }, ['task_list'])!;
+    expect(text).toContain('(plugin id `tasks`)');
+    expect(text).toContain(`Tasks: ${'d'.repeat(500)} The user`);
   });
 });
 

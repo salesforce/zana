@@ -52,6 +52,22 @@ describe('mergeThreadRoster', () => {
     });
   });
 
+  it('keeps hidden threads off the roster and drops a thread once it is hidden', () => {
+    const existing = thread({ id: 'a' });
+    const rows = [existing];
+    expect(mergeThreadRoster(rows, thread({ id: 'panel', visibility: 'hidden' }))).toBe(rows);
+    expect(mergeThreadRoster(rows, { ...existing, visibility: 'hidden' })).toEqual([]);
+    expect(mergeThreadRoster(rows, thread({ id: 'shown', visibility: 'visible' })).map((row) => row.id)).toEqual(['shown', 'a']);
+  });
+
+  it('keeps a hidden fork so its parent can surface the fork\'s pending question', () => {
+    const parent = thread({ id: 'parent' });
+    const fork = thread({ id: 'fork', parentThreadId: 'parent', visibility: 'hidden', hasPendingInteraction: true });
+    const rows = mergeThreadRoster([parent], fork);
+    expect(rows.map((row) => row.id)).toEqual(['fork', 'parent']);
+    expect(pendingChildThreads(rows, 'parent').map((row) => row.id)).toEqual(['fork']);
+  });
+
   it('prepends a thread that is not already on the roster', () => {
     const existing = thread({ id: 'a' });
     const created = thread({ id: 'b' });

@@ -90,6 +90,8 @@ export {
   listVisibleConversationThreads,
   listMenubarConversationThreads,
   queryConversationThreads,
+  listPanelAgentThreads,
+  revealConversationThread,
   updateConversationThreadStatus,
   applyConversationThreadLifecycleEvent,
   applyConversationThreadLifecycleEventOnRow,

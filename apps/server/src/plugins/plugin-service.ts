@@ -804,6 +804,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([pluginId, current]) => ({
         pluginId,
+        name: store.get(pluginId)?.name,
+        description: store.get(pluginId)?.description,
         tools: current.handle!.agentTools,
         configurers: current.handle!.agentConfigurers,
         extraInstructions: current.handle!.extraInstructions,

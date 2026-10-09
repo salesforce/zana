@@ -41224,3 +41224,95 @@ textarea.thread-command-editor {
   color: white;
   margin-left: 5px;
 }
+
+.panel-agent-tab-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-agent-tab-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.panel-agent-tab-open:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.panel-agent-tab-error {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.panel-agent-recents {
+  margin-bottom: auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.panel-agent-recents-title {
+  margin: 0 0 4px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.panel-agent-recents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel-agent-recent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panel-agent-recent:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.panel-agent-recent-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-agent-recent-time {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}

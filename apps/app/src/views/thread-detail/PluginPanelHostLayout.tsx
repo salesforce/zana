@@ -18,15 +18,18 @@ export function pluginPanelBrowserOwnerId(pluginId: string, panelPath: string): 
 export function PluginPanelHostLayout({
   pluginId,
   panelPath,
+  subPath,
   children
 }: {
   pluginId: string;
   panelPath: string;
+  /** The page's own route below the panel; recorded as the agent's starting view. */
+  subPath?: string;
   children: ReactNode;
 }) {
   if (getDesktopBrowserApi() === null) return children;
   return (
-    <PluginPanelBrowserHost pluginId={pluginId} panelPath={panelPath}>
+    <PluginPanelBrowserHost pluginId={pluginId} panelPath={panelPath} subPath={subPath}>
       {children}
     </PluginPanelBrowserHost>
   );
@@ -35,10 +38,12 @@ export function PluginPanelHostLayout({
 function PluginPanelBrowserHost({
   pluginId,
   panelPath,
+  subPath,
   children
 }: {
   pluginId: string;
   panelPath: string;
+  subPath?: string;
   children: ReactNode;
 }) {
   const ownerId = pluginPanelBrowserOwnerId(pluginId, panelPath);
@@ -63,8 +68,14 @@ function PluginPanelBrowserHost({
       <PanelAgentTab
         key={tabId}
         threadId={closable.threadId}
-        pluginPanel={{ pluginId, panel: panelPath }}
+        pluginPanel={{ pluginId, panel: panelPath, ...(subPath ? { view: subPath } : {}) }}
         onCreated={(threadId) => panel.patchTab(tabId, { threadId })}
+        onOpenConversation={({ id, title }) => {
+          // Reopening a conversation already in a tab focuses it, not a duplicate.
+          const open = panel.state.tabs.find((tab) => tab.kind === 'agent' && tab.threadId === id);
+          if (open) panel.activateTab(open.id);
+          else panel.patchTab(tabId, { threadId: id, ...(title ? { title } : {}) });
+        }}
       />
     );
   } else if (closable?.kind === 'new-tab') {

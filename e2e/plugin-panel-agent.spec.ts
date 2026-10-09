@@ -80,9 +80,12 @@ test('a plugin page opens an agent side panel from its launcher and New Tab', as
     const threadId = state.tabs.find((tab) => tab.kind === 'agent' && tab.threadId)?.threadId;
     if (!threadId) throw new Error('agent tab did not record its thread');
     const metadata = await (await fetch(`/api/v1/threads/${threadId}/plugin-metadata?pluginId=pr-monitor`)).json();
-    return { panel: key.slice('zcc.secondaryPanel.plugin-panel:pr-monitor:'.length), metadata };
+    const { thread } = await (await fetch(`/api/v1/threads/${threadId}`)).json() as { thread: { visibility: string; originPluginId: string } };
+    return { threadId, panel: key.slice('zcc.secondaryPanel.plugin-panel:pr-monitor:'.length), metadata, thread };
   });
-  expect(binding.metadata).toEqual({ panelAgent: { panel: binding.panel } });
+  expect(binding.metadata.panelAgent).toMatchObject({ panel: binding.panel });
+  // Panel conversations stay out of the Agents list until promoted.
+  expect(binding.thread).toMatchObject({ visibility: 'hidden', originPluginId: 'pr-monitor' });
 
   // Main, not the renderer, decides which plugins may bind a thread.
   const rejected = await win.evaluate(async (projectId) => {
@@ -102,6 +105,22 @@ test('a plugin page opens an agent side panel from its launcher and New Tab', as
   await shot(app.electron, win, testInfo, '4-new-tab-agent-entry');
   await win.getByTestId('thread-new-tab-agent').click();
   await expect(win.getByTestId('panel-agent-tab-composer')).toBeVisible();
+  // A fresh composer lists the plugin's earlier conversations to pick up again.
+  const recent = win.getByTestId('panel-agent-recent');
+  await expect(recent).toHaveCount(1, { timeout: 15_000 });
+  await shot(app.electron, win, testInfo, '5-agent-recents');
+  await recent.click();
+  await expect(win.getByTestId('panel-agent-tab-chat')).toBeVisible();
+
+  // Open as thread promotes it into the Agents list and goes there.
+  await win.getByTestId('panel-agent-open-as-thread').click();
+  await expect.poll(() => win.url()).toContain(binding.threadId);
+  await expect.poll(() => win.evaluate(async (id) =>
+    ((await (await fetch(`/api/v1/threads/${id}`)).json()) as { thread: { visibility: string } }).thread.visibility
+  , binding.threadId)).toBe('visible');
+  await shot(app.electron, win, testInfo, '6-opened-as-thread');
+  await win.getByRole('button', { name: /^PR Monitor/ }).click();
+  await expect(win.locator('.prm-board-card').filter({ hasText: pr.title })).toBeVisible();
 
   // Hiding and relaunching returns to the latest conversation tab.
   await win.getByTestId('thread-secondary-hide').click();

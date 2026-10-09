@@ -11,6 +11,9 @@ export const GENERIC_AGENT_TOOL_GLYPH = 'Toolbox';
 
 export interface PluginAgentToolSource {
   pluginId: string;
+  /** Manifest name and description, for grounding the plugin's side-panel threads. */
+  name?: string;
+  description?: string;
   tools: readonly PluginAgentToolRecord[];
   configurers?: ReadonlyArray<
     (
@@ -87,6 +90,44 @@ export function pluginToolResultToResponse(name: string, value: unknown): ToolCa
   };
 }
 
+const GROUNDING_DESCRIPTION_MAX = 500;
+
+function oneLine(text: string, max: number): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+/**
+ * Host-authored grounding for a thread started from a plugin page's side panel.
+ * Every plugin gets it, so a panel agent knows where it is even when the plugin
+ * contributes no instructions of its own. The binding fields were validated
+ * when main wrote them; the name and description come from the manifest.
+ */
+export function panelAgentGrounding(
+  source: Pick<PluginAgentToolSource, 'pluginId' | 'name' | 'description' | 'pluginMetadata'>,
+  toolNames: readonly string[]
+): string | null {
+  const binding = source.pluginMetadata?.panelAgent;
+  if (!binding || typeof binding !== 'object' || Array.isArray(binding)) return null;
+  const panel = typeof binding.panel === 'string' ? binding.panel : null;
+  const view = typeof binding.view === 'string' ? binding.view : null;
+  const name = oneLine(source.name || source.pluginId, 80);
+  const description = source.description ? oneLine(source.description, GROUNDING_DESCRIPTION_MAX) : '';
+  const where = [
+    `plugin id \`${source.pluginId}\``,
+    ...(panel ? [`panel \`${panel}\``] : []),
+    ...(view ? [`view \`${view}\` when this conversation started`] : [])
+  ].join(', ');
+  return [
+    `You are the assistant in the side panel next to the "${name}" plugin page in Zana (${where}).`,
+    ...(description ? [`${name}: ${description}`] : []),
+    'The user is looking at that page while talking to you, so read their questions in its context.',
+    toolNames.length > 0
+      ? `Prefer ${name}'s own tools over guessing: ${toolNames.join(', ')}.`
+      : `${name} gives you no tools of its own, so answer from what the user tells you and Zana's general tools.`,
+    'You cannot see the page itself; ask the user when you need something that is only on screen.'
+  ].join(' ');
+}
+
 export async function resolvePluginSessionTools(
   sources: readonly PluginAgentToolSource[],
   ctx: PluginAgentConfigureContext
@@ -94,8 +135,11 @@ export async function resolvePluginSessionTools(
   const tools: DynamicTool[] = [];
   const seen = new Set<string>();
   const instructionParts: string[] = [];
+  let grounding: string | null = null;
 
   for (const source of sources) {
+    const bound = Boolean(ctx.origin?.pluginId) && source.pluginId === ctx.origin?.pluginId;
+    const boundToolNames: string[] = [];
     const extra = (source.extraInstructions ?? []).map((row) => row.trim()).filter(Boolean);
     instructionParts.push(...extra);
     for (const provider of source.extraInstructionProviders ?? []) {
@@ -113,13 +157,17 @@ export async function resolvePluginSessionTools(
 
     const configured = await configurePlugin(source, ctx);
     instructionParts.push(...configured.instructions);
-    if (configured.selected === 'none') continue;
+    if (configured.selected === 'none') {
+      if (bound) grounding = panelAgentGrounding(source, boundToolNames);
+      continue;
+    }
 
     for (const registration of source.tools) {
       if (ctx.desktopPresentation === false && registration.desktopOnly === true) continue;
       if (configured.selected !== 'all' && !configured.selected.has(registration.name)) continue;
       if (seen.has(registration.name)) continue;
       seen.add(registration.name);
+      if (bound) boundToolNames.push(registration.name);
       const override = configured.parameterOverrides.get(registration.name);
       const packed = toDynamicTool(registration);
       tools.push(
@@ -132,9 +180,11 @@ export async function resolvePluginSessionTools(
         );
       }
     }
+    if (bound) grounding = panelAgentGrounding(source, boundToolNames);
   }
 
-  const instructions = instructionParts.join('\n\n').trim();
+  // Grounding frames everything else the plugins contribute, so it goes first.
+  const instructions = [...(grounding ? [grounding] : []), ...instructionParts].join('\n\n').trim();
   return {
     tools,
     ...(instructions ? { instructions } : {})

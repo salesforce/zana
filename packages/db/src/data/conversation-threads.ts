@@ -169,6 +169,32 @@ export function queryConversationThreads(
   return (db.sqlite.prepare(sql).all(...params, limit, offset) as ConversationThreadSqlRow[]).map(toThread);
 }
 
+/**
+ * A plugin's side-panel assistant conversations (hidden or opened as threads),
+ * newest first. Only rows whose origin-plugin metadata carries the host-written
+ * `panelAgent` binding qualify; corrupt metadata is skipped, not thrown. With
+ * `panel`, only that panel's conversations: a plugin can have several pages.
+ */
+export function listPanelAgentThreads(
+  db: ZccDatabase,
+  pluginId: string,
+  limit = 20,
+  panel?: string
+): ConversationThreadRow[] {
+  const capped = Math.max(1, Math.min(Math.trunc(limit) || 20, 100));
+  const sql = `SELECT threads.* FROM threads
+    JOIN thread_plugin_metadata AS meta
+      ON meta.thread_id = threads.id AND meta.plugin_id = threads.origin_plugin_id
+    WHERE threads.origin_plugin_id = ? AND threads.archived_at IS NULL
+      AND CASE WHEN json_valid(meta.metadata_json)
+        THEN json_type(meta.metadata_json, '$.panelAgent') END = 'object'
+      ${panel === undefined ? '' : `AND CASE WHEN json_valid(meta.metadata_json)
+        THEN json_extract(meta.metadata_json, '$.panelAgent.panel') END = ?`}
+    ORDER BY threads.updated_at DESC, threads.id DESC LIMIT ?`;
+  const params = panel === undefined ? [pluginId, capped] : [pluginId, panel, capped];
+  return (db.sqlite.prepare(sql).all(...params) as ConversationThreadSqlRow[]).map(toThread);
+}
+
 /** Include hidden agents and unresolved interactions without materializing a growing roster. */
 export function countConversationThreadsForQuit(db: ZccDatabase): number {
   const row = db.sqlite.prepare(`SELECT COUNT(*) AS count FROM threads
@@ -377,6 +403,13 @@ export function updateConversationThreadTitle(
 ): ConversationThreadRow | null {
   const now = Date.now();
   db.sqlite.prepare('UPDATE threads SET title = ?, updated_at = ? WHERE id = ?').run(title, now, id);
+  return getConversationThread(db, id);
+}
+
+/** Show a hidden thread in the Agents list ("Open as thread"). One-way. */
+export function revealConversationThread(db: ZccDatabase, id: string): ConversationThreadRow | null {
+  db.sqlite.prepare("UPDATE threads SET visibility = 'visible', updated_at = ? WHERE id = ? AND visibility = 'hidden'")
+    .run(Date.now(), id);
   return getConversationThread(db, id);
 }
 

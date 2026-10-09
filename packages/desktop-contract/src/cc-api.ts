@@ -495,7 +495,7 @@ export interface CcApi {
       serviceTier?: string;
       acpMode?: string;
       /** Started from a plugin page's side-panel Agent tab; main validates the plugin. */
-      pluginPanel?: { pluginId: string; panel: string };
+      pluginPanel?: { pluginId: string; panel: string; view?: string };
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -625,6 +625,18 @@ export interface CcApi {
     read(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     unread(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     rename(threadId: string, title: string): Promise<{ thread: Record<string, unknown> }>;
+    /** A plugin panel's side-panel conversations (hidden until opened as threads), newest first. */
+    panelConversations(pluginId: string, panel?: string): Promise<Array<{
+      id: string;
+      projectId: string;
+      title: string | null;
+      status: string;
+      visibility: 'visible' | 'hidden';
+      createdAt: number;
+      updatedAt: number;
+    }>>;
+    /** Move a side-panel conversation into the Agents list. */
+    openAsThread(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     conversationOutline(threadId: string): Promise<{
       items: Array<{ id: string; role: 'user' | 'assistant'; preview: string; attachmentSummary: unknown }>;
       maxSeq: number;

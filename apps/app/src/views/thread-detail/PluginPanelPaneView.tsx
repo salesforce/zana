@@ -41,7 +41,7 @@ export function PluginPanelPaneView({
   }
 
   return (
-    <PluginPanelHostLayout pluginId={pluginId} panelPath={panelPath}>
+    <PluginPanelHostLayout pluginId={pluginId} panelPath={panelPath} subPath={subPath}>
       {body}
     </PluginPanelHostLayout>
   );

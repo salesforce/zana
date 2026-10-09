@@ -17,6 +17,8 @@ export interface ThreadListItem {
   branchName: string | null;
   isWorktree: boolean;
   archivedAt?: number | null;
+  /** Hidden threads (side-panel assistants, side-chat forks) never join the roster. */
+  visibility?: 'visible' | 'hidden';
   parentThreadId?: string | null;
   hasPendingInteraction?: boolean;
   lastReadSeq?: number | null;
@@ -94,7 +96,11 @@ export function mergeThreadRoster(
   threads: ThreadListItem[],
   thread: ThreadListItem
 ): ThreadListItem[] {
-  if (thread.archivedAt) {
+  // `threads:updated` is broadcast for every thread, so an update is the only
+  // place a hidden thread could slip into the list the initial load excludes.
+  // Hidden children (side-chat forks) stay: their parent shows their pending
+  // questions as banners.
+  if (thread.archivedAt || (thread.visibility === 'hidden' && !thread.parentThreadId)) {
     return threads.some(row => row.id === thread.id) ? threads.filter((row) => row.id !== thread.id) : threads;
   }
   const index = threads.findIndex((row) => row.id === thread.id);
