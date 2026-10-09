@@ -3,6 +3,7 @@ import type { PublicOrgView, PublicListedOrg } from "../../../lib/types.js";
 import type { SoqlSObjectDescribe } from "../../../lib/soql-describe.js";
 import type { SalesforceOperation } from "../../../lib/workbench-contract.js";
 import { SALESFORCE_STYLES } from "./styles.js";
+import { KeyValueList, keyValueText } from "./KeyValue.js";
 import { OperationResults } from "./OperationResults.js";
 import { OPERATION_LABELS, displayTime } from '../panels/workbench-presentation.js';
 export { EmptyState, LoadingState } from './SalesforceState.js';
@@ -138,7 +139,7 @@ export function RecordInspector({
               {value == null
                 ? "—"
                 : typeof value === "object"
-                  ? JSON.stringify(value)
+                  ? <KeyValueList value={value} />
                   : String(value)}
             </dd>
           </div>
@@ -150,7 +151,7 @@ export function RecordInspector({
           type="button"
           onClick={() =>
             onAddToPrompt(
-              `${org?.alias ?? "Salesforce"} record ${record.Id ?? ""}:\n${JSON.stringify(Object.fromEntries(fields), null, 2).slice(0, 8000)}`,
+              `${org?.alias ?? "Salesforce"} record ${record.Id ?? ""}:\n${keyValueText(Object.fromEntries(fields))}`,
             )
           }
         >
@@ -264,7 +265,7 @@ export function RunSummary({
             type="button"
             onClick={() =>
               onAddToPrompt(
-                `${operation.kind} · ${operation.org.alias}\n${operation.summary ?? ""}\n${JSON.stringify(operation.data, null, 2)?.slice(0, 8000) ?? ""}`,
+                `${operation.kind} · ${operation.org.alias}\n${operation.summary ?? ""}\n${keyValueText(operation.data)}`,
               )
             }
           >

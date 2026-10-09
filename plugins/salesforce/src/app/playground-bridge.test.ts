@@ -17,6 +17,14 @@ describe('playground bridge', () => {
       expect(isHostToPlayground({ ...graph, ...change })).toBe(false);
     }
   });
+  it('accepts and bounds the optional compact, focus and focusSeq graph fields', () => {
+    const graph = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'graph', content: 'start_agent:', visible: true, theme: 'light' };
+    expect(isHostToPlayground({ ...graph, compact: true, focus: 'topic.returns', focusSeq: 3 })).toBe(true);
+    expect(isHostToPlayground({ ...graph, compact: false, focusSeq: 0 })).toBe(true);
+    for (const change of [{ compact: 'yes' }, { focus: 7 }, { focus: 'x'.repeat(201) }, { focusSeq: -1 }, { focusSeq: 1.5 }, { focusSeq: '2' }, { focusSeq: 2_000_000_000 }]) {
+      expect(isHostToPlayground({ ...graph, ...change })).toBe(false);
+    }
+  });
   it('validates draft identities and save-as flags before accepting editor messages', () => {
     const persist = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'persist', path: 'New.agent', content: 'source', draftKey: 'p:example:one', create: true };
     expect(isPlaygroundToHost(persist)).toBe(true);

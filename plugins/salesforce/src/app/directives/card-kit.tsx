@@ -1,9 +1,10 @@
+import { STUDIO_TOKENS } from '../studio/studio-tokens.js';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
 
 /** Card chrome. Extends the host `plugin-directive-card*` classes with --sf-* tokens. */
 export const CARD_STYLES = `
-.sf-dcard { --sf-bg: var(--bg-panel); --sf-text: var(--text-primary); --sf-muted: var(--text-muted); --sf-border: var(--border); --sf-accent: var(--accent); --sf-danger: var(--danger); --sf-success: var(--success); --sf-warn: var(--accent-gold); border-color:var(--sf-border); }
+${STUDIO_TOKENS}.sf-dcard { border-color:var(--sf-border); }
 .sf-dcard .sf-dcard-icon { flex:0 0 auto; display:inline-flex; width:22px; height:22px; align-items:center; justify-content:center; border-radius:6px; font-size:11px; font-weight:700; color:var(--sf-accent); background:color-mix(in srgb,var(--sf-accent) 12%,transparent); }
 .sf-dcard .sf-dcard-body { display:grid; gap:2px; min-width:0; flex:1 1 auto; text-align:left; }
 .sf-dcard .sf-dcard-line { display:flex; align-items:center; gap:8px; min-width:0; }

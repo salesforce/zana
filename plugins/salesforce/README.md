@@ -205,6 +205,42 @@ bundles and published agents. Published agents always execute live actions and
 therefore require the existing live-action confirmation, even when a caller
 omits the live flag. The Studio does not share that live-action path.
 
+### Studio layout, side-panel mode and Assistant
+
+The Studio adapts to the width of its container, so the same component serves the full tab and the thread side panel:
+
+- **Wide (>= 620 px):** activity strip, explorer, editor tabs (agents and read-only Apex/Flow), a bottom panel (**Problems**, **Comments**, **Trace**) and a right rail (**Assistant** plus the tool tabs). Cmd/Ctrl+P opens quick open.
+- **Compact / side panel (< 620 px):** one tool at a time. A tool strip switches between **Code, Preview, Tests, Graph, Actions, Data, Deploy, Comments** and **Agents**; the explorer becomes a file switcher and the bottom panel a sheet. The editor iframe stays mounted across tier changes, so drafts and cursor survive resizing. Data results become cards and Deploy a vertical stepper below about 520 px.
+- A context strip shows the active file, selection, problems and last preview run.
+
+**Assistant** is the right rail (a pane in compact mode). **Ask the agent** offers *Review, Fix problems, Address comments, Write scenarios, Explain selection, Generate action* and *Harden guardrails*, or a free request. Each action starts or reuses a linked thread with a role (author, editor, reviewer, tester, assistant); linked threads are listed and open inline. Sharing the view (`share`) lets agents read the editor context through `sf_workbench view.state`. Edits an agent makes arrive as **proposals**: a diff in the editor that you accept, reject or partly accept per hunk; a newer proposal or closing the editor settles an older one as rejected.
+
+**Comments** are anchored to line ranges with the quoted text, and can be added by you or an agent, then resolved with a note.
+
+**Preview** has one engine switch:
+
+| Engine | Runs | Trace |
+| --- | --- | --- |
+| Rehearse | AI rehearsal (Models API) | None: shown as an approximation, `available: false` |
+| Simulate | Salesforce Preview API, simulated actions | Planner trace per turn (up to 200 steps, previews clipped, sensitive paths redacted); steps link to source lines |
+| Live | CLI `agent preview` with real actions | Not available (the trace needs a Simulate session) |
+
+Open a step to reveal its line. **Save as scenario** appends the run to the agent's suite.
+
+**Scenario suites** are repo files at `tests/<AgentName>.scenario.json` (written with the same confined, SHA-checked path rules as agent files):
+
+```json
+{ "cases": [
+  { "id": "refund-delayed", "name": "Delayed refund",
+    "utterances": ["Where is my order A-1042?", "I want a refund"],
+    "expect": { "topic": "returns", "actions": ["Create_Return"], "contains": ["refund"], "criteria": "Agent stays polite and confirms the order." } }
+] }
+```
+
+A suite holds 1-50 cases with unique ids and 1-8 utterances each. `expect` is optional: `contains` is deterministic, `topic` and `actions` need a Simulate trace, and `criteria` adds an advisory AI verdict. Results are stored per case (`pass`, `fail`, `inconclusive`) outside the repo and shown as chips in Preview and the explorer.
+
+**Chat cards.** Agents can emit directives that render as live cards: `::sf-agent{path="..." line="42"}` (open the file at a line; optional `tool`, `apiName` and `readOnly` open a tool or a dependency), `::sf-preview{runId="..." turn="2"}` (open a run) and `::sf-operation{id="..."}` (live deploy/test status). Guardrail rows deep link into the same panel params.
+
 See [the design and verification notes](./AGENTFORCE_STUDIO.md) for API boundaries,
 research sources and test commands.
 
@@ -331,5 +367,8 @@ Workbench controls use explicit, short-lived view IDs. List `ui.views`, submit `
 | LWC source and Jest | `sf_lwc` | Confined local project |
 | Metadata preview, validation, retrieve, deploy, job results | `sf_workbench metadata.list`, `operations.*` | Explicit components/tests and existing write confirmation |
 | Show a view/file/query/record/log/job, manage Agentforce tools | `sf_workbench ui.views`, `ui.command`, `ui.result` | Explicit mounted view; project and org must match; acknowledgement required |
+| What the user is viewing, review comments, suites, planner trace | `sf_workbench view.state`, `comments.list/add/resolve`, `suites.list`, `preview.trace` | Local reads; `preview.trace` reads the org; shared view only |
+
+Studio-specific `ui.command` verbs (Agentforce view): `editor.proposeEdit` (`path`, `expectedSha256`, `content` or `edits`, `summary`; the user accepts hunks and the result reports `accepted`, `rejected` or `partial`), `preview.start` and `preview.send` (`text`, `engine`: start or send in the selected engine), `trace.focus` (`runId`, `turn`, `step`), `graph.focus` (`node`) and `layout.set` (`compact`). `ui.result` accepts `waitMs` (up to 20 000) to wait for the acknowledgement instead of polling; proposals report their outcome through the same result once resolved.
 
 These are semantic workflow controls. Pixel-level gestures such as dragging graph nodes or resizing panes remain manual, and a closed workbench must be opened before it can acknowledge display commands. A view that targets another org is refused; align it with the project's selected org first. Existing running conversations may need a fresh turn/session to receive new tools.

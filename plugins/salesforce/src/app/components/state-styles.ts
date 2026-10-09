@@ -1,5 +1,5 @@
 export const SALESFORCE_STATE_STYLES = `
-.sf-state { --sf-state-accent:var(--accent,#5d91bf); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; min-width:0; width:100%; min-height:240px; padding:36px 22px; box-sizing:border-box; text-align:center; color:var(--text-primary); font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+.sf-state { --sf-state-accent:var(--sf-accent, var(--accent)); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; min-width:0; width:100%; min-height:240px; padding:36px 22px; box-sizing:border-box; text-align:center; color:var(--text-primary); font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
 .sf-state[data-compact] { min-height:180px; gap:14px; padding:24px 12px; font-size:12px; }
 .sf-state-art { position:relative; flex:none; width:144px; height:104px; color:var(--sf-state-accent); }
 .sf-state[data-compact] .sf-state-art { zoom:.8; }

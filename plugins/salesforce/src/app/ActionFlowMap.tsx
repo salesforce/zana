@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { KeyValueList } from './components/KeyValue.js';
 import { flowPositions, type FlowModel } from './action-flow.js';
 
 export function ActionFlowMap({ model, onOpenTarget }: { model: FlowModel; onOpenTarget(target: string): void }) {
@@ -42,6 +43,6 @@ export function ActionFlowMap({ model, onOpenTarget }: { model: FlowModel; onOpe
         </g>;
       })}
     </svg></div>}
-    {node && <section className="af-flow-detail" aria-label="Flow step details"><div><strong>{node.label}</strong><button aria-label="Close step details" onClick={() => setSelected(null)}>×</button></div>{node.target && <button className="af-target-link" onClick={() => onOpenTarget(node.target!)}>Open {node.target} ↗</button>}<pre>{JSON.stringify(node.detail, null, 2)}</pre></section>}
+    {node && <section className="af-flow-detail" aria-label="Flow step details"><div><strong>{node.label}</strong><button aria-label="Close step details" onClick={() => setSelected(null)}>×</button></div>{node.target && <button className="af-target-link" onClick={() => onOpenTarget(node.target!)}>Open {node.target} ↗</button>}<KeyValueList value={node.detail} /></section>}
   </div>;
 }

@@ -34,7 +34,7 @@ export type PlaygroundToHost =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saveRequest' };
 
 export type HostToPlayground =
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'graph'; content: string; visible: boolean; theme: 'light' | 'dark' }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'graph'; content: string; visible: boolean; theme: 'light' | 'dark'; compact?: boolean; focus?: string; focusSeq?: number }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'revealLine'; line: number }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'reference'; content: string; language: 'apex' | 'xml' | 'json'; line?: number; theme: 'light' | 'dark' }
   | {
@@ -120,7 +120,7 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     return false;
   }
   return (
-    (value.type === 'graph' && typeof value.content === 'string' && value.content.length <= 180_000 && typeof value.visible === 'boolean' && ['light', 'dark'].includes(String(value.theme))) ||
+    (value.type === 'graph' && typeof value.content === 'string' && value.content.length <= 180_000 && typeof value.visible === 'boolean' && ['light', 'dark'].includes(String(value.theme)) && (value.compact === undefined || typeof value.compact === 'boolean') && (value.focus === undefined || (typeof value.focus === 'string' && value.focus.length <= 200)) && (value.focusSeq === undefined || (Number.isInteger(value.focusSeq) && Number(value.focusSeq) >= 0 && Number(value.focusSeq) <= 1_000_000_000))) ||
     value.type === 'init' ||
     (value.type === 'revealLine' && Number.isInteger(value.line) && Number(value.line) > 0) ||
     (value.type === 'reference' && typeof value.content === 'string' && value.content.length <= 750_000 && ['apex', 'xml', 'json'].includes(String(value.language))) ||

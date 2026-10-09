@@ -7,12 +7,14 @@ import { useSalesforceDraft } from '../components/drafts.js';
 import { useResource } from '../components/use-resource.js';
 import { EmptyState, ErrorState, LoadingState, SalesforcePanelFrame } from '../components/ui.js';
 import { needsOperationThread, operationReviewDraft } from '../operation-review.js';
+import { useWidthTier } from '../studio/useWidthTier.js';
 import { OperationsPanel } from './OperationsPanel.js';
 
 const METADATA_TYPES = { ApexClass: 'Apex classes', ApexTrigger: 'Apex triggers', LightningComponentBundle: 'Lightning components', CustomObject: 'Objects', PermissionSet: 'Permission sets', Flow: 'Flows' };
 
 export function DeploymentsPanel(props: SalesforcePanelProps) {
   const id = useId();
+  const [widthRef, widthTier] = useWidthTier([520]);
   const draftKey = `${props.projectId ?? 'global'}:${props.threadId ?? 'project'}:deploy`;
   const call = useSalesforceCall(props.pluginId, props, props.threadId);
   const [components, setComponents] = useSalesforceDraft(`${draftKey}:components`);
@@ -47,8 +49,8 @@ export function DeploymentsPanel(props: SalesforcePanelProps) {
     finally { setBusy(false); }
   }
   return <SalesforcePanelFrame>
-    <div className="sf-workspace sf-deploy-workspace">
-      <div className="sf-workspace-config">
+    <div className="sf-workspace sf-deploy-workspace" ref={widthRef}>
+      <div className={`sf-workspace-config${widthTier === 0 ? ' sf-stepper' : ''}`} data-stepper={widthTier === 0 ? 'vertical' : undefined}>
         <div className="sf-workspace-heading"><div><span className="sf-eyebrow">Deployments</span><h2>Prepare a change</h2></div></div>
         <div className="sf-target-strip"><span>Target org</span><strong>{props.orgAlias || 'Project default'}</strong></div>
         {error && <ErrorState message={error} />}

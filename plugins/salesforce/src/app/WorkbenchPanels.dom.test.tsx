@@ -194,6 +194,14 @@ describe("public Salesforce panels", () => {
     expect(within(activity).getByRole('heading', { name: 'InvoiceTest' })).toBeTruthy();
   });
 
+  it('shows the vertical stepper when the panel is narrow', async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 320, height: 600, top: 0, left: 0, right: 320, bottom: 600, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+    mount(<DeploymentsPanel {...props} />);
+    await screen.findByText('Choose components');
+    expect(document.querySelector('[data-stepper="vertical"]')).toBeTruthy();
+    rect.mockRestore();
+  });
+
   it('searches metadata, removes chips and retains selections when browsing another type', async () => {
     call.mockImplementation(async (method, args) => method === 'metadata.list' ? { ok: true, records: [{ fullName: 'Ten' }, { fullName: 'One' }] } : respond(method, args));
     mount(<DeploymentsPanel {...props} />);
@@ -615,7 +623,7 @@ describe("public Salesforce panels", () => {
     fireEvent.change(screen.getByLabelText("Find record field"), {
       target: { value: "owner" },
     });
-    expect(screen.getByText('{"Name":"Jo"}')).toBeTruthy();
+    expect(screen.getByText('Jo')).toBeTruthy();
     expect(screen.queryByText("Empty")).toBeNull();
   });
 

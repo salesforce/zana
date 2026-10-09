@@ -1,3 +1,4 @@
+import { KeyValueList } from "./KeyValue.js";
 import type { SalesforceOperation } from "../../../lib/workbench-contract.js";
 import {
   operationResultView,
@@ -103,7 +104,7 @@ export function OperationResults({
         <p className="sf-muted sf-small">
           Stored evidence is size limited; large reports may be shortened.
         </p>
-        <pre className="sf-code">{JSON.stringify(operation.data, null, 2)}</pre>
+        <KeyValueList value={operation.data} />
       </details>
     </div>
   );

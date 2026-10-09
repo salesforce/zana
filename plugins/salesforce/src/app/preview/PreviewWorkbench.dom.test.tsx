@@ -244,4 +244,47 @@ describe('PreviewWorkbench', () => {
     expect(calls.filter(c => c.method === 'agentLab.end')).toHaveLength(1);
     el.remove();
   });
+
+  describe('host commands', () => {
+    const render = async (props: Partial<PreviewWorkbenchProps>) => {
+      await act(async () => {
+        root!.render(createElement(PreviewWorkbench, { pluginId: 'salesforce', projectId: 'proj-1', source: 'agent_label: x', fileLabel: 'A.agent', path: 'force-app/A.agent', ...props }));
+      });
+      await flush();
+    };
+
+    it('starts a session in the selected engine and runs each seq once', async () => {
+      await mount({ engine: 'simulate' });
+      await render({ engine: 'simulate', command: { seq: 1, type: 'start' } });
+      expect(calls.filter(c => c.method === 'agentLab.start')).toHaveLength(1);
+      expect(calls.find(c => c.method === 'agentLab.start')!.args.engine).toBe('preview');
+      await render({ engine: 'simulate', command: { seq: 1, type: 'start' } });
+      expect(calls.filter(c => c.method === 'agentLab.start')).toHaveLength(1);
+    });
+
+    it('send starts a session when none is running, then sends the text', async () => {
+      const el = await mount({ engine: 'rehearse' });
+      await render({ engine: 'rehearse', command: { seq: 1, type: 'send', text: 'hello' } });
+      expect(calls.map(c => c.method).filter(m => m.startsWith('agentLab.') && m !== 'agentLab.end')).toEqual(['agentLab.start', 'agentLab.send']);
+      expect(calls.find(c => c.method === 'agentLab.send')!.args.text).toBe('hello');
+      expect(el.textContent).toContain('Hi there');
+    });
+
+    it('waits for the controlled engine, and sends through the live engine', async () => {
+      await mount({ engine: 'rehearse' });
+      await render({ engine: 'rehearse', command: { seq: 1, type: 'send', text: 'hi live', engine: 'live' } });
+      expect(calls.filter(c => c.method.endsWith('.start'))).toHaveLength(0);
+      await render({ engine: 'live', command: { seq: 1, type: 'send', text: 'hi live', engine: 'live' } });
+      expect(calls.find(c => c.method === 'agentPreview.start')).toBeTruthy();
+      expect(calls.find(c => c.method === 'agentPreview.send')!.args).toMatchObject({ sessionId: 'live-1', utterance: 'hi live' });
+    });
+
+    it('surfaces failures instead of throwing, for empty text and live without a path', async () => {
+      const el = await mount({ engine: 'rehearse' });
+      await render({ engine: 'rehearse', command: { seq: 1, type: 'send', text: '  ' } });
+      expect(el.textContent).toContain('preview.send needs text');
+      await render({ engine: 'live', path: undefined, command: { seq: 2, type: 'start', engine: 'live' } });
+      expect(el.textContent).toContain('Live preview needs a saved .agent file');
+    });
+  });
 });

@@ -34,6 +34,6 @@ it('passes compact layout and graph.focus through to the graph', () => {
   const graph = { source, type: 'graph', content: ACTION_AGENT, visible: true, theme: 'dark', compact: true, focus: 'lookup', focusSeq: 4 };
   fireEvent(window, new MessageEvent('message', { origin: location.origin, source: window.parent, data: graph }));
   expect(screen.getByTestId('agent-script-graph').className).toContain('compact');
-  fireEvent(window, new MessageEvent('message', { origin: location.origin, source: window.parent, data: { ...graph, compact: false, focus: 5 } }));
+  fireEvent(window, new MessageEvent('message', { origin: location.origin, source: window.parent, data: { ...graph, compact: false } }));
   expect(screen.getByTestId('agent-script-graph').className).not.toContain('compact');
 });

@@ -25,7 +25,11 @@ export interface PreviewWorkbenchProps {
   threadId?: string;
   /** Called with the active run so the host can publish `lastRun` into the studio view. */
   onRunChange?(run: { runId: string; engine: StudioEngine; turn: number } | null): void;
+  /** Controlled command from the host (`preview.start` / `preview.send`); each new `seq` runs once in the selected engine. */
+  command?: PreviewCommand | null;
 }
+
+export interface PreviewCommand { seq: number; type: 'start' | 'send'; text?: string; engine?: StudioEngine }
 
 type SuiteEntry = ScenarioSuite & { sha256?: string };
 type Rpc<T> = { ok?: boolean; error?: string; data?: T } & Record<string, unknown>;
@@ -190,9 +194,13 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   async function send(event?: FormEvent) {
     event?.preventDefault();
     const text = draft.trim();
-    const current = active.current;
-    if (!text || !current) return;
+    if (!text || !active.current) return;
     setDraft('');
+    await sendText(text);
+  }
+  async function sendText(text: string) {
+    const current = active.current;
+    if (!current) return;
     if (current.engine === 'live') {
       setTurns(prev => [...prev, { role: 'user', text }]);
       const res = await rpc<{ response?: string; planId?: string }>('agentPreview.send', { sessionId: current.id, utterance: text, path, live: true, orgAlias: props.orgAlias, threadId: props.threadId });
@@ -205,6 +213,26 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
       setTurns(snapshotTurns(res.data));
     }
   }
+
+  // Host commands run once per seq, after the selected engine matches the command's engine.
+  const handledSeq = useRef(0);
+  const { command } = props;
+  useEffect(() => {
+    if (!command || command.seq === handledSeq.current) return;
+    if (command.engine && command.engine !== engine) return;
+    if (locked.current) return;
+    handledSeq.current = command.seq;
+    void perform(async () => {
+      if (liveBlocked) throw new Error('Live preview needs a saved .agent file.');
+      if (command.type === 'start' || !active.current || active.current.engine !== engine) await start();
+      if (command.type === 'send') {
+        const text = command.text?.trim();
+        if (!text) throw new Error('preview.send needs text.');
+        await sendText(text);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command, engine, busy]);
 
   async function toggleTrace(index: number, turn: RunTurn) {
     const next = !open[index];

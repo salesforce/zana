@@ -9,7 +9,7 @@ import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 
 const control: { options?: any } = {};
 vi.mock('./useSalesforceControl.js', () => ({ useSalesforceControl: (options: unknown) => { control.options = options; } }));
-vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button></div> }));
+vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine} data-command={p.command ? JSON.stringify(p.command) : ""}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button></div> }));
 vi.mock('./studio/AssistantRail.js', () => ({ AssistantRail: () => <div data-testid="stub-assistant" /> }));
 vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)} /> }));
 vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: () => <div data-testid="stub-agents" /> }));
@@ -175,7 +175,12 @@ describe('AgentScriptPanel studio layout', () => {
     await ready(el);
     await act(async () => { await exec('preview.start', { engine: 'simulate' }); });
     expect(el.querySelector('[data-testid="stub-preview"]')!.getAttribute('data-engine')).toBe('simulate');
-    await expect(exec('preview.send', { text: 'hi' })).rejects.toThrow(/not available/);
+    expect(JSON.parse(el.querySelector('[data-testid="stub-preview"]')!.getAttribute('data-command')!)).toMatchObject({ seq: 1, type: 'start', engine: 'simulate' });
+    await act(async () => { await exec('preview.send', { text: 'hi', engine: 'live' }); });
+    const stub = el.querySelector('[data-testid="stub-preview"]')!;
+    expect(stub.getAttribute('data-engine')).toBe('live');
+    expect(JSON.parse(stub.getAttribute('data-command')!)).toMatchObject({ seq: 2, type: 'send', text: 'hi', engine: 'live' });
+    await expect(exec('preview.send', { text: '  ' })).rejects.toThrow(/Provide text/);
     await act(async () => { await exec('trace.focus', {}); });
     expect(el.querySelector('[data-testid="studio-trace-pane"]')).toBeTruthy();
     await act(async () => { await exec('graph.focus', { node: 'topic.main' }); });

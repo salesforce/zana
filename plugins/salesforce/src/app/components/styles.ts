@@ -70,6 +70,14 @@ export const SALESFORCE_STYLES = `
 .sf-definition div { display:grid; grid-template-columns:minmax(90px,1fr) minmax(0,2fr); border-bottom:1px solid var(--border); gap:12px; padding:9px 0; }
 .sf-definition dt { color:var(--text-muted); }
 .sf-definition dd { margin:0; overflow-wrap:anywhere; user-select:text; }
+.sf-kv { margin:8px 0; font-size:12px; }
+.sf-kv-nested { margin:0; padding-left:10px; border-left:1px solid var(--border); }
+.sf-kv-scalar { margin:4px 0; overflow-wrap:anywhere; user-select:text; }
+.sf-kv code { font:11px ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.sf-stepper > .sf-workspace-section { position:relative; padding-left:30px; }
+.sf-stepper > .sf-workspace-section::before { content:""; position:absolute; left:10px; top:28px; bottom:-8px; width:1px; background:var(--border); }
+.sf-stepper > .sf-workspace-section:last-child::before { display:none; }
+.sf-stepper > .sf-workspace-section > h3 .sf-step { position:absolute; left:0; }
 .sf-code { font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; overflow-wrap:anywhere; margin:12px 0; padding:14px; background:var(--bg-base); border:1px solid var(--border); border-radius:6px; max-height:480px; overflow:auto; user-select:text; }
 .sf-inspector { padding:18px; min-width:0; overflow:auto; background:var(--bg-panel); }
 .sf-operation-results { min-width:0; margin-top:18px; overflow-wrap:anywhere; }

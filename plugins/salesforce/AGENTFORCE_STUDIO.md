@@ -208,3 +208,21 @@ and org source, expanded-view focus restoration, light/dark and narrow layouts,
 element details, fault/loop/scheduled branches, related implementations, blocked
 frame fallback and unchanged source files. Real org permissions remain outside
 these fixture-based checks.
+
+
+## Studio layout and agent collaboration
+
+All Studio CSS uses one `--sf-*` token set (`src/app/studio/studio-tokens.ts`) mapped onto host tokens: `bg`, `surface`, `elevated`, `sunken`, `text`, `muted`, `border`, `accent`, `soft`, `on-accent`, `danger`, `success` and `warn`. Every style string that uses them begins with `STUDIO_TOKENS`, so panels render correctly standalone or inside the Studio. The older `--sf-as-*`, `--af-*` and `--sf-soql-*` aliases are gone.
+
+Layout follows the container width (`useWidthTier`, breakpoints 400, 620, 960): wide shows explorer, editor tabs, bottom panel and right rail; compact shows one tool at a time with a tool strip. The Monaco iframe is never remounted when the tier changes. Panel params (`path`, `line`, `tool`, `apiName`, `readOnly`) have a single parser, `parseAgentforcePanelFocus` in `agentforce-panel-params.ts`, shared by chat cards, guardrail links and `AgentScriptPanel`.
+
+Agent collaboration:
+
+- **Shared view.** The panel publishes path, SHA, cursor, selection, tool, last run and up to 50 diagnostics (`studio.view.publish`). Agents read it with `sf_workbench view.state` only while sharing is on.
+- **Proposals.** `editor.proposeEdit` is rejected if the open file or its SHA differs. The editor shows a diff; the user resolves hunks. A newer proposal, a file switch or closing the editor settles pending ones as rejected with a note.
+- **Comments.** `comments.list/add/resolve` (`studio.comments.*`) store anchored review items; changes broadcast on `sf.studio.changed`.
+- **Preview commands.** `preview.start` and `preview.send` reach `PreviewWorkbench` through a controlled `command` prop (`{ seq, type, text?, engine? }`). Each `seq` runs once, after the selected engine matches; `send` starts a session first if none is running. Failures show in the workbench error banner.
+- **Graph bridge.** The host to playground `graph` message carries `content`, `visible`, `theme` plus optional `compact`, `focus` (node id or label, at most 200 characters) and `focusSeq` (integer; bump it to re-focus the same node). The validator rejects other types.
+- **Trace.** `agentLab.trace {id, planId}` reads `GET .../preview/sessions/{sid}/plans/{planId}` for Simulate sessions only. Rehearsal returns an approximation notice, Live and expired runs return `available: false` with a reason; nothing is fabricated. Results are cached per session and bounded to 200 steps. Live (CLI) trace remains unverified against a real org.
+- **Suites.** `tests/<Agent>.scenario.json` (see the README for the format); `studio.suites.run` runs cases sequentially under the lab's AI budget and compares runs by `runId`.
+- **Limits.** One `contributeInstructions` provider exists per plugin and its text is a snapshot at session start, so a running thread may need a fresh turn to learn new directives and verbs. A guardrail to operation link needs the agent to emit `::sf-operation` after approval.

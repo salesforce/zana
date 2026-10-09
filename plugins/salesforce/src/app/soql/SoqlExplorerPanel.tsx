@@ -25,6 +25,8 @@ import { SoqlSchemaRail } from './SoqlSchemaRail.js';
 import { useSalesforceCall, requireResult } from '../components/client.js';
 import { SALESFORCE_STYLES } from '../components/styles.js';
 import { RecordInspector, OrgBadge } from '../components/ui.js';
+import { STUDIO_TOKENS } from '../studio/studio-tokens.js';
+import { KeyValueList } from '../components/KeyValue.js';
 import { ActionDialog } from '../components/ActionDialog.js';
 import { useSalesforceDraft } from '../components/drafts.js';
 import { OrgPicker } from '../OrgPicker.js';
@@ -33,56 +35,62 @@ import { QueryEditorPane } from './QueryEditorPane.js';
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
 export const SOQL_HOST_STYLES = `
-.sf-soql { --sf-soql-surface: var(--bg-panel); --sf-soql-elevated: var(--bg-elevated); --sf-soql-sunken: var(--bg-base); --sf-soql-border: var(--border); --sf-soql-text: var(--text-primary); --sf-soql-muted: var(--text-muted); --sf-soql-accent: var(--accent); height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--sf-soql-text); background: var(--sf-soql-surface); }
-.sf-soql-header { display: flex; align-items: center; gap: 8px; min-height: 48px; flex-wrap: wrap; padding: 10px 12px; flex-shrink: 0; background: var(--sf-soql-elevated); border-bottom: 1px solid var(--sf-soql-border); }
+${STUDIO_TOKENS}.sf-soql { height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--sf-text); background: var(--sf-surface); }
+.sf-soql-header { display: flex; align-items: center; gap: 8px; min-height: 48px; flex-wrap: wrap; padding: 10px 12px; flex-shrink: 0; background: var(--sf-elevated); border-bottom: 1px solid var(--sf-border); }
 .sf-soql-brand { font-size: 13px; font-weight: 600; }
-.sf-soql-chip { font-size: 12px; color: var(--sf-soql-muted); }
-.sf-org-picker { font: inherit; font-size: 12px; color: var(--sf-soql-text); background: var(--sf-soql-sunken); border: 1px solid var(--sf-soql-border); border-radius: 6px; height: 28px; max-width: 280px; }
+.sf-soql-chip { font-size: 12px; color: var(--sf-muted); }
+.sf-org-picker { font: inherit; font-size: 12px; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; height: 28px; max-width: 280px; }
 .sf-soql-spacer { flex: 1; }
-.sf-soql-btn { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--sf-soql-border); background: transparent; color: var(--sf-soql-text); font-size: 12px; cursor: pointer; }
-.sf-soql-btn.primary { background: var(--sf-soql-accent); border-color: transparent; color: var(--text-on-accent,#fff); font-weight: 600; }
+.sf-soql-btn { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--sf-border); background: transparent; color: var(--sf-text); font-size: 12px; cursor: pointer; }
+.sf-soql-btn.primary { background: var(--sf-accent); border-color: transparent; color: var(--text-on-accent,#fff); font-weight: 600; }
 .sf-soql-btn:disabled { opacity: .45; cursor: default; }
-.sf-soql-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sf-soql-muted); }
-.sf-soql-banner { padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--sf-soql-border); color: var(--sf-soql-muted); }
+.sf-soql-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sf-muted); }
+.sf-soql-banner { padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--sf-border); color: var(--sf-muted); }
 .sf-soql-banner.is-warn { color: var(--accent-gold); }
 .sf-soql-banner.is-error { color: var(--danger, #ff8a8a); }
 .sf-soql-body { display: flex; flex: 1; min-height: 0; }
-.sf-soql-rail { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sf-soql-sunken); border-right: 1px solid var(--sf-soql-border); }
+.sf-soql-rail { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sf-sunken); border-right: 1px solid var(--sf-border); }
 .sf-soql-rail.is-collapsed { width: 36px; }
 .sf-soql-rail-head { display: flex; align-items: center; gap: 6px; padding: 8px; }
-.sf-soql-rail-title { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--sf-soql-muted); flex: 1; }
-.sf-soql-rail-toggle { border: 0; background: transparent; color: var(--sf-soql-muted); cursor: pointer; width: 22px; height: 22px; }
-.sf-soql-search { margin: 0 8px 8px; font: inherit; font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--sf-soql-border); background: var(--sf-soql-elevated); color: var(--sf-soql-text); }
+.sf-soql-rail-title { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--sf-muted); flex: 1; }
+.sf-soql-rail-toggle { border: 0; background: transparent; color: var(--sf-muted); cursor: pointer; width: 22px; height: 22px; }
+.sf-soql-search { margin: 0 8px 8px; font: inherit; font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--sf-border); background: var(--sf-elevated); color: var(--sf-text); }
 .sf-soql-rail-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 10px; }
-.sf-soql-section-label { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--sf-soql-muted); padding: 8px 6px 4px; }
-.sf-soql-tree-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; border-radius: 6px; padding: 4px 6px; font-size: 12px; color: var(--sf-soql-text); background: transparent; cursor: pointer; }
-.sf-soql-tree-btn:hover, .sf-soql-tree-btn.is-active { background: color-mix(in srgb, var(--sf-soql-accent) 18%, transparent); }
+.sf-soql-section-label { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--sf-muted); padding: 8px 6px 4px; }
+.sf-soql-tree-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; border-radius: 6px; padding: 4px 6px; font-size: 12px; color: var(--sf-text); background: transparent; cursor: pointer; }
+.sf-soql-tree-btn:hover, .sf-soql-tree-btn.is-active { background: color-mix(in srgb, var(--sf-accent) 18%, transparent); }
 .sf-soql-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sf-soql-tree-meta { margin-left: auto; font-size: 10px; color: var(--sf-soql-muted); }
+.sf-soql-tree-meta { margin-left: auto; font-size: 10px; color: var(--sf-muted); }
 .sf-soql-field-row { display: flex; align-items: center; gap: 6px; padding: 2px 6px; font-size: 12px; }
 .sf-soql-field-row label { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.sf-soql-link { border: 0; background: transparent; color: var(--sf-soql-muted); font-size: 11px; cursor: pointer; }
+.sf-soql-link { border: 0; background: transparent; color: var(--sf-muted); font-size: 11px; cursor: pointer; }
 .sf-soql-stage { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .sf-soql-split { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.sf-soql-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--sf-soql-border); position: relative; }
-.sf-soql-textarea { flex: 1; min-height: 0; resize: none; border: 0; padding: 12px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; background: var(--sf-soql-surface); color: var(--sf-soql-text); }
-.sf-soql-editor-meta { display: flex; flex-wrap:wrap; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--sf-soql-border); }
-.sf-soql-hint { font-size: 11px; color: var(--sf-soql-muted); }
+.sf-soql-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--sf-border); position: relative; }
+.sf-soql-textarea { flex: 1; min-height: 0; resize: none; border: 0; padding: 12px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; background: var(--sf-surface); color: var(--sf-text); }
+.sf-soql-editor-meta { display: flex; flex-wrap:wrap; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--sf-border); }
+.sf-soql-hint { font-size: 11px; color: var(--sf-muted); }
 .sf-soql-editor-error { margin: 0; padding: 6px 10px; font-size: 12px; color: var(--danger, #ff8a8a); }
-.sf-soql-completions { position: absolute; left: 12px; bottom: 42px; max-height: 180px; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--sf-soql-elevated); border: 1px solid var(--sf-soql-border); border-radius: 8px; min-width: 240px; z-index: 2; }
+.sf-soql-completions { position: absolute; left: 12px; bottom: 42px; max-height: 180px; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--sf-elevated); border: 1px solid var(--sf-border); border-radius: 8px; min-width: 240px; z-index: 2; }
 .sf-soql-completions button { display: flex; width: 100%; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; font-size: 12px; padding: 4px 6px; cursor: pointer; }
-.sf-soql-muted { color: var(--sf-soql-muted); margin-left: auto; }
+.sf-soql-muted { color: var(--sf-muted); margin-left: auto; }
 .sf-soql-results { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.sf-soql-results-meta { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; color: var(--sf-soql-muted); }
+.sf-soql-results-meta { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; color: var(--sf-muted); }
 .sf-soql-results-pager { margin-left: auto; display: flex; gap: 6px; }
+.sf-soql-cards { flex: 1; min-height: 0; overflow: auto; display: grid; gap: 6px; padding: 8px; align-content: start; }
+.sf-soql-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated, var(--bg-panel)); padding: 7px 9px; display: grid; gap: 1px; font-size: 12px; }
+.sf-soql-card-title { font-weight: 600; color: var(--accent); text-align: left; }
+.sf-soql-card-row { display: grid; grid-template-columns: minmax(70px, auto) 1fr; gap: 10px; }
+.sf-soql-card-row > span:first-child { color: var(--text-muted); font-size: 11px; }
+.sf-soql-card-row > span:last-child { overflow-wrap: anywhere; }
 .sf-soql-table-wrap { flex: 1; min-height: 0; overflow: auto; }
 .sf-soql-table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12px; }
-.sf-soql-table th, .sf-soql-table td { border-bottom: 1px solid var(--sf-soql-border); padding: 6px 8px; text-align: left; white-space: nowrap; }
-.sf-soql-table th { position: sticky; top: 0; background: var(--sf-soql-elevated); }
-.sf-soql-empty { padding: 16px; font-size: 12px; color: var(--sf-soql-muted); }
-.sf-soql-history { width: 260px; flex-shrink: 0; border-left: 1px solid var(--sf-soql-border); background: var(--sf-soql-sunken); overflow: auto; }
+.sf-soql-table th, .sf-soql-table td { border-bottom: 1px solid var(--sf-border); padding: 6px 8px; text-align: left; white-space: nowrap; }
+.sf-soql-table th { position: sticky; top: 0; background: var(--sf-elevated); }
+.sf-soql-empty { padding: 16px; font-size: 12px; color: var(--sf-muted); }
+.sf-soql-history { width: 260px; flex-shrink: 0; border-left: 1px solid var(--sf-border); background: var(--sf-sunken); overflow: auto; }
 .sf-soql-history-row { display: flex; align-items: center; }
-.sf-soql-search-table { height: 28px; width: 160px; font: inherit; font-size: 12px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sf-soql-border); background: var(--sf-soql-sunken); color: var(--sf-soql-text); }
+.sf-soql-search-table { height: 28px; width: 160px; font: inherit; font-size: 12px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sf-border); background: var(--sf-sunken); color: var(--sf-text); }
 `;
 
 type QueryState = QueryPage & { soql?: string; sobjectName?: string; useToolingApi?: boolean; includeDeleted?: boolean };
@@ -118,7 +126,7 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
   const [accessoryErrors, setAccessoryErrors] = useState<string[]>([]);
   const [inspected, setInspected] = useState<Record<string, unknown> | null>(null);
   const [dialog, setDialog] = useState<{ title: string; message?: string; input?: string; confirm(value: string): void } | null>(null);
-  const [explain, setExplain] = useState<string | null>(null);
+  const [explain, setExplain] = useState<{ plans: unknown } | null>(null);
 
 
 
@@ -309,7 +317,7 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
     const generation = epoch.current;
     try {
       const payload = requireResult<{ plans: unknown }>(await call('soql.explain', { soql, useToolingApi, orgAlias: org?.alias }));
-      if (generation === epoch.current) setExplain(JSON.stringify(payload.plans, null, 2));
+      if (generation === epoch.current) setExplain({ plans: payload.plans });
     } catch (err) { if (generation === epoch.current) setError({ message: String(err) }); }
   };
 
@@ -472,9 +480,9 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
               </select>
             </div>
             {explain ? (
-              <pre className="sf-soql-empty" data-testid="soql-explain">
-                {explain}
-              </pre>
+              <div className="sf-soql-empty" data-testid="soql-explain">
+                <KeyValueList value={explain.plans} />
+              </div>
             ) : (
               <SoqlResultsGrid
                 records={result?.records ?? []}

@@ -16,7 +16,7 @@ import {
   type StudioTool
 } from '../../lib/studio-contract.js';
 import { takeQueuedAgentScriptOpen } from './agent-script-open.js';
-import { parseAgentforcePanelPath } from './agentforce-panel-params.js';
+import { focusKey, parseAgentforcePanelFocus, type StudioFocus } from './agentforce-panel-params.js';
 import { OrgPicker } from './OrgPicker.js';
 import { AgentScriptDocumentBar } from './AgentScriptDocumentBar.js';
 import {
@@ -49,7 +49,7 @@ import { agentDraftKey, readAgentDraft, writeAgentDraft, clearAgentDraft, rememb
 import { NewAgentDialog } from './NewAgentDialog.js';
 import { SaveAgentDialog } from './SaveAgentDialog.js';
 import { EmptyState, LoadingState, SalesforceState } from './components/SalesforceState.js';
-import { PreviewWorkbench } from './preview/PreviewWorkbench.js';
+import { PreviewWorkbench, type PreviewCommand } from './preview/PreviewWorkbench.js';
 import { OperationsPanel } from './panels/OperationsPanel.js';
 import { AssistantRail } from './studio/AssistantRail.js';
 import { ContextStrip } from './studio/ContextStrip.js';
@@ -64,48 +64,47 @@ import { ToolStrip, type StripItem } from './studio/ToolStrip.js';
 import type { QuickOpenItem } from './studio/QuickOpen.js';
 import { layoutForTier, useWidthTier } from './studio/useWidthTier.js';
 import { useStudioLayout, type CompactTool, type EditorTab } from './studio/studio-layout.js';
-import { focusKey, parseStudioFocus, type StudioFocus } from './studio/panel-focus.js';
 import { applyProposalEdits } from './studio/proposal-edits.js';
 import { BottomTests, BottomTrace } from './studio/BottomPanes.js';
+import { STUDIO_TOKENS } from './studio/studio-tokens.js';
 import { useSuites, withSuiteBadges } from './studio/useSuites.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
 export const AGENTFORCE_PANEL_STYLES = `
-.sf-as { --sf-as-surface: var(--bg-panel); --sf-as-elevated: var(--bg-panel, #22262e); --sf-as-sunken: #14161b; --sf-as-border: var(--border, #2c313a); --sf-as-text: var(--text-primary); --sf-as-muted: var(--text-muted, #9aa1ad); --sf-as-accent: var(--accent); }
-.sf-as-header { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 16px; flex-shrink: 0; background: var(--sf-as-elevated); border-bottom: 1px solid var(--sf-as-border); color: var(--sf-as-text); }
+${STUDIO_TOKENS}.sf-as-header { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 16px; flex-shrink: 0; background: var(--sf-elevated); border-bottom: 1px solid var(--sf-border); color: var(--sf-text); }
 .sf-as-brand { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
-.sf-as-crumb { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--sf-as-muted); font-size: 13px; }
-.sf-as-crumb-seg { color: var(--sf-as-muted); white-space: nowrap; }
-.sf-as-crumb-seg:last-child { color: var(--sf-as-text); overflow: hidden; text-overflow: ellipsis; }
-.sf-as-tabs { display: flex; gap: 2px; margin-left: 8px; padding: 2px; border-radius: 999px; border: 1px solid var(--sf-as-border); background: var(--sf-as-sunken); }
-.sf-as-tab { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 500; color: var(--sf-as-muted); background: transparent; cursor: pointer; }
-.sf-as-tab.is-active { color: var(--sf-as-text); background: var(--sf-as-elevated); box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 0 0 1px var(--sf-as-border); }
+.sf-as-crumb { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--sf-muted); font-size: 13px; }
+.sf-as-crumb-seg { color: var(--sf-muted); white-space: nowrap; }
+.sf-as-crumb-seg:last-child { color: var(--sf-text); overflow: hidden; text-overflow: ellipsis; }
+.sf-as-tabs { display: flex; gap: 2px; margin-left: 8px; padding: 2px; border-radius: 999px; border: 1px solid var(--sf-border); background: var(--sf-sunken); }
+.sf-as-tab { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 500; color: var(--sf-muted); background: transparent; cursor: pointer; }
+.sf-as-tab.is-active { color: var(--sf-text); background: var(--sf-elevated); box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 0 0 1px var(--sf-border); }
 .sf-as-spacer { flex: 1; }
-.sf-as-dialect { font: inherit; font-size: 11px; font-weight: 500; color: var(--sf-as-muted); background: transparent; border: 0; }
-.sf-org-picker { font: inherit; font-size: 11px; font-weight: 500; color: var(--sf-as-muted); background: transparent; border: 1px solid var(--sf-as-border); border-radius: 6px; height: 28px; max-width: 240px; padding: 0 6px; }
-.sf-as-save { height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--sf-as-border); background: transparent; color: var(--sf-as-muted); font-size: 12px; font-weight: 600; cursor: pointer; }
-.sf-as-save.is-dirty { background: var(--sf-as-accent); border-color: transparent; color: var(--text-on-accent,#fff); }
+.sf-as-dialect { font: inherit; font-size: 11px; font-weight: 500; color: var(--sf-muted); background: transparent; border: 0; }
+.sf-org-picker { font: inherit; font-size: 11px; font-weight: 500; color: var(--sf-muted); background: transparent; border: 1px solid var(--sf-border); border-radius: 6px; height: 28px; max-width: 240px; padding: 0 6px; }
+.sf-as-save { height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--sf-border); background: transparent; color: var(--sf-muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+.sf-as-save.is-dirty { background: var(--sf-accent); border-color: transparent; color: var(--sf-on-accent); }
 .sf-as-save:disabled { opacity: .45; cursor: default; }
-.sf-as-banner { padding: 6px 16px; font-size: 12px; color: var(--sf-as-muted); border-bottom: 1px solid var(--sf-as-border); }
-.sf-as-banner.is-error { color: var(--danger, #ff8a8a); }
+.sf-as-banner { padding: 6px 16px; font-size: 12px; color: var(--sf-muted); border-bottom: 1px solid var(--sf-border); }
+.sf-as-banner.is-error { color: var(--sf-danger); }
 .sf-as-body { display: flex; flex: 1; min-height: 0; }
-.sf-as-explorer { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sf-as-sunken); border-right: 1px solid var(--sf-as-border); color: var(--sf-as-text); }
+.sf-as-explorer { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sf-sunken); border-right: 1px solid var(--sf-border); color: var(--sf-text); }
 .sf-as-explorer.is-collapsed { width: 36px; }
 .sf-as-explorer-head { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; }
-.sf-as-explorer-title { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--sf-as-muted); flex: 1; }
+.sf-as-explorer-title { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--sf-muted); flex: 1; }
 .sf-as-explorer-toggle, .sf-as-tree-btn { border: 0; background: transparent; color: inherit; cursor: pointer; }
-.sf-as-explorer-toggle { width: 22px; height: 22px; border-radius: 6px; color: var(--sf-as-muted); }
-.sf-as-explorer-search { margin: 0 8px 8px; font: inherit; font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--sf-as-border); background: var(--sf-as-elevated); color: var(--sf-as-text); }
+.sf-as-explorer-toggle { width: 22px; height: 22px; border-radius: 6px; color: var(--sf-muted); }
+.sf-as-explorer-search { margin: 0 8px 8px; font: inherit; font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--sf-border); background: var(--sf-elevated); color: var(--sf-text); }
 .sf-as-explorer-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 10px; }
 .sf-as-section { margin-bottom: 8px; }
-.sf-as-section-label { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--sf-as-muted); padding: 4px 6px; }
-.sf-as-tree-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border-radius: 6px; padding: 4px 6px; font-size: 12px; color: var(--sf-as-text); }
-.sf-as-tree-btn:hover { background: var(--sf-as-elevated); }
-.sf-as-tree-btn.is-active { background: color-mix(in srgb, var(--sf-as-accent) 18%, transparent); box-shadow: inset 2px 0 0 var(--sf-as-accent); }
+.sf-as-section-label { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--sf-muted); padding: 4px 6px; }
+.sf-as-tree-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border-radius: 6px; padding: 4px 6px; font-size: 12px; color: var(--sf-text); }
+.sf-as-tree-btn:hover { background: var(--sf-elevated); }
+.sf-as-tree-btn.is-active { background: color-mix(in srgb, var(--sf-accent) 18%, transparent); box-shadow: inset 2px 0 0 var(--sf-accent); }
 .sf-as-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sf-as-tree-meta { margin-left: auto; font-size: 10px; color: var(--sf-as-muted); }
-.sf-as-empty { padding: 8px 10px; font-size: 12px; color: var(--sf-as-muted); }
+.sf-as-tree-meta { margin-left: auto; font-size: 10px; color: var(--sf-muted); }
+.sf-as-empty { padding: 8px 10px; font-size: 12px; color: var(--sf-muted); }
 .sf-as-stage { flex: 1; min-width: 0; min-height: 0; display: flex; }
 `;
 
@@ -156,9 +155,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const pluginId = props.pluginId || PLUGIN_ID;
   const context = useZccContext();
   const projectId = props.projectId ?? context.projectId ?? undefined;
-  const focus = parseStudioFocus(props.params);
+  const focus = parseAgentforcePanelFocus(props.params);
   const focusSignature = focusKey(focus);
-  const initialPath = parseAgentforcePanelPath(props.params) ?? focus.path ?? props.subPath ?? null;
+  const initialPath = focus.path ?? props.subPath ?? null;
   const settings = useSettings();
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [files, setFiles] = useState<PlaygroundFileRef[]>([]);
@@ -213,6 +212,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [commentBody, setCommentBody] = useState('');
   const [fixBusy, setFixBusy] = useState(false);
   const [previewEngine, setPreviewEngine] = useState<StudioEngine>('rehearse');
+  const [previewCommand, setPreviewCommand] = useState<PreviewCommand | null>(null);
   const [lastRun, setLastRun] = useState<{ runId: string; engine: StudioEngine; turn: number } | null>(null);
   const [graphFocus, setGraphFocus] = useState<{ node: string | null; seq: number }>({ node: null, seq: 0 });
   const [editorCompactOverride, setEditorCompactOverride] = useState<boolean | null>(null);
@@ -438,7 +438,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const firstFocus = useRef(true);
   useEffect(() => {
     if (firstFocus.current) { firstFocus.current = false; return; }
-    const next = parseStudioFocus(props.params);
+    const next = parseAgentforcePanelFocus(props.params);
     if (!Object.keys(next).length) return;
     pendingFocus.current = next;
     if (playgroundReady && next.path && next.path !== activePathRef.current) void openFile(next.path);
@@ -540,8 +540,16 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       })
     },
     preview: {
-      start: ({ engine }) => { if (engine) setPreviewEngine(engine); openTool('preview'); },
-      send: () => { openTool('preview'); throw new Error('Sending a message to the preview is not available from this view yet.'); }
+      start: ({ engine }) => {
+        if (engine) setPreviewEngine(engine);
+        openTool('preview');
+        setPreviewCommand(prev => ({ seq: (prev?.seq ?? 0) + 1, type: 'start', engine }));
+      },
+      send: ({ text, engine }) => {
+        if (engine) setPreviewEngine(engine);
+        openTool('preview');
+        setPreviewCommand(prev => ({ seq: (prev?.seq ?? 0) + 1, type: 'send', text, engine }));
+      }
     },
     traceFocus: () => {
       if (wide) patch({ bottomOpen: true, bottomTab: 'trace' }); else openTool('preview');
@@ -826,7 +834,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
             if (id === 'graph') return <AgentScriptGraphPanel source={source} visible={visible} compact={compact} focusNode={graphFocus.node} focusSeq={graphFocus.seq} onOpenAction={id => { const action = actions.find(row => row.id === id); if (action) openAction(action); }} />;
             if (id === 'preview') return <PreviewWorkbench pluginId={pluginId} projectId={projectId} source={source} fileLabel={activePath?.split('/').pop() ?? exampleTitle ?? 'Draft'}
               engine={previewEngine} onEngineChange={setPreviewEngine} path={activePath ?? undefined} orgAlias={org?.alias} threadId={context.threadId ?? undefined}
-              onRunChange={setLastRun}
+              onRunChange={setLastRun} command={previewCommand}
               onRevealSource={(path, line) => { if (path === activePathRef.current) revealLine(line); else void openFile(path).then(opened => { if (opened) revealLine(line); }); }} />;
             if (id === 'test') return <AgentforceLabPanel pluginId={pluginId} projectId={projectId} source={source} mode="test" fileLabel={activePath?.split('/').pop() ?? exampleTitle ?? 'Draft'} />;
             if (id === 'org-preview') return <AgentforcePreviewPanel pluginId={pluginId} projectId={projectId} />;

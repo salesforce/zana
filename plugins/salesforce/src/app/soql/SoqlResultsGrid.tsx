@@ -1,5 +1,8 @@
 import { cellDisplay, discoverColumns, flattenRecords } from './soql-flatten.js';
+import { useWidthTier } from '../studio/useWidthTier.js';
 import { EmptyState, LoadingState } from '../components/SalesforceState.js';
+
+const NARROW_BREAKPOINT = [520] as const;
 
 export function SoqlResultsGrid(props: {
   hasRun?: boolean;
@@ -13,6 +16,8 @@ export function SoqlResultsGrid(props: {
   onLoadAll?: () => void;
   busy?: boolean;
 }) {
+  const [widthRef, tier] = useWidthTier(NARROW_BREAKPOINT);
+  const narrow = tier === 0;
   const flat = flattenRecords(props.records);
   const columns = discoverColumns(props.records);
   const needle = props.search.trim().toLowerCase();
@@ -32,7 +37,7 @@ export function SoqlResultsGrid(props: {
     );
   }
   return (
-    <div className="sf-soql-results" data-testid="soql-results">
+    <div className="sf-soql-results" data-testid="soql-results" ref={widthRef}>
       <div className="sf-soql-results-meta">
         <span>
           {rows.length}
@@ -51,6 +56,22 @@ export function SoqlResultsGrid(props: {
         ) : null}
       </div>
       {rows.length === 0 && <EmptyState compact art="search" title="No matching rows">Try a different search. Your loaded records are still here.</EmptyState>}
+      {narrow ? (
+        <div className="sf-soql-cards" data-testid="soql-cards">
+          {rows.map((row, index) => {
+            const [titleCol, ...rest] = columns.includes('Name') ? ['Name', ...columns.filter(col => col !== 'Name')] : columns;
+            const title = cellDisplay(row[titleCol!]);
+            return (
+              <div className="sf-soql-card" key={String(row.Id ?? index)}>
+                {props.onSelectRecord
+                  ? <button type="button" className="sf-link sf-soql-card-title" onClick={() => props.onSelectRecord?.(props.records[flat.indexOf(row)])}>{title}</button>
+                  : <b className="sf-soql-card-title">{title}</b>}
+                {rest.map(col => <div className="sf-soql-card-row" key={col}><span>{col}</span><span>{cellDisplay(row[col])}</span></div>)}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
       <div className="sf-soql-table-wrap">
         <table className="sf-soql-table">
           <thead>
@@ -71,6 +92,7 @@ export function SoqlResultsGrid(props: {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
