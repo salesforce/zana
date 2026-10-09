@@ -1,21 +1,21 @@
 {
   "schemaVersion": 1,
   "package": "sf-agentic-tools",
-  "version": "0.1.0",
-  "tag": "v0.1.0",
-  "sourceCommit": "06188958bb84c1d8bee3aba084a866c3d3921eb5",
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "sourceCommit": "f99f878eeacf8510a20be3c64994f1780d70e978",
   "node": ">=22.19",
-  "npmIntegrity": "sha512-/75pvnpJlZHzDTvxdDlcfEirMQ/cs6KzkUCaWO6gWnBY+P7SEgFPhqNgYWbhFS6a72DrfXHZLWJcEUf9jK54SQ==",
+  "npmIntegrity": "sha512-AbjRT9wAY1fK7GPP3XyF2B7NoT/hyRbYtI4Tl+GjSLgAZ8M/w8I/UF6Li614rtdfT4TFD5NHL612LfBzcGROQA==",
   "assets": [
     {
-      "name": "sf-agentic-tools-0.1.0.tgz",
-      "size": 1637972,
-      "sha256": "164ccae8e25184ee50d61e5cd06f3d3f16f6c7baada0c07c388d141179b7e851"
+      "name": "sf-agentic-tools-0.2.0.tgz",
+      "size": 1697905,
+      "sha256": "5ac455469b8226e92c81f12bff0603f83d35ddbc7f9bad3791bcbafb8e8cd0d4"
     },
     {
-      "name": "sf-agentic-tools-0.1.0-catalog.json",
-      "size": 181643,
-      "sha256": "2d5261fa463ee547e4550bb1190beaab530583f2bf49b8c1649f89a25c198df5"
+      "name": "sf-agentic-tools-0.2.0-catalog.json",
+      "size": 182901,
+      "sha256": "a5f078d80aee6ef32b4236c0dec512d75611bf91f6450db5b4d5d8c0501c1d16"
     }
   ]
 }

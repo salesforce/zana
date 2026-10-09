@@ -46,7 +46,7 @@
     "fast-xml-parser": "5.11.1",
     "lucide-react": "^1.47.0",
     "monaco-editor": "^0.54.0",
-    "sf-agentic-tools": "file:vendor/sf-agentic-tools-0.1.0.tgz"
+    "sf-agentic-tools": "file:vendor/sf-agentic-tools-0.2.0.tgz"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",

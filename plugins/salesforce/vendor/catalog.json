@@ -1122,6 +1122,10 @@
             "type": "boolean",
             "description": "Optional for action='generate_spec'. Include evidence-backed same-session scenarios for provable after_response state and branch behavior. Default true."
           },
+          "include_voice_tests": {
+            "type": "boolean",
+            "description": "Optional for action='generate_spec'. Include the concise greeting and distressed-caller probes for Voice agents. Default true."
+          },
           "include_guardrail": {
             "type": "boolean",
             "description": "Optional for action='generate_spec'. Include the curated off-topic guardrail probe. Default true."
@@ -1376,10 +1380,11 @@
           "api": {
             "type": "string",
             "enum": [
+              "auto",
               "rest",
               "tooling"
             ],
-            "description": "Query API mode. Default rest."
+            "description": "Query API mode. Default auto resolves from current-org schema evidence."
           },
           "max_rows": {
             "type": "number",
@@ -1474,8 +1479,9 @@
         }
       },
       "guidance": [
-        "Use sf_soql before raw CLI and establish current schema/relationship evidence before relying on custom names.",
-        "Prefer validation, count, or sample before broad execution; queryAll/deleted-row scope must be explicit and disclosed.",
+        "Use sf_soql before raw CLI; query actions perform API-aware schema preflight before execution.",
+        "Omit api for automatic REST/Tooling resolution; explicit api selections stay strict.",
+        "Prefer count or sample before broad execution; queryAll/deleted-row scope must be explicit and disclosed.",
         "Use the guidePath returned by tools describe for Tooling API, query-plan, artifact, and export guidance."
       ],
       "guide": "sf-soql/AGENT_GUIDE.md"
@@ -1563,11 +1569,14 @@
           },
           "user_id": {
             "type": "string",
-            "description": "Tooling User Id to trace/read logs for."
+            "description": "15- or 18-character Tooling User Id to trace/read logs for.",
+            "pattern": "^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$"
           },
           "duration_minutes": {
-            "type": "number",
-            "description": "Trace duration. Default 30, max 120."
+            "type": "integer",
+            "description": "Trace duration in minutes. Default 30, range 1..120.",
+            "minimum": 1,
+            "maximum": 120
           },
           "wait_seconds": {
             "type": "number",
@@ -1902,7 +1911,7 @@
       "name": "sf_flow",
       "owner": "sf-flow",
       "available": true,
-      "description": "Lean Salesforce Flow lifecycle tool: core-five authoring plans, project scan, local diagnostics and Mermaid topology, source-bound safe quick fixes, check-only validation, explicit guarded activation/deactivation, and targeted Flow tests.",
+      "description": "Lean Salesforce Flow lifecycle tool: core-five plus queue, direct-agent, skills, availability, and no-route Omni-Channel authoring; project scan; local diagnostics and Mermaid topology; source-bound quick fixes; check-only validation; guarded lifecycle; and targeted Flow tests.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -1969,9 +1978,27 @@
               "autolaunched",
               "record-triggered",
               "schedule-triggered",
-              "platform-event-triggered"
+              "platform-event-triggered",
+              "omni-channel"
             ],
-            "description": "Explicit core Flow family when intent alone is ambiguous."
+            "description": "Explicit supported Flow family when intent alone is ambiguous."
+          },
+          "omni_destination": {
+            "type": "string",
+            "enum": [
+              "queue",
+              "agent",
+              "skills"
+            ],
+            "description": "Omni-Channel Route Work destination for author.plan."
+          },
+          "omni_check_availability": {
+            "type": "boolean",
+            "description": "Add Check Availability and an intentional no-route branch to an Omni-Channel authoring plan."
+          },
+          "omni_no_route": {
+            "type": "boolean",
+            "description": "Add an explicit no-route branch with reasonForNotRouting to an Omni-Channel authoring plan."
           },
           "object": {
             "type": "string",

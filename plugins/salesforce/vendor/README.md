@@ -1,7 +1,7 @@
-# sf-agentic-tools v0.1.0
+# sf-agentic-tools v0.2.0
 
-Pinned release from the local sf-agentic-tools project, tag v0.1.0, source commit
-06188958bb84c1d8bee3aba084a866c3d3921eb5. The archive, catalog and release manifest
+Pinned release from the local sf-agentic-tools project, tag v0.2.0, source commit
+f99f878eeacf8510a20be3c64994f1780d70e978. The archive, catalog and release manifest
 retain their published hashes. SHA256SUMS uses the local catalog filename.
 
 To upgrade, replace the archive, manifest, catalog, notice/license and checksums,

@@ -38,7 +38,7 @@ export class SalesforceToolkitAdapter {
   }) {}
 
   async catalog() {
-    return { ok: true, provider: await this.deps.provider(), version: '0.1.0', tools: descriptions.map(({ name, description }) => ({ name, description })) };
+    return { ok: true, provider: await this.deps.provider(), version: '0.2.0', tools: descriptions.map(({ name, description }) => ({ name, description })) };
   }
   async describe(name: string) {
     const item = descriptions.find(item => item.name === name);

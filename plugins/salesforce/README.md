@@ -110,7 +110,7 @@ never depend on sf-agentic-tools. Other plugins consume `SalesforcePluginSdk`
 from this plugin's `/sdk` export (`toolCatalog`, `toolDescribe`, `toolInvoke`,
 `toolReadResult`) instead of importing toolkit internals.
 
-The pinned v0.1.0 release is vendored with its manifest, SHA-256 and license under
+The pinned v0.2.0 release is vendored with its manifest, SHA-256 and license under
 `vendor/`. `build-toolkit.mjs` verifies it and builds a standalone SDK plus its
 runtime resources; release packages ship `toolkit-runtime`, with no dependency
 on the source checkout or node_modules. CLI prerequisites such as Salesforce CLI

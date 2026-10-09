@@ -17,7 +17,7 @@ export function assertToolkitImports(outputs) {
 
 /** Keep the SDK's import.meta.url assets separate from the host's server bundle. */
 export async function buildToolkitRuntime(output = join(pluginRoot, 'toolkit-runtime')) {
-  const tarball = await readFile(join(pluginRoot, 'vendor/sf-agentic-tools-0.1.0.tgz'));
+  const tarball = await readFile(join(pluginRoot, 'vendor/sf-agentic-tools-0.2.0.tgz'));
   const manifest = JSON.parse(await readFile(join(pluginRoot, 'vendor/release-manifest.json'), 'utf8'));
   if (createHash('sha256').update(tarball).digest('hex') !== manifest.assets.find(a => a.name.endsWith('.tgz')).sha256) throw Error('Toolkit release integrity mismatch');
   const catalog = await readFile(join(pluginRoot, 'vendor/catalog.json'));

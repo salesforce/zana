@@ -1677,8 +1677,8 @@ importers:
         specifier: ^0.54.0
         version: 0.54.0
       sf-agentic-tools:
-        specifier: file:vendor/sf-agentic-tools-0.1.0.tgz
-        version: file:plugins/salesforce/vendor/sf-agentic-tools-0.1.0.tgz(supports-color@8.1.1)
+        specifier: file:vendor/sf-agentic-tools-0.2.0.tgz
+        version: file:plugins/salesforce/vendor/sf-agentic-tools-0.2.0.tgz(supports-color@8.1.1)
     devDependencies:
       '@types/react':
         specifier: ^19.2.18
@@ -10864,9 +10864,9 @@ packages:
   setprototypeof@1.2.0:
     resolution: {integrity: sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw==}
 
-  sf-agentic-tools@file:plugins/salesforce/vendor/sf-agentic-tools-0.1.0.tgz:
-    resolution: {integrity: sha512-/75pvnpJlZHzDTvxdDlcfEirMQ/cs6KzkUCaWO6gWnBY+P7SEgFPhqNgYWbhFS6a72DrfXHZLWJcEUf9jK54SQ==, tarball: file:plugins/salesforce/vendor/sf-agentic-tools-0.1.0.tgz}
-    version: 0.1.0
+  sf-agentic-tools@file:plugins/salesforce/vendor/sf-agentic-tools-0.2.0.tgz:
+    resolution: {integrity: sha512-AbjRT9wAY1fK7GPP3XyF2B7NoT/hyRbYtI4Tl+GjSLgAZ8M/w8I/UF6Li614rtdfT4TFD5NHL612LfBzcGROQA==, tarball: file:plugins/salesforce/vendor/sf-agentic-tools-0.2.0.tgz}
+    version: 0.2.0
     engines: {node: '>=22.19'}
     hasBin: true
 
@@ -15414,7 +15414,7 @@ snapshots:
       debounce: 1.2.1
       vscode-languageclient: 9.0.1
       vscode-languageserver: 9.0.1
-      vscode-languageserver-protocol: 3.17.5
+      vscode-languageserver-protocol: 3.18.3
       vscode-languageserver-textdocument: 1.0.14
 
   '@salesforce/source-deploy-retrieve@13.4.3(supports-color@8.1.1)':
@@ -22268,7 +22268,7 @@ snapshots:
 
   setprototypeof@1.2.0: {}
 
-  sf-agentic-tools@file:plugins/salesforce/vendor/sf-agentic-tools-0.1.0.tgz(supports-color@8.1.1):
+  sf-agentic-tools@file:plugins/salesforce/vendor/sf-agentic-tools-0.2.0.tgz(supports-color@8.1.1):
     dependencies:
       '@dagrejs/dagre': 1.1.8
       '@lwc/compiler': 9.4.3(supports-color@8.1.1)
