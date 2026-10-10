@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import { envelopeTitle } from '../lib/guardrail.js';
-import { createKvArtifactStore } from '../lib/artifacts.js';
+import { ARTIFACT_RETENTION, createKvArtifactStore } from '../lib/artifacts.js';
 import { compactError } from '../lib/dx-project.js';
 import { AGENT_SCRIPT_EXAMPLES } from '../lib/agent-script-model.js';
 import type { SalesforceDeps, SalesforceRequest } from '../lib/types.js';
@@ -729,6 +729,9 @@ describe('salesforce family tools', () => {
     harness.submitInteraction({ approved: true });
     await expect(live).resolves.toMatchObject({ ok: true });
     expect(seen).toContain('--use-live-actions');
+    // Ending a Live session runs no actions, so it never waits for an approval.
+    const ended = harness.callRpc('agentPreview.end', { threadId: 'thr-1', sessionId: 'sess-1', path: 'force-app/main/default/agents/MyBot.agent', live: true });
+    await expect(Promise.race([ended, new Promise(resolve => setTimeout(() => resolve('awaiting approval'), 50))])).resolves.toMatchObject({ ok: true });
     await expect(
       harness.callRpc('agentPreview.start', { path: 'force-app/main/default/agents/MyBot.agent' })
     ).resolves.toMatchObject({ ok: true });
@@ -1103,13 +1106,50 @@ describe('salesforce helpers', () => {
     expect(envelopeTitle('agent.preview.live')).toMatch(/live preview/i);
   });
 
+  it('keeps kv artifacts unique and bounded, pruning legacy ones first', async () => {
+    const kv = new Map<string, unknown>([['artifact:soql-legacy', '{}'], ['settings', 'kept']]);
+    let failList = false;
+    const store = createKvArtifactStore({
+      get: async (key) => kv.get(key) as never,
+      set: async (key, value) => {
+        kv.set(key, value);
+      },
+      delete: async (key) => {
+        kv.delete(key);
+      },
+      list: async (prefix) => {
+        if (failList) throw new Error('kv offline');
+        return [...kv.keys()].filter((key) => !prefix || key.startsWith(prefix));
+      }
+    });
+    const ids: string[] = [];
+    for (let i = 0; i < ARTIFACT_RETENTION + 1; i += 1) ids.push(await store.put('agent-preview', { i }));
+    // Same-millisecond puts never overwrite each other.
+    expect(new Set(ids).size).toBe(ids.length);
+    const kept = [...kv.keys()].filter((key) => key.startsWith('artifact:'));
+    expect(kept).toHaveLength(ARTIFACT_RETENTION);
+    expect(kv.has('artifact:soql-legacy')).toBe(false);
+    expect(kv.has(`artifact:${ids[0]}`)).toBe(false);
+    await expect(store.get(ids.at(-1)!)).resolves.toEqual({ i: ARTIFACT_RETENTION });
+    expect(kv.get('settings')).toBe('kept');
+    // A failed prune still returns the stored artifact.
+    kv.delete('artifact-index');
+    failList = true;
+    const late = await store.put('soql', { late: true });
+    await expect(store.get(late)).resolves.toEqual({ late: true });
+  });
+
   it('round-trips kv artifacts and formats API errors', async () => {
     const kv = new Map<string, unknown>();
     const store = createKvArtifactStore({
       get: async (key) => kv.get(key) as never,
       set: async (key, value) => {
         kv.set(key, value);
-      }
+      },
+      delete: async (key) => {
+        kv.delete(key);
+      },
+      list: async (prefix) => [...kv.keys()].filter((key) => !prefix || key.startsWith(prefix))
     });
     const id = await store.put('soql', { ok: true });
     await expect(store.get(id)).resolves.toEqual({ ok: true });

@@ -52,7 +52,7 @@ export class AgentforceLab {
   private session(input: unknown): Session {
     this.prune();
     const s = this.sessions.get(labText(labRecord(input).id, 'Session', 128));
-    if (!s || s.scope !== this.deps.scope()) throw new Error('This rehearsal has expired or belongs to another project. Start a new run.');
+    if (!s || s.scope !== this.deps.scope()) throw new Error('This run has expired or belongs to another project. Start a new run.');
     s.touched = this.now();
     return s;
   }

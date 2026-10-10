@@ -200,6 +200,12 @@ body.is-resizing-split iframe {
   font-size: 13px;
 }
 
+.graph-empty p {
+  margin: 0;
+  max-width: 320px;
+  line-height: 1.6;
+}
+
 .graph-empty code {
   font-size: 12px;
   padding: 1px 5px;

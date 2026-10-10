@@ -27,11 +27,17 @@ export interface PreviewWorkbenchProps {
   onRunChange?(run: { runId: string; engine: StudioEngine; turn: number } | null): void;
   /** Controlled command from the host (`preview.start` / `preview.send`); each new `seq` runs once in the selected engine. */
   command?: PreviewCommand | null;
+  /** Called once the command is taken, so the host can drop it and a remount never replays it. */
+  onCommandHandled?(seq: number): void;
+  /** The editor has unsaved changes: Live runs the saved file. */
+  dirty?: boolean;
 }
 
 export interface PreviewCommand { seq: number; type: 'start' | 'send'; text?: string; engine?: StudioEngine }
 
 type SuiteEntry = ScenarioSuite & { sha256?: string };
+/** A started run and the context it was started in, so it is ended against the same project, file and thread. */
+type ActiveRun = { id: string; engine: StudioEngine; projectId?: string; path?: string; threadId?: string };
 type Rpc<T> = { ok?: boolean; error?: string; data?: T } & Record<string, unknown>;
 const ENGINE_COPY: Record<StudioEngine, { title: string; hint: string }> = {
   rehearse: { title: 'Rehearse', hint: 'AI plays your script · no runtime' },
@@ -89,6 +95,7 @@ function download(name: string, data: unknown) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 const unavailable = (runId: string, reason: string, planId?: string): TurnTrace => ({ runId, turn: 0, ...(planId ? { planId } : {}), available: false, reason, steps: [] });
+const LIVE_TRACE_REASON = 'Live runs do not return a planner trace here. Use Simulate to see how the agent decided.';
 
 export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   const { pluginId, projectId, path } = props;
@@ -112,7 +119,9 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   const [saveCriteria, setSaveCriteria] = useState('');
   const [compare, setCompare] = useState<[string, string] | null>(null);
   const alive = useRef(true);
-  const active = useRef<{ id: string; engine: StudioEngine } | null>(null);
+  const active = useRef<ActiveRun | null>(null);
+  // Bumped whenever the run is released, so a start that resolves afterwards knows it was superseded.
+  const epoch = useRef(0);
   const locked = useRef(false);
 
   const rpc = useCallback(async <T,>(method: string, args: Record<string, unknown> = {}): Promise<Rpc<T>> => {
@@ -120,14 +129,31 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     return result ?? { ok: false, error: 'No response.' };
   }, [pluginId, projectId]);
 
+  const close = useCallback(async (run: ActiveRun): Promise<Rpc<unknown>> => {
+    const live = run.engine === 'live';
+    const result = await callPluginRpc(pluginId, live ? 'agentPreview.end' : 'agentLab.end', {
+      ...(run.projectId ? { projectId: run.projectId } : {}),
+      ...(live ? { sessionId: run.id, path: run.path, live: true, ...(run.threadId ? { threadId: run.threadId } : {}) } : { id: run.id })
+    }) as Rpc<unknown>;
+    return result ?? { ok: false, error: 'No response.' };
+  }, [pluginId]);
   const release = useCallback(() => {
+    epoch.current += 1;
     const current = active.current;
     active.current = null;
-    if (!current) return;
-    const method = current.engine === 'live' ? 'agentPreview.end' : 'agentLab.end';
-    void callPluginRpc(pluginId, method, { ...(projectId ? { projectId } : {}), ...(current.engine === 'live' ? { sessionId: current.id, path, live: true } : { id: current.id }) }).catch(() => undefined);
-  }, [pluginId, projectId, path]);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; release(); }; }, [release]);
+    setSessionId(null);
+    if (current) void close(current).catch(() => undefined);
+  }, [close]);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // A run belongs to the file it started from: opening another file ends it, while saving a new draft keeps it.
+  const shownPath = useRef(path);
+  useEffect(() => {
+    const previous = shownPath.current;
+    shownPath.current = path;
+    if (previous && previous !== path) release();
+  }, [path, release]);
+  // Switching project or unmounting ends the run.
+  useEffect(() => release, [projectId, release]);
 
   // Keep a bounded history of runs (compare / export) and tell the host which run is active.
   useEffect(() => {
@@ -166,30 +192,36 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   }
 
   async function start() {
-    if (active.current) { release(); }
-    setTurns([]); setTraces({}); setOpen({}); setTracing({}); setSessionId(null);
+    release();
+    setTurns([]); setTraces({}); setOpen({}); setTracing({});
+    const started = epoch.current;
+    const owner = { engine, ...(projectId ? { projectId } : {}), ...(path ? { path } : {}), ...(props.threadId ? { threadId: props.threadId } : {}) };
     const lab = engineToLab(engine);
+    let run: ActiveRun; let first: RunTurn[] = [];
     if (lab) {
       const res = await rpc<LabSnapshot>('agentLab.start', { engine: lab, source: props.source });
       if (!res.ok || !res.data) throw new Error(res.error || 'The preview could not start.');
-      active.current = { id: res.data.id, engine };
-      setSessionId(res.data.id); setTurns(snapshotTurns(res.data));
+      run = { ...owner, id: res.data.id }; first = snapshotTurns(res.data);
     } else {
       const res = await rpc<{ sessionId?: string | null }>('agentPreview.start', { threadId: props.threadId, orgAlias: props.orgAlias, path, live: true });
       const id = res.data?.sessionId;
       if (!res.ok || !id) throw new Error(res.error || 'Live preview could not start.');
-      active.current = { id, engine };
-      setSessionId(id);
+      run = { ...owner, id };
     }
+    // The panel closed or the file changed while starting: nobody owns this run, so end it.
+    if (started !== epoch.current) { void close(run).catch(() => undefined); return; }
+    active.current = run;
+    setSessionId(run.id); setTurns(first);
     setRunEngine(engine); setRunSource(props.source);
   }
   async function end() {
     const current = active.current;
     if (!current) return;
     active.current = null;
-    if (current.engine === 'live') await rpc('agentPreview.end', { sessionId: current.id, path, live: true, orgAlias: props.orgAlias, threadId: props.threadId });
-    else await rpc('agentLab.end', { id: current.id });
-    if (alive.current) setSessionId(null);
+    setSessionId(null);
+    const res = await close(current).catch((err: unknown) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+    // A lab run is a local handle that is gone either way; a Live session may still be open on the org.
+    if (current.engine === 'live' && !res.ok) throw new Error(`The Live session may still be open on the org: ${res.error || 'it did not confirm the end.'}`);
   }
   async function send(event?: FormEvent) {
     event?.preventDefault();
@@ -203,7 +235,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     if (!current) return;
     if (current.engine === 'live') {
       setTurns(prev => [...prev, { role: 'user', text }]);
-      const res = await rpc<{ response?: string; planId?: string }>('agentPreview.send', { sessionId: current.id, utterance: text, path, live: true, orgAlias: props.orgAlias, threadId: props.threadId });
+      const res = await rpc<{ response?: string; planId?: string }>('agentPreview.send', { sessionId: current.id, utterance: text, path: current.path, live: true, orgAlias: props.orgAlias, threadId: current.threadId });
       if (!res.ok) throw new Error(res.error || 'The agent did not respond.');
       const reply = res.data?.response?.trim();
       if (reply) setTurns(prev => [...prev, { role: 'agent', text: reply, ...(res.data?.planId ? { planId: res.data.planId } : {}) }]);
@@ -222,6 +254,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     if (command.engine && command.engine !== engine) return;
     if (locked.current) return;
     handledSeq.current = command.seq;
+    props.onCommandHandled?.(command.seq);
     void perform(async () => {
       if (liveBlocked) throw new Error('Live preview needs a saved .agent file.');
       if (command.type === 'start' || !active.current || active.current.engine !== engine) await start();
@@ -238,7 +271,8 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     const next = !open[index];
     setOpen(prev => ({ ...prev, [index]: next }));
     const run = sessionId;
-    if (!next || !run || runEngine === 'rehearse' || !turn.planId || traces[turn.planId]) return;
+    // Only Simulate has a runtime trace; a failed fetch is retried on the next expand.
+    if (!next || !run || runEngine !== 'simulate' || !turn.planId || traces[turn.planId]?.available) return;
     const planId = turn.planId;
     setTracing(prev => ({ ...prev, [index]: true }));
     try {
@@ -295,7 +329,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
         {running && turns.some(t => t.role === 'user') && <button type="button" className="sf-pw-btn" disabled={!path} title={path ? 'Save this conversation as a scenario' : 'Open a saved .agent file to save scenarios'} onClick={() => setSaving(s => !s)}>Save as scenario</button>}
       </div>
       <div className={engine === 'live' ? 'sf-pw-hint is-warn' : 'sf-pw-hint'}>
-        {engine === 'rehearse' ? `${REHEARSE_LABEL}. An AI model plays your script.` : engine === 'simulate' ? 'Compiles this draft through the Preview API. Actions are simulated.' : liveBlocked ? 'Open a saved .agent file to run Live.' : `Live runs real actions${props.orgAlias ? ` on ${props.orgAlias}` : ' on the connected org'}.`}
+        {engine === 'rehearse' ? `${REHEARSE_LABEL}. An AI model plays your script.` : engine === 'simulate' ? 'Compiles this draft through the Preview API. Actions are simulated.' : liveBlocked ? 'Open a saved .agent file to run Live.' : `Live runs real actions${props.orgAlias ? ` on ${props.orgAlias}` : ' on the connected org'}.${props.dirty ? ' It runs the saved file, so save to include your edits.' : ''}`}
         {stale && ' Your script changed; start a new run to test the edits.'}
       </div>
       {error && <div className="sf-pw-err" role="alert">{error}</div>}
@@ -322,9 +356,12 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
                   {open[index] && (
                     runEngine === 'rehearse'
                       ? <TracePanel trace={null} approximation />
+                      : runEngine === 'live'
+                        ? <TracePanel trace={unavailable(sessionId ?? '', LIVE_TRACE_REASON)} />
                       : !turn.planId
                         ? <TracePanel trace={unavailable(sessionId ?? '', 'This turn has no plan id, so there is no runtime trace.')} />
-                        : <TracePanel trace={traces[turn.planId] ?? null} loading={Boolean(tracing[index])} onRevealSource={props.onRevealSource} />
+                        // An ended run keeps its conversation, but only traces fetched while it ran.
+                        : <TracePanel trace={traces[turn.planId] ?? (running ? null : unavailable('', 'This run has ended, so its runtime trace is no longer available. Start a new run to trace replies.', turn.planId))} loading={Boolean(tracing[index])} onRevealSource={props.onRevealSource} />
                   )}
                 </>
               )}

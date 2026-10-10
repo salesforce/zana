@@ -78,7 +78,8 @@ export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEd
   if (isPlaceholderAgentGraph(props.nodes)) {
     return (
       <div className="graph-empty" role="status">
-        No topics defined. Add a <code>start_agent</code> or <code>topic</code> in the Script view.
+        {/* One grid item: bare text and <code> children would each become a separate row. */}
+        <p>No topics defined. Add a <code>start_agent</code> or <code>topic</code> in the Script view.</p>
       </div>
     );
   }

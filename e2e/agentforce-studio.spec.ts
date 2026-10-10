@@ -647,6 +647,78 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   expect(refused).toMatchObject({ ok: false, code: 'invalid_context' });
 });
 
+test('Agentforce Studio: no-file entry points reach org agents, an explorer org agent opens, and the empty graph reads as one hint', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => { const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id; }, join(home, 'dx'));
+  await page.evaluate(async id => { await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' }); history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate')); }, projectId);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = page.getByTestId('salesforce-agent-script-panel');
+  await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', 'wide');
+  const noFile = studio.getByTestId('salesforce-agent-script-no-file');
+  await expect(noFile).toBeVisible({ timeout: 30_000 });
+  const agentsTab = studio.locator('.af-tools').getByRole('tab', { name: 'Agents', exact: true });
+  const search = studio.getByRole('region', { name: 'Org agents' }).getByRole('textbox', { name: 'Search org agents' });
+
+  // The empty state's actions sit with its message instead of floating far below it.
+  const message = await noFile.locator('.sf-state-hint').boundingBox();
+  const openOrgAgents = noFile.getByRole('button', { name: 'Open org agents', exact: true });
+  expect((await openOrgAgents.boundingBox())!.y - (message!.y + message!.height)).toBeLessThan(48);
+  await openOrgAgents.click();
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(search).toBeFocused();
+
+  // An empty graph is a single readable hint, not one row per text run and code chip.
+  await openTool(studio, 'Graph view');
+  const hint = page.frameLocator('iframe[title="AgentScript graph"]').locator('.graph-empty');
+  await expect(hint).toContainText('No topics defined. Add a start_agent or topic in the Script view.');
+  expect(await hint.evaluate(el => [...el.childNodes].map(node => node.nodeName))).toEqual(['P']);
+  expect((await hint.locator('p').boundingBox())!.height).toBeLessThan(80);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('empty-graph-hint.png'));
+
+  // The explorer link switches back to Agents, and re-asking while Agents is already open still lands focus in its search.
+  const explorer = studio.getByTestId('salesforce-agent-script-explorer');
+  // No local file matches, so the project section offers the org instead, next to the matching org agent row.
+  await explorer.getByRole('textbox', { name: 'Filter Agentforce files' }).fill('Agent_0');
+  const browse = explorer.getByRole('button', { name: 'Browse agents in your org', exact: true });
+  await browse.click();
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(search).toBeFocused();
+  await search.blur();
+  await expect(search).not.toBeFocused();
+  await browse.click();
+  await expect(search).toBeFocused();
+
+  // An org agent row retrieves and opens that agent rather than only showing the list.
+  await openTool(studio, 'Graph view');
+  const orgAgents = explorer.getByTestId('sf-explorer-org-agent');
+  await orgAgents.getByRole('button', { name: 'Agent_0', exact: true }).click();
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(search).toHaveValue('Agent_0');
+  await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toContainText('Retrieved to your project', { timeout: 30_000 });
+  await expect(studio.locator('.af-document-name')).toHaveText('Agent_0_v1.agent');
+  await expect(noFile).toBeHidden();
+  const retrievals = readFileSync(join(home, 'agent-retrievals.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  expect(retrievals.map(row => row.args.join(' '))).toEqual([expect.stringContaining('AiAuthoringBundle:Agent_0_v1')]);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('explorer-org-agent-opened.png'));
+
+  // Reopening a closed Agents tab starts clean instead of replaying the last request.
+  const sidePanel = studio.locator('.af-tools');
+  await sidePanel.getByRole('button', { name: 'Close Agents', exact: true }).click();
+  await sidePanel.getByRole('button', { name: 'Add side panel tab', exact: true }).click();
+  await sidePanel.getByRole('button', { name: /^Agents/ }).click();
+  await expect(studio.getByRole('region', { name: 'Org agents' }).getByText('Z Last', { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(search).toHaveValue('');
+  await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 
 test('Agentforce Studio: create local agents and control the visible workbench through the CLI', async ({ app, home }, testInfo) => {
   const page = app.window;
