@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { useThreads, type ThreadListItem } from '../../thread-store.js';
 
@@ -40,6 +40,8 @@ function stubConfirm(answer: boolean) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  threads.archive.mockClear();
+  threads.closeFollowup.mockClear();
   useThreads.setState({ threads: [] });
 });
 
@@ -64,6 +66,22 @@ describe('ThreadDetailOverflow running-process warning', () => {
     choose('Close with follow-up');
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('2 background processes running'));
     expect(threads.closeFollowup).not.toHaveBeenCalled();
+  });
+
+  it('archives and drops the row once the warning is accepted', async () => {
+    useThreads.setState({ threads: [row(1)] });
+    stubConfirm(true);
+    choose('Archive');
+    expect(threads.archive).toHaveBeenCalledWith(id);
+    await waitFor(() => expect(useThreads.getState().threads).toHaveLength(0));
+  });
+
+  it('closes with follow-up once the warning is accepted', async () => {
+    useThreads.setState({ threads: [row(1)] });
+    stubConfirm(true);
+    choose('Close with follow-up');
+    expect(threads.closeFollowup).toHaveBeenCalledWith(id);
+    await waitFor(() => expect(useThreads.getState().threads).toHaveLength(0));
   });
 
   it('keeps the plain prompt when nothing is running', () => {
