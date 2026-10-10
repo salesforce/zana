@@ -528,3 +528,102 @@ describe("inbound request decoding", () => {
     });
   });
 });
+
+describe("buildCommandPlan lifecycle commands", () => {
+  it("plans initialize as a noop because the handshake runs post-spawn", () => {
+    const adapter = makeAdapter();
+    expect(adapter.buildCommandPlan({ type: "initialize" })).toEqual({
+      kind: "noop",
+      reason: "initialize handled post-spawn",
+    });
+  });
+
+  it("plans thread/resume with the provider thread id and wire options", () => {
+    const adapter = makeAdapter();
+    const plan = adapter.buildCommandPlan({
+      type: "thread/resume",
+      threadId: "thr_1",
+      cwd: "/w",
+      providerThreadId: "p_1",
+      options: fullModeOptions,
+      instructionMode: "append",
+    });
+    expect(plan).toMatchObject({
+      kind: "request",
+      method: "thread/resume",
+      params: {
+        threadId: "thr_1",
+        cwd: "/w",
+        providerThreadId: "p_1",
+        instructionMode: "append",
+      },
+    });
+    expect(plan.kind === "request" ? plan.params : {}).not.toHaveProperty(
+      "dynamicTools",
+    );
+  });
+
+  it("forwards dynamic and disallowed tools on resume when provided", () => {
+    const adapter = makeAdapter();
+    const plan = adapter.buildCommandPlan({
+      type: "thread/resume",
+      threadId: "thr_1",
+      cwd: "/w",
+      providerThreadId: "p_1",
+      options: fullModeOptions,
+      instructionMode: "replace",
+      disallowedTools: ["Bash"],
+    });
+    expect(plan).toMatchObject({
+      kind: "request",
+      params: { disallowedTools: ["Bash"], instructionMode: "replace" },
+    });
+  });
+
+  it("plans thread/discard as an ungated request", () => {
+    const adapter = makeAdapter();
+    expect(
+      adapter.buildCommandPlan({
+        type: "thread/discard",
+        threadId: "thr_1",
+        providerThreadId: "p_1",
+      }),
+    ).toEqual({
+      kind: "request",
+      method: "thread/discard",
+      params: { threadId: "thr_1", providerThreadId: "p_1" },
+    });
+  });
+
+  it("gates thread/unarchive on the threadArchive capability", () => {
+    const adapter = makeAdapter();
+    const command = {
+      type: "thread/unarchive",
+      threadId: "thr_1",
+      providerThreadId: "p_1",
+    } as const;
+    expect(adapter.buildCommandPlan(command)).toMatchObject({ kind: "noop" });
+    completeHandshake(adapter, { threadArchive: true });
+    expect(adapter.buildCommandPlan(command)).toEqual({
+      kind: "request",
+      method: "thread/unarchive",
+      params: { threadId: "thr_1", providerThreadId: "p_1" },
+    });
+  });
+
+  it("sends thread/goal/clear once the bridge advertises threadGoalClear", () => {
+    const adapter = makeAdapter();
+    completeHandshake(adapter, { threadGoalClear: true });
+    expect(
+      adapter.buildCommandPlan({
+        type: "thread/goal/clear",
+        threadId: "thr_1",
+        providerThreadId: "p_1",
+      }),
+    ).toEqual({
+      kind: "request",
+      method: "thread/goal/clear",
+      params: { threadId: "thr_1", providerThreadId: "p_1" },
+    });
+  });
+});
