@@ -12,6 +12,7 @@ import {
   threadListIndicatorState
 } from './thread-list-indicator.js';
 import { useThreadRowSplitDrag } from './sidebar/useThreadRowSplitDrag.js';
+import { ThreadProcessBadge } from './ThreadProcessBadge.js';
 import { usePaneContentSplitIndicator } from './sidebar/paneContentSplitIndicator.js';
 import { SplitPaneMiniMap } from './sidebar/SplitPaneMiniMap.js';
 
@@ -77,7 +78,8 @@ export function ThreadListEntry({
           <span className={`tab-agent-dot agent-${tone}`} aria-hidden="true" />
           <span className="agents-row-title">{thread.title ?? 'Untitled agent'}</span>
           <FleetKindChip kind="thread" />
-          {listIndicator !== 'none' ? (
+          <ThreadProcessBadge thread={thread} />
+          {listIndicator !== 'none' && listIndicator !== 'background-command' ? (
             <span
               className={`thread-list-indicator is-${listIndicator}`}
               data-testid="thread-list-indicator"

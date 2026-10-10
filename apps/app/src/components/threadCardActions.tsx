@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Archive, Puzzle } from 'lucide-react';
+import { runningProcessCount, withRunningProcessWarning } from '../lib/thread-running-processes.js';
 import { product } from '../lib/product-client.js';
 import { errorMessage, useUi } from '../store.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath, projectIdFromThreadPath, threadIdFromPath } from '../lib/route-paths.js';
@@ -79,7 +80,7 @@ export function viewingThread(pathname: string, threadId: string): boolean {
 
 export async function runThreadMenuAction(
   action: ThreadMenuAction,
-  thread: Pick<ThreadListItem, 'id' | 'title'>,
+  thread: Pick<ThreadListItem, 'id' | 'title' | 'activity'>,
   ctx: ThreadMenuContext
 ): Promise<void> {
   const projectId = ctx.projectId || projectIdFromThreadPath(ctx.pathname) || undefined;
@@ -113,7 +114,7 @@ export async function runThreadMenuAction(
   }
   const title = threadTitle(thread);
   if (action === 'close-followup') {
-    if (ctx.confirm && !ctx.confirm(`Close “${title}” and file a follow-up if work is left?`)) return;
+    if (ctx.confirm && !ctx.confirm(withRunningProcessWarning(`Close “${title}” and file a follow-up if work is left?`, thread))) return;
     const result = await ctx.closeFollowup(thread.id);
     if (result && result.ok === false) return;
     ctx.remove(thread.id);
@@ -131,7 +132,7 @@ export async function runThreadMenuAction(
     }
     return;
   }
-  if (action === 'archive' && ctx.confirm && !ctx.confirm(`Archive “${title}”?`)) return;
+  if (action === 'archive' && ctx.confirm && !ctx.confirm(withRunningProcessWarning(`Archive “${title}”?`, thread))) return;
   await archiveThreadWithoutConfirm(thread, ctx);
 }
 
@@ -373,7 +374,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   );
 }
 
-/** Hover-revealed one-click archive. Same lifecycle as the menu, without a confirm dialog. */
+/** Hover-revealed one-click archive. Same lifecycle as the menu; confirms only when processes are still running. */
 export function ThreadArchiveQuickAction({ thread }: { thread: ThreadListItem }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -390,6 +391,8 @@ export function ThreadArchiveQuickAction({ thread }: { thread: ThreadListItem })
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (runningProcessCount(thread) > 0
+          && !window.confirm(withRunningProcessWarning(`Archive “${threadTitle(thread)}”?`, thread))) return;
         void archiveThreadWithoutConfirm(thread, {
           navigate,
           pathname: location.pathname,

@@ -120,7 +120,7 @@ describe('ThreadListEntry', () => {
     expect(html).toContain('data-kind="plan-mode"');
   });
 
-  it('shows a background-command list badge while a leftover job is running', () => {
+  it('shows a process-count badge instead of the dot while a leftover job is running', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadListEntry
@@ -138,8 +138,8 @@ describe('ThreadListEntry', () => {
         />
       </MemoryRouter>
     );
-    expect(html).toContain('data-testid="thread-list-indicator"');
-    expect(html).toContain('data-kind="background-command"');
-    expect(html).toContain('Background command running');
+    expect(html).toContain('data-testid="thread-process-badge"');
+    expect(html).toContain('1 background process running');
+    expect(html).not.toContain('data-kind="background-command"');
   });
 });
