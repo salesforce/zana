@@ -386,7 +386,7 @@ describe('OrgPicker and Salesforce project tab', () => {
     expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs.login.start', { instance: 'sandbox', alias: undefined });
   });
 
-  it('renders the unlisted Salesforce orgs panel', async () => {
+  it('renders the Salesforce orgs sidebar panel', async () => {
     const el = await mount(createElement(SalesforceOrgsPanel, { pluginId: 'salesforce', subPath: '' }));
     expect(el.querySelector('[data-testid="salesforce-orgs-panel"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="salesforce-org-list"]')).toBeTruthy();

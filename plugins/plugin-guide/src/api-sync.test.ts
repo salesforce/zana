@@ -79,7 +79,8 @@ describe('plugin guide surfaces', () => {
     expect(nav?.bullets.some((line) => line.includes('unlisted'))).toBe(true);
     const footer = SURFACES.find((row) => row.id === 'sidebarFooterAction');
     expect(footer?.bullets.some((line) => line.includes('toPluginPanel'))).toBe(true);
-    expect(footer?.firstParty).toEqual(['Connect', 'Salesforce']);
+    expect(footer?.firstParty).toEqual(['Connect']);
+    expect(nav?.firstParty).toContain('Salesforce');
   });
 });
 

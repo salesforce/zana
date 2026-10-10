@@ -139,12 +139,10 @@ describe('salesforce plugin contract', () => {
     expect(set.threadPanelActions.find(row => row.id === 'preview')).toMatchObject({ title: 'Preview', layout: 'flush' });
     expect(set.newThreadPanelActions).toEqual([]);
     expect(set.navPanels).toMatchObject([
-      { id: 'orgs', title: 'Salesforce', icon: 'Cloud', placement: 'unlisted' }
+      { id: 'orgs', title: 'Salesforce', icon: 'Cloud' }
     ]);
-    expect(set.sidebarFooterActions).toMatchObject([{ id: 'orgs', title: 'Salesforce', icon: 'Cloud' }]);
-    const footerToPanel = vi.fn();
-    set.sidebarFooterActions[0]?.run({ openSettings: vi.fn(), toPluginPanel: footerToPanel });
-    expect(footerToPanel).toHaveBeenCalledWith('orgs');
+    expect(set.navPanels[0]?.placement).toBeUndefined();
+    expect(set.sidebarFooterActions).toEqual([]);
     expect(set.projectMenuActions).toEqual([]);
     const paletteCtx = {
       threadId: null,

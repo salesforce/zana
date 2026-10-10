@@ -36,7 +36,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'Optional header and sidebar accessory.'
         ],
         apiSymbols: ['PluginAppSlots.navPanel', 'PluginNavPanelRegistration'],
-        firstParty: ['Tasks', 'Automations', 'PR Monitor']
+        firstParty: ['Tasks', 'Automations', 'PR Monitor', 'Salesforce']
       },
       {
         id: 'experimental_projectMenuAction',
@@ -69,7 +69,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           '`toPluginPanel` opens a `navPanel`, including `placement: "unlisted"` pages.'
         ],
         apiSymbols: ['PluginAppSlots.sidebarFooterAction', 'PluginSidebarFooterActionRegistration'],
-        firstParty: ['Connect', 'Salesforce']
+        firstParty: ['Connect']
       }
     ]
   },
