@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import { ThreadProcessBadge } from '../ThreadProcessBadge.js';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileIcon } from '../../lib/profileIcon.js';
 import { AgentDeleteQuickAction } from '../agentCardActions.js';
@@ -148,6 +149,7 @@ export function ProjectThreadRailRow({
         <span className="project-terminal-text">
           <span className="project-terminal-name">{title}</span>
           <span className="project-terminal-detail">
+            <ThreadProcessBadge thread={thread} />
             <span className={threadRailStatusClass(status)}>{status}</span>
             {` · ${fleetKindLabel('thread')}`}
             {projectName ? (

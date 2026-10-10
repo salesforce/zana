@@ -215,6 +215,19 @@ describe('runThreadMenuAction', () => {
     expect(c.navigate).not.toHaveBeenCalled();
   });
 
+  it('warns that archiving or closing stops running background processes', async () => {
+    const running = { ...thread, activity: {
+      activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 1, activeGoalCount: 0, activePlanModeCount: 0
+    } };
+    const c = ctx({ confirm: vi.fn(() => false) });
+    await runThreadMenuAction('archive', running, c);
+    await runThreadMenuAction('close-followup', running, c);
+    expect(c.confirm).toHaveBeenNthCalledWith(1, expect.stringContaining('Archive “hello”?\n\nThis agent still has a background process running'));
+    expect(c.confirm).toHaveBeenNthCalledWith(2, expect.stringContaining('Ending its session stops it.'));
+    expect(c.archive).not.toHaveBeenCalled();
+    expect(c.closeFollowup).not.toHaveBeenCalled();
+  });
+
   it('archives from the quick action without a confirm dialog', async () => {
     const c = ctx({ confirm: vi.fn(() => false) });
     await archiveThreadWithoutConfirm(thread, c);

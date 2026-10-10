@@ -127,6 +127,8 @@ function appendDanglingBackgroundTaskCompletions(
       type: 'item/backgroundTask/completed' as const,
       threadId: row.threadId,
       providerThreadId: row.providerThreadId,
+      // Activity counts only read scoped events; completions are thread-scoped.
+      scope: { kind: 'thread' as const },
       item: {
         ...row.item,
         status: backgroundTaskItemStatus(taskStatus),

@@ -7,6 +7,7 @@ import {
   createConversationThread,
   createEnvironment,
   getConversationThread,
+  getConversationThreadActivityCounts,
   listConversationThreadEvents,
   openDatabase,
   updateConversationThreadStatus,
@@ -302,5 +303,23 @@ describe('background-task lifecycle reconciliation triggers', () => {
     expect(listSettledBackgroundTaskItems(database, thread.id)).toEqual([
       { status: 'interrupted', taskStatus: 'stopped' }
     ]);
+  });
+
+  it('writes thread-scoped completions the activity counts recognise', () => {
+    const database = openTestDb();
+    const host = seedHost(database);
+    const thread = seedThread(database, host.id);
+    seedOpenBackgroundTask(database, thread.id);
+    const running = (counts: ReturnType<typeof getConversationThreadActivityCounts>) =>
+      counts.activeWorkflowCount + counts.activeBackgroundAgentCount + counts.activeBackgroundCommandCount;
+    expect(running(getConversationThreadActivityCounts(database, thread.id))).toBe(1);
+
+    settleDanglingBackgroundTasksForStoppedThread({ db: database, hub: hub() }, { threadId: thread.id });
+
+    const completed = listConversationThreadEvents(database, thread.id).filter(
+      (row) => row.type === 'item/backgroundTask/completed'
+    );
+    expect((completed[0]!.payload as { scope: unknown }).scope).toEqual(threadScope());
+    expect(running(getConversationThreadActivityCounts(database, thread.id))).toBe(0);
   });
 });

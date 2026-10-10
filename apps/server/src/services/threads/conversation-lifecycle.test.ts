@@ -11,9 +11,14 @@ import {
   settleLiveTurnCommandFailure
 } from './conversation-turn-settlement.js';
 import { LIVE_TURN_COMMAND_TIMEOUT_MS } from '../../http/host-hub.js';
+import { settleDanglingBackgroundTasksForStoppedThread } from './conversation-background-task-reconciliation.js';
 
 // Lifecycle projection is independent of the indexed marker persistence seam,
 // which has its own real-SQLite tests. Keep this mocked database fixture in memory.
+vi.mock('./conversation-background-task-reconciliation.js', async (orig) => ({
+  ...(await orig<object>()),
+  settleDanglingBackgroundTasksForStoppedThread: vi.fn()
+}));
 vi.mock('./thread-reads.js', () => ({
   peekThreadReadSeq: () => null,
   getThreadReadSeq: () => 0,
@@ -974,6 +979,23 @@ describe('conversation lifecycle', () => {
     await archiveConversation(context, thread.id);
     expect(archiveConversationThread).toHaveBeenCalledWith(expect.anything(), child.id);
     expect(archiveConversationThread).toHaveBeenCalledWith(expect.anything(), thread.id);
+  });
+
+  it('settles background tasks once the session is stopped, before the archived row is written', async () => {
+    vi.mocked(getConversationThread).mockImplementation(() => ({ ...thread }));
+    vi.mocked(listConversationThreadsByProject).mockImplementation(() => []);
+    const order: string[] = [];
+    const callHostOnlineRpc = vi.fn(async (args: { command: { type: string } }) => {
+      order.push(args.command.type);
+      if (args.command.type === 'thread.stop') throw new Error('host offline');
+      return { threadId: thread.id, stopped: true };
+    });
+    vi.mocked(settleDanglingBackgroundTasksForStoppedThread).mockImplementation(() => { order.push('settle'); });
+    vi.mocked(archiveConversationThread).mockImplementation(() => { order.push('archive-row'); return undefined as never; });
+    await archiveConversation(ctx(callHostOnlineRpc), thread.id, { skipEnvironmentCleanup: true });
+    expect(settleDanglingBackgroundTasksForStoppedThread).toHaveBeenCalledWith(expect.objectContaining({ db: expect.anything(), hub: expect.anything() }), { threadId: thread.id });
+    // Settling still happens when the host is gone; it must precede the archived row.
+    expect(order.slice(0, 3)).toEqual(['thread.stop', 'settle', 'archive-row']);
   });
 
   it('archives nested descendants before the parent and leaves visible forks live', async () => {

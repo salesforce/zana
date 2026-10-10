@@ -79,6 +79,7 @@ import {
   withResolvedPathMentionContext
 } from '../../plugins/path-mentions.js';
 import { appendStopRequestedEvent, finalizeInterruptedConversation } from './conversation-interrupt.js';
+import { settleDanglingBackgroundTasksForStoppedThread } from './conversation-background-task-reconciliation.js';
 import {
   markOwningThreadPlanTasksInterrupted,
   recordThreadExecutionMode
@@ -660,6 +661,9 @@ async function archiveConversationInternal(
   } catch {
     /* already gone */
   }
+  // Archive ends the provider session, which takes its background shells with
+  // it; close their rows so the archived thread stops reporting them running.
+  settleDanglingBackgroundTasksForStoppedThread({ db: ctx.db, hub: ctx.hub }, { threadId });
   const archived = archiveConversationThread(ctx.db, threadId) ?? thread;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, archived));
   emitPluginThreadEvent(ctx, {

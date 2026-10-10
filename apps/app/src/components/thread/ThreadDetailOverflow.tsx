@@ -6,6 +6,7 @@ import { product } from '../../lib/product-client.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { useThreads } from '../../thread-store.js';
+import { withRunningProcessWarning } from '../../lib/thread-running-processes.js';
 import { errorMessage, useUi } from '../../store.js';
 import { MobileActionSheet } from '../MobilePageHeader.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
@@ -149,6 +150,7 @@ export function ThreadDetailOverflow({
   const navigate = useNavigate();
   const route = useRouteState();
   const remove = useThreads((s) => s.remove);
+  const currentThread = () => useThreads.getState().threads.find((row) => row.id === threadId);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -210,7 +212,7 @@ export function ThreadDetailOverflow({
       }}
       onCloseFollowup={() => {
         close();
-        if (!window.confirm(`Close “${title}” and file a follow-up if work is left?`)) return;
+        if (!window.confirm(withRunningProcessWarning(`Close “${title}” and file a follow-up if work is left?`, currentThread()))) return;
         void product.threads.closeFollowup(threadId).then((result) => {
           if (result && result.ok === false) return;
           remove(threadId);
@@ -219,7 +221,7 @@ export function ThreadDetailOverflow({
       }}
       onArchive={() => {
         close();
-        if (!window.confirm(`Archive “${title}”?`)) return;
+        if (!window.confirm(withRunningProcessWarning(`Archive “${title}”?`, currentThread()))) return;
         void product.threads.archive(threadId).then((result) => {
           if (result && result.ok === false) return;
           remove(threadId);

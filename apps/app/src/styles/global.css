@@ -35793,6 +35793,26 @@ textarea.thread-command-editor {
   background: var(--accent, #3b82f6);
 }
 
+.thread-process-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--success, #16a34a) 45%, transparent);
+  color: var(--success, #16a34a);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-terminal-detail .thread-process-badge {
+  margin-right: 4px;
+  vertical-align: 1px;
+}
+
 .thread-timeline-system-title {
   color: var(--ink);
 }
