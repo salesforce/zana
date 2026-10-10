@@ -613,6 +613,11 @@ export function createAgentRuntimeAdapter(options: {
       }
       return cancelled;
     },
+    async stopBackgroundTask(input) {
+      if (!threadLocation.has(input.threadId)) return false;
+      const result = await runtimeForThread(input.threadId).stopBackgroundTask({ threadId: input.threadId, itemId: input.itemId });
+      return result.stopped;
+    },
     async prepareRewind(input: ThreadRewindPrepareInput) {
       const runtime = runtimeFor(input.environmentId, input.cwd);
       const result = await runtime.prepareThreadRewind({

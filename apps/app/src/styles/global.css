@@ -32384,7 +32384,45 @@ textarea.ui-command-composer-input {
 }
 
 .thread-background-activity-item {
+  display: flex;
+  align-items: flex-start;
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.thread-background-activity-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.thread-background-activity-stop {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 5px 12px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.thread-background-activity-stop:hover:not(:disabled),
+.thread-background-activity-stop:focus-visible {
+  background: color-mix(in srgb, var(--danger, #e5484d) 14%, transparent);
+  color: var(--danger, #e5484d);
+}
+
+.thread-background-activity-stop:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.thread-background-activity-item[data-stop-state] .thread-background-activity-text {
+  color: var(--ink-muted);
 }
 
 .thread-background-activity-item details > summary {

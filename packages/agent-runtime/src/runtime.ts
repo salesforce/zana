@@ -230,6 +230,7 @@ function defaultBridgeNodeEnv(): Record<string, string> | undefined {
 type ProviderProcess = RuntimeProviderProcess;
 
 const threadGoalClearResultSchema = z.object({ cleared: z.boolean() }).strict();
+const backgroundTaskStopResultSchema = z.object({ stopped: z.boolean() }).strict();
 const THREAD_GOAL_CLEAR_EVENT_TIMEOUT_MS = 5_000;
 const PREPARED_THREAD_REWIND_TTL_MS = 5 * 60_000;
 const PREPARED_THREAD_REWIND_RETRY_MS = 30_000;
@@ -2434,6 +2435,27 @@ function createAgentRuntimeInternal(
           return {
             providerCheckpointId: result.providerCheckpointId ?? null,
           };
+        },
+      });
+    },
+
+    async stopBackgroundTask({ threadId, itemId }) {
+      return runThreadOperation({
+        threadId,
+        work: async () => {
+          const proc = requireProviderProcessForThread(threadId);
+          const cmd = proc.adapter.buildCommandPlan({
+            type: "thread/backgroundTask/stop",
+            threadId,
+            providerThreadId: requireProviderThreadId(threadId),
+            itemId,
+          });
+          if (cmd.kind === "noop") return { stopped: false };
+          return sendCommand({
+            proc,
+            message: cmd,
+            resultSchema: backgroundTaskStopResultSchema,
+          });
         },
       });
     },

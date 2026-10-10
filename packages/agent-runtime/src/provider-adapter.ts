@@ -163,6 +163,13 @@ export type AdapterCommand =
       providerThreadId: string;
     }
   | {
+      type: "thread/backgroundTask/stop";
+      threadId: string;
+      providerThreadId: string;
+      /** zcc item id; the adapter resolves the provider item behind it. */
+      itemId: string;
+    }
+  | {
       type: "thread/name/set";
       threadId: string;
       providerThreadId: string;

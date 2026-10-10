@@ -199,6 +199,13 @@ export class SdkSession {
     await this.query?.applyFlagSettings(settings);
   }
 
+  /** False when the query is not running, so there is nothing to stop. */
+  async stopTask(taskId: string): Promise<boolean> {
+    if (this.query === undefined) return false;
+    await this.query.stopTask(taskId);
+    return true;
+  }
+
   async setModel(model: string | undefined): Promise<void> {
     await this.query?.setModel(model);
     this.options.model = model;

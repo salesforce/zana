@@ -117,7 +117,7 @@ export {
   nextEventSequence,
   type ThreadEventRow
 } from './data/events.js';
-export { getConversationThreadActivityCounts, listConversationActiveTurnInputs, ACTIVE_PLAN_INPUT_PAGE_SIZE } from './data/conversation-activity.js';
+export { getConversationThreadActivityCounts, listConversationActiveTurnInputs, listConversationOpenBackgroundTaskItems, ACTIVE_PLAN_INPUT_PAGE_SIZE, OPEN_BACKGROUND_TASK_LIMIT } from './data/conversation-activity.js';
 export { getLatestConversationCheckpoint } from './data/conversation-checkpoint.js';
 export {
   appendConversationThreadEvent,

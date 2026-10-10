@@ -508,6 +508,41 @@ describe('host command dispatch', () => {
     })).rejects.toMatchObject({ code: 'environment_not_ready' });
   });
 
+  it('stops one background task only for a known thread and forwards the item id', async () => {
+    const calls: Array<{ threadId: string; itemId: string }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      stopBackgroundTask: async (input) => {
+        calls.push(input);
+        return input.itemId === 'item-bg-1';
+      }
+    });
+    const threadId = randomUUID();
+    const missingId = randomUUID();
+    runtime.threads.set(threadId, { environmentId: randomUUID(), providerId: 'claude' });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.background.stop', threadId: missingId, itemId: 'item-bg-1'
+    })).resolves.toEqual({ threadId: missingId, stopped: false });
+    expect(calls).toEqual([]);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.background.stop', threadId, itemId: 'item-bg-1'
+    })).resolves.toEqual({ threadId, stopped: true });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.background.stop', threadId, itemId: 'item-other'
+    })).resolves.toEqual({ threadId, stopped: false });
+    expect(calls).toEqual([{ threadId, itemId: 'item-bg-1' }, { threadId, itemId: 'item-other' }]);
+    expect(runtime.threads.has(threadId)).toBe(true);
+  });
+
+  it('reports a background stop as not stopped when the runtime cannot stop tasks', async () => {
+    const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude });
+    const threadId = randomUUID();
+    runtime.threads.set(threadId, { environmentId: randomUUID(), providerId: 'claude' });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.background.stop', threadId, itemId: 'item-bg-1'
+    })).resolves.toEqual({ threadId, stopped: false });
+  });
+
   it('keeps stale plans live and requires a resume after confirmed cancellation', async () => {
     const stopped: string[] = [];
     const runtime = createCommandRuntime({

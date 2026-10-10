@@ -202,6 +202,16 @@ function buildCommandPlan(command: AdapterCommand): ProviderCommandPlan {
           threadId: command.threadId,
         },
       };
+    case "thread/backgroundTask/stop":
+      return {
+        kind: "request",
+        method: "thread/backgroundTask/stop",
+        params: {
+          providerThreadId: command.providerThreadId,
+          threadId: command.threadId,
+          providerItemId: command.itemId,
+        },
+      };
     case "thread/name/set":
       return {
         kind: "request",

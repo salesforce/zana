@@ -570,6 +570,8 @@ export interface CcApi {
       }
     ): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
+    /** Stops the given background task items, or all of them when omitted. */
+    stopBackground(threadId: string, itemIds?: string[]): Promise<{ ok: boolean; stopped?: string[]; requested?: string[]; fallbackError?: string }>;
     implementPlan(threadId: string, revision: number, acpMode?: string): Promise<{ ok: boolean }>;
     cancelPlan(threadId: string): Promise<{ ok: boolean }>;
     plan(threadId: string): Promise<{ ok: boolean; plan?: unknown }>;

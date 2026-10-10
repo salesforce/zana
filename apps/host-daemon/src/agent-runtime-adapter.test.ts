@@ -155,6 +155,28 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it('stops a background task only for a known thread and returns the runtime verdict', async () => {
+    let stopBackgroundTask: ReturnType<typeof vi.spyOn>;
+    let stopped = true;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined, dataDir: cwd,
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        stopBackgroundTask = vi.spyOn(runtime, 'stopBackgroundTask').mockImplementation(async () => ({ stopped }));
+        return runtime;
+      },
+    });
+    const threadId = randomUUID();
+    await adapter.startWork({ threadId, environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd });
+    expect(await adapter.stopBackgroundTask!({ threadId: 'unknown', itemId: 'item-1' })).toBe(false);
+    expect(stopBackgroundTask!).not.toHaveBeenCalled();
+    expect(await adapter.stopBackgroundTask!({ threadId, itemId: 'item-1' })).toBe(true);
+    expect(stopBackgroundTask!).toHaveBeenCalledWith({ threadId, itemId: 'item-1' });
+    stopped = false;
+    expect(await adapter.stopBackgroundTask!({ threadId, itemId: 'item-1' })).toBe(false);
+    adapter.dispose();
+  });
+
   it('forwards command mentions into AgentRuntime instead of wiping them', async () => {
     let startThread: ReturnType<typeof vi.spyOn>;
     let runTurn: ReturnType<typeof vi.spyOn>;

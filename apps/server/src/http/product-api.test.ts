@@ -1934,6 +1934,8 @@ describe('product HTTP thread reasoning', () => {
     expect(source).toContain('dropDeferredConversationMessage');
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/compact')");
     expect(source).toContain('compactConversation');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/background/stop')");
+    expect(source).toContain('stopConversationBackgroundTasks');
     expect(source).toContain("path === '/api/v1/threads/search'");
     expect(source).toContain("path === '/api/v1/threads/resolve-mentions'");
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/prompt-history')");
@@ -3287,5 +3289,49 @@ describe('async history and queue HTTP responsiveness', () => {
         expect(refreshSafeMode).toHaveBeenCalledTimes(expectedCalls);
       }
     } finally { server.ctx.plugins = original; }
+  });
+});
+
+describe('product HTTP thread background stop', () => {
+  it('validates the body and maps service errors to HTTP statuses', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-bgstop-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: dataDir
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+    const post = (id: string, body: unknown) =>
+      fetch(`${server!.url}api/v1/threads/${id}/background/stop`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+    for (const body of [{ itemIds: [] }, { itemIds: [''] }, { extra: true }]) {
+      const res = await post(thread.id, body);
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ error: 'invalid-input' });
+    }
+
+    const missing = await post('missing-thread', {});
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toMatchObject({ error: 'unknown-thread' });
+
+    for (const body of [{}, { itemIds: ['bg-1'] }]) {
+      const idle = await post(thread.id, body);
+      expect(idle.status).toBe(409);
+      await expect(idle.json()).resolves.toMatchObject({ error: 'not-running' });
+    }
   });
 });

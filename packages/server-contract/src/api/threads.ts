@@ -309,6 +309,26 @@ export const editMessageResponseSchema = z
   .strict();
 export type EditMessageResponse = z.infer<typeof editMessageResponseSchema>;
 
+/** Omit itemIds to stop every running background task of the thread. */
+export const stopBackgroundTasksRequestSchema = z
+  .object({
+    itemIds: z.array(z.string().min(1).max(200)).min(1).max(50).optional(),
+  })
+  .strict();
+export type StopBackgroundTasksRequest = z.infer<
+  typeof stopBackgroundTasksRequestSchema
+>;
+
+export interface StopBackgroundTasksResponse {
+  ok: true;
+  /** Stopped by the provider; completion rows arrive as thread events. */
+  stopped: string[];
+  /** Handed to the agent because the provider could not stop them. */
+  requested: string[];
+  /** The agent could not be asked to stop the rest; `stopped` still holds. */
+  fallbackError?: string;
+}
+
 export const sendQueuedMessageModeSchema = z.enum(["auto", "steer"]);
 export type SendQueuedMessageMode = z.infer<typeof sendQueuedMessageModeSchema>;
 

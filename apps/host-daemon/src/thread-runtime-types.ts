@@ -40,6 +40,7 @@ export interface ThreadRuntimeAdapter {
   writeWork(input: { threadId: string; data: string }): Promise<void>;
   stopWork(input: { threadId: string }): Promise<void>;
   cancelPlan?(input: { threadId: string; expectedTurnId: string }): Promise<boolean>;
+  stopBackgroundTask?(input: { threadId: string; itemId: string }): Promise<boolean>;
   prepareRewind(input: ThreadRewindPrepareInput): Promise<{ providerThreadId: string }>;
   discardRewind(input: { leaseId: string; environmentId: string }): Promise<void>;
   renameWork(input: { threadId: string; title: string }): Promise<void>;

@@ -992,7 +992,7 @@ export function ThreadDetail({
               />}
               <QueuedMessagesCard threadId={threadId} />
               <ModelFallbackCard fallback={modelFallback} />
-              <BackgroundCommandsCard commands={backgroundCommands} workflows={workflows} />
+              <BackgroundCommandsCard threadId={threadId} commands={backgroundCommands} workflows={workflows} />
               <ChildThreadPendingBanners childThreads={childThreads} projectId={projectId} />
               {pendingInteractions.map((interaction) => (
                 <ThreadPendingInteractionBanner

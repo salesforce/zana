@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Send, Sparkles, Square, SquareTerminal, Workflow } from 'lucide-react';
 import type { GitHostPullRequest } from '@zana-ai/zcc-domain';
 import {
@@ -234,12 +234,43 @@ function useNow(active: boolean): number {
   return now;
 }
 
-function BackgroundActivityRow({ row, now }: { row: TimelineViewWorkflowWorkRow; now: number }) {
+/** `asked` means the provider could not stop it, so the agent was asked to. */
+type BackgroundStopState = 'stopping' | 'asked';
+
+/** A row still shown this long after a stop was accepted can be stopped again. */
+export const BACKGROUND_STOP_RETRY_MS = 15_000;
+
+function BackgroundActivityRow({
+  row,
+  now,
+  stopState,
+  onStop
+}: {
+  row: TimelineViewWorkflowWorkRow;
+  now: number;
+  stopState?: BackgroundStopState;
+  onStop?: () => void;
+}) {
   const kind = backgroundActivityKind(row);
   const Icon = BACKGROUND_ACTIVITY_ICONS[kind];
   const kindLabel = backgroundActivityKindLabel(kind);
   const text = row.workflowName || row.description || 'Running';
-  const elapsed = formatWorkingElapsed(now - row.startedAt);
+  const elapsed = stopState === 'stopping'
+    ? 'Stopping…'
+    : stopState === 'asked' ? 'Asked agent to stop' : formatWorkingElapsed(now - row.startedAt);
+  const stop = onStop ? (
+    <button
+      type="button"
+      className="thread-background-activity-stop"
+      data-testid="thread-background-stop"
+      aria-label={`Stop ${text}`}
+      title="Stop"
+      disabled={stopState === 'stopping'}
+      onClick={onStop}
+    >
+      <Square size={11} fill="currentColor" aria-hidden="true" />
+    </button>
+  ) : null;
   const line = (
     <>
       <span className="thread-background-activity-icon" title={kindLabel}>
@@ -252,33 +283,91 @@ function BackgroundActivityRow({ row, now }: { row: TimelineViewWorkflowWorkRow;
       {elapsed ? <span className="thread-background-activity-elapsed">{elapsed}</span> : null}
     </>
   );
-  if (kind !== 'command') {
-    return (
-      <li className="thread-background-activity-item" data-kind={kind}>
-        <div className="thread-background-activity-row">{line}</div>
-      </li>
-    );
-  }
+  const body = kind === 'command' ? (
+    <details className="thread-background-activity-main">
+      <summary className="thread-background-activity-row" title="Show full command">{line}</summary>
+      <pre className="thread-background-activity-full" data-testid="thread-background-command-full">{text}</pre>
+    </details>
+  ) : (
+    <div className="thread-background-activity-main thread-background-activity-row">{line}</div>
+  );
   return (
-    <li className="thread-background-activity-item" data-kind={kind}>
-      <details>
-        <summary className="thread-background-activity-row" title="Show full command">{line}</summary>
-        <pre className="thread-background-activity-full" data-testid="thread-background-command-full">{text}</pre>
-      </details>
+    <li className="thread-background-activity-item" data-kind={kind} data-stop-state={stopState}>
+      {body}
+      {stop}
     </li>
   );
 }
 
+/**
+ * Running background tasks of a thread. With a `threadId` each row gets a
+ * Stop control (plus Stop all), which works while the thread is idle too.
+ */
 export function BackgroundCommandsCard({
+  threadId,
   commands,
   workflows
 }: {
+  threadId?: string;
   commands: TimelineViewWorkflowWorkRow[] | null | undefined;
   workflows?: TimelineViewWorkflowWorkRow[] | null;
 }) {
   const rows = [...(workflows ?? []), ...(commands ?? [])];
   const now = useNow(rows.length > 0);
+  const [stopStates, setStopStates] = useState<ReadonlyMap<string, BackgroundStopState>>(() => new Map());
+  const [stopError, setStopError] = useState<string | null>(null);
+  const retryTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+
+  useEffect(() => {
+    const timers = retryTimers.current;
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  // Forget rows that are gone, so the map only ever holds shown rows.
+  const rowIdsKey = rows.map((row) => row.itemId).join('\n');
+  useEffect(() => {
+    const shown = new Set(rowIdsKey ? rowIdsKey.split('\n') : []);
+    setStopStates((current) => {
+      const gone = [...current.keys()].filter((itemId) => !shown.has(itemId));
+      return withStopStates(current, gone, undefined);
+    });
+  }, [rowIdsKey]);
+
+  const stop = useCallback((itemIds: string[]) => {
+    if (!threadId || itemIds.length === 0) return;
+    setStopError(null);
+    setStopStates((current) => withStopStates(current, itemIds, 'stopping'));
+    void product.threads.stopBackground(threadId, itemIds)
+      .then((result) => {
+        const requested = result.requested ?? [];
+        const stopped = result.stopped ?? [];
+        setStopStates((current) => withStopStates(current, requested, 'asked'));
+        if (result.fallbackError) setStopError(result.fallbackError);
+        // Release ids the server neither stopped nor handed on, and allow a
+        // retry if a stopped task never reports its completion.
+        const handled = new Set([...requested, ...stopped]);
+        setStopStates((current) => withStopStates(current, itemIds.filter((id) => !handled.has(id)), undefined));
+        const timer = setTimeout(() => {
+          retryTimers.current.delete(timer);
+          setStopStates((current) => withStopStates(
+            current,
+            stopped.filter((id) => current.get(id) === 'stopping'),
+            undefined
+          ));
+        }, BACKGROUND_STOP_RETRY_MS);
+        retryTimers.current.add(timer);
+      })
+      .catch((err) => {
+        setStopError(err instanceof Error ? err.message : 'Failed to stop background task');
+        setStopStates((current) => withStopStates(current, itemIds, undefined));
+      });
+  }, [threadId]);
+
   if (rows.length === 0) return null;
+  const stoppable = threadId ? rows.filter((row) => stopStates.get(row.itemId) !== 'stopping') : [];
   return (
     <section
       className="thread-composer-stack-card thread-background-commands-card"
@@ -287,12 +376,49 @@ export function BackgroundCommandsCard({
       <header className="thread-queued-card-header">
         <span className="thread-stack-card-title">{backgroundActivityTitle(rows)}</span>
         {rows.length > 1 ? <span className="thread-background-activity-count">{rows.length} running</span> : null}
+        {rows.length > 1 && threadId ? (
+          <button
+            type="button"
+            className="thread-queued-flush"
+            data-testid="thread-background-stop-all"
+            disabled={stoppable.length === 0}
+            onClick={() => stop(stoppable.map((row) => row.itemId))}
+          >
+            <Square size={10} fill="currentColor" aria-hidden="true" />
+            Stop all
+          </button>
+        ) : null}
       </header>
+      {stopError ? (
+        <p role="alert" className="thread-queued-failure" data-testid="thread-background-stop-error">{stopError}</p>
+      ) : null}
       <ul className="thread-background-activity-list">
-        {rows.map((row) => <BackgroundActivityRow key={row.id} row={row} now={now} />)}
+        {rows.map((row) => (
+          <BackgroundActivityRow
+            key={row.id}
+            row={row}
+            now={now}
+            stopState={stopStates.get(row.itemId)}
+            onStop={threadId ? () => stop([row.itemId]) : undefined}
+          />
+        ))}
       </ul>
     </section>
   );
+}
+
+function withStopStates(
+  current: ReadonlyMap<string, BackgroundStopState>,
+  itemIds: readonly string[],
+  state: BackgroundStopState | undefined
+): ReadonlyMap<string, BackgroundStopState> {
+  if (itemIds.length === 0) return current;
+  const next = new Map(current);
+  for (const itemId of itemIds) {
+    if (state) next.set(itemId, state);
+    else next.delete(itemId);
+  }
+  return next;
 }
 
 const PROMPT_CONTEXT_POLL_MS = 3_000;

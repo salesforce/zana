@@ -11,6 +11,7 @@ const mockQueryInstance = {
   interrupt: vi.fn(),
   setModel: vi.fn(),
   setPermissionMode: vi.fn(),
+  stopTask: vi.fn(),
   [Symbol.asyncIterator]: vi.fn(),
 };
 const { queryMock } = vi.hoisted(() => ({
@@ -167,6 +168,32 @@ describe("SdkSession", () => {
     await expect(consumed).rejects.toThrow(
       "Claude SDK session stopped before input consumed",
     );
+  });
+
+  it("stopTask forwards to the live query and reports true", async () => {
+    keepSdkStreamOpen();
+    mockQueryInstance.stopTask.mockResolvedValue(undefined);
+    const session = new SdkSession(defaultOptions, vi.fn(), vi.fn());
+    session.start();
+    await expect(session.stopTask("task-1")).resolves.toBe(true);
+    expect(mockQueryInstance.stopTask).toHaveBeenCalledWith("task-1");
+    session.stop();
+  });
+
+  it("stopTask propagates SDK rejections", async () => {
+    keepSdkStreamOpen();
+    mockQueryInstance.stopTask.mockRejectedValue(new Error("no such task"));
+    const session = new SdkSession(defaultOptions, vi.fn(), vi.fn());
+    session.start();
+    await expect(session.stopTask("task-1")).rejects.toThrow("no such task");
+    session.stop();
+  });
+
+  it("stopTask returns false without calling the SDK when no query is running", async () => {
+    mockQueryInstance.stopTask.mockClear();
+    const session = new SdkSession(defaultOptions, vi.fn(), vi.fn());
+    await expect(session.stopTask("task-1")).resolves.toBe(false);
+    expect(mockQueryInstance.stopTask).not.toHaveBeenCalled();
   });
 
   it("stop cleans up state", () => {

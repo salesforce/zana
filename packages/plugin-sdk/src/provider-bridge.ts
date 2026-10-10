@@ -68,6 +68,7 @@ export {
   threadDiscardParamsSchema,
   threadForkParamsSchema,
   threadGoalClearParamsSchema,
+  threadBackgroundTaskStopParamsSchema,
   threadNameSetParamsSchema,
   threadResumeParamsSchema,
   threadStartParamsSchema,

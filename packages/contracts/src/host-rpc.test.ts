@@ -110,14 +110,14 @@ describe('host-rpc contract', () => {
     }).success).toBe(false);
   });
 
-  it('requires protocol 42 for project-bound plugin host calls', () => {
+  it('accepts project-bound plugin host calls at the current protocol', () => {
     const command = {
       type: 'plugin.host.call', pluginId: 'fixture', generation: 'g1',
       artifact: { digest: 'a'.repeat(64), byteLength: 12 },
       callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
       projectRoot: '/registered/project'
     };
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(42);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(43);
     expect(HostRpcRequestMessageSchema.parse({
       type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1', command
@@ -284,6 +284,16 @@ describe('host-rpc contract', () => {
     expect(HostRpcCommandSchema.safeParse({
       type: 'thread.plan.cancel',
       threadId
+    }).success).toBe(false);
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.background.stop',
+      threadId,
+      itemId: 'item-bg-1'
+    })).toMatchObject({ type: 'thread.background.stop', itemId: 'item-bg-1' });
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'thread.background.stop',
+      threadId,
+      itemId: ''
     }).success).toBe(false);
     expect(HostRpcCommandSchema.parse({
       type: 'turn.submit',
@@ -619,6 +629,10 @@ describe('host-rpc contract', () => {
       threadId,
       cancelled: true
     });
+    expect(parseHostRpcResult('thread.background.stop', { threadId, stopped: false })).toEqual({
+      threadId,
+      stopped: false
+    });
     expect(() => parseHostRpcResult('thread.start', { providers: [] })).toThrow();
     expect(parseHostRpcResult('workspace.diffFiles', {
       files: [{
@@ -853,7 +867,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(42);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(43);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
