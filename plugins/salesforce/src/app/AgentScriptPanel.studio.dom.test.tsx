@@ -215,6 +215,47 @@ describe('AgentScriptPanel studio layout', () => {
     if (scenario) await act(async () => { fireEvent.click(scenario); });
   });
 
+  it('opens Lightning Types, folds explorer sections and hides the explorer', async () => {
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => {
+      if (method === 'studio.explorer') return { ok: true, nodes: [{ kind: 'agent', path: 'force-app/bots/QC.agent', apiName: 'QC' }, { kind: 'lightning-type', apiName: 'c__Order', path: 'lightningTypes/Order', usedBy: ['force-app/bots/Help.agent'] }] };
+      if (method === 'studio.lightningType') return { ok: true, data: { ref: args.ref, standard: false, status: 'ready', title: 'Order', properties: [], files: [] } };
+      return base(p, method, args);
+    });
+    const el = await mount();
+    await ready(el);
+    const explorer = () => el.querySelector('[data-testid="salesforce-agent-script-explorer"]');
+    const typeNode = [...explorer()!.querySelectorAll('button')].find(n => n.textContent?.includes('c__Order'))!;
+    await act(async () => { fireEvent.click(typeNode); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.lightningType', { projectId: 'proj-1', ref: 'c__Order' });
+    const view = el.querySelector('[data-testid="lightning-type-view"]')!;
+    expect(view.querySelector('h2')!.textContent).toBe('Order');
+    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'Help.agent')!); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
+    // Fold and unfold a section.
+    const toggle = () => explorer()!.querySelector('[data-testid="sf-explorer-lightning-type"] button[aria-expanded]')!;
+    await act(async () => { fireEvent.click(toggle()); });
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    await act(async () => { fireEvent.click(toggle()); });
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    // Hide from the header, restore with Cmd+B.
+    await act(async () => { fireEvent.click(explorer()!.querySelector('button[aria-label="Hide explorer"], button[title^="Hide explorer"]')!); });
+    expect(explorer()).toBeNull();
+    await act(async () => { fireEvent.keyDown(el.querySelector('.sf-studio')!, { key: 'b', metaKey: true }); });
+    expect(explorer()).toBeTruthy();
+    // Compact studios open a type in the code tool.
+    await resize(500);
+    await act(async () => { fireEvent.keyDown(el.querySelector('.sf-studio')!, { key: 'p', ctrlKey: true }); });
+    const pick = [...document.querySelectorAll('[role="option"], li, button')].find(n => n.textContent?.includes('c__Order') && !n.closest('[data-testid="salesforce-agent-script-explorer"]'));
+    expect(pick).toBeTruthy();
+    await act(async () => { fireEvent.click(pick!); });
+    await flush();
+    expect(el.querySelector('[data-testid="lightning-type-view"]')).toBeTruthy();
+    rpc.mockImplementation(base);
+  });
+
   it('keeps a target tab in front when the panel remounts without an agent to restore', async () => {
     const first = await mount('force-app/bots/QC.agent');
     await ready(first);
