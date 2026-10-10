@@ -288,3 +288,282 @@ describe('PreviewWorkbench', () => {
     });
   });
 });
+
+const setInput = async (input: HTMLInputElement, value: string) => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => { setter.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); });
+};
+const alertText = (el: HTMLElement) => el.querySelector('[role=alert]')?.textContent ?? '';
+const rerender = async (props: Partial<PreviewWorkbenchProps>) => {
+  await act(async () => { root!.render(createElement(PreviewWorkbench, { pluginId: 'salesforce', projectId: 'proj-1', source: 'agent_label: x', fileLabel: 'A.agent', path: 'force-app/A.agent', ...props })); });
+  await flush();
+};
+
+describe('PreviewWorkbench failure paths and edge cases', () => {
+  it('treats an empty RPC response and a missing lab snapshot as start failures', async () => {
+    handlers['agentLab.start'] = () => undefined;
+    const el = await mount();
+    await click(btn(el, 'Start'));
+    expect(alertText(el)).toContain('No response.');
+    handlers['agentLab.start'] = () => ({ ok: false });
+    await click(btn(el, 'Start'));
+    expect(alertText(el)).toContain('The preview could not start.');
+    expect(btn(el, 'End')).toBeUndefined();
+  });
+
+  it('reports a live start without a session id and surfaces thrown non-Error values', async () => {
+    handlers['agentPreview.start'] = () => ({ ok: true, data: { sessionId: null } });
+    const el = await mount({ engine: 'live', orgAlias: 'dev' });
+    expect(el.textContent).toContain('Live runs real actions on dev');
+    await click(btn(el, 'Start'));
+    expect(alertText(el)).toContain('Live preview could not start.');
+    handlers['agentPreview.start'] = () => { throw 'plain string failure'; };
+    await click(btn(el, 'Start'));
+    expect(alertText(el)).toContain('plain string failure');
+    expect(el.textContent).not.toContain('Start a run');
+  });
+
+  it('describes engines in the hint and live without an org', async () => {
+    const el = await mount({ engine: 'simulate' });
+    expect(el.textContent).toContain('Actions are simulated');
+    await rerender({ engine: 'live' });
+    expect(el.textContent).toContain('on the connected org');
+    await rerender({ engine: 'rehearse' });
+    expect(el.textContent).toContain('An AI model plays your script');
+  });
+
+  it('keeps Start disabled for a blank draft and shows the placeholder when idle', async () => {
+    const el = await mount({ source: '   ', fileLabel: '' });
+    expect(btn(el, 'Start').disabled).toBe(true);
+    expect(el.textContent).toContain('Current draft');
+    expect((el.querySelector('input[aria-label="Preview message"]') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('does nothing when submitting an empty message and shows Starting while a run starts', async () => {
+    let release!: (v: unknown) => void;
+    handlers['agentLab.start'] = () => new Promise(r => { release = r; });
+    const el = await mount();
+    await act(async () => { (el.querySelector('form.sf-pw-composer') as HTMLFormElement).requestSubmit(); }); await flush();
+    expect(methods()).not.toContain('agentLab.send');
+    await click(btn(el, 'Start'));
+    expect(el.textContent).toContain('Starting…');
+    await act(async () => release(snap([]))); await flush();
+    await act(async () => { (el.querySelector('form.sf-pw-composer') as HTMLFormElement).requestSubmit(); }); await flush();
+    expect(methods()).not.toContain('agentLab.send');
+    expect(btn(el, 'End')).toBeTruthy();
+  });
+
+  it('surfaces lab send failures with and without an error message', async () => {
+    const el = await mount();
+    await click(btn(el, 'Start'));
+    handlers['agentLab.send'] = () => ({ ok: false });
+    await typeAndSend(el, 'one');
+    expect(alertText(el)).toContain('The agent did not respond.');
+    handlers['agentLab.send'] = () => ({ ok: false, error: 'rate limited' });
+    await typeAndSend(el, 'two');
+    expect(alertText(el)).toContain('rate limited');
+  });
+
+  it('handles live replies: errors, empty replies and replies without a plan id', async () => {
+    const el = await mount({ engine: 'live' });
+    await click(btn(el, 'Start'));
+    handlers['agentPreview.send'] = () => ({ ok: false });
+    await typeAndSend(el, 'a');
+    expect(alertText(el)).toContain('The agent did not respond.');
+    handlers['agentPreview.send'] = () => ({ ok: false, error: 'org offline' });
+    await typeAndSend(el, 'b');
+    expect(alertText(el)).toContain('org offline');
+    handlers['agentPreview.send'] = () => ({ ok: true, data: { response: '   ' } });
+    await typeAndSend(el, 'c');
+    expect(el.querySelectorAll('[data-role=agent]')).toHaveLength(0);
+    handlers['agentPreview.send'] = () => ({ ok: true });
+    await typeAndSend(el, 'd');
+    expect(el.querySelectorAll('[data-role=agent]')).toHaveLength(0);
+    handlers['agentPreview.send'] = () => ({ ok: true, data: { response: 'no plan here' } });
+    await typeAndSend(el, 'e');
+    expect(el.textContent).toContain('no plan here');
+    await click(btn(el, 'trace'));
+    expect(el.textContent).toContain('no plan id');
+    expect(methods()).not.toContain('agentLab.trace');
+  });
+
+  it('releases a live session on unmount and ignores end failures', async () => {
+    handlers['agentPreview.end'] = () => { throw new Error('gone'); };
+    const el = await mount({ engine: 'live' });
+    await click(btn(el, 'Start'));
+    act(() => root!.unmount()); root = null;
+    await flush();
+    expect(calls.find(c => c.method === 'agentPreview.end')?.args).toMatchObject({ sessionId: 'live-1', live: true });
+    el.remove();
+  });
+
+  it('closes the previous session when a host start command arrives mid-run', async () => {
+    const el = await mount({ engine: 'simulate' });
+    await click(btn(el, 'Start'));
+    handlers['agentLab.start'] = () => ({ ok: true, data: { id: 'sess-2', turns: [] } });
+    await rerender({ engine: 'simulate', command: { seq: 5, type: 'start' } });
+    expect(calls.filter(c => c.method === 'agentLab.start')).toHaveLength(2);
+    expect(calls.find(c => c.method === 'agentLab.end')?.args).toMatchObject({ id: 'sess-1' });
+    expect(el.querySelector('[role=alert]')).toBeNull();
+  });
+
+  it('restarts when a send command targets a different engine than the active session', async () => {
+    const el = await mount({ engine: 'rehearse' });
+    await click(btn(el, 'Start'));
+    await rerender({ engine: 'live', command: { seq: 2, type: 'send', text: 'switch' } });
+    expect(calls.find(c => c.method === 'agentPreview.start')).toBeTruthy();
+    expect(calls.find(c => c.method === 'agentPreview.send')?.args).toMatchObject({ utterance: 'switch' });
+    expect(el.querySelector('[role=alert]')).toBeNull();
+  });
+
+  it('ignores unrelated or malformed realtime payloads and reloads for global suite changes', async () => {
+    await mount();
+    const before = () => calls.filter(c => c.method === 'studio.suites.list').length;
+    const start = before();
+    await act(async () => { realtime?.(null); }); await flush();
+    await act(async () => { realtime?.({ kind: 'suites', projectId: 'someone-else' }); }); await flush();
+    expect(before()).toBe(start);
+    await act(async () => { realtime?.({ kind: 'suites' }); }); await flush();
+    expect(before()).toBe(start + 1);
+  });
+
+  it('tolerates failing or malformed suite listings and skips them without a path', async () => {
+    handlers['studio.suites.list'] = () => { throw new Error('offline'); };
+    let el = await mount();
+    expect(el.querySelector('.sf-pw-suite')).toBeNull();
+    act(() => root!.unmount()); host!.remove();
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: [] });
+    el = await mount();
+    expect(el.querySelector('.sf-pw-suite')).toBeNull();
+    act(() => root!.unmount()); host!.remove();
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: 'nope' });
+    el = await mount();
+    expect(el.querySelector('.sf-pw-suite')).toBeNull();
+    act(() => root!.unmount()); host!.remove();
+    calls.length = 0;
+    el = await mount({ path: undefined });
+    expect(methods()).not.toContain('studio.suites.list');
+  });
+
+  it('reports suite run failures of every shape and shows progress for single cases', async () => {
+    let release!: (v: unknown) => void;
+    handlers['studio.suites.run'] = () => new Promise(r => { release = r; });
+    const el = await mount();
+    await click(btn(el, 'Run suite'));
+    expect(el.querySelector('.sf-pw-suite')?.textContent).toContain('Running 2 cases…');
+    expect([...el.querySelectorAll('.sf-pw-chip')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
+    await act(async () => release({ ok: false })); await flush();
+    expect(alertText(el)).toContain('The suite could not run.');
+    handlers['studio.suites.run'] = () => new Promise(r => { release = r; });
+    await click(btn(el, 'Other'));
+    expect(el.querySelector('.sf-pw-suite')?.textContent).toContain('Running case…');
+    await act(async () => release({ ok: true, suite: suiteRow({ sha256: 'newer', lastResults: { c1: { outcome: 'pass', runId: 'r', at: 3 } } }) })); await flush();
+    expect(el.querySelector('.sf-pw-suite')?.textContent).toContain('1/2 pass');
+    handlers['studio.suites.run'] = () => { throw new Error('socket closed'); };
+    await click(btn(el, 'Run suite'));
+    expect(alertText(el)).toContain('socket closed');
+  });
+
+  it('disables suite runs while Live is selected or a run is active', async () => {
+    const el = await mount({ engine: 'live' });
+    expect(btn(el, 'Run suite').disabled).toBe(true);
+    expect([...el.querySelectorAll('.sf-pw-chip')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
+    await rerender({ engine: 'simulate' });
+    await click(btn(el, 'Start'));
+    expect(btn(el, 'Run suite').disabled).toBe(true);
+  });
+
+  async function startAndSave(el: HTMLElement, name: string, criteria = '') {
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
+    await click(btn(el, 'Save as scenario'));
+    const form = el.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
+    const inputs = form.querySelectorAll('input');
+    expect((form.querySelector('button[type=submit]') as HTMLButtonElement).disabled).toBe(true);
+    await setInput(inputs[0] as HTMLInputElement, name);
+    if (criteria) await setInput(inputs[1] as HTMLInputElement, criteria);
+    await act(async () => { form.requestSubmit(); }); await flush();
+  }
+
+  it('saves a scenario into an empty suite without an expected sha and keeps the criteria', async () => {
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: [] });
+    const el = await mount();
+    await startAndSave(el, 'First', 'Greets the user');
+    const save = calls.find(c => c.method === 'studio.suites.save')!;
+    expect(save.args).not.toHaveProperty('expectedSha256');
+    const cases = save.args.cases as Array<{ name: string }>;
+    expect(cases).toHaveLength(1);
+    expect(JSON.stringify(cases[0])).toContain('Greets the user');
+    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeNull();
+  });
+
+  it('keeps the save form open and reports an error when saving fails', async () => {
+    handlers['studio.suites.save'] = () => ({ ok: false });
+    const el = await mount();
+    await startAndSave(el, 'Nope');
+    expect(alertText(el)).toContain('The scenario could not be saved.');
+    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeTruthy();
+    handlers['studio.suites.save'] = () => { throw new Error('disk full'); };
+    await act(async () => { (el.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement).requestSubmit(); }); await flush();
+    expect(alertText(el)).toContain('disk full');
+  });
+
+  it('cannot save a scenario without a saved file, and toggles the save form', async () => {
+    const el = await mount({ path: undefined });
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
+    expect(btn(el, 'Save as scenario').disabled).toBe(true);
+    await rerender({ path: 'force-app/A.agent' });
+    await click(btn(el, 'Save as scenario'));
+    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeTruthy();
+    await click(btn(el, 'Save as scenario'));
+    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeNull();
+  });
+
+  it('does not fetch a trace for rehearse runs, and degrades on thrown trace errors', async () => {
+    handlers['agentLab.trace'] = () => { throw new Error('trace exploded'); };
+    const el = await mount();
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
+    expect(el.textContent).toContain('1.2s');
+    await click(btn(el, 'trace'));
+    expect(el.textContent).toContain('trace exploded');
+  });
+
+  it('falls back to a generic reason when a trace returns no data', async () => {
+    handlers['agentLab.trace'] = () => ({ ok: true });
+    const el = await mount();
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello'); await click(btn(el, 'trace'));
+    expect(el.textContent).toContain('Trace request failed.');
+  });
+
+  it('reports non-Error trace failures', async () => {
+    handlers['agentLab.trace'] = () => { throw 'string trace failure'; };
+    const el = await mount();
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello'); await click(btn(el, 'trace'));
+    expect(el.textContent).toContain('string trace failure');
+  });
+
+  it('compares runs with no agent replies and switches run A', async () => {
+    const el = await mount();
+    handlers['agentLab.start'] = () => snap([]);
+    handlers['agentLab.send'] = () => ({ ok: true, data: { id: 'sess-1', turns: [{ role: 'user', text: 'only me' }] } });
+    await click(btn(el, 'Start')); await typeAndSend(el, 'x'); await click(btn(el, 'End'));
+    handlers['agentLab.start'] = () => ({ ok: true, data: { id: 'sess-2', turns: [] } });
+    handlers['agentLab.send'] = () => ({ ok: true, data: { id: 'sess-2', turns: [{ role: 'user', text: 'also me' }] } });
+    await click(btn(el, 'Start')); await typeAndSend(el, 'y');
+    await click(btn(el, 'Compare runs'));
+    expect(el.textContent).toContain('No agent replies to compare.');
+    const a = el.querySelector('select[aria-label="Run A"]') as HTMLSelectElement;
+    await act(async () => { a.value = a.options[1].value; a.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect((el.querySelector('select[aria-label="Run A"]') as HTMLSelectElement).value).toBe(a.options[1].value);
+  });
+
+  it('shows matching replies as same across two runs', async () => {
+    const el = await mount();
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello'); await click(btn(el, 'End'));
+    handlers['agentLab.start'] = () => ({ ok: true, data: { id: 'sess-2', turns: [] } });
+    handlers['agentLab.send'] = () => ({ ok: true, data: { id: 'sess-2', turns: [{ role: 'agent', text: 'Welcome' }, { role: 'user', text: 'hello' }, { role: 'agent', text: 'Hi there', planId: 'p1' }] } });
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
+    await click(btn(el, 'Compare runs'));
+    expect(el.textContent).toContain(' · same');
+    expect(el.textContent).not.toContain('differs');
+  });
+});

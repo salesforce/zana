@@ -127,4 +127,93 @@ describe('Agentforce rehearsal UI', () => {
       test.unmount();
     }
   });
+
+  async function startAndSend() {
+    const view = render(<AgentforceLabPanel {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: /Start conversation/ }));
+    await screen.findByText('Conversation ready');
+    fireEvent.change(screen.getByLabelText('Rehearsal message'), { target: { value: 'Find my order' } });
+    fireEvent.submit(screen.getByLabelText('Rehearsal message').closest('form')!);
+    await screen.findByText('Let me help with your order.');
+    return view;
+  }
+  const openEvidence = () => {
+    const details = document.querySelector('details.af-plan') as HTMLDetailsElement;
+    details.open = true; // happy-dom dispatches the toggle event itself
+    return details;
+  };
+  const closeEvidence = async () => {
+    const details = document.querySelector('details.af-plan') as HTMLDetailsElement;
+    details.open = false;
+    await act(async () => { await new Promise(r => setTimeout(r, 5)); });
+  };
+  const traceBody = { ok: true, data: { runId: 'one', turn: 1, planId: 'plan-one', available: true, steps: [{ kind: 'topic', label: 'Orders' }] } };
+
+  it('lazy-loads the planner trace once when runtime evidence is opened on a preview session', async () => {
+    rpc.mockImplementation(async (plugin, method, args) => method === 'agentLab.trace' ? traceBody : defaultRpc(plugin, method, args));
+    await startAndSend();
+    expect(rpc.mock.calls.some(c => c[1] === 'agentLab.trace')).toBe(false);
+    const details = openEvidence();
+    await waitFor(() => expect(details.textContent).toContain('Orders'));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.trace', { projectId: 'p1', id: 'one', planId: 'plan-one' });
+    await closeEvidence();
+    openEvidence();
+    await act(async () => { await new Promise(r => setTimeout(r, 5)); });
+    expect(rpc.mock.calls.filter(c => c[1] === 'agentLab.trace')).toHaveLength(1);
+  });
+
+  it('shows the failure reason when the trace request is rejected or returns an error', async () => {
+    rpc.mockImplementation(async (plugin, method, args) => method === 'agentLab.trace' ? { ok: false, error: 'Trace expired' } : defaultRpc(plugin, method, args));
+    await startAndSend();
+    const details = openEvidence();
+    await waitFor(() => expect(details.textContent).toContain('Trace expired'));
+  });
+
+  it('falls back to a generic reason for an empty trace response', async () => {
+    rpc.mockImplementation(async (plugin, method, args) => method === 'agentLab.trace' ? { ok: true } : defaultRpc(plugin, method, args));
+    await startAndSend();
+    const details = openEvidence();
+    await waitFor(() => expect(details.textContent).toContain('Trace request failed.'));
+  });
+
+  it('reports thrown trace errors, including non-Error values, and does not trace rehearsal sessions', async () => {
+    rpc.mockImplementation(async (plugin, method, args) => { if (method === 'agentLab.trace') throw new Error('Socket closed'); return defaultRpc(plugin, method, args); });
+    const view = await startAndSend();
+    let details = openEvidence();
+    await waitFor(() => expect(details.textContent).toContain('Socket closed'));
+    view.unmount();
+    rpc.mockImplementation(async (plugin, method, args) => { if (method === 'agentLab.trace') throw 'string failure'; return defaultRpc(plugin, method, args); });
+    const second = await startAndSend();
+    details = openEvidence();
+    await waitFor(() => expect(details.textContent).toContain('string failure'));
+    second.unmount();
+    rpc.mockClear();
+    render(<AgentforceLabPanel {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: /AI rehearsal/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Start conversation/ }));
+    await screen.findByText('Conversation ready');
+    fireEvent.change(screen.getByLabelText('Rehearsal message'), { target: { value: 'hi' } });
+    fireEvent.submit(screen.getByLabelText('Rehearsal message').closest('form')!);
+    await screen.findByText('Let me help with your order.');
+    details = openEvidence();
+    expect(rpc.mock.calls.some(c => c[1] === 'agentLab.trace')).toBe(false);
+    expect(details.querySelector('.sf-trace')).toBeNull();
+  });
+
+  it('closing the evidence does not request a trace, and a new conversation clears cached traces', async () => {
+    rpc.mockImplementation(async (plugin, method, args) => method === 'agentLab.trace' ? traceBody : defaultRpc(plugin, method, args));
+    await startAndSend();
+    const details = document.querySelector('details.af-plan') as HTMLDetailsElement;
+    fireEvent(details, new Event('toggle'));
+    expect(rpc.mock.calls.some(c => c[1] === 'agentLab.trace')).toBe(false);
+    openEvidence();
+    await waitFor(() => expect(details.textContent).toContain('Orders'));
+    fireEvent.click(screen.getByRole('button', { name: /New conversation/ }));
+    await waitFor(() => expect(rpc.mock.calls.filter(c => c[1] === 'agentLab.start')).toHaveLength(2));
+    fireEvent.change(screen.getByLabelText('Rehearsal message'), { target: { value: 'again' } });
+    fireEvent.submit(screen.getByLabelText('Rehearsal message').closest('form')!);
+    await waitFor(() => expect(document.querySelector('details.af-plan')).toBeTruthy());
+    openEvidence();
+    await waitFor(() => expect(rpc.mock.calls.filter(c => c[1] === 'agentLab.trace')).toHaveLength(2));
+  });
 });

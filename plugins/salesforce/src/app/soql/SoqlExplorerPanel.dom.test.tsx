@@ -191,6 +191,14 @@ describe('SOQL workbench interactions', () => {
     await waitFor(() => expect(screen.queryByTestId('soql-editor-error')).toBeNull());
   });
 
+  it('shows an error and no plan when explain fails', async () => {
+    await mount();
+    call.mockImplementation(async (method: string) => method === 'soql.explain' ? { ok: false, error: 'Explain unavailable' } : respond(method));
+    fireEvent.click(screen.getByRole('button', { name: 'Explain', exact: true }));
+    await screen.findByText(/Explain unavailable/);
+    expect(screen.queryByTestId('soql-explain')).toBeNull();
+  });
+
   it('browses schema, builds a query, formats it and explains its plan', async () => {
     await mount();
     fireEvent.click(screen.getByTestId('soql-sobject:Account'));
