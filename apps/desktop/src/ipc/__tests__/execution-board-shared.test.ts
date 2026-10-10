@@ -7,17 +7,24 @@ vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({ store: { listPro
 vi.mock('../shared-product-registry.js', () => ({ registerSharedProduct: (channel: string, fn: Function) => { state.shared.set(channel, fn); } }));
 import { bindIpcCtx } from '../ctx.js';
 import { registerExecutionBoardIpc } from '../execution-board.js';
-const get = vi.fn(), stop = vi.fn(), start = vi.fn(), list = vi.fn(), clear = vi.fn(), recoverTimedOut = vi.fn();
+const get = vi.fn(), stop = vi.fn(), start = vi.fn(), list = vi.fn(), clear = vi.fn(), recoverTimedOut = vi.fn(), recoverRetained = vi.fn(), resumeRun = vi.fn(), exactNativeRecoveryAvailability = vi.fn();
 const execution = { id: 'execution', projectId: 'registered', teamId: 'team-1', request: {}, jobTitle: 'Job', state: 'RUNNING', attempt: 1, stateVersion: 4, createdAt: 1, updatedAt: 2, workUnits: [] };
 beforeEach(() => {
   state.shared.clear(); state.windows.clear(); vi.clearAllMocks();
    get.mockImplementation(async (projectId: string, id: string) => projectId === 'registered' && id === 'execution' ? { id, projectId, callerPrincipalId: 'stored-owner' } : undefined);
    stop.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Version changed' });
-   recoverTimedOut.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' });
-   start.mockResolvedValue({ ok: true }); list.mockResolvedValue({ records: [], hasMore: false });
-   bindIpcCtx({ safeHandle: vi.fn(), safeHandleFromWindow: (channel: string, fn: Function) => state.windows.set(channel, fn), ptys: { list: () => [] }, teams: { list: () => [] }, personas: { list: () => [] }, windows: new Map([[7, { projectId: 'different' }]]), executionStore: { getInProject: get }, executionResumeTokens: { clear }, executionSources: {}, squadExecutionService: { stop, listProject: list, recoverTimedOut }, startTeamJobFromUi: start } as any);
+   recoverTimedOut.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' }); recoverRetained.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' }); resumeRun.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already resumed' });
+   start.mockResolvedValue({ ok: true }); list.mockResolvedValue({ records: [], hasMore: false }); exactNativeRecoveryAvailability.mockReturnValue({ available: false, restorableSlots: 0 });
+     bindIpcCtx({ safeHandle: vi.fn(), safeHandleFromWindow: (channel: string, fn: Function) => state.windows.set(channel, fn), ptys: { list: () => [] }, teams: { list: () => [] }, personas: { list: () => [] }, windows: new Map([[7, { projectId: 'different' }]]), executionStore: { getInProject: get }, executionResumeTokens: { clear, status: () => ({ state: 'missing' }) }, executionSources: {}, squadExecutionService: { stop, listProject: list, recoverTimedOut, recoverRetained, resumeRun }, startTeamJobFromUi: start, exactNativeRecoveryAvailability } as any);
   registerExecutionBoardIpc();
-});
+   });
+  it('authorizes typed retained recovery and forwards only valid recovery inputs', async () => {
+    const recover = state.windows.get(IPC.executionBoard.recoverRetained)!;
+    await expect(recover({ id: 8 }, 'registered', 'execution', 3, 'exact-native')).resolves.toMatchObject({ code: 'CONFLICT' });
+    expect(recoverRetained).toHaveBeenCalledWith('interactive:local', 'registered', 'execution', 3, 'exact-native');
+    await expect(recover({ id: 8 }, 'registered', 'execution', 3, 'invalid')).resolves.toMatchObject({ code: 'INVALID' });
+    await expect(recover({ id: 8 }, 'registered', 'execution', 3.5, 'fresh-plan')).resolves.toMatchObject({ code: 'INVALID' });
+  });
 it('denies every shared execution operation for an unregistered project before reading execution state', async () => {
   for (const [method, channel] of SHARED_PRODUCT_METHODS) {
     if (!method.startsWith('executionBoard.')) continue;
@@ -67,8 +74,72 @@ it('does not fabricate a native window for shared launches and preserves local w
   expect(SHARED_PRODUCT_METHODS.has('executionBoard.relaunchMonitor')).toBe(false);
   expect(SHARED_PRODUCT_METHODS.has('executionSources.pick')).toBe(false);
 });
+it('preserves resolved requirement guidance from host launch response', async () => {
+  start.mockResolvedValueOnce({
+    ok: false,
+    code: 'REQUIREMENT_UNAVAILABLE',
+    message: 'work unit build requirement unavailable: skills: review',
+    requirementFailure: { workUnits: [{ id: 'build', title: 'Build UI', missingSkills: ['review'], missingMcpServers: [] }] }
+  });
+
+  await expect(state.windows.get(IPC.teams.startJob)!({ id: 8 }, { projectId: 'registered' })).resolves.toEqual({
+    ok: false,
+    code: 'REQUIREMENT_UNAVAILABLE',
+    message: 'work unit build requirement unavailable: skills: review',
+    requirementFailure: { workUnits: [{ id: 'build', title: 'Build UI', missingSkills: ['review'], missingMcpServers: [] }] }
+  });
+});
+it('preserves availability-unknown guidance from host launch response', async () => {
+  start.mockResolvedValueOnce({
+    ok: false,
+    code: 'CAPABILITY_AVAILABILITY_UNKNOWN',
+    message: 'Project capability availability could not be verified',
+    availabilityUnknown: { failedSources: ['skills', 'mcpServers'] }
+  });
+
+  await expect(state.windows.get(IPC.teams.startJob)!({ id: 8 }, { projectId: 'registered' })).resolves.toEqual({
+    ok: false,
+    code: 'CAPABILITY_AVAILABILITY_UNKNOWN',
+    message: 'Project capability availability could not be verified',
+    availabilityUnknown: { failedSources: ['skills', 'mcpServers'] }
+  });
+});
 it('contains a shared service failure without allowing any fallback launch', async () => {
   start.mockRejectedValueOnce(new Error('offline'));
   expect(await state.shared.get(IPC.teams.startJob)!({ projectId: 'registered' })).toMatchObject({ ok: false, code: 'UNAVAILABLE' });
   expect(start).toHaveBeenCalledOnce();
+});
+
+it('aligns desktop exact-native action with host-confirmed compatible slots without native ids', async () => {
+  const retained = {
+    ...execution,
+    state: 'FAILED',
+    nativeRecoverySnapshots: [{ attempt: 1, slotId: 'slot', role: 'worker', nativeConversationId: 'native-secret' }]
+  };
+  list.mockResolvedValueOnce({ records: [retained], hasMore: false });
+  exactNativeRecoveryAvailability.mockReturnValueOnce({ available: true, restorableSlots: 1 });
+  const enabled = await state.windows.get(IPC.executionBoard.listProject)!({ id: 8 }, 'registered');
+  expect(enabled.executions[0].recovery.actions.exactNative).toEqual({ available: true, restorableSlots: 1 });
+  expect(JSON.stringify(enabled)).not.toContain('native-secret');
+
+  list.mockResolvedValueOnce({ records: [retained], hasMore: false });
+  // Durable snapshots alone do not enable recovery: host rejects former persona/profile slots.
+  exactNativeRecoveryAvailability.mockReturnValueOnce({ available: false, restorableSlots: 0 });
+  const unsupported = await state.windows.get(IPC.executionBoard.listProject)!({ id: 8 }, 'registered');
+  expect(unsupported.executions[0].recovery.actions.exactNative).toEqual({ available: false, restorableSlots: 0, reason: 'NATIVE_RESTORE_UNAVAILABLE' });
+});
+
+it('keeps native recovery available after a replacement launch fails without projecting snapshot ids', async () => {
+  const retained = {
+    ...execution,
+    state: 'FAILED',
+    attempt: 2,
+    nativeRecoverySnapshots: [{ attempt: 1, slotId: 'slot', role: 'worker', nativeConversationId: 'native-secret' }]
+  };
+  list.mockResolvedValueOnce({ records: [retained], hasMore: false });
+  exactNativeRecoveryAvailability.mockReturnValueOnce({ available: true, restorableSlots: 1 });
+
+  const result = await state.windows.get(IPC.executionBoard.listProject)!({ id: 8 }, 'registered');
+  expect(result.executions[0].recovery.actions.exactNative).toEqual({ available: true, restorableSlots: 1 });
+  expect(JSON.stringify(result)).not.toContain('native-secret');
 });

@@ -7,6 +7,9 @@ import type {
   AgentMessage,
   SubagentChild,
   InboxEntry,
+  InboxHostAction,
+  InboxHostActionInput,
+  InboxHostActionLookup,
   Suggestion,
   InboxDigest,
   DetailedInboxDigest,
@@ -119,6 +122,101 @@ export const useInbox = create<InboxLiveState>((set) => ({
       return next.length === s.entries.length ? s : { entries: next };
     })
 }));
+
+/** Host-authorized inbox action ids. The renderer never derives this from entry
+ * fields: only main's current allowlist can route an interaction to host IPC. */
+interface InboxHostActionsState {
+  byEntryId: Record<string, InboxHostAction>;
+  resolutionByEntryId: Record<string, InboxHostActionResolution>;
+  setActions: (actions: InboxHostAction[]) => void;
+  beginResolution: (entryId: string) => number;
+  resolveEntry: (entryId: string, generation: number, lookup: InboxHostActionLookup) => void;
+  failResolution: (entryId: string, generation: number) => void;
+}
+
+interface InboxHostActionResolution {
+  generation: number;
+  loading: boolean;
+  error: boolean;
+  resolved: boolean;
+}
+
+export const useInboxHostActions = create<InboxHostActionsState>((set, get) => ({
+  byEntryId: {},
+  setActions: (actions) => set({
+    byEntryId: Object.fromEntries(actions.map((action) => [action.entryId, action]))
+  }),
+  resolutionByEntryId: {},
+  beginResolution: (entryId): number => {
+    const generation = (get().resolutionByEntryId[entryId]?.generation ?? 0) + 1;
+    set((state) => ({
+      resolutionByEntryId: {
+        ...state.resolutionByEntryId,
+        [entryId]: { generation, loading: true, error: false, resolved: false }
+      }
+    }));
+    return generation;
+  },
+  resolveEntry: (entryId, generation, lookup) => set((state) => {
+    if (state.resolutionByEntryId[entryId]?.generation !== generation) return state;
+    const byEntryId = { ...state.byEntryId };
+    if (lookup.action) byEntryId[entryId] = lookup.action;
+    else delete byEntryId[entryId];
+    return {
+      byEntryId,
+      resolutionByEntryId: {
+        ...state.resolutionByEntryId,
+        [entryId]: { generation, loading: false, error: !lookup.resolved, resolved: lookup.resolved }
+      }
+    };
+  }),
+  failResolution: (entryId, generation) => set((state) => state.resolutionByEntryId[entryId]?.generation === generation
+    ? {
+        resolutionByEntryId: {
+          ...state.resolutionByEntryId,
+          [entryId]: { generation, loading: false, error: true, resolved: false }
+        }
+      }
+    : state)
+}));
+
+export async function refreshInboxHostActions(): Promise<void> {
+  try {
+    const actions = await product.inbox.hostActions?.list();
+    useInboxHostActions.getState().setActions(actions ?? []);
+  } catch { /* Per-entry lookup remains source of ownership gating. */ }
+}
+
+/** Resolve selected entry ownership before exposing any agent-launching control. */
+export async function resolveInboxHostAction(entry: Pick<InboxEntry, 'id' | 'hostActionRequired'>): Promise<void> {
+  const generation = useInboxHostActions.getState().beginResolution(entry.id);
+  try {
+    const get = product.inbox.hostActions?.get;
+    // Browser/mobile has no main-process registry. The durable marker is stamped
+    // before host-only entries become visible, so only unmarked entries can use
+    // ordinary terminal delivery without a desktop ownership lookup.
+    if (!get) {
+      if (entry.hostActionRequired) throw new Error('Host ownership lookup unavailable');
+      useInboxHostActions.getState().resolveEntry(entry.id, generation, { resolved: true, action: null });
+      return;
+    }
+    useInboxHostActions.getState().resolveEntry(entry.id, generation, await get(entry.id));
+  } catch {
+    useInboxHostActions.getState().failResolution(entry.id, generation);
+  }
+}
+
+/** Dispatch only an id previously supplied by main's allowlist. */
+export async function runInboxHostAction(entryId: string, input?: InboxHostActionInput): Promise<boolean> {
+  if (!useInboxHostActions.getState().byEntryId[entryId]) return false;
+  try {
+    const result = await product.inbox.hostActions?.run(entryId, input);
+    await resolveInboxHostAction({ id: entryId });
+    return result?.ok === true;
+  } catch {
+    return false;
+  }
+}
 
 // ============================================================================
 // Suggested Actions launcher (afl-03) — a SIBLING store to the inbox, NOT a feed
@@ -1601,6 +1699,15 @@ export function pruneInboxMarkers(removedIds: string[]): void {
   useInboxAnswered.getState().pruneAnswered(removedIds);
   useSavedMark.getState().pruneSaved(removedIds);
   useInboxKeep.getState().pruneKeptByIds(removedIds);
+  const { byEntryId } = useInboxHostActions.getState();
+  const { resolutionByEntryId } = useInboxHostActions.getState();
+  if (removedIds.some((id) => id in byEntryId || id in resolutionByEntryId)) {
+    const next = { ...byEntryId };
+    const nextResolution = { ...resolutionByEntryId };
+    for (const id of removedIds) delete next[id];
+    for (const id of removedIds) delete nextResolution[id];
+    useInboxHostActions.setState({ byEntryId: next, resolutionByEntryId: nextResolution });
+  }
 }
 
 /**

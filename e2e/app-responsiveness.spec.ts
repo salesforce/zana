@@ -61,7 +61,7 @@ test('search edits do not execute a regex against retained renderer previews', a
 
 test('large documents stay bounded and recursive deletion yields at the Electron boundary', async ({ home }) => {
   test.setTimeout(120_000);
-  const { launchApp } = await import('./fixtures/app.js');
+  const { closeApp, launchApp } = await import('./fixtures/app.js');
   const { writeFile } = await import('node:fs/promises');
   const root = join(home, 'large-preview-project'); mkdirSync(join(root, 'delete-me'), { recursive: true });
   const large = '# Large document\n```javascript\n' + 'const value = 1;\n'.repeat(60_000) + '```';
@@ -89,7 +89,7 @@ test('large documents stay bounded and recursive deletion yields at the Electron
 
 test('plugin service returns survive worker transport and a blocking callback cannot freeze product requests', async ({ home }) => {
   test.setTimeout(90_000);
-  const { launchApp } = await import('./fixtures/app.js');
+  const { closeApp, launchApp } = await import('./fixtures/app.js');
   const root = join(home, 'plugin-worker-regression'); mkdirSync(root, { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'plugin-worker-regression', version: '1.0.0', engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' }, zcc: { name: 'Busy worker regression', description: 'Isolated fixture', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
   writeFileSync(join(root, 'server.mjs'), `export default async api => {
@@ -135,7 +135,7 @@ test('plugin service returns survive worker transport and a blocking callback ca
 
 test('history searches and marker lock retries keep product HTTP responsive in Electron', async ({ home }) => {
   test.setTimeout(120_000);
-  const { launchApp } = await import('./fixtures/app.js');
+  const { closeApp, launchApp } = await import('./fixtures/app.js');
   const { openDatabase, createSqliteDatabase, upsertHost, createEnvironment, createConversationThread, appendConversationThreadEvent } = await import('../packages/db/src/index.js');
   const root = join(home, 'history-project'); mkdirSync(root, { recursive: true }); mkdirSync(join(home, '.zcc'), { recursive: true });
   writeFileSync(join(home, '.zcc/projects.json'), JSON.stringify({ version: 1, projects: [{ id: 'history', name: 'History project', path: root, createdAt: Date.now(), lastActiveAt: Date.now() }] }));
@@ -168,7 +168,7 @@ test('history searches and marker lock retries keep product HTTP responsive in E
     expect(latency).toBeLessThan(500);
     lock.exec('COMMIT'); lock.close(); lock = undefined;
     const read = await request; expect(read.status).toBe(200); expect(read.elapsed).toBeGreaterThan(100);
-  } finally { try { lock?.exec('ROLLBACK'); } finally { lock?.close(); await app.electron.close(); } }
+  } finally { try { lock?.exec('ROLLBACK'); } finally { lock?.close(); await closeApp(app.electron); } }
 });
 
 test('legacy extension storage writes await persistence across the utility-process broker', async ({ home }) => {

@@ -23,10 +23,13 @@ import {
   useInbox,
   useInboxAnswered,
   useInboxKeep,
+  useInboxHostActions,
   useInboxRead,
   useInboxSelection,
   useSavedMark,
   useSuggestions,
+  resolveInboxHostAction,
+  runInboxHostAction,
   useUi
 } from '../store.js';
 import { DelayedLoading, DelayedStencilLines } from './ui/Skeleton.js';
@@ -45,6 +48,7 @@ import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/lau
 import type {
   InboxDoc,
   InboxEntry,
+  InboxHostAction,
   FsReadResult,
   LaunchProfileId,
   Project,
@@ -151,6 +155,12 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   const setNav = useUi((s) => s.setNav);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
+  const hostAction = useInboxHostActions((s) => s.byEntryId[entry.id]);
+  const ownership = useInboxHostActions((s) => s.resolutionByEntryId?.[entry.id]);
+
+  useEffect(() => {
+    void resolveInboxHostAction(entry);
+  }, [entry.id, entry.hostActionRequired]);
 
   const [exporting, setExporting] = useState(false);
   const [reopening, setReopening] = useState(false);
@@ -220,12 +230,20 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
 
   const hasDocs = (entry.docs?.length ?? 0) > 0;
   const hasComments = (entry.comments ?? '').trim().length > 0;
+  const decisionGuidance = entry.decisionGuidance;
   // One-or-many questions, normalized to a flat list (see inboxQuestions).
   // The interactive lettered-option form is an experimental display choice; when
   // it's off we fall back to the plain free-text ReplyBox everywhere (the options
   // are still spelled out in the entry's Comments text, so nothing is lost — it's
   // just not an interactive form).
-  const questionSet = structuredQuestions ? inboxQuestions(entry) : [];
+  // Host-owned actions must retain their approved route even when the user hides
+  // ordinary interactive question forms. Main remains the authority for both the
+  // action allowlist and its structured options.
+  const questionSet = (structuredQuestions || hostAction) ? inboxQuestions(entry) : [];
+  const hostOptionAction = hostAction && questionSet.length === 1
+    && questionSet[0]?.multiSelect !== true && questionSet[0]?.allowOther !== true
+    ? (input: { optionId: string; text?: string }) => runInboxHostAction(entry.id, input)
+    : undefined;
   // Does this entry read as a QUESTION the user should answer? Independent of
   // the `structuredQuestions` display flag: `classifyEntry` reports 'question'
   // from the entry's own structured question field, so a user who disabled the
@@ -494,7 +512,32 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
     }
   };
 
-  const answerSurface = (
+  // Unknown ownership is fail-closed until main confirms this exact entry is non-host.
+  const ownershipLoading = ownership?.loading ?? true;
+  const ownershipError = ownership?.error === true;
+  const hostActionSurface = ownershipLoading ? (
+    <div className="inbox-reply" role="status">Loading host action…</div>
+  ) : ownershipError ? (
+    <div className="inbox-reply" role="alert">
+      Host action status is unavailable. Ordinary reply delivery is paused.
+      <button type="button" onClick={() => void resolveInboxHostAction(entry)}>Retry</button>
+    </div>
+  ) : hostAction ? (
+    <HostActionSurface
+      entry={entry}
+      action={hostAction}
+      questions={questionSet}
+      prompt={entry.comments}
+      onAction={hostOptionAction}
+    />
+  ) : null;
+  // Host action ownership permits only viewing its recorded origin. A fresh or
+  // resumed terminal could escape the host-controlled worktree and authority.
+  const ownershipPending = ownershipLoading || ownershipError;
+  const canOpenHostOrigin = !!originatingThread || !!originalSession;
+  const canOpen = projectAlive && !ownershipPending && (!hostAction || canOpenHostOrigin);
+
+  const answerSurface = hostActionSurface ?? (
     <>
           {/* Answer surface — one deterministic decision (resolveAnswerSurface):
               • live   → the originating (or a reopened) session is alive → inject
@@ -526,7 +569,11 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
                 onReply={answerOnThread}
               />
             ) : (
-              <ReplyBox entry={entry} sessionTitle={originatingThread.title} onReply={answerOnThread} />
+              <ReplyBox
+                entry={entry}
+                sessionTitle={originatingThread.title}
+                onReply={answerOnThread}
+              />
             )
           ) : deliveryMode === 'live' && aliveSession ? (
             questionSet.length > 0 ? (
@@ -539,7 +586,11 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
                 sessionTitle={aliveSession.title}
               />
             ) : (
-              <ReplyBox entry={entry} sessionId={aliveSession.id} sessionTitle={aliveSession.title} />
+              <ReplyBox
+                entry={entry}
+                sessionId={aliveSession.id}
+                sessionTitle={aliveSession.title}
+              />
             )
           ) : deliveryMode === 'reopen' ? (
             showReopenBox ? (
@@ -614,7 +665,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
         {compact ? <InboxMobileActions actions={[
           { label: kept ? 'Remove keep flag' : 'Keep this entry', icon: <Star size={20} aria-hidden="true" />, pressed: kept, onSelect: () => { void toggleInboxKeep(entry.id); } },
           ...(canExport ? [{ label: alreadySaved ? 'Saved for later' : saving ? 'Saving…' : 'Save for later', icon: <Bookmark size={20} aria-hidden="true" />, disabled: saving || alreadySaved, onSelect: () => { void onSave(); } }] : []),
-          ...(projectAlive ? [{ label: 'New agent from this message', icon: <BotMessageSquare size={20} aria-hidden="true" />, onSelect: () => setLauncherOpen(true) }] : []),
+           ...(projectAlive && !ownershipPending && !hostAction ? [{ label: 'New agent from this message', icon: <BotMessageSquare size={20} aria-hidden="true" />, onSelect: () => setLauncherOpen(true) }] : []),
           ...(canExport ? [{ label: exporting ? 'Exporting…' : 'Download PDF', icon: <Download size={20} aria-hidden="true" />, disabled: exporting, onSelect: () => { void exportPdf(); } }] : []),
           { label: 'Delete message', icon: <Trash2 size={20} aria-hidden="true" />, danger: true, onSelect: onDelete }
         ]} /> : <div className="inbox-detail-actions">
@@ -647,7 +698,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             )}
           </div>
           <div className="inbox-detail-actions-group">
-            {projectAlive && (
+             {projectAlive && !ownershipPending && !hostAction && (
               <button
                 type="button"
                 onClick={() => setLauncherOpen(true)}
@@ -711,7 +762,11 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
         </div>
       )}
 
-      {questionFirst ? answerSurface : null}
+       {(ownershipLoading || ownershipError || hostAction || questionFirst) ? answerSurface : null}
+
+       {decisionGuidance?.kind === 'plan-correction' && (
+        <PlanCorrectionDetails entryId={entry.id} guidance={decisionGuidance} />
+       )}
 
       {/* A structured-question entry shows its question text INSIDE the
           "Your input" card (QuestionBlock `prompt`), so it's self-contained and
@@ -737,7 +792,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
 
       <div className="inbox-detail-dock">
         <div className="inbox-detail-footer">
-          {projectAlive ? (
+          {canOpen ? (
             <button
               type="button"
               onClick={() => void handleOpen()}
@@ -761,7 +816,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             </div>
           )}
         </div>
-        {questionFirst ? null : answerSurface}
+         {(ownershipLoading || ownershipError || hostAction || questionFirst) ? null : answerSurface}
       </div>
 
       {relatedSuggestions.length > 0 && (
@@ -783,6 +838,103 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
       )}
     </div>
   );
+}
+
+/** Host-owned entries never fall back to terminal, thread, or reopen delivery. */
+function HostActionSurface({
+  entry,
+  action,
+  questions,
+  prompt,
+  onAction
+}: {
+  entry: InboxEntry;
+  action: InboxHostAction;
+  questions: InboxQuestion[];
+  prompt?: string;
+  onAction?: (input: { optionId: string; text?: string }) => Promise<boolean>;
+}) {
+  if (action.unavailable) {
+    return <div className="inbox-reply"><div className="inbox-detail-unavailable" role="alert">{action.message ?? 'This host action is unavailable.'}</div></div>;
+  }
+  if (action.status === 'claimed') {
+    return <div className="inbox-reply" role="status">{action.message ?? 'Host action is running.'}</div>;
+  }
+  if (action.status === 'done') {
+    return <div className="inbox-reply answered" role="status">{action.message ?? 'Host action completed.'}</div>;
+  }
+  return (
+    <QuestionBlock
+      entry={entry}
+      questions={questions}
+      prompt={prompt}
+      sessionTitle="Host action"
+      onHostAction={onAction}
+      hostOwned
+      hostActionTextOptionId={action.textOptionId}
+      hostActionMessage={action.message}
+      hostActionUnavailable={!onAction}
+    />
+  );
+}
+
+function PlanCorrectionDetails({
+  entryId,
+  guidance,
+}: {
+  entryId: string;
+  guidance: NonNullable<InboxEntry['decisionGuidance']>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="inbox-plan-correction-details" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>Details</summary>
+      {open && <dl>
+          <dt>Technical diagnostic</dt>
+          <dd>{guidance.diagnostic}</dd>
+          {guidance.originalPlanPath && <>
+            <dt>Original plan</dt>
+            <dd><PlanCorrectionArtifact entryId={entryId} path={guidance.originalPlanPath} /></dd>
+          </>}
+          {guidance.correctedPlanPath && <>
+            <dt>Corrected plan</dt>
+            <dd><PlanCorrectionArtifact entryId={entryId} path={guidance.correctedPlanPath} /></dd>
+          </>}
+          {guidance.diffPath && <>
+            <dt>Diff</dt>
+            <dd><PlanCorrectionArtifact entryId={entryId} path={guidance.diffPath} /></dd>
+          </>}
+        </dl>}
+    </details>
+  );
+}
+
+function PlanCorrectionArtifact({ entryId, path }: { entryId: string; path: string }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const readArtifact = product.inbox.hostActions?.readDecisionArtifact;
+    if (!readArtifact) {
+      setError('Could not load decision details. Try again.');
+      return;
+    }
+    void readArtifact(entryId, path).then((result) => {
+      if (cancelled) return;
+      if (result?.ok && typeof result.value.content === 'string') setContent(result.value.content);
+      else setError('Could not load decision details. Try again.');
+    }).catch(() => {
+      if (!cancelled) setError('Could not load decision details. Try again.');
+    });
+    return () => { cancelled = true; };
+  }, [entryId, path]);
+
+  return <div className="inbox-plan-correction-artifact">
+    <code>{path}</code>
+    {content !== null && <pre>{content}</pre>}
+    {error && <span>{error}</span>}
+  </div>;
 }
 
 function SessionStatusPill({

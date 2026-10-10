@@ -55,6 +55,97 @@ describe('execution store', () => {
     now = 1_130;
     expect(await store.decideDeadline(record.id, 1_050, 30)).toMatchObject({ kind: 'stopped', record: { state: 'STOPPED', timeoutReason: 'unresolved-blocker' } });
   }));
+  it('persists plan-correction cancellation as a non-resumable terminal stop across restart', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await expect(store.stopForPlanCorrection(record.id)).resolves.toMatchObject({
+      state: 'STOPPED', timeoutReason: 'plan-correction-cancelled'
+    });
+    const restarted = createExecutionStore({ filePath, id: () => 'other' });
+    await expect(restarted.get(record.id)).resolves.toMatchObject({
+      state: 'STOPPED', timeoutReason: 'plan-correction-cancelled'
+    });
+    await expect(restarted.registerPlan(record.id, 1, [{ id: 'late', title: 'Late', task: 'late', dependencies: [], readOnly: true }])).rejects.toThrow('execution is stopped');
+    await expect(restarted.stopForPlanCorrection(record.id)).resolves.toMatchObject({ stateVersion: 1 });
+  }));
+  it('persists latest trusted native recovery snapshot per slot with a state-version fence', async () => fixture(async (filePath) => {
+    let now = 10;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+      attempt: 1, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-old'
+    });
+    now = 20;
+    record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+      attempt: 1, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-new'
+    });
+    expect(record.nativeRecoverySnapshots).toEqual([expect.objectContaining({ slotId: 'worker-1', nativeConversationId: 'native-new', capturedAt: 20 })]);
+    await expect(store.upsertNativeRecoverySnapshot(record.id, record.stateVersion - 1, {
+      attempt: 1, slotId: 'worker-2', role: 'worker', personaId: 'reviewer', nativeConversationId: 'native-stale'
+    })).rejects.toThrow('stale execution state');
+    expect((await createExecutionStore({ filePath }).get(record.id))?.nativeRecoverySnapshots).toEqual(record.nativeRecoverySnapshots);
+  }));
+  it('rejects malformed native recovery snapshots on durable load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    durable.records[0].nativeRecoverySnapshots = [{ version: 1, attempt: 1, slotId: 'worker-1', role: 'worker', nativeConversationId: 'native', capturedAt: 1 }];
+    await writeFile(filePath, JSON.stringify(durable));
+    await expect(createExecutionStore({ filePath }).get(record.id)).rejects.toThrow('corrupt execution store');
+  }));
+  it('atomically starts retained recovery without durable BLOCKED state', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'failed');
+    record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+      attempt: record.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+    const recovered = await store.beginRetainedRecovery(record.id, record.stateVersion);
+    expect(recovered).toMatchObject({ state: 'STARTING', attempt: 2, teamLaunchRequestId: 'execution-1:attempt:2' });
+    expect(recovered.nativeRecoverySnapshots).toEqual([expect.objectContaining({ nativeConversationId: 'native-1' })]);
+    expect((await createExecutionStore({ filePath }).get(record.id))).toMatchObject({ state: 'STARTING', attempt: 2 });
+    const transitions = (await store.events('session-1', 'project-1', record.id)).events.filter((event) => event.kind === 'transition');
+    expect(transitions.map((event) => [event.fromState, event.toState])).toEqual([
+      ['READY', 'FAILED'], ['FAILED', 'STARTING']
+    ]);
+  }));
+  it('rejects retained recovery after an intervening terminal write without resetting work', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'failed');
+    const staleVersion = record.stateVersion;
+    record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+      attempt: record.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'intervening'
+    });
+
+    await expect(store.beginRetainedRecovery(record.id, staleVersion)).rejects.toThrow('stale execution state');
+    expect(await store.get(record.id)).toMatchObject({ state: 'FAILED', stateVersion: record.stateVersion, attempt: 1 });
+  }));
+  it('clears only prior-attempt native recovery snapshots after fresh-plan launch', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'failed');
+    record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+      attempt: 1, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+    record = await store.beginRetainedRecovery(record.id, record.stateVersion);
+    record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+      attempt: 2, slotId: 'worker-2', role: 'worker', personaId: 'reviewer', nativeConversationId: 'native-2'
+    });
+    const cleared = await store.clearPriorNativeRecoverySnapshots(record.id);
+    expect(cleared.nativeRecoverySnapshots).toEqual([expect.objectContaining({ attempt: 2, nativeConversationId: 'native-2' })]);
+  }));
+  it('makes a concurrent generic stop non-resumable when correction cancellation follows', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'STOPPED', 'info', 'user stop');
+
+    await expect(store.stopForPlanCorrection(record.id)).resolves.toMatchObject({
+      state: 'STOPPED', timeoutReason: 'plan-correction-cancelled'
+    });
+  }));
   it('cancels obsolete notice intents and schedules retries from post-increment attempts', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
@@ -1396,6 +1487,46 @@ describe('execution store', () => {
     expect(await store.get(stopped.id)).toMatchObject({ id: stopped.id, dismissedAt: expect.any(Number) });
     expect((await store.listInProject('project-1')).records).toEqual([]);
     await expect(store.dismiss(stopped.id)).resolves.toMatchObject({ id: stopped.id });
+  }));
+
+  it('retains execution-owned squad worktrees through terminal state until dismissal', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/.worktrees/execution-1', branch: 'zcc/execution-1', baseBranch: 'main'
+    });
+    const starting = await store.transition(prepared.id, prepared.stateVersion, 'STARTING', 'info', 'Starting');
+    const running = await store.transition(starting.id, starting.stateVersion, 'RUNNING', 'info', 'Running');
+    const stopped = await store.transition(running.id, running.stateVersion, 'STOPPED', 'info', 'Stopped');
+
+    expect(await store.listUndisposedSquadWorktrees()).toMatchObject([{ id: stopped.id, squadWorktree: {
+      path: '/repo/.worktrees/execution-1', baseBranch: 'main'
+    } }]);
+    await store.dismiss(stopped.id);
+    expect(await store.listUndisposedSquadWorktrees()).toEqual([]);
+  }));
+
+  it('persists terminal squad worktree completion marker across restart', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/.worktrees/execution-1', branch: 'zcc/execution-1', baseBranch: 'main'
+    });
+    const starting = await store.transition(prepared.id, prepared.stateVersion, 'STARTING', 'info', 'Starting');
+    const running = await store.transition(starting.id, starting.stateVersion, 'RUNNING', 'info', 'Running');
+    const terminal = await store.transition(running.id, running.stateVersion, 'COMPLETED', 'info', 'Completed');
+
+    // Simulate a process crash after terminal state write, before host effects run.
+    const restarted = createExecutionStore({ filePath, id: () => 'other' });
+    expect((await restarted.get(terminal.id))?.terminalWorktreeEffectsStateVersion).toBeUndefined();
+    await restarted.markSquadWorktreeTerminalEffects(terminal.id, terminal.stateVersion);
+
+    const afterReplay = createExecutionStore({ filePath, id: () => 'other' });
+    await expect(afterReplay.get(terminal.id)).resolves.toMatchObject({
+      terminalWorktreeEffectsStateVersion: terminal.stateVersion
+    });
   }));
 
   it('refuses to dismiss active executions', async () => fixture(async (filePath) => {

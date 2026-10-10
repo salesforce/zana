@@ -95,6 +95,7 @@ import { threadModelCatalogForHost } from './thread/pickers/thread-model-catalog
 import { useHosts } from '../hooks/useHosts.js';
 import { cliAgentCatalogScope } from './cli-agent-catalog-scope.js';
 import { RemoteComposerConnection } from './RemoteComposerConnection.js';
+import { effectiveWorktreeIsolation } from '../lib/workspace-choice.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 const CLI_WORK_MODE_ENTRIES = composerModeEntries({
@@ -173,6 +174,7 @@ export function LegacyAgentHomeComposer({
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
+  const [projectWorktreeIsolation, setProjectWorktreeIsolation] = useState<boolean | undefined>(undefined);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [extraArgs, setExtraArgs] = useState<string[]>([]);
   const [personaId, setPersonaId] = useState('');
@@ -371,13 +373,41 @@ export function LegacyAgentHomeComposer({
   }, [loadProjects, pinnedProject, preferredProjectId, projectId, projects]);
 
   useEffect(() => {
+    if (!project?.id) {
+      setProjectWorktreeIsolation(undefined);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      void product.projectSettings.get(project.id).then((settings) => {
+        if (!cancelled) setProjectWorktreeIsolation(settings.worktreeIsolation);
+      }).catch(() => {
+        if (!cancelled) setProjectWorktreeIsolation(undefined);
+      });
+    };
+    load();
+    const unsubscribe = product.projectSettings.onChanged((changedProjectId) => {
+      if (changedProjectId === project.id) load();
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [project?.id]);
+
+  const worktreeIsolation = effectiveWorktreeIsolation(
+    projectWorktreeIsolation,
+    worktreeIsolationDefault
+  );
+
+  useEffect(() => {
     if (!project) return;
     setWorkspace(
       project.quickAgent || project.remote
         ? { kind: 'personal' }
-        : defaultWorkspaceChoice(worktreeIsolationDefault)
+        : defaultWorkspaceChoice(worktreeIsolation)
     );
-  }, [project?.id, project?.quickAgent, project?.remote, worktreeIsolationDefault]);
+  }, [project?.id, project?.quickAgent, project?.remote, worktreeIsolation]);
 
   // Resolve a concrete model like the Modern composer instead of resting on
   const fallbackModel = defaultOfferedComposerModel(

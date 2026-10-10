@@ -13,6 +13,8 @@ export interface RestoreCapability {
   sessionProfile?: LaunchProfileId;
   sessionTitle?: string;
   remoteTmuxId?: string;
+  /** Retained squad worktree owned by this terminal until PtyManager confirms exit. */
+  followUpExecutionId?: string;
   createdAt: number;
   exitedAt?: number;
 }

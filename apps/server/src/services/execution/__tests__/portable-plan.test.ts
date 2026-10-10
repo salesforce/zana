@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePortablePlan } from '../portable-plan.js';
+import { hasPortablePlanStep, parsePortablePlan } from '../portable-plan.js';
 import { normalizeExecutionPlan } from '../../launch/preflight.js';
 
 const CANONICAL = `# Minimal Workflow Execution Probe
@@ -17,6 +17,7 @@ const CANONICAL = `# Minimal Workflow Execution Probe
 - **Mode:** Mutating
 - **Read scope:** None
 - **Write scope:** \`home.txt\`
+- **Requires:** Skills: \`test-driven-development\`; MCP servers: \`repo\`, \`browser\`
 - **Excludes:** \`about.txt\`, \`result.txt\`
 - **Work:** Create \`home.txt\` containing exactly \`HOME: ready\`.
 - **Verification:** Read \`home.txt\` and confirm exact content.
@@ -69,6 +70,7 @@ describe('parsePortablePlan', () => {
     expect(home.verification).toEqual(['Read `home.txt` and confirm exact content.']);
     expect(home.readOnly).toBeUndefined();
     expect(home.routing).toEqual({ version: 1, minimumLevel: 'low' });
+    expect(home.requires).toEqual({ skills: ['test-driven-development'], mcpServers: ['repo', 'browser'] });
 
     const nav = result.units[2];
     expect(nav.dependencies).toEqual(['home', 'about']);
@@ -93,6 +95,13 @@ describe('parsePortablePlan', () => {
   it('rejects text with no executable-step markers', () => {
     const result = parsePortablePlan('# Plan\n\n### home: Write\n\n- **Work:** do it\n');
     expect(result).toEqual({ ok: false, reason: 'no executable steps found' });
+  });
+
+  it('recognizes indented headings and case-insensitive, whitespace-padded markers', () => {
+    const text = '  ### home: Write <!--  EXECUTABLE-STEP  -->\n\n- **Work:** do it\n';
+
+    expect(hasPortablePlanStep(text)).toBe(true);
+    expect(parsePortablePlan(text)).toMatchObject({ ok: true, units: [{ id: 'home' }] });
   });
 
   it('rejects empty text', () => {

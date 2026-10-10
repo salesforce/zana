@@ -53,6 +53,22 @@ describe('validateGoalFile', () => {
     expect(r.history.iterations).toHaveLength(1);
   });
 
+  it('preserves durable terminal intent and notification delivery state', () => {
+    const r = validateGoalFile({
+      ...baseGoal,
+      status: 'active',
+      terminalStatus: 'escalated',
+      terminalMessage: 'Goal needs attention.',
+      terminalNotificationDelivered: true
+    });
+    if ('error' in r) throw new Error('unexpected error');
+    expect(r).toMatchObject({
+      terminalStatus: 'escalated',
+      terminalMessage: 'Goal needs attention.',
+      terminalNotificationDelivered: true
+    });
+  });
+
   it('trims and drops blank success criteria', () => {
     const r = validateGoalFile({ ...baseGoal });
     if ('error' in r) throw new Error('unexpected error');
@@ -177,6 +193,36 @@ describe('validateGoalFile', () => {
     });
     if ('error' in r) throw new Error('unexpected error');
     expect(r.assignment).toEqual({ kind: 'persona', personaId: 'reviewer' });
+  });
+
+  it('preserves a team assignment only with a usable team id', () => {
+    const valid = validateGoalFile({ ...baseGoal, assignment: { kind: 'team', teamId: ' release-squad ' } });
+    expect('error' in valid).toBe(false);
+    if (!('error' in valid)) expect(valid.assignment).toEqual({ kind: 'team', teamId: 'release-squad' });
+    expect(validateGoalFile({ ...baseGoal, assignment: { kind: 'team' } })).toEqual({ error: 'team goal requires teamId' });
+  });
+
+  it('preserves durable squad execution identity for restart observation', () => {
+    const r = validateGoalFile({
+      ...baseGoal,
+      assignment: { kind: 'team', teamId: 'release-squad' },
+      history: {
+        retain: 10,
+        iterations: [{
+          id: 'squad-iteration',
+          at: '2026-01-01T00:00:00.000Z',
+          executionId: 'execution-1',
+          launchRequestId: 'goal:g1:squad-iteration',
+          launchState: 'running'
+        }]
+      }
+    });
+    if ('error' in r) throw new Error('unexpected error');
+    expect(r.history.iterations[0]).toMatchObject({
+      executionId: 'execution-1',
+      launchRequestId: 'goal:g1:squad-iteration',
+      launchState: 'running'
+    });
   });
 
   it('reads a clocked cadence', () => {

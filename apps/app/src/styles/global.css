@@ -34122,6 +34122,55 @@ textarea.ui-command-composer-input {
   font-size: 13px;
 }
 
+.team-requirement-failure {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--danger, #e5484d) 45%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger, #e5484d) 7%, var(--surface));
+}
+
+.team-requirement-failure h2,
+.team-requirement-failure h3,
+.team-requirement-failure h4,
+.team-requirement-failure p,
+.team-requirement-failure ul {
+  margin: 0;
+}
+
+.team-requirement-failure h2 { font-size: 15px; }
+.team-requirement-failure h3 { font-size: 14px; }
+.team-requirement-failure h4 { font-size: 12px; color: var(--text-muted); }
+
+.team-requirement-failure-unit {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.team-requirement-failure-unit ul { padding-left: 18px; }
+
+.team-requirement-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.team-requirement-failure details dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 10px;
+  margin: 8px 0 0;
+}
+
+.team-requirement-failure details dt { font-weight: 600; }
+.team-requirement-failure details dd { margin: 0; }
+
 .thread-command-upload {
   display: flex;
   align-items: center;

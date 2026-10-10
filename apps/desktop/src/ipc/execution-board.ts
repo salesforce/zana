@@ -11,7 +11,7 @@ import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/sto
 import type {
   Result,
   TeamJobLaunchInput,
-  TeamJobLaunchResult,
+  TeamJobLaunchResponse,
   ExecutionBoardProjection,
   ExecutionBoardSnapshot,
   TerminalSession,
@@ -30,7 +30,7 @@ type ExecutionCaller = { kind: 'window'; window: BrowserWindow } | { kind: 'shar
 export function registerExecutionBoardIpc(): void {
   const { safeHandle, safeHandleFromWindow, ptys, teams, personas, windows,
     executionStore, executionResumeTokens, executionSources, squadExecutionService,
-    startTeamJobFromUi, getTeamLaunch, createTerminalConfined } = ctx;
+    startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability } = ctx;
 
   // The product-server credential identifies the authenticated instance owner.
   // A remote caller never supplies a window or receives a fabricated local one.
@@ -49,17 +49,31 @@ export function registerExecutionBoardIpc(): void {
     return !scopedProjectId || scopedProjectId === projectId;
   };
 
+  const withDesktopExactNativeAvailability = (record: ExecutionRecord, projection: ExecutionBoardProjection): ExecutionBoardProjection => {
+    if (projection.recovery?.actions.exactNative.reason !== 'NATIVE_RESTORE_UNAVAILABLE') return projection;
+    const exactNative = exactNativeRecoveryAvailability(record) as { available: boolean; restorableSlots: number };
+    return {
+      ...projection,
+      recovery: {
+        ...projection.recovery,
+        actions: {
+          ...projection.recovery.actions,
+          exactNative: exactNative.available ? exactNative : { ...exactNative, reason: 'NATIVE_RESTORE_UNAVAILABLE' }
+        }
+      }
+    };
+  };
   const executionProjection = (record: ExecutionRecord): ExecutionBoardProjection => {
     const live = (ptys.list(record.projectId) as TerminalSession[]).find((session) => session.cohort?.executionId === record.id
       && session.cohort.role === 'orchestrator' && session.status !== 'exited');
-    return executionBoardProjection(record, live?.id);
+    return withDesktopExactNativeAvailability(record, executionBoardProjection(record, live?.id));
   };
   const executionBoardOwner = async (projectId: string, executionId: string) =>
     (await executionStore.getInProject(projectId, executionId))?.callerPrincipalId;
 
   // Team job launch (Job Team). main authorizes the whole launch and stamps the
   // originating window; a project the window is not scoped to is rejected (Rule 1).
-  handleFromCaller<[TeamJobLaunchInput], Result<TeamJobLaunchResult>>(
+  handleFromCaller<[TeamJobLaunchInput], TeamJobLaunchResponse>(
     IPC.teams.startJob,
     (win, input) => !isExecutionProjectAllowed(win, input?.projectId)
       ? { ok: false, code: 'NOT_FOUND', message: 'project not found' }
@@ -75,11 +89,14 @@ export function registerExecutionBoardIpc(): void {
       const project = store.listProjects().find((candidate) => candidate.id === projectId);
       if (!project) return { executions: [], hasMore: false };
       const page = await squadExecutionService.listProject(project.id, before, limit);
-      const executions = projectExecutionProjection(page.records, ptys.list(project.id)).map((execution) => ({
-        ...execution,
-        hasResumeToken: executionResumeTokens.status(project.id, execution.executionId).state === 'available',
-        teamName: (teams.list() as Team[]).find((team) => team.id === execution.teamId)?.name ?? execution.teamId
-      }));
+      const executions = projectExecutionProjection(page.records, ptys.list(project.id)).map((projection, index) => {
+        const execution = withDesktopExactNativeAvailability(page.records[index]!, projection);
+        return {
+          ...execution,
+          hasResumeToken: executionResumeTokens.status(project.id, execution.executionId).state === 'available',
+          teamName: (teams.list() as Team[]).find((team) => team.id === execution.teamId)?.name ?? execution.teamId
+        };
+      });
       return { executions, hasMore: page.hasMore };
     },
     () => ({ executions: [], hasMore: false })
@@ -265,6 +282,32 @@ export function registerExecutionBoardIpc(): void {
         : { ok: false, code: result.code, message: result.message };
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'timeout recovery unavailable' })
+  );
+
+  handleFromCaller<[string, string, number, 'exact-native' | 'fresh-plan'], Result<ExecutionBoardProjection>>(
+    IPC.executionBoard.recoverRetained,
+    async (win, projectId, executionId, expectedStateVersion, mode) => {
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      if (!Number.isInteger(expectedStateVersion) || (mode !== 'exact-native' && mode !== 'fresh-plan')) {
+        return { ok: false, code: 'INVALID', message: 'invalid retained recovery request' };
+      }
+      const result = await squadExecutionService.recoverRetained('interactive:local', projectId, executionId, expectedStateVersion, mode);
+      return result.ok ? { ok: true, value: executionProjection(result.value) } : { ok: false, code: result.code, message: result.message };
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'retained recovery unavailable' })
+  );
+
+  handleFromCaller<[string, string, number, boolean | undefined], Result<ExecutionBoardProjection>>(
+    IPC.executionBoard.resumeRun,
+    async (win, projectId, executionId, expectedStateVersion, replay) => {
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      if (!Number.isInteger(expectedStateVersion) || replay !== undefined && typeof replay !== 'boolean') {
+        return { ok: false, code: 'INVALID', message: 'invalid execution recovery request' };
+      }
+      const result = await squadExecutionService.resumeRun('interactive:local', projectId, executionId, expectedStateVersion, replay === true);
+      return result.ok ? { ok: true, value: executionProjection(result.value) } : { ok: false, code: result.code, message: result.message };
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution recovery unavailable' })
   );
 
   const executionWorkControl = async (

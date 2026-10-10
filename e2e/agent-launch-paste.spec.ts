@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures/app.js';
 
-test('launching agent after pasting absolute path works', async ({ page, appWorkspace }) => {
-  const window = await appWorkspace.start();
+test('launching agent after pasting absolute path works', async ({ app }) => {
+  const window = app.window;
   await window.locator('[data-testid="nav-agents"]').click();
   await window.locator('[data-testid="agents-board-new-thread"]').first().click();
   const modal = window.locator('[data-testid="launch-modal"]');

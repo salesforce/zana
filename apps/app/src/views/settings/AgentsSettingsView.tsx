@@ -35,12 +35,12 @@ export function AgentsSettingsView({
         anchorId="git-worktrees"
         searchId="agents.git-worktrees.intro"
         title="Git worktrees"
-        help="Give parallel agents separate branches and checkouts under ~/.zcc/worktrees so they cannot overwrite each other's files. Available for local Git projects; each launch can override this default in the workspace picker."
+        help="Give parallel agents separate branches and checkouts under ~/.zcc/worktrees so they cannot overwrite each other's files. Available for local Git projects; each launch can override this default in the workspace picker. Durable squads use their own project and squad settings."
       >
         <CheckboxField
           label="Prefer a new git worktree by default"
           searchId="agents.worktree-default"
-          help="Pre-selects New worktree in the agent workspace picker. Project settings can override this global default."
+          help="Pre-selects New worktree in the agent workspace picker. Project settings can override this global default; Squads use it when their project and Squad settings use default behavior."
           checked={config.worktreeIsolationDefault ?? false}
           onChange={(v) => onUpdate({ worktreeIsolationDefault: v })}
         />

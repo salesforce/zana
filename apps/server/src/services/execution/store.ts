@@ -13,6 +13,9 @@ import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthoriza
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { normalizeExecutionPlan } from '../launch/preflight.js';
+import type { ExecutionDatabase } from '@zana-ai/zcc-db';
+import { readExecutionStoreSqliteState, writeExecutionStoreSqliteState } from './storage/sqlite-state.js';
+import { isResumableExecutionState } from './storage/backend-policy.js';
 import { evaluateSlotEligibility, type WorkUnitRoutingV1 } from './routing-policy.js';
 import { MODEL_PRICING_CATALOG_ID, MODEL_PRICING_CATALOG_VERSION } from './model-pricing-catalog.js';
 import {
@@ -91,6 +94,13 @@ export interface ExecutionWorkUnitInput {
   readOnly?: boolean;
   routing?: WorkUnitRoutingV1;
   output?: WorkOutputDeclarationV1;
+  requires?: WorkUnitRequirementsV1;
+}
+
+/** Optional capabilities a work unit must have before the execution can launch. */
+export interface WorkUnitRequirementsV1 {
+  skills?: string[];
+  mcpServers?: string[];
 }
 
 export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
@@ -243,7 +253,13 @@ export interface ExecutionRecord {
   launchRequestId: string;
   teamLaunchRequestId: string;
   request: ExecutionRequestSnapshotV1;
+  /** Main-created shared checkout for this squad execution, if isolation applied. */
+  squadWorktree?: SquadWorktreeRecord;
+  /** Terminal worktree effects completed for this exact terminal generation. */
+  terminalWorktreeEffectsStateVersion?: number;
   attempt: number;
+  /** Durable start of current launch attempt; resets before every retry launch. */
+  attemptStartedAt: number;
   state: ExecutionState;
   stateVersion: number;
   lastEventSequence?: number;
@@ -257,14 +273,16 @@ export interface ExecutionRecord {
   effectiveOwnerPrincipalIds?: string[];
   recoveryGeneration?: number;
   recoveryDeadlineAt?: number;
+  /** Trusted-host capture only. Never contains a session token or transcript. */
+  nativeRecoverySnapshots?: ExecutionNativeRecoverySnapshotV1[];
   workUnits?: ExecutionWorkUnit[];
   blockers?: ExecutionBlocker[];
   deliveries?: ExecutionDeliveryRecord[];
   noticeIntents?: ExecutionNoticeIntent[];
   /** Fixed, non-sliding timeout extension for a committed unresolved blocker. */
   blockerGraceUntil?: number;
-  /** Durable explanation for a terminal timeout; never implies inbox delivery. */
-  timeoutReason?: 'idle' | 'unresolved-blocker';
+  /** Durable explanation for a terminal stop; never implies inbox delivery. */
+  timeoutReason?: 'idle' | 'unresolved-blocker' | 'plan-correction-cancelled';
   /** Stable launch request reserved for one recovered successor. */
   successorLaunchRequestId?: string;
   successorExecutionId?: string;
@@ -288,8 +306,23 @@ export interface ExecutionRecord {
   dismissedAt?: number;
 }
 
+export type RetainedRecoveryMode = 'exact-native' | 'fresh-plan';
+
+/** Per-slot identity needed by a future trusted host native-session restore. */
+export interface ExecutionNativeRecoverySnapshotV1 {
+  version: 1;
+  attempt: number;
+  slotId: string;
+  role: 'worker' | 'orchestrator';
+  personaId?: string;
+  profileId?: string;
+  profileVersion?: string;
+  nativeConversationId: string;
+  capturedAt: number;
+}
+
 export type ExecutionClaimInput = Omit<ExecutionRecord,
-  'id' | 'teamLaunchRequestId' | 'attempt' | 'state' | 'stateVersion' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers'
+  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers'
 > & { workUnits?: ExecutionWorkUnitInput[] };
 
 export interface ExecutionRequestSnapshotV1 {
@@ -305,6 +338,16 @@ export interface ExecutionRequestSnapshotV1 {
     sources: Array<Omit<ExecutionSourceSnapshot, 'extractedText'>>;
   };
   objective?: string;
+  /** Explicit execution API override. Undefined defers to project then Team defaults. */
+  worktree?: boolean;
+  onComplete?: 'leave' | 'merge' | 'delete';
+}
+
+/** Minimal durable identity for one shared squad checkout. */
+export interface SquadWorktreeRecord {
+  path: string;
+  branch: string;
+  baseBranch?: string;
 }
 
 export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['policy']> {
@@ -387,6 +430,9 @@ interface ExecutionStateFile {
 
 export interface ExecutionStoreOptions {
   filePath: string;
+  database?: ExecutionDatabase;
+  /** New records use JSON only during an explicit rollout override. */
+  createInJson?: boolean;
   now?: () => number;
   id?: () => string;
   maxRecords?: number;
@@ -511,6 +557,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.launchDisplay === undefined || validLaunchDisplay(record.launchDisplay))
     && validString(record.launchRequestId) && validString(record.teamLaunchRequestId) && validRequestSnapshot(record.request)
     && (record.summary === undefined || validString(record.summary)) && Number.isInteger(record.attempt)
+    && typeof record.attemptStartedAt === 'number' && Number.isFinite(record.attemptStartedAt)
     && isState(record.state) && Number.isInteger(record.stateVersion)
     && (record.lastEventSequence === undefined || Number.isInteger(record.lastEventSequence) && record.lastEventSequence >= 0)
     && Array.isArray(record.resolvedModels) && record.resolvedModels.every(validModelSnapshot)
@@ -522,12 +569,14 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.effectiveOwnerPrincipalIds === undefined || Array.isArray(record.effectiveOwnerPrincipalIds) && record.effectiveOwnerPrincipalIds.every(validString))
     && (record.recoveryGeneration === undefined || Number.isInteger(record.recoveryGeneration) && record.recoveryGeneration >= 0)
     && (record.recoveryDeadlineAt === undefined || typeof record.recoveryDeadlineAt === 'number' && Number.isFinite(record.recoveryDeadlineAt))
+    && (record.terminalWorktreeEffectsStateVersion === undefined || validNonNegativeInteger(record.terminalWorktreeEffectsStateVersion))
+    && (record.nativeRecoverySnapshots === undefined || Array.isArray(record.nativeRecoverySnapshots) && record.nativeRecoverySnapshots.length <= 100 && record.nativeRecoverySnapshots.every(validNativeRecoverySnapshot))
     && (record.workUnits === undefined || Array.isArray(record.workUnits) && record.workUnits.length <= MAX_WORK_UNITS && record.workUnits.every(validWorkUnit))
     && (record.blockers === undefined || Array.isArray(record.blockers) && record.blockers.length <= MAX_WORK_UNITS && record.blockers.every(validExecutionBlocker))
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
     && (record.noticeIntents === undefined || Array.isArray(record.noticeIntents) && record.noticeIntents.length <= MAX_WORK_UNITS && record.noticeIntents.every(validNoticeIntent))
     && (record.blockerGraceUntil === undefined || typeof record.blockerGraceUntil === 'number' && Number.isFinite(record.blockerGraceUntil))
-    && (record.timeoutReason === undefined || record.timeoutReason === 'idle' || record.timeoutReason === 'unresolved-blocker')
+    && (record.timeoutReason === undefined || record.timeoutReason === 'idle' || record.timeoutReason === 'unresolved-blocker' || record.timeoutReason === 'plan-correction-cancelled')
     && (record.successorLaunchRequestId === undefined || validString(record.successorLaunchRequestId))
     && (record.successorExecutionId === undefined || validString(record.successorExecutionId))
     && (record.recoveryRequestId === undefined || validString(record.recoveryRequestId))
@@ -547,6 +596,19 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.dismissedAt === undefined || typeof record.dismissedAt === 'number');
 }
 
+function validNativeRecoverySnapshot(value: unknown): value is ExecutionNativeRecoverySnapshotV1 {
+  if (!value || typeof value !== 'object') return false;
+  const snapshot = value as Partial<ExecutionNativeRecoverySnapshotV1>;
+  return snapshot.version === 1 && typeof snapshot.attempt === 'number' && validNonNegativeInteger(snapshot.attempt) && snapshot.attempt >= 1
+    && validString(snapshot.slotId) && (snapshot.role === 'worker' || snapshot.role === 'orchestrator')
+    && (snapshot.personaId === undefined || validString(snapshot.personaId))
+    && (snapshot.profileId === undefined || validString(snapshot.profileId))
+    && (snapshot.profileVersion === undefined || validString(snapshot.profileVersion))
+    && (snapshot.personaId !== undefined || snapshot.profileId !== undefined)
+    && validString(snapshot.nativeConversationId)
+    && typeof snapshot.capturedAt === 'number' && Number.isFinite(snapshot.capturedAt);
+}
+
 function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
   if (!value || typeof value !== 'object') return false;
   const unit = value as Partial<ExecutionWorkUnit>;
@@ -559,6 +621,7 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.readOnly === undefined || typeof unit.readOnly === 'boolean')
     && (unit.routing === undefined || validRouting(unit.routing))
     && (unit.output === undefined || validOutputDeclaration(unit.output))
+    && (unit.requires === undefined || validWorkUnitRequirements(unit.requires))
     && (unit.state === 'PENDING' || unit.state === 'READY' || unit.state === 'CLAIMED' || unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')
     && (unit.assignedSlotId === undefined || validString(unit.assignedSlotId)) && Number.isInteger(unit.attempt) && (unit.attempt ?? -1) >= 0
     && (unit.claimGeneration === undefined || validNonNegativeInteger(unit.claimGeneration))
@@ -583,6 +646,19 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && Array.isArray(unit.history) && unit.history.length <= MAX_UNIT_LIST * 10;
 }
 
+function validWorkUnitRequirements(value: unknown): value is WorkUnitRequirementsV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const requires = value as WorkUnitRequirementsV1;
+  if (Object.keys(requires).some((key) => key !== 'skills' && key !== 'mcpServers')) return false;
+  return (requires.skills === undefined || validRequirementNames(requires.skills))
+    && (requires.mcpServers === undefined || validRequirementNames(requires.mcpServers));
+}
+
+function validRequirementNames(values: unknown): values is string[] {
+  return Array.isArray(values) && values.length <= 50
+    && values.every((value) => typeof value === 'string' && value.trim().length >= 1 && value.length <= 256);
+}
+
 function clearClaim(unit: ExecutionWorkUnit): void {
   unit.claimId = undefined;
   unit.claimedBy = undefined;
@@ -591,6 +667,47 @@ function clearClaim(unit: ExecutionWorkUnit): void {
   unit.heartbeatAt = undefined;
   unit.progressAt = undefined;
   unit.turnCount = undefined;
+}
+
+function resetRetainedWork(record: ExecutionRecord): void {
+  for (const unit of record.workUnits ?? []) {
+    if (unit.state === 'COMPLETED') continue;
+    unit.state = 'PENDING';
+    unit.assignedSlotId = undefined;
+    unit.claimId = undefined;
+    unit.claimedBy = undefined;
+    unit.claimedAt = undefined;
+    unit.leaseExpiresAt = undefined;
+    unit.heartbeatAt = undefined;
+    unit.progressAt = undefined;
+    unit.turnCount = undefined;
+    unit.failureCode = undefined;
+    unit.failure = undefined;
+    unit.result = undefined;
+    unit.structuredResult = undefined;
+    unit.reclaimedClaim = undefined;
+    unit.noProgressSlots = undefined;
+  }
+  record.blockers = [];
+  record.deliveries = [];
+  record.noticeIntents = [];
+  record.timeoutReason = undefined;
+  record.blockerGraceUntil = undefined;
+  deriveReadiness(record, true);
+}
+
+function beginRetryAttempt(record: ExecutionRecord, timestamp: number): void {
+  record.attempt += 1;
+  record.teamLaunchRequestId = `${record.id}:attempt:${record.attempt}`;
+  record.attemptStartedAt = timestamp;
+  record.state = 'STARTING';
+  record.stateVersion += 1;
+  record.authorizationContext = undefined;
+  record.authorizationContextDigest = undefined;
+  record.launchIntent = undefined;
+  record.policyResult = undefined;
+  record.coordinatorState = 'ACTIVE';
+  record.updatedAt = timestamp;
 }
 
 function validExecutionBlocker(value: unknown): value is ExecutionBlocker {
@@ -786,6 +903,8 @@ function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot
       && validUtf8String((slot as { initialTask?: unknown }).initialTask, MAX_TEAM_INITIAL_TASK_BYTES))
     && Array.isArray(request.resolvedModels) && request.resolvedModels.every(validModelSnapshot)
     && (request.objective === undefined || validString(request.objective))
+    && (request.worktree === undefined || typeof request.worktree === 'boolean')
+    && (request.onComplete === undefined || ['leave', 'merge', 'delete'].includes(request.onComplete))
     && (request.sourceBundle === undefined || validSourceBundle(request.sourceBundle))
     && (request.policy === undefined || validExecutionPolicy(request.policy))
     && (request.workflow === undefined || typeof request.workflow === 'object');
@@ -918,15 +1037,25 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   );
   const maxEvents = Math.min(options.maxEvents ?? MAX_EVENTS, MAX_EVENTS);
   const maxEventsPerExecution = Math.min(options.maxEventsPerExecution ?? MAX_EVENTS_PER_EXECUTION, MAX_EVENTS_PER_EXECUTION);
+  const createInJson = options.createInJson === true || options.database === undefined;
   // Ensure the store directory exists once, at construction — not on every
   // persist(). atomicDurableWrite writes tmp+rename within this directory.
   mkdirSync(dirname(options.filePath), { recursive: true });
 
-  function read(): { state: ExecutionStateFile; hash: string | null } {
-    const bytes = readRawFile(options.filePath);
-    if (!bytes) return { state: { version: 1, revision: 0, records: [], events: [] }, hash: null };
+  type StorageBackend = 'json' | 'sqlite';
+  type StorageSnapshot = {
+    state: ExecutionStateFile;
+    /** Compatibility alias while all mutation paths retain their read snapshot. */
+    hash: StorageSnapshot;
+    hashes: Record<StorageBackend, string | null>;
+    states: Record<StorageBackend, ExecutionStateFile>;
+    owners: Map<string, StorageBackend>;
+  };
+  const emptyState = (): ExecutionStateFile => ({ version: 1, revision: 0, records: [], events: [] });
+
+  function parseState(value: unknown, source: string): ExecutionStateFile {
     try {
-      const parsed = JSON.parse(bytes.toString('utf8')) as Partial<ExecutionStateFile>;
+      const parsed = value as Partial<ExecutionStateFile>;
       if (Array.isArray(parsed.records)) {
         for (const record of parsed.records) {
           if (!record || typeof record !== 'object') continue;
@@ -941,25 +1070,56 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           record.coordinatorWakeSequence ??= record.coordinatorWakes.length;
           delete (record as ExecutionRecord & { coordinatorWake?: unknown }).coordinatorWake;
           for (const delivery of record.deliveries) delivery.manualRetryCount ??= 0;
-          record.recoveryGeneration ??= 0;
-          record.usageObservations ??= [];
+           record.recoveryGeneration ??= 0;
+           record.nativeRecoverySnapshots ??= [];
+           record.usageObservations ??= [];
           const legacyRequest = record.request as ExecutionRequestSnapshotV1 & { goal?: string };
           if (legacyRequest.objective === undefined && legacyRequest.goal !== undefined) legacyRequest.objective = legacyRequest.goal;
           delete legacyRequest.goal;
-          if (typeof record.createdAt === 'number') record.recoveryDeadlineAt ??= record.createdAt + EXECUTION_RECOVERY_TTL_MS;
+           if (typeof record.createdAt === 'number') record.recoveryDeadlineAt ??= record.createdAt + EXECUTION_RECOVERY_TTL_MS;
+           if (typeof record.createdAt === 'number') record.attemptStartedAt ??= record.createdAt;
         }
       }
       if (parsed.version !== 1 || !Array.isArray(parsed.records) || !parsed.records.every(validRecord)
         || !Array.isArray(parsed.events) || !parsed.events.every(validEvent) || !Number.isInteger(parsed.revision)) {
         throw new Error('invalid shape');
       }
-      return { state: parsed as ExecutionStateFile, hash: hashBytes(bytes) };
+      return parsed as ExecutionStateFile;
     } catch (error) {
-      throw new Error(`corrupt execution store: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`corrupt execution store (${source}): ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  function persist(state: ExecutionStateFile, expectedHash: string | null): void {
+  function read(): StorageSnapshot {
+    const sqlite = readExecutionStoreSqliteState<ExecutionStateFile>(options.database, 'execution-store');
+    const bytes = readRawFile(options.filePath);
+    const states = {
+      // Keep immutable owner snapshots separate from the merged mutable state.
+      // Otherwise a mutation changes both sides of the persist comparison.
+      json: bytes ? clone(parseState(JSON.parse(bytes.toString('utf8')), 'JSON')) : emptyState(),
+      sqlite: sqlite ? clone(parseState(sqlite.value, 'SQLite')) : emptyState()
+    };
+    const owners = new Map<string, StorageBackend>();
+    // SQLite wins an accidental duplicate so its existing execution is never hidden.
+    for (const record of states.json.records) owners.set(record.id, 'json');
+    for (const record of states.sqlite.records) owners.set(record.id, 'sqlite');
+    const state = emptyState();
+    state.records = clone([...states.sqlite.records, ...states.json.records.filter((record) => owners.get(record.id) === 'json')]);
+    const eventOwner = (event: ExecutionEvent): StorageBackend | undefined => owners.get(event.executionId);
+    state.events = clone([...states.sqlite.events.filter((event) => eventOwner(event) === 'sqlite'), ...states.json.events.filter((event) => eventOwner(event) === 'json')]);
+    state.revision = Math.max(states.sqlite.revision, states.json.revision);
+    const snapshot: StorageSnapshot = {
+      state,
+      hash: undefined as unknown as StorageSnapshot,
+      hashes: { json: bytes ? hashBytes(bytes) : null, sqlite: sqlite?.hash ?? null },
+      states,
+      owners
+    };
+    snapshot.hash = snapshot;
+    return snapshot;
+  }
+
+  function persist(state: ExecutionStateFile, snapshot: StorageSnapshot): void {
     for (const record of state.records) {
       record.deliveries ??= [];
       record.noticeIntents ??= [];
@@ -997,8 +1157,36 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     state.records = state.records.filter((record) => retainedIds.has(record.id));
     state.events = compactEvents(state.events, maxEventsPerExecution, maxEvents);
     if (!state.records.every(validRecord) || !state.events.every(validEvent)) throw new Error('invalid execution state before persistence');
-    state.revision += 1;
-    atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
+    const recordsByBackend: Record<StorageBackend, ExecutionRecord[]> = { json: [], sqlite: [] };
+    for (const record of state.records) {
+      const owner = snapshot.owners.get(record.id) ?? (createInJson ? 'json' : 'sqlite');
+      recordsByBackend[owner].push(record);
+    }
+    const ownerForEvent = (event: ExecutionEvent): StorageBackend => {
+      const owner = snapshot.owners.get(event.executionId);
+      if (owner) return owner;
+      if (recordsByBackend.sqlite.some((record) => record.id === event.executionId)) return 'sqlite';
+      return createInJson ? 'json' : 'sqlite';
+    };
+    const desired: Record<StorageBackend, ExecutionStateFile> = {
+      json: { version: 1, revision: snapshot.states.json.revision, records: recordsByBackend.json, events: [] },
+      sqlite: { version: 1, revision: snapshot.states.sqlite.revision, records: recordsByBackend.sqlite, events: [] }
+    };
+    for (const event of state.events) desired[ownerForEvent(event)].events.push(event);
+    for (const backend of ['json', 'sqlite'] as const) {
+      const next = desired[backend];
+      const previous = snapshot.states[backend];
+      const changed = JSON.stringify({ version: next.version, records: next.records, events: next.events })
+        !== JSON.stringify({ version: previous.version, records: previous.records, events: previous.events });
+      if (!changed) continue;
+      next.revision = previous.revision + 1;
+      if (backend === 'sqlite') {
+        if (!options.database) throw new Error('execution SQLite backend is unavailable');
+        writeExecutionStoreSqliteState(options.database, 'execution-store', next, snapshot.hashes.sqlite);
+      } else {
+        atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(next)), { expectedHash: snapshot.hashes.json });
+      }
+    }
   }
 
   async function claim(input: ExecutionClaimInput) {
@@ -1041,12 +1229,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       const timestamp = now();
       const record: ExecutionRecord = {
-        ...bounded, id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, state: 'READY', stateVersion: 0, lastEventSequence: 0,
+        ...bounded, id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, attemptStartedAt: timestamp, state: 'READY', stateVersion: 0, lastEventSequence: 0,
         deliveries: [], noticeIntents: [], recoveryGeneration: 0, recoveryDeadlineAt: timestamp + EXECUTION_RECOVERY_TTL_MS, createdAt: timestamp, updatedAt: timestamp
       };
       snapshot.state.records.push(record);
       append(snapshot.state, record, 'READY', 'info', 'Execution reserved', timestamp);
-      persist(snapshot.state, snapshot.hash);
+      persist(snapshot.state, snapshot);
       return { outcome: 'claimed' as const, record: clone(record) };
     });
   }
@@ -1074,6 +1262,79 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.stateVersion += 1;
       record.updatedAt = timestamp;
       append(snapshot.state, record, state, severity, string(summary, 'event summary'), timestamp, { kind: 'transition', fromState, toState: state });
+      persist(snapshot.state, snapshot);
+      return clone(record);
+    });
+  }
+
+  async function stopForPlanCorrection(executionId: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.state === 'STOPPED' && record.timeoutReason === 'plan-correction-cancelled') return clone(record);
+      // Correction cancellation is a final owner decision. It wins a concurrent
+      // generic stop or launch failure so neither path leaves a resumable record.
+      if (record.state === 'COMPLETED') return clone(record);
+      const fromState = record.state;
+      record.state = 'STOPPED';
+      record.timeoutReason = 'plan-correction-cancelled';
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, 'STOPPED', 'info', 'Execution cancelled during plan correction', record.updatedAt, {
+        kind: fromState === 'STOPPED' ? 'event' : 'transition',
+        ...(fromState === 'STOPPED' ? {} : { fromState, toState: 'STOPPED' })
+      });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function setSquadWorktree(
+    executionId: string,
+    expectedStateVersion: number,
+    squadWorktree: SquadWorktreeRecord
+  ): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      const reattachingWorktree = record.squadWorktree !== undefined;
+      if (record.squadWorktree) {
+        if (record.squadWorktree.branch !== squadWorktree.branch) {
+          throw new Error('squad worktree already differs');
+        }
+        if (record.squadWorktree.path === squadWorktree.path &&
+          (record.squadWorktree.baseBranch || !squadWorktree.baseBranch)) return clone(record);
+      }
+      record.squadWorktree = {
+        path: string(squadWorktree.path, 'squad worktree path'),
+        branch: string(squadWorktree.branch, 'squad worktree branch'),
+        ...(squadWorktree.baseBranch ? { baseBranch: string(squadWorktree.baseBranch, 'squad worktree base branch') } : {})
+      };
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'info', reattachingWorktree ? 'Squad worktree reattached' : 'Squad worktree prepared', record.updatedAt, { kind: 'event' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /** Mark terminal worktree effects only after their whole generation completed. */
+  async function markSquadWorktreeTerminalEffects(
+    executionId: string,
+    expectedStateVersion: number
+  ): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      if (!terminalStates.has(record.state) || !record.squadWorktree) throw new Error('terminal squad worktree is unavailable');
+      if (record.terminalWorktreeEffectsStateVersion === expectedStateVersion) return clone(record);
+      record.terminalWorktreeEffectsStateVersion = expectedStateVersion;
+      record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
@@ -1360,23 +1621,81 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
+  /**
+   * Trusted hosts capture only native restore identity. State-version CAS prevents
+   * a stale slot report from replacing a newer execution generation.
+   */
+  async function upsertNativeRecoverySnapshot(
+    executionId: string,
+    expectedStateVersion: number,
+    input: Omit<ExecutionNativeRecoverySnapshotV1, 'version' | 'capturedAt'> & { capturedAt?: number }
+  ): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      const captured = { ...clone(input), version: 1 as const, capturedAt: input.capturedAt ?? now() };
+      if (!validNativeRecoverySnapshot(captured) || captured.attempt !== record.attempt) throw new Error('invalid native recovery snapshot');
+      const existing = record.nativeRecoverySnapshots ?? [];
+      record.nativeRecoverySnapshots = [...existing.filter((entry) => entry.slotId !== captured.slotId), captured];
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'info', 'Native recovery snapshot captured', record.updatedAt);
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
   async function beginRetry(executionId: string, expectedStateVersion: number): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
       if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
-      if (record.state !== 'BLOCKED' || record.launchIntent) throw new Error('execution retry is not allowed');
-      record.attempt += 1;
-      record.teamLaunchRequestId = `${record.id}:attempt:${record.attempt}`;
-      record.state = 'STARTING';
+      if (record.state !== 'BLOCKED' || record.successorExecutionId) throw new Error('execution retry is not allowed');
+      const fromState = record.state;
+      beginRetryAttempt(record, now());
+      append(snapshot.state, record, record.state, 'info', 'Execution retry started', record.updatedAt, { kind: 'transition', fromState, toState: 'STARTING' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /** Reset retained work and reserve its replacement launch in one terminal-state CAS. */
+  async function beginRetainedRecovery(executionId: string, expectedStateVersion: number): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      if ((record.state !== 'FAILED' && record.state !== 'STOPPED') || record.successorExecutionId
+        || record.state === 'STOPPED' && record.timeoutReason === 'unresolved-blocker') throw new Error('execution retry is not allowed');
+      const fromState = record.state;
+      resetRetainedWork(record);
+      beginRetryAttempt(record, now());
+      append(snapshot.state, record, record.state, 'info', 'Execution retained recovery started', record.updatedAt, { kind: 'transition', fromState, toState: 'STARTING' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /**
+   * A fresh-plan recovery invalidates only identities from prior attempts, and
+   * only after its replacement launch succeeded. Current-attempt captures may
+   * race the cleanup, so they are deliberately retained.
+   */
+  async function clearPriorNativeRecoverySnapshots(executionId: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const retained = (record.nativeRecoverySnapshots ?? []).filter((entry) => entry.attempt >= record.attempt);
+      if (retained.length === (record.nativeRecoverySnapshots ?? []).length) return clone(record);
+      record.nativeRecoverySnapshots = retained;
       record.stateVersion += 1;
-      record.authorizationContext = undefined;
-      record.authorizationContextDigest = undefined;
-      record.policyResult = undefined;
-      record.coordinatorState = 'ACTIVE';
       record.updatedAt = now();
-      append(snapshot.state, record, record.state, 'info', 'Execution retry started', record.updatedAt, { kind: 'transition', fromState: 'BLOCKED', toState: 'STARTING' });
+      append(snapshot.state, record, record.state, 'info', 'Prior native recovery snapshots cleared after fresh-plan launch', record.updatedAt);
       persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
@@ -2577,6 +2896,13 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     return storeQueue.run(async () => clone(read().state.records.filter((record) => !terminalStates.has(record.state))));
   }
 
+  /** Retain every execution-owned squad checkout until user explicitly dismisses it. */
+  async function listUndisposedSquadWorktrees(): Promise<ExecutionRecord[]> {
+    return storeQueue.run(async () => clone(read().state.records.filter((record) =>
+      record.squadWorktree !== undefined && record.dismissedAt === undefined
+    )));
+  }
+
   async function listActiveClaims(after?: ActiveClaimCursor, limit = 25): Promise<ActiveClaimPage> {
     return storeQueue.run(async () => {
       const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
@@ -2661,7 +2987,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listUndisposedSquadWorktrees, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

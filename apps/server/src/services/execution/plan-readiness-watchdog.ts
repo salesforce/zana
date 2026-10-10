@@ -39,7 +39,7 @@ export class PlanReadinessWatchdog {
     if (record.workUnits && record.workUnits.length > 0) return;
     const grace = this.deps.graceMs();
     if (!Number.isFinite(grace) || grace <= 0) return;
-    this.arm(record.id, record.createdAt + grace, 1);
+    this.arm(record.id, record.attemptStartedAt + grace, 1);
   }
 
   restore(records: readonly ExecutionRecord[]): void {

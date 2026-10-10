@@ -23,12 +23,13 @@ describe('restore capability store', () => {
       sessionProfile: 'claude',
       sessionTitle: 'Trusted session',
       remoteTmuxId: 'tmux-1',
+      followUpExecutionId: 'execution-1',
       createdAt: 1
     });
 
     const reopened = createRestoreCapabilityStore({ filePath });
     expect(reopened.get('cap-1')?.request.cwd).toBe('/trusted');
-    expect(reopened.list()).toMatchObject([{ id: 'cap-1', sessionId: 'session-1' }]);
+    expect(reopened.list()).toMatchObject([{ id: 'cap-1', sessionId: 'session-1', followUpExecutionId: 'execution-1' }]);
     const listed = reopened.list();
     listed[0].request.cwd = '/mutated';
     expect(reopened.get('cap-1')?.request.cwd).toBe('/trusted');

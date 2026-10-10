@@ -265,6 +265,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   );
   const execution = snapshot.execution;
   const isTerminal = terminal.has(execution.state);
+  const retainedRecovery = execution.recovery?.actions;
+  const exactNativeUnavailableReason = retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
+    ? 'Existing Squad sessions cannot be restored on this device.'
+    : undefined;
   const deliveryPending = snapshot.execution.currentBlocker?.delivery?.state === 'PENDING' || snapshot.execution.currentBlocker?.delivery?.state === 'LEASED';
   const replyBytes = new TextEncoder().encode(replyDraft).byteLength;
   const replyTooLarge = replyBytes > 16 * 1024;
@@ -427,6 +431,9 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}
         {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>}
         {execution.state === 'STOPPED' && execution.timeoutReason === 'unresolved-blocker' && !execution.successorExecutionId && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverTimedOut(projectId, executionId, execution.stateVersion ?? 0, crypto.randomUUID()))}>Recover timed-out run</button>}
+        {retainedRecovery?.freshPlan.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'fresh-plan'))}>Relaunch Squad from retained plan</button>}
+        {retainedRecovery?.exactNative.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'exact-native'))}>Resume existing Squad</button>}
+        {exactNativeUnavailableReason && <button className="btn" type="button" disabled title={exactNativeUnavailableReason}>Resume existing Squad</button>}
         {execution.successorExecutionId && <p role="status">Recovered successor: {execution.successorExecutionId}</p>}
         {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}
       </div>

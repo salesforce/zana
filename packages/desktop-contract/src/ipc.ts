@@ -40,6 +40,9 @@ export const IPC = {
     resume: 'executionBoard:resume',
     retryDelivery: 'executionBoard:retryDelivery',
     recoverTimedOut: 'executionBoard:recoverTimedOut',
+    recoverRetained: 'executionBoard:recoverRetained',
+    /** @deprecated Compatibility alias for retained fresh-plan recovery. */
+    resumeRun: 'executionBoard:resumeRun',
     clearResumeToken: 'executionBoard:clearResumeToken',
     relaunchMonitor: 'executionBoard:relaunchMonitor'
   },
@@ -301,6 +304,12 @@ export const IPC = {
     markAllRead: 'inbox:markAllRead',
     pruneRead: 'inbox:pruneRead',
     migrateReadState: 'inbox:migrateReadState',
+    hostActions: {
+      list: 'inbox:hostActions:list',
+      get: 'inbox:hostActions:get',
+      run: 'inbox:hostActions:run',
+      readDecisionArtifact: 'inbox:hostActions:readDecisionArtifact'
+    },
     onAppended: 'inbox:onAppended',
     onRemoved: 'inbox:onRemoved',
     onUpdated: 'inbox:onUpdated',

@@ -1,8 +1,7 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, realpathSync, unlinkSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
-import { mkdirSync } from 'node:fs';
 import type {
   GitBranch,
   GitCommit,
@@ -64,6 +63,21 @@ const STATUS_MAX_PATHSPECS = 400;
  *  than a status read, so it gets a more generous ceiling than {@link TIMEOUT_MS}
  *  while still bounding a hung git (Rule 5). */
 const WORKTREE_ADD_TIMEOUT_MS = 20_000;
+
+// Guardrail only: Git config and hooks can be bypassed. Tokens stay process-local
+// and are consumed once, so authorization never persists in a worktree.
+const instructPushAuthorizations = new Set<string>();
+
+export function authorizeInstructWorktreePush(): string {
+  const token = randomBytes(32).toString('hex');
+  instructPushAuthorizations.add(token);
+  return token;
+}
+
+export function consumeInstructWorktreePushAuthorization(token: string): NodeJS.ProcessEnv | undefined {
+  if (!instructPushAuthorizations.delete(token)) return undefined;
+  return { ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: token };
+}
 
 /** Hard cap on how many commits `getRecentCommits` will ever read — bounds the
  *  `git log` output regardless of how deep the caller asks (CLAUDE.md rule 5). */
@@ -411,7 +425,8 @@ export async function createWorktree(
   projectPath: string,
   targetDir: string,
   branchName: string,
-  managedRoot?: string
+  managedRoot?: string,
+  protectPush = false
 ): Promise<WorktreeCreateResult> {
   if (!isAbsolute(projectPath) || !isAbsolute(targetDir)) {
     return { ok: false, reason: 'invalid path' };
@@ -426,7 +441,7 @@ export async function createWorktree(
   }
 
   return withWorktreeLock(projectPath, branchName, () =>
-    createWorktreeUnlocked(toplevel, targetDir, branchName, managedRoot)
+    createWorktreeUnlocked(toplevel, targetDir, branchName, managedRoot, protectPush)
   );
 }
 
@@ -451,7 +466,9 @@ async function createWorktreeUnlocked(
   toplevel: string,
   targetDir: string,
   branchName: string,
-  managedRoot?: string
+  managedRoot?: string,
+  protectPush = false,
+  retriedStaleRegistration = false
 ): Promise<WorktreeCreateResult> {
   // Re-launch on an existing branch: if that branch is already checked out in a
   // registered worktree, adopt it rather than failing (git refuses to check one
@@ -468,7 +485,31 @@ async function createWorktreeUnlocked(
     if (already.path !== expected) {
       return { ok: false, reason: 'branch is checked out outside its managed destination' };
     }
-    return { ok: true, path: already.path, branch: branchName, reused: true };
+    // A retained execution can outlive a checkout removed outside Zana. Prune
+    // only its stale registration while holding this branch's worktree lock, then
+    // recreate below. Retry at most once: a locked registration can survive
+    // prune forever, so recursion here must not be unbounded.
+    if (!existsSync(already.path)) {
+      if (retriedStaleRegistration) {
+        return { ok: false, reason: 'stale worktree registration remains after prune' };
+      }
+      const pruned = await runGitOutput(toplevel, ['worktree', 'prune']);
+      if (!pruned.ok) return { ok: false, reason: pruned.output || 'could not prune missing worktree metadata' };
+      // Re-read registration after prune. A locked stale entry remains listed;
+      // fail rather than retrying prune/creation indefinitely.
+      const afterPrune = await listWorktrees(toplevel);
+      const remaining = afterPrune.find((worktree) => !worktree.isMain && worktree.branch === branchName);
+      if (remaining && !existsSync(remaining.path)) {
+        return { ok: false, reason: 'stale worktree registration remains after prune' };
+      }
+      return createWorktreeUnlocked(toplevel, targetDir, branchName, managedRoot, protectPush, true);
+    }
+    const protection = protectPush
+      ? await configureWorktreeProtection(toplevel, already.path)
+      : { ok: true as const };
+    return protection.ok
+      ? { ok: true, path: already.path, branch: branchName, reused: true }
+      : { ok: false, reason: protection.reason };
   }
 
   // Parent must exist; the leaf must NOT (git creates it).
@@ -529,10 +570,133 @@ async function createWorktreeUnlocked(
             return;
           }
         }
-        resolve({ ok: true, path: real, branch: branchName, reused: false });
+        const configure = protectPush
+          ? configureWorktreeProtection(toplevel, real)
+          : Promise.resolve({ ok: true as const });
+        void configure.then((protection) => {
+          resolve(protection.ok
+            ? { ok: true, path: real, branch: branchName, reused: false }
+            : { ok: false, reason: protection.reason });
+        });
       }
     );
   });
+}
+
+function runGitOutput(cwd: string, args: string[]): Promise<{ ok: boolean; output: string }> {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
+      resolve({ ok: !err, output: String(stdout || stderr || '').trim() });
+    });
+  });
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function resolveWorktreeGitPath(worktreePath: string, gitPath: string): string {
+  return isAbsolute(gitPath) ? gitPath : join(worktreePath, gitPath);
+}
+
+/**
+ * Install squad-worktree-local push guardrails. `extensions.worktreeConfig` is
+ * needed before Git permits `--worktree`; push.default and hooksPath then live
+ * only in the linked checkout's config.worktree, leaving the main checkout's
+ * effective settings untouched. Every executable existing hook gets a proxy so
+ * changing hooksPath cannot bypass commit, security, or other policy hooks.
+ */
+async function configureWorktreeProtection(toplevel: string, worktreePath: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const existingHooks = await runGitOutput(worktreePath, ['config', '--path', '--get', 'core.hooksPath']);
+  const defaultHook = await runGitOutput(worktreePath, ['rev-parse', '--git-path', 'hooks/pre-push']);
+  const zanaHooks = await runGitOutput(worktreePath, ['rev-parse', '--git-path', 'zana-hooks']);
+  if (!zanaHooks.ok || !zanaHooks.output || !defaultHook.ok || !defaultHook.output) {
+    return { ok: false, reason: 'could not resolve worktree hook paths' };
+  }
+  // Git returns configured relative hooks paths unchanged. Hooks interpret those
+  // relative to the worktree, not this Electron process's cwd.
+  const existingHooksPath = existingHooks.ok
+    ? resolveWorktreeGitPath(worktreePath, existingHooks.output)
+    : '';
+  const defaultHookPath = resolveWorktreeGitPath(worktreePath, defaultHook.output);
+  const zanaHooksPath = resolveWorktreeGitPath(worktreePath, zanaHooks.output);
+  // Reattaching an execution's already-guarded worktree must not regenerate
+  // proxies from the proxy directory itself.
+  if (existingHooks.ok && existingHooksPath === zanaHooksPath) return { ok: true };
+  const previousHook = existingHooks.ok
+    ? join(existingHooksPath, 'pre-push')
+    : defaultHookPath;
+  const zanaPrePush = join(zanaHooksPath, 'pre-push');
+  try {
+    const previousHooksDir = realpathSync(dirname(previousHook));
+    const preservedHooks = new Map<string, string>();
+    for (const hook of readdirSync(previousHooksDir)) {
+      if (hook.endsWith('.sample')) continue;
+      const existing = join(previousHooksDir, hook);
+      if (!existsSync(existing)) continue;
+      let resolvedHook: string;
+      try {
+        resolvedHook = realpathSync(existing);
+      } catch {
+        continue;
+      }
+      const stat = lstatSync(resolvedHook);
+      if (!stat.isFile() || !(stat.mode & 0o111)) continue;
+      // Replacing core.hooksPath would otherwise silently disable this hook.
+      // A proxy may only execute a target still confined to its configured directory.
+      if (!isWithinPath(resolvedHook, previousHooksDir)) {
+        return { ok: false, reason: `cannot preserve executable hook outside configured hooks directory: ${hook}` };
+      }
+      preservedHooks.set(hook, resolvedHook);
+    }
+    mkdirSync(zanaHooksPath, { recursive: true, mode: 0o700 });
+    let chainedHook = '';
+    const preservedPrePush = preservedHooks.get('pre-push');
+    if (previousHook !== zanaPrePush && preservedPrePush) {
+      chainedHook = `\nexec ${shellSingleQuote(preservedPrePush)} "$@"\n`;
+    }
+    writeFileSync(zanaPrePush, `#!/bin/sh\n# Zana safety guardrail; not a security boundary.\nif [ -z "${'${ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION:-}'}" ]; then\n  printf '%s\\n' 'Zana blocked push from managed squad worktree. Request one-time Instruct-agent authorization, then retry.' >&2\n  exit 1\nfi${chainedHook}\nexit 0\n`, { mode: 0o700 });
+    chmodSync(zanaPrePush, 0o700);
+    for (const [hook, resolvedHook] of preservedHooks) {
+      if (hook === 'pre-push') continue;
+      writeFileSync(join(zanaHooksPath, hook), `#!/bin/sh\nexec ${shellSingleQuote(resolvedHook)} "$@"\n`, { mode: 0o700 });
+      chmodSync(join(zanaHooksPath, hook), 0o700);
+    }
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  const enable = await runGitOutput(toplevel, ['config', 'extensions.worktreeConfig', 'true']);
+  if (!enable.ok) return { ok: false, reason: enable.output || 'could not enable worktree config' };
+  const pushDefault = await runGitOutput(worktreePath, ['config', '--worktree', 'push.default', 'nothing']);
+  if (!pushDefault.ok) return { ok: false, reason: pushDefault.output || 'could not configure worktree push default' };
+  const hooksPath = await runGitOutput(worktreePath, ['config', '--worktree', 'core.hooksPath', zanaHooksPath]);
+  return hooksPath.ok ? { ok: true } : { ok: false, reason: hooksPath.output || 'could not configure worktree hooks' };
+}
+
+/**
+ * Enable or remove push protection for one linked worktree. This never changes
+ * main-checkout or repository-local config, so terminal squad cleanup cannot
+ * weaken another checkout.
+ */
+export async function setWorktreePushProtection(
+  projectPath: string,
+  worktreePath: string,
+  enabled: boolean
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!isAbsolute(projectPath) || !isAbsolute(worktreePath)) return { ok: false, reason: 'invalid path' };
+  const toplevel = findToplevel(projectPath);
+  if (!toplevel) return { ok: false, reason: 'not a git repo' };
+  const worktree = (await listWorktrees(toplevel)).find((candidate) => candidate.path === worktreePath);
+  if (!worktree || worktree.isMain) return { ok: false, reason: 'not a linked worktree in project' };
+  if (enabled) return configureWorktreeProtection(toplevel, worktreePath);
+
+  for (const key of ['push.default', 'core.hooksPath']) {
+    const configured = await runGitOutput(worktreePath, ['config', '--worktree', '--get', key]);
+    if (!configured.ok) continue;
+    const unset = await runGitOutput(worktreePath, ['config', '--worktree', '--unset-all', key]);
+    if (!unset.ok) return { ok: false, reason: unset.output || `could not clear worktree ${key}` };
+  }
+  return { ok: true };
 }
 
 /**
@@ -554,6 +718,61 @@ export async function removeWorktree(
   if (!toplevel) return { ok: false, message: 'not a git repo' };
   const args = ['worktree', 'remove', ...(force ? ['--force'] : []), worktreePath];
   return runGit(toplevel, args);
+}
+
+/** Merge a clean managed worktree into its recorded base checkout. */
+export async function mergeWorktree(
+  projectPath: string,
+  worktreePath: string,
+  baseBranch: string
+): Promise<{ ok: boolean; message?: string }> {
+  if (!isAbsolute(projectPath) || !isAbsolute(worktreePath) || !baseBranch.trim()) {
+    return { ok: false, message: 'invalid path' };
+  }
+  const base = await getGitStatus(projectPath);
+  if (!base) return { ok: false, message: 'base checkout is unavailable' };
+  if (base.dirty) return { ok: false, message: 'base checkout is dirty' };
+  if (base.branch !== baseBranch) return { ok: false, message: 'base checkout is not on recorded branch' };
+  const source = await getGitStatus(worktreePath);
+  if (!source) return { ok: false, message: 'worktree is unavailable' };
+  if (source.dirty) return { ok: false, message: 'worktree is dirty' };
+  if (!source.branch) return { ok: false, message: 'worktree branch is unavailable' };
+  const merged = await runGit(projectPath, ['merge', '--no-edit', source.branch]);
+  if (!merged.ok) await runGit(projectPath, ['merge', '--abort']);
+  return merged;
+}
+
+/**
+ * Remove only abandoned, clean managed worktrees with no unique commits. Active
+ * execution paths are explicitly retained so resumable runs survive a restart.
+ * This is conservative cleanup, never a security boundary and never forceful.
+ */
+export async function sweepManagedWorktrees(
+  projectPath: string,
+  managedRoot: string,
+  activeWorktreePaths: readonly string[] = []
+): Promise<string[]> {
+  if (!isAbsolute(projectPath) || !isAbsolute(managedRoot)) return [];
+  let root: string;
+  try {
+    root = realpathSync(managedRoot);
+  } catch {
+    return [];
+  }
+  const active = new Set(activeWorktreePaths);
+  const removed: string[] = [];
+  for (const worktree of await listWorktrees(projectPath)) {
+    if (worktree.isMain || active.has(worktree.path) || !isWithinPath(worktree.path, root)) continue;
+    const hooksPath = await runGitOutput(worktree.path, ['config', '--worktree', '--get', 'core.hooksPath']);
+    // Only Zana-configured checkouts are ours to sweep. A user-created worktree
+    // under the same directory remains untouched even when it happens to be clean.
+    if (!hooksPath.ok || !hooksPath.output.endsWith('/zana-hooks')) continue;
+    const state = await worktreeState(worktree.path);
+    if (!state.prunable) continue;
+    const result = await removeWorktree(projectPath, worktree.path, false);
+    if (result.ok) removed.push(worktree.path);
+  }
+  return removed;
 }
 
 /**

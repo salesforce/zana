@@ -65,6 +65,11 @@ export function QuestionBlock({
   sessionId,
   sessionTitle,
   onReply,
+  onHostAction,
+  hostOwned = false,
+  hostActionTextOptionId,
+  hostActionMessage,
+  hostActionUnavailable = false,
   onAnswerDeadSession,
   deadSessionBusy = false
 }: {
@@ -85,6 +90,16 @@ export function QuestionBlock({
   sessionTitle: string;
   /** Delivery to a conversation thread, retaining its history and settings. */
   onReply?: (answer: string) => Promise<boolean>;
+  /** Present only when main listed this entry as a host-owned action. */
+  onHostAction?: (input: { optionId: string; text?: string }) => Promise<boolean>;
+  /** Host ownership is independent from ordinary inbox answered markers. */
+  hostOwned?: boolean;
+  /** Main-approved option that needs operator-authored text. */
+  hostActionTextOptionId?: string;
+  /** Main-authored status for a host action that remains available to retry. */
+  hostActionMessage?: string;
+  /** Main revoked this action after its resource was removed or superseded. */
+  hostActionUnavailable?: boolean;
   /** Dead-session delivery: reopen the agent with the answer as its first turn.
    *  Set (with no `sessionId`) when the originating session has ended. */
   onAnswerDeadSession?: (answer: string) => Promise<boolean>;
@@ -96,12 +111,15 @@ export function QuestionBlock({
   const [states, setStates] = useState<QState[]>(() => questions.map(emptyQState));
   const [sending, setSending] = useState(false);
   const [reopened, setReopened] = useState(false);
+  const [hostActionText, setHostActionText] = useState('');
 
   const dead = !sessionId && !!onAnswerDeadSession;
   const busy = sending || deadSessionBusy;
   const isMulti = questions.length > 1;
   const executionLinked = !!entry.executionId && !!entry.blockerId;
-  const collapsed = (executionLinked ? blockerState !== 'actionable' && blockerState !== 'unknown' : answered) && !reopened;
+  const collapsed = !hostOwned
+    && (executionLinked ? blockerState !== 'actionable' && blockerState !== 'unknown' : answered)
+    && !reopened;
 
   const patch = (qi: number, next: QState) =>
     setStates((prev) => prev.map((s, i) => (i === qi ? next : s)));
@@ -127,7 +145,12 @@ export function QuestionBlock({
   // keyed by entry.id, so a switch to a different entry resets cleanly) — fall
   // back to an empty state so we never read `.selected` off undefined.
   const answers = questions.map((q, i) => answerFor(q, states[i] ?? emptyQState()));
-  const canSend = answers.every((a) => a.trim().length > 0);
+  const selectedHostOptionId = hostOptionId();
+  const selectedHostActionNeedsText = hostOwned
+    && selectedHostOptionId !== undefined
+    && selectedHostOptionId === hostActionTextOptionId;
+  const canSend = answers.every((a) => a.trim().length > 0)
+    && (!selectedHostActionNeedsText || hostActionText.trim().length > 0);
 
   // What actually gets injected. One question → its raw answer (unchanged from
   // the single-question behaviour). Many → a labelled block so the agent can tell
@@ -139,12 +162,25 @@ export function QuestionBlock({
       .join('\n\n');
   };
 
+  function hostOptionId(): string | undefined {
+    if (questions.length !== 1 || questions[0]?.multiSelect || states[0]?.otherActive) return undefined;
+    const selected = [...(states[0]?.selected ?? [])];
+    return selected.length === 1 ? selected[0] : undefined;
+  }
+
   const submit = async () => {
     if (busy || !canSend) return;
     setSending(true);
     let ok = false;
     try {
-      if (entry.executionId && entry.blockerId) {
+      if (onHostAction) {
+        const optionId = hostOptionId();
+        if (!optionId) return;
+        ok = await onHostAction({
+          optionId,
+          ...(hostOwned && optionId === hostActionTextOptionId ? { text: hostActionText.trim() } : {})
+        });
+      } else if (entry.executionId && entry.blockerId) {
         ok = await respondToInboxBlocker(entry, buildReply());
       } else {
         ok = onReply ? await onReply(buildReply()) : dead
@@ -154,7 +190,10 @@ export function QuestionBlock({
     } finally {
       setSending(false);
     }
-    if (ok) setReopened(false);
+    if (ok) {
+      if (!hostOwned && onHostAction) useInboxAnswered.getState().markAnswered(entry.id);
+      setReopened(false);
+    }
   };
 
   const skip = () => {
@@ -266,8 +305,19 @@ export function QuestionBlock({
           </div>
         );
       })}
+      {selectedHostActionNeedsText && (
+        <textarea
+          className="inbox-reply-input"
+          value={hostActionText}
+          onChange={(event) => setHostActionText(event.target.value)}
+          rows={3}
+          placeholder="Tell agent what to do…"
+          aria-label="Instructions for follow-up agent"
+        />
+      )}
+      {hostActionMessage && <p className="inbox-question-host-status" role="alert">{hostActionMessage}</p>}
       <div className="inbox-question-actions">
-        {!executionLinked && (
+        {!executionLinked && !hostOwned && (
           <button type="button" className="inbox-question-skip" onClick={skip} disabled={busy}>
             Skip
           </button>
@@ -276,7 +326,7 @@ export function QuestionBlock({
           type="button"
           className="inbox-question-continue"
           onClick={() => void submit()}
-          disabled={busy || !canSend}
+          disabled={busy || !canSend || hostActionUnavailable}
           title="Continue (⌘↵)"
         >
           {busy ? (dead ? 'Reopening…' : 'Sending…') : dead ? 'Reopen & answer' : 'Continue'}

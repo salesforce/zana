@@ -28,7 +28,10 @@ describe('restore/reconnect trust boundary', () => {
     expect(handlers).toContain('legacy reconnect target not found or identity mismatch');
     expect(handlers).toContain('restoreCapabilities.consume');
     expect(handlers).toContain('restoreCapabilities.release');
-    expect(handlers).toContain('{ preallocatedSessionId: capability.sessionId }');
+    expect(handlers).toContain('preallocatedSessionId: capability.sessionId');
+    expect(handlers.match(/capability\.followUpExecutionId/g)).toHaveLength(4);
+    expect(handlers.match(/retainWorktree: Boolean\(capability\.followUpExecutionId\)/g)).toHaveLength(2);
+    expect(handlers).not.toContain('maySpawn:');
     expect(handlers).toContain('restore capability unavailable or already reserved');
     expect(handlers).toContain('restorePrincipal(capability)');
     expect(handlers).toContain('capability.request.cohort?.teamId');
@@ -58,6 +61,18 @@ describe('restore/reconnect trust boundary', () => {
     );
     expect(launch.indexOf('resolveFrameworkPersona(')).toBeLessThan(launch.indexOf('preflightLaunch('));
     expect(launch).toContain('frameworkPersona: authorizedPlan.resolved.frameworkPersona');
+  });
+
+  it('keeps restore ownership metadata separate from callback lifecycle gates', () => {
+    const launch = hostSource.slice(
+      hostSource.indexOf('async function launchAuthorizedTerminal('),
+      hostSource.indexOf('/** Interactive renderer launch')
+    );
+    expect(launch).toContain('followUpExecutionId?: string');
+    expect(launch).toContain('beforeSpawn: spawnLifecycle?.maySpawn');
+    expect(launch).toContain('afterSpawn: spawnLifecycle?.claimRunning');
+    expect(launch).toContain('followUpExecutionId,');
+    expect(launch).not.toContain('spawnLifecycle?.followUpExecutionId');
   });
 
 });

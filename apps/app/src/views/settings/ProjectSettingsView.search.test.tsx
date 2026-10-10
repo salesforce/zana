@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   descriptors: vi.fn(),
   settingsGet: vi.fn(async () => ({})),
   settingsSet: vi.fn(async (_id: string, patch: object) => patch),
+  isRepo: vi.fn(async () => true),
   consent: vi.fn(async () => [] as unknown[]),
   claudeRead: vi.fn(),
   codexRead: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('../../lib/product-client.js', () => ({
     harness: { descriptors: mocks.descriptors },
     projectSettings: { get: mocks.settingsGet, set: mocks.settingsSet, onChanged: () => () => undefined },
     executionConsent: { listProject: mocks.consent, revokeProject: vi.fn() },
+    git: { isRepo: mocks.isRepo },
     projects: { listProcesses: vi.fn(async () => ({ supported: true, truncated: false, processes: [] })) },
     claudeSettings: { read: mocks.claudeRead, write: vi.fn() },
     codexSettings: { read: mocks.codexRead, write: vi.fn() },
@@ -67,6 +69,7 @@ beforeEach(() => {
     base('opencode', 'OpenCode')
   ]);
   mocks.settingsGet.mockClear();
+  mocks.isRepo.mockClear().mockResolvedValue(true);
   mocks.consent.mockResolvedValue([{ id: 'g1', adapterId: 'claude', mode: 'autonomous', grantedAt: 1 }]);
   const valid = { state: 'valid', hash: 'h', settings: { permissions: { allow: ['Read'] }, model: 'opus' } };
   mocks.claudeRead.mockResolvedValue(valid);
@@ -88,13 +91,14 @@ describe('ProjectSettingsView settings-search targets', () => {
     expect(seen(container)).toEqual(['project.landing']);
   });
 
-  it('tags the remote connection section and omits local-only sections for a remote project', async () => {
+  it('tags the remote connection and disabled worktree sections for a remote project', async () => {
     const { container } = render(<ProjectSettingsView project={remote} onOpen={vi.fn()} onSaved={vi.fn()} />);
     await screen.findByRole('button', { name: 'Project settings for Claude Code' });
     const ids = seen(container);
     expect(ids).toContain('project.remote-connection');
     expect(ids).toContain('project.remote-start-path');
-    expect(ids).not.toContain('project.worktrees');
+    expect(ids).toContain('project.worktrees');
+    expect(ids).toContain('project.worktree-isolation');
     expect(ids).not.toContain('project.checkouts');
   });
 

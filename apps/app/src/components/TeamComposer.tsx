@@ -1,7 +1,7 @@
 import { product } from '../lib/product-client.js';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, FileText, Folder, Loader2, Mic, Paperclip, Users, X } from 'lucide-react';
-import type { ExecutionSourceCapabilityView, Project, TeamCoordinationMode } from '@zana-ai/zcc-domain/product';
+import type { ExecutionSourceCapabilityView, Project, TeamAvailabilityUnknown, TeamCoordinationMode, TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import {
   CommandComposer,
   ComposerIconButton,
@@ -43,6 +43,7 @@ export function TeamComposer({
   const loadProjects = useData((s) => s.loadProjects);
   const teams = useTeams(useShallow((s) => s.teams));
   const pushToast = useUi((s) => s.pushToast);
+  const openProjectSettings = useUi((s) => s.openProjectSettings);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const lastProjectId = useData((s) => s.lastProjectId);
   const [internalProjectId, setInternalProjectId] = useState(pinnedProject?.id ?? composerProjectId ?? '');
@@ -64,6 +65,8 @@ export function TeamComposer({
   const [pickingSources, setPickingSources] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requirementFailure, setRequirementFailure] = useState<TeamRequirementFailure | null>(null);
+  const [availabilityUnknown, setAvailabilityUnknown] = useState<TeamAvailabilityUnknown | null>(null);
   const [expanded, setExpanded] = useState(false);
   const ensureScratchRef = useRef(false);
   const launchRef = useRef<() => void>(() => undefined);
@@ -163,6 +166,8 @@ export function TeamComposer({
     if (!teamId || !project || launching) return;
     if (field.typeaheadOpen && field.suggestions.length > 0) return;
     setError(null);
+    setRequirementFailure(null);
+    setAvailabilityUnknown(null);
     setLaunching(true);
     try {
       const serialized = field.serialize();
@@ -207,6 +212,14 @@ export function TeamComposer({
         ...(jobSources.length ? { sourceCapabilityIds: jobSources.map(({ id }) => id) } : {})
       });
       if (!res.ok) {
+        if (res.code === 'REQUIREMENT_UNAVAILABLE' && 'requirementFailure' in res) {
+          setRequirementFailure(res.requirementFailure);
+          return;
+        }
+        if (res.code === 'CAPABILITY_AVAILABILITY_UNKNOWN' && 'availabilityUnknown' in res) {
+          setAvailabilityUnknown(res.availabilityUnknown);
+          return;
+        }
         const message = `Squad launch failed: ${res.message ?? res.code}`;
         setError(message);
         pushToast(message, 'error');
@@ -226,6 +239,11 @@ export function TeamComposer({
       setLaunching(false);
     }
   };
+  const cancelRequirementFailure = () => {
+    // Admission rejected before execution claim, authorization, or worker spawn.
+    setRequirementFailure(null);
+    onClose?.();
+  };
   launchRef.current = () => {
     void launch();
   };
@@ -243,6 +261,50 @@ export function TeamComposer({
       {...field.dropHandlers}
     >
       <span id="team-command-label" className="thread-command-label">Squad composer</span>
+      {requirementFailure ? (
+        <section className="team-requirement-failure" role="alert" aria-labelledby="team-requirement-failure-title">
+          <h2 id="team-requirement-failure-title">Squad requirements need attention</h2>
+          <p>No workers started. Resolve requirements, then launch again.</p>
+          {requirementFailure.workUnits.map((unit) => (
+            <article key={unit.id} className="team-requirement-failure-unit">
+              <h3>{unit.title}</h3>
+              {unit.missingSkills.length ? <><h4>Missing Skills</h4><ul>{unit.missingSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul></> : null}
+              {unit.missingMcpServers.length ? <><h4>Missing MCP servers</h4><ul>{unit.missingMcpServers.map((server) => <li key={server}>{server}</li>)}</ul></> : null}
+              <p>Configure this project or edit this plan to meet requirements.</p>
+              <p>Choose another project with project selector below, or ask a normal agent: <code>Complete this work without these Skills or MCP servers.</code></p>
+            </article>
+          ))}
+          <div className="team-requirement-failure-actions">
+            {project ? <button type="button" className="btn" onClick={() => openProjectSettings(project.id)}>Configure project</button> : null}
+            <button type="button" className="btn" onClick={() => { setRequirementFailure(null); field.focus(); }}>Edit plan</button>
+            <button type="button" className="btn" onClick={cancelRequirementFailure}>Cancel</button>
+          </div>
+          <details>
+            <summary>Details</summary>
+            <dl>
+              <dt>Error code</dt><dd><code>REQUIREMENT_UNAVAILABLE</code></dd>
+              {requirementFailure.workUnits.map((unit) => <Fragment key={unit.id}><dt>Work unit ID</dt><dd><code>{unit.id}</code></dd></Fragment>)}
+            </dl>
+          </details>
+        </section>
+      ) : null}
+      {availabilityUnknown ? (
+        <section className="team-requirement-failure" role="alert" aria-labelledby="team-availability-unknown-title">
+          <h2 id="team-availability-unknown-title">Project capabilities could not be verified</h2>
+          <p>No workers started. Retry after connection or capability discovery is available.</p>
+          <div className="team-requirement-failure-actions">
+            <button type="button" className="btn" onClick={() => { void launch(); }}>Retry</button>
+            <button type="button" className="btn" onClick={cancelRequirementFailure}>Cancel</button>
+          </div>
+          <details>
+            <summary>Details</summary>
+            <dl>
+              <dt>Error code</dt><dd><code>CAPABILITY_AVAILABILITY_UNKNOWN</code></dd>
+              <dt>Failed sources</dt><dd>{availabilityUnknown.failedSources.map((source) => source === 'skills' ? 'Skills' : 'MCP servers').join(', ')}</dd>
+            </dl>
+          </details>
+        </section>
+      ) : null}
       {error ? (
         <p className="thread-command-error" data-testid="team-command-error">{error}</p>
       ) : null}

@@ -20,6 +20,13 @@ import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-
 import type { Project } from '@zana-ai/zcc-domain/product';
 
 describe('sanitizeTeam', () => {
+  it('preserves the explicit shared-worktree toggle', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], worktreeIsolation: true }))
+      .toMatchObject({ worktreeIsolation: true });
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], worktreeIsolation: 'true' }))
+      .toMatchObject({ worktreeIsolation: undefined });
+  });
+
   it('requires id, name, and a slots array', () => {
     expect(sanitizeTeam({ name: 'X', slots: [] })).toBeNull(); // no id
     expect(sanitizeTeam({ id: 'x', slots: [] })).toBeNull(); // no name

@@ -8,6 +8,19 @@ import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapt
 import type { ThreadModelCatalogSnapshot } from './thread/pickers/thread-model-catalog.js';
 import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
 
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 const h = vi.hoisted(() => ({
   projects: [] as Project[], hosts: [] as Array<{ id: string; status: string; isPrimary: boolean }>,
   personas: [], listeners: new Set<() => void>(),
@@ -16,19 +29,30 @@ const h = vi.hoisted(() => ({
   defaultHarness: 'claude', catalogScope: vi.fn(), ensure: vi.fn(), ensureProvider: vi.fn(), reloadProvider: vi.fn(),
   effectiveDefault: vi.fn(async (): Promise<EffectiveHarnessDefaultResult> => ({ ok: true, profile: 'claude', family: 'claude', source: 'global-default' })),
   createTerminal: vi.fn(async () => ({ id: 'terminal-1' })), selectTab: vi.fn(), pushToast: vi.fn(), clear: vi.fn(),
-  remember: vi.fn(), loadProjects: vi.fn(),
+  remember: vi.fn(), loadProjects: vi.fn(), worktreeIsolationDefault: false,
+  projectWorktreeIsolation: undefined as boolean | undefined, projectSettingsListeners: new Set<(projectId: string) => void>(),
+  projectSettingsGet: vi.fn(async () => ({ worktreeIsolation: h.projectWorktreeIsolation })),
+  environmentProps: null as null | { value: { kind: string } },
   modelProps: null as null | { onSelectedProviderChange: (id: string) => void; onReloadModels?: () => void;
     selectedProviderId: string; modelLockedLabel?: string; modelIsLoading: boolean; providerOptions: Array<{ value: string }> }
 }));
 
 vi.mock('../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({ projects: h.projects, lastProjectId: h.projects[0]?.id,
-    defaultHarness: h.defaultHarness, createTerminal: h.createTerminal, loadProjects: h.loadProjects, nativeAgentDiscoveryEnabled: true }),
+    defaultHarness: h.defaultHarness, createTerminal: h.createTerminal, loadProjects: h.loadProjects,
+    worktreeIsolationDefault: h.worktreeIsolationDefault, nativeAgentDiscoveryEnabled: true }),
   usePersonas: (select: (state: unknown) => unknown) => select({ personas: h.personas }),
   useUi: (select: (state: unknown) => unknown) => select({ selectTab: h.selectTab, pushToast: h.pushToast, selectedProjectId: null })
 }));
 vi.mock('../lib/product-client.js', () => ({ product: {
-  harness: { descriptors: async () => h.descriptors, effectiveDefault: h.effectiveDefault }
+  harness: { descriptors: async () => h.descriptors, effectiveDefault: h.effectiveDefault },
+  projectSettings: {
+    get: (...args: [string]) => h.projectSettingsGet(...args),
+    onChanged: (listener: (projectId: string) => void) => {
+      h.projectSettingsListeners.add(listener);
+      return () => h.projectSettingsListeners.delete(listener);
+    }
+  }
 } }));
 vi.mock('../hooks/useHosts.js', () => ({
   useHosts: () => h.hosts,
@@ -55,7 +79,13 @@ vi.mock('./AgentLauncher.js', () => ({ buildLaunchArgs: (prompt: string) => ({ i
 vi.mock('./composer/ComposerPromptField.js', () => ({ ComposerPromptField: () => null }));
 vi.mock('../plugins/PluginComposerChrome.js', () => ({ PluginComposerChrome: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('../plugins/PluginComposerSlots.js', () => ({ PluginComposerAdvanced: () => null, PluginComposerMeta: () => null }));
-vi.mock('./EnvironmentPicker.js', () => ({ EnvironmentPicker: () => null, defaultWorkspaceChoice: () => ({ kind: 'unmanaged' }) }));
+vi.mock('./EnvironmentPicker.js', () => ({
+  EnvironmentPicker: (props: NonNullable<typeof h.environmentProps>) => {
+    h.environmentProps = props;
+    return <span data-testid="workspace-kind">{props.value.kind}</span>;
+  },
+  defaultWorkspaceChoice: (isolate: boolean) => ({ kind: isolate ? 'worktree' : 'unmanaged' })
+}));
 vi.mock('./ComposerProjectPicker.js', () => ({ ComposerProjectPicker: () => null }));
 vi.mock('./RemoteComposerConnection.js', () => ({ RemoteComposerConnection: () => null }));
 vi.mock('./ui/PopoverPicklist.js', () => ({ PopoverPicklist: () => null }));
@@ -87,6 +117,8 @@ beforeEach(() => {
   h.projects = [local(), remote()];
   h.hosts = [{ id: 'primary-host', status: 'connected', isPrimary: true }, { id: 'remote-host', status: 'connected', isPrimary: false }];
   h.catalog = catalog(['codex']); h.remembered = null; h.rememberedModel = '';
+  h.worktreeIsolationDefault = false; h.projectWorktreeIsolation = undefined; h.projectSettingsListeners.clear(); h.environmentProps = null;
+  h.projectSettingsGet.mockReset().mockImplementation(async () => ({ worktreeIsolation: h.projectWorktreeIsolation }));
   h.effectiveDefault.mockReset().mockResolvedValue({ ok: true, profile: 'codex', family: 'codex', source: 'global-default' });
   h.descriptors = [{ id: 'codex', label: 'Codex', defaultProfileId: 'codex', profiles: [], targets: { models: [] } },
     { id: 'claude', label: 'Claude', defaultProfileId: 'claude', profiles: [], targets: { models: [] } }] as unknown as HarnessAdapterDescriptor[];
@@ -177,5 +209,38 @@ describe('CLI Agent project-owned discovery', () => {
       harnessRouting: { schemaVersion: 1, byAdapter: { codex: { executionState: 'accept-edits' } } }
     })));
     expect(h.reloadProvider).not.toHaveBeenCalled();
+  });
+
+  it('renders project worktree override ahead of global default and reacts to setting changes', async () => {
+    h.worktreeIsolationDefault = false;
+    h.projectWorktreeIsolation = true;
+    render(composer(h.projects[0]));
+    await waitFor(() => expect(screen.getByTestId('workspace-kind').textContent).toBe('worktree'));
+
+    h.projectWorktreeIsolation = false;
+    act(() => { for (const listener of h.projectSettingsListeners) listener('local'); });
+    await waitFor(() => expect(screen.getByTestId('workspace-kind').textContent).toBe('unmanaged'));
+  });
+
+  it('ignores a previous project settings read resolved after switching projects and cleans up listeners', async () => {
+    const localSettings = deferred<{ worktreeIsolation: boolean }>();
+    const secondSettings = deferred<{ worktreeIsolation: boolean }>();
+    const secondProject: Project = { id: 'second', name: 'Second', path: '/tmp/second' } as Project;
+    h.projectSettingsGet.mockImplementation((projectId: string) => (
+      projectId === 'local' ? localSettings.promise : secondSettings.promise
+    ));
+
+    const view = render(composer(h.projects[0]));
+    await waitFor(() => expect(h.projectSettingsListeners.size).toBe(1));
+    view.rerender(composer(secondProject));
+    await waitFor(() => expect(h.projectSettingsListeners.size).toBe(1));
+
+    await act(async () => { secondSettings.resolve({ worktreeIsolation: false }); });
+    await waitFor(() => expect(screen.getByTestId('workspace-kind').textContent).toBe('unmanaged'));
+    await act(async () => { localSettings.resolve({ worktreeIsolation: true }); });
+    expect(screen.getByTestId('workspace-kind').textContent).toBe('unmanaged');
+
+    view.unmount();
+    expect(h.projectSettingsListeners).toHaveLength(0);
   });
 });

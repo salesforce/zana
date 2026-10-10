@@ -7,7 +7,7 @@ function record(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
     id: 'execution-1', callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1',
     jobTitle: 'Job', requestDigest: 'digest', launchRequestId: 'request-1', teamLaunchRequestId: 'request-1',
     request: { version: 1, launchKind: 'team', slots: [{ initialTask: 'work' }], resolvedModels: [], policy: {} },
-    attempt: 1, state: 'RUNNING', stateVersion: 1, resolvedModels: [], createdAt: 1_000, updatedAt: 1_000,
+    attempt: 1, attemptStartedAt: 1_000, state: 'RUNNING', stateVersion: 1, resolvedModels: [], createdAt: 1_000, updatedAt: 1_000,
     coordinationMode: 'structured',
     ...over
   } as ExecutionRecord;
@@ -135,14 +135,21 @@ describe('PlanReadinessWatchdog', () => {
     expect(f.onGraceExpired).not.toHaveBeenCalled();
   });
 
-  it('deadline is anchored to createdAt + grace, not to now() at schedule time', async () => {
+  it('deadline is anchored to attemptStartedAt + grace, not to now() at schedule time', async () => {
     const f = fixture(50_000, 5_000);
-    f.watchdog.schedule(record({ createdAt: 1_000 }));
-    // deadline = 1_000 + 5_000 = 6_000, already well past now() = 50_000 → fires immediately (delay 0)
+    f.watchdog.schedule(record({ createdAt: 1_000, attemptStartedAt: 45_000 }));
+    // deadline = 45_000 + 5_000 = 50_000, exactly now → fires immediately (delay 0)
     expect(f.setTimer).toHaveBeenCalledWith(expect.any(Function), 0);
     f.fireNext();
     await Promise.resolve();
     expect(f.onGraceExpired).toHaveBeenCalledWith('execution-1');
+  });
+
+  it('gives a resumed attempt its own grace after the original grace elapsed', () => {
+    const f = fixture(50_000, 5_000);
+    f.watchdog.schedule(record({ createdAt: 1_000, attemptStartedAt: 50_000, attempt: 2 }));
+    // The execution is old, but this launch attempt is fresh.
+    expect(f.setTimer).toHaveBeenCalledWith(expect.any(Function), 5_000);
   });
 
   it('re-arms a still-pending timer instead of firing early when now() has not reached the deadline yet', async () => {

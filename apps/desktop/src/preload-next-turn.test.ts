@@ -37,6 +37,16 @@ it('exposes timeout recovery through its dedicated execution IPC channel', async
   );
 });
 
+it('exposes typed retained-run recovery through its dedicated execution IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce({ ok: true });
+
+  await api.executionBoard.recoverRetainedSquad('project-1', 'execution-1', 4, 'exact-native');
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.executionBoard.recoverRetained, 'project-1', 'execution-1', 4, 'exact-native');
+});
+
 it('exposes schedule get and reload through their distinct product IPC channels', async () => {
   await import('./preload.js');
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];

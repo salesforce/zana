@@ -27,7 +27,7 @@ beforeEach(() => {
   clipboardWriteText = vi.fn(async () => ({ ok: true as const }));
   Object.defineProperty(window, 'cc', { configurable: true, value: { executionBoard: {
     snapshot: vi.fn(async () => structuredClone(baseSnapshot)), stop: vi.fn(), retry: vi.fn(), retryWork: vi.fn(),
-    releaseWork: vi.fn(), reassignWork: vi.fn(), respond: vi.fn(), retryDelivery: vi.fn(), recoverTimedOut: vi.fn(), readArtifact: vi.fn(), relaunchMonitor: vi.fn()
+    releaseWork: vi.fn(), reassignWork: vi.fn(), respond: vi.fn(), retryDelivery: vi.fn(), recoverTimedOut: vi.fn(), recoverRetainedSquad: vi.fn(), resumeRun: vi.fn(), readArtifact: vi.fn(), relaunchMonitor: vi.fn()
   }, clipboard: { writeText: clipboardWriteText } } });
 });
 afterEach(() => {
@@ -73,6 +73,76 @@ describe('ExecutionJobDetails phase 5 projection', () => {
 
     expect(await screen.findByText('Recovered successor: execution-successor')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Recover timed-out run' })).toBeNull();
+  });
+
+  it('relaunches retained plans only when the main projection allows it', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'FAILED';
+    snapshot.execution.currentBlocker = undefined;
+    snapshot.execution.recovery = { status: 'terminal', actions: {
+      freshPlan: { available: true },
+      exactNative: { available: false, restorableSlots: 0, reason: 'NO_RESTORABLE_SLOTS' }
+    } };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Relaunch Squad from retained plan' }));
+    await waitFor(() => expect(window.cc.executionBoard.recoverRetainedSquad).toHaveBeenCalledWith('project-1', 'execution-1', 2, 'fresh-plan'));
+    expect(screen.queryByRole('button', { name: 'Resume existing Squad' })).toBeNull();
+  });
+
+  it('renders exact-native recovery from main capability, including unavailable explanation', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'FAILED';
+    snapshot.execution.recovery = { status: 'terminal', actions: {
+      freshPlan: { available: true },
+      exactNative: { available: true, restorableSlots: 2 }
+    } };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume existing Squad' }));
+    await waitFor(() => expect(window.cc.executionBoard.recoverRetainedSquad).toHaveBeenCalledWith('project-1', 'execution-1', 2, 'exact-native'));
+
+    snapshot.execution.recovery.actions.exactNative = { available: false, restorableSlots: 2, reason: 'NATIVE_RESTORE_UNAVAILABLE' };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    cleanup();
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    const unavailable = await screen.findByRole('button', { name: 'Resume existing Squad' });
+    expect((unavailable as HTMLButtonElement).disabled).toBe(true);
+    expect(unavailable.getAttribute('title')).toBe('Existing Squad sessions cannot be restored on this device.');
+  });
+
+  it('offers native recovery after a failed replacement when main retains a usable snapshot', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'FAILED';
+    snapshot.execution.attempt = 2;
+    snapshot.execution.recovery = { status: 'terminal', actions: {
+      freshPlan: { available: true },
+      exactNative: { available: true, restorableSlots: 1 }
+    } };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume existing Squad' }));
+    await waitFor(() => expect(window.cc.executionBoard.recoverRetainedSquad).toHaveBeenCalledWith('project-1', 'execution-1', 2, 'exact-native'));
+  });
+
+  it('hides retained recovery for plan-correction cancellation', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'STOPPED';
+    snapshot.execution.timeoutReason = 'plan-correction-cancelled';
+    snapshot.execution.currentBlocker = undefined;
+    snapshot.execution.recovery = { status: 'terminal', actions: {
+      freshPlan: { available: false, reason: 'RECOVERY_NOT_ALLOWED' },
+      exactNative: { available: false, restorableSlots: 0, reason: 'RECOVERY_NOT_ALLOWED' }
+    } };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+
+    await screen.findByText('final result');
+    expect(screen.queryByRole('button', { name: 'Relaunch Squad from retained plan' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Resume existing Squad' })).toBeNull();
   });
 
   it('keeps stop available and hides generic retry for resource blocks', async () => {

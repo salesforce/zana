@@ -2,6 +2,15 @@ export { openDatabase, type ZccDatabase, type SqliteDatabase } from './connectio
 export { SQLITE_LOCK_WAIT_MS, isSqliteBusy, retrySqliteTransaction } from './contention.js';
 export { createSqliteDatabase, sqliteWorkerConfiguration } from './sqlite.js';
 export { migrate } from './migrate.js';
+export { openExecutionDatabase, type ExecutionDatabase } from './execution/database.js';
+export { migrateExecutionDatabase, EXECUTION_SCHEMA_V1, EXECUTION_SCHEMA_V2, EXECUTION_SCHEMA_V3, EXECUTION_SCHEMA_V4 } from './execution/schema.js';
+export {
+  deleteExecutionRecord,
+  getExecutionRecord,
+  putExecutionRecord,
+  type ExecutionJson,
+  type ExecutionRecord
+} from './execution/records.js';
 export {
   getProviderModelCatalog,
   putProviderModelCatalog,

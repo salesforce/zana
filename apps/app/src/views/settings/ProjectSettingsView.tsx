@@ -68,9 +68,7 @@ export function ProjectSettingsView({
 
       <ProjectHarnessSettings project={project} onOpen={onOpen} onSaved={onSaved} />
 
-      {!project.remote && !project.quickAgent && (
-        <ProjectWorktreeSettings project={project} onSaved={onSaved} />
-      )}
+      <ProjectWorktreeSettings project={project} onSaved={onSaved} />
 
       <ProjectProcessesSection project={project} />
 
@@ -340,6 +338,7 @@ export function ProjectWorktreeSettings({
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const [value, setValue] = useState<boolean | undefined>(undefined);
+  const [gitRepo, setGitRepo] = useState<boolean | null>(() => project.remote || project.quickAgent ? false : null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -351,6 +350,19 @@ export function ProjectWorktreeSettings({
     currentProjectId.current = project.id;
     setLoaded(false);
     setError(null);
+    if (project.remote || project.quickAgent) {
+      setGitRepo(false);
+      setLoaded(true);
+      return () => { cancelled = true; };
+    }
+    setGitRepo(null);
+    product.git.isRepo(project.path)
+      .then((isRepo) => {
+        if (!cancelled) setGitRepo(isRepo);
+      })
+      .catch(() => {
+        if (!cancelled) setGitRepo(false);
+      });
     product.projectSettings.get(project.id)
       .then((settings) => {
         if (!cancelled) {
@@ -368,16 +380,17 @@ export function ProjectWorktreeSettings({
   }, [project.id]);
 
   useEffect(() => product.projectSettings.onChanged((projectId) => {
+    if (gitRepo !== true) return;
     if (projectId !== project.id || savingRef.current) return;
     void product.projectSettings.get(projectId).then((settings) => {
       if (projectId === currentProjectId.current) setValue(settings.worktreeIsolation);
     }).catch(() => {
       // A background refresh is advisory and must not replace an already-rendered value.
     });
-  }), [project.id]);
+  }), [project.id, gitRepo]);
 
   const save = async (next: boolean | undefined) => {
-    if (saving) return;
+    if (saving || gitRepo !== true) return;
     const previous = value;
     setValue(next);
     savingRef.current = true;
@@ -409,10 +422,15 @@ export function ProjectWorktreeSettings({
       title="Git worktrees"
       help="Choose whether new agents for this project use separate branches and checkouts. This project setting overrides the global Agents default."
     >
-      {loaded ? (
+      {gitRepo === false ? (
+        <>
+          <ProjectWorktreeIsolationField value={false} disabled onChange={() => {}} />
+          <p className="settings-help">Worktrees need a local Git project. Squads here run in the project folder.</p>
+        </>
+      ) : loaded ? (
         <ProjectWorktreeIsolationField
           value={value}
-          disabled={saving}
+          disabled={saving || gitRepo !== true}
           onChange={(next) => void save(next)}
         />
       ) : (

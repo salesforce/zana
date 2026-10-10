@@ -120,6 +120,7 @@ export function registerTerminalsIpc(): void {
       if (reserved) {
         const { capability, reservationId } = reserved;
         try {
+          await ctx.restoreSquadWorktreeFollowUpClaim(capability);
           const resolved = await ctx.resolveWorktreeForRequest(capability.request);
           if (!resolved.ok) {
             ctx.restoreCapabilities.release(capability.id, reservationId);
@@ -128,12 +129,17 @@ export function registerTerminalsIpc(): void {
           const launched = await ctx.launchAuthorizedTerminal(
             resolved.value,
             ctx.restorePrincipal(capability),
-            capability.sessionId ? { preallocatedSessionId: capability.sessionId } : undefined,
+            capability.sessionId
+              ? { preallocatedSessionId: capability.sessionId, retainWorktree: Boolean(capability.followUpExecutionId) }
+              : undefined,
             capability.request.cohort?.teamId,
             undefined,
-            undefined,
-            undefined,
-            ctx.isTeamWorkerRestore(capability.request)
+             undefined,
+             undefined,
+             undefined,
+             ctx.isTeamWorkerRestore(capability.request),
+             undefined,
+             capability.followUpExecutionId
           );
           if (launched.ok) ctx.restoreCapabilities.consume(capability.id, reservationId);
           else ctx.restoreCapabilities.release(capability.id, reservationId);
@@ -203,12 +209,25 @@ export function registerTerminalsIpc(): void {
         return { ok: false, code: 'DENIED', message: 'reconnect capability has no remote tmux target' };
       }
       try {
+        await ctx.restoreSquadWorktreeFollowUpClaim(capability);
         const launched = await ctx.launchAuthorizedTerminal(
           capability.request,
           legacyReconnect
             ? { kind: 'interactive-user', id: 'reconnect:legacy-confirmed' }
             : { kind: 'automation', id: `reconnect:${capability.id}` },
-          { reconnectTmuxId: capability.remoteTmuxId, resume: true }
+          {
+            reconnectTmuxId: capability.remoteTmuxId,
+            resume: true,
+            retainWorktree: Boolean(capability.followUpExecutionId)
+          },
+          undefined,
+          undefined,
+          undefined,
+           undefined,
+           undefined,
+           false,
+           undefined,
+           capability.followUpExecutionId
         );
         if (launched.ok) ctx.restoreCapabilities.consume(capability.id, reserved.reservationId);
         else release();

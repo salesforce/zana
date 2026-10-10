@@ -45,9 +45,9 @@ describe('InboxDetail attention layout', () => {
   const source = readFileSync(`${process.cwd()}/apps/app/src/components/InboxDetail.tsx`, 'utf8');
 
   it('puts the answer surface above comments/docs when the entry is a question', () => {
-    const early = source.indexOf('{questionFirst ? answerSurface : null}');
+    const early = source.indexOf('{(ownershipLoading || ownershipError || hostAction || questionFirst) ? answerSurface : null}');
     const comments = source.indexOf('inbox-detail-comments');
-    const late = source.indexOf('{questionFirst ? null : answerSurface}');
+    const late = source.indexOf('{(ownershipLoading || ownershipError || hostAction || questionFirst) ? null : answerSurface}');
     const footer = source.indexOf('inbox-detail-footer');
     const related = source.indexOf('<RelatedNextSteps');
     expect(early).toBeGreaterThan(-1);

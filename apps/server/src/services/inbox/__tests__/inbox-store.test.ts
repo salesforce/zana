@@ -42,6 +42,17 @@ describe('bounded inbox pages and bytes', () => {
       expect((await store.read()).entries[2]?.comments).toBe(first.comments);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+  it('gets an old entry outside a newest-200 history page', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-inbox-get-'));
+    const file = join(dir, 'entries.jsonl');
+    try {
+      const lines = Array.from({ length: 201 }, (_, index) => JSON.stringify({ id: String(index), ts: index, projectId: 'p', comments: 'x' }));
+      await writeFile(file, lines.join('\n') + '\n');
+      const store = createInboxStore({ filePath: file });
+      expect((await store.read({ limit: 200 })).entries.map((entry) => entry.id)).not.toContain('0');
+      expect(await store.get('0')).toMatchObject({ id: '0', projectId: 'p' });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
   it('rejects oversized admissions and legacy lines without rewriting preserved data', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zcc-inbox-size-'));
     const file = join(dir, 'entries.jsonl');

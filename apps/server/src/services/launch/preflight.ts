@@ -12,6 +12,7 @@ import type {
 } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { ExecutionConsentCeremonyInput } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import type { WorkUnitRoutingV1 } from '../execution/routing-policy.js';
+import type { WorkUnitRequirementsV1 } from '../execution/store.js';
 import type { WorkOutputDeclarationV1 } from '../execution/contracts.js';
 import { validOutputDeclaration } from '../execution/contracts.js';
 import { evaluateSlotEligibility, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
@@ -36,6 +37,8 @@ export interface AdmissionCheck {
   status: AdmissionCheckStatus;
   required: boolean;
   subject?: string;
+  /** Exact capability names that made this check fail. Omitted when not known. */
+  unavailable?: readonly string[];
   message: string;
 }
 
@@ -55,6 +58,8 @@ export interface AdmissionCapabilityInventoryV1 {
   mcpServers: readonly { name: string; available: boolean }[];
   models: readonly { id: string; status: 'available' | 'unavailable' | 'unknown'; provider: string }[];
   providers: readonly { id: string; status: 'available' | 'unavailable' | 'unknown' }[];
+  /** Collection outcome is distinct from an empty, successfully read inventory. */
+  sourceStatuses?: readonly { source: 'skills' | 'mcpServers' | 'models' | 'providers'; status: 'collected' | 'failed' }[];
 }
 
 export interface AdmissionWorkUnitInput {
@@ -68,6 +73,7 @@ export interface AdmissionWorkUnitInput {
   readOnly?: boolean;
   routing?: WorkUnitRoutingV1;
   output?: WorkOutputDeclarationV1;
+  requires?: WorkUnitRequirementsV1;
 }
 
 export interface TeamAdmissionInput {
@@ -117,6 +123,8 @@ export interface TeamAdmissionResultV1 {
   digest: string;
   estimate: { contextBytes: number; tokens: number; usd?: number };
   checks: AdmissionCheck[];
+  /** Failed capability reads prevent launch without claiming named capabilities are missing. */
+  availabilityUnknown?: { failedSources: readonly ('skills' | 'mcpServers')[] };
 }
 
 const MAX_ADMISSION_REQUIREMENTS = 100;
@@ -160,8 +168,12 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
   const requiredMcpServers = boundedStrings(input.requiredMcpServers);
   const requiredModels = boundedModels(input.requiredModels);
   const requiredProviders = boundedStrings(input.requiredProviders);
-  capabilityChecks('SKILL_AVAILABLE', requiredSkills, input.inventory?.skills, inventoryFresh, add);
-  capabilityChecks('MCP_AVAILABLE', requiredMcpServers, input.inventory?.mcpServers, inventoryFresh, add);
+  const failedSources = new Set(input.inventory?.sourceStatuses?.filter(({ status }) => status === 'failed').map(({ source }) => source) ?? []);
+  capabilityChecks('SKILL_AVAILABLE', requiredSkills, input.inventory?.skills, inventoryFresh, failedSources.has('skills'), add);
+  capabilityChecks('MCP_AVAILABLE', requiredMcpServers, input.inventory?.mcpServers, inventoryFresh, failedSources.has('mcpServers'), add);
+  for (const unit of normalizedPlan ?? []) {
+    workUnitCapabilityChecks(unit, input.inventory, inventoryFresh, failedSources, add);
+  }
   modelHealthChecks(requiredModels, input.inventory?.models, inventoryFresh, add);
   healthChecks('PROVIDER_HEALTH', requiredProviders, input.inventory?.providers, inventoryFresh, add);
   for (const unit of normalizedPlan ?? []) {
@@ -208,15 +220,20 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
       skills: canonicalCapabilities(input.inventory.skills),
       mcpServers: canonicalCapabilities(input.inventory.mcpServers),
       models: [...input.inventory.models].sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`)),
-      providers: [...input.inventory.providers].sort((a, b) => a.id.localeCompare(b.id))
+      providers: [...input.inventory.providers].sort((a, b) => a.id.localeCompare(b.id)),
+      sourceStatuses: input.inventory.sourceStatuses?.slice().sort((a, b) => a.source.localeCompare(b.source))
     },
     slotRoutes: input.slotRoutes?.map(({ observedAt: _observedAt, ...slot }) => ({ ...slot, capabilities: slot.capabilities?.slice().sort(), modalities: slot.modalities?.slice().sort() }))
       .sort((a, b) => a.slotId.localeCompare(b.slotId))
   };
-  return { version: 1, ready, digest: launchDigest({ version: 1, identity, estimate, checks }), estimate, checks };
+  const availabilityUnknown = [...failedSources].filter((source): source is 'skills' | 'mcpServers' => source === 'skills' || source === 'mcpServers');
+  return {
+    version: 1, ready, digest: launchDigest({ version: 1, identity, estimate, checks }), estimate, checks,
+    ...(availabilityUnknown.length ? { availabilityUnknown: { failedSources: availabilityUnknown } } : {})
+  };
 }
 
-/** Build one bounded inventory snapshot. Any failed source becomes UNKNOWN at evaluation. */
+/** Build one bounded inventory snapshot. Failed sources remain distinct from empty reads. */
 export async function collectTeamAdmissionInventory(
   requirements: TeamAdmissionRequirements,
   sources: TeamAdmissionInventorySources
@@ -236,12 +253,13 @@ export async function collectTeamAdmissionInventory(
     version: 1,
     observedAt,
     maxAgeMs: normalizeMaxAge(sources.maxAgeMs),
-    skills: canonicalCapabilities(skills.filter((skill) => requiredSkills.has(skill.name)).map((skill) => ({ name: skill.name, available: skill.enabled }))),
-    mcpServers: canonicalCapabilities(mcpServers.filter((server) => requiredMcpServers.has(server.name)).map((server) => ({ name: server.name, available: server.enabled }))),
-    models: models.filter((model) => requiredModels.has(`${model.provider}\0${model.id}`)).slice(0, MAX_ADMISSION_REQUIREMENTS)
+    skills: canonicalCapabilities(skills.items.filter((skill) => requiredSkills.has(skill.name)).map((skill) => ({ name: skill.name, available: skill.enabled }))),
+    mcpServers: canonicalCapabilities(mcpServers.items.filter((server) => requiredMcpServers.has(server.name)).map((server) => ({ name: server.name, available: server.enabled }))),
+    models: models.items.filter((model) => requiredModels.has(`${model.provider}\0${model.id}`)).slice(0, MAX_ADMISSION_REQUIREMENTS)
       .sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`)),
-    providers: providers.filter((provider) => requiredProviders.has(provider.id)).slice(0, MAX_ADMISSION_REQUIREMENTS)
-      .sort((a, b) => a.id.localeCompare(b.id))
+    providers: providers.items.filter((provider) => requiredProviders.has(provider.id)).slice(0, MAX_ADMISSION_REQUIREMENTS)
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    sourceStatuses: [skills, mcpServers, models, providers].map(({ source, status }) => ({ source, status }))
   };
 }
 
@@ -256,6 +274,7 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
     const dependencies = input.dependencies.map((dependency: string) => boundedString(dependency, 'work unit dependency'));
     const files = input.files?.map(normalizeFileScope);
     const verification = input.verification?.map((step: string) => boundedString(step, 'work unit verification'));
+    const requires = normalizeWorkUnitRequirements(input.requires);
     if (requireComplete && !input.readOnly && !files?.length) throw new PlanValidationError('file', 'mutating work unit requires file scope');
     if (requireComplete && !verification?.length) throw new PlanValidationError('dag', 'work unit requires verification');
     if (input.output !== undefined && !validOutputDeclaration(input.output)) throw new PlanValidationError('dag', 'invalid bounded output declaration');
@@ -269,7 +288,8 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
       ...(verification ? { verification } : {}),
       ...(input.readOnly ? { readOnly: true } : {}),
       ...(input.routing ? { routing: normalizeRouting(input.routing) } : {}),
-      ...(input.output ? { output: JSON.parse(JSON.stringify(input.output)) as WorkOutputDeclarationV1 } : {})
+      ...(input.output ? { output: JSON.parse(JSON.stringify(input.output)) as WorkOutputDeclarationV1 } : {}),
+      ...(requires ? { requires } : {})
     };
   });
   for (const unit of units) for (const dependency of unit.dependencies) if (!ids.has(dependency)) throw new PlanValidationError('dag', 'missing work unit dependency');
@@ -286,6 +306,21 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
   };
   for (const unit of units) visit(unit.id);
   return units;
+}
+
+function normalizeWorkUnitRequirements(value: unknown): WorkUnitRequirementsV1 | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PlanValidationError('dag', 'invalid work unit requires');
+  const requires = value as Record<string, unknown>;
+  if (Object.keys(requires).some((key) => key !== 'skills' && key !== 'mcpServers')) throw new PlanValidationError('dag', 'invalid work unit requires');
+  const names = (input: unknown, label: string): string[] | undefined => {
+    if (input === undefined) return undefined;
+    if (!Array.isArray(input) || input.length > 50) throw new PlanValidationError('dag', `invalid work unit ${label}`);
+    return [...new Set(input.map((name) => boundedString(name, `work unit ${label}`, 256)))].sort();
+  };
+  const skills = names(requires.skills, 'required skills');
+  const mcpServers = names(requires.mcpServers, 'required MCP servers');
+  return skills || mcpServers ? { ...(skills ? { skills } : {}), ...(mcpServers ? { mcpServers } : {}) } : undefined;
 }
 
 function normalizeRouting(routing: WorkUnitRoutingV1): WorkUnitRoutingV1 {
@@ -366,23 +401,56 @@ function normalizeMaxAge(value: number | undefined): number {
   return Math.min(MAX_INVENTORY_MAX_AGE_MS, Math.max(0, value));
 }
 
-async function safeInventory<T>(source: 'skills' | 'mcpServers' | 'models' | 'providers', read: () => Promise<readonly T[]>, onError?: TeamAdmissionInventorySources['onError']): Promise<readonly T[]> {
-  try { return await read(); } catch (error) {
+async function safeInventory<T>(source: 'skills' | 'mcpServers' | 'models' | 'providers', read: () => Promise<readonly T[]>, onError?: TeamAdmissionInventorySources['onError']): Promise<{ source: 'skills' | 'mcpServers' | 'models' | 'providers'; status: 'collected' | 'failed'; items: readonly T[] }> {
+  try { return { source, status: 'collected', items: await read() }; } catch (error) {
     try { onError?.(source, error); } catch { /* Diagnostics must not defeat fail-closed fallback. */ }
-    return [];
+    return { source, status: 'failed', items: [] };
   }
 }
 
 function capabilityChecks(
   code: 'SKILL_AVAILABLE' | 'MCP_AVAILABLE', required: readonly string[],
-  inventory: readonly { name: string; available: boolean }[] | undefined, fresh: boolean,
+  inventory: readonly { name: string; available: boolean }[] | undefined, fresh: boolean, collectionFailed: boolean,
   add: (check: AdmissionCheck) => void
 ): void {
   if (!required.length) return add({ code, status: 'SKIPPED', required: false, message: 'No requirements supplied' });
   for (const subject of required) {
     const found = inventory?.find((item) => item.name === subject);
-    const status = !fresh || !found ? 'UNKNOWN' : found.available ? 'PASS' : 'FAIL';
+    const status = !fresh || collectionFailed || !found ? 'UNKNOWN' : found.available ? 'PASS' : 'FAIL';
     add({ code, status, required: true, subject, message: status === 'PASS' ? `${subject} is available` : status === 'FAIL' ? `${subject} is unavailable` : `${subject} availability is unknown` });
+  }
+}
+
+function workUnitCapabilityChecks(
+  unit: AdmissionWorkUnitInput,
+  inventory: AdmissionCapabilityInventoryV1 | undefined,
+  fresh: boolean,
+  failedSources: ReadonlySet<string>,
+  add: (check: AdmissionCheck) => void
+): void {
+  const required = unit.requires;
+  for (const [code, names, available, label, collectionFailed] of [
+    ['SKILL_AVAILABLE', required?.skills, inventory?.skills, 'skills', failedSources.has('skills')],
+    ['MCP_AVAILABLE', required?.mcpServers, inventory?.mcpServers, 'MCP servers', failedSources.has('mcpServers')]
+  ] as const) {
+    if (!names?.length) continue;
+    // A stale or absent inventory blocks admission but does not prove a named
+    // capability is missing. Only project verified gaps are safe UI guidance.
+    const missing = fresh && !collectionFailed ? names.filter((name) => !available?.some((item) => item.name === name && item.available)) : [];
+    add({
+      code,
+      status: !fresh || collectionFailed ? 'UNKNOWN' : missing.length ? 'FAIL' : 'PASS',
+      required: true,
+      subject: unit.id,
+      ...(missing.length ? { unavailable: missing } : {}),
+      message: !fresh
+        ? `work unit ${unit.id} ${label} are unknown`
+        : collectionFailed
+        ? `work unit ${unit.id} ${label} availability is unknown`
+        : missing.length
+        ? `work unit ${unit.id} requirement unavailable: ${label}: ${missing.join(', ')}`
+        : `work unit ${unit.id} ${label} are available`
+    });
   }
 }
 

@@ -39,6 +39,7 @@ if (args[0] === 'acp') {
   if (args.includes('--resume')) process.stdout.write('Resume picker ready\n');
   createInterface({ input: process.stdin }).on('line', (line) => {
     if (!ready) return;
+    line = line.replace(/^\x1b\[200~/, '').replace(/\x1b\[201~$/, '');
     if (line === '/exit') process.exit(0);
     if (line === '/large') process.stdout.write('L'.repeat(40000) + '\nAFCODE_OUTPUT_COMPLETE\n');
     else process.stdout.write(`AFCODE_RECEIVED:${line}\n`);

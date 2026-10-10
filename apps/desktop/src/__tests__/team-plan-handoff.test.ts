@@ -7,13 +7,17 @@ import {
   MAX_HANDOFF_FILE_BYTES,
   TeamPlanHandoff,
   authoredPlanRelPath,
+  correctedPlanRelPath,
   cleanupHandoffFiles,
   readAuthoredPlan,
+  readCorrectedPlan,
   sourceMirrorRelPath,
   writeSourceMirror,
   type AuthoredPlanRead,
   type CoordinatorHandoffContext
 } from '../team-plan-handoff.js';
+import { PlanCorrectionService } from '../plan-correction/service.js';
+import { PlanCorrectionLaunchBinding } from '../plan-correction/launch-binding.js';
 
 const VALID_PLAN = [
   '### home: Write Home <!-- executable-step -->',
@@ -47,6 +51,13 @@ describe('readAuthoredPlan / writeSourceMirror (filesystem)', () => {
     if (read.status !== 'ok') return;
     expect(read.units).toHaveLength(1);
     expect(read.units[0]).toMatchObject({ id: 'home', files: ['home.txt'], verification: ['Read it back.'] });
+  });
+
+  it('reads a corrected plan from its separate handoff path', async () => {
+    await mkdir(join(root, '.zana'), { recursive: true });
+    await writeFile(join(root, correctedPlanRelPath('exec-1')), VALID_PLAN, 'utf8');
+    expect((await readCorrectedPlan(root, 'exec-1')).status).toBe('ok');
+    expect(await readAuthoredPlan(root, 'exec-1')).toEqual({ status: 'missing' });
   });
 
   it('returns invalid (with reason) for a present-but-incomplete plan', async () => {
@@ -223,11 +234,211 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     expect(nudge.mock.calls[0][1]).toContain('work unit requires verification');
   });
 
+  it('lets correction handling hold an invalid authored plan before nudging', async () => {
+    const reviewInvalid = vi.fn(async () => 'wait' as const);
+    const { nudge } = deps({ readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad plan' }) });
+    const guarded = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad plan' }),
+      reviewInvalid,
+      register: async () => ({ ok: true }),
+      nudge,
+      cleanup: async () => {},
+      logError: () => {}
+    });
+    await guarded.onCoordinatorIdle(ctx);
+    expect(reviewInvalid).toHaveBeenCalledWith(ctx, 'bad plan');
+    expect(nudge).not.toHaveBeenCalled();
+  });
+
+  it('nudges invalid inferred plans when correction handling is unhandled', async () => {
+    const reviewInvalid = vi.fn(async () => undefined);
+    const nudge = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad inferred plan' }),
+      reviewInvalid,
+      register: async () => ({ ok: true }),
+      nudge,
+      cleanup: async () => {},
+      logError: () => {}
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(reviewInvalid).toHaveBeenCalledWith(ctx, 'bad inferred plan');
+    expect(nudge).toHaveBeenCalledOnce();
+  });
+
   it('nudges when the host rejects the register, without latching done', async () => {
     const { handoff, nudge, register } = deps({ register: async () => ({ ok: false, message: 'budget exceeded' }) });
     await handoff.onCoordinatorIdle(ctx);
     expect(register).toHaveBeenCalledOnce();
     expect(nudge.mock.calls[0][1]).toContain('budget exceeded');
+  });
+
+  it('waits for correction review before registering', async () => {
+    const nudge = vi.fn();
+    const register = vi.fn(async () => ({ ok: true }));
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/plan.md' }),
+      review: async () => 'wait',
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {}
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).not.toHaveBeenCalled();
+    expect(nudge).not.toHaveBeenCalled();
+  });
+
+  it('registers review-approved replacement units instead of source units', async () => {
+    const corrected = [{ id: 'corrected', title: 'Corrected', task: 'do corrected', dependencies: [] }];
+    const register = vi.fn(async () => ({ ok: true }));
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/plan.md' }),
+      review: async () => ({ status: 'ok', units: corrected, realPath: '/root/.zana/corrected.md' }),
+      register,
+      nudge: () => {},
+      cleanup: async () => {},
+      logError: () => {}
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledWith(ctx, corrected);
+  });
+
+  it('holds provided-invalid launch handoff until human approval for durable executionId', async () => {
+    const executionId = 'execution-durable-1';
+    const durableCtx = { ...ctx, executionId };
+    const appendInbox = vi.fn(async (input) => ({ ...input, id: 'correction-1', ts: 1 }));
+    const bindInboxAction = vi.fn(() => true);
+    const nudge = vi.fn();
+    const corrected = { status: 'ok' as const, units: [{ id: 'corrected', title: 'Corrected', task: 'fix', dependencies: [] }], realPath: '/root/.zana/corrected.md' };
+    const records = new Map();
+    let handoff: TeamPlanHandoff;
+    const correction = new PlanCorrectionService({
+      appendInbox,
+      bindInboxAction,
+      nudge,
+      readCorrectedPlan: async () => corrected,
+      store: {
+        get: async (id) => records.get(id),
+        put: async (record) => { records.set(record.executionId, structuredClone(record)); return record; }
+      },
+      resume: async (resumeCtx) => handoff.onCoordinatorIdle(resumeCtx),
+      stopExecution: async () => {}
+    });
+    const launchBinding = new PlanCorrectionLaunchBinding();
+    launchBinding.beginLaunch('launch-request-1', 'provided plan lacks verification');
+    // ExecutionService creates durable id, then launchTeam binds it before spawn.
+    await expect(launchBinding.bindExecution('launch-request-1', executionId, correction)).resolves.toBe(true);
+    await expect(correction.isPending('launch-request-1')).resolves.toBe(false);
+    const register = vi.fn(async () => ({ ok: true }));
+    handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/authored.md' }),
+      review: (handoffCtx, read) => correction.review(handoffCtx, read),
+      reviewInvalid: (handoffCtx, reason) => correction.reviewInvalid(handoffCtx, reason),
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {}
+    });
+
+    await handoff.onCoordinatorIdle(durableCtx);
+    expect(appendInbox).toHaveBeenCalledOnce();
+    expect(bindInboxAction).toHaveBeenCalledWith(expect.anything(), {
+      kind: 'plan-correction',
+      ref: expect.stringContaining(`"executionId":"${executionId}"`)
+    });
+    expect(JSON.parse(bindInboxAction.mock.calls[0][1].ref)).toMatchObject({ executionId, offerId: expect.any(String), digest: expect.any(String) });
+    expect(register).not.toHaveBeenCalled();
+
+    const offer = JSON.parse(bindInboxAction.mock.calls[0][1].ref);
+    await expect(correction.respond(executionId, 'approve', offer)).resolves.toBe('approve');
+    expect(register).toHaveBeenCalledWith(durableCtx, corrected.units);
+  });
+
+  it('does not revive a handoff when cancellation queues behind approval persistence', async () => {
+    const corrected = { status: 'ok' as const, units: [{ id: 'corrected', title: 'Corrected', task: 'fix', dependencies: [] }], realPath: '/root/.zana/corrected.md' };
+    const records = new Map<string, Record<string, unknown>>();
+    let releaseApprovalWrite!: () => void;
+    let handoff: TeamPlanHandoff;
+    const bindInboxAction = vi.fn(() => true);
+    const correction = new PlanCorrectionService({
+      appendInbox: async (input) => ({ ...input, id: 'correction-1', ts: 1 }),
+      bindInboxAction,
+      nudge: vi.fn(),
+      readCorrectedPlan: async () => corrected,
+      store: {
+        get: async (id) => records.get(id) as never,
+        put: async (record) => {
+          if (record.status === 'approved') await new Promise<void>((resolve) => { releaseApprovalWrite = resolve; });
+          records.set(record.executionId, structuredClone(record));
+          return record;
+        }
+      },
+      resume: async (resumeCtx) => handoff.onCoordinatorIdle(resumeCtx),
+      stopExecution: async () => {}
+    });
+    await correction.begin(ctx.executionId, 'provided plan invalid', false);
+    const register = vi.fn(async () => ({ ok: true }));
+    handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'invalid', reason: 'still invalid' }),
+      reviewInvalid: (handoffCtx, reason) => correction.reviewInvalid(handoffCtx, reason),
+      register,
+      nudge: vi.fn(),
+      cleanup: async () => {},
+      logError: () => {}
+    });
+
+    await handoff.onCoordinatorIdle(ctx);
+    const offer = JSON.parse(bindInboxAction.mock.calls[0][1].ref);
+    const approval = correction.respond(ctx.executionId, 'approve', offer);
+    await vi.waitFor(() => expect(releaseApprovalWrite).toBeTypeOf('function'));
+    const cancellation = correction.respond(ctx.executionId, 'cancel', offer);
+    releaseApprovalWrite();
+
+    await expect(cancellation).resolves.toBe('cancelled');
+    await expect(approval).resolves.toBe('cancelled');
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('registers approved corrected plan when authored plan remains invalid', async () => {
+    const records = new Map();
+    const corrected = { status: 'ok' as const, units: [{ id: 'corrected', title: 'Corrected', task: 'fix', dependencies: [] }], realPath: '/root/.zana/corrected.md' };
+    const bindInboxAction = vi.fn(() => true);
+    const correction = new PlanCorrectionService({
+      appendInbox: async (input) => ({ ...input, id: 'correction-1', ts: 1 }),
+      bindInboxAction,
+      nudge: vi.fn(),
+      readCorrectedPlan: async () => corrected,
+      store: {
+        get: async (id) => records.get(id),
+        put: async (record) => { records.set(record.executionId, structuredClone(record)); return record; }
+      },
+      resume: async () => {},
+      stopExecution: async () => {}
+    });
+    await correction.begin(ctx.executionId, 'provided plan invalid', false);
+    const register = vi.fn(async () => ({ ok: true }));
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'invalid', reason: 'still invalid' }),
+      reviewInvalid: (handoffCtx, reason) => correction.reviewInvalid(handoffCtx, reason),
+      register,
+      nudge: vi.fn(),
+      cleanup: async () => {},
+      logError: () => {}
+    });
+
+    await handoff.onCoordinatorIdle(ctx);
+    const offer = JSON.parse(bindInboxAction.mock.calls[0][1].ref);
+    await correction.respond(ctx.executionId, 'approve', offer);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledWith(ctx, corrected.units);
   });
 
   it('stops nudging after maxNudges and defers to the watchdog', async () => {

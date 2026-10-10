@@ -68,6 +68,10 @@ type Deps = {
   readLastTurn: (ref: TranscriptRef) => Promise<string>;
   /** Run the goal-evaluator prompt with the given vars; never throws. */
   runEvaluator: (vars: GoalEvalVars, dedupeKey: string) => Promise<LlmRunResult>;
+  /** Main-authorized durable squad launch and terminal lookup for team assignments. */
+  launchSquad?: (input: { goal: Goal; project: Project; iterationId: string }) => Promise<{ executionId: string }>;
+  getSquadExecution?: (projectId: string, executionId: string) => Promise<{ state: string; finalSummary?: string } | undefined>;
+  findSquadExecution?: (projectId: string, launchRequestId: string) => Promise<{ executionId: string; state: string; finalSummary?: string } | undefined>;
 };
 
 interface Live {
@@ -76,6 +80,12 @@ interface Live {
   iterIndexBySession: Map<string, number>;
   /** Retry timer set when a spawn was blocked by the concurrency cap. */
   retryTimer: NodeJS.Timeout | null;
+  /** Retry timer for a terminal status whose outcome is already durable. */
+  terminalRetryTimer: NodeJS.Timeout | null;
+  /** Guards one in-process terminal inbox delivery while its marker saves. */
+  terminalNotificationDelivering: boolean;
+  /** Retains an outcome across a transient intent-save failure until it is durable. */
+  pendingTerminal?: { status: 'achieved' | 'exhausted' | 'escalated' | 'cancelled'; message: string };
 }
 
 /**
@@ -203,6 +213,9 @@ export class GoalManager extends EventEmitter {
   private pending = 0;
   private epoch = 0;
   private evaluating = new Set<string>();
+  private squadPollTimers = new Map<string, NodeJS.Timeout>();
+  /** One in-flight lookup per durable squad iteration. */
+  private squadPolls = new Map<string, Live>();
 
   private serial<T>(work: () => Promise<T>): Promise<T> {
     if (this.pending >= 100) return Promise.reject(new Error('Too many pending goal operations'));
@@ -260,21 +273,32 @@ export class GoalManager extends EventEmitter {
     );
     if (epoch !== this.epoch) return;
     for (const live of this.live.values()) this.clearRetry(live);
+    for (const live of this.live.values()) this.clearTerminalRetry(live);
     this.live.clear(); this.startMsBySession.clear();
+    for (const timer of this.squadPollTimers.values()) clearTimeout(timer);
+    this.squadPollTimers.clear();
     for (const goal of goals) this.live.set(goal.id, this.makeLive(goal));
     for (const goal of goals) {
+      const live = this.live.get(goal.id)!;
+      if (live.goal.terminalStatus || (live.goal.terminalMessage && !live.goal.terminalNotificationDelivered)) {
+        this.resolveTerminalization(live);
+        continue;
+      }
       // The process may have stopped after launch but before the acknowledgement
       // reached the metadata owner. Never replay that ambiguous side effect.
       if (goal.history.iterations.some(iteration => iteration.launchState === 'pending')) {
         try {
-          if (await this.recoverPending(this.live.get(goal.id)!)) continue;
+          if (await this.recoverPending(live)) continue;
           if (goal.status !== 'paused') await this.finish(goal.id, 'paused', `Goal **${goal.title}** has an unconfirmed worker launch. Check its sessions before running it again.`);
         }
         catch (error) { this.log(`recover ${goal.id}`, error); }
         continue;
       }
-      if (goal.status === 'active' && !this.hasLiveSessionFor(goal.id)) {
-        try { await this.arm(goal.id); } catch (error) { this.log(`resume ${goal.id}`, error); }
+      if (goal.status === 'active') {
+        if (this.resumeSquadObservation(live)) continue;
+        if (!this.hasLiveSessionFor(goal.id)) {
+          try { await this.arm(goal.id); } catch (error) { this.log(`resume ${goal.id}`, error); }
+        }
       }
     }
     this.emitChangedIfDifferent();
@@ -284,6 +308,7 @@ export class GoalManager extends EventEmitter {
     if (!input.title?.trim()) throw new Error('title is required');
     if (!input.projectId) throw new Error('projectId is required');
     if (!input.statement?.trim()) throw new Error('statement is required');
+    if (input.assignment?.kind === 'team' && !input.assignment.teamId?.trim()) throw new Error('teamId is required for team goals');
     const now = new Date().toISOString();
     const goal: Goal = {
       id: randomUUID(),
@@ -327,7 +352,13 @@ export class GoalManager extends EventEmitter {
     if (patch.successCriteria !== undefined) {
       next.successCriteria = patch.successCriteria.map((s) => s.trim()).filter(Boolean);
     }
-    if (patch.assignment !== undefined) next.assignment = patch.assignment;
+    if (patch.assignment !== undefined) {
+      if (patch.assignment.kind === 'team' && !patch.assignment.teamId?.trim()) throw new Error('teamId is required for team goals');
+      if (patch.assignment.kind !== live.goal.assignment.kind && this.hasUnresolvedIteration(live)) {
+        throw new Error('Cannot change goal assignment kind while an existing run or launch is unresolved');
+      }
+      next.assignment = patch.assignment;
+    }
     if (patch.cadence !== undefined) next.cadence = patch.cadence;
     if (patch.maxIterations !== undefined && patch.maxIterations > 0) {
       next.maxIterations = Math.min(100, Math.round(patch.maxIterations));
@@ -352,10 +383,42 @@ export class GoalManager extends EventEmitter {
   private async setStatusNow(id: string, status: GoalStatus): Promise<Goal | null> {
     const live = this.live.get(id);
     if (!live) return null;
+    if (status === 'cancelled') {
+      // Cancellation fences every terminal path. Evaluators may still finish and
+      // record iteration evidence, but cannot resurrect a terminal intent.
+      this.clearRetry(live);
+      this.clearTerminalRetry(live);
+      this.clearSquadPolls(id);
+      live.pendingTerminal = undefined;
+      await this.commit(live, {
+        ...live.goal,
+        status: 'cancelled',
+        terminalStatus: undefined,
+        terminalMessage: undefined,
+        terminalNotificationDelivered: undefined,
+        updatedAt: new Date().toISOString()
+      });
+      this.emit('changed');
+      return live.goal;
+    }
+    if (live.goal.terminalStatus && status === 'active') {
+      await this.commit(live, { ...live.goal, status, updatedAt: new Date().toISOString() });
+      await this.completeTerminalization(live);
+      this.emit('changed');
+      return live.goal;
+    }
     if (status === 'active' && !(await this.recoverPending(live))) throw new Error('Unconfirmed worker launch; reconcile its session before resuming');
     await this.commit(live, { ...live.goal, status, updatedAt: new Date().toISOString() });
     if (status === 'active') {
-      if (!this.hasLiveSessionFor(id)) await this.arm(id);
+      if (live.goal.terminalStatus) {
+        await this.completeTerminalization(live);
+        this.emit('changed');
+        return live.goal;
+      }
+      // A paused squad may have reached terminal state while its poll was
+      // suppressed. Resume observation first so that execution is evaluated
+      // instead of remaining an unresolved, live-looking iteration forever.
+      if (!this.resolveTerminalization(live) && !this.resumeSquadObservation(live) && !this.hasLiveSessionFor(id)) await this.arm(id);
     } else {
       this.clearRetry(live);
     }
@@ -371,7 +434,7 @@ export class GoalManager extends EventEmitter {
       if (this.deps.persistence) await this.deps.persistence.remove(live.goal);
       else if (!deleteGoal(id, this.deps.store.listProjects())) throw new Error('Goal could not be removed');
     }
-    this.clearRetry(live); this.live.delete(id);
+    this.clearRetry(live); this.clearTerminalRetry(live); this.clearSquadPolls(id); this.live.delete(id);
     for (const iteration of live.goal.history.iterations) if (iteration.sessionId) this.startMsBySession.delete(iteration.sessionId);
     this.emit('changed');
   }
@@ -380,17 +443,28 @@ export class GoalManager extends EventEmitter {
   private async runNowInternal(id: string): Promise<Goal> {
     const live = this.live.get(id);
     if (!live) throw new Error(`goal not found: ${id}`);
+    if (live.goal.terminalStatus) {
+      if (live.goal.status !== 'active') await this.commit(live, { ...live.goal, status: 'active', updatedAt: new Date().toISOString() });
+      await this.completeTerminalization(live);
+      return live.goal;
+    }
     if (!(await this.recoverPending(live))) throw new Error('Unconfirmed worker launch; reconcile its session before resuming');
     if (live.goal.status !== 'active') {
       await this.commit(live, { ...live.goal, status: 'active', updatedAt: new Date().toISOString() });
     }
-    if (!this.hasLiveSessionFor(id)) await this.arm(id);
+    // A paused squad may have finished while its poll was suppressed. Resume
+    // observation before the live-session guard so its verdict can evaluate.
+    if (!this.resolveTerminalization(live) && !this.resumeSquadObservation(live) && !this.hasLiveSessionFor(id)) await this.arm(id);
     return live.goal;
   }
 
   stopAll() {
     this.epoch++;
-    for (const live of this.live.values()) this.clearRetry(live);
+    for (const live of this.live.values()) {
+      this.clearRetry(live);
+      this.clearTerminalRetry(live);
+    }
+    this.clearSquadPolls();
     this.live.clear();
     // Every live goal is gone, so no session's finish will ever consume its
     // start-time entry — drop them all so the map can't leak across a stop/start
@@ -404,6 +478,8 @@ export class GoalManager extends EventEmitter {
       const live = this.live.get(id);
       if (live?.goal.projectId === projectId) {
         this.clearRetry(live);
+        this.clearTerminalRetry(live);
+        this.clearSquadPolls(id);
         // Drop any pending start-time stamps for this goal's sessions — with the
         // goal gone, onAgentFinished will never fire to clean them up (Rule 3).
         for (const it of live.goal.history.iterations) {
@@ -501,7 +577,7 @@ export class GoalManager extends EventEmitter {
   // ----- the loop -------------------------------------------------------------
 
   private makeLive(goal: Goal): Live {
-    return { goal, iterIndexBySession: new Map(), retryTimer: null };
+    return { goal, iterIndexBySession: new Map(), retryTimer: null, terminalRetryTimer: null, terminalNotificationDelivering: false };
   }
 
   private async persist(goal: Goal) {
@@ -522,6 +598,7 @@ export class GoalManager extends EventEmitter {
   /** Only the main-owned PTY inventory can confirm a reserved worker. A missing
    * session is ambiguous (host offline/restart), never authority to replay it. */
   private async recoverPending(live: Live): Promise<boolean> {
+    if (live.goal.assignment.kind === 'team') return this.recoverPendingSquad(live);
     const pending = live.goal.history.iterations.filter(it => it.launchState === 'pending');
     if (!pending.length) return true;
     const sessions = pending.map(it => it.sessionId ? this.deps?.ptys.getSession(it.sessionId) : null);
@@ -544,6 +621,36 @@ export class GoalManager extends EventEmitter {
     return true;
   }
 
+  private async recoverPendingSquad(live: Live): Promise<boolean> {
+    const pending = live.goal.history.iterations.filter(it => it.launchState === 'pending');
+    if (!pending.length) return true;
+    if (!this.deps?.getSquadExecution) return false;
+    const records = await Promise.all(pending.map(it => it.executionId
+      ? this.deps!.getSquadExecution!(live.goal.projectId, it.executionId)
+      : it.launchRequestId ? this.deps!.findSquadExecution?.(live.goal.projectId, it.launchRequestId) : undefined));
+    if (records.some(record => !record)) return false;
+    await this.commit(live, { ...live.goal, iteration: live.goal.iteration + pending.length,
+      status: live.goal.status,
+      updatedAt: new Date().toISOString(), history: { ...live.goal.history, iterations: live.goal.history.iterations.map(it => {
+        const index = pending.indexOf(it); const record = index >= 0 ? records[index] : undefined;
+        return record ? { ...it, launchState: 'running' as const, ...(it.executionId ? {} : { executionId: (record as { executionId?: string }).executionId }), ...(record.finalSummary ? { report: record.finalSummary } : {}) } : it;
+      }) } });
+    this.emit('changed');
+    for (const [index, record] of records.entries()) {
+      const iteration = pending[index];
+      if (!iteration) continue;
+      const executionId = (record as { executionId?: string } | undefined)?.executionId ?? iteration.executionId;
+      if (!executionId) continue;
+      if (['COMPLETED', 'FAILED', 'STOPPED'].includes(record!.state)) {
+        void this.evaluateSquadTerminal(live.goal.id, iteration.id, record!.state, record!.finalSummary ?? 'Squad execution ended without a final summary.')
+          .catch(error => this.log(`recover squad ${live.goal.id}`, error));
+      } else {
+        this.pollSquadTerminal(live.goal.id, iteration.id, executionId);
+      }
+    }
+    return true;
+  }
+
   private clearRetry(live: Live) {
     if (live.retryTimer) {
       clearTimeout(live.retryTimer);
@@ -551,10 +658,72 @@ export class GoalManager extends EventEmitter {
     }
   }
 
+  private clearTerminalRetry(live: Live) {
+    if (live.terminalRetryTimer) {
+      clearTimeout(live.terminalRetryTimer);
+      live.terminalRetryTimer = null;
+    }
+  }
+
+  /** Resume status persistence or deferred delivery from durable terminal intent. */
+  private resolveTerminalization(live: Live): boolean {
+    if (live.goal.status === 'cancelled') return false;
+    if (!live.goal.terminalStatus && (!live.goal.terminalMessage || live.goal.terminalNotificationDelivered)) return false;
+    if (live.goal.status === 'paused') return true;
+    this.retryTerminalization(live);
+    return true;
+  }
+
+  /** Retry terminal intent/status persistence; notify only after final status is durable. */
+  private retryTerminalization(live: Live) {
+    if ((!live.pendingTerminal && !live.goal.terminalStatus && (!live.goal.terminalMessage || live.goal.terminalNotificationDelivered)) || live.terminalRetryTimer) return;
+    live.terminalRetryTimer = setTimeout(() => {
+      live.terminalRetryTimer = null;
+      void this.serial(async () => {
+        if (this.live.get(live.goal.id) !== live || live.goal.status === 'paused') return;
+        await this.completeTerminalization(live);
+      }).catch(error => this.log(`terminalize ${live.goal.id}`, error));
+    }, 1_000);
+    live.terminalRetryTimer.unref?.();
+  }
+
+  private async completeTerminalization(live: Live): Promise<void> {
+    if (live.goal.status === 'cancelled') return;
+    try {
+      if (live.pendingTerminal) {
+        const pending = live.pendingTerminal;
+        await this.commit(live, {
+          ...live.goal,
+          terminalStatus: pending.status,
+          terminalMessage: pending.message,
+          terminalNotificationDelivered: undefined,
+          updatedAt: new Date().toISOString()
+        });
+        live.pendingTerminal = undefined;
+      }
+      if (live.goal.terminalStatus) {
+        await this.commit(live, {
+          ...live.goal,
+          status: live.goal.terminalStatus,
+          terminalStatus: undefined,
+          updatedAt: new Date().toISOString()
+        });
+      }
+      this.emit('changed');
+      await this.deliverTerminalNotification(live);
+    } catch (error) {
+      this.log(`terminalize ${live.goal.id}`, error);
+      this.retryTerminalization(live);
+    }
+  }
+
   /** True if this goal has a spawned worker still running/starting. */
   private hasLiveSessionFor(id: string): boolean {
     const live = this.live.get(id);
     if (!live || !this.deps) return false;
+    if (live.goal.assignment.kind === 'team') {
+      return live.goal.history.iterations.some(it => it.executionId && it.verdict === undefined);
+    }
     const aliveIds = new Set(
       this.deps.ptys
         .list(live.goal.projectId)
@@ -564,6 +733,18 @@ export class GoalManager extends EventEmitter {
     return live.goal.history.iterations.some((it) => it.sessionId && aliveIds.has(it.sessionId));
   }
 
+  /**
+   * Iteration completion dispatch depends on its assignment kind. Keep that
+   * identity stable until every reserved, running, or unevaluated iteration is
+   * resolved.
+   */
+  private hasUnresolvedIteration(live: Live): boolean {
+    return this.hasLiveSessionFor(live.goal.id) || live.goal.history.iterations.some(iteration =>
+      iteration.launchState === 'pending' ||
+      (iteration.launchState === 'running' && iteration.verdict === undefined)
+    );
+  }
+
   private hasAnyLiveSession(): boolean {
     for (const [id, live] of this.live) {
       if (!live.goal.history.iterations.some(it => it.launchState === 'pending') && this.hasLiveSessionFor(id)) return true;
@@ -571,7 +752,7 @@ export class GoalManager extends EventEmitter {
     return false;
   }
 
-  /** Count goal-worker sessions alive across ALL goals (backs the concurrency cap). */
+  /** Count live PTY workers and unresolved squad executions across all goals. */
   private countLiveGoalRuns(): number {
     if (!this.deps) return 0;
     const aliveByProject = new Map<string, Set<string>>();
@@ -593,6 +774,7 @@ export class GoalManager extends EventEmitter {
       const alive = aliveFor(live.goal.projectId);
       for (const it of live.goal.history.iterations) {
         if (it.sessionId && alive.has(it.sessionId)) counted.add(it.sessionId);
+        if (it.executionId && it.verdict === undefined) counted.add(`squad:${it.executionId}`);
       }
     }
     return counted.size;
@@ -601,7 +783,7 @@ export class GoalManager extends EventEmitter {
   /** Try to spawn the next iteration; if the cap is hit, retry shortly. */
   private async arm(id: string): Promise<void> {
     const live = this.live.get(id);
-    if (!live || live.goal.status !== 'active' || this.hasLiveSessionFor(id) || this.evaluating.has(id)) return;
+    if (!live || live.goal.status !== 'active' || live.goal.terminalStatus || this.hasLiveSessionFor(id) || this.evaluating.has(id)) return;
     if (live.goal.history.iterations.some(it => it.launchState === 'pending')) return;
     this.clearRetry(live);
     if (live.goal.iteration >= live.goal.maxIterations) {
@@ -635,6 +817,11 @@ export class GoalManager extends EventEmitter {
         error: `project ${goal.projectId} not found`
       });
       await this.finish(id, 'escalated', `Project not found for goal "${goal.title}".`);
+      return;
+    }
+
+    if (goal.assignment.kind === 'team') {
+      await this.spawnSquadIteration(live, project);
       return;
     }
 
@@ -728,6 +915,134 @@ export class GoalManager extends EventEmitter {
     this.emit('changed');
   }
 
+  private async spawnSquadIteration(live: Live, project: Project) {
+    const goal = live.goal;
+    if (!goal.assignment.teamId || !this.deps?.launchSquad) {
+      await this.recordIteration(goal.id, { id: randomUUID(), at: new Date().toISOString(), verdict: 'fail', error: 'team goal requires an available squad execution service' });
+      await this.finish(goal.id, 'escalated', `Goal **${goal.title}** cannot launch its squad.`);
+      return;
+    }
+    const iterId = randomUUID();
+    const at = new Date().toISOString();
+    const launchRequestId = `goal:${goal.id}:${iterId}`;
+    const lastScored = goal.history.iterations.find((it) => it.verdict !== undefined);
+    // Squads receive their objective through the execution service rather than a
+    // terminal seed prompt. Reuse the bounded worker context so both paths act
+    // on the same criteria and latest evaluator feedback.
+    const squadGoal = { ...goal, statement: buildIterationPrompt(goal, lastScored) };
+    await this.recordIteration(goal.id, { id: iterId, at, launchRequestId, launchState: 'pending' }, 'paused');
+    this.pendingLaunches++;
+    let launched: { executionId: string };
+    try {
+      launched = await this.deps.launchSquad({ goal: squadGoal, project, iterationId: iterId });
+    } catch (error) {
+      await this.recordLaunchFailure(goal.id, iterId, at, live, error);
+      return;
+    } finally { this.pendingLaunches--; }
+    if (this.live.get(goal.id) !== live) return;
+    await this.commit(live, { ...live.goal, status: goal.status, iteration: live.goal.iteration + 1, updatedAt: at,
+      history: { ...live.goal.history, iterations: live.goal.history.iterations.map(it => it.id === iterId ? { ...it, executionId: launched.executionId, launchRequestId, launchState: 'running' as const } : it) } });
+    this.emit('changed');
+    this.pollSquadTerminal(goal.id, iterId, launched.executionId);
+  }
+
+  private pollSquadTerminal(goalId: string, iterationId: string, executionId: string) {
+    const key = `${goalId}:${iterationId}`;
+    const scheduled = this.squadPollTimers.get(key);
+    if (scheduled) {
+      clearTimeout(scheduled);
+      this.squadPollTimers.delete(key);
+    }
+    const poll = async () => {
+      const live = this.live.get(goalId);
+      if (!live) return;
+      // A resume request can overlap an existing lookup. Keep the current live
+      // identity as the owner so a reload may observe its replacement instead.
+      if (this.squadPolls.get(key) === live) return;
+      this.squadPolls.set(key, live);
+      let record: { state: string; finalSummary?: string } | undefined;
+      try {
+        record = this.deps?.getSquadExecution
+          ? await this.deps.getSquadExecution(live.goal.projectId, executionId)
+          : undefined;
+      } catch (error) {
+        this.log(`poll squad ${goalId}`, error);
+        // A lookup failure is transient. Re-arm only if this exact live identity
+        // still owns the iteration; teardown/reload must leave no orphan timer.
+        this.retrySquadObservation(goalId, live, iterationId, executionId);
+        return;
+      } finally {
+        if (this.squadPolls.get(key) === live) this.squadPolls.delete(key);
+      }
+      // Lookup may finish after removal/reload. Never re-arm an orphaned poll.
+      if (!this.ownsSquadExecution(goalId, live, iterationId, executionId)) return;
+      if (!record || !['COMPLETED', 'FAILED', 'STOPPED'].includes(record.state)) {
+        this.retrySquadObservation(goalId, live, iterationId, executionId); return;
+      }
+      this.squadPollTimers.delete(key);
+      try {
+        await this.evaluateSquadTerminal(goalId, iterationId, record.state, record.finalSummary ?? 'Squad execution ended without a final summary.');
+      } catch (error) {
+        this.log(`evaluate squad ${goalId}`, error);
+        // The execution is already terminal. A failed verdict write must resume
+        // observation rather than strand this unresolved iteration forever.
+        this.retrySquadObservation(goalId, live, iterationId, executionId);
+      }
+    };
+    void poll().catch(error => this.log(`poll squad ${goalId}`, error));
+  }
+
+  /** Schedule one guarded re-check for an unresolved squad execution. */
+  private retrySquadObservation(goalId: string, live: Live, iterationId: string, executionId: string) {
+    const key = `${goalId}:${iterationId}`;
+    if (!this.ownsSquadExecution(goalId, live, iterationId, executionId) || this.squadPollTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      this.squadPollTimers.delete(key);
+      this.pollSquadTerminal(goalId, iterationId, executionId);
+    }, 1_000);
+    timer.unref?.();
+    this.squadPollTimers.set(key, timer);
+  }
+
+  private async evaluateSquadTerminal(goalId: string, iterationId: string, state: string, summary: string) {
+    const live = this.live.get(goalId);
+    if (!live || this.evaluating.has(goalId)) return;
+    const iteration = live.goal.history.iterations.find(it => it.id === iterationId);
+    if (!iteration || iteration.verdict !== undefined) return;
+    this.evaluating.add(goalId);
+    try {
+      const result = await this.deps!.runEvaluator({
+        statement: live.goal.statement,
+        criteria: live.goal.successCriteria.map(c => `- ${c}`).join('\n') || '(none specified)',
+        lastTurn: summary,
+        report: summary
+      }, `goal:${goalId}:${iterationId}`);
+      const parsed = state === 'COMPLETED' && result.ok
+        ? parseGoalVerdict(result.text)
+        : { verdict: 'fail' as GoalVerdict, rationale: state === 'COMPLETED' ? 'evaluator call failed' : `squad execution ${state.toLowerCase()}` };
+      await this.serial(async () => {
+        const cur = this.live.get(goalId);
+        if (cur !== live) return;
+        const index = cur.goal.history.iterations.findIndex(it => it.id === iterationId);
+        if (index < 0 || cur.goal.history.iterations[index].verdict !== undefined) return;
+        const terminal = cur.goal.status === 'cancelled' ? null : this.terminalOutcome(cur.goal, parsed);
+        await this.commit(cur, { ...cur.goal, updatedAt: new Date().toISOString(), history: { ...cur.goal.history,
+          iterations: cur.goal.history.iterations.map((it, idx) => idx === index ? { ...it, report: summary, finishedAt: new Date().toISOString(), ...parsed } : it) },
+          ...(terminal ? { terminalStatus: terminal.status, terminalMessage: terminal.message, terminalNotificationDelivered: undefined } : {}) });
+        this.emit('changed');
+        if (terminal) {
+          if (cur.goal.status !== 'paused') await this.finish(goalId, terminal.status, terminal.message);
+        }
+        else if (cur.goal.status !== 'active') return;
+        else {
+          // arm() rejects while evaluator owns this goal; release before next iteration.
+          this.evaluating.delete(goalId);
+          await this.arm(goalId);
+        }
+      });
+    } finally { this.evaluating.delete(goalId); }
+  }
+
   private async recordLaunchFailure(id: string, iterId: string, startedAt: string, live: Live, err: unknown) {
     if (this.live.get(id) !== live) return;
     this.log(`spawn ${id}`, err);
@@ -801,8 +1116,8 @@ export class GoalManager extends EventEmitter {
   private async evaluateAndBranch(id: string, sessionId: string): Promise<void> {
     const live = this.live.get(id);
     if (!live || !this.deps) return;
-    // A paused/cancelled goal that still had a worker in flight must not re-spawn.
-    if (live.goal.status !== 'active') return;
+    // A paused worker still needs a durable evaluator outcome. The branch below
+    // suppresses terminalization/re-spawn until resume.
 
     const idx = live.goal.history.iterations.findIndex((it) => it.sessionId === sessionId);
     if (idx < 0) return;
@@ -839,18 +1154,17 @@ export class GoalManager extends EventEmitter {
       if (cur !== live) return;
       const index = cur.goal.history.iterations.findIndex(it => it.id === iteration.id);
       if (index < 0 || cur.goal.history.iterations[index].verdict !== undefined) return;
+      const terminal = cur.goal.status === 'cancelled' ? null : this.terminalOutcome(cur.goal, parsed);
       await this.commit(cur, { ...cur.goal, updatedAt: new Date().toISOString(), history: { ...cur.goal.history,
-        iterations: cur.goal.history.iterations.map((it, idx) => idx === index ? { ...it, ...parsed } : it) } });
+        iterations: cur.goal.history.iterations.map((it, idx) => idx === index ? { ...it, ...parsed } : it) },
+        ...(terminal ? { terminalStatus: terminal.status, terminalMessage: terminal.message, terminalNotificationDelivered: undefined } : {}) });
       this.emit('changed');
       this.evaluating.delete(id);
-      if (cur.goal.status !== 'active') return;
-      if (parsed.verdict === 'pass') {
-        await this.finish(id, 'achieved', `✅ Goal achieved: **${cur.goal.title}** (in ${cur.goal.iteration} iteration${cur.goal.iteration === 1 ? '' : 's'}). ${parsed.rationale}`.trim());
-      } else if (cur.goal.iteration >= cur.goal.maxIterations) {
-        await this.finish(id, 'exhausted', `Goal **${cur.goal.title}** hit its ${cur.goal.maxIterations}-iteration limit without passing. Last verdict: ${parsed.verdict} — ${parsed.rationale}`);
-      } else if (trailingStall(cur.goal.history.iterations) >= cur.goal.noProgressLimit) {
-        await this.finish(id, 'escalated', `Goal **${cur.goal.title}** stalled (${cur.goal.noProgressLimit} rounds without progress) — needs you. Last: ${parsed.rationale}`);
-      } else { await this.arm(id); }
+      if (terminal) {
+        if (cur.goal.status !== 'paused') await this.finish(id, terminal.status, terminal.message);
+      }
+      else if (cur.goal.status !== 'active') return;
+      else await this.arm(id);
     });
   }
 
@@ -858,16 +1172,46 @@ export class GoalManager extends EventEmitter {
   private async finish(id: string, status: GoalStatus, message: string) {
     const live = this.live.get(id);
     if (!live) return;
+    if (live.goal.status === 'cancelled') return;
     this.clearRetry(live);
-    await this.commit(live, { ...live.goal, status, updatedAt: new Date().toISOString() });
-    this.emit('changed');
-    void this.notifyInbox(live.goal, message);
+    this.clearSquadPolls(id);
+    if (!isTerminalGoalStatus(status)) {
+      await this.commit(live, { ...live.goal, status, updatedAt: new Date().toISOString() });
+      this.emit('changed');
+      void this.notifyInbox(live.goal, message);
+      return;
+    }
+    if (live.goal.terminalStatus !== status || live.goal.terminalMessage !== message || live.goal.terminalNotificationDelivered) {
+      live.pendingTerminal = { status, message };
+    }
+    if (live.goal.status !== 'paused') await this.completeTerminalization(live);
   }
 
-  private async notifyInbox(goal: Goal, message: string) {
-    if (!this.deps?.inbox) return;
+  /** Inbox append is idempotent by durable goal dedupe key; persist delivery only after it succeeds. */
+  private async deliverTerminalNotification(live: Live): Promise<void> {
+    if (live.goal.status === 'cancelled' || !live.goal.terminalMessage || live.goal.terminalNotificationDelivered || live.terminalNotificationDelivering) return;
+    live.terminalNotificationDelivering = true;
+    try {
+      const delivered = await this.notifyInbox(live.goal, live.goal.terminalMessage);
+      if (!delivered) throw new Error('terminal inbox notification was not delivered');
+      await this.commit(live, { ...live.goal, terminalNotificationDelivered: true, updatedAt: new Date().toISOString() });
+      this.emit('changed');
+    } finally {
+      live.terminalNotificationDelivering = false;
+    }
+  }
+
+  private terminalOutcome(goal: Goal, parsed: { verdict: GoalVerdict; rationale: string }): { status: 'achieved' | 'exhausted' | 'escalated'; message: string } | null {
+    if (parsed.verdict === 'pass') return { status: 'achieved', message: `Goal achieved: **${goal.title}**. ${parsed.rationale}`.trim() };
+    if (goal.iteration >= goal.maxIterations) return { status: 'exhausted', message: `Goal **${goal.title}** hit its iteration limit. Last verdict: ${parsed.verdict}. ${parsed.rationale}` };
+    if (trailingStall([{ id: '', at: '', verdict: parsed.verdict }, ...goal.history.iterations]) >= goal.noProgressLimit) return { status: 'escalated', message: `Goal **${goal.title}** stalled. Last: ${parsed.rationale}` };
+    return null;
+  }
+
+  private async notifyInbox(goal: Goal, message: string): Promise<boolean> {
+    if (!this.deps?.inbox) return true;
     const project = this.deps.store.listProjects().find((p) => p.id === goal.projectId);
-    if (!project) return;
+    if (!project) return true;
     try {
       await this.deps.inbox.append({
         projectId: project.id,
@@ -881,8 +1225,10 @@ export class GoalManager extends EventEmitter {
         // Goal outcomes are something the user should see — surface inline + badge.
         notify: 'loud'
       });
+      return true;
     } catch (err) {
       this.log(`notifyInbox ${goal.id}`, err);
+      return false;
     }
   }
 
@@ -895,6 +1241,38 @@ export class GoalManager extends EventEmitter {
     await this.commit(live, { ...live.goal, status: status ?? live.goal.status, history: { ...history,
       iterations: [iteration, ...history.iterations.filter(it => it.id !== iteration.id)].slice(0, history.retain) } });
     this.reindex(live);
+  }
+
+  /** Resume observation of durable squad executions after a process restart. */
+  private resumeSquadObservation(live: Live): boolean {
+    if (live.goal.assignment.kind !== 'team') return false;
+    let observed = false;
+    for (const iteration of live.goal.history.iterations) {
+      if (!iteration.executionId || iteration.verdict !== undefined) continue;
+      observed = true;
+      this.pollSquadTerminal(live.goal.id, iteration.id, iteration.executionId);
+    }
+    return observed;
+  }
+
+  /** Stop one goal's polls, or every poll during manager teardown. */
+  private clearSquadPolls(goalId?: string) {
+    for (const [key, timer] of this.squadPollTimers) {
+      if (goalId && !key.startsWith(`${goalId}:`)) continue;
+      clearTimeout(timer);
+      this.squadPollTimers.delete(key);
+    }
+    for (const key of this.squadPolls.keys()) {
+      if (goalId && !key.startsWith(`${goalId}:`)) continue;
+      this.squadPolls.delete(key);
+    }
+  }
+
+  /** Reject stale callbacks from replaced lives or completed/replaced iterations. */
+  private ownsSquadExecution(goalId: string, live: Live, iterationId: string, executionId: string): boolean {
+    return this.live.get(goalId) === live && live.goal.history.iterations.some(iteration =>
+      iteration.id === iterationId && iteration.executionId === executionId && iteration.verdict === undefined
+    );
   }
 
   private reindex(live: Live) {
@@ -925,4 +1303,8 @@ export class GoalManager extends EventEmitter {
 function clampRetain(n: number | undefined): number {
   if (typeof n !== 'number' || !Number.isFinite(n)) return 20;
   return Math.max(1, Math.min(100, Math.round(n)));
+}
+
+function isTerminalGoalStatus(status: GoalStatus): status is 'achieved' | 'exhausted' | 'escalated' | 'cancelled' {
+  return status === 'achieved' || status === 'exhausted' || status === 'escalated' || status === 'cancelled';
 }

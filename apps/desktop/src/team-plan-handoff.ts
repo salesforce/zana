@@ -117,6 +117,19 @@ export function sourceMirrorRelPath(executionId: string): string {
   return `${TEAM_PLAN_HANDOFF_DIR}/execution-source-${safeToken(executionId)}.md`;
 }
 
+/** Project-relative correction artifacts. Both stay inside the handoff root. */
+export function correctionProseRelPath(executionId: string): string {
+  return `${TEAM_PLAN_HANDOFF_DIR}/execution-plan-correction-${safeToken(executionId)}.md`;
+}
+
+export function correctedPlanRelPath(executionId: string): string {
+  return `${TEAM_PLAN_HANDOFF_DIR}/execution-plan-corrected-${safeToken(executionId)}.md`;
+}
+
+export function correctionDiffRelPath(executionId: string): string {
+  return `${TEAM_PLAN_HANDOFF_DIR}/execution-plan-diff-${safeToken(executionId)}.md`;
+}
+
 export type AuthoredPlanRead =
   | { status: 'ok'; units: ExecutionWorkUnitInput[]; realPath: string }
   | { status: 'missing' }
@@ -128,8 +141,8 @@ export type AuthoredPlanRead =
  * complete durable DAG) so the caller can nudge with a precise reason only when
  * the coordinator actually produced something.
  */
-export async function readAuthoredPlan(projectRoot: string, executionId: string): Promise<AuthoredPlanRead> {
-  const real = await resolveContainedReal(projectRoot, authoredPlanRelPath(executionId));
+async function readPlan(projectRoot: string, rel: string): Promise<AuthoredPlanRead> {
+  const real = await resolveContainedReal(projectRoot, rel);
   if (!real) return { status: 'missing' };
   let text: string;
   let handle: FileHandle | undefined;
@@ -161,6 +174,33 @@ export async function readAuthoredPlan(projectRoot: string, executionId: string)
     return { status: 'ok', units, realPath: real };
   } catch (error) {
     return { status: 'invalid', reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function readAuthoredPlan(projectRoot: string, executionId: string): Promise<AuthoredPlanRead> {
+  return readPlan(projectRoot, authoredPlanRelPath(executionId));
+}
+
+export async function readCorrectedPlan(projectRoot: string, executionId: string): Promise<AuthoredPlanRead> {
+  return readPlan(projectRoot, correctedPlanRelPath(executionId));
+}
+
+/** Read a bounded handoff artifact from main-authorized execution worktree scope. */
+export async function readHandoffArtifact(projectRoot: string, rel: string): Promise<string | undefined> {
+  const real = await resolveContainedReal(projectRoot, rel);
+  if (!real) return undefined;
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(real, fsConstants.O_RDONLY | O_NOFOLLOW);
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > MAX_HANDOFF_FILE_BYTES) return undefined;
+    const buffer = Buffer.allocUnsafe(MAX_HANDOFF_FILE_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return bytesRead > MAX_HANDOFF_FILE_BYTES ? undefined : buffer.subarray(0, bytesRead).toString('utf8');
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => {});
   }
 }
 
@@ -215,7 +255,13 @@ export async function writeSourceMirror(
 
 /** Best-effort removal of both handoff files (on successful register / dismissal). */
 export async function cleanupHandoffFiles(projectRoot: string, executionId: string): Promise<void> {
-  for (const rel of [authoredPlanRelPath(executionId), sourceMirrorRelPath(executionId)]) {
+  for (const rel of [
+    authoredPlanRelPath(executionId),
+    sourceMirrorRelPath(executionId),
+    correctionProseRelPath(executionId),
+    correctedPlanRelPath(executionId),
+    correctionDiffRelPath(executionId)
+  ]) {
     const target = resolveContained(projectRoot, rel);
     if (!target) continue;
     // Verify the REAL parent is still inside projectRoot before unlinking: a
@@ -243,6 +289,10 @@ export interface PlanHandoffDeps {
   readAuthoredPlan(projectRoot: string, executionId: string): Promise<AuthoredPlanRead>;
   /** Register host-side (auto-dispatches ready units); resolves ok/false. */
   register(ctx: CoordinatorHandoffContext, units: ExecutionWorkUnitInput[]): Promise<{ ok: boolean; message?: string }>;
+  /** Gate a corrected authored plan before it may enter the durable execution. */
+  review?(ctx: CoordinatorHandoffContext, read: Extract<AuthoredPlanRead, { status: 'ok' }>): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject'>;
+  /** Handle a plan file that cannot be parsed before generic handoff nudging. */
+  reviewInvalid?(ctx: CoordinatorHandoffContext, reason: string): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined>;
   /** Re-inject a bounded nudge into the coordinator pty (fire-and-forget). */
   nudge(sessionId: string, text: string): void;
   cleanup(projectRoot: string, executionId: string): Promise<void>;
@@ -294,7 +344,13 @@ export class TeamPlanHandoff {
       }
       const read = await this.deps.readAuthoredPlan(ctx.projectRoot, ctx.executionId);
       if (read.status === 'ok') {
-        const registered = await this.deps.register(ctx, read.units);
+        const verdict = await this.deps.review?.(ctx, read);
+        if (verdict === 'wait') return;
+        if (verdict === 'reject') {
+          entry.done = true;
+          return;
+        }
+        const registered = await this.deps.register(ctx, typeof verdict === 'object' ? verdict.units : read.units);
         if (registered.ok) {
           entry.done = true;
           await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
@@ -304,6 +360,22 @@ export class TeamPlanHandoff {
         return;
       }
       const reason = read.status === 'invalid' ? read.reason : `no plan file found at \`${authoredPlanRelPath(ctx.executionId)}\``;
+      const invalidVerdict = await this.deps.reviewInvalid?.(ctx, reason);
+      if (invalidVerdict === 'wait') return;
+      if (invalidVerdict === 'reject') {
+        entry.done = true;
+        return;
+      }
+      if (typeof invalidVerdict === 'object') {
+        const registered = await this.deps.register(ctx, invalidVerdict.units);
+        if (registered.ok) {
+          entry.done = true;
+          await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
+          return;
+        }
+        this.maybeNudge(entry, maxNudges, ctx, `the host rejected your corrected plan (${registered.message ?? 'register failed'})`);
+        return;
+      }
       this.maybeNudge(entry, maxNudges, ctx, reason);
     } catch (error) {
       this.deps.logError(`team plan handoff ${ctx.sessionId}`, error);

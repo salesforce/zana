@@ -94,9 +94,37 @@ function parseList(value: string): string[] {
     .filter((item) => item && item.toLowerCase() !== 'none');
 }
 
+/** Parse `Skills: alpha, beta; MCP servers: repo` portable requirement syntax. */
+function parseRequires(value: string): ExecutionWorkUnitInput['requires'] | undefined {
+  if (!value.trim() || /^none$/i.test(stripBackticks(value))) return undefined;
+  const requires: NonNullable<ExecutionWorkUnitInput['requires']> = {};
+  for (const entry of value.split(';')) {
+    const match = /^\s*(skills|mcp\s*servers)\s*:\s*(.*)$/i.exec(entry);
+    if (!match) continue;
+    const names = parseList(match[2]);
+    if (!names.length) continue;
+    if (/^skills$/i.test(match[1])) requires.skills = names;
+    else requires.mcpServers = names;
+  }
+  return requires.skills || requires.mcpServers ? requires : undefined;
+}
+
 interface PlanStepBlock {
   heading: string;
   body: string[];
+}
+
+/**
+ * Whether text contains a heading the portable-plan parser will treat as an
+ * executable step. Keep invalid-plan callers on this grammar so they cannot
+ * silently fall back to inferred planning for marker spelling variants.
+ */
+export function hasPortablePlanStep(text: string): boolean {
+  return text.split(/\r?\n/).some(isPortablePlanStepLine);
+}
+
+function isPortablePlanStepLine(line: string): boolean {
+  return HEADING.test(line) && STEP_MARKER.test(line);
 }
 
 /**
@@ -154,6 +182,7 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
   const readOnly = /read[-\s]?only/i.test(labels.get('mode') ?? '');
   const executionClass = stripBackticks(labels.get('execution class') ?? '').toLowerCase();
   const minimumLevel = EXECUTION_CLASS_LEVEL[executionClass];
+  const requires = parseRequires(labels.get('requires') ?? '');
 
   return {
     ok: true,
@@ -165,7 +194,8 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
       ...(files.length ? { files } : {}),
       ...(verificationText ? { verification: [verificationText] } : {}),
       ...(readOnly ? { readOnly: true } : {}),
-      ...(minimumLevel ? { routing: { version: 1, minimumLevel } } : {})
+      ...(minimumLevel ? { routing: { version: 1, minimumLevel } } : {}),
+      ...(requires ? { requires } : {})
     }
   };
 }
@@ -178,7 +208,7 @@ export function parsePortablePlan(text: string): PortablePlanParse {
   const blocks: Array<{ heading: string; body: string[] }> = [];
   for (let i = 0; i < lines.length; i += 1) {
     const headingMatch = HEADING.exec(lines[i]);
-    if (!headingMatch || !STEP_MARKER.test(lines[i])) continue;
+    if (!headingMatch || !isPortablePlanStepLine(lines[i])) continue;
     const body: string[] = [];
     let j = i + 1;
     // Track fenced-code state while collecting so a `#`-prefixed line INSIDE a

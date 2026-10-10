@@ -101,7 +101,8 @@ export function sanitizeTeam(raw: unknown): Team | null {
       typeof r.defaultProjectId === 'string' && r.defaultProjectId.trim()
         ? r.defaultProjectId.trim()
         : undefined,
-    initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined
+    initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
+    worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined
   };
 }
 

@@ -247,6 +247,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     team?.orchestratorPersonaId ?? ''
   );
   const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
+  const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(team?.worktreeIsolation);
   const [slots, setSlots] = useState<SlotDraft[]>(() => {
     const base = (team?.slots ?? []).map((s) => ({
       personaId: s.personaId,
@@ -328,7 +329,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       orchestratorPersonaId: orch,
       slots: cleanSlots,
       initialPrompt: initialPrompt.trim() || undefined,
-      defaultProjectId: defaultProjectId || undefined
+      defaultProjectId: defaultProjectId || undefined,
+      worktreeIsolation
     };
     if (keepsId && team) input.id = team.id;
 
@@ -563,6 +565,27 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
               ...projects.map((project) => ({ value: project.id, label: project.name }))
             ]}
           />
+        </div>
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-worktree-isolation">Worktree isolation</label>
+          <PopoverPicklist
+            id="team-worktree-isolation"
+            ariaLabel="Squad worktree isolation"
+            searchable={false}
+            value={worktreeIsolation === true ? 'on' : worktreeIsolation === false ? 'off' : 'inherit'}
+            onChange={(next) => setWorktreeIsolation(next === 'on' ? true : next === 'off' ? false : undefined)}
+            options={[
+              { value: 'inherit', label: 'Use default' },
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' }
+            ]}
+          />
+          <p className="settings-help">
+            Creates one shared branch and checkout for durable squad runs. Use default follows
+            the effective project-or-global setting; On forces a shared squad worktree; Off
+            disables it.
+          </p>
         </div>
 
         <p className="settings-help persona-form-hint">

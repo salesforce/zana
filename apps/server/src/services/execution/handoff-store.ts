@@ -2,6 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue, hashBytes, readRawFile } from '../harness-routing/storage.js';
+import type { ExecutionDatabase } from '@zana-ai/zcc-db';
+import { readExecutionSqliteState, writeExecutionSqliteState } from './storage/sqlite-state.js';
+import { executionStorageBackendForId, type ExecutionStorageBackend } from './storage/backend-policy.js';
 
 export const EXECUTION_HANDOFF_OPERATION = 'execution.control' as const;
 export const EXECUTION_RESUME_MONITOR_OPERATION = 'execution.resume-monitor' as const;
@@ -47,27 +50,35 @@ function validGrant(value: unknown): value is ExecutionHandoffGrant {
     && (grant.usedAt === undefined || typeof grant.usedAt === 'number');
 }
 
-export function createExecutionHandoffStore(options: { filePath: string; now?: () => number; id?: () => string; token?: () => string }) {
+export function createExecutionHandoffStore(options: { filePath: string; executionFilePath?: string; database?: ExecutionDatabase; now?: () => number; id?: () => string; token?: () => string }) {
   const now = options.now ?? Date.now;
   const id = options.id ?? randomUUID;
   const token = options.token ?? randomUUID;
-  function read(): { state: StateFile; hash: string | null } {
-    const bytes = readRawFile(options.filePath);
-    if (!bytes) return { state: { version: 1, revision: 0, grants: [] }, hash: null };
+  function owner(executionId: string): ExecutionStorageBackend {
+    return executionStorageBackendForId({ filePath: options.executionFilePath ?? options.filePath.replace(/(?:\.handoffs|-handoffs)(\.json)?$/, '$1'), database: options.database, executionId });
+  }
+  function read(backend: ExecutionStorageBackend): { state: StateFile; hash: string | null } {
+    const sqlite = backend === 'sqlite' ? readExecutionSqliteState<StateFile>(options.database, 'execution-handoff-store') : null;
+    if (backend === 'sqlite' && !sqlite) return { state: { version: 1, revision: 0, grants: [] }, hash: null };
+    const bytes = backend === 'json' ? readRawFile(options.filePath) : null;
+    if (!sqlite && !bytes) return { state: { version: 1, revision: 0, grants: [] }, hash: null };
     try {
-      const parsed = JSON.parse(bytes.toString('utf8')) as Partial<StateFile>;
+      const parsed = (sqlite?.value ?? JSON.parse(bytes!.toString('utf8'))) as Partial<StateFile>;
       if (parsed.version !== 1 || !Number.isInteger(parsed.revision) || !Array.isArray(parsed.grants) || !parsed.grants.every(validGrant)) throw new Error('invalid shape');
-      return { state: parsed as StateFile, hash: hashBytes(bytes) };
+      return { state: parsed as StateFile, hash: sqlite?.hash ?? hashBytes(bytes!) };
     } catch (error) {
       throw new Error(`corrupt execution handoff store: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  async function persist(state: StateFile, expectedHash: string | null): Promise<void> {
+  async function persist(state: StateFile, expectedHash: string | null, backend: ExecutionStorageBackend): Promise<void> {
     const timestamp = now();
     state.grants = state.grants.filter((grant) => grant.usedAt === undefined && grant.expiresAt > timestamp).slice(-MAX_GRANTS);
     state.revision += 1;
-    await mkdir(dirname(options.filePath), { recursive: true });
-    atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
+    if (backend === 'sqlite') writeExecutionSqliteState(options.database!, 'execution-handoff-store', state, expectedHash);
+    else {
+      await mkdir(dirname(options.filePath), { recursive: true });
+      atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
+    }
   }
   async function mint(input: Omit<ExecutionHandoffGrant, 'id' | 'tokenDigest' | 'createdAt' | 'usedAt'>) {
     const bounded = {
@@ -83,11 +94,12 @@ export function createExecutionHandoffStore(options: { filePath: string; now?: (
       throw new Error('invalid execution handoff grant');
     }
     return queue.run(async () => {
-      const snapshot = read();
+      const backend = owner(bounded.executionId);
+      const snapshot = read(backend);
       const rawToken = string(token(), 'token');
       const record: ExecutionHandoffGrant = { id: string(id(), 'id'), tokenDigest: digest(rawToken), ...bounded, createdAt: now() };
       snapshot.state.grants.push(record);
-      await persist(snapshot.state, snapshot.hash);
+      await persist(snapshot.state, snapshot.hash, backend);
       return { token: rawToken, expiresAt: record.expiresAt };
     });
   }
@@ -97,7 +109,8 @@ export function createExecutionHandoffStore(options: { filePath: string; now?: (
       projectId: string(input.projectId, 'project id'), executionId: string(input.executionId, 'execution id'), operation: input.operation
     };
     return queue.run(async () => {
-      const snapshot = read();
+      const backend = owner(bounded.executionId);
+      const snapshot = read(backend);
       const grant = snapshot.state.grants.find((candidate) => candidate.tokenDigest === digest(bounded.token));
       if (!grant || grant.usedAt !== undefined || grant.expiresAt <= now()
         || grant.targetSessionId !== bounded.targetSessionId || grant.projectId !== bounded.projectId
@@ -105,7 +118,7 @@ export function createExecutionHandoffStore(options: { filePath: string; now?: (
         throw new Error('execution handoff is not current');
       }
       grant.usedAt = now();
-      await persist(snapshot.state, snapshot.hash);
+      await persist(snapshot.state, snapshot.hash, backend);
       return clone(grant);
     });
   }
@@ -115,7 +128,7 @@ export function createExecutionHandoffStore(options: { filePath: string; now?: (
       projectId: string(input.projectId, 'project id'), executionId: string(input.executionId, 'execution id'), operation: input.operation
     };
     return queue.run(async () => {
-      const grant = read().state.grants.find((candidate) => candidate.tokenDigest === digest(bounded.token));
+      const grant = read(owner(bounded.executionId)).state.grants.find((candidate) => candidate.tokenDigest === digest(bounded.token));
       if (!grant || grant.kind !== 'monitor' || grant.usedAt !== undefined || grant.expiresAt <= now()
         || grant.targetSessionId !== bounded.targetSessionId || grant.projectId !== bounded.projectId
         || grant.executionId !== bounded.executionId || !grant.operations.includes(bounded.operation)) {

@@ -58,6 +58,12 @@ async function openThread(window: Page, id: string) {
   await expect(window.getByTestId('thread-detail')).toBeVisible({ timeout: 30_000 });
 }
 
+function terminalText(backlog: string): string {
+  return backlog
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\r/g, '');
+}
+
 test('afcode ACP plugin streams, cancels and removes its provider on disable', async ({ app }, testInfo) => {
   const projectPath = mkdtempSync(join(tmpdir(), 'zcc-afcode-acp-'));
   let projectId: string | undefined;
@@ -107,8 +113,8 @@ test('afcode CLI adapter delivers input, retains large output and opens its resu
   const sessions: string[] = [];
   try {
     projectId = await setup(app, projectPath);
-    // The built-in CLI adapter remains available independently of the ACP plugin.
-    await app.window.evaluate(() => window.cc.pluginApps.setEnabled('provider-afcode', false));
+    // The installed provider contributes both ACP and CLI profiles. Keep it
+    // running so the picker represents a user-installed Agentforce Code setup.
     const { window } = app;
     await window.getByTestId('nav-agents').click();
     await window.getByTestId('agents-board-new-thread').first().click();
@@ -137,7 +143,7 @@ test('afcode CLI adapter delivers input, retains large output and opens its resu
     expect(session, JSON.stringify(await window.evaluate((pid) => window.cc.terminals.list(pid), projectId))).toBeTruthy();
     const created = { value: session! };
     sessions.push(created.value.id);
-    await expect.poll(() => app.window.evaluate((id) => window.cc.terminals.backlog(id), created.value.id), { timeout: 30_000 }).toContain('AFCODE_RECEIVED:AFCODE_OPENING_TASK');
+    await expect.poll(async () => terminalText(await app.window.evaluate((id) => window.cc.terminals.backlog(id), created.value.id)), { timeout: 30_000 }).toContain('AFCODE_RECEIVED:AFCODE_OPENING_TASK');
     await app.window.evaluate((id) => window.cc.terminals.reply(id, '/large'), created.value.id);
     await expect.poll(() => app.window.evaluate((id) => window.cc.terminals.backlog(id), created.value.id)).toContain('AFCODE_OUTPUT_COMPLETE');
     const output = await app.window.evaluate((id) => window.cc.terminals.backlog(id), created.value.id);
@@ -164,7 +170,6 @@ test('CLI Agent afcode tab launches afcode instead of remembered Claude', async 
   const sessions: string[] = [];
   try {
     projectId = await setup(app, projectPath);
-    await app.window.evaluate(() => window.cc.pluginApps.setEnabled('provider-afcode', false));
     const { window } = app;
     await window.evaluate(() => localStorage.setItem('zcc.composer.selection', JSON.stringify({
       providerId: 'claude-code', byProvider: { 'claude-code': { model: 'claude-sonnet-5' } }
@@ -188,7 +193,7 @@ test('CLI Agent afcode tab launches afcode instead of remembered Claude', async 
     const session = await window.evaluate(async (pid) => (await window.cc.terminals.list(pid)).find((s) => s.projectId === pid), projectId);
     expect(session?.profile, JSON.stringify(await window.evaluate((pid) => window.cc.terminals.list(pid), projectId))).toBe('afcode');
     sessions.push(session!.id);
-    await expect.poll(() => app.window.evaluate((id) => window.cc.terminals.backlog(id), session!.id), { timeout: 30_000 }).toContain('AFCODE_RECEIVED:AFCODE_OPENING_TASK');
+    await expect.poll(async () => terminalText(await app.window.evaluate((id) => window.cc.terminals.backlog(id), session!.id)), { timeout: 30_000 }).toContain('AFCODE_RECEIVED:AFCODE_OPENING_TASK');
   } finally {
     for (const id of sessions) await app.window.evaluate((sid) => window.cc.terminals.close(sid), id).catch(() => {});
     if (projectId) await app.window.evaluate((id) => window.cc.projects.remove(id), projectId).catch(() => {});

@@ -7,7 +7,7 @@ import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 const h = vi.hoisted(() => ({
   entry: {} as InboxEntry, terminals: [] as unknown[], compact: false,
   get: vi.fn(), send: vi.fn(), unarchive: vi.fn(), markAnswered: vi.fn(), toast: vi.fn(),
-  create: vi.fn(), restore: vi.fn(), terminalReply: vi.fn(), focus: vi.fn()
+  create: vi.fn(), restore: vi.fn(), terminalReply: vi.fn(), focus: vi.fn(), hostActions: {} as Record<string, unknown>
 }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => h.compact }));
 vi.mock('../store.js', () => ({
@@ -19,9 +19,10 @@ vi.mock('../store.js', () => ({
   useInboxKeep: (pick: Function) => pick({ keptIds: {} }),
   useSavedMark: (pick: Function) => pick({ savedEntryIds: {} }),
   useInboxAnswered: Object.assign((pick: Function) => pick({ answeredIds: {} }), { getState: () => ({ markAnswered: h.markAnswered }) }),
+  useInboxHostActions: (pick: Function) => pick({ byEntryId: h.hostActions, resolutionByEntryId: { [h.entry.id]: { loading: false, error: false, resolved: true } } }),
   useSuggestions: (pick: Function) => pick({ entries: [] }),
   deleteInboxEntry: vi.fn(), toggleInboxKeep: vi.fn(), saveInboxEntry: vi.fn(),
-  replyToInboxEntry: h.terminalReply
+  replyToInboxEntry: h.terminalReply, resolveInboxHostAction: vi.fn(), refreshInboxHostActions: vi.fn(), runInboxHostAction: vi.fn()
 }));
 vi.mock('../lib/product-client.js', () => ({ product: { threads: { get: h.get, send: h.send, unarchive: h.unarchive } } }));
 vi.mock('./AgentLauncher.js', () => ({ AgentLauncher: () => null }));
@@ -36,7 +37,7 @@ const view = () => <MemoryRouter><InboxDetail visible /><Location /></MemoryRout
 beforeEach(() => {
   inboxThreadCache.clear();
   vi.resetAllMocks();
-  h.compact = false; h.terminals = [];
+  h.compact = false; h.terminals = []; h.hostActions = {};
   h.entry = { id: 'report', ts: 1, projectId: 'p', sessionId: 'thread', subject: 'Report', comments: 'Ready for your reply.' };
   h.get.mockResolvedValue({ thread: { id: 'thread', projectId: 'p', title: 'Original work', archivedAt: null } });
   h.send.mockResolvedValue({ ok: true });
