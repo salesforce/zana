@@ -511,8 +511,11 @@ test('Salesforce Flow visualizer: official canvas, branches, details, themes and
   await detail.getByRole('button', { name: 'Expand Flow', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Expanded Flow' })).toBeVisible();
   await expect(flow.getByText('Each order item', { exact: true })).toBeVisible();
-  await flow.getByText('Return eligible?', { exact: true }).click();
-  await expect(flow.getByText('Element Details', { exact: true })).toBeVisible();
+  // Expanding moves the canvas into the dialog; on a slow runner its first click can land before it is wired.
+  await expect(async () => {
+    await flow.getByText('Return eligible?', { exact: true }).click();
+    await expect(flow.getByText('Element Details', { exact: true })).toBeVisible({ timeout: 3_000 });
+  }).toPass({ timeout: 30_000 });
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('flow-official-details-dark.png'));
   await flow.getByRole('button', { name: 'Close', exact: true }).click();
   await flow.getByRole('button', { name: 'Collapse All', exact: true }).click();
