@@ -63,3 +63,9 @@ it('answers side-panel conversation calls with empty results until main serves t
   await expect(api.threads.panelConversations('notes', 'board')).resolves.toEqual([]);
   await expect(api.threads.openAsThread('thread-1')).resolves.toEqual({ thread: {} });
 });
+
+it('leaves background stops to the product client', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  await expect(api.threads.stopBackground('thread-1', ['item-1'])).resolves.toEqual({ ok: false });
+});

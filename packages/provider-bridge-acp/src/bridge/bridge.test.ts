@@ -617,6 +617,98 @@ describe("acp bridge", () => {
     ).toEqual(["low", "medium", "high"]);
   });
 
+  describe("provider maintenance and discard requests", () => {
+    const missingCommand = "zcc-nonexistent-acp-agent-binary";
+    const launchOptions = (command: string): Record<string, unknown> => ({
+      acpLaunchSpec: {
+        displayName: "Maintenance ACP Agent",
+        command,
+        args: [],
+        env: {},
+      },
+    });
+
+    it("reports a generic ACP agent with a missing binary as not installed", async () => {
+      const response = await waitForResponse(
+        sendRequest("provider/health", {
+          providerId: "acp-generic",
+          providerOptions: launchOptions(missingCommand),
+        }),
+      );
+      expect(response.error).toBeUndefined();
+      expect(response.result).toMatchObject({
+        health: { status: "not_installed" },
+      });
+    });
+
+    it("reports usage as unsupported for a dialect-less ACP agent", async () => {
+      const response = await waitForResponse(
+        sendRequest("provider/usage", {
+          providerId: "acp-generic",
+          providerOptions: launchOptions(process.execPath),
+        }),
+      );
+      expect(response.error).toBeUndefined();
+      expect(response.result).toEqual({ supported: false });
+    });
+
+    it("reports installation status for an installed and a missing executable", async () => {
+      const installed = await waitForResponse(
+        sendRequest("provider/installation/status", {
+          providerId: "acp-generic",
+          providerOptions: launchOptions(process.execPath),
+        }),
+      );
+      expect(installed.result).toMatchObject({
+        executableName: process.execPath,
+        installed: true,
+        installSource: "external",
+        installAction: null,
+        needsUpdate: false,
+      });
+
+      const missing = await waitForResponse(
+        sendRequest("provider/installation/status", {
+          providerId: "acp-generic",
+          providerOptions: launchOptions(missingCommand),
+        }),
+      );
+      expect(missing.result).toMatchObject({
+        executableName: missingCommand,
+        executablePath: null,
+        installed: false,
+        installSource: "notInstalled",
+        installAction: null,
+      });
+    });
+
+    it("declines installation runs the host cannot perform", async () => {
+      const response = await waitForResponse(
+        sendRequest("provider/installation/run", {
+          providerId: "acp-generic",
+          action: "install",
+          providerOptions: launchOptions(missingCommand),
+        }),
+      );
+      expect(response.error).toBeUndefined();
+      expect(response.result).toEqual({
+        available: false,
+        message: `${missingCommand} install is not available on this host.`,
+      });
+    });
+
+    it("acknowledges thread/discard without a live session", async () => {
+      const response = await waitForResponse(
+        sendRequest("thread/discard", {
+          threadId: "thread-never-started",
+          providerThreadId: "provider-thread-never-started",
+        }),
+      );
+      expect(response.error).toBeUndefined();
+      expect(response.result).toEqual({ ok: true });
+    });
+  });
+
   it("answers a minimal model/list (no params) with the synthetic default", async () => {
     const modelListId = sendRequest("model/list", {});
     expect((await waitForResponse(modelListId)).result).toMatchObject({

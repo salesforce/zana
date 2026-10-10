@@ -14,3 +14,10 @@ it('asks the settings route to omit secrets only when requested', async () => {
   await product.pluginApps.getSettings('p/1');
   expect(http.apiJson).toHaveBeenLastCalledWith('/plugin-apps/p%2F1/settings');
 });
+
+it('stops a thread\'s background tasks, targeting item ids only when given', async () => {
+  await product.threads.stopBackground('t/1', ['a', 'b']);
+  expect(http.apiJson).toHaveBeenLastCalledWith('/threads/t%2F1/background/stop', { method: 'POST', body: '{"itemIds":["a","b"]}' });
+  await product.threads.stopBackground('t/1');
+  expect(http.apiJson).toHaveBeenLastCalledWith('/threads/t%2F1/background/stop', { method: 'POST', body: '{}' });
+});

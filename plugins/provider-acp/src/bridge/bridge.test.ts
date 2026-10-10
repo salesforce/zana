@@ -584,6 +584,17 @@ describe("acp bridge", () => {
     });
   });
 
+  it("acknowledges thread/discard without a live session", async () => {
+    const response = await waitForResponse(
+      sendRequest("thread/discard", {
+        threadId: "thread-never-started",
+        providerThreadId: "provider-thread-never-started",
+      }),
+    );
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({ ok: true });
+  });
+
   it("answers a minimal model/list (no params) with the synthetic default", async () => {
     // The packaged-bridge smoke test sends `model/list` with empty params and
     // no agent binary on PATH; the bridge must still respond (not hang) so the
