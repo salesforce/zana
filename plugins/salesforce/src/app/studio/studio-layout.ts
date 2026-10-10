@@ -3,7 +3,7 @@ import { AGENT_SCRIPT_TOOLS, type AgentScriptTool } from '../AgentScriptTools.js
 import { isBottomTab, type BottomTab } from './BottomPanel.js';
 
 export type CompactTool = 'code' | AgentScriptTool;
-export interface EditorTab { id: string; kind: 'agent' | 'apex' | 'flow'; label: string; path?: string; target?: string }
+export interface EditorTab { id: string; kind: 'agent' | 'apex' | 'flow' | 'type'; label: string; path?: string; target?: string }
 export interface StudioLayoutState {
   /** Compact mode shows exactly one tool; wide mode ignores it. */
   tool: CompactTool;
@@ -12,18 +12,20 @@ export interface StudioLayoutState {
   bottomOpen: boolean;
   bottomTab: BottomTab;
   explorerOpen: boolean;
+  /** Explorer sections the user folded (`project`, `apex`, `lightning-type`, …). A filter query shows them all. */
+  collapsedSections: string[];
   share: boolean;
   /** The right rail gets Assistant once, the first time the wide layout is shown. */
   railSeeded: boolean;
 }
 export const MAX_EDITOR_TABS = 12;
-export const DEFAULT_LAYOUT: StudioLayoutState = { tool: 'code', tabs: [], activeTab: null, bottomOpen: false, bottomTab: 'problems', explorerOpen: true, share: false, railSeeded: false };
+export const DEFAULT_LAYOUT: StudioLayoutState = { tool: 'code', tabs: [], activeTab: null, bottomOpen: false, bottomTab: 'problems', explorerOpen: true, collapsedSections: [], share: false, railSeeded: false };
 
 const text = (value: unknown, max = 300) => typeof value === 'string' && value.length > 0 && value.length <= max ? value : undefined;
 export function parseTab(value: unknown): EditorTab | null {
   if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;
-  const kind = row.kind === 'agent' || row.kind === 'apex' || row.kind === 'flow' ? row.kind : null;
+  const kind = row.kind === 'agent' || row.kind === 'apex' || row.kind === 'flow' || row.kind === 'type' ? row.kind : null;
   const id = text(row.id); const label = text(row.label, 160);
   if (!kind || !id || !label) return null;
   const path = text(row.path); const target = text(row.target);
@@ -48,6 +50,7 @@ export function readStudioLayout(key: string): StudioLayoutState {
       bottomOpen: raw.bottomOpen === true,
       bottomTab: isBottomTab(raw.bottomTab) ? raw.bottomTab : 'problems',
       explorerOpen: raw.explorerOpen !== false,
+      collapsedSections: Array.isArray(raw.collapsedSections) ? [...new Set<string>((raw.collapsedSections as unknown[]).filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 40))].slice(0, 20) : [],
       share: raw.share === true,
       railSeeded: raw.railSeeded === true
     };

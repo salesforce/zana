@@ -26,11 +26,17 @@ export interface TraceStep {
 export interface TurnTrace { runId: string; turn: number; planId?: string; available: boolean; reason?: string; steps: TraceStep[] }
 export interface ScenarioCase { id: string; name: string; utterances: string[]; expect: { topic?: string; actions?: string[]; contains?: string[]; criteria?: string } }
 export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, { outcome: 'pass' | 'fail' | 'inconclusive'; runId: string; at: number }> }
-export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
+export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
+export interface LightningTypeProperty { name: string; type?: string; title?: string; description?: string; required: boolean }
+/** One Lightning Type as `studio.lightningType` returns it: a project bundle, a standard platform type, or a missing reference. */
+export interface LightningTypeView {
+  ref: string; standard: boolean; status: 'ready' | 'standard' | 'missing'; path?: string; title?: string; description?: string; message?: string;
+  properties: LightningTypeProperty[]; files: Array<{ path: string; content: string; truncated?: boolean }>;
+}
 
 export const STUDIO_RPC = {
   askAgent: 'studio.askAgent', threads: 'studio.threads', unlink: 'studio.unlinkThread',
-  viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer',
+  viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType',
   comments: 'studio.comments.list', commentAdd: 'studio.comments.add', commentResolve: 'studio.comments.resolve',
   trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run',
   outcome: 'control.outcome',

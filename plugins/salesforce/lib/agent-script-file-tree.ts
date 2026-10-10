@@ -79,8 +79,8 @@ export function ancestorFolderPaths(filePath: string): string[] {
   return folders;
 }
 
-export function breadcrumbSegments(path: string | null, exampleTitle?: string): string[] {
-  if (!path) return exampleTitle ? [exampleTitle] : [];
+export function breadcrumbSegments(path: string | null): string[] {
+  if (!path) return [];
   return path.split('/').filter(Boolean);
 }
 

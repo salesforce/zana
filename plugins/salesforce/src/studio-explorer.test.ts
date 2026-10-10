@@ -70,10 +70,36 @@ describe('buildLocalExplorer', () => {
     expect(result.truncated).toBe(true);
     expect(result.nodes.filter(node => node.kind === 'scenario')).toHaveLength(EXPLORER_LIMITS.scenarios);
   });
-  it('lists an unresolvable target without a path when the source cannot be read', () => {
+  it('locates a target without reading its source', () => {
     const root = project({ 'force-app/main/default/classes/Big.cls': 'x'.repeat(800_000), 'agents/Big.agent': 'x: apex://Big' });
-    const big = buildLocalExplorer(root, createNodeDeps()).nodes.find(node => node.apiName === 'Big' && node.kind === 'apex');
-    expect(big).toEqual({ kind: 'apex', apiName: 'Big', usedBy: ['agents/Big.agent'] });
+    const deps = createNodeDeps();
+    const readFile = vi.spyOn(deps, 'readFile');
+    const big = buildLocalExplorer(root, deps).nodes.find(node => node.apiName === 'Big' && node.kind === 'apex');
+    // Opening it reports the preview limit; the tree still points at the file.
+    expect(big).toEqual({ kind: 'apex', apiName: 'Big', path: 'force-app/main/default/classes/Big.cls', usedBy: ['agents/Big.agent'] });
+    expect(readFile.mock.calls.some(([path]) => String(path).endsWith('Big.cls'))).toBe(false);
+  });
+  it('walks the project once however many targets the agents reference', () => {
+    const extra: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) extra[`force-app/main/default/classes/C${i}.cls`] = 'public class C {}';
+    extra['agents/Many.agent'] = Array.from({ length: 20 }, (_, i) => `a${i}: apex://C${i}`).join('\n');
+    const deps = createNodeDeps();
+    const readdir = vi.spyOn(deps, 'readdir');
+    const nodes = buildLocalExplorer(project(extra), deps).nodes;
+    expect(nodes.filter(node => node.kind === 'apex' && /^C\d+$/.test(node.apiName) && node.path)).toHaveLength(20);
+    const classDirReads = readdir.mock.calls.filter(([path]) => String(path).endsWith('/classes'));
+    // Agent listing plus the one action index; it used to be one walk per target.
+    expect(classDirReads).toHaveLength(2);
+  });
+  it('still lists targets without paths when the project cannot be indexed', () => {
+    const deps = createNodeDeps();
+    const readFileBounded = deps.readFileBounded!;
+    vi.spyOn(deps, 'readFileBounded').mockImplementation((path, max) => {
+      if (String(path).endsWith('sfdx-project.json')) throw Error('unreadable');
+      return readFileBounded(path, max);
+    });
+    const lookup = buildLocalExplorer(project(), deps).nodes.find(node => node.apiName === 'OrderLookup');
+    expect(lookup).toEqual({ kind: 'apex', apiName: 'OrderLookup', usedBy: expect.any(Array) });
   });
 });
 

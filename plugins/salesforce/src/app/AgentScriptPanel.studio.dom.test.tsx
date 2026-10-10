@@ -215,6 +215,26 @@ describe('AgentScriptPanel studio layout', () => {
     if (scenario) await act(async () => { fireEvent.click(scenario); });
   });
 
+  it('keeps a target tab in front when the panel remounts without an agent to restore', async () => {
+    const first = await mount('force-app/bots/QC.agent');
+    await ready(first);
+    const apex = [...first.querySelectorAll('.sf-as-explorer button')].find(n => n.textContent?.includes('Foo'))!;
+    await act(async () => { fireEvent.click(apex); });
+    nodes.splice(0).forEach(fn => fn());
+    rpc.mockClear();
+    const el = await mount();
+    await ready(el);
+    expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
+    expect(el.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Foo');
+    expect(rpc.mock.calls.some(c => c[1] === 'agentFiles.read')).toBe(false);
+    // Its agent tab reopens the file once selected.
+    const agentTab = [...el.querySelectorAll('[role="tab"]')].find(n => n.textContent?.includes('QC.agent'))!;
+    await act(async () => { fireEvent.click(agentTab); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/QC.agent' }));
+    expect(el.querySelector('[data-testid="studio-target-view"]')).toBeNull();
+  });
+
   it('reloads comments when the active file is opened again', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);

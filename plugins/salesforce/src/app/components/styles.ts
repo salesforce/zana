@@ -46,6 +46,9 @@ export const SALESFORCE_STYLES = `
 .sf-tab[aria-selected=true] { color:var(--text-primary); border-bottom-color:var(--accent); }
 .sf-scroll { overflow:auto; min-height:0; min-width:0; flex:1; }
 .sf-content { padding:24px; }
+.sf-overview { display:flex; flex-direction:column; }
+.sf-overview-activity { display:flex; flex-direction:column; flex:1 0 420px; min-height:420px; margin-top:24px; }
+.sf-overview-activity > .sf-activity { flex:1; height:auto; }
 .sf-content h2 { margin:0 0 6px; font-size:22px; font-weight:550; letter-spacing:-.4px; }
 .sf-content h3, .sf-inspector h3 { margin:0 0 12px; font-size:13px; font-weight:600; }
 .sf-content p { margin:0 0 14px; }

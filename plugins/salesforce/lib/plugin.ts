@@ -262,6 +262,21 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerRpc('operations.list', () => workbench.list());
   registerRpc('operations.start', args => workbench.start(args));
   registerRpc('operations.report', args => workbench.report(args));
+  // Renderer-only (absent from WORKBENCH_ACTIONS): the panel shows this org, the operator
+  // approves it there, and the run is refused if the target moved in between.
+  registerRpc('apex.anonymous.target', async () => {
+    try {
+      const org = await sdk.connect();
+      return { ok: true, org: { alias: org.alias, kind: org.kind, orgId: org.orgId } };
+    } catch (error) {
+      return connectionFailure(error);
+    }
+  });
+  registerRpc('apex.anonymous.run', args => {
+    const orgId = rpcString(args, 'approvedOrgId');
+    if (!orgId) throw new Error('Approve the target org before running anonymous Apex.');
+    return workbench.start({ ...(args as Record<string, unknown>), kind: 'apex.anonymous' }, { operatorApproved: { orgId } });
+  });
   registerRpc('apex.logs', args => runApex({ action: 'logs.fetch', limit: 20 }, { threadId: rpcString(args, 'threadId') }, sdk, artifacts, deps, readSettings));
   registerRpc('lwc.scan', () => runLwc({ action: 'scan' }, deps, readSettings, artifacts));
   zcc.onDispose(() => workbench.dispose());
@@ -644,7 +659,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     if (isWorkbenchAction(action)) return invokeAction(action, (input as { input?: unknown }).input ?? input, ctx);
     if (name === 'sf_agent') return runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence);
     if (name === 'sf_soql') return runSoql(input, ctx, sdk, artifacts);
-    if (name === 'sf_apex') return runApex(input, ctx, sdk, artifacts, deps, readSettings);
+    if (name === 'sf_apex') return runApex(input, { threadId: ctx.threadId }, sdk, artifacts, deps, readSettings);
     if (name === 'sf_lwc') return runLwc(input, deps, readSettings, artifacts);
     return Promise.resolve({ ok: false, error: 'Unknown Salesforce tool.' });
   };
@@ -1007,7 +1022,7 @@ async function runSoql(
 
 async function runApex(
   input: unknown,
-  ctx: Pick<PluginAgentToolContext, 'threadId'>,
+  ctx: Pick<PluginAgentToolContext, 'threadId'> & { operatorApprovedOrgId?: string },
   sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
@@ -1098,7 +1113,9 @@ async function runApex(
 
     const body = parsed.plan.body ?? '';
     const org = await sdk.connect();
-    const mediated = await sdk.confirm({
+    // The operator already approved this org and body in the panel; refuse if the target moved since.
+    if (ctx.operatorApprovedOrgId && ctx.operatorApprovedOrgId !== org.orgId) return fail('refused', 'The target org changed since you approved this run. Review it again.');
+    const mediated = ctx.operatorApprovedOrgId ? { approved: true, reason: 'submitted' as const } : await sdk.confirm({
       orgAlias: org.alias,
       orgId: org.orgId,
       orgKind: org.kind,

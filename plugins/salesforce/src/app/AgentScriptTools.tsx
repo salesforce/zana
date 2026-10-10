@@ -3,7 +3,7 @@ import { PanelRight, Plus, X } from 'lucide-react';
 
 export const AGENT_SCRIPT_TOOLS = [
   { id: 'agents', title: 'Agents', description: 'Browse org agents and retrieve source versions', icon: 'M9 4h6 M12 2v2 M4 8h16v12H4z M8 12h.01 M16 12h.01 M8 16h8' },
-  { id: 'files', title: 'File explorer', description: 'Project scripts and examples', icon: 'M3 7h7l2 2h9v11H3z M3 7V4h7l2 3' },
+  { id: 'files', title: 'File explorer', description: 'Project scripts and references', icon: 'M3 7h7l2 2h9v11H3z M3 7V4h7l2 3' },
   { id: 'graph', title: 'Graph view', description: 'Topics, actions, and conversation routes', icon: 'M6 3v6h12V3 M12 9v6 M9 15h6v6H9z' },
   { id: 'preview', title: 'Preview', description: 'Try the current draft in a conversation', icon: 'm8 4 12 8-12 8z' },
   { id: 'test', title: 'Tests', description: 'Run scenarios and review evaluations', icon: 'M9 3h6 M10 3v7L4 20h16l-6-10V3 M7 16h10' },

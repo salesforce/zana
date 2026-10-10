@@ -49,15 +49,15 @@ describe('Agent Script document toolbar', () => {
     expect((screen.getByRole('button', { name: 'Save as…' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('labels examples and untitled drafts, hides file save and omits an empty folder path', () => {
-    const view = render(<AgentScriptDocumentBar {...defaults} path={null} exampleTitle="Support concierge" />);
-    expect(screen.getByLabelText('Agentforce file').title).toBe('Support concierge');
-    expect(screen.getByRole('status').textContent).toBe('Example');
+  it('labels the no-file state and untitled drafts, hides file save and omits an empty folder path', () => {
+    const view = render(<AgentScriptDocumentBar {...defaults} path={null} />);
+    expect(screen.getByLabelText('Agentforce file').title).toBe('No agent open');
+    expect(screen.getByRole('status').textContent).toBe('Open or create an agent');
     expect(screen.queryByRole('button', { name: 'Save Agentforce file' })).toBeNull();
     expect(view.container.querySelector('.af-document-folder')).toBeNull();
     expect(view.container.querySelector('.af-document-org')).toBeNull();
     view.rerender(<AgentScriptDocumentBar {...defaults} path={null} dirty />);
-    expect(within(screen.getByLabelText('Agentforce file')).getByText('Untitled')).toBeTruthy();
+    expect(within(screen.getByLabelText('Agentforce file')).getByText('No agent open')).toBeTruthy();
     expect(screen.getByRole('status').textContent).toBe('Unsaved draft');
     view.rerender(<AgentScriptDocumentBar {...defaults} path="Support.agent" />);
     expect(view.container.querySelector('.af-document-folder')).toBeNull();

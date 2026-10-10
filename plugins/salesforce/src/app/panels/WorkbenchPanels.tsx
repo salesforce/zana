@@ -25,7 +25,6 @@ import { DebugLogsPanel } from "./DebugLogsPanel.js";
 import { OperationsPanel } from "./OperationsPanel.js";
 export { OperationsPanel } from "./OperationsPanel.js";
 export { DeploymentsPanel } from "./DeploymentsPanel.js";
-import { needsOperationThread, operationReviewDraft } from "../operation-review.js";
 
 export interface SalesforcePanelProps extends SalesforceResource {
   pluginId: string;
@@ -215,25 +214,46 @@ export function ApexPanel(props: SalesforcePanelProps) {
     },
   });
 
+  // Anonymous Apex runs from the panel once the operator approves the resolved org and the exact code.
+  const [review, setReview] = useState<{ body: string; org: Pick<PublicOrgView, "alias" | "kind" | "orgId"> } | null>(null);
+  async function reviewAnonymous() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { org } = requireResult<{ org?: Pick<PublicOrgView, "alias" | "kind" | "orgId"> }>(await call("apex.anonymous.target"));
+      if (!org?.orgId) throw new Error("Select a connected org before running anonymous Apex.");
+      setReview({ body, org });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function runAnonymous() {
+    if (!review) return;
+    setBusy(true);
+    setError(null);
+    try {
+      requireResult(await call("apex.anonymous.run", { body: review.body, approvedOrgId: review.org.orgId }));
+      setReview(null);
+      setRevision((value) => value + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const lwc = useResource<{ data: Array<{ name: string }> }>(
     call,
     tab === "lwc" ? "lwc.scan" : null,
   );
   async function start(kind: OperationKind) {
-    if (!props.threadId && needsOperationThread(kind)) {
-      props.onAddToPrompt?.(operationReviewDraft(kind, props.orgAlias, { body }));
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
       requireResult(
-        await call("operations.start", {
-          kind,
-          className,
-          body,
-          component: className,
-        }),
+        await call("operations.start", { kind, className, component: className }),
       );
       setRevision((value) => value + 1);
     } catch (err) {
@@ -251,6 +271,7 @@ export function ApexPanel(props: SalesforcePanelProps) {
         onChange={(value) => {
           setTab(value);
           setError(null);
+          setReview(null);
         }}
         items={[
           ["tests", "Tests"],
@@ -275,13 +296,8 @@ export function ApexPanel(props: SalesforcePanelProps) {
               className="sf-form sf-apex-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                void start(
-                  tab === "anonymous"
-                    ? "apex.anonymous"
-                    : tab === "lwc"
-                      ? "lwc.test"
-                      : "apex.test",
-                );
+                if (tab === "anonymous") void reviewAnonymous();
+                else void start(tab === "lwc" ? "lwc.test" : "apex.test");
               }}
             >
               <label>
@@ -294,8 +310,9 @@ export function ApexPanel(props: SalesforcePanelProps) {
                   <textarea
                     className="sf-input"
                     value={body}
-                    onChange={(event) => setBody(event.target.value)}
+                    onChange={(event) => { setBody(event.target.value); setReview(null); }}
                     spellCheck={false}
+                    readOnly={busy && Boolean(review)}
                   />
                 ) : (
                   <input
@@ -315,24 +332,41 @@ export function ApexPanel(props: SalesforcePanelProps) {
                   <option key={row.name} value={row.name} />
                 ))}
               </datalist>
-              <div>
-                <button
-                  className="sf-btn primary"
-                  disabled={
-                    busy || (tab === "anonymous" && !props.threadId && !props.onAddToPrompt) ||
-                    !(tab === "anonymous" ? body.trim() : className.trim())
-                  }
-                >
-                  {busy
-                    ? "Starting…"
-                    : tab === "anonymous"
-                      ? props.threadId ? "Review and run" : "Continue in a thread"
-                      : "Run targeted tests"}
-                </button>
-              </div>
+              {tab === "anonymous" && review ? (
+                <div className="sf-apex-review" role="group" aria-label="Approve anonymous Apex">
+                  <div className="sf-apex-review-head"><strong>Run on</strong><OrgBadge org={review.org} /></div>
+                  {review.org.kind !== "sandbox" && review.org.kind !== "scratch" && (
+                    <p className="sf-apex-review-warning" role="alert">
+                      {review.org.kind === "production"
+                        ? "This is a production org. Anonymous Apex can change live data."
+                        : "This org's type is unknown. Anonymous Apex can change its data."}
+                    </p>
+                  )}
+                  <pre className="sf-apex-review-code" aria-label="Code to run">{review.body}</pre>
+                  <div className="sf-control-row">
+                    <button className="sf-btn primary" type="button" disabled={busy} onClick={() => void runAnonymous()}>
+                      {busy ? "Running…" : `Run on ${review.org.alias}`}
+                    </button>
+                    <button className="sf-btn quiet" type="button" disabled={busy} onClick={() => setReview(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <button
+                    className="sf-btn primary"
+                    disabled={busy || !(tab === "anonymous" ? body.trim() : className.trim())}
+                  >
+                    {busy
+                      ? "Starting…"
+                      : tab === "anonymous"
+                        ? "Review and run"
+                        : "Run targeted tests"}
+                  </button>
+                </div>
+              )}
               <p className="sf-muted sf-small">
                 {tab === "anonymous"
-                  ? "Anonymous Apex requires approval in a thread. Your code and selected org will be carried into the review."
+                  ? "You confirm the target org and code before it runs. Results appear in Activity."
                   : "Run only the selected class or component. Results stay in this panel's history."}
               </p>
             </form>

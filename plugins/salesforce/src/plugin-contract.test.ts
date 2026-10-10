@@ -139,10 +139,12 @@ describe('salesforce plugin contract', () => {
     expect(set.threadPanelActions.find(row => row.id === 'preview')).toMatchObject({ title: 'Preview', layout: 'flush' });
     expect(set.newThreadPanelActions).toEqual([]);
     expect(set.navPanels).toMatchObject([
-      { id: 'orgs', title: 'Salesforce', icon: 'Cloud' }
+      { id: 'orgs', title: 'Salesforce', icon: 'Cloud', placement: 'unlisted' }
     ]);
-    expect(set.navPanels[0]?.placement).toBeUndefined();
-    expect(set.sidebarFooterActions).toEqual([]);
+    expect(set.sidebarFooterActions).toMatchObject([{ id: 'orgs', title: 'Salesforce', icon: 'Cloud' }]);
+    const footerToPanel = vi.fn();
+    set.sidebarFooterActions[0]?.run({ openSettings: vi.fn(), toPluginPanel: footerToPanel });
+    expect(footerToPanel).toHaveBeenCalledWith('orgs');
     expect(set.projectMenuActions).toEqual([]);
     const paletteCtx = {
       threadId: null,
@@ -519,6 +521,53 @@ describe('salesforce plugin behavior', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     harness.submitInteraction({ approved: true });
     await expect(pending).resolves.toMatchObject({ ok: true });
+  });
+
+  it('runs panel-approved anonymous Apex on the approved org without a thread, and refuses any other target', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
+    const requests: SalesforceRequest[] = [];
+    await createSalesforcePlugin(
+      zcc,
+      mockDeps('sandbox', (req) => { requests.push(req); return { status: 200, json: { compiled: true, success: true }, text: '{}' }; })
+    );
+    harness.setSettings({ defaultOrg: 'dev' });
+    const target = await harness.callRpc('apex.anonymous.target', { projectId: 'p1' });
+    expect(target).toEqual({ ok: true, org: { alias: 'dev', kind: 'sandbox', orgId: '00Dxx0000000001' } });
+    expect(JSON.stringify(target)).not.toContain('SECRET_TOKEN');
+
+    await expect(harness.callRpc('apex.anonymous.run', { projectId: 'p1', body: 'System.debug(1);' }))
+      .resolves.toMatchObject({ ok: false, error: expect.stringMatching(/Approve the target org/) });
+    await expect(harness.callRpc('apex.anonymous.run', { projectId: 'p1', body: 'System.debug(1);', approvedOrgId: '00Dxx0000000099' }))
+      .resolves.toMatchObject({ ok: false, error: expect.stringMatching(/target org changed/) });
+    // A caller cannot reuse the approval for another operation kind.
+    await expect(harness.callRpc('apex.anonymous.run', { projectId: 'p1', kind: 'deploy.start', body: 'System.debug(2);', approvedOrgId: '00Dxx0000000001' }))
+      .resolves.toMatchObject({ ok: true, operation: { kind: 'apex.anonymous' } });
+    await vi.waitFor(async () => {
+      const list = await harness.callRpc('operations.list', { projectId: 'p1' }) as { operations: Array<{ kind: string; state: string }> };
+      expect(list.operations[0]).toMatchObject({ kind: 'apex.anonymous', state: 'succeeded' });
+    });
+    // No thread was involved, so success proves the run did not go through a thread approval.
+    expect(requests.filter((req) => req.path.includes('executeAnonymous'))).toHaveLength(1);
+    expect(requests.find((req) => req.path.includes('executeAnonymous'))?.query).toEqual({ anonymousBody: 'System.debug(2);' });
+  });
+
+  it('keeps the panel approval RPCs out of reach of agent tools', async () => {
+    const { WORKBENCH_ACTIONS } = await import('../lib/workbench-actions.js');
+    const methods = Object.values(WORKBENCH_ACTIONS).map(([method]) => method);
+    expect(methods).not.toContain('apex.anonymous.run');
+    expect(methods).not.toContain('apex.anonymous.target');
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
+    await createSalesforcePlugin(zcc, mockDeps('sandbox', () => ({ status: 200, json: { compiled: true, success: true }, text: '{}' })));
+    harness.setSettings({ defaultOrg: 'dev' });
+    const apex = harness.agentTools.find((row) => row.name === 'sf_apex')!;
+    // An agent passing a forged approval still has to go through the thread confirmation.
+    const pending = apex.execute(
+      { action: 'anon.run', body: 'System.debug(1);', operatorApprovedOrgId: '00Dxx0000000001' },
+      { threadId: 'thr-1', projectId: 'p1', signal: AbortSignal.abort(), operatorApprovedOrgId: '00Dxx0000000001' } as never
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    harness.cancelInteraction();
+    await expect(pending).resolves.toMatchObject({ ok: false, code: 'refused' });
   });
 
   it('fails closed without a thread id', async () => {

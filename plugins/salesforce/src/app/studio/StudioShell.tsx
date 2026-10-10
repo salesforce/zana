@@ -11,9 +11,10 @@ import type { StudioLayout } from './useWidthTier.js';
  *   compact container < 620px: `top` (tool strip + context strip), one tool at a time, QuickOpen instead of an explorer
  *   wide    container >= 620px: `activity` bar, `explorer` column, editor/rail split
  *
- * The shell also owns the shortcuts that must work wherever focus is inside the Studio: Cmd/Ctrl+S saves, Cmd/Ctrl+P opens QuickOpen.
+ * The shell also owns the shortcuts that must work wherever focus is inside the Studio: Cmd/Ctrl+S saves, Cmd/Ctrl+P opens QuickOpen,
+ * Cmd/Ctrl+B shows or hides the explorer (wide layout).
  */
-export function StudioShell({ layout, tier, top, activity, explorer, children, quickOpen, quickItems, onQuickOpenChange, onQuickPick, onSave }: {
+export function StudioShell({ layout, tier, top, activity, explorer, children, quickOpen, quickItems, onQuickOpenChange, onQuickPick, onSave, onToggleExplorer }: {
   layout: StudioLayout;
   tier: number | null;
   top?: ReactNode;
@@ -25,6 +26,7 @@ export function StudioShell({ layout, tier, top, activity, explorer, children, q
   onQuickOpenChange(open: boolean): void;
   onQuickPick(item: QuickOpenItem): void;
   onSave(): void;
+  onToggleExplorer?(): void;
 }) {
   return <div className="sf-as-body sf-studio" data-layout={layout} data-tier={tier ?? undefined} tabIndex={-1}
     onKeyDown={event => {
@@ -32,6 +34,7 @@ export function StudioShell({ layout, tier, top, activity, explorer, children, q
       const key = event.key.toLowerCase();
       if (key === 's') { event.preventDefault(); onSave(); }
       else if (key === 'p') { event.preventDefault(); onQuickOpenChange(true); }
+      else if (key === 'b' && onToggleExplorer) { event.preventDefault(); onToggleExplorer(); }
     }}>
     <style>{STUDIO_TOKENS}</style>
     {top}

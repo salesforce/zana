@@ -51,6 +51,15 @@ describe('StudioShell', () => {
     expect(onSave).toHaveBeenCalledTimes(2);
     expect(onQuickOpenChange).toHaveBeenCalledTimes(1);
   });
+  it('toggles the explorer with Cmd/Ctrl+B only when the layout offers it', () => {
+    const onToggleExplorer = vi.fn();
+    const { rerender } = render(<StudioShell layout="wide" tier={960} quickOpen={false} quickItems={[]} onQuickOpenChange={vi.fn()} onQuickPick={vi.fn()} onSave={vi.fn()} onToggleExplorer={onToggleExplorer}><div data-testid="b-child" /></StudioShell>);
+    fireEvent.keyDown(screen.getByTestId('b-child'), { key: 'b', metaKey: true });
+    expect(onToggleExplorer).toHaveBeenCalledTimes(1);
+    rerender(<StudioShell layout="compact" tier={400} quickOpen={false} quickItems={[]} onQuickOpenChange={vi.fn()} onQuickPick={vi.fn()} onSave={vi.fn()}><div data-testid="b-child" /></StudioShell>);
+    fireEvent.keyDown(screen.getByTestId('b-child'), { key: 'b', ctrlKey: true });
+    expect(onToggleExplorer).toHaveBeenCalledTimes(1);
+  });
   it('shows QuickOpen and closes it', () => {
     const { onQuickOpenChange } = setup({ quickOpen: true });
     expect(screen.getByText('Help.agent')).toBeTruthy();

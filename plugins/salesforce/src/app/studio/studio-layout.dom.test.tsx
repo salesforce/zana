@@ -22,6 +22,15 @@ it('falls back to defaults for missing, corrupt or hostile storage', () => {
   expect(readStudioLayout('k')).toEqual(DEFAULT_LAYOUT);
   localStorage.setItem('k', JSON.stringify({ tool: 'evil', tabs: 'x', activeTab: 4, bottomTab: 'nope', bottomOpen: 'yes', explorerOpen: false, share: 1, railSeeded: true }));
   expect(readStudioLayout('k')).toEqual({ ...DEFAULT_LAYOUT, explorerOpen: false, railSeeded: true });
+  localStorage.setItem('k', JSON.stringify({ collapsedSections: ['apex', 'apex', 7, '', 'x'.repeat(41), 'org-agent'] }));
+  expect(readStudioLayout('k').collapsedSections).toEqual(['apex', 'org-agent']);
+  localStorage.setItem('k', JSON.stringify({ collapsedSections: 'apex' }));
+  expect(readStudioLayout('k').collapsedSections).toEqual([]);
+});
+
+it('keeps Lightning Type tabs', () => {
+  expect(parseTab({ id: 'type:c__Order', kind: 'type', label: 'c__Order', target: 'c__Order' })).toEqual({ id: 'type:c__Order', kind: 'type', label: 'c__Order', target: 'c__Order' });
+  expect(parseTab({ id: 'type:x', kind: 'type', label: 'x' })).toBeNull();
 });
 
 it('keeps valid persisted tabs, drops duplicates and caps the list', () => {

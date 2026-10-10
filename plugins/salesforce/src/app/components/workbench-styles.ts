@@ -33,6 +33,10 @@ export const WORKBENCH_STYLES = `
 .sf-inline-details summary { color:var(--text-muted); cursor:pointer; }
 .sf-inline-details[open] > summary { margin-bottom:10px; }
 .sf-review-step > .primary { width:100%; white-space:normal; }
+.sf-apex-review { display:grid; gap:10px; padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--bg-panel); }
+.sf-apex-review-head { display:flex; align-items:center; gap:8px; font-size:12px; }
+.sf-apex-review-warning { margin:0; padding:8px 10px; border-radius:6px; font-size:12px; color:var(--text-primary); background:color-mix(in srgb,var(--danger, #d4183d) 12%,var(--bg-panel)); }
+.sf-apex-review-code { margin:0; max-height:180px; overflow:auto; padding:8px 10px; border-radius:6px; background:var(--bg-base); font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
 .sf-activity { display:flex; flex-direction:column; height:100%; min-height:300px; min-width:0; overflow:hidden; background:var(--bg-panel); container:sf-activity / inline-size; }
 .sf-activity > .sf-workspace-heading { border-bottom:1px solid var(--border); }
 .sf-activity-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 16px; border-bottom:1px solid var(--border); }

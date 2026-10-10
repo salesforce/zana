@@ -51,7 +51,8 @@ describe('EditorTabs', () => {
   const tabs: EditorTab[] = [
     { id: 'agent:a', kind: 'agent', label: 'A.agent', path: 'a.agent' },
     { id: 'apex:Lookup', kind: 'apex', label: 'Lookup', target: 'apex://Lookup' },
-    { id: 'flow:Refund', kind: 'flow', label: 'Refund', target: 'flow://Refund' }
+    { id: 'flow:Refund', kind: 'flow', label: 'Refund', target: 'flow://Refund' },
+    { id: 'type:c__Order', kind: 'type', label: 'c__Order', target: 'c__Order' }
   ];
   it('renders nothing without tabs', () => {
     const { container } = render(<EditorTabs tabs={[]} active={null} onSelect={vi.fn()} onClose={vi.fn()} />);
@@ -62,11 +63,12 @@ describe('EditorTabs', () => {
     render(<EditorTabs tabs={tabs} active="agent:a" dirtyId="agent:a" problems={3} onSelect={onSelect} onClose={onClose} />);
     expect(screen.getByLabelText('Unsaved changes')).toBeTruthy();
     expect(screen.getByLabelText('3 problems')).toBeTruthy();
-    expect(screen.getAllByText('read-only')).toHaveLength(2);
+    expect(screen.getAllByText('read-only')).toHaveLength(3);
+    expect(screen.getByText('TYPE')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /Lookup/ }));
     expect(onSelect).toHaveBeenLastCalledWith('apex:Lookup');
     fireEvent.keyDown(screen.getByRole('tab', { name: /A\.agent/ }), { key: 'ArrowLeft' });
-    expect(onSelect).toHaveBeenLastCalledWith('flow:Refund');
+    expect(onSelect).toHaveBeenLastCalledWith('type:c__Order');
     fireEvent.keyDown(screen.getByRole('tab', { name: /A\.agent/ }), { key: 'ArrowRight' });
     expect(onSelect).toHaveBeenLastCalledWith('apex:Lookup');
     onSelect.mockClear();
@@ -145,17 +147,17 @@ describe('Explorer', () => {
     { kind: 'org-agent', apiName: 'Billing' }
   ];
   const files = [{ apiName: 'QC', path: 'force-app/bots/QC.agent', lines: 4 }];
-  const props = () => ({ files, nodes, activePath: null, exampleId: '', query: '', onQuery: vi.fn(), onOpenFile: vi.fn(), onOpenExample: vi.fn(), onOpenNode: vi.fn(), onBrowseOrg: vi.fn() });
+  const props = () => ({ files, nodes, activePath: null, query: '', onQuery: vi.fn(), onOpenFile: vi.fn(), onOpenNode: vi.fn(), onBrowseOrg: vi.fn() });
   it('groups nodes by kind and filters by query', () => {
     expect(groupExplorerNodes(nodes, '').map(group => group.kind)).toEqual(['apex', 'flow', 'prompt', 'scenario', 'org-agent']);
+    expect(groupExplorerNodes([{ kind: 'lightning-type', apiName: 'c__T' }, ...nodes], '').map(group => group.kind)).toEqual(['apex', 'flow', 'prompt', 'lightning-type', 'scenario', 'org-agent']);
     expect(groupExplorerNodes(nodes, ' refund ').map(group => group.kind)).toEqual(['flow']);
     expect(groupExplorerNodes([], '')).toEqual([]);
   });
-  it('opens files, examples and nodes; prompts are not openable', () => {
+  it('opens files and nodes without an examples section; prompts are not openable', () => {
     const p = props();
     render(<Explorer {...p} dirtyPath="force-app/bots/QC.agent" />);
-    fireEvent.click(screen.getByText(/Examples/));
-    fireEvent.click(screen.getByText(/Examples/));
+    expect(screen.queryByText(/Examples/)).toBeNull();
     fireEvent.click(screen.getByText('Billing'));
     expect(p.onOpenNode).toHaveBeenCalledWith(nodes[4]);
     fireEvent.click(screen.getByText('OrderLookup'));
@@ -168,9 +170,6 @@ describe('Explorer', () => {
     expect(screen.getByLabelText('Unsaved changes')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter Agentforce files'), { target: { value: 'x' } });
     expect(p.onQuery).toHaveBeenCalledWith('x');
-    const example = within(screen.getByTestId('salesforce-agent-script-explorer')).getAllByRole('button').find(button => button.className.includes('sf-as-tree-btn') && button.getAttribute('style')?.includes('18px'));
-    fireEvent.click(example!);
-    expect(p.onOpenExample).toHaveBeenCalled();
   });
   it('shows an empty project state with a browse action', () => {
     const p = { ...props(), files: [], nodes: [], query: '' };
@@ -179,6 +178,26 @@ describe('Explorer', () => {
     expect(p.onBrowseOrg).toHaveBeenCalled();
     rerender(<Explorer {...p} query="zz" />);
     expect(screen.getByText('No matching files')).toBeTruthy();
+  });
+  it('folds sections, keeps them open while filtering, and hides the column', () => {
+    const typed: ExplorerNode[] = [...nodes, { kind: 'lightning-type', apiName: 'lightning__textType' }, { kind: 'lightning-type', apiName: 'c__Ghost', usedBy: ['a.agent'] }, { kind: 'lightning-type', apiName: 'c__Order', path: 'lightningTypes/Order' }];
+    const onToggleSection = vi.fn(); const onHide = vi.fn();
+    const p = { ...props(), nodes: typed };
+    const { rerender } = render(<Explorer {...p} collapsed={['apex', 'project']} onToggleSection={onToggleSection} onHide={onHide} />);
+    expect(screen.queryByText('OrderLookup')).toBeNull();
+    expect(screen.queryByTestId('salesforce-agent-script-file:force-app/bots/QC.agent')).toBeNull();
+    const types = screen.getByRole('button', { name: /Lightning Types/ });
+    expect(types.getAttribute('aria-expanded')).toBe('true');
+    expect(types.textContent).toContain('3');
+    expect(screen.getByText('std')).toBeTruthy();
+    expect(screen.getByText('missing')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Apex 1' }));
+    expect(onToggleSection).toHaveBeenCalledWith('apex');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide explorer' }));
+    expect(onHide).toHaveBeenCalled();
+    rerender(<Explorer {...p} query="order" collapsed={['apex']} onToggleSection={onToggleSection} />);
+    expect(screen.getByText('OrderLookup')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Hide explorer' })).toBeNull();
   });
   it('expands and collapses folders', () => {
     const nested = [{ apiName: 'A', path: 'force-app/main/A.agent', lines: 1 }];
