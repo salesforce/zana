@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
-import { BackgroundCommandsCard } from './ComposerStackCards.js';
+import { BACKGROUND_STOP_RETRY_MS, BackgroundCommandsCard } from './ComposerStackCards.js';
 
-vi.mock('../../../lib/product-client.js', () => ({ product: { threads: {} } }));
+const { stopBackground } = vi.hoisted(() => ({ stopBackground: vi.fn() }));
+vi.mock('../../../lib/product-client.js', () => ({ product: { threads: { stopBackground } } }));
 vi.mock('../../../lib/in-app-browser-link-preference.js', () => ({ handleHttpLinkClick: vi.fn() }));
 vi.mock('../secondary-panel/threadSecondaryPanelLogic.js', () => ({ loadWorkspaceMeta: vi.fn() }));
 
@@ -22,6 +23,7 @@ function row(overrides: Partial<TimelineViewWorkflowWorkRow>): TimelineViewWorkf
 }
 
 beforeEach(() => {
+  stopBackground.mockReset();
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
 });
@@ -87,4 +89,122 @@ it('falls back to Running when a row has no name or description', () => {
   render(<BackgroundCommandsCard commands={[row({ id: 'agent', taskType: 'local_agent' })]} />);
   expect(screen.getByText('Background agent', { selector: '.thread-stack-card-title' })).toBeTruthy();
   expect(screen.getByText('Running')).toBeTruthy();
+});
+
+it('shows no stop controls without a thread id', () => {
+  render(<BackgroundCommandsCard commands={[row({ id: 'a', itemId: 'a' }), row({ id: 'b', itemId: 'b' })]} />);
+  expect(screen.queryByTestId('thread-background-stop')).toBeNull();
+  expect(screen.queryByTestId('thread-background-stop-all')).toBeNull();
+});
+
+it('stops one row and marks it stopping, outside the expandable summary', async () => {
+  stopBackground.mockResolvedValue({ ok: true, stopped: ['a'], requested: [] });
+  const { container } = render(
+    <BackgroundCommandsCard threadId="t" commands={[row({ id: 'a', itemId: 'a', description: 'npm run dev' })]} />
+  );
+  expect(screen.queryByTestId('thread-background-stop-all')).toBeNull();
+  const button = screen.getByRole('button', { name: 'Stop npm run dev' });
+  expect(button.closest('summary')).toBeNull();
+  await act(async () => {
+    fireEvent.click(button);
+  });
+  expect(stopBackground).toHaveBeenCalledWith('t', ['a']);
+  const item = container.querySelector('[data-kind="command"]')!;
+  expect(item.getAttribute('data-stop-state')).toBe('stopping');
+  expect(item.textContent).toContain('Stopping…');
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+});
+
+it('stops all rows and shows which ones the agent was asked to stop', async () => {
+  stopBackground.mockResolvedValue({ ok: true, stopped: ['a'], requested: ['b'] });
+  const { container } = render(
+    <BackgroundCommandsCard
+      threadId="t"
+      commands={[row({ id: 'a', itemId: 'a', description: 'vite' }), row({ id: 'b', itemId: 'b', description: 'tsc -w' })]}
+    />
+  );
+  const stopAll = screen.getByTestId('thread-background-stop-all') as HTMLButtonElement;
+  await act(async () => {
+    fireEvent.click(stopAll);
+  });
+  expect(stopBackground).toHaveBeenCalledWith('t', ['a', 'b']);
+  const states = [...container.querySelectorAll('.thread-background-activity-item')].map((el) => el.getAttribute('data-stop-state'));
+  expect(states).toEqual(['stopping', 'asked']);
+  expect(container.textContent).toContain('Asked agent to stop');
+  // The asked row can be stopped again; Stop all only targets it now.
+  const [stopA, stopB] = screen.getAllByTestId('thread-background-stop') as HTMLButtonElement[];
+  expect(stopA!.disabled).toBe(true);
+  expect(stopB!.disabled).toBe(false);
+  stopBackground.mockResolvedValue({ ok: true, stopped: [], requested: ['b'] });
+  await act(async () => {
+    fireEvent.click(stopAll);
+  });
+  expect(stopBackground).toHaveBeenLastCalledWith('t', ['b']);
+});
+
+it('lets a stopped row be retried when its task never reports completion', async () => {
+  stopBackground.mockResolvedValue({ ok: true, stopped: ['a'], requested: [] });
+  const { container } = render(
+    <BackgroundCommandsCard threadId="t" commands={[row({ id: 'a', itemId: 'a', description: 'vite' })]} />
+  );
+  await act(async () => {
+    fireEvent.click(screen.getByTestId('thread-background-stop'));
+  });
+  expect(container.querySelector('[data-stop-state="stopping"]')).not.toBeNull();
+  act(() => {
+    vi.advanceTimersByTime(BACKGROUND_STOP_RETRY_MS);
+  });
+  expect(container.querySelector('[data-stop-state]')).toBeNull();
+  expect((screen.getByTestId('thread-background-stop') as HTMLButtonElement).disabled).toBe(false);
+});
+
+it('releases rows the server neither stopped nor handed on, and shows a fallback error', async () => {
+  stopBackground.mockResolvedValue({ ok: true, stopped: ['a'], requested: [], fallbackError: 'thread is archived' });
+  const { container } = render(
+    <BackgroundCommandsCard
+      threadId="t"
+      commands={[row({ id: 'a', itemId: 'a', description: 'vite' }), row({ id: 'b', itemId: 'b', description: 'tsc' })]}
+    />
+  );
+  await act(async () => {
+    fireEvent.click(screen.getByTestId('thread-background-stop-all'));
+  });
+  expect(screen.getByRole('alert').textContent).toBe('thread is archived');
+  const states = [...container.querySelectorAll('.thread-background-activity-item')].map((el) => el.getAttribute('data-stop-state'));
+  expect(states).toEqual(['stopping', null]);
+});
+
+it('forgets the stop state of a row once it is gone', async () => {
+  stopBackground.mockResolvedValue({ ok: true, stopped: [], requested: ['a'] });
+  const a = row({ id: 'a', itemId: 'a', description: 'vite' });
+  const { container, rerender } = render(<BackgroundCommandsCard threadId="t" commands={[a]} />);
+  await act(async () => {
+    fireEvent.click(screen.getByTestId('thread-background-stop'));
+  });
+  expect(container.querySelector('[data-stop-state="asked"]')).not.toBeNull();
+  rerender(<BackgroundCommandsCard threadId="t" commands={[]} />);
+  rerender(<BackgroundCommandsCard threadId="t" commands={[a]} />);
+  expect(container.querySelector('[data-stop-state]')).toBeNull();
+});
+
+it('shows the error and re-enables the row when stopping fails', async () => {
+  stopBackground.mockRejectedValue(new Error('No matching background task is running in this thread'));
+  const { container } = render(
+    <BackgroundCommandsCard threadId="t" commands={[row({ id: 'a', itemId: 'a', description: 'vite' })]} />
+  );
+  await act(async () => {
+    fireEvent.click(screen.getByTestId('thread-background-stop'));
+  });
+  expect(screen.getByRole('alert').textContent).toBe('No matching background task is running in this thread');
+  expect(container.querySelector('[data-stop-state]')).toBeNull();
+  expect((screen.getByTestId('thread-background-stop') as HTMLButtonElement).disabled).toBe(false);
+});
+
+it('uses a generic message for non-Error failures', async () => {
+  stopBackground.mockRejectedValue('nope');
+  render(<BackgroundCommandsCard threadId="t" workflows={[row({ id: 'w', itemId: 'w', taskType: 'local_workflow', workflowName: 'Build' })]} commands={[]} />);
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Stop Build' }));
+  });
+  expect(screen.getByRole('alert').textContent).toBe('Failed to stop background task');
 });

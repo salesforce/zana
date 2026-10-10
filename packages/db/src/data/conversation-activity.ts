@@ -20,12 +20,8 @@ const EVENT_JSON = `CASE
     AND json_type(payload, '$.event.scope.kind') = 'text' THEN json_extract(payload, '$.event')
   ELSE NULL END`;
 
-/** Fixed-size result, independent of transcript size and number of past tasks. */
-export function getConversationThreadActivityCounts(
-  db: ZccDatabase,
-  threadId: string
-): Omit<ThreadActivityState, 'activePlanModeCount'> {
-  const tasks = db.sqlite.prepare(`
+// Latest row per background task item of one thread (bound to `thread_id = ?`).
+const BACKGROUND_TASKS_CTE = `
     WITH events AS (
       SELECT sequence, ${EVENT_JSON} AS event FROM thread_events
       WHERE thread_id = ? AND type IN (
@@ -36,11 +32,35 @@ export function getConversationThreadActivityCounts(
       SELECT json_extract(event, '$.item.taskType') AS task_type,
         json_extract(event, '$.item.status') AS status,
         json_extract(event, '$.item.skipTranscript') AS skip_transcript,
+        json_extract(event, '$.item') AS item,
         ROW_NUMBER() OVER (
           PARTITION BY json_extract(event, '$.item.id') ORDER BY sequence DESC
         ) AS rank
       FROM events WHERE json_extract(event, '$.item.type') = 'backgroundTask'
-    )
+    )`;
+
+/** Upper bound on the running tasks returned for one thread. */
+export const OPEN_BACKGROUND_TASK_LIMIT = 200;
+
+/**
+ * The background task items still running in a thread, as their latest stored
+ * item JSON. Uses the same rows as the activity counts, so every task a badge or
+ * card shows is listed, however old the event that started it.
+ */
+export function listConversationOpenBackgroundTaskItems(db: ZccDatabase, threadId: string): unknown[] {
+  const rows = db.sqlite.prepare(`${BACKGROUND_TASKS_CTE}
+    SELECT item FROM tasks WHERE rank = 1 AND status = 'pending' AND NOT COALESCE(skip_transcript, 0)
+    LIMIT ?
+  `).all(threadId, OPEN_BACKGROUND_TASK_LIMIT) as Array<{ item: string }>;
+  return rows.map(row => JSON.parse(row.item) as unknown);
+}
+
+/** Fixed-size result, independent of transcript size and number of past tasks. */
+export function getConversationThreadActivityCounts(
+  db: ZccDatabase,
+  threadId: string
+): Omit<ThreadActivityState, 'activePlanModeCount'> {
+  const tasks = db.sqlite.prepare(`${BACKGROUND_TASKS_CTE}
     SELECT
       COUNT(CASE WHEN task_type = ? THEN 1 END) AS activeWorkflowCount,
       COUNT(CASE WHEN task_type IN (?, ?) THEN 1 END) AS activeBackgroundAgentCount,

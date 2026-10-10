@@ -86,6 +86,11 @@ export const bridgeCapabilitiesSchema = z
     /** The bridge supports thread/goal/clear. */
     threadGoalClear: z.boolean().default(false),
     /**
+     * The bridge supports thread/backgroundTask/stop for one background task
+     * item. When false the runtime never sends it.
+     */
+    backgroundTaskStop: z.boolean().default(false),
+    /**
      * Session cloning support ({@link providerForkSchema} — the same
      * vocabulary the provider declaration uses). The declaration is a ceiling
      * for UI affordances; this is the operative truth, and it may only narrow

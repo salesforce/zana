@@ -85,7 +85,8 @@ import {
 // 41: provider-declared host environment passthrough on bridge launches.
 // 42: plugin.host.call carries a server-realpath-confined projectRoot for
 // project-bound host RPC (OBL-001); worker trusts it, never re-resolves it.
-export const HOST_RPC_PROTOCOL_VERSION = 42;
+// 43: thread.background.stop stops one provider background task by item id.
+export const HOST_RPC_PROTOCOL_VERSION = 43;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -111,6 +112,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'thread.input',
   'thread.stop',
   'thread.plan.cancel',
+  'thread.background.stop',
   'thread.resume',
   'thread.rewind.prepare',
   'thread.rewind.discard',
@@ -398,6 +400,12 @@ export const ThreadPlanCancelCommandSchema = z.object({
   type: z.literal('thread.plan.cancel'),
   threadId: UuidSchema,
   expectedTurnId: z.string().min(1).max(200)
+}).strict();
+
+export const ThreadBackgroundStopCommandSchema = z.object({
+  type: z.literal('thread.background.stop'),
+  threadId: UuidSchema,
+  itemId: z.string().min(1).max(200)
 }).strict();
 
 export const ThreadResumeFieldsSchema = z.object({
@@ -884,6 +892,7 @@ export const HostRpcCommandSchema = z.union([
   ThreadInputCommandSchema,
   ThreadStopCommandSchema,
   ThreadPlanCancelCommandSchema,
+  ThreadBackgroundStopCommandSchema,
   ThreadResumeCommandSchema,
   ThreadRewindPrepareCommandSchema,
   ThreadRewindDiscardCommandSchema,
@@ -1068,6 +1077,12 @@ export const ThreadPlanCancelResultSchema = z.object({
   cancelled: z.boolean()
 }).strict();
 export type ThreadPlanCancelResult = z.infer<typeof ThreadPlanCancelResultSchema>;
+
+export const ThreadBackgroundStopResultSchema = z.object({
+  threadId: UuidSchema,
+  stopped: z.boolean()
+}).strict();
+export type ThreadBackgroundStopResult = z.infer<typeof ThreadBackgroundStopResultSchema>;
 
 export const TurnSubmitResultSchema = z.object({
   threadId: UuidSchema,
@@ -1408,6 +1423,7 @@ export const HostRpcResultSchemaByType = {
   'thread.input': ThreadInputResultSchema,
   'thread.stop': ThreadStopResultSchema,
   'thread.plan.cancel': ThreadPlanCancelResultSchema,
+  'thread.background.stop': ThreadBackgroundStopResultSchema,
   'thread.resume': ThreadResumeResultSchema,
   'thread.rewind.prepare': ThreadRewindPrepareResultSchema,
   'thread.rewind.discard': ThreadRewindDiscardResultSchema,

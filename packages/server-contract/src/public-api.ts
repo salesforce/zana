@@ -58,6 +58,8 @@ import type {
   CreateProjectRequest,
   CreateProjectSourceRequest,
   CreateQueuedMessageRequest,
+  StopBackgroundTasksRequest,
+  StopBackgroundTasksResponse,
   CreateThreadSectionRequest,
   CreateThreadRequest,
   EditMessageRequest,
@@ -242,6 +244,7 @@ import {
   createHostJoinCodeRequestSchema,
   createProjectSourceRequestSchema,
   createQueuedMessageRequestSchema,
+  stopBackgroundTasksRequestSchema,
   updateQueuedMessageRequestSchema,
   createThreadRequestSchema,
   forkThreadRequestSchema,
@@ -1153,6 +1156,14 @@ export const publicApiRoutes = {
       method: "post",
       request: noRequest<PathId>(),
       response: jsonResponse<{ ok: true }>(),
+    }),
+    stopBackground: defineRoute({
+      path: "/threads/:id/background/stop",
+      method: "post",
+      request: jsonRequest<PathId, StopBackgroundTasksRequest>(
+        stopBackgroundTasksRequestSchema,
+      ),
+      response: jsonResponse<StopBackgroundTasksResponse>(),
     }),
     compact: defineRoute({
       path: "/threads/:id/compact",

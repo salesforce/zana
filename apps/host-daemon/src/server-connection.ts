@@ -183,6 +183,11 @@ export function startEnrolledHostConnection(options: {
         await sink.flush();
         return cancelled;
       },
+      stopBackgroundTask: async (input) => {
+        const stopped = await adapter!.stopBackgroundTask?.(input) ?? false;
+        await sink.flush();
+        return stopped;
+      },
       prepareRewind: (input) => adapter!.prepareRewind(input),
       discardRewind: (input) => adapter!.discardRewind(input),
       renameWork: (input) => adapter!.renameWork(input),

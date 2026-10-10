@@ -83,7 +83,7 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
                            [--acp-mode <mode>] [--reasoning-level <level>] [--permission-mode <mode>]
                            [--title] [--wait]
   thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
-  thread background list|stop <id>
+  thread background list|stop <id> [itemId...]
   thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   machine list|show|join-code|rename|remove|provider-cli
   project list|show|create|files|content|skills|processes
@@ -133,7 +133,7 @@ zcc thread spawn --project <id> --prompt "…" [--provider <id>] [--model <id>] 
 zcc thread list|show|tell|wait|stop
 zcc agent launch --project <id> --prompt "…" [--wait]
 zcc agent wait|reply|stop <id>
-zcc thread background list|stop <id>
+zcc thread background list|stop <id> [itemId...]
 zcc machine list
 zcc project list
 zcc skill install-cli-skills
@@ -465,7 +465,8 @@ with `zcc project processes <id>` and stop selected pids with
 Stop leftover Bash:
 
 ```bash
-zcc thread background stop <id>          # tell the agent to KillShell
+zcc thread background stop <id> [itemId...]  # provider stops each task; the
+                                         # agent is asked for the rest
 zcc thread background stop <id> --force  # thread.stop (children usually die;
                                          # fully detached processes can leak)
 ```

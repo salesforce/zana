@@ -723,6 +723,11 @@ function httpProduct(): Pick<
         }),
       stop: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/stop`, { method: 'POST', body: '{}' }),
+      stopBackground: async (threadId, itemIds) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/background/stop`, {
+          method: 'POST',
+          body: JSON.stringify(itemIds ? { itemIds } : {})
+        }),
       implementPlan: async (threadId, revision, acpMode) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/plan/implement`, { method: 'POST', body: JSON.stringify({ revision, acpMode }) }),
       cancelPlan: async (threadId) =>

@@ -51,7 +51,10 @@ import {
 import { BRIDGE_JSON_RPC_ERRORS } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import type { BridgeJsonRpcOutputMessage } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 
-import { BRIDGE_INBOUND_REQUEST_METHODS } from "@zana-ai/zcc-provider-bridge-protocol";
+import {
+  BRIDGE_INBOUND_REQUEST_METHODS,
+  PROVIDER_BRIDGE_PROTOCOL_VERSION,
+} from "@zana-ai/zcc-provider-bridge-protocol";
 
 type BridgeSessionOptions = ReturnType<typeof buildSessionOptions>;
 type BridgeSessionHooks = NonNullable<BridgeSessionOptions["hooks"]>;
@@ -135,6 +138,7 @@ interface ControlledClaudeQuery {
   initializationResult: ReturnType<typeof vi.fn>;
   setModel: ReturnType<typeof vi.fn>;
   setPermissionMode: ReturnType<typeof vi.fn>;
+  stopTask: ReturnType<typeof vi.fn>;
   [Symbol.asyncIterator](): AsyncIterator<SDKMessage>;
 }
 
@@ -364,6 +368,7 @@ function createControlledClaudeQuery(): ControlledClaudeQuery {
     initializationResult: vi.fn(),
     setModel: vi.fn().mockResolvedValue(undefined),
     setPermissionMode: vi.fn().mockResolvedValue(undefined),
+    stopTask: vi.fn().mockResolvedValue(undefined),
     [Symbol.asyncIterator]() {
       return iterator;
     },
@@ -6020,5 +6025,204 @@ describe("live Claude permission policy", () => {
       expect(queries[0]?.setPermissionMode).toHaveBeenCalledWith("acceptEdits");
       await stopBridgeThread({ bridge, queries, threadId });
     } finally { queries.forEach(query => query.finish()); bridge.restore(); }
+  });
+});
+
+describe("thread/backgroundTask/stop", () => {
+  const providerThreadId = "provider-thread-bg-stop";
+  const threadId = "thread-bg-stop";
+  const taskId = "task-bg-stop";
+  const toolUseId = "tool-bg-stop";
+
+  async function startWithRunningTask(): Promise<{
+    bridge: BridgeJsonRpcTestHarness;
+    query: ControlledClaudeQuery;
+  }> {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const query = createControlledClaudeQuery();
+    queryMock.mockReturnValue(query);
+    sendResumeThread({ bridge, providerThreadId, requestId: 1, threadId });
+    await bridge.waitForResponse(1);
+    bridge.sendRequest(
+      2,
+      "turn/start",
+      canonicalTurnParams({
+        threadId,
+        providerThreadId,
+        input: [{ type: "text", text: "start background work" }],
+      }),
+    );
+    await readNextPromptText(getLatestQueryCall());
+    await bridge.waitForResponse(2);
+    query.emit(
+      createAssistantToolUseMessage({
+        parentToolUseId: null,
+        toolInput: { prompt: "work" },
+        toolName: "Agent",
+        toolUseId,
+      }),
+    );
+    query.emit({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      tool_use_id: toolUseId,
+      description: "Background work",
+      subagent_type: "general-purpose",
+      is_backgrounded: true,
+      task_type: "local_agent",
+      prompt: "work",
+      uuid: "00000000-0000-4000-8000-0000000000a1",
+      session_id: providerThreadId,
+    });
+    await bridge.flushWork();
+    return { bridge, query };
+  }
+
+  async function stopRequest(
+    bridge: BridgeJsonRpcTestHarness,
+    id: number,
+    params: { threadId: string; providerItemId: string },
+  ): Promise<BridgeJsonRpcOutputMessage> {
+    bridge.sendRequest(id, "thread/backgroundTask/stop", {
+      ...params,
+      providerThreadId: params.threadId,
+    });
+    return bridge.waitForResponse(id);
+  }
+
+  async function shutdown(
+    bridge: BridgeJsonRpcTestHarness,
+    query: ControlledClaudeQuery,
+  ): Promise<void> {
+    bridge.sendRequest(90, "thread/stop", {
+      threadId,
+      providerThreadId,
+      intent: "interrupt",
+      activeTurnId: null,
+    });
+    await bridge.flushWork();
+    query.finish();
+    await bridge.waitForResponse(90);
+    bridge.restore();
+  }
+
+  it("advertises backgroundTaskStop in the handshake", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    try {
+      bridge.sendRequest(1, "initialize", {
+        protocolVersion: PROVIDER_BRIDGE_PROTOCOL_VERSION,
+        client: { name: "test", version: "0" },
+      });
+      const response = await bridge.waitForResponse(1);
+      expect(response.result).toMatchObject({
+        capabilities: { backgroundTaskStop: true },
+      });
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("stops a running task through the SDK by its task id", async () => {
+    const { bridge, query } = await startWithRunningTask();
+    try {
+      const response = await stopRequest(bridge, 3, {
+        threadId,
+        providerItemId: `task:${taskId}`,
+      });
+      expect(query.stopTask).toHaveBeenCalledExactlyOnceWith(taskId);
+      expect(response.result).toEqual({ stopped: true });
+    } finally {
+      await shutdown(bridge, query);
+    }
+  });
+
+  it("reports stopped:false for an unknown item without calling the SDK", async () => {
+    const { bridge, query } = await startWithRunningTask();
+    try {
+      const response = await stopRequest(bridge, 3, {
+        threadId,
+        providerItemId: "task:does-not-exist",
+      });
+      expect(query.stopTask).not.toHaveBeenCalled();
+      expect(response.result).toEqual({ stopped: false });
+    } finally {
+      await shutdown(bridge, query);
+    }
+  });
+
+  it("reports stopped:false once the task has finished", async () => {
+    const { bridge, query } = await startWithRunningTask();
+    try {
+      query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: taskId,
+        tool_use_id: toolUseId,
+        status: "stopped",
+        output_file: "",
+        summary: "Stopped",
+        usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 },
+        uuid: "00000000-0000-4000-8000-0000000000a2",
+        session_id: providerThreadId,
+      });
+      await bridge.flushWork();
+      const response = await stopRequest(bridge, 3, {
+        threadId,
+        providerItemId: `task:${taskId}`,
+      });
+      expect(query.stopTask).not.toHaveBeenCalled();
+      expect(response.result).toEqual({ stopped: false });
+    } finally {
+      await shutdown(bridge, query);
+    }
+  });
+
+  it("reports stopped:false for an unknown thread", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    try {
+      const response = await stopRequest(bridge, 1, {
+        threadId: "thread-never-started",
+        providerItemId: `task:${taskId}`,
+      });
+      expect(response.result).toEqual({ stopped: false });
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("returns a JSON-RPC error when the SDK stopTask rejects", async () => {
+    const { bridge, query } = await startWithRunningTask();
+    try {
+      query.stopTask.mockRejectedValueOnce(new Error("sdk refused"));
+      const response = await stopRequest(bridge, 3, {
+        threadId,
+        providerItemId: `task:${taskId}`,
+      });
+      expect(response.result).toBeUndefined();
+      expect(response.error).toMatchObject({
+        code: -32000,
+        message: "sdk refused",
+      });
+    } finally {
+      await shutdown(bridge, query);
+    }
+  });
+
+  it("stringifies non-Error stopTask rejections", async () => {
+    const { bridge, query } = await startWithRunningTask();
+    try {
+      query.stopTask.mockRejectedValueOnce("plain failure");
+      const response = await stopRequest(bridge, 3, {
+        threadId,
+        providerItemId: `task:${taskId}`,
+      });
+      expect(response.error).toMatchObject({
+        code: -32000,
+        message: "plain failure",
+      });
+    } finally {
+      await shutdown(bridge, query);
+    }
   });
 });

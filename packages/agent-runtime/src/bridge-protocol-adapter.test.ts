@@ -83,6 +83,66 @@ describe("handshake gating", () => {
   });
 });
 
+describe("thread/backgroundTask/stop", () => {
+  function openItem(adapter: ReturnType<typeof makeAdapter>, threadId: string, providerItemId: string): string {
+    adapter.translateEvent({
+      jsonrpc: "2.0",
+      method: "thread/delta",
+      params: { threadId, deltas: [{ kind: "turn.open" }] },
+    });
+    const events = adapter.translateEvent({
+      jsonrpc: "2.0",
+      method: "thread/delta",
+      params: {
+        threadId,
+        deltas: [{ kind: "item.open", key: { providerItemId }, item: { type: "command", command: "sleep 100", cwd: "/repo" } }],
+      },
+    });
+    const started = events.find((event) => event.type === "item/started");
+    if (started?.type !== "item/started") throw new Error("Item did not start");
+    return started.item.id;
+  }
+
+  const stop = (adapter: ReturnType<typeof makeAdapter>, itemId: string) =>
+    adapter.buildCommandPlan({
+      type: "thread/backgroundTask/stop",
+      threadId: "thr_1",
+      providerThreadId: "p_1",
+      itemId,
+    });
+
+  it("is a noop for an item the assembler never minted", () => {
+    const adapter = makeAdapter();
+    completeHandshake(adapter, { backgroundTaskStop: true });
+    expect(stop(adapter, "item_unknown")).toEqual({
+      kind: "noop",
+      reason: "unknown background task item",
+    });
+  });
+
+  it("sends the provider item id when the bridge advertised the capability", () => {
+    const adapter = makeAdapter();
+    completeHandshake(adapter, { backgroundTaskStop: true });
+    const itemId = openItem(adapter, "thr_1", "native-task-1");
+    expect(itemId).not.toBe("native-task-1");
+    expect(stop(adapter, itemId)).toEqual({
+      kind: "request",
+      method: "thread/backgroundTask/stop",
+      params: { threadId: "thr_1", providerThreadId: "p_1", providerItemId: "native-task-1" },
+    });
+  });
+
+  it("is a noop for a known item when the capability is not advertised", () => {
+    const adapter = makeAdapter();
+    completeHandshake(adapter, {});
+    const itemId = openItem(adapter, "thr_1", "native-task-1");
+    expect(stop(adapter, itemId)).toMatchObject({
+      kind: "noop",
+      reason: "backgroundTaskStop not advertised",
+    });
+  });
+});
+
 describe("fork narrowing", () => {
   const forkCommand = {
     type: "thread/fork",

@@ -870,6 +870,128 @@ rl.on("line", (line) => {
     10_000,
   );
 
+  describe("stopBackgroundTask", () => {
+    function writeStopScript(stopped: boolean): string {
+      const providerScriptPath = join(tmpDir, `bg-stop-${stopped}.cjs`);
+      writeFileSync(
+        providerScriptPath,
+        `
+const readline = require("node:readline");
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: {} });
+  } else if (message.method === "thread/start") {
+    send({ jsonrpc: "2.0", id: message.id, result: { providerThreadId: "bg-thread-1" } });
+  } else if (message.method === "thread/backgroundTask/stop") {
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: message.params.providerItemId === "native-1" ? { stopped: ${stopped} } : { stopped: false },
+    });
+  }
+});
+`,
+        "utf8",
+      );
+      return providerScriptPath;
+    }
+
+    async function startRuntime(
+      scriptPath: string,
+      wrap?: (adapter: ReturnType<typeof createFakeAdapter>) => ReturnType<typeof createFakeAdapter>,
+    ) {
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => undefined,
+        onToolCall: async () => ({
+          contentItems: [{ type: "inputText", text: "ok" }],
+          success: true,
+        }),
+        adapterFactory: () => {
+          const adapter = createFakeAdapter(scriptPath);
+          return wrap ? wrap(adapter) : adapter;
+        },
+      });
+      await runtime.startThread({
+        environmentId: "env-1",
+        threadId: "t-bg",
+        projectId: "p1",
+        providerId: "fake",
+        options: fullRuntimeOptions,
+      });
+      return runtime;
+    }
+
+    it.each([true, false])(
+      "returns the provider verdict (stopped=%s) from the bridge result",
+      async (stopped) => {
+        const runtime = await startRuntime(writeStopScript(stopped));
+        try {
+          await expect(
+            runtime.stopBackgroundTask({ threadId: "t-bg", itemId: "native-1" }),
+          ).resolves.toEqual({ stopped });
+          await expect(
+            runtime.stopBackgroundTask({ threadId: "t-bg", itemId: "other" }),
+          ).resolves.toEqual({ stopped: false });
+        } finally {
+          await runtime.shutdown();
+        }
+      },
+      10_000,
+    );
+
+    it("answers stopped=false without a bridge request when the plan is a noop", async () => {
+      const runtime = await startRuntime(writeStopScript(true), (adapter) => ({
+        ...adapter,
+        buildCommandPlan: (command) =>
+          command.type === "thread/backgroundTask/stop"
+            ? { kind: "noop", reason: "backgroundTaskStop not advertised" }
+            : adapter.buildCommandPlan(command),
+      }));
+      try {
+        await expect(
+          runtime.stopBackgroundTask({ threadId: "t-bg", itemId: "native-1" }),
+        ).resolves.toEqual({ stopped: false });
+      } finally {
+        await runtime.shutdown();
+      }
+    });
+
+    it("rejects a malformed bridge result", async () => {
+      const scriptPath = join(tmpDir, "bg-stop-bad.cjs");
+      writeFileSync(
+        scriptPath,
+        readFileSync(writeStopScript(true), "utf8").replace(
+          /\{ stopped: (true|false) \} : \{ stopped: false \}/u,
+          '{ stopped: "yes" } : { stopped: "yes" }',
+        ),
+        "utf8",
+      );
+      const runtime = await startRuntime(scriptPath);
+      try {
+        await expect(
+          runtime.stopBackgroundTask({ threadId: "t-bg", itemId: "native-1" }),
+        ).rejects.toThrow();
+      } finally {
+        await runtime.shutdown();
+      }
+    });
+
+    it("rejects for a thread with no provider process", async () => {
+      const runtime = await startRuntime(writeStopScript(true));
+      try {
+        await expect(
+          runtime.stopBackgroundTask({ threadId: "t-unknown", itemId: "native-1" }),
+        ).rejects.toThrow();
+      } finally {
+        await runtime.shutdown();
+      }
+    });
+  });
+
   it("rejects thread resume when providerThreadId cannot be resolved", async () => {
     const runtime = createContractRuntime({
       scriptPath,

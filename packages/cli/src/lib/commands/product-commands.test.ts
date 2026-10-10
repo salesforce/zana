@@ -162,12 +162,12 @@ describe('product API command groups', () => {
 
   it('lists and soft-stops background commands', async () => {
     let commands = [{ itemId: 'task:1', taskType: 'local_bash', description: 'npm run dev' }];
-    let told = '';
+    const stopBodies: unknown[] = [];
     const fetchImpl = router({
       'GET /api/v1/threads/thr-1/timeline': () => ({ activeBackgroundCommands: commands }),
-      'POST /api/v1/threads/thr-1/send': (_url, init) => {
-        told = JSON.parse(String(init?.body)).text;
-        return { thread: sampleThread };
+      'POST /api/v1/threads/thr-1/background/stop': (_url, init) => {
+        stopBodies.push(JSON.parse(String(init?.body)));
+        return { ok: true, stopped: ['task:1'], requested: [] };
       },
       'GET /api/v1/threads/thr-1': () => ({
         thread: {
@@ -190,9 +190,50 @@ describe('product API command groups', () => {
       }
     });
     expect(stopped.exitCode).toBe(0);
-    expect(told).toMatch(/KillShell/);
+    commands = [{ itemId: 'task:1', taskType: 'local_bash', description: 'npm run dev' }];
+    const one = await runCli(['node', 'zcc', 'thread', 'background', 'stop', 'thr-1', 'task:1', '--timeout', '2s'], {
+      fetchImpl,
+      nowMs: () => now,
+      sleep: async () => {
+        commands = [];
+        now += 500;
+      }
+    });
+    expect(one.exitCode).toBe(0);
+    expect(stopBodies).toEqual([{}, { itemIds: ['task:1'] }]);
     const forced = await runCli(['node', 'zcc', 'thread', 'background', 'stop', 'thr-1', '--force'], { fetchImpl });
     expect(forced.stdout).toContain('stopped');
+  });
+
+  it('waits only for targeted background items, and rejects --force with item ids', async () => {
+    let commands = [
+      { itemId: 'vite', taskType: 'local_bash', description: 'vite' },
+      { itemId: 'tsc', taskType: 'local_bash', description: 'tsc -w' }
+    ];
+    const fetchImpl = router({
+      'GET /api/v1/threads/thr-1/timeline': () => ({ activeBackgroundCommands: commands, activeWorkflows: [] }),
+      'POST /api/v1/threads/thr-1/background/stop': { ok: true, stopped: ['vite'], requested: [] }
+    });
+    let now = 0;
+    const deps = {
+      fetchImpl,
+      nowMs: () => now,
+      sleep: async () => {
+        commands = commands.filter((row) => row.itemId !== 'vite');
+        now += 1000;
+      }
+    };
+    const one = await runCli(['node', 'zcc', 'thread', 'background', 'stop', 'thr-1', 'vite', '--timeout', '5s'], deps);
+    expect(one.exitCode).toBe(0);
+    expect(one.stdout).toContain('vite stopped');
+
+    const stuck = await runCli(['node', 'zcc', 'thread', 'background', 'stop', 'thr-1', 'tsc', '--timeout', '2s'], deps);
+    expect(stuck.exitCode).toBe(124);
+    expect(stuck.stderr).toContain('tsc');
+
+    const forced = await runCli(['node', 'zcc', 'thread', 'background', 'stop', 'thr-1', 'tsc', '--force'], deps);
+    expect(forced.exitCode).toBe(2);
+    expect(forced.stderr).toContain('--force');
   });
 
   it('prints a deprecation on zcc run / agent send / term', async () => {

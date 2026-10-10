@@ -58,6 +58,7 @@ import {
 import {
   hasCompletionBlockingClaudeTasks,
   buildInterruptedClaudeTaskDeltas,
+  findRunningClaudeTaskId,
   hasPendingClaudeTasks,
   translateClaudeTaskMessage,
   type ClaudeTaskMap,
@@ -1303,6 +1304,15 @@ export function createClaudeDeltaTranslator(
     );
   }
 
+  function runningTaskIdForItem(
+    threadId: string,
+    providerItemId: string,
+  ): string | undefined {
+    const state = statesByThreadId.get(threadId);
+    if (state === undefined) return undefined;
+    return findRunningClaudeTaskId(state.tasksById, providerItemId);
+  }
+
   function setClaudeModelContextWindowHint(
     threadId: string,
     model: string,
@@ -1318,6 +1328,7 @@ export function createClaudeDeltaTranslator(
     configureSandbox: (enabled: boolean) => { sandboxEnabled = enabled; },
     hasOpenSessionWork,
     hasOpenTurn,
+    runningTaskIdForItem,
     setClaudeModelContextWindowHint,
     translate,
   };

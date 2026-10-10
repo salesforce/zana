@@ -14,6 +14,10 @@ import {
   spawningToolUseFor,
   spawningToolUseMessage,
 } from "./delta-test-harness.js";
+import {
+  findRunningClaudeTaskId,
+  type ClaudeTaskMap,
+} from "./task-translation.js";
 
 const PROGRESS_THROTTLE_MS = 500;
 
@@ -1057,5 +1061,90 @@ describe("claude-code background task translation", () => {
         status: "failed",
       }),
     );
+  });
+});
+
+describe("findRunningClaudeTaskId", () => {
+  function tasksOf(
+    entries: Array<{ taskId: string; providerItemKey: string; terminal: boolean }>,
+  ): ClaudeTaskMap {
+    return new Map(
+      entries.map((entry) => [entry.taskId, entry]),
+    ) as unknown as ClaudeTaskMap;
+  }
+
+  it("returns the SDK task id of a non-terminal task with the matching item key", () => {
+    const tasks = tasksOf([
+      { taskId: "t1", providerItemKey: "task:t1", terminal: false },
+      { taskId: "t2", providerItemKey: "task:t2", terminal: false },
+    ]);
+    expect(findRunningClaudeTaskId(tasks, "task:t2")).toBe("t2");
+  });
+
+  it("returns undefined for a terminal task", () => {
+    const tasks = tasksOf([
+      { taskId: "t1", providerItemKey: "task:t1", terminal: true },
+    ]);
+    expect(findRunningClaudeTaskId(tasks, "task:t1")).toBeUndefined();
+  });
+
+  it("returns undefined when no task matches or the map is empty", () => {
+    const tasks = tasksOf([
+      { taskId: "t1", providerItemKey: "task:t1", terminal: false },
+    ]);
+    expect(findRunningClaudeTaskId(tasks, "task:other")).toBeUndefined();
+    expect(findRunningClaudeTaskId(tasksOf([]), "task:t1")).toBeUndefined();
+  });
+});
+
+describe("translator.runningTaskIdForItem", () => {
+  const threadId = "bb-thread-1";
+
+  function startSubagentTask() {
+    const harness = createClaudeDeltaHarness();
+    const started = loadFixture("task-started-subagent.json");
+    harness.translate(spawningToolUseFor(started), { threadId });
+    const events = harness.translate(started, { threadId });
+    const item = events
+      .map((event) => ("item" in event ? event.item : undefined))
+      .find((candidate) => candidate?.type === "backgroundTask");
+    return { harness, started, taskId: String(started.task_id), item };
+  }
+
+  it("maps a running task's provider item id back to the SDK task id", () => {
+    const { harness, taskId, item } = startSubagentTask();
+    expect(item).toBeDefined();
+    expect(harness.translator.runningTaskIdForItem(threadId, `task:${taskId}`)).toBe(
+      taskId,
+    );
+  });
+
+  it("returns undefined after the task completes", () => {
+    const { harness, taskId } = startSubagentTask();
+    harness.translate(loadFixture("task-notification-subagent.json"), { threadId });
+    expect(
+      harness.translator.runningTaskIdForItem(threadId, `task:${taskId}`),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined after the task is stopped", () => {
+    const { harness, taskId } = startSubagentTask();
+    harness.translate(
+      { ...loadFixture("task-notification-subagent.json"), status: "stopped" },
+      { threadId },
+    );
+    expect(
+      harness.translator.runningTaskIdForItem(threadId, `task:${taskId}`),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined for unknown item ids and unknown threads", () => {
+    const { harness, taskId } = startSubagentTask();
+    expect(
+      harness.translator.runningTaskIdForItem(threadId, "task:nope"),
+    ).toBeUndefined();
+    expect(
+      harness.translator.runningTaskIdForItem("other-thread", `task:${taskId}`),
+    ).toBeUndefined();
   });
 });

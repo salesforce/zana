@@ -376,6 +376,12 @@ export interface ClearThreadGoalArgs {
   threadId: string;
 }
 
+export interface StopBackgroundTaskArgs {
+  threadId: string;
+  /** zcc item id of the running background task. */
+  itemId: string;
+}
+
 export interface ArchiveThreadArgs {
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   providerId: string;
@@ -430,6 +436,13 @@ export interface AgentRuntime {
   stopThread(args: StopThreadArgs): Promise<StopThreadResult>;
 
   clearThreadGoal(args: ClearThreadGoalArgs): Promise<{ cleared: boolean }>;
+
+  /**
+   * Asks the provider to stop one background task. `stopped: false` means
+   * the provider cannot stop it (capability absent, item unknown, or the
+   * session is gone); the turn and the thread are left untouched.
+   */
+  stopBackgroundTask(args: StopBackgroundTaskArgs): Promise<{ stopped: boolean }>;
 
   renameThread(args: RenameThreadArgs): Promise<void>;
 

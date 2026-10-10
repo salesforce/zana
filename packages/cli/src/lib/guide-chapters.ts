@@ -54,7 +54,7 @@ Open desktop previews in the in-app browser; give the private URL for phone acce
   zcc thread log <id>
   zcc thread tell <id> "..."
   zcc thread wait <id> [--timeout 20m] [--until turn|quiet]
-  zcc thread background list|stop <id> [--force]
+  zcc thread background list|stop <id> [itemId...] [--force]
   zcc thread stop <id>
   zcc thread fork|archive|unarchive <id>
   zcc thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]

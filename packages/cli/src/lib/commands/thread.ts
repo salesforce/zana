@@ -173,15 +173,37 @@ function formatBackgroundCommand(row: BackgroundCommandRow): string {
   return `${id}\t${taskType}\t${description}`;
 }
 
-function backgroundStopPrompt(commands: BackgroundCommandRow[]): string {
-  const names = commands
-    .map((row) => row.description?.trim())
-    .filter((name): name is string => Boolean(name));
-  const listed = names.length > 0 ? names.join('; ') : 'the running background shells';
-  return (
-    `Stop these running background shells now: ${listed}. ` +
-    'Use KillShell (or the equivalent tool) so they exit. Do not start new ones.'
-  );
+const BACKGROUND_POLL_MS = 1000;
+
+/** Wait until none of `itemIds` is still listed as running in the thread. */
+async function waitForBackgroundItemsGone(
+  id: string,
+  itemIds: readonly string[],
+  timeoutMs: number,
+  json: boolean,
+  deps: ProductHttpDeps | undefined
+): Promise<CliResult> {
+  const nowMs = deps?.nowMs ?? (() => Date.now());
+  const sleep = deps?.sleep ?? ((ms: number) => sleepMs(ms, deps));
+  const deadline = nowMs() + timeoutMs;
+  for (;;) {
+    const timeline = await productRequest<{
+      activeBackgroundCommands?: BackgroundCommandRow[];
+      activeWorkflows?: BackgroundCommandRow[];
+    }>('GET', `/api/v1/threads/${encodeURIComponent(id)}/timeline`, { deps, query: { summaryOnly: 'true' } });
+    if (!timeline.ok) return timeline.result;
+    const running = [...(timeline.data.activeBackgroundCommands ?? []), ...(timeline.data.activeWorkflows ?? [])]
+      .filter((row) => row.itemId !== undefined && itemIds.includes(row.itemId));
+    if (running.length === 0) return renderOrJson(json, { threadId: id, stopped: itemIds }, `${itemIds.join(' ')} stopped\n`);
+    if (nowMs() >= deadline) {
+      return {
+        exitCode: 124,
+        stdout: '',
+        stderr: `Error: timed out waiting for ${running.map((row) => row.itemId).join(' ')} to stop\n`
+      };
+    }
+    await sleep(BACKGROUND_POLL_MS);
+  }
 }
 
 async function runThreadBackground(
@@ -194,6 +216,7 @@ async function runThreadBackground(
   const positional = stripFlags(rest, ['--timeout'], ['--force']);
   const action = positional[0];
   const id = positional[1];
+  const itemIds = positional.slice(2);
   if (action !== 'list' && action !== 'stop') {
     return errResult('thread background requires list or stop <threadId>', 2);
   }
@@ -215,6 +238,9 @@ async function runThreadBackground(
   }
 
   if (force) {
+    if (itemIds.length > 0) {
+      return errResult('--force stops the whole thread; it cannot be combined with item ids', 2);
+    }
     const stopped = await productRequest<unknown>(
       'POST',
       `/api/v1/threads/${encodeURIComponent(id)}/stop`,
@@ -238,12 +264,15 @@ async function runThreadBackground(
   if (commands.length === 0) {
     return renderOrJson(json, commands, 'No background commands\n');
   }
-  const sent = await productRequest<{ thread?: ThreadRow }>(
+  // The server stops each task through the provider and asks the agent only
+  // for the ones the provider cannot stop.
+  const stopped = await productRequest<{ stopped?: string[]; requested?: string[] }>(
     'POST',
-    `/api/v1/threads/${encodeURIComponent(id)}/send`,
-    { deps, body: { text: backgroundStopPrompt(commands), mode: 'auto' } }
+    `/api/v1/threads/${encodeURIComponent(id)}/background/stop`,
+    { deps, body: itemIds.length > 0 ? { itemIds } : {} }
   );
-  if (!sent.ok) return sent.result;
+  if (!stopped.ok) return stopped.result;
+  if (itemIds.length > 0) return waitForBackgroundItemsGone(id, itemIds, timeoutMs, json, deps);
   return waitForThread(id, timeoutMs, json, deps, 'quiet');
 }
 

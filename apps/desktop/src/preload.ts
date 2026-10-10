@@ -463,6 +463,7 @@ const api: CcApi = {
     get: async () => ({ thread: {} }),
     send: async () => ({ ok: false }),
     stop: async () => ({ ok: false }),
+    stopBackground: async () => ({ ok: false }),
     implementPlan: async () => ({ ok: false }),
     cancelPlan: async () => ({ ok: false }),
     plan: async () => ({ ok: false }),

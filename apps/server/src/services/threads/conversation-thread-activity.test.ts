@@ -7,7 +7,8 @@ import { EMPTY_THREAD_ACTIVITY, threadActivityFromEvents } from '@zana-ai/zcc-th
 import {
   appendConversationThreadEvent, createConversationThread, openDatabase, upsertHost,
   listConversationThreadEvents, listConversationActiveTurnInputs, deleteConversationThreadEventsAfter,
-  getConversationThreadActivityCounts, ACTIVE_PLAN_INPUT_PAGE_SIZE, type ZccDatabase
+  getConversationThreadActivityCounts, listConversationOpenBackgroundTaskItems, ACTIVE_PLAN_INPUT_PAGE_SIZE,
+  OPEN_BACKGROUND_TASK_LIMIT, type ZccDatabase
 } from '@zana-ai/zcc-db';
 import { activePlanTurnForConversation, resetThreadActivityCache, threadActivityForConversation } from './conversation-thread-activity.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -44,6 +45,20 @@ function accepted(id: string, mode = 'plan', wrapped = false) {
 }
 
 describe('bounded conversation activity', () => {
+  it('lists the running task items however old, with their latest state', () => {
+    task('dev'); task('done'); task('done', 'local_bash', 'completed');
+    task('hidden', 'local_bash', 'pending', { skipTranscript: true }); task('wrapped', 'local_agent', 'pending', {}, true);
+    for (let i = 0; i < 300; i++) event('turn/diff/updated', { diff: 'x' });
+    event('item/backgroundTask/progress', { item: { id: 'dev', type: 'backgroundTask', taskType: 'local_bash', status: 'pending', taskStatus: 'running', skipTranscript: false, description: 'npm run dev' } });
+    expect(listConversationOpenBackgroundTaskItems(db, thread.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'dev', description: 'npm run dev' }),
+      expect.objectContaining({ id: 'wrapped' })
+    ]));
+    expect(listConversationOpenBackgroundTaskItems(db, thread.id)).toHaveLength(2);
+    expect(listConversationOpenBackgroundTaskItems(db, 'missing')).toEqual([]);
+    expect(OPEN_BACKGROUND_TASK_LIMIT).toBe(200);
+  });
+
   it('returns empty counts for missing history and skips the database for sequence zero', () => {
     expect(getConversationThreadActivityCounts(db, 'missing')).toEqual({ activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activeGoalCount: 0 });
     const prepare = vi.spyOn(db.sqlite, 'prepare');

@@ -67,6 +67,7 @@ import {
   type ThreadResumeParams,
   type ThreadStartParams,
   type ThreadStopParams,
+  type ThreadBackgroundTaskStopParams,
   type TurnStartParams,
   type TurnSteerParams,
 } from "./commands.js";
@@ -2295,6 +2296,7 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
           threadArchive: false,
           threadRename: false,
           threadGoalClear: false,
+          backgroundTaskStop: true,
           fork: "checkpoint",
           approvalEnforcedBy: "provider",
           grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
@@ -2377,6 +2379,9 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       break;
     case "thread/discard":
       sendResult(request.id, await closeThreadForStop(request.params.threadId));
+      break;
+    case "thread/backgroundTask/stop":
+      await handleBackgroundTaskStop(request.id, request.params);
       break;
     case "skills/configure":
       configuredSkillRoots = assembleSkillPlugins(request.params.roots);
@@ -2799,6 +2804,27 @@ async function closeThreadForStop(
     threadId,
   });
   return { ok: true };
+}
+
+async function handleBackgroundTaskStop(
+  id: string | number,
+  params: ThreadBackgroundTaskStopParams,
+): Promise<void> {
+  const threadSession = threadAttachments.get(params.threadId)?.residentSession;
+  const taskId = threadSession != null && !threadSession.closing
+    ? threadSession.translator.runningTaskIdForItem(params.threadId, params.providerItemId)
+    : undefined;
+  if (threadSession == null || taskId === undefined) {
+    sendResult(id, { stopped: false });
+    return;
+  }
+  try {
+    // The SDK answers with task_notification{status:"stopped"}, which the
+    // translator turns into the item's completion delta.
+    sendResult(id, { stopped: await threadSession.session.stopTask(taskId) });
+  } catch (error) {
+    sendError(id, -32000, error instanceof Error ? error.message : String(error));
+  }
 }
 
 async function handleThreadStop(

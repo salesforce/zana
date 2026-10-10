@@ -190,6 +190,7 @@ export interface CommandRuntime {
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
   cancelPlan?: (input: { threadId: string; expectedTurnId: string }) => Promise<boolean>;
+  stopBackgroundTask?: (input: { threadId: string; itemId: string }) => Promise<boolean>;
   deliverInteractiveResolve?: (input: {
     threadId: string;
     interactionId: string;
@@ -251,6 +252,7 @@ export function createCommandRuntime(options: {
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
   cancelPlan?: (input: { threadId: string; expectedTurnId: string }) => Promise<boolean>;
+  stopBackgroundTask?: (input: { threadId: string; itemId: string }) => Promise<boolean>;
   deliverInteractiveResolve?: (input: {
     threadId: string;
     interactionId: string;
@@ -306,6 +308,7 @@ export function createCommandRuntime(options: {
     writeWork: options.writeWork,
     stopWork: options.stopWork,
     cancelPlan: options.cancelPlan,
+    stopBackgroundTask: options.stopBackgroundTask,
     deliverInteractiveResolve: options.deliverInteractiveResolve,
     prepareRewind: options.prepareRewind,
     discardRewind: options.discardRewind,
@@ -776,6 +779,11 @@ export async function dispatchHostCommand(
       // stopThread releases its provider session. The next turn must resume it.
       if (cancelled) runtime.threads.delete(command.threadId);
       return { threadId: command.threadId, cancelled };
+    }
+    case 'thread.background.stop': {
+      if (!runtime.threads.has(command.threadId)) return { threadId: command.threadId, stopped: false };
+      const stopped = await runtime.stopBackgroundTask?.({ threadId: command.threadId, itemId: command.itemId }) ?? false;
+      return { threadId: command.threadId, stopped };
     }
     case 'thread.resume':
       return applyThreadResume(runtime, command);

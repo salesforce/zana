@@ -37,7 +37,7 @@ const test = base.extend({
       else if (path.endsWith('/messages')) {
         const text = body.message.text;
         if (text === 'Fail this turn') { res.writeHead(503); res.end('{}'); return; }
-        if (text === 'Wait for cancellation') { await new Promise(resolve => setTimeout(resolve, 1500)); }
+        if (text === 'Wait for cancellation') { await new Promise(resolve => setTimeout(resolve, 8000)); }
         result = { messages: [{ message: text === 'Long response' ? 'Complete response. '.repeat(1200) + 'END_OF_RESPONSE' : 'I can help you track an order or resolve an issue. Could you share your order number so I can find the right details?', planId: 'plan-e2e-1' }] };
       } else if (path.endsWith('/chat-generations')) {
         const system = body.messages[0].content as string;

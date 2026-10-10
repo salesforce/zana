@@ -78,6 +78,19 @@ export function hasPendingClaudeTasks(tasks: ClaudeTaskMap): boolean {
   return false;
 }
 
+/** SDK task id behind a still-running task item, for stopTask(). */
+export function findRunningClaudeTaskId(
+  tasks: ClaudeTaskMap,
+  providerItemKey: string,
+): string | undefined {
+  for (const task of tasks.values()) {
+    if (task.providerItemKey === providerItemKey && !task.terminal) {
+      return task.taskId;
+    }
+  }
+  return undefined;
+}
+
 function buildClaudeTaskItemKey(taskId: string, generation: number): string {
   return generation > 1 ? `task:${taskId}#${generation}` : `task:${taskId}`;
 }

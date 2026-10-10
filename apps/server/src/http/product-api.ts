@@ -70,6 +70,7 @@ import {
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
 import { compactConversation } from '../services/threads/conversation-compact.js';
+import { stopConversationBackgroundTasks } from '../services/threads/conversation-background-stop.js';
 import { closeConversationWithFollowup } from '../services/threads/thread-close-followup.js';
 import { conversationPromptHistory, pagedConversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
 import { conversationNextTurnView } from '../services/threads/conversation-next-turn.js';
@@ -133,7 +134,7 @@ import { provisionProjectEnvironment } from '../services/threads/spawn-environme
 import { isZccManagedWorkspacePath } from '../services/threads/worktree-paths.js';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, validatePluginMetadata, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
-import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema, threadPluginMetadataQuerySchema, updateThreadPluginMetadataRequestSchema } from '@zana-ai/zcc-server-contract';
+import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema, threadPluginMetadataQuerySchema, updateThreadPluginMetadataRequestSchema, stopBackgroundTasksRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify, harnessVerifyBundle } from './harness-via-rpc.js';
 import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../services/threads/provider-health-probe.js';
@@ -1726,6 +1727,25 @@ export async function handleProductHttp(
       try {
         const thread = await stopConversation(ctx, threadStop.id);
         sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadBackgroundStop = routeParams(path, '/api/v1/threads/:id/background/stop');
+    if (threadBackgroundStop && method === 'POST') {
+      const parsed = stopBackgroundTasksRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid background stop request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await stopConversationBackgroundTasks(ctx, threadBackgroundStop.id, parsed.data.itemIds));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });
