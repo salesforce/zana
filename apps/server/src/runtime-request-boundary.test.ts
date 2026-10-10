@@ -17,3 +17,17 @@ it('rejects malformed messages, preserves successful replies, and bounds errors 
   await dispatchRuntimeMessage({ type: 'stop', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION }, reply, async () => { throw new Error('x'.repeat(10000)); });
   expect(reply.mock.lastCall?.[0].message).toHaveLength(8192); expect(reply.mock.lastCall?.[0]).not.toHaveProperty('id');
 });
+it('echoes a bounded request id on schema failures so main rejects immediately', async () => {
+  const reply = vi.fn(), handle = vi.fn();
+  await dispatchRuntimeMessage({ ...request, operation: 'product-event', channel: 'arbitrary:x', args: [] }, reply, handle);
+  expect(handle).not.toHaveBeenCalled();
+  expect(reply.mock.lastCall?.[0]).toMatchObject({ type: 'error', id: request.id });
+  expect(reply.mock.lastCall?.[0].message).toMatch(/^invalid server runtime message: /);
+  expect(reply.mock.lastCall?.[0].message.length).toBeLessThanOrEqual(200);
+  for (const id of ['', 'x'.repeat(201), 7]) {
+    await dispatchRuntimeMessage({ id, bogus: true }, reply, handle);
+    expect(reply.mock.lastCall?.[0]).not.toHaveProperty('id');
+  }
+  await dispatchRuntimeMessage('junk', reply, handle);
+  expect(reply.mock.lastCall?.[0]).not.toHaveProperty('id');
+});

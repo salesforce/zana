@@ -88,9 +88,20 @@ export function registerSchedulerIpc(): void {
       }
     }
   );
-  ctx.scheduler.on('changed', () => {
-    ctx.safeSend(IPC.scheduler.onChanged, listSchedulesForUi());
-  });
+  // The UI list merges native schedules with Claude /loop rows read from disk,
+  // which the manager doesn't track. 'changed' always publishes; each poll
+  // ('polled') publishes only when the merged list differs from the last send.
+  let lastSchedulesKey: string | null = null;
+  const publishSchedules = (force: boolean) => {
+    const rows = listSchedulesForUi();
+    // Loop rows without a stored createdAt are stamped with "now"; ignore those stamps.
+    const key = JSON.stringify(rows.map(row => row.external ? { ...row, createdAt: undefined, updatedAt: undefined } : row));
+    if (!force && key === lastSchedulesKey) return;
+    lastSchedulesKey = key;
+    ctx.safeSend(IPC.scheduler.onChanged, rows);
+  };
+  ctx.scheduler.on('changed', () => publishSchedules(true));
+  ctx.scheduler.on('polled', () => publishSchedules(false));
 
   // Goals — persistent objectives the main process works toward (spawn → evaluate
   // → re-spawn). Mirrors the ctx.scheduler IPC surface. The renderer is untrusted, so

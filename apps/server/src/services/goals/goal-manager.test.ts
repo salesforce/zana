@@ -951,3 +951,34 @@ it('checks an unknown reserved goal worker without launching or resuming it', as
   expect(ptys.createCalls).toHaveLength(0);
   await expect(manager.reconcile('missing')).rejects.toThrow('not found'); manager.stopAll();
 });
+
+describe('GoalManager poll reloads emit only on content change', () => {
+  it('emits once for two polls over unchanged persistence', async () => {
+    const { manager } = durableManager(); const changed = vi.fn(); manager.on('changed', changed);
+    await manager.loadAll([project]); await manager.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(1); manager.stopAll();
+  });
+  it('emits when a record changes externally', async () => {
+    const { manager, records, input } = durableManager();
+    const goal = await manager.create(input);
+    const changed = vi.fn(); manager.on('changed', changed);
+    await manager.loadAll([project]); expect(changed).not.toHaveBeenCalled();
+    records.set(goal.id, { ...structuredClone(records.get(goal.id)!), title: 'Renamed' });
+    await manager.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(1); expect(manager.list()[0].title).toBe('Renamed'); manager.stopAll();
+  });
+  it('does not re-emit after a mutation when the poll sees identical content', async () => {
+    const { manager, input } = durableManager(); const changed = vi.fn(); manager.on('changed', changed);
+    await manager.create(input);
+    const afterCreate = changed.mock.calls.length; expect(afterCreate).toBeGreaterThan(0);
+    await manager.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(afterCreate); manager.stopAll();
+  });
+});
+
+it('GoalManager passes other events through without touching the change fingerprint', async () => {
+  const { manager } = durableManager(); const other = vi.fn(); const changed = vi.fn();
+  manager.on('other', other); manager.on('changed', changed);
+  expect(manager.emit('other', 1)).toBe(true); expect(other).toHaveBeenCalledWith(1);
+  await manager.loadAll([project]); expect(changed).toHaveBeenCalledTimes(1); manager.stopAll();
+});

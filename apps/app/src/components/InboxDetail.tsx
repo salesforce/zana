@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BotMessageSquare, Code2, Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderOpen, Send, Sparkles, Star, Trash2 } from 'lucide-react';
 import './inbox-detail.css';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
-import { useInboxThread } from '../hooks/useInboxThread.js';
+import { createResultCache, useInboxThread } from '../hooks/useInboxThread.js';
 import { reopenInboxThread, sendInboxThreadReply } from '../lib/inbox-thread.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { confirmInboxDeletion, isInboxListShortcut } from '../lib/inbox-keyboard.js';
@@ -29,7 +29,7 @@ import {
   useSuggestions,
   useUi
 } from '../store.js';
-import { DelayedStencilLines, StencilLines } from './ui/Skeleton.js';
+import { DelayedLoading, DelayedStencilLines } from './ui/Skeleton.js';
 import { AgentLauncher } from './AgentLauncher.js';
 import { inspectAgentSession } from '../lib/inspect-session.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
@@ -510,7 +510,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
                          a real question auto-opens.
               • none   → project gone → honest disabled panel, never a blank node. */}
           {threadLookup.loading ? (
-            <div className="inbox-reply" role="status">Loading conversation…</div>
+            <DelayedLoading><div className="inbox-reply" role="status">Loading conversation…</div></DelayedLoading>
           ) : threadLookup.error ? (
             <div className="inbox-reply" role="alert">
               {threadLookup.error}
@@ -730,6 +730,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             docs={entry.docs!}
             project={aliveProject}
             originCwd={entry.origin?.cwd}
+            cacheScope={entry.id}
           />
         </div>
       )}
@@ -1043,11 +1044,13 @@ function ReplyBox({
 function DocExplorer({
   docs,
   project,
-  originCwd
+  originCwd,
+  cacheScope
 }: {
   docs: InboxDoc[];
   project: Project | null;
   originCwd?: string;
+  cacheScope?: string;
 }) {
   const compact = useCompactLayout();
   const [selectedPath, setSelectedPath] = useState(docs[0]?.path ?? '');
@@ -1064,7 +1067,7 @@ function DocExplorer({
   if (compact) return <div className="inbox-mobile-documents">
     <h2>Documents <span>{docs.length}</span></h2>
     {docs.map((doc) => <InboxMobileDocument key={doc.path} path={doc.path}>
-      <DocPreview project={project} doc={doc} originCwd={originCwd} />
+      <DocPreview project={project} doc={doc} originCwd={originCwd} cacheScope={cacheScope} />
     </InboxMobileDocument>)}
   </div>;
 
@@ -1099,6 +1102,7 @@ function DocExplorer({
           project={project}
           doc={selectedDoc}
           originCwd={originCwd}
+          cacheScope={cacheScope}
         />
       )}
     </div>
@@ -1117,29 +1121,57 @@ function DocExplorer({
  * different relative path. On a hit we render/act on the resolved location and
  * note where it was actually found.
  */
+/** Last successful doc read per entry+path, so a remount paints content instead of a skeleton. */
+// Weighted by content length (UTF-16 units, 2 bytes each): about 4 MB in total,
+// and no single document or image data URL over about 512 KB is retained after unmount.
+export const inboxDocCache = createResultCache<{ result: FsReadResult; resolvedPath: string; relocated: boolean }>(20, {
+  weigh: (value) => value.result.content?.length ?? 0, maxWeight: 2 * 1024 * 1024, maxEntryWeight: 256 * 1024
+});
+
 function DocPreview({
   project,
   doc,
-  originCwd
+  originCwd,
+  cacheScope = ''
 }: {
   project: Project | null;
   doc: InboxDoc;
+  /** Entry id; part of the doc cache key. */
+  cacheScope?: string;
   /** The originating agent's cwd, when captured — a resolution hint for main. */
   originCwd?: string;
 }) {
-  const [result, setResult] = useState<FsReadResult | null>(null);
+  const cacheKey = `${cacheScope}:${doc.path}`;
+  const seed = project && cacheScope ? inboxDocCache.get(cacheKey) : undefined;
+  const [result, setResult] = useState<FsReadResult | null>(seed?.result ?? null);
   // The path we actually resolved the file at (project-root-relative). Defaults
   // to the reported path; updated when main relocates a 404'd doc.
-  const [resolvedPath, setResolvedPath] = useState(doc.path);
+  const [resolvedPath, setResolvedPath] = useState(seed?.resolvedPath ?? doc.path);
   // True once main confirmed the file lives somewhere other than reported.
-  const [relocated, setRelocated] = useState(false);
+  const [relocated, setRelocated] = useState(seed?.relocated ?? false);
 
   useEffect(() => {
     let cancelled = false;
     const videoRequest = new AbortController();
-    setResult(null);
-    setResolvedPath(doc.path);
-    setRelocated(false);
+    // Paint the last good read immediately and revalidate; only a miss shows the loading state.
+    const cached = project && cacheScope ? inboxDocCache.get(cacheKey) : undefined;
+    setResult(cached?.result ?? null);
+    setResolvedPath(cached?.resolvedPath ?? doc.path);
+    setRelocated(cached?.relocated ?? false);
+    let foundPath = doc.path, foundRelocated = false;
+    const commit = (r: FsReadResult) => {
+      if (cancelled) return;
+      if (r.ok && cacheScope) inboxDocCache.set(cacheKey, { result: r, resolvedPath: foundPath, relocated: foundRelocated });
+      else if (!r.ok) {
+        // A failure is never cached. It may be transient, so this view keeps the
+        // good copy it painted, but the copy is evicted: the next visit re-reads
+        // and shows the real state (e.g. a deleted doc) instead of stale content.
+        inboxDocCache.delete(cacheKey);
+        if (cached) return;
+      }
+      if (cached) { setResolvedPath(foundPath); setRelocated(foundRelocated); }
+      setResult(r);
+    };
     if (!project) {
       // No live project — show the tombstone after a microtask so the
       // "Loading" flash doesn't render.
@@ -1157,20 +1189,20 @@ function DocPreview({
           });
           if (cancelled) return;
           if (response.ok) {
-            setResult({ ok: true, content: '' });
+            commit({ ok: true, content: '' });
             return;
           }
           const found = await product.fs.resolveDoc(projectPath, doc.path, originCwd);
           if (cancelled) return;
           if (found.ok && found.rel) {
-            setResolvedPath(found.rel);
-            setRelocated(!!found.relocated);
-            setResult({ ok: true, content: '' });
+            foundPath = found.rel; foundRelocated = !!found.relocated;
+            if (!cached) { setResolvedPath(found.rel); setRelocated(foundRelocated); }
+            commit({ ok: true, content: '' });
           } else {
-            setResult({ ok: false, message: 'Video file not found' });
+            commit({ ok: false, message: 'Video file not found' });
           }
         } catch (err) {
-          if (!cancelled) setResult({ ok: false, message: err instanceof Error ? err.message : 'Video preview unavailable' });
+          commit({ ok: false, message: err instanceof Error ? err.message : 'Video preview unavailable' });
         }
         return;
       }
@@ -1182,7 +1214,7 @@ function DocPreview({
         r = { ok: false, message: err instanceof Error ? err.message : 'Read failed' };
       }
       if (r.ok || cancelled) {
-        if (!cancelled) setResult(r);
+        commit(r);
         return;
       }
       // Missing at the reported path — ask main to locate it (subdir / library /
@@ -1191,23 +1223,23 @@ function DocPreview({
         const found = await product.fs.resolveDoc(projectPath, doc.path, originCwd);
         if (cancelled) return;
         if (found.ok && found.rel) {
-          setResolvedPath(found.rel);
-          setRelocated(!!found.relocated);
+          foundPath = found.rel; foundRelocated = !!found.relocated;
+          if (!cached) { setResolvedPath(found.rel); setRelocated(foundRelocated); }
           const r2 = await readInboxDocPreview(joinPath(projectPath, found.rel));
-          if (!cancelled) setResult(r2);
+          commit(r2);
           return;
         }
       } catch {
         /* resolver failed — fall through to the original error */
       }
-      if (!cancelled) setResult(r);
+      commit(r);
     };
     void load();
     return () => {
       cancelled = true;
       videoRequest.abort();
     };
-  }, [project, doc.path, originCwd]);
+  }, [project, doc.path, originCwd, cacheScope, cacheKey]);
 
   const pushToast = useUi((s) => s.pushToast);
   const canPreview = !!result && result.ok && typeof result.content === 'string';
@@ -1254,7 +1286,7 @@ function DocPreview({
       </div>
       <div className="inbox-doc-body">
         {result === null ? (
-          <StencilLines label="Loading document" widths={['75%', '100%', '83%', '67%']} />
+          <DelayedStencilLines label="Loading document" widths={['75%', '100%', '83%', '67%']} />
         ) : result.ok && absResolved && videoContentType(resolvedPath) ? (
           <ThreadVideoPreview key={absResolved} src={videoPreviewUrl(absResolved)} path={resolvedPath} />
         ) : canPreview ? (

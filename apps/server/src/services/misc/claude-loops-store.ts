@@ -106,7 +106,9 @@ function toRow(
   projectId: string,
   createdAtIso: string
 ): ScheduledTask {
-  const createdAt = typeof raw.createdAt === 'number' ? new Date(raw.createdAt).toISOString() : createdAtIso;
+  // An out-of-range number would make toISOString() throw on every 15 s poll.
+  const stamp = typeof raw.createdAt === 'number' ? new Date(raw.createdAt) : null;
+  const createdAt = stamp && Number.isFinite(stamp.getTime()) ? stamp.toISOString() : createdAtIso;
   return {
     // Namespace the id so it can't collide with a native schedule's id and the
     // mutating handlers can detect it (defense-in-depth alongside `external`).

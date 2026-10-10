@@ -33,6 +33,7 @@ import type {
 import { useData, useGoals, useUi } from '@/store';
 import { ImprovePromptButton } from '@/components/ImprovePromptButton';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { useNowTick } from '@/hooks/useNowTick';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 
 const PROFILES = VALID_PROFILES;
@@ -100,6 +101,8 @@ function isTerminal(status: GoalStatus): boolean {
  *    modal's project locked to it, and the goal is written under the project.
  */
 export function GoalsPanel({ projectId }: { projectId?: string } = {}) {
+  // Keeps the "Nm ago" labels current; the list itself only re-renders on real changes.
+  useNowTick();
   const scoped = Boolean(projectId);
   const goals = useGoals((s) => s.goals);
   const loading = useGoals((s) => s.loading);

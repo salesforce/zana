@@ -1,5 +1,17 @@
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import { fetchWithAppSurface } from './fetch-with-app-surface.js';
+import { hasDesktopBridge } from './app-surface.js';
+
+type RoutedTerminals = CcApi['terminals'] & { streamsOverProductSocket?: (id: string) => Promise<boolean> };
+
+/** Whether a session's live output travels over the product WebSocket, so a product
+ * reset or reconnect can have dropped output. Desktop-bridge sessions stream over IPC. */
+export async function streamsOverProductSocket(terminals: CcApi['terminals'], id: string): Promise<boolean> {
+  if (!hasDesktopBridge()) return true;
+  const decide = (terminals as RoutedTerminals).streamsOverProductSocket;
+  if (typeof decide !== 'function') return true;
+  try { return await decide.call(terminals, id); } catch { return true; }
+}
 
 /** Select transport by recorded session ownership before performing an action.
  * A failed mutation is never retried against a different machine. */
@@ -49,6 +61,7 @@ export function machineTerminals(owner: CcApi['terminals'], hosts: CcApi['termin
             const selected = await transport(id);
             return (selected[method] as (...values: any[]) => unknown)(id, ...args);
           };
+        case 'streamsOverProductSocket': return async (id: string) => (await transport(id)) === hosts;
         case 'onData': return (cb: Parameters<CcApi['terminals']['onData']>[0]) => both(owner.onData, hosts.onData, cb);
         case 'onExit': return (cb: Parameters<CcApi['terminals']['onExit']>[0]) => both(owner.onExit, hosts.onExit, cb);
         case 'onUpdated': return (cb: Parameters<CcApi['terminals']['onUpdated']>[0]) => both(owner.onUpdated, hosts.onUpdated, cb);

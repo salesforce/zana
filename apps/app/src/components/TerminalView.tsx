@@ -1,5 +1,6 @@
 import { createTerminalReplay } from '../lib/terminal-replay.js';
 import { createTerminalWriteQueue } from '../lib/terminal-write-queue.js';
+import { streamsOverProductSocket } from '../lib/machine-terminals.js';
 import { subscribeProductReconnect } from '../lib/product-ws.js';
 import { product } from '../lib/product-client.js';
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -317,17 +318,45 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
       });
     }, visibleRef.current);
     writesRef.current = writes;
+    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+    const showHost = () => { clearTimeout(hideTimer); if (ref.current) ref.current.style.opacity = ''; };
+    const hideHost = () => {
+      clearTimeout(hideTimer);
+      if (ref.current) ref.current.style.opacity = '0';
+      hideTimer = setTimeout(showHost, 1000);
+    };
     const writeFollowing = (data: string) => writes.write(data);
     const replay = createTerminalReplay(signal => product.terminals.backlogSnapshot
       ? product.terminals.backlogSnapshot(session.id, signal) : product.terminals.backlog(session.id), {
-      reset: () => writes.reset(() => term.reset()), write: writeFollowing,
-      follow: () => { if (!disposedRef.current && !term.hasSelection()) term.scrollToBottom(); }
+      capture: () => {
+        const buf = term.buffer.active;
+        return { following: buf.viewportY >= buf.baseY, distanceFromBottom: Math.max(0, buf.baseY - buf.viewportY) };
+      },
+      // A redraw hides the host until the rewrite lands (capped), so the user
+      // never watches the old output fast-forward. Opacity, not visibility, so
+      // the focused xterm textarea keeps focus and typing still lands.
+      reset: () => writes.reset(() => { hideHost(); term.reset(); }), write: writeFollowing,
+      follow: (previous) => {
+        if (disposedRef.current) return;
+        if (!previous) { if (!term.hasSelection()) term.scrollToBottom(); return; }
+        writes.whenIdle(() => {
+          showHost();
+          if (disposedRef.current || term.hasSelection()) return;
+          if (previous.following) term.scrollToBottom();
+          else term.scrollToLine(Math.max(0, term.buffer.active.baseY - previous.distanceFromBottom));
+        });
+      }
     });
     const offData = product.terminals.onData((id, data, cursor) => {
       if (id === session.id) replay.receive(data, cursor);
     });
     void replay.replay();
-    const offReconnect = subscribeProductReconnect(() => replay.replay(true));
+    // Only sessions streaming over the product socket can have missed output.
+    const offReconnect = subscribeProductReconnect(() => {
+      void streamsOverProductSocket(product.terminals, session.id).then((needed) => {
+        if (needed && !disposedRef.current) void replay.replay(true);
+      });
+    });
     const offExit = product.terminals.onExit((id, code, reason) => {
       if (id !== session.id) return;
       // 0 / undefined → dim "[session exited]"; non-zero → red "[exited code N]".
@@ -336,7 +365,7 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
       const label = reason ?? (bad ? `[exited code ${code}]` : '[session exited]');
       writes.write(`\r\n${sgr}${label}\x1b[0m\r\n`);
     });
-    offsRef.current = [offData, offExit, offReconnect, () => replay.dispose(), () => offScroll.dispose(), () => offOsc52.dispose()];
+    offsRef.current = [offData, offExit, offReconnect, showHost, () => replay.dispose(), () => offScroll.dispose(), () => offOsc52.dispose()];
 
     const onInput = term.onData((data) => {
       void product.terminals.write(session.id, data).catch(() => {});

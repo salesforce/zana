@@ -1,6 +1,8 @@
 import { readTerminalSnapshot } from './terminal-read-queue.js';
 export interface TerminalOutputCursor { startOffset: number; endOffset: number }
 type Snapshot = string | (TerminalOutputCursor & { text: string });
+/** Where the user was looking before a destructive redraw, so it can be restored. */
+export interface TerminalViewport { following: boolean; distanceFromBottom: number }
 type Chunk = { data: string; cursor?: TerminalOutputCursor };
 const GAP_NOTICE = '\r\n[Some output was missed while reconnecting.]\r\n';
 
@@ -15,7 +17,9 @@ function validCursor(cursor: TerminalOutputCursor, length: number): boolean {
  * Local legacy PTYs keep the original string-only contract.
  */
 export function createTerminalReplay(read: (signal?: AbortSignal) => Promise<Snapshot>, display: {
-  reset(): void; write(text: string): void; follow(): void;
+  reset(): void; write(text: string): void; follow(previous?: TerminalViewport): void;
+  /** Snapshot of the viewport, taken just before `reset()`. */
+  capture?(): TerminalViewport;
 }, maxPendingChars = 512 * 1024) {
   let stopped = false, ready = false, running: Promise<void> | undefined;
   let pending: Chunk[] = [], pendingChars = 0, gap = false, refreshAgain = false;
@@ -60,6 +64,7 @@ export function createTerminalReplay(read: (signal?: AbortSignal) => Promise<Sna
         refreshAgain = false;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const controller = new AbortController();
+        let viewport: TerminalViewport | undefined, redrawn = false;
         const deadline = new Promise<never>((_, reject) => {
           cancelDeadline = () => { clearTimeout(timer); controller.abort(); reject(new Error('terminal replay cancelled')); };
           timer = setTimeout(() => { controller.abort(); reject(new Error('terminal replay timed out')); }, 10_000);
@@ -68,9 +73,16 @@ export function createTerminalReplay(read: (signal?: AbortSignal) => Promise<Sna
           const snapshot = await Promise.race([readTerminalSnapshot(() => read(controller.signal), controller.signal), deadline]);
           if (stopped) return;
           if (typeof snapshot !== 'string' && !validCursor(snapshot, snapshot.text.length)) throw new Error('Invalid terminal snapshot cursor');
-          if (reset) display.reset();
-          const text = typeof snapshot === 'string' ? snapshot : snapshot.text;
-          offset = typeof snapshot === 'string' ? undefined : snapshot.endOffset;
+          let text = typeof snapshot === 'string' ? snapshot : snapshot.text;
+          if (reset && typeof snapshot !== 'string' && offset !== undefined && snapshot.startOffset <= offset) {
+            // The retained window still covers what is on screen: append only
+            // what was missed (nothing at all when the screen is current).
+            if (snapshot.endOffset <= offset) text = '';
+            else { text = text.slice(offset - snapshot.startOffset); offset = snapshot.endOffset; }
+          } else {
+            if (reset) { viewport = display.capture?.(); display.reset(); redrawn = true; }
+            offset = typeof snapshot === 'string' ? undefined : snapshot.endOffset;
+          }
           if (text) display.write(text);
           // A snapshot covers dropped queued chunks only when its cursor
           // reaches the earliest retained event. Otherwise show an explicit gap.
@@ -81,7 +93,8 @@ export function createTerminalReplay(read: (signal?: AbortSignal) => Promise<Sna
         if (gap) display.write(GAP_NOTICE);
         for (const chunk of pending) show(chunk);
         pending = []; pendingChars = 0; gap = false;
-        display.follow();
+        // A non-destructive refresh keeps the user's scroll position.
+        if (!reset || redrawn) display.follow(viewport);
         reset = true;
       } while (refreshAgain && !stopped);
     })().finally(() => { running = undefined; ready = true; });

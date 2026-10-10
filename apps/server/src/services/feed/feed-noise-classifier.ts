@@ -27,11 +27,7 @@
 
 import type { InboxEntry, LlmRunResult } from '@zana-ai/zcc-domain/product';
 import { entryGist } from '../inbox/inbox-summary.js';
-import {
-  AUTO_CLOSE_KEY_PREFIX,
-  HEARTBEAT_KEY_PREFIX,
-  GOAL_KEY_PREFIX
-} from '@zana-ai/zcc-domain/feed-categories';
+import { isDemotionCandidate } from '@zana-ai/zcc-domain/feed-categories';
 
 /** Upper bound on how many recent entries the classifier considers — bounds the
  *  prompt size (and token cost) regardless of inbox size. Mirrors
@@ -39,12 +35,15 @@ import {
 export const FEED_NOISE_MAX_ENTRIES = 60;
 
 /** Result of a classify call. Always an id set (empty on any failure / nothing
- *  routine); the caller treats "no verdict" and "nothing routine" identically. */
+ *  routine); `failed` marks a failed model call so the renderer can keep its
+ *  previous overlay instead of regrouping. */
 export interface FeedNoiseResult {
   /** Entry ids to demote into the folded `routine` section. Subset of the input. */
   routineIds: string[];
   /** How many entries were considered (candidates after the deterministic gate). */
   candidateCount: number;
+  /** Set when the classify call itself failed (not "nothing is routine"). */
+  failed?: true;
 }
 
 export interface FeedNoiseDeps {
@@ -59,29 +58,11 @@ export interface FeedNoiseDeps {
 }
 
 /**
- * DETERMINISTIC gate: an entry is a demotion CANDIDATE only when it is a
- * comment-only free-form report — i.e. exactly what {@link classifyEntry} maps
- * to `report` AND carries no docs/question. Everything the registry pins as
- * signal (goal outcomes) or folds by rule (scheduled/heartbeat/auto-close) is
- * excluded here so the model never even sees it. Pure; exported for tests.
- *
- * Kept in sync with `classifyEntry`'s precedence by construction: we reject the
- * same markers it keys on, then require a non-empty comment and no docs/question.
+ * DETERMINISTIC gate (comment-only free-form reports with no docs/questions).
+ * Lives in the domain registry so the renderer's layout re-applies the same
+ * check to cached overlay ids; re-exported here for existing importers.
  */
-export function isDemotionCandidate(entry: InboxEntry): boolean {
-  if (entry.question) return false; // pinned signal (question)
-  if ((entry.docs?.length ?? 0) > 0) return false; // a report WITH docs stays loud
-  const key = entry.dedupeKey ?? '';
-  if (
-    key.startsWith(AUTO_CLOSE_KEY_PREFIX) ||
-    key.startsWith(HEARTBEAT_KEY_PREFIX) ||
-    key.startsWith(GOAL_KEY_PREFIX)
-  ) {
-    return false; // already folded-by-rule or pinned (goal)
-  }
-  if (entry.scheduled) return false; // scheduled → its own tier, not routine
-  return (entry.comments ?? '').trim().length > 0; // must have a gist to judge
-}
+export { isDemotionCandidate };
 
 /**
  * Render the candidate list fed to the model: one line per entry, `- [id] gist`.
@@ -153,7 +134,7 @@ export class FeedNoiseClassifier {
 
     const result = await this.deps.runClassify(text, `feed-noise:${projectId ?? 'all'}`);
     if (!result.ok || !result.text.trim()) {
-      return { routineIds: [], candidateCount: candidates.length };
+      return { routineIds: [], candidateCount: candidates.length, failed: true };
     }
     const validIds = new Set(candidates.map((c) => c.id));
     return { routineIds: parseRoutineIds(result.text, validIds), candidateCount: candidates.length };

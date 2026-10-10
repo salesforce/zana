@@ -1,5 +1,5 @@
 import type { MetadataPersistence } from '../projects/project-record-store.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { watch, existsSync, mkdirSync, type FSWatcher } from 'node:fs';
 import type {
@@ -136,6 +136,23 @@ export class FollowUpManager extends EventEmitter {
   private serialTail: Promise<unknown> = Promise.resolve();
   private pending = 0;
 
+  private lastChangedFingerprint: string | null = null;
+
+  private fingerprint(): string {
+    return createHash('sha1').update(JSON.stringify(this.list())).digest('hex');
+  }
+
+  /** Every 'changed' emit records what subscribers were last told, so polls can skip no-op reloads. */
+  override emit(event: string | symbol, ...args: unknown[]): boolean {
+    if (event === 'changed') this.lastChangedFingerprint = this.fingerprint();
+    return super.emit(event, ...args);
+  }
+
+  /** Poll/reload paths only: announce the list when it differs from the last announced snapshot. */
+  private emitChangedIfDifferent() {
+    if (this.fingerprint() !== this.lastChangedFingerprint) this.emit('changed');
+  }
+
   private serial<T>(work: () => Promise<T>): Promise<T> {
     if (this.pending >= 100) return Promise.reject(new Error('Too many pending follow-up operations'));
     this.pending++;
@@ -173,7 +190,7 @@ export class FollowUpManager extends EventEmitter {
     );
     this.items.clear();
     for (const f of all) this.items.set(f.id, f);
-    this.emit('changed');
+    this.emitChangedIfDifferent();
   }
 
   private async createNow(input: FollowUpCreateInput): Promise<FollowUp> {

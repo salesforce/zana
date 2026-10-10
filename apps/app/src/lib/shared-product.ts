@@ -33,7 +33,16 @@ export function sharedProductFamily(family: string, fallback: object = {}): obje
         void hasSharedServices().then(supported => {
           if (stopped) return;
           unsubscribe = supported
-            ? subscribeProductEvent<{ channel: string; args: unknown[] }>('shared:changed', event => { if (event.channel === channel) { revision++; callback(...event.args); } })
+            ? subscribeProductEvent<{ channel: string; args: unknown[] }>('shared:changed', event => {
+              if (event.channel !== channel) return;
+              const before = ++revision;
+              if (event.args.length > 0 || !refreshReaders[method]) { callback(...event.args); return; }
+              // A zero-arg change is an invalidation (snapshot too large to carry): re-read it.
+              const reader = Reflect.get(sharedProductFamily(family, target), refreshReaders[method]!);
+              void (async () => reader())().then(value => {
+                if (!stopped && before === revision && value !== undefined) callback(value);
+              }).catch(() => {});
+            })
             : Reflect.get(target, key)?.(callback);
           if (supported && refreshReaders[method]) {
             stopReconnect = subscribeProductReconnect(async () => {

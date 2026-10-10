@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   MenubarAgentSchema,
+  PRODUCT_EVENT_ARGS_MAX_CHARS,
+  PRODUCT_EVENT_ARGS_MAX_COUNT,
   MenubarThreadsChangedMessageSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
@@ -44,6 +46,15 @@ describe('server runtime contract', () => {
     }
     expect(parse('config:onChanged', [{ theme: 'light' }])).toBe(true);
     expect(parse('arbitrary:native-operation', [])).toBe(false);
+  });
+  it('accepts product-event args at exactly the cap and rejects one more character or argument', () => {
+    const parse = (args: unknown[]) => ServerRuntimeInboundSchema.safeParse({ ...request, operation: 'product-event', channel: 'config:onChanged', args }).success;
+    const sized = (chars: number) => ['x'.repeat(chars - 4)]; // JSON of [""] adds 4 characters
+    expect(JSON.stringify(sized(PRODUCT_EVENT_ARGS_MAX_CHARS)).length).toBe(PRODUCT_EVENT_ARGS_MAX_CHARS);
+    expect(parse(sized(PRODUCT_EVENT_ARGS_MAX_CHARS))).toBe(true);
+    expect(parse(sized(PRODUCT_EVENT_ARGS_MAX_CHARS + 1))).toBe(false);
+    expect(parse(Array(PRODUCT_EVENT_ARGS_MAX_COUNT).fill(1))).toBe(true);
+    expect(parse(Array(PRODUCT_EVENT_ARGS_MAX_COUNT + 1).fill(1))).toBe(false);
   });
   it.each(['library-changed', 'projects-changed'])('accepts only the bounded runtime %s invalidation shape', type => {
     const event = { type, protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION };

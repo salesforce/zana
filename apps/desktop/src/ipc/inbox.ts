@@ -60,7 +60,7 @@ export function registerInboxIpc(): void {
       }
       return ctx.feedNoiseClassifier.classify(projectId ?? null);
     },
-    (): FeedNoiseResult => ({ routineIds: [], candidateCount: 0 })
+    (): FeedNoiseResult => ({ routineIds: [], candidateCount: 0, failed: true })
   );
   const emptyReadState = () => ({ readIds: {}, migratedFromLocalStorage: false });
   ctx.safeHandle(IPC.inbox.getReadState, () => ctx.inboxReadStore.getReadState(), emptyReadState);

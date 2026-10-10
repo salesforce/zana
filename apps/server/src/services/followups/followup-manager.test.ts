@@ -515,3 +515,44 @@ describe('metadata watcher lifetime', () => {
     const m = makeManager(); m.startWatching(); expect(fs.mkdirSync).toHaveBeenCalled(); m.stopWatching(); log.mockRestore();
   });
 });
+
+describe('poll reloads emit only on content change', () => {
+  const store = () => {
+    const records = new Map<string, import('@zana-ai/zcc-domain/product').FollowUp>();
+    const persistence = {
+      load: vi.fn(async () => structuredClone([...records.values()])),
+      save: vi.fn(async (f: import('@zana-ai/zcc-domain/product').FollowUp) => { records.set(f.id, structuredClone(f)); }),
+      remove: vi.fn(async (f: import('@zana-ai/zcc-domain/product').FollowUp) => { records.delete(f.id); }),
+      localProjects: () => [project]
+    };
+    return { records, persistence };
+  };
+  it('emits once for two polls over unchanged persistence', async () => {
+    const m = makeManager({ persistence: store().persistence }); const changed = vi.fn(); m.on('changed', changed);
+    await m.loadAll([project]); await m.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+  it('emits when a record changes externally', async () => {
+    const { records, persistence } = store(); const m = makeManager({ persistence });
+    const f = await m.create({ projectId: project.id, title: 'Q' });
+    const changed = vi.fn(); m.on('changed', changed);
+    await m.loadAll([project]); expect(changed).not.toHaveBeenCalled();
+    records.set(f.id, { ...records.get(f.id)!, title: 'Other' });
+    await m.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(1); expect(m.list()[0].title).toBe('Other');
+  });
+  it('does not re-emit after a mutation when the poll sees identical content', async () => {
+    const m = makeManager({ persistence: store().persistence }); const changed = vi.fn(); m.on('changed', changed);
+    await m.create({ projectId: project.id, title: 'Q' });
+    const afterCreate = changed.mock.calls.length; expect(afterCreate).toBeGreaterThan(0);
+    await m.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(afterCreate);
+  });
+});
+
+it('passes other events through without touching the change fingerprint', async () => {
+  const m = makeManager({ persistence: { load: async () => [], save: async () => {}, remove: async () => {}, localProjects: () => [project] } as never });
+  const other = vi.fn(); const changed = vi.fn(); m.on('other', other); m.on('changed', changed);
+  expect(m.emit('other', 1)).toBe(true); expect(other).toHaveBeenCalledWith(1);
+  await m.loadAll([project]); expect(changed).toHaveBeenCalledTimes(1);
+});

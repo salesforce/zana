@@ -1193,3 +1193,122 @@ describe('SchedulerManager — cron cadence', () => {
     expect(live.status.nextRunAt).toBe('2027-01-01T00:00:00.000Z');
   });
 });
+
+describe('SchedulerManager poll reloads emit only on content change', () => {
+  async function polled() {
+    const project: Project = { id: 'proj-1', name: 'P', path: '/tmp/proj', createdAt: 0, lastActiveAt: 0 };
+    const records = new Map<string, any>();
+    const persistence = {
+      load: vi.fn(async () => structuredClone([...records.values()])),
+      save: vi.fn(async (value: any) => { records.set(value.id, structuredClone(value)); }),
+      remove: vi.fn(async (value: any) => { records.delete(value.id); }),
+      localProjects: vi.fn(() => [project])
+    };
+    const manager = new SchedulerManager();
+    manager.setDeps({
+      persistence, ptys: Object.assign(new FakePtyManager(), { reapDeadSessions: vi.fn() }) as unknown as PtyManager,
+      launchTerminal: vi.fn() as never,
+      store: { listProjects: () => [project], getConfig: () => ({}) } as never
+    } as never);
+    const changed = vi.fn(); manager.on('changed', changed);
+    return { manager, records, changed, project };
+  }
+
+  it('emits once for two reloads of unchanged persistence', async () => {
+    const { manager, changed, project } = await polled();
+    await manager.loadAll([project]); await manager.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(1);
+    manager.stopAll();
+  });
+
+  it('emits when persistence changed externally', async () => {
+    const { manager, records, changed, project } = await polled();
+    const task = await manager.create({ name: 't', projectId: 'proj-1', profile: 'claude', every: '5m', enabled: false });
+    changed.mockClear();
+    await manager.loadAll([project]); expect(changed).not.toHaveBeenCalled();
+    records.set(task.id, { ...structuredClone(records.get(task.id)), name: 'renamed' });
+    await manager.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(manager.list()[0].name).toBe('renamed');
+    manager.stopAll();
+  });
+
+  it('signals polled after every poll tick, even when nothing changed', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, changed } = await polled();
+      const polledEvents = vi.fn(); manager.on('polled', polledEvents);
+      manager.startWatching();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(polledEvents).toHaveBeenCalledTimes(2);
+      expect(changed).toHaveBeenCalledTimes(1);
+      manager.stopWatching(); manager.stopAll();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('logs a throwing polled listener and stops signalling after stopWatching', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager } = await polled();
+      const logger = vi.fn();
+      (manager as unknown as { deps: { logger: unknown } }).deps.logger = logger;
+      const polledEvents = vi.fn(() => { throw new Error('listener boom'); });
+      manager.on('polled', polledEvents);
+      manager.startWatching();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(polledEvents).toHaveBeenCalledTimes(1);
+      expect(logger).toHaveBeenCalledWith('refresh', expect.objectContaining({ message: 'listener boom' }));
+      manager.stopWatching();
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(polledEvents).toHaveBeenCalledTimes(1);
+      manager.stopAll();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('skips a poll tick while a mutation is pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager } = await polled();
+      const polledEvents = vi.fn(); manager.on('polled', polledEvents);
+      const load = vi.spyOn(manager, 'loadAll');
+      (manager as unknown as { pending: number }).pending = 1;
+      manager.startWatching();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(load).not.toHaveBeenCalled();
+      expect(polledEvents).not.toHaveBeenCalled();
+      manager.stopWatching(); manager.stopAll();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not signal polled when watching stopped while the poll was loading', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager } = await polled();
+      const polledEvents = vi.fn(); manager.on('polled', polledEvents);
+      let finish!: () => void;
+      vi.spyOn(manager, 'loadAll').mockReturnValue(new Promise<void>(resolve => { finish = resolve; }));
+      manager.startWatching();
+      await vi.advanceTimersByTimeAsync(15_000);
+      manager.stopWatching();
+      finish(); await vi.advanceTimersByTimeAsync(0);
+      expect(polledEvents).not.toHaveBeenCalled();
+      manager.stopAll();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not re-emit after a mutation when the poll sees identical content', async () => {
+    const { manager, changed, project } = await polled();
+    await manager.create({ name: 't', projectId: 'proj-1', profile: 'claude', every: '5m', enabled: false });
+    const afterCreate = changed.mock.calls.length;
+    expect(afterCreate).toBeGreaterThan(0);
+    await manager.loadAll([project]);
+    expect(changed).toHaveBeenCalledTimes(afterCreate);
+    manager.stopAll();
+  });
+});
+
+it('SchedulerManager passes other events through without touching the change fingerprint', async () => {
+  const manager = new SchedulerManager(); const other = vi.fn(); manager.on('other', other);
+  expect(manager.emit('other', 1)).toBe(true); expect(other).toHaveBeenCalledWith(1);
+});

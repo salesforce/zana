@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 // side-effect-free under vitest.
 vi.mock('electron', () => ({ app: { getPath: () => '/home/test' } }));
 
-const { cronToCadence, loopName } = await import('./claude-loops-store.js');
+const { cronToCadence, loopName, readClaudeLoops } = await import('./claude-loops-store.js');
 
 describe('cronToCadence', () => {
   it('every N minutes', () => {
@@ -66,5 +66,26 @@ describe('loopName', () => {
 
   it('falls back to a default for an empty prompt', () => {
     expect(loopName('')).toBe('Claude loop');
+  });
+});
+
+describe('readClaudeLoops', () => {
+  it('falls back to now for an out-of-range createdAt instead of throwing', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'loops-'));
+    try {
+      mkdirSync(join(dir, '.claude'));
+      writeFileSync(join(dir, '.claude', 'scheduled_tasks.json'), JSON.stringify({ tasks: [
+        { id: 'bad', cron: '*/5 * * * *', prompt: 'check', createdAt: 1e300 },
+        { id: 'ok', cron: '*/5 * * * *', prompt: 'check', createdAt: 0 }
+      ] }));
+      const rows = readClaudeLoops([{ id: 'p', name: 'P', path: dir, createdAt: 0, lastActiveAt: 0 }], '2026-01-01T00:00:00.000Z');
+      expect(rows.map(row => [row.id, row.createdAt])).toEqual([
+        ['claude-loop:bad', '2026-01-01T00:00:00.000Z'],
+        ['claude-loop:ok', '1970-01-01T00:00:00.000Z']
+      ]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

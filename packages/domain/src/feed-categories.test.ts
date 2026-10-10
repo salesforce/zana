@@ -4,6 +4,7 @@ import {
   FEED_CATEGORIES,
   GROUPED_CATEGORY_ORDER,
   classifyEntry,
+  isDemotionCandidate,
   isGroupedEntry,
   isReport,
   AUTO_CLOSE_KEY_PREFIX,
@@ -122,5 +123,20 @@ describe('isReport', () => {
   it('a docs-bearing but unflagged push is not a report (opt-in only, no heuristic)', () => {
     expect(isReport(e({ docs: [{ path: 'report.md' }] }))).toBe(false);
     expect(isReport(e({ docs: [{ path: 'report.md' }], report: true }))).toBe(true);
+  });
+});
+
+describe('isDemotionCandidate (feed-noise gate)', () => {
+  const comment = (over: Partial<InboxEntry> = {}) => ({ id: 'x', projectId: 'p', ts: 1, comments: 'Build finished', ...over }) as InboxEntry;
+  it('admits only comment-only free-form reports', () => {
+    expect(isDemotionCandidate(comment())).toBe(true);
+    expect(isDemotionCandidate(comment({ comments: '  ' }))).toBe(false);
+    expect(isDemotionCandidate(comment({ docs: [{ path: 'log.md' }] }))).toBe(false);
+    expect(isDemotionCandidate(comment({ question: { prompt: 'Ok?' } as never }))).toBe(false);
+    expect(isDemotionCandidate(comment({ questions: [{ prompt: 'Ok?', options: ['Yes'] }] as never }))).toBe(false);
+    expect(isDemotionCandidate(comment({ scheduled: true, notify: 'loud' }))).toBe(false);
+    for (const key of [AUTO_CLOSE_KEY_PREFIX, HEARTBEAT_KEY_PREFIX, GOAL_KEY_PREFIX]) {
+      expect(isDemotionCandidate(comment({ dedupeKey: `${key}x` }))).toBe(false);
+    }
   });
 });

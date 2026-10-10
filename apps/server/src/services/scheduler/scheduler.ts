@@ -1,7 +1,7 @@
 import { LaunchSpawnError } from '../launch/coordinator.js';
 import type { InspectWorkerLaunch } from '../launch/worker-recovery.js';
 import type { MetadataPersistence } from '../projects/project-record-store.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
 import { watch, existsSync, mkdirSync, type FSWatcher } from 'node:fs';
@@ -162,6 +162,23 @@ export class SchedulerManager extends EventEmitter {
   private suppressWatchUntil = 0;
 
   private remotePoll: NodeJS.Timeout | null = null;
+
+  private lastChangedFingerprint: string | null = null;
+
+  private fingerprint(): string {
+    return createHash('sha1').update(JSON.stringify(this.list())).digest('hex');
+  }
+
+  /** Every 'changed' emit records what subscribers were last told, so polls can skip no-op reloads. */
+  override emit(event: string | symbol, ...args: unknown[]): boolean {
+    if (event === 'changed') this.lastChangedFingerprint = this.fingerprint();
+    return super.emit(event, ...args);
+  }
+
+  /** Poll/reload paths only: announce the list when it differs from the last announced snapshot. */
+  private emitChangedIfDifferent() {
+    if (this.fingerprint() !== this.lastChangedFingerprint) this.emit('changed');
+  }
   private serialTail: Promise<unknown> = Promise.resolve();
   private pending = 0;
   private epoch = 0;
@@ -291,7 +308,7 @@ export class SchedulerManager extends EventEmitter {
       }
       if (task.enabled) this.arm(task.id);
     }
-    this.emit('changed');
+    this.emitChangedIfDifferent();
     if (deferred) this.scheduleReload();
   }
 
@@ -517,7 +534,12 @@ export class SchedulerManager extends EventEmitter {
     this.rebindWatchers();
     if (!this.remotePoll && this.deps?.persistence) {
       this.remotePoll = setInterval(() => {
-        if (!this.pending && this.deps) void this.loadAll(this.deps.store.listProjects()).catch(error => this.log('refresh', error));
+        // 'polled' lets owners of merged views (e.g. Claude /loop rows) re-check
+        // state this manager doesn't track, without an unconditional 'changed'.
+        // Never after stopWatching, and a throwing listener is logged, not left unhandled.
+        if (!this.pending && this.deps) void this.loadAll(this.deps.store.listProjects())
+          .then(() => { if (this.remotePoll) this.emit('polled'); })
+          .catch(error => this.log('refresh', error));
       }, 15_000);
       this.remotePoll.unref?.();
     }

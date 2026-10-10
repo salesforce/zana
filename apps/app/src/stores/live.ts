@@ -1257,6 +1257,8 @@ export interface InboxSummaryCacheItem {
   digest: InboxDigest | null;
   /** Epoch ms of the last successful generation, or null if never generated. */
   generatedAt: number | null;
+  /** Epoch ms of the last completed attempt, success or failure. Throttles automatic retries. */
+  attemptedAt: number | null;
   loading: boolean;
   /** 'empty' (nothing to summarize) | 'failed' | null. Drives the card's fallback. */
   error: 'empty' | 'failed' | null;
@@ -1276,6 +1278,7 @@ export const useInboxSummary = create<InboxSummaryState>((set) => ({
       const prev = s.byScope[scopeKey] ?? {
         digest: null,
         generatedAt: null,
+        attemptedAt: null,
         loading: false,
         error: null,
         signature: ''
@@ -1320,6 +1323,7 @@ export async function refreshInboxSummary(
       setItem(scopeKey, {
         digest: res.digest,
         generatedAt: Date.now(),
+        attemptedAt: Date.now(),
         loading: false,
         error: null,
         signature
@@ -1327,6 +1331,7 @@ export async function refreshInboxSummary(
     } else {
       setItem(scopeKey, {
         loading: false,
+        attemptedAt: Date.now(),
         error: res.reason === 'empty' ? 'empty' : 'failed',
         // Stamp the signature even on a soft failure so we don't hammer the model
         // on every render for an inbox that simply can't be summarized yet.
@@ -1334,9 +1339,24 @@ export async function refreshInboxSummary(
       });
     }
   } catch {
-    setItem(scopeKey, { loading: false, error: 'failed', signature });
+    setItem(scopeKey, { loading: false, attemptedAt: Date.now(), error: 'failed', signature });
   }
 }
+
+/** Whether a cached item already answers this content signature. A soft failure
+ * counts as an answer, except that a 'failed' attempt goes stale after the floor
+ * so a transient model error is retried on a later view. */
+function answersSignature(
+  item: { signature: string; generatedAt: number | null; attemptedAt: number | null; error?: string | null } | undefined,
+  signature: string
+): boolean {
+  if (!item || item.signature !== signature || (item.generatedAt === null && item.attemptedAt === null)) return false;
+  return !(item.error === 'failed' && item.attemptedAt !== null && Date.now() - item.attemptedAt >= INBOX_SUMMARY_AUTO_MIN_MS);
+}
+const withinAutoFloor = (item: { generatedAt: number | null; attemptedAt: number | null } | undefined) => {
+  const last = Math.max(item?.generatedAt ?? 0, item?.attemptedAt ?? 0);
+  return last > 0 && Date.now() - last < INBOX_SUMMARY_AUTO_MIN_MS;
+};
 
 /**
  * View-driven, throttled auto-refresh of a scope's AI summary. Called by the
@@ -1351,11 +1371,11 @@ export function maybeRefreshInboxSummary(projectId: string | null, entries: Inbo
   const item = useInboxSummary.getState().byScope[scopeKey];
   if (item?.loading) return;
   const signature = inboxContentSignature(entries);
-  const unchanged = item && item.signature === signature && item.generatedAt !== null;
-  if (unchanged) return; // inbox hasn't changed since last (success OR soft-fail)
-  // Throttle automatic regens: if we generated recently, wait — a manual refresh
-  // bypasses this by calling refreshInboxSummary directly.
-  if (item?.generatedAt && Date.now() - item.generatedAt < INBOX_SUMMARY_AUTO_MIN_MS) return;
+  if (answersSignature(item, signature)) return; // inbox hasn't changed since last (success OR soft-fail)
+  // Throttle automatic regens since the latest attempt — a manual refresh
+  // bypasses this by calling refreshInboxSummary directly. No background timer:
+  // a change inside the window is picked up by the next view after it.
+  if (withinAutoFloor(item)) return;
   void refreshInboxSummary(projectId, signature);
 }
 
@@ -1372,7 +1392,11 @@ export interface FeedNoiseCacheItem {
   /** Ids to demote into the folded "Routine" section. */
   routineIds: Set<string>;
   generatedAt: number | null;
+  /** Epoch ms of the last completed attempt, success or failure. */
+  attemptedAt: number | null;
   loading: boolean;
+  /** 'failed' when the last classify call failed; retried once the auto floor has passed. */
+  error?: 'failed' | null;
   /** Inbox-content signature the cached verdict reflects. */
   signature: string;
 }
@@ -1389,6 +1413,7 @@ export const useFeedNoise = create<FeedNoiseState>((set) => ({
       const prev = s.byScope[scopeKey] ?? {
         routineIds: new Set<string>(),
         generatedAt: null,
+        attemptedAt: null,
         loading: false,
         signature: ''
       };
@@ -1407,17 +1432,26 @@ export async function refreshFeedNoise(
   const scopeKey = scopeKeyFor(projectId);
   const { setItem } = useFeedNoise.getState();
   setItem(scopeKey, { loading: true });
+  // A failed call keeps the previous overlay (empty at first, so everything stays
+  // inline) instead of regrouping the list; it is retried after the auto floor.
+  const keepPrevious = () => setItem(scopeKey, { attemptedAt: Date.now(), loading: false, error: 'failed', signature });
   try {
     const res = await product.inbox.classifyNoise(projectId);
+    if (res.failed) { keepPrevious(); return; }
+    const previous = useFeedNoise.getState().byScope[scopeKey]?.routineIds;
+    const next = new Set(res.routineIds);
+    // Keep the previous Set instance when membership is unchanged so the list does not regroup.
+    const same = previous && previous.size === next.size && [...next].every((id) => previous.has(id));
     setItem(scopeKey, {
-      routineIds: new Set(res.routineIds),
+      routineIds: same ? previous : next,
       generatedAt: Date.now(),
+      attemptedAt: Date.now(),
       loading: false,
+      error: null,
       signature
     });
   } catch {
-    // Degrade to "nothing demoted" — the overlay is advisory, never load-bearing.
-    setItem(scopeKey, { routineIds: new Set(), loading: false, signature });
+    keepPrevious();
   }
 }
 
@@ -1438,9 +1472,8 @@ export function maybeRefreshFeedNoise(
   const item = useFeedNoise.getState().byScope[scopeKey];
   if (item?.loading) return;
   const signature = inboxContentSignature(entries);
-  const unchanged = item && item.signature === signature && item.generatedAt !== null;
-  if (unchanged) return;
-  if (item?.generatedAt && Date.now() - item.generatedAt < INBOX_SUMMARY_AUTO_MIN_MS) return;
+  if (answersSignature(item, signature)) return;
+  if (withinAutoFloor(item)) return;
   void refreshFeedNoise(projectId, signature);
 }
 

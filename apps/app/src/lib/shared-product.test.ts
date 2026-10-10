@@ -83,3 +83,34 @@ it.each(['get', 'reload'] as const)('returns explicit unavailability for schedul
   const { product } = await import('./product-client.js');
   expect(await product.scheduler[method]('task')).toMatchObject({ ok: false, code: 'unavailable', message: expect.stringContaining('owner') });
 });
+it('treats a zero-arg change as an invalidation, re-reads once, and keeps state if the read fails', async () => {
+  api.mockResolvedValueOnce({ sharedProductServices: true });
+  const { sharedProductFamily } = await import('./shared-product.js');
+  const callback = vi.fn(); reconnect.mockReturnValue(vi.fn());
+  (sharedProductFamily('followups') as any).onChanged(callback);
+  await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
+  const handler = subscribe.mock.calls[0]![1];
+  api.mockResolvedValueOnce({ ok: true, value: ['f1'] }); handler({ channel: 'followups:onChanged', args: [] });
+  await vi.waitFor(() => expect(callback).toHaveBeenCalledExactlyOnceWith(['f1']));
+  expect(api).toHaveBeenLastCalledWith('/shared-product', expect.objectContaining({ body: JSON.stringify({ method: 'followups.list', args: [] }) }));
+  api.mockRejectedValueOnce(new Error('offline')); handler({ channel: 'followups:onChanged', args: [] });
+  await new Promise(r => setTimeout(r, 10));
+  expect(callback).toHaveBeenCalledOnce();
+  api.mockResolvedValueOnce({ ok: true, value: undefined }); handler({ channel: 'followups:onChanged', args: [] });
+  await new Promise(r => setTimeout(r, 10));
+  expect(callback).toHaveBeenCalledOnce();
+});
+it('fences an invalidation read behind a newer event and passes zero args through without a reader', async () => {
+  api.mockResolvedValue({ sharedProductServices: true });
+  const { sharedProductFamily } = await import('./shared-product.js');
+  const callback = vi.fn(); reconnect.mockReturnValue(vi.fn());
+  (sharedProductFamily('goals') as any).onChanged(callback);
+  await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
+  const handler = subscribe.mock.calls[0]![1];
+  let resolve!: (value: unknown) => void;
+  api.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+  handler({ channel: 'goals:onChanged', args: [] }); await Promise.resolve();
+  handler({ channel: 'goals:onChanged', args: [['new']] });
+  resolve({ ok: true, value: ['stale'] }); await new Promise(r => setTimeout(r, 10));
+  expect(callback.mock.calls).toEqual([[['new']]]);
+});

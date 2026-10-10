@@ -160,7 +160,10 @@ function effectiveCategory(
 ): FeedCategoryId {
   let category = classifyEntry(e);
   if (isReport(e)) category = 'report';
-  if (category === 'report' && routineIds?.has(e.id)) category = 'routine';
+  // An overlay id is a cached verdict: a coalesced re-push can since have added
+  // docs or questions, which must stay loud whatever the verdict said.
+  const gainedSignal = (e.docs?.length ?? 0) > 0 || !!e.question || (e.questions?.length ?? 0) > 0;
+  if (category === 'report' && routineIds?.has(e.id) && !gainedSignal) category = 'routine';
   return category;
 }
 

@@ -446,6 +446,17 @@ describe('groupByBucketFlat (TIME view)', () => {
     const groups = groupByBucketFlat(entries, NOW, new Set(['flagged']));
     expect(groups).toEqual([]);
   });
+
+  it('keeps a cached overlay id loud once its entry gained docs or questions', () => {
+    // A coalesced re-push keeps the id but adds docs/questions after the verdict was cached.
+    const entries: InboxEntry[] = [
+      entry({ id: 'docs', projectId: 'A', ts: NOW - 1000, docs: [{ path: 'build-log.md' }] }),
+      entry({ id: 'asks', projectId: 'A', ts: NOW - 2000, report: true, questions: [{ prompt: 'Ship it?', options: ['Yes', 'No'] }] as never }),
+      entry({ id: 'plain', projectId: 'A', ts: NOW - 3000 })
+    ];
+    const groups = groupByBucketFlat(entries, NOW, new Set(['docs', 'asks', 'plain']));
+    expect(groups[0][1].map((e) => e.id)).toEqual(['docs', 'asks']);
+  });
 });
 
 describe('flattenVisibleFlat', () => {

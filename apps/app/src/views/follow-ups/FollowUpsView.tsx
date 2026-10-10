@@ -38,6 +38,7 @@ import { answerFollowUp, useData, useFollowUps, useUi } from '@/store';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '@/lib/launchProfile';
 import { buildFollowUpPrompt, followUpAgentTitle } from '@/lib/followUpPrompt';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { useNowTick } from '@/hooks/useNowTick';
 
 /** Status → pill label / class suffix. Reuses the scheduler pill palette. */
 const STATUS_META: Record<FollowUpStatus, { label: string; cls: string }> = {
@@ -83,6 +84,8 @@ const ORIGIN_LABEL: Record<FollowUp['origin']['source'], string> = {
  * question/decision that a human (or the filing agent) resolves or dismisses.
  */
 export function FollowUpsView({ projectId }: { projectId?: string } = {}) {
+  // Keeps the "Nm ago" labels current; the list itself only re-renders on real changes.
+  useNowTick();
   const scoped = Boolean(projectId);
   const followups = useFollowUps((s) => s.followups);
   const loading = useFollowUps((s) => s.loading);

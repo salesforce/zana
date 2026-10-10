@@ -1,7 +1,7 @@
 import { LaunchSpawnError } from '../launch/coordinator.js';
 import type { InspectWorkerLaunch } from '../launch/worker-recovery.js';
 import type { MetadataPersistence } from '../projects/project-record-store.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { watch, existsSync, mkdirSync, type FSWatcher } from 'node:fs';
 import type {
@@ -182,6 +182,23 @@ export class GoalManager extends EventEmitter {
   private watchDebounce: NodeJS.Timeout | null = null;
   private suppressWatchUntil = 0;
   private remotePoll: NodeJS.Timeout | null = null;
+
+  private lastChangedFingerprint: string | null = null;
+
+  private fingerprint(): string {
+    return createHash('sha1').update(JSON.stringify(this.list())).digest('hex');
+  }
+
+  /** Every 'changed' emit records what subscribers were last told, so polls can skip no-op reloads. */
+  override emit(event: string | symbol, ...args: unknown[]): boolean {
+    if (event === 'changed') this.lastChangedFingerprint = this.fingerprint();
+    return super.emit(event, ...args);
+  }
+
+  /** Poll/reload paths only: announce the list when it differs from the last announced snapshot. */
+  private emitChangedIfDifferent() {
+    if (this.fingerprint() !== this.lastChangedFingerprint) this.emit('changed');
+  }
   private serialTail: Promise<unknown> = Promise.resolve();
   private pending = 0;
   private epoch = 0;
@@ -260,7 +277,7 @@ export class GoalManager extends EventEmitter {
         try { await this.arm(goal.id); } catch (error) { this.log(`resume ${goal.id}`, error); }
       }
     }
-    this.emit('changed');
+    this.emitChangedIfDifferent();
   }
 
   private async createNow(input: GoalCreateInput): Promise<Goal> {

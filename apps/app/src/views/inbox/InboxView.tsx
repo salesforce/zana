@@ -45,6 +45,9 @@ export function InboxView() {
     () => (scopeProjectId ? allEntries.filter((e) => e.projectId === scopeProjectId) : allEntries),
     [allEntries, scopeProjectId]
   );
+  // Same predicate the sidebar's effect uses to drop a stale selection, computed during render so an
+  // out-of-scope or deleted entry never paints before that effect clears the store.
+  const selectionInScope = !!selectedId && entries.some((entry) => entry.id === selectedId);
   const detailOpen = showingSaved
     ? savedRecords.some((record) => record.id === savedId && (!scopeProjectId || record.projectId === scopeProjectId))
     : entries.some((entry) => entry.id === selectedId) || overviewOpen;
@@ -74,7 +77,7 @@ export function InboxView() {
     <section ref={root} className="inbox-view panel-body--full" data-compact={compact} data-detail-open={detailOpen}>
       <InboxPane mobileHeaderEnabled={active && !detailOpen} onShowOverview={compact ? () => { select(null); setOverviewOpen(true); } : undefined} />
       <div className="inbox-view-detail">
-        {compact && (showingSaved || !selectedId) && (
+        {compact && (showingSaved || !selectionInScope) && (
           <button type="button" className="inbox-mobile-back" onClick={backToList}>
             <ArrowLeft size={16} aria-hidden />
             {showingSaved ? 'Saved reports' : 'Inbox'}
@@ -82,7 +85,7 @@ export function InboxView() {
         )}
         {showingSaved ? (
           <SavedDetail visible={detailVisible} />
-        ) : selectedId ? (
+        ) : selectionInScope ? (
           <InboxDetail visible={detailVisible} onBack={compact ? backToList : undefined} />
         ) : (
           <InboxOverview scopeProjectId={scopeProjectId} entries={entries} />

@@ -131,3 +131,19 @@ it('does not open stale or out-of-scope feed or saved selections', () => {
   act(() => savedSelection.getState().selectSaved('s'));
   expect(screen.getByTestId('saved-detail').getAttribute('data-visible')).toBe('false');
 });
+
+it('renders the overview on the first render when the selection is out of scope or missing', () => {
+  layout.compact = false; layout.scope = 'p';
+  selection.setState({ selectedEntryId: 'b' });
+  const first = render(<InboxView />);
+  expect(screen.queryByTestId('feed-detail')).toBeNull();
+  expect(screen.getByTestId('overview')).toBeTruthy();
+  first.unmount();
+  selection.setState({ selectedEntryId: 'gone' });
+  render(<InboxView />);
+  expect(screen.queryByTestId('feed-detail')).toBeNull();
+  cleanup();
+  selection.setState({ selectedEntryId: 'a' });
+  render(<InboxView />);
+  expect(screen.getByTestId('feed-detail')).toBeTruthy();
+});

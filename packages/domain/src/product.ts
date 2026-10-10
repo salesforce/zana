@@ -784,6 +784,9 @@ export interface FeedNoiseResult {
   routineIds: string[];
   /** How many entries were considered (comment-only reports after the gate). */
   candidateCount: number;
+  /** Set when the classify call itself failed (not "nothing is routine"), so the
+   *  renderer can keep its previous overlay instead of regrouping the list. */
+  failed?: true;
 }
 
 /** A frozen snapshot of an inbox doc, captured at save time. */

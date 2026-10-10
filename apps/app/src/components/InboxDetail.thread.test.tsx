@@ -29,10 +29,12 @@ vi.mock('./MarkdownContent.js', () => ({ MarkdownContent: ({ text }: { text: str
 vi.mock('../lib/renderReportHtml.js', () => ({ renderReportHtml: vi.fn() }));
 vi.mock('../lib/executionInboxBlockerState.js', () => ({ useExecutionInboxBlockerState: () => 'actionable' }));
 import { InboxDetail } from './InboxDetail.js';
+import { inboxThreadCache } from '../hooks/useInboxThread.js';
 
 function Location() { return <output data-testid="location">{useLocation().pathname}</output>; }
 const view = () => <MemoryRouter><InboxDetail visible /><Location /></MemoryRouter>;
 beforeEach(() => {
+  inboxThreadCache.clear();
   vi.resetAllMocks();
   h.compact = false; h.terminals = [];
   h.entry = { id: 'report', ts: 1, projectId: 'p', sessionId: 'thread', subject: 'Report', comments: 'Ready for your reply.' };

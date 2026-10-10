@@ -53,8 +53,9 @@ it('repairs a live sequence gap by reading a snapshot without replaying input', 
     .mockResolvedValue({ text: 'abc', startOffset: 0, endOffset: 3 });
   const view = display(), replay = createTerminalReplay(read, view);
   await replay.replay(); replay.receive('c', { startOffset: 2, endOffset: 3 });
-  await vi.waitFor(() => expect(view.reset).toHaveBeenCalledOnce());
-  expect(view.write.mock.calls).toEqual([['a'], ['abc']]); replay.dispose();
+  await vi.waitFor(() => expect(view.write).toHaveBeenCalledTimes(2));
+  expect(view.reset).not.toHaveBeenCalled();
+  expect(view.write.mock.calls).toEqual([['a'], ['bc']]); replay.dispose();
 });
 it('marks a real gap if snapshot recovery fails and validates untrusted cursors', async () => {
   const read = vi.fn().mockResolvedValueOnce({ text: 'a', startOffset: 0, endOffset: 1 }).mockRejectedValue(new Error('offline'));
@@ -79,4 +80,35 @@ it('bounds pending event count and bytes while preserving cursor overlap', async
   bounded.receive('', { startOffset: 4100, endOffset: 4100 });
   resolve({ text: '', startOffset: 4100, endOffset: 4100 }); await second;
   expect(view.write).toHaveBeenCalledTimes(2); bounded.dispose();
+});
+
+const snap = (text: string, startOffset: number) => ({ text, startOffset, endOffset: startOffset + text.length });
+it('refreshes without resetting when nothing was missed', async () => {
+  const read = vi.fn().mockResolvedValueOnce(snap('abc', 0)).mockResolvedValue(snap('abc', 0));
+  const view = display(), replay = createTerminalReplay(read, view);
+  await replay.replay(); view.follow.mockClear();
+  replay.receive('d', { startOffset: 3, endOffset: 4 });
+  await replay.replay(true);
+  expect(view.reset).not.toHaveBeenCalled(); expect(view.follow).not.toHaveBeenCalled();
+  expect(view.write.mock.calls).toEqual([['abc'], ['d']]); replay.dispose();
+});
+it('appends only the missed tail when the window still covers the offset', async () => {
+  const read = vi.fn().mockResolvedValueOnce(snap('abc', 0)).mockResolvedValue(snap('bcdef', 1));
+  const view = display(), replay = createTerminalReplay(read, view);
+  await replay.replay(); await replay.replay(true);
+  expect(view.reset).not.toHaveBeenCalled(); expect(view.write.mock.calls).toEqual([['abc'], ['def']]); replay.dispose();
+});
+it('resets, captures the viewport and follows with it when the window no longer covers the offset', async () => {
+  const read = vi.fn().mockResolvedValueOnce(snap('abc', 0)).mockResolvedValue(snap('xyz', 10));
+  const viewport = { following: false, distanceFromBottom: 4 };
+  const view = { ...display(), capture: vi.fn(() => viewport) }, replay = createTerminalReplay(read, view);
+  await replay.replay(); await replay.replay(true);
+  expect(view.capture).toHaveBeenCalledOnce(); expect(view.reset).toHaveBeenCalledOnce();
+  expect(view.write).toHaveBeenLastCalledWith('xyz'); expect(view.follow).toHaveBeenLastCalledWith(viewport); replay.dispose();
+});
+it('resets for a legacy string snapshot', async () => {
+  const read = vi.fn().mockResolvedValueOnce(snap('abc', 0)).mockResolvedValue('legacy');
+  const view = display(), replay = createTerminalReplay(read, view);
+  await replay.replay(); await replay.replay(true);
+  expect(view.reset).toHaveBeenCalledOnce(); expect(view.follow).toHaveBeenLastCalledWith(undefined); replay.dispose();
 });

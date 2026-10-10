@@ -8,7 +8,7 @@ Optional LLM demotion (`builtin:feed-noise-classifier`) background-demotes ambig
 
 ### Invariants
 
-1. Advisory overlay, never mutation — `classifyEntry` stays pure and never returns `routine`. LLM verdict is non-persisted `ReadonlySet<string>` of entry ids passed as 3rd arg to `groupByBucketThenProject(entries, now, routineIds)`, which re-buckets id `report`→`routine` only (any other category left untouched). Missing/failed verdict just leaves everything inline — classifier can only ever demote a report, never promote or hide anything else.
+1. Advisory overlay, never mutation — `classifyEntry` stays pure and never returns `routine`. LLM verdict is non-persisted `ReadonlySet<string>` of entry ids passed as 3rd arg to `groupByBucketThenProject(entries, now, routineIds)`, which re-buckets id `report`→`routine` only (any other category left untouched). Missing verdict leaves everything inline; a failed call (`failed: true`) keeps the renderer's previous overlay (empty at first) so the list doesn't regroup — classifier can only ever demote a report, never promote or hide anything else.
 
 2. Deterministic gate precedes LLM — `isDemotionCandidate` (main-side) only ever feeds micro-call comment-only reports (rejects `question`, docs-bearing, `auto-close:`/`heartbeat:`/`goal:` dedupeKeys, and `scheduled`). Model physically cannot see docs/idea/question/goal entry to demote it.
 

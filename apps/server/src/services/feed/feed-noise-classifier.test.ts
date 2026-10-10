@@ -115,6 +115,13 @@ describe('FeedNoiseClassifier.classify', () => {
     const res = await svc.classify(null);
     expect(res.routineIds).toEqual([]);
     expect(res.candidateCount).toBe(1);
+    // Marked as a failure so the renderer keeps its previous overlay.
+    expect(res.failed).toBe(true);
+  });
+
+  it('does not mark a successful "nothing is routine" verdict as failed', async () => {
+    const svc = new FeedNoiseClassifier({ readEntries: async () => [e({ id: 'r1' })], runClassify: async () => okResult('{"routine":[]}') });
+    expect((await svc.classify(null)).failed).toBeUndefined();
   });
 
   it('scopes the dedupeKey by project', async () => {

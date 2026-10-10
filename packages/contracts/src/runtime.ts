@@ -15,6 +15,16 @@ import { ProjectHistoryRequestSchema } from './project-history.js';
  * Bump when any desktop-to-server utility-process message changes shape or
  * meaning. Both endpoints reject a mismatched version before dispatching it.
  */
+/** Product-event snapshot limits; measured as JSON.stringify(args).length by both the schema and the main forwarder. */
+export const PRODUCT_EVENT_ARGS_MAX_CHARS = 128 * 1024;
+export const PRODUCT_EVENT_ARGS_MAX_COUNT = 8;
+/** Latest-wins snapshot channels: the full list/config rides in args, so a newer event supersedes an older one
+ * and an oversized one can be replaced by an empty-args invalidation that readers answer with a re-read.
+ * Id-carrying (projectSettings, feed) and stream (terminals:*) channels are deliberately absent. */
+export const PRODUCT_EVENT_SNAPSHOT_CHANNELS: ReadonlySet<string> = new Set([
+  'config:onChanged', 'scheduler:onChanged', 'scheduler:groups:onChanged', 'scheduler:onTemplatesChanged', 'goals:onChanged',
+  'followups:onChanged', 'personas:onChanged', 'teams:onChanged', 'quickPrompts:onChanged', 'extensions:onChanged'
+]);
 export const SERVER_RUNTIME_PROTOCOL_VERSION = 13;
 const ServerRuntimeProtocolVersionSchema = z.literal(SERVER_RUNTIME_PROTOCOL_VERSION);
 const RequestIdSchema = z.string().uuid();
@@ -150,7 +160,7 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('product-event'),
     channel: z.string().refine(value => value === 'product:reset' || value === 'library:changed' || [...SHARED_PRODUCT_EVENTS.values()].includes(value)),
-    args: z.array(z.unknown()).max(8).refine(value => JSON.stringify(value).length <= 128 * 1024)
+    args: z.array(z.unknown()).max(PRODUCT_EVENT_ARGS_MAX_COUNT).refine(value => JSON.stringify(value).length <= PRODUCT_EVENT_ARGS_MAX_CHARS)
   }).strict().refine(value => !['product:reset', 'library:changed'].includes(value.channel) || value.args.length === 0, 'Invalidations cannot contain snapshots'),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('project-settings-get'),

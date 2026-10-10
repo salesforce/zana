@@ -251,6 +251,21 @@ export function isGroupedEntry(
   return FEED_CATEGORIES[classifyEntry(entry)].grouped;
 }
 
+/**
+ * DETERMINISTIC gate for the optional feed-noise classifier: an entry may be
+ * demoted to `routine` only while it is a comment-only free-form report, i.e.
+ * exactly what {@link classifyEntry} maps to `report` AND it carries no docs or
+ * questions. Main applies it before the model sees an entry; the layout
+ * (`inbox-grouping.ts`) separately keeps a cached overlay id loud once its entry
+ * gains docs or questions (a coalesced re-push). Pure.
+ */
+export function isDemotionCandidate(entry: InboxEntry): boolean {
+  if (classifyEntry(entry) !== 'report') return false; // pinned or folded-by-rule
+  if ((entry.docs?.length ?? 0) > 0) return false; // a report WITH docs stays loud
+  if (entry.scheduled) return false; // scheduled → its own tier, not routine
+  return (entry.comments ?? '').trim().length > 0; // must have a gist to judge
+}
+
 /** Is this entry an auto-close-idle breadcrumb? Kept for callers that need the
  *  specific check (e.g. feed-service milestone mapping). */
 export function isAutoCloseEntry(entry: Pick<InboxEntry, 'dedupeKey'>): boolean {

@@ -37,3 +37,12 @@ it('bounds aggregate pending history and favors visible sessions', () => {
   all.forEach(queue => queue.write('x'.repeat(256 * 1024)));
   all[0].setVisible(true); frame(); expect(writes[0]).toContain('omitted');
 });
+it('runs idle callbacks only once queued output has been parsed', () => {
+  let done!: () => void; const idle = vi.fn();
+  const queue = make((_text, callback) => { done = callback; });
+  queue.whenIdle(idle); expect(idle).toHaveBeenCalledTimes(1);
+  queue.write('abc'); queue.whenIdle(idle); expect(idle).toHaveBeenCalledTimes(1);
+  frame(); expect(idle).toHaveBeenCalledTimes(1);
+  done(); expect(idle).toHaveBeenCalledTimes(2);
+  queue.write('def'); queue.whenIdle(idle); queue.dispose(); queue.whenIdle(idle); expect(idle).toHaveBeenCalledTimes(2);
+});

@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { machineTerminals } from './machine-terminals.js';
+import { machineTerminals, streamsOverProductSocket } from './machine-terminals.js';
 const { fetch } = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock('./fetch-with-app-surface.js', () => ({ fetchWithAppSurface: fetch }));
 function backend(id: string) {
@@ -43,4 +43,18 @@ it('reads a cursor snapshot only from the recorded host, preserving legacy owner
   expect(await api.backlogSnapshot!('remote')).toEqual({ text: 'x', startOffset: 7, endOffset: 8 });
   expect(await api.backlogSnapshot!('local')).toBe('local');
   expect(host.backlog).not.toHaveBeenCalled();
+});
+
+it('reports whether a session streams over the product socket', async () => {
+  const owner = Object.freeze(backend('local')), host = backend('remote'), api = machineTerminals(owner as any, host as any);
+  await api.create({ projectId: 'p1', profile: 'shell', hostId: 'h2' }); await api.create({ projectId: 'p1', profile: 'codex' });
+  vi.stubGlobal('window', { cc: {} });
+  try {
+    expect(await streamsOverProductSocket(api, 'remote')).toBe(true);
+    expect(await streamsOverProductSocket(api, 'local')).toBe(false);
+    fetch.mockResolvedValue({ ok: false, status: 503 });
+    expect(await streamsOverProductSocket(api, 'unknown')).toBe(true);
+    expect(await streamsOverProductSocket(owner as any, 'local')).toBe(true);
+  } finally { vi.unstubAllGlobals(); }
+  expect(await streamsOverProductSocket(api, 'local')).toBe(true);
 });
