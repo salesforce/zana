@@ -26,7 +26,7 @@ describe('agent script file tree', () => {
   it('lists ancestor folders and breadcrumb segments', () => {
     expect(ancestorFolderPaths('force-app/bots/QC.agent')).toEqual(['force-app', 'force-app/bots']);
     expect(breadcrumbSegments('force-app/bots/QC.agent')).toEqual(['force-app', 'bots', 'QC.agent']);
-    expect(breadcrumbSegments(null, 'Support bot')).toEqual(['Support bot']);
+    expect(breadcrumbSegments(null)).toEqual([]);
   });
 
   it('filters to matching files and keeps parent folders', () => {

@@ -96,6 +96,7 @@ function respond(method: string, args?: Record<string, unknown>) {
       apiVersion: "62.0",
     };
   if (method === "orgs") return { ok: true, orgs: [org], selectedAlias: "dev" };
+  if (method === "apex.anonymous.target") return { ok: true, org: { alias: org.alias, kind: org.kind, orgId: org.orgId } };
   if (method === "operations.list")
     return { ok: true, operations: [operation] };
   if (method === "records.get")
@@ -252,16 +253,68 @@ describe("public Salesforce panels", () => {
     } finally { HTMLElement.prototype.scrollIntoView = original; }
   });
 
-  it("hands off anonymous Apex with the exact org and code without executing", async () => {
+  it("runs anonymous Apex from the panel after the operator approves the org and code", async () => {
+    call.mockImplementation(async (method, args) =>
+      method === "apex.anonymous.target"
+        ? { ok: true, org: { alias: "dev", kind: "sandbox", orgId: org.orgId } }
+        : method === "apex.anonymous.run"
+          ? { ok: true, operation: { ...operation, kind: "apex.anonymous" } }
+          : respond(method, args));
     mount(<ApexPanel {...props} threadId={undefined} onAddToPrompt={addQuote} />);
     fireEvent.click(screen.getByRole('tab', { name: 'Anonymous Apex' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Anonymous Apex' }), { target: { value: 'System.debug(42);' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Continue in a thread' }));
-    expect(addQuote).toHaveBeenCalledOnce();
-    const draft = addQuote.mock.calls[0][0];
-    expect(draft).toContain('do not execute automatically');
-    expect(JSON.parse(draft.slice(draft.indexOf('{')))).toMatchObject({ operation: 'apex.anonymous', orgAlias: 'dev', body: 'System.debug(42);' });
+    fireEvent.click(screen.getByRole('button', { name: 'Review and run' }));
+    const review = await screen.findByRole('group', { name: 'Approve anonymous Apex' });
+    expect(within(review).getByLabelText('Code to run').textContent).toBe('System.debug(42);');
+    expect(within(review).queryByRole('alert')).toBeNull();
+    expect(call.mock.calls.some(([method]) => method === 'apex.anonymous.run')).toBe(false);
+    fireEvent.click(within(review).getByRole('button', { name: 'Run on dev' }));
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Approve anonymous Apex' })).toBeNull());
+    expect(call).toHaveBeenCalledWith('apex.anonymous.run', expect.objectContaining({ body: 'System.debug(42);', approvedOrgId: org.orgId }));
+    expect(addQuote).not.toHaveBeenCalled();
     expect(call.mock.calls.some(([method]) => method === 'operations.start')).toBe(false);
+  });
+
+  it("warns on production, cancels, and invalidates the approval when the code changes", async () => {
+    call.mockImplementation(async (method, args) =>
+      method === "apex.anonymous.target"
+        ? { ok: true, org: { alias: "prod", kind: "production", orgId: "00D000000000009" } }
+        : respond(method, args));
+    mount(<ApexPanel {...props} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Anonymous Apex' }));
+    const editor = screen.getByRole('textbox', { name: 'Anonymous Apex' });
+    fireEvent.change(editor, { target: { value: 'delete [SELECT Id FROM Account];' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review and run' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/production org/);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('group', { name: 'Approve anonymous Apex' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Review and run' }));
+    await screen.findByRole('button', { name: 'Run on prod' });
+    fireEvent.change(editor, { target: { value: 'System.debug(1);' } });
+    expect(screen.queryByRole('button', { name: 'Run on prod' })).toBeNull();
+    expect(call.mock.calls.some(([method]) => method === 'apex.anonymous.run')).toBe(false);
+  });
+
+  it("flags an unknown org and surfaces target and run failures", async () => {
+    let target: unknown = { ok: false, error: "No target org" };
+    call.mockImplementation(async (method, args) =>
+      method === "apex.anonymous.target" ? target
+        : method === "apex.anonymous.run" ? { ok: false, error: "The target org changed since you approved this run. Review it again." }
+          : respond(method, args));
+    mount(<ApexPanel {...props} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Anonymous Apex' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Anonymous Apex' }), { target: { value: 'System.debug(42);' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review and run' }));
+    await screen.findByText(/No target org/);
+    target = { ok: true };
+    fireEvent.click(screen.getByRole('button', { name: 'Review and run' }));
+    await screen.findByText(/Select a connected org/);
+    target = { ok: true, org: { alias: "mystery", kind: "unknown", orgId: "00D000000000008" } };
+    fireEvent.click(screen.getByRole('button', { name: 'Review and run' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/type is unknown/);
+    fireEvent.click(screen.getByRole('button', { name: 'Run on mystery' }));
+    await screen.findByText(/target org changed/);
+    expect(screen.getByRole('group', { name: 'Approve anonymous Apex' })).toBeTruthy();
   });
 
   it("carries selected metadata and tests into deployment and retrieval review", async () => {
@@ -277,13 +330,6 @@ describe("public Salesforce panels", () => {
       { operation: 'retrieve.start', orgAlias: 'dev', components: ['ApexClass:One'], tests: ['OneTest', 'TwoTest'] },
     ]);
     expect(call.mock.calls.some(([method]) => method === 'operations.start')).toBe(false);
-  });
-
-  it("disables standalone writes when no thread handoff is available", async () => {
-    mount(<ApexPanel {...props} threadId={undefined} />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Anonymous Apex' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Anonymous Apex' }), { target: { value: 'System.debug(42);' } });
-    expect(screen.getByRole('button', { name: 'Continue in a thread' }).hasAttribute('disabled')).toBe(true);
   });
 
   it("refreshes an empty debug log list without leaving the panel", async () => {
@@ -668,7 +714,7 @@ describe("public Salesforce panels", () => {
     expect(call.mock.calls.filter(([method]) => method === 'operations.report')).toHaveLength(2);
   });
 
-  it("supports keyboard navigation, targeted tests, logs, LWC and anonymous drafts", async () => {
+  it("supports keyboard navigation, targeted tests, logs, LWC and anonymous review", async () => {
     mount(<ApexPanel {...props} onAddToPrompt={addQuote} />);
     const testsTab = screen.getByRole("tab", { name: "Tests" });
     fireEvent.keyDown(testsTab, { key: "ArrowRight" });
@@ -689,13 +735,7 @@ describe("public Salesforce panels", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Review and run/ }));
     await waitFor(() =>
-      expect(call).toHaveBeenCalledWith(
-        "operations.start",
-        expect.objectContaining({
-          kind: "apex.anonymous",
-          body: "System.debug(1);",
-        }),
-      ),
+      expect(call).toHaveBeenCalledWith("apex.anonymous.target", expect.anything()),
     );
     fireEvent.keyDown(screen.getByRole("tab", { name: "Anonymous Apex" }), {
       key: "Home",

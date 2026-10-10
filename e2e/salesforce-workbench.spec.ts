@@ -18,7 +18,9 @@ const test = base.extend({
         return;
       }
       let data: unknown = {};
-      if (url.pathname.endsWith("/sobjects"))
+      if (url.pathname.endsWith('/tooling/executeAnonymous/') || url.pathname.endsWith('/tooling/executeAnonymous'))
+        data = { compiled: true, success: true, line: -1, column: -1, compileProblem: null, exceptionMessage: null, exceptionStackTrace: null, anonymousBody: url.searchParams.get('anonymousBody') };
+      else if (url.pathname.endsWith("/sobjects"))
         data = {
           sobjects: [{ name: "Account", label: "Account", queryable: true }],
         };
@@ -601,13 +603,16 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await window.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await workbench.getByRole('tab', { name: 'Anonymous Apex', exact: true }).click();
   await workbench.getByRole('textbox', { name: 'Anonymous Apex', exact: true }).fill('System.debug(42);');
-  await workbench.getByRole('button', { name: 'Continue in a thread' }).click();
-  await expect.poll(() => new URL(window.url()).searchParams.get('prompt')).toContain('System.debug(42);');
-  const stagedPrompt = new URL(window.url()).searchParams.get('prompt')!;
-  expect(stagedPrompt).toContain('org-159');
-  expect(stagedPrompt).toContain('do not execute automatically');
-  await expect(window.locator('[contenteditable="true"]').first()).toContainText('System.debug(42);');
+  await workbench.getByRole('button', { name: 'Review and run' }).click();
+  // The panel asks the operator to approve the resolved org and exact code; nothing is staged into a prompt.
+  const review = workbench.getByRole('group', { name: 'Approve anonymous Apex' });
+  await expect(review.getByLabel('Code to run')).toHaveText('System.debug(42);');
+  await expect(review.getByText('org-159 · sandbox')).toBeVisible();
   await window.screenshot({ path: testInfo.outputPath('salesforce-action-review.png') });
+  await review.getByRole('button', { name: 'Run on org-159' }).click();
+  await expect(review).toBeHidden();
+  await expect(workbench.locator('.sf-activity').getByText('Anonymous Apex').first()).toBeVisible();
+  expect(new URL(window.url()).searchParams.get('prompt')).toBeNull();
   const trace = readFileSync(join(home, "sf-trace.jsonl"), "utf8")
     .trim()
     .split("\n")

@@ -88,7 +88,7 @@ export class WorkbenchService {
       contexts: ProjectContexts;
       fs: SalesforceDeps;
       kv: ExplorerKv;
-      apex(input: unknown, origin: { threadId: string }): Promise<ToolResult>;
+      apex(input: unknown, origin: { threadId: string; operatorApprovedOrgId?: string }): Promise<ToolResult>;
       lwc(input: unknown): Promise<ToolResult>;
     },
   ) {}
@@ -206,7 +206,11 @@ export class WorkbenchService {
     };
   }
 
-  async start(input: unknown) {
+  /**
+   * `operatorApproved` comes only from the renderer-only `apex.anonymous.run` RPC, after
+   * the operator approved this exact org in the panel. Agent tools never set it.
+   */
+  async start(input: unknown, options: { operatorApproved?: { orgId: string } } = {}) {
     if (this.disposed || this.active.size >= 3)
       throw new Error(
         "Three Salesforce operations are already running. Wait for one to finish.",
@@ -247,6 +251,8 @@ export class WorkbenchService {
         );
     }
     const org = await this.deps.sdk.connect();
+    if (options.operatorApproved && (kind !== "apex.anonymous" || !org.orgId || org.orgId !== options.operatorApproved.orgId))
+      throw new Error("The target org changed since you approved this run. Review it again.");
     // Reserve before async storage/approval, so simultaneous callers cannot overfill the limit.
     if (this.active.size >= 3)
       throw new Error("Three Salesforce operations are already running.");
@@ -270,7 +276,7 @@ export class WorkbenchService {
       throw error;
     }
     // The current AsyncLocalStorage snapshot is inherited by this detached promise.
-    void this.execute(row, input, components)
+    void this.execute(row, input, components, options.operatorApproved?.orgId)
       .then(async (result) => {
         row.summary = result.summary;
         row.data = publicEvidence(result.data);
@@ -300,6 +306,7 @@ export class WorkbenchService {
     row: SalesforceOperation,
     input: unknown,
     components: string[],
+    operatorApprovedOrgId?: string,
   ) {
     const threadId = inputText(input, "threadId");
     const raw = inputRecord(input);
@@ -315,7 +322,7 @@ export class WorkbenchService {
                 ...raw,
                 action: row.kind === "apex.test" ? "test.run" : "anon.run",
               },
-              { threadId },
+              { threadId, ...(operatorApprovedOrgId ? { operatorApprovedOrgId } : {}) },
             );
       if (!result.ok) throw new Error(result.error);
       const data = inputRecord(result.data);

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readOrgAction, readProjectAction, ACTION_SOURCE_CAP } from '../lib/action-source.js';
+import { indexProjectActions, projectActionCandidates, readOrgAction, readProjectAction, ACTION_SOURCE_CAP } from '../lib/action-source.js';
 import { createNodeDeps } from '../lib/node-deps.js';
 import { readBoundedResponse, salesforceRestRequest } from '../lib/sf-cli.js';
 import { createSalesforcePlugin } from '../lib/plugin.js';
@@ -60,6 +60,19 @@ describe('action source resolution', () => {
     expect(readProjectAction(root, 'apex://OrderLookup', limited)).toMatchObject({ status: 'ambiguous', message: expect.stringContaining('limit') });
     const deep = { ...deps, realpath: (p: string) => p, readdir: (p: string) => p === root ? [] : ['next'], stat: () => 'dir' as const };
     expect(readProjectAction(root, 'apex://OrderLookup', deep)).toMatchObject({ status: 'ambiguous' });
+  });
+  it('indexes Apex and Flow sources once and matches namespaced targets against it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sf-index-')); dirs.push(root);
+    mkdirSync(join(root, 'pkg/classes'), { recursive: true }); mkdirSync(join(root, 'pkg/flows'), { recursive: true });
+    writeFileSync(join(root, 'sfdx-project.json'), JSON.stringify({ namespace: 'acme', packageDirectories: [{ path: 'pkg' }] }));
+    writeFileSync(join(root, 'pkg/classes/Lookup.cls'), 'x'); writeFileSync(join(root, 'pkg/flows/Route.flow-meta.xml'), '<Flow/>');
+    writeFileSync(join(root, 'pkg/classes/notes.txt'), 'x');
+    const index = indexProjectActions(root, createNodeDeps());
+    expect([...index.files.keys()].sort()).toEqual(['Lookup.cls', 'Route.flow-meta.xml']);
+    expect(projectActionCandidates(index, 'apex://acme__Lookup')).toEqual(['pkg/classes/Lookup.cls']);
+    expect(projectActionCandidates(index, 'apex://other__Lookup')).toEqual([]);
+    expect(projectActionCandidates(index, 'flow://Route')).toEqual(['pkg/flows/Route.flow-meta.xml']);
+    expect(() => projectActionCandidates(index, 'prompt://Route')).toThrow(/Apex and Flow/);
   });
   it('fetches one class and the registered action contract from the same pinned org', async () => {
     const { deps } = setup();

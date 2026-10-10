@@ -119,6 +119,21 @@ describe('AgentScriptPanel', () => {
     expect(el.querySelector('[data-testid="salesforce-playground-org"]')?.textContent).toBe('dev (sandbox)');
   });
 
+  it('opens no example by default and offers to open or create an agent', async () => {
+    const el = await mount();
+    const post = vi.spyOn(el.querySelector('iframe')!.contentWindow!, 'postMessage');
+    await message(el, { type: 'ready' });
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'setFile', path: null, content: '', readOnly: true }), window.location.origin);
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'init', examples: [] }), window.location.origin);
+    const empty = el.querySelector('[data-testid="salesforce-agent-script-no-file"]') as HTMLElement;
+    expect(empty.textContent).toContain('Open an agent');
+    expect(([...el.querySelectorAll('button')].find(b => b.textContent === 'Save as…') as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { ([...empty.querySelectorAll('button')].find(b => b.textContent === 'Create an agent') as HTMLButtonElement).click(); });
+    expect(el.querySelector('dialog[open]')).toBeTruthy();
+    await act(async () => { ([...empty.querySelectorAll('button')].find(b => b.textContent === 'Go to file') as HTMLButtonElement).click(); });
+    await act(async () => { ([...empty.querySelectorAll('button')].find(b => b.textContent === 'Open org agents') as HTMLButtonElement).click(); });
+  });
+
   it('opens a scanned file after the playground is ready and persists on request', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await act(async () => {
@@ -162,26 +177,7 @@ describe('AgentScriptPanel', () => {
       'agentFiles.write',
       expect.objectContaining({ path: 'force-app/bots/QC.agent', content: 'updated', projectId: 'proj-1' })
     );
-    await act(async () => {
-      const example = [...el.querySelectorAll('.sf-as-tree-btn')].find((button) =>
-        button.textContent?.includes('Support concierge')
-      ) as HTMLButtonElement | undefined;
-      example?.click();
-    });
-    await act(async () => {
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          origin: window.location.origin,
-          source: el.querySelector("iframe")!.contentWindow,
-          data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty', dirty: true }
-        })
-      );
-    });
-    expect(save.hidden).toBe(true);
-    expect(el.querySelector('.af-draft-state')?.textContent).toBe('Unsaved draft');
-    await act(async () => {
-      save.click();
-    });
+    expect([...el.querySelectorAll('.sf-as-tree-btn')].some(button => button.textContent?.includes('Support concierge'))).toBe(false);
     await act(async () => {
       (
         el.querySelector('[data-testid="salesforce-agent-script-file:force-app/bots/QC.agent"]') as HTMLButtonElement
@@ -353,8 +349,8 @@ describe('AgentScriptPanel', () => {
     expect(readAgentDraft(key)?.content).toBe('unsaved recovered');
   });
 
-  it('creates an example copy and keeps the Save as dialog open on collision', async () => {
-    const el = await mount();
+  it('saves a copy of the open agent and keeps the Save as dialog open on collision', async () => {
+    const el = await mount('force-app/bots/QC.agent');
     await message(el, { type: 'ready' });
     await act(async () => { [...el.querySelectorAll('button')].find(b => b.textContent === 'Save as…')!.click(); });
     expect(el.querySelector('dialog[open]')).toBeTruthy();

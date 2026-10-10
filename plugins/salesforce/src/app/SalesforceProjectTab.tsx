@@ -231,7 +231,7 @@ export function SalesforceProjectTab(props: {
         style={{ display: "flex", flexDirection: "column" }}
       >
         {view === "overview" && (
-          <div className="sf-scroll sf-content">
+          <div className="sf-scroll sf-content sf-overview">
             {status.busy && !status.data ? (
               <LoadingState hint="Preparing your project tools." />
             ) : status.error ? null : (
@@ -322,7 +322,7 @@ export function SalesforceProjectTab(props: {
                     </button>
                   ))}
                 </div>
-                <div style={{ marginTop: 24, height: 420 }}>
+                <div className="sf-overview-activity">
                   <OperationsPanel {...scoped} onAddToPrompt={investigate} />
                 </div>
               </>

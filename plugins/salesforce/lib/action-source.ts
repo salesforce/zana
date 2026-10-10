@@ -1,4 +1,4 @@
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { parsePackageDirectories, resolveUnderRoot } from './dx-project.js';
 import { parseActionTarget, type ActionParameter } from './agent-action-model.js';
 import type { ResolvedOrg, SalesforceDeps } from './types.js';
@@ -29,23 +29,29 @@ function boundedRead(deps: SalesforceDeps, path: string): string {
   return content;
 }
 
+/** Apex classes and Flows found by one bounded walk of the project's package roots. */
+export interface ProjectActionIndex {
+  realRoot: string;
+  namespace: unknown;
+  /** File name (e.g. `Foo.cls`) to project-relative paths. */
+  files: Map<string, string[]>;
+  /** Lightning Type bundle name (the folder under `lightningTypes/`) to project-relative bundle paths. */
+  lightningTypes: Map<string, string[]>;
+  incomplete: boolean;
+}
+
+const ACTION_SUFFIXES = ['.cls', '.flow-meta.xml'];
+
 /** Scan only package roots, never follow a link outside the registered project. */
-export function readProjectAction(root: string, target: string, deps: SalesforceDeps, candidate?: string): ActionSource {
-  const parsed = parseActionTarget(target);
-  if (!parsed) throw Error('Only Apex and Flow implementation targets are supported.');
-  const base: ActionSource = { origin: 'project', target, label: 'Project source', status: 'missing' };
-  if (!root) return { ...base, message: 'Open a project containing Salesforce source to inspect its implementation.' };
+export function indexProjectActions(root: string, deps: SalesforceDeps): ProjectActionIndex {
   const realRoot = deps.realpath(root);
   const config = resolveUnderRoot(realRoot, 'sfdx-project.json', deps.realpath);
   const configText = config ? boundedRead(deps, config) : '';
   const namespace = (() => { try { return JSON.parse(configText).namespace as unknown; } catch { return null; } })();
-  // Never mistake an unnamespaced local class for a managed package class.
-  const names = new Set([parsed.name]);
-  if (!parsed.namespace || namespace === parsed.namespace) names.add(parsed.developerName);
-  const suffix = parsed.kind === 'apex' ? '.cls' : '.flow-meta.xml';
   const queue = (config ? parsePackageDirectories(configText) : ['.']).map(path => ({ path: join(realRoot, path), depth: 0 }));
   const seen = new Set<string>();
-  const matches = new Set<string>();
+  const files = new Map<string, string[]>();
+  const lightningTypes = new Map<string, string[]>();
   let visited = 0;
   let incomplete = false;
   while (queue.length && visited < 6000) {
@@ -61,12 +67,44 @@ export function readProjectAction(root: string, target: string, deps: Salesforce
       if (['node_modules', '.git', '.sf', '.sfdx', 'dist', '.zcc'].includes(name)) continue;
       const child = resolveUnderRoot(realRoot, join(path, name), deps.realpath);
       if (!child) continue;
-      if (deps.stat(child) === 'dir') queue.push({ path: child, depth: next.depth + 1 });
-      else if (name.endsWith(suffix) && names.has(name.slice(0, -suffix.length))) matches.add(relative(realRoot, child).split('\\').join('/'));
+      if (deps.stat(child) === 'dir') {
+        // A bundle is a leaf: record it without spending the walk budget on its channel folders.
+        if (basename(path) === 'lightningTypes') {
+          const paths = lightningTypes.get(name) ?? [];
+          paths.push(relative(realRoot, child).split('\\').join('/'));
+          lightningTypes.set(name, paths);
+        } else queue.push({ path: child, depth: next.depth + 1 });
+      }
+      else if (ACTION_SUFFIXES.some(suffix => name.endsWith(suffix))) {
+        const paths = files.get(name) ?? [];
+        paths.push(relative(realRoot, child).split('\\').join('/'));
+        files.set(name, paths);
+      }
     }
   }
   if (queue.length) incomplete = true;
-  const candidates = [...matches].sort();
+  return { realRoot, namespace, files, lightningTypes, incomplete };
+}
+
+/** Sorted project paths implementing `target`, from an index built by `indexProjectActions`. */
+export function projectActionCandidates(index: ProjectActionIndex, target: string): string[] {
+  const parsed = parseActionTarget(target);
+  if (!parsed) throw Error('Only Apex and Flow implementation targets are supported.');
+  // Never mistake an unnamespaced local class for a managed package class.
+  const names = new Set([parsed.name]);
+  if (!parsed.namespace || index.namespace === parsed.namespace) names.add(parsed.developerName);
+  const suffix = parsed.kind === 'apex' ? '.cls' : '.flow-meta.xml';
+  return [...new Set([...names].flatMap(name => index.files.get(`${name}${suffix}`) ?? []))].sort();
+}
+
+export function readProjectAction(root: string, target: string, deps: SalesforceDeps, candidate?: string): ActionSource {
+  const parsed = parseActionTarget(target);
+  if (!parsed) throw Error('Only Apex and Flow implementation targets are supported.');
+  const base: ActionSource = { origin: 'project', target, label: 'Project source', status: 'missing' };
+  if (!root) return { ...base, message: 'Open a project containing Salesforce source to inspect its implementation.' };
+  const index = indexProjectActions(root, deps);
+  const { realRoot, incomplete } = index;
+  const candidates = projectActionCandidates(index, target);
   if (candidate && !candidates.includes(candidate)) throw Error('The selected source is not a matching implementation inside this project.');
   if (!candidate && (candidates.length > 1 || incomplete)) return { ...base, status: 'ambiguous', candidates, message: incomplete ? 'The project scan reached its limit. Choose an exact match below, or inspect the org implementation.' : 'Multiple packages contain this implementation. Choose the source to inspect.' };
   const selected = candidate ?? candidates[0];

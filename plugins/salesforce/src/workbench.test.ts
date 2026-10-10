@@ -367,6 +367,27 @@ describe("workbench evidence and operations", () => {
     ).toEqual([]);
   });
 
+  it("passes a panel approval through only for the approved org and anonymous Apex", async () => {
+    const f = fixture();
+    await expect(
+      f.run(() => f.service.start({ kind: "apex.test", className: "OneTest" }, { operatorApproved: { orgId: "00D000000000001" } })),
+    ).rejects.toThrow("target org changed");
+    await expect(
+      f.run(() => f.service.start({ kind: "apex.anonymous", body: "x" }, { operatorApproved: { orgId: "00D000000000002" } })),
+    ).rejects.toThrow("target org changed");
+    await f.run(() =>
+      f.service.start({ kind: "apex.anonymous", body: "System.debug(1);" }, { operatorApproved: { orgId: "00D000000000001" } }),
+    );
+    await f.settle();
+    expect(f.apex).toHaveBeenLastCalledWith(
+      expect.objectContaining({ action: "anon.run", body: "System.debug(1);" }),
+      { threadId: "", operatorApprovedOrgId: "00D000000000001" },
+    );
+    await f.run(() => f.service.start({ kind: "apex.anonymous", body: "System.debug(2);", threadId: "t" }));
+    await f.settle();
+    expect(f.apex).toHaveBeenLastCalledWith(expect.anything(), { threadId: "t" });
+  });
+
   it("validates DX roots and tests, gates writes, and caps concurrent requests", async () => {
     const f = fixture();
     await expect(f.service.start({ kind: "bad" })).rejects.toThrow("supported");

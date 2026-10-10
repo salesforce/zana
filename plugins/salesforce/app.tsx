@@ -147,7 +147,16 @@ export default definePluginApp((app) => {
     id: 'orgs',
     title: 'Salesforce',
     icon: 'Cloud',
+    placement: 'unlisted',
     component: SalesforceOrgsPanel
+  });
+  app.slots.sidebarFooterAction({
+    id: 'orgs',
+    title: 'Salesforce',
+    icon: 'Cloud',
+    run: ({ toPluginPanel }) => {
+      toPluginPanel('orgs');
+    }
   });
   app.slots.fileOpener({
     id: 'agent',

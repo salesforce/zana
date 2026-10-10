@@ -1,9 +1,9 @@
 import { X } from 'lucide-react';
 import type { EditorTab } from './studio-layout.js';
 
-const KIND_MARK: Record<EditorTab['kind'], string> = { agent: 'AGENT', apex: 'APEX', flow: 'FLOW' };
+const KIND_MARK: Record<EditorTab['kind'], string> = { agent: 'AGENT', apex: 'APEX', flow: 'FLOW', type: 'TYPE' };
 
-/** Open editor tabs: agent (editable), Apex (read-only) and Flow (read-only map). */
+/** Open editor tabs: agent (editable), Apex (read-only), Flow (read-only map) and Lightning Type (read-only schema). */
 export function EditorTabs({ tabs, active, dirtyId, problems, onSelect, onClose }: {
   tabs: EditorTab[];
   active: string | null;

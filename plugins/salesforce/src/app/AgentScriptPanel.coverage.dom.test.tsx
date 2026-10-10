@@ -138,7 +138,7 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/QC.agent' }));
   });
 
-  it('quick open picks files, examples and explorer nodes', async () => {
+  it('quick open picks files and explorer nodes, never examples', async () => {
     const el = await mount();
     await ready(el);
     const open = async () => { await act(async () => { fireEvent.keyDown(el.querySelector('.sf-studio')!, { key: 'p', ctrlKey: true }); }); };
@@ -148,8 +148,7 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     await click(pick(/Help/));
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
     await open();
-    await click(pick(/^Example|Example/));
-    await open();
+    expect([...document.querySelectorAll('[role="option"], li')].some(row => /Example/.test(row.textContent ?? ''))).toBe(false);
     await click(pick(/Foo/));
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
   });
