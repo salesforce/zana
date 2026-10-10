@@ -182,7 +182,6 @@ ${STUDIO_TOKENS}.sf-as { container-type: inline-size; background:var(--sf-surfac
 .sf-comment-form textarea { font:inherit; color:inherit; background:transparent; border:1px solid var(--sf-border); border-radius:6px; padding:4px 6px; resize:vertical; }
 
 .sf-as-no-file { position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:24px; background:var(--sf-surface); }
-.sf-as-no-file-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
 .sf-as .sf-as-explorer-top { display:flex; align-items:center; gap:4px; margin-top:10px; }
 .sf-as .sf-as-explorer-top .sf-as-explorer-search { margin-top:0; flex:1; min-width:0; }
 .sf-as .sf-as-explorer-hide { flex:0 0 auto; color:var(--sf-muted); }

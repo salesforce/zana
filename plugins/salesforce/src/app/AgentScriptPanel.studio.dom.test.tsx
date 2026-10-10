@@ -9,7 +9,7 @@ import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 
 const control: { options?: any } = {};
 vi.mock('./useSalesforceControl.js', () => ({ useSalesforceControl: (options: unknown) => { control.options = options; } }));
-vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine} data-command={p.command ? JSON.stringify(p.command) : ""}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button></div> }));
+vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine} data-dirty={String(Boolean(p.dirty))} data-command={p.command ? JSON.stringify(p.command) : ""}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button><button data-testid="stub-handled" onClick={() => p.onCommandHandled(p.command?.seq ?? -1)}>handled</button><button data-testid="stub-stale" onClick={() => p.onCommandHandled(0)}>stale</button></div> }));
 vi.mock('./studio/AssistantRail.js', () => ({ AssistantRail: () => <div data-testid="stub-assistant" /> }));
 vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)} /> }));
 vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: () => <div data-testid="stub-agents" /> }));
@@ -168,6 +168,23 @@ describe('AgentScriptPanel studio layout', () => {
     const { settled } = await exec('editor.proposeEdit', { path: 'force-app/bots/QC.agent', expectedSha256: SHA, summary: 's', content: 'x' }) as any;
     await post(el, { type: 'requestOpen', path: 'force-app/bots/Help.agent' });
     await expect(settled).resolves.toMatchObject({ outcome: 'rejected' });
+  });
+
+  it('drops a preview command once it is handled, so reopening Preview never replays it', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    const stub = () => el.querySelector('[data-testid="stub-preview"]')!;
+    await act(async () => { await exec('preview.send', { text: 'hi', engine: 'simulate' }); });
+    expect(JSON.parse(stub().getAttribute('data-command')!)).toMatchObject({ seq: 1, type: 'send', text: 'hi' });
+    // A stale seq leaves a newer command in place.
+    await act(async () => { fireEvent.click(stub().querySelector('[data-testid="stub-stale"]')!); });
+    expect(JSON.parse(stub().getAttribute('data-command')!)).toMatchObject({ seq: 1 });
+    await act(async () => { fireEvent.click(stub().querySelector('[data-testid="stub-handled"]')!); });
+    expect(stub().getAttribute('data-command')).toBe('');
+    await act(async () => { await exec('preview.start', {}); });
+    // The seq keeps counting after a drop, so a remounted panel never mistakes it for one it already ran.
+    expect(JSON.parse(stub().getAttribute('data-command')!)).toMatchObject({ seq: 2, type: 'start' });
+    expect(stub().getAttribute('data-dirty')).toBe('false');
   });
 
   it('wires preview, trace, graph and layout command targets', async () => {

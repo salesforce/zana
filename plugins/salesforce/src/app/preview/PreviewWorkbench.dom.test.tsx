@@ -125,6 +125,20 @@ describe('PreviewWorkbench', () => {
     expect(calls.filter(c => c.method === 'agentLab.trace')).toHaveLength(1);
   });
 
+  it('after End keeps fetched traces and explains why an untraced reply has none', async () => {
+    handlers['agentLab.send'] = () => snap([{ role: 'user', text: 'a' }, { role: 'agent', text: 'One', planId: 'p1' }, { role: 'user', text: 'b' }, { role: 'agent', text: 'Two', planId: 'p2' }]);
+    const el = await mount();
+    await click(btn(el, 'Start')); await typeAndSend(el, 'b');
+    const traceButtons = () => [...el.querySelectorAll('button')].filter(b => b.textContent?.startsWith('trace')) as HTMLButtonElement[];
+    await click(traceButtons()[0]);
+    expect(el.textContent).toContain('Orders');
+    await click(btn(el, 'End'));
+    await click(traceButtons()[1]);
+    expect(calls.filter(c => c.method === 'agentLab.trace')).toHaveLength(1);
+    expect(el.textContent).toContain('This run has ended, so its runtime trace is no longer available.');
+    expect(el.textContent).toContain('Orders');
+  });
+
   it('degrades when the trace is unavailable or throws', async () => {
     handlers['agentLab.trace'] = () => ({ ok: false, error: 'nope' });
     const el = await mount();
@@ -383,7 +397,7 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     await typeAndSend(el, 'e');
     expect(el.textContent).toContain('no plan here');
     await click(btn(el, 'trace'));
-    expect(el.textContent).toContain('no plan id');
+    expect(el.textContent).toContain('Live runs do not return a planner trace here');
     expect(methods()).not.toContain('agentLab.trace');
   });
 
@@ -565,5 +579,120 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     await click(btn(el, 'Compare runs'));
     expect(el.textContent).toContain(' · same');
     expect(el.textContent).not.toContain('differs');
+  });
+});
+
+describe('PreviewWorkbench run ownership', () => {
+  const deferred = () => { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+
+  it('ends the run when another file opens, keeps its conversation and lets a new run start', async () => {
+    const el = await mount();
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
+    await rerender({ path: 'force-app/B.agent', fileLabel: 'B.agent' });
+    expect(calls.filter(c => c.method === 'agentLab.end').map(c => c.args)).toEqual([expect.objectContaining({ id: 'sess-1' })]);
+    expect(el.textContent).toContain('Hi there');
+    expect((el.querySelector('input[aria-label="Preview message"]') as HTMLInputElement).disabled).toBe(true);
+    await click(btn(el, 'Start'));
+    expect(calls.filter(c => c.method === 'agentLab.start')).toHaveLength(2);
+  });
+
+  it('keeps the run when a new draft is saved for the first time', async () => {
+    const el = await mount({ path: undefined });
+    await click(btn(el, 'Start'));
+    await rerender({ path: 'force-app/A.agent' });
+    expect(methods()).not.toContain('agentLab.end');
+    expect(btn(el, 'End')).toBeTruthy();
+  });
+
+  it('ends a run whose start resolves after the panel closed', async () => {
+    const late = deferred();
+    handlers['agentLab.start'] = () => late.promise;
+    const el = await mount();
+    await act(async () => { btn(el, 'Start').click(); });
+    act(() => root!.unmount()); root = null;
+    await act(async () => { late.resolve(snap([])); }); await flush();
+    expect(calls.find(c => c.method === 'agentLab.end')?.args).toMatchObject({ id: 'sess-1' });
+    el.remove();
+  });
+
+  it('ends a Live run whose start resolves after another file opened, against the file it started on', async () => {
+    const late = deferred();
+    handlers['agentPreview.start'] = () => late.promise;
+    const el = await mount({ engine: 'live', threadId: 'thr-1' });
+    await act(async () => { btn(el, 'Start').click(); });
+    await rerender({ engine: 'live', threadId: 'thr-1', path: 'force-app/B.agent' });
+    await act(async () => { late.resolve({ ok: true, data: { sessionId: 'live-late' } }); }); await flush();
+    expect(calls.find(c => c.method === 'agentPreview.end')?.args).toMatchObject({ sessionId: 'live-late', path: 'force-app/A.agent', threadId: 'thr-1', live: true });
+    expect(btn(el, 'Start')).toBeTruthy();
+    expect(btn(el, 'End')).toBeUndefined();
+  });
+
+  it('releases a Live run with its thread so the end is not refused as headless', async () => {
+    const el = await mount({ engine: 'live', threadId: 'thr-1' });
+    await click(btn(el, 'Start'));
+    act(() => root!.unmount()); root = null;
+    await flush();
+    expect(calls.find(c => c.method === 'agentPreview.end')?.args).toMatchObject({ projectId: 'proj-1', sessionId: 'live-1', path: 'force-app/A.agent', threadId: 'thr-1', live: true });
+    el.remove();
+  });
+
+  it('reports a Live end the org did not confirm, but never a lab end', async () => {
+    const el = await mount({ engine: 'live', threadId: 'thr-1' });
+    await click(btn(el, 'Start'));
+    handlers['agentPreview.end'] = () => ({ ok: false, error: 'Operator refused preview.end.' });
+    await click(btn(el, 'End'));
+    expect(alertText(el)).toBe('The Live session may still be open on the org: Operator refused preview.end.');
+    expect(btn(el, 'Start')).toBeTruthy();
+    handlers['agentPreview.end'] = () => { throw 'offline'; };
+    await click(btn(el, 'Start')); await click(btn(el, 'End'));
+    expect(alertText(el)).toBe('The Live session may still be open on the org: offline');
+    handlers['agentPreview.end'] = () => null;
+    await click(btn(el, 'Start')); await click(btn(el, 'End'));
+    expect(alertText(el)).toBe('The Live session may still be open on the org: No response.');
+    handlers['agentLab.end'] = () => ({ ok: false, error: 'This run has expired' });
+    await rerender({ engine: 'simulate', threadId: 'thr-1' });
+    await click(btn(el, 'Start')); await click(btn(el, 'End'));
+    expect(alertText(el)).toBe('');
+    expect(btn(el, 'Start')).toBeTruthy();
+  });
+
+  it('warns that Live runs the saved file while the editor has unsaved changes', async () => {
+    const el = await mount({ engine: 'live', dirty: true });
+    expect(el.textContent).toContain('It runs the saved file, so save to include your edits.');
+    await rerender({ engine: 'live', dirty: false });
+    expect(el.textContent).not.toContain('save to include your edits');
+    await rerender({ engine: 'simulate', dirty: true });
+    expect(el.textContent).not.toContain('save to include your edits');
+  });
+
+  it('retries a failed trace on the next expand and keeps a fetched one', async () => {
+    handlers['agentLab.trace'] = () => ({ ok: false, error: 'Trace service busy' });
+    const el = await mount();
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
+    await click(btn(el, 'trace'));
+    expect(el.textContent).toContain('Trace service busy');
+    handlers['agentLab.trace'] = () => ({ ok: true, data: { runId: 'sess-1', turn: 1, planId: 'p1', available: true, steps: [{ kind: 'topic', label: 'Orders' }] } });
+    await click(btn(el, 'trace')); await click(btn(el, 'trace'));
+    expect(el.textContent).toContain('Orders');
+    await click(btn(el, 'trace')); await click(btn(el, 'trace'));
+    expect(calls.filter(c => c.method === 'agentLab.trace')).toHaveLength(2);
+  });
+
+  it('never asks the lab for a Live trace', async () => {
+    const el = await mount({ engine: 'live' });
+    await click(btn(el, 'Start')); await typeAndSend(el, 'go');
+    await click(btn(el, 'trace'));
+    expect(el.textContent).toContain('Live runs do not return a planner trace here. Use Simulate to see how the agent decided.');
+    expect(methods()).not.toContain('agentLab.trace');
+  });
+
+  it('tells the host once it takes a command', async () => {
+    const onCommandHandled = vi.fn();
+    await mount({ engine: 'rehearse', onCommandHandled });
+    await rerender({ engine: 'rehearse', onCommandHandled, command: { seq: 3, type: 'send', text: 'hi', engine: 'simulate' } });
+    expect(onCommandHandled).not.toHaveBeenCalled();
+    await rerender({ engine: 'simulate', onCommandHandled, command: { seq: 3, type: 'send', text: 'hi', engine: 'simulate' } });
+    expect(onCommandHandled.mock.calls).toEqual([[3]]);
+    expect(calls.find(c => c.method === 'agentLab.send')?.args).toMatchObject({ text: 'hi' });
   });
 });

@@ -183,7 +183,7 @@ including unsaved changes. Choose an engine:
 criteria and a budget of 1–8 turns against either engine. Choose a preset or edit
 the scenario. The customer and evaluator use the selected org's Models API,
 which requires the relevant API scopes, model permissions and Einstein request
-capacity. The default model is `sfdc_ai__DefaultOpenAIGPT4OmniMini`; expand
+capacity. The default model is `sfdc_ai__DefaultGPT4OmniMini` (Salesforce-managed); expand
 **AI model & usage** to use another model API name enabled in your org.
 
 Results include conversation text, response latency, Preview plan IDs, org and

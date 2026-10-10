@@ -39,6 +39,7 @@ import { AgentforceStudioSplit } from './AgentforceStudioSplit.js';
 import { AGENTFORCE_STUDIO_STYLES } from './agentforce-studio-styles.js';
 import { AgentScriptTools, useAgentScriptTools, type AgentScriptTool } from './AgentScriptTools.js';
 import { OrgAgentsPanel } from './OrgAgentsPanel.js';
+import type { RetrievedOrgAgent } from '../../lib/org-agent-contract.js';
 import { AgentScriptGraphPanel } from './AgentScriptGraphPanel.js';
 import { AgentforcePreviewPanel } from './AgentforcePreviewPanel.js';
 import type { AgentAction } from '../../lib/agent-action-model.js';
@@ -214,6 +215,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [fixBusy, setFixBusy] = useState(false);
   const [previewEngine, setPreviewEngine] = useState<StudioEngine>('rehearse');
   const [previewCommand, setPreviewCommand] = useState<PreviewCommand | null>(null);
+  // Monotonic, so a command issued after one was handled and dropped never reuses its seq.
+  const previewSeq = useRef(0);
+  const previewCommandHandled = useCallback((seq: number) => setPreviewCommand(current => current?.seq === seq ? null : current), []);
   const [lastRun, setLastRun] = useState<{ runId: string; engine: StudioEngine; turn: number } | null>(null);
   const [graphFocus, setGraphFocus] = useState<{ node: string | null; seq: number }>({ node: null, seq: 0 });
   const [editorCompactOverride, setEditorCompactOverride] = useState<boolean | null>(null);
@@ -264,6 +268,17 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     if (compact && compactTool !== 'code' && tools.state.active !== compactTool) tools.openTool(compactTool);
   }, [compact, compactTool, tools.state.active, tools.openTool]);
 
+  // Every "browse org agents" entry point lands in the Agents tool with its search focused;
+  // naming an agent (explorer row) also retrieves and opens it. The panel takes each request once.
+  const agentsSeq = useRef(0);
+  const [agentsFocus, setAgentsFocus] = useState<{ name?: string; seq: number } | null>(null);
+  const browseAgents = useCallback((name?: string) => {
+    agentsSeq.current += 1;
+    setAgentsFocus({ ...(name ? { name } : {}), seq: agentsSeq.current });
+    openTool('agents');
+  }, [openTool]);
+  const agentsFocusHandled = useCallback((seq: number) => setAgentsFocus(current => current?.seq === seq ? null : current), []);
+
   const openAction = useCallback((action: AgentAction, origin: 'project' | 'org' = 'project') => {
     setActionTabs(tabs => tabs.some(tab => tab.action.id === action.id) ? tabs.map(tab => tab.action.id === action.id ? { ...tab, action, origin } : tab) : [...tabs.slice(-7), { action, origin }]);
     setSelectedActionId(action.id);
@@ -291,10 +306,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     return next;
   }, [pluginId, projectId, send]);
 
+  // Only the latest listing lands: an org switch must not be overwritten by a slower, older answer.
+  const explorerSeq = useRef(0);
   const refreshExplorer = useCallback(async () => {
+    const seq = ++explorerSeq.current;
     try {
       const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs())) as { ok?: boolean; nodes?: ExplorerNode[] };
-      if (alive.current && result?.ok !== false && Array.isArray(result?.nodes)) setExplorerNodes(result.nodes);
+      if (alive.current && seq === explorerSeq.current && result?.ok !== false && Array.isArray(result?.nodes)) setExplorerNodes(result.nodes);
     } catch { /* the explorer sections are an enhancement over the file tree */ }
   }, [pluginId, rpcArgs]);
 
@@ -332,10 +350,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       const changedProject = (event as CustomEvent<{ projectId?: string | null }>).detail?.projectId;
       if (changedProject && changedProject !== projectId) return;
       void refreshOrg().catch(() => undefined);
+      // The explorer's org agents belong to the org that just changed.
+      void refreshExplorer();
     };
     window.addEventListener('sf:context-changed', changed);
     return () => window.removeEventListener('sf:context-changed', changed);
-  }, [projectId, refreshOrg]);
+  }, [projectId, refreshOrg, refreshExplorer]);
 
   const openFile = useCallback(
     async (path: string | null, isCurrent: () => boolean = () => true) => {
@@ -400,6 +420,18 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     },
     [compact, dialect, openTab, patch, pluginId, rpcArgs, draftScope, send, settleProposals]
   );
+
+  // A retrieval opens its file seconds after the click: read the live editor, not the click-time render.
+  const openFileRef = useRef(openFile);
+  openFileRef.current = openFile;
+  const unrecoverableDraft = useRef(false);
+  unrecoverableDraft.current = dirty && draftWarning;
+  const openRetrieved = useCallback(async (file: RetrievedOrgAgent, isCurrent: () => boolean) => {
+    await refreshFiles();
+    // Switching now would discard a draft with no local recovery; the retrieved file waits under Local agents.
+    if (unrecoverableDraft.current) throw Error(`${basename(file.path)} is in your project. Save your current draft, then open it from Local agents.`);
+    await openFileRef.current(file.path, isCurrent);
+  }, [refreshFiles]);
 
   const openTarget = useCallback((kind: 'apex' | 'flow', apiName: string, path?: string) => {
     openTab({ id: `${kind}:${apiName}`, kind, label: apiName, target: `${kind}://${apiName}`, ...(path ? { path } : {}) });
@@ -543,12 +575,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       start: ({ engine }) => {
         if (engine) setPreviewEngine(engine);
         openTool('preview');
-        setPreviewCommand(prev => ({ seq: (prev?.seq ?? 0) + 1, type: 'start', engine }));
+        setPreviewCommand({ seq: ++previewSeq.current, type: 'start', engine });
       },
       send: ({ text, engine }) => {
         if (engine) setPreviewEngine(engine);
         openTool('preview');
-        setPreviewCommand(prev => ({ seq: (prev?.seq ?? 0) + 1, type: 'send', text, engine }));
+        setPreviewCommand({ seq: ++previewSeq.current, type: 'send', text, engine });
       }
     },
     traceFocus: () => {
@@ -689,8 +721,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     else if (node.kind === 'apex' || node.kind === 'flow') openTarget(node.kind, node.apiName, node.path);
     else if (node.kind === 'lightning-type') { openTab({ id: `type:${node.apiName}`, kind: 'type', label: node.apiName, target: node.apiName, ...(node.path ? { path: node.path } : {}) }); if (compact) patch({ tool: 'code' }); }
     else if (node.kind === 'scenario') openTool('test');
-    else if (node.kind === 'org-agent') openTool('agents');
-  }, [compact, openFile, openTab, openTarget, openTool, patch]);
+    else if (node.kind === 'org-agent') browseAgents(node.apiName);
+  }, [browseAgents, compact, openFile, openTab, openTarget, openTool, patch]);
   const pickQuick = (item: QuickOpenItem) => {
     setQuickOpen(false);
     if (item.id.startsWith('file:')) void openFile(item.id.slice(5));
@@ -703,7 +735,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={tools.state.open}
           headerActions={props.headerActions}
           orgPicker={props.orgPicker !== false && <OrgPicker pluginId={pluginId} projectId={projectId} compact />}
-          onBrowse={() => openTool('agents')} onSave={() => void save()}
+          onBrowse={() => browseAgents()} onSave={() => void save()}
           onSaveAs={() => { setError(null); setSaveAsOpen(true); }} onShowPanel={tools.toggle}
           {...(layout === 'legacy' ? {} : {
             shortcutHint: wide, hidePanelToggle: compact,
@@ -760,7 +792,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const explorerNode = (
     <Explorer files={files} nodes={badgedNodes} activePath={activePath} dirtyPath={dirty ? activePath : null}
       query={fileQuery} onQuery={setFileQuery} onOpenFile={path => void openFile(path)}
-      onOpenNode={openNode} onBrowseOrg={() => openTool('agents')}
+      onOpenNode={openNode} onBrowseOrg={() => browseAgents()}
       collapsed={studio.collapsedSections} onToggleSection={toggleSection} onHide={wide ? () => patch({ explorerOpen: false }) : undefined} />
   );
 
@@ -774,7 +806,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const activity = wide ? (
     <ToolStrip orientation="vertical" label="Studio activity" active={studio.explorerOpen ? 'files' : null}
       items={[stripItem('files'), stripItem('agents'), { id: 'search', title: 'Go to file', icon: <Search size={16} aria-hidden="true" /> }]}
-      onSelect={id => { if (id === 'files') patch({ explorerOpen: !studio.explorerOpen }); else if (id === 'agents') openTool('agents'); else setQuickOpen(true); }} />
+      onSelect={id => { if (id === 'files') patch({ explorerOpen: !studio.explorerOpen }); else if (id === 'agents') browseAgents(); else setQuickOpen(true); }} />
   ) : false;
 
   const splitMode = compact ? (compactTool === 'code' ? 'editor' : 'panel') : 'split';
@@ -824,14 +856,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           <div className="sf-frame-stage" style={{ position: 'relative', display: showTargetTab ? 'none' : 'flex', flex: 1, minHeight: 0 }}>
             {!playgroundReady && <LoadingState art="code" label="Opening your editor…" hint="Preparing Agent Script tools." />}
             {playgroundReady && !activePath && <div className="sf-as-no-file" data-testid="salesforce-agent-script-no-file">
-              <EmptyState art="code" title="Open an agent">
+              <EmptyState art="code" title="Open an agent" action={<>
+                <button type="button" className="sf-as-save" onClick={() => setNewAgentOpen(true)}>Create an agent</button>
+                <button type="button" className="sf-as-save" onClick={() => browseAgents()}>Open org agents</button>
+                {files.length > 0 && <button type="button" className="sf-as-save" onClick={() => setQuickOpen(true)}>Go to file</button>}
+              </>}>
                 {files.length > 0 ? 'Pick an .agent file from the explorer, or create a new one.' : 'This project has no .agent files yet. Create one, or retrieve an agent from the org.'}
               </EmptyState>
-              <div className="sf-as-no-file-actions">
-                <button type="button" className="sf-as-save" onClick={() => setNewAgentOpen(true)}>Create an agent</button>
-                <button type="button" className="sf-as-save" onClick={() => openTool('agents')}>Open org agents</button>
-                {files.length > 0 && <button type="button" className="sf-as-save" onClick={() => setQuickOpen(true)}>Go to file</button>}
-              </div>
             </div>}
             <iframe
               ref={frameRef}
@@ -843,7 +874,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         )}
         </div>}>
           <AgentScriptTools tools={tools} hiddenTools={hiddenTools} chrome={!compact} open={compact ? splitOpen : undefined} render={(id, visible) => {
-            if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => file.path.includes('aiAuthoringBundles/'))} onLocalOpen={path => void openFile(path)} onPublish={path => navigate.toCompose({ initialPrompt: `Review and publish this Salesforce Agentforce draft to the selected project org as an inactive version. Diagnose and compile it first, show any issues and use sf_agent lifecycle.publish with the normal confirmation. Do not activate.\nProject: ${projectId}\nSource: ${path}`, focusPrompt: true })} onOpen={async (file, isCurrent) => { await refreshFiles(); await openFile(file.path, isCurrent); }} />;
+            if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => file.path.includes('aiAuthoringBundles/'))} onLocalOpen={path => void openFile(path)} onPublish={path => navigate.toCompose({ initialPrompt: `Review and publish this Salesforce Agentforce draft to the selected project org as an inactive version. Diagnose and compile it first, show any issues and use sf_agent lifecycle.publish with the normal confirmation. Do not activate.\nProject: ${projectId}\nSource: ${path}`, focusPrompt: true })} onOpen={openRetrieved} />;
             if (id === 'files') return layout === 'legacy' ? explorerNode : null;
             if (id === 'assistant') return compact ? null : <AssistantRail pluginId={pluginId} projectId={projectId} path={activePath} view={view} onShareChange={setShare} />;
             if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}
@@ -853,7 +884,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
             if (id === 'graph') return <AgentScriptGraphPanel source={source} visible={visible} compact={compact} focusNode={graphFocus.node} focusSeq={graphFocus.seq} onOpenAction={id => { const action = actions.find(row => row.id === id); if (action) openAction(action); }} />;
             if (id === 'preview') return <PreviewWorkbench pluginId={pluginId} projectId={projectId} source={source} fileLabel={activePath?.split('/').pop() ?? 'Draft'}
               engine={previewEngine} onEngineChange={setPreviewEngine} path={activePath ?? undefined} orgAlias={org?.alias} threadId={context.threadId ?? undefined}
-              onRunChange={setLastRun} command={previewCommand}
+              onRunChange={setLastRun} command={previewCommand} onCommandHandled={previewCommandHandled} dirty={dirty}
               onRevealSource={(path, line) => { if (path === activePathRef.current) revealLine(line); else void openFile(path).then(opened => { if (opened) revealLine(line); }); }} />;
             if (id === 'test') return <AgentforceLabPanel pluginId={pluginId} projectId={projectId} source={source} mode="test" fileLabel={activePath?.split('/').pop() ?? 'Draft'} />;
             if (id === 'org-preview') return <AgentforcePreviewPanel pluginId={pluginId} projectId={projectId} />;

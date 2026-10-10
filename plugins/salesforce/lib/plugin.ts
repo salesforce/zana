@@ -1451,11 +1451,12 @@ async function runAgentPreview(
   if ('ok' in resolved) return resolved;
   const label = resolved.identity?.apiName ?? plan.sessionId ?? '';
   const live = plan.live || resolved.identity?.flag === 'api-name';
+  // Ending only closes the session and runs no actions, so it keeps the org read gate but needs no Live approval.
   const { org, mediated } = await mediateOrgRead(
     ctx,
     sdk,
     (connected) => `${live ? 'Live ' : ''}${plan.action} ${label} on ${connected.alias} (${connected.kind})`,
-    live ? 'agent.preview.live' : undefined,
+    live && verb !== 'end' ? 'agent.preview.live' : undefined,
     { preview: label }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} ${plan.action}.`);

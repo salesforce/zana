@@ -4,18 +4,24 @@ import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import type { OrgAgentCatalog, OrgAgentRetrieval, RetrievedOrgAgent } from '../../lib/org-agent-contract.js';
 import { EmptyState, LoadingState, SalesforceState } from './components/SalesforceState.js';
 
-export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOpen, onNew, localFiles = [], onLocalOpen, onPublish }: {
+export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOpen, onNew, localFiles = [], onLocalOpen, onPublish, focus, onFocusHandled }: {
   pluginId: string; projectId?: string; visible: boolean; editorReady: boolean;
   onNew?(): void;
   localFiles?: Array<{ path: string; apiName: string }>;
   onLocalOpen?(path: string): void;
   onPublish?(path: string): void;
   onOpen(file: RetrievedOrgAgent, isCurrent: () => boolean): Promise<void>;
+  /** A new `seq` focuses the search; with `name`, it also filters to that agent and retrieves & opens it. */
+  focus?: { name?: string; seq: number } | null;
+  /** Called once a request is taken, so the owner can drop it and a remounted panel never replays it. */
+  onFocusHandled?(seq: number): void;
 }) {
   const [catalog, setCatalog] = useState<OrgAgentCatalog | null>(null);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  // A named request the org can't satisfy; the inventory itself loaded, so it is not an `error`.
+  const [missing, setMissing] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [retrieving, setRetrieving] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -26,9 +32,45 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wake = useRef<(() => void) | null>(null);
   const active = useRef(false);
+  const search = useRef<HTMLInputElement>(null);
+  // A named request waiting for the inventory; `refreshed` once a miss has reloaded it.
+  const pendingOpen = useRef<{ name: string; refreshed: boolean } | null>(null);
+
+  // Only a new request (seq) refocuses; the name travels with it.
+  useEffect(() => {
+    if (!focus) return;
+    setMissing(null);
+    if (focus.name) {
+      setQuery(focus.name);
+      // A repeat click while that agent is already being retrieved must not open it twice.
+      const inFlight = Boolean(retrieving) && catalog?.agents.some(agent => agent.name === focus.name && agent.versions.some(version => version.fullName === retrieving));
+      pendingOpen.current = inFlight ? null : { name: focus.name, refreshed: false };
+    }
+    search.current?.focus();
+    // Without a name, an earlier filter stays but typing replaces it.
+    if (!focus.name) search.current?.select();
+    onFocusHandled?.(focus.seq);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.seq]);
+
+  // A named request opens that agent once the inventory and editor are ready.
+  useEffect(() => {
+    const pending = pendingOpen.current;
+    if (!pending || loading || !loaded || !editorReady || retrieving) return;
+    // The inventory failed and already shows why; a later refresh must not replay this request.
+    if (!catalog) { pendingOpen.current = null; return; }
+    const agent = catalog.agents.find(row => row.name === pending.name);
+    if (agent) { pendingOpen.current = null; void retrieve(selected[agent.name] || agent.versions[0].fullName); return; }
+    // The explorer re-lists the org more often than this panel: look once more before reporting a miss.
+    if (!pending.refreshed) { pending.refreshed = true; setLoaded(false); setRevision(value => value + 1); return; }
+    pendingOpen.current = null;
+    if (!error) setMissing(`${pending.name} has no Agent Script source in ${catalog.org.alias || 'this org'}.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, loading, loaded, editorReady, retrieving, focus?.seq]);
 
   useEffect(() => {
     const reset = () => {
+      pendingOpen.current = null;
       epoch.current++;
       if (timer.current) clearTimeout(timer.current);
       wake.current?.(); wake.current = null;
@@ -38,7 +80,7 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
     const changed = (event: Event) => {
       const id = (event as CustomEvent<{ projectId?: string }>).detail?.projectId;
       if (id && id !== projectId) return;
-      reset(); setCatalog(null); setSelected({}); setError(null); setNotice(null); setRetrieving(null); setLoaded(false); setRevision(value => value + 1);
+      reset(); setCatalog(null); setSelected({}); setError(null); setMissing(null); setNotice(null); setRetrieving(null); setLoaded(false); setRevision(value => value + 1);
     };
     setCatalog(null); setLoaded(false);
     window.addEventListener('sf:context-changed', changed);
@@ -49,7 +91,7 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
     if (!visible || loaded) return;
     let cancelled = false;
     const current = epoch.current;
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setMissing(null);
     void callPluginRpc(pluginId, 'agents.list', { projectId }).then(payload => {
       if (cancelled || current !== epoch.current) return;
       const result = payload as { ok: boolean; data?: OrgAgentCatalog; error?: string };
@@ -68,7 +110,7 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
     if (!catalog || active.current) return;
     active.current = true;
     const current = epoch.current;
-    setRetrieving(fullName); setError(null); setNotice(null);
+    setRetrieving(fullName); setError(null); setMissing(null); setNotice(null);
     try {
       const started = await callPluginRpc(pluginId, 'agents.retrieve.start', { projectId, orgId: catalog.org.orgId, fullName }) as { ok: boolean; jobId?: string; error?: string };
       if (!started.ok || !started.jobId) throw Error(started.error || 'Could not start retrieval.');
@@ -107,7 +149,7 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
   const agents = catalog?.agents.filter(agent => `${agent.name} ${agent.versions.map(version => version.fullName).join(' ')}`.toLowerCase().includes(query.toLowerCase())) ?? [];
   return <section className="af-org-agents" aria-label="Org agents">
     <header><div><strong>Agents</strong><small>{catalog?.org.alias || 'Connected org'}</small></div>{onNew && <button type="button" className="af-secondary" disabled={!editorReady} onClick={onNew}><Plus size={13} aria-hidden="true" />New agent</button>}<button className="icon-btn" type="button" title="Refresh agents" aria-label="Refresh agents" disabled={loading || Boolean(retrieving)} onClick={() => { setLoaded(false); setRevision(value => value + 1); }}><RefreshCw size={14} aria-hidden="true" /></button></header>
-    <label className="af-agent-search"><Search size={14} aria-hidden="true" /><input aria-label="Search org agents" placeholder="Search agents…" value={query} onChange={event => setQuery(event.target.value)} /></label>
+    <label className="af-agent-search"><Search size={14} aria-hidden="true" /><input ref={search} aria-label="Search org agents" placeholder="Search agents…" value={query} onChange={event => setQuery(event.target.value)} /></label>
     {localFiles.length > 0 && <section aria-label="Local agents"><p className="af-agent-caption">Local agents</p>{localFiles.filter(file => `${file.apiName} ${file.path}`.toLowerCase().includes(query.toLowerCase())).map(file => <article className="af-agent-card" key={file.path}>
       <div className="af-agent-name"><Bot size={17} aria-hidden="true" /><strong>{file.apiName.replace(/_/g, ' ')}</strong></div>
       <small className="af-agent-api-name" title={file.path}>{file.path}</small>
@@ -117,6 +159,7 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
     {loading && <LoadingState compact art="agents" label="Loading agents…" hint="Finding Agent Script sources in your org." />}
     {error && (catalog?.agents.length ? <div className="af-error" role="alert">{error}</div> : <SalesforceState compact kind="error" art="agents" title="Org agents unavailable"
       action={onNew && <button type="button" className="af-secondary" disabled={!editorReady} onClick={onNew}>Create a local agent</button>}>{error}</SalesforceState>)}
+    {missing && <div className="af-error" role="alert">{missing}</div>}
     {notice && <div className="af-notice" role="status">{notice}</div>}
     {!loading && !error && loaded && agents.length === 0 && <EmptyState compact art={query ? 'search' : 'agents'} title={query ? 'No matching agents' : 'No Agent Script sources found'}
       action={!query && onNew && <button type="button" className="af-secondary" disabled={!editorReady} onClick={onNew}>Create a local agent</button>}>

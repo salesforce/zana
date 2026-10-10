@@ -1,5 +1,6 @@
 export type LabEngine = 'preview' | 'rehearsal';
-export const DEFAULT_LAB_MODEL = 'sfdc_ai__DefaultOpenAIGPT4OmniMini';
+// Salesforce-managed (Azure OpenAI) GPT-4o mini: orgs often disable the direct OpenAI, Bedrock and Vertex providers.
+export const DEFAULT_LAB_MODEL = 'sfdc_ai__DefaultGPT4OmniMini';
 export const LAB_MAX_TURNS = 8;
 export interface LabTurn {
   role: 'user' | 'agent';

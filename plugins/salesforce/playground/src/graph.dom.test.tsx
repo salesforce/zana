@@ -27,7 +27,10 @@ const graph = () => parseAgentScriptSource(ACTION_AGENT, 'agentforce').graph;
 
 it('shows the placeholder for an empty graph', () => {
   const { getByRole } = render(<AgentGraph nodes={[]} edges={[]} />);
-  expect(getByRole('status').textContent).toContain('No topics defined');
+  const status = getByRole('status');
+  expect(status.textContent).toContain('No topics defined');
+  // The status is a grid; a single paragraph keeps the sentence and its code chips on one line.
+  expect([...status.childNodes].map(node => node.nodeName)).toEqual(['P']);
 });
 
 it('renders nodes, marks the focused one, opens actions and fits the view to the focus after a delay', () => {

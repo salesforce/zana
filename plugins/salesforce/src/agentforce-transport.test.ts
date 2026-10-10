@@ -42,6 +42,21 @@ describe('Agentforce bounded transport', () => {
     await expect(transport.request('JWT', path + '?redirect=evil')).rejects.toThrow('Unsupported');
     await expect(transport.request('JWT', path, undefined, 'evil.example' as never)).rejects.toThrow('Unsupported');
   });
+  it("includes Salesforce's own bounded reason for a rejected call", async () => {
+    const models = '/einstein/platform/v1/models/sfdc_ai__DefaultOpenAIGPT4OmniMini/chat-generations';
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(reply({ errorCode: 'BAD_REQUEST', message: 'The requested provider is disabled for this org: OpenAI' }, 400))
+      .mockResolvedValueOnce(reply([{ message: 'Session  expired.\n' }], 400))
+      .mockResolvedValueOnce(reply({ error: { message: 'x'.repeat(400) } }, 400))
+      .mockResolvedValueOnce(reply({ error: 'invalid_token' }, 401))
+      .mockResolvedValueOnce(reply({ message: 42 }, 400));
+    const transport = new AgentforceTransport(fetcher);
+    await expect(transport.request('JWT', models, {})).rejects.toThrow('Models API returned HTTP 400. Salesforce said: The requested provider is disabled for this org: OpenAI. The request was not retried');
+    await expect(transport.request('JWT', path, {})).rejects.toThrow('HTTP 400. Salesforce said: Session expired. The request');
+    await expect(transport.request('JWT', path, {})).rejects.toThrow(`Salesforce said: ${'x'.repeat(300)}. The request`);
+    await expect(transport.request('JWT', path, {})).rejects.toThrow('HTTP 401. Salesforce said: invalid_token. Check org authentication');
+    await expect(transport.request('JWT', path, {})).rejects.toThrow(/^Salesforce Preview API returned HTTP 400\. The request/);
+  });
   it('passes cancellation through and does not leak credential-bearing network errors as API content', async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => { init?.signal?.throwIfAborted(); return reply(null); });
     const transport = new AgentforceTransport(fetcher);

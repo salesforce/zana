@@ -21,7 +21,15 @@ vi.mock('./studio/AssistantRail.js', () => ({ AssistantRail: () => <div data-tes
 vi.mock('./AgentScriptGraphPanel.js', () => ({
   AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph"><button data-testid="graph-open" onClick={() => { p.onOpenAction('act1'); p.onOpenAction('missing'); }}>open</button></div>
 }));
-vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: () => <div data-testid="stub-agents" /> }));
+// Records each request the Agents panel takes and hands it back, like the real panel.
+const agentRequests = vi.hoisted(() => [] as Array<{ name?: string; seq: number }>);
+type OpenRetrieved = (file: { path: string; fullName: string; orgId: string; existing: boolean }, isCurrent: () => boolean) => Promise<void>;
+const agentsPanel = vi.hoisted(() => ({ onOpen: undefined as OpenRetrieved | undefined }));
+vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: ({ focus, onFocusHandled, onOpen }: { focus?: { name?: string; seq: number } | null; onFocusHandled?(seq: number): void; onOpen: OpenRetrieved }) => {
+  agentsPanel.onOpen = onOpen;
+  React.useEffect(() => { if (focus) { agentRequests.push(focus); onFocusHandled?.(focus.seq); } }, [focus?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <div data-testid="stub-agents" data-focus={focus ? 'pending' : 'none'} />;
+} }));
 vi.mock('./AgentforceLabPanel.js', () => ({ AgentforceLabPanel: () => <div data-testid="stub-lab" /> }));
 vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data-testid="stub-ops" /> }));
 const { AgentScriptPanel } = await import('./AgentScriptPanel.js');
@@ -100,7 +108,7 @@ beforeEach(() => {
     useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; }
   };
 });
-afterEach(() => { nodes.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); delete (globalThis as any).__ZCC_PLUGIN_HOST__; delete (globalThis as any).__ZCC_PLUGIN_RUNTIME__; });
+afterEach(() => { nodes.splice(0).forEach(fn => fn()); agentRequests.length = 0; agentsPanel.onOpen = undefined; vi.restoreAllMocks(); delete (globalThis as any).__ZCC_PLUGIN_HOST__; delete (globalThis as any).__ZCC_PLUGIN_RUNTIME__; });
 
 describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
   it('toggles the explorer, opens agents and quick-opens from the activity bar', async () => {
@@ -114,7 +122,9 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     await click(activity.querySelectorAll('button')[0]);
     expect(explorer()).toBeTruthy();
     await click(activity.querySelectorAll('button')[1]);
-    expect(el.querySelector('[data-testid="stub-agents"]')).toBeTruthy();
+    // Browsing focuses the panel's search without naming an agent, and the request is handed over once.
+    expect(agentRequests).toEqual([{ seq: 1 }]);
+    expect(el.querySelector<HTMLElement>('[data-testid="stub-agents"]')!.dataset.focus).toBe('none');
     await click(activity.querySelectorAll('button')[2]);
     expect(document.querySelector('[role="dialog"], [role="listbox"], [role="option"]')).toBeTruthy();
   });
@@ -132,7 +142,16 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     expect(el.querySelector('[data-testid="stub-lab"]')).toBeTruthy();
     el.querySelector<HTMLElement>('[data-testid="stub-agents"]')?.remove();
     await click(node(/OrgBot/));
+    // An org-agent row asks the Agents panel to retrieve and open that agent, not just to show the list.
+    expect(agentRequests.at(-1)).toEqual({ name: 'OrgBot', seq: expect.any(Number) });
+    // Closing and reopening the Agents tab remounts the panel without replaying that request.
+    const taken = agentRequests.length;
+    await click(el.querySelector<HTMLElement>('[aria-label="Close Agents"]')!);
+    expect(el.querySelector('[data-testid="stub-agents"]')).toBeNull();
+    await click(el.querySelector<HTMLElement>('[aria-label="Add side panel tab"]')!);
+    await click(byText(el.querySelector('.af-tools')!, 'button', /^Agents/)!);
     expect(el.querySelector('[data-testid="stub-agents"]')).toBeTruthy();
+    expect(agentRequests).toHaveLength(taken);
     rpc.mockClear();
     await click(node(/QC/));
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/QC.agent' }));
@@ -151,6 +170,51 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     expect([...document.querySelectorAll('[role="option"], li')].some(row => /Example/.test(row.textContent ?? ''))).toBe(false);
     await click(pick(/Foo/));
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
+  });
+});
+
+describe('AgentScriptPanel org agents', () => {
+  const RETRIEVED = { path: 'force-app/main/default/aiAuthoringBundles/OrgBot_v1/OrgBot_v1.agent', fullName: 'OrgBot_v1', orgId: '00D', existing: false };
+
+  it('opens a retrieved agent, but never over a draft that has no local recovery', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await click(el.querySelector('[aria-label="Studio activity"]')!.querySelectorAll('button')[1]);
+    // The retrieval resolves seconds later through the callback it was handed at click time.
+    const clickTime = agentsPanel.onOpen!;
+    await post(el, { type: 'dirty', dirty: true, draftKey: 'proj-1:file:force-app/bots/QC.agent', persisted: false, baseSha: SHA });
+    expect(banner(el)).toContain('Local recovery is unavailable');
+    rpc.mockClear();
+    await act(async () => { await expect(clickTime(RETRIEVED, () => true)).rejects.toThrow('OrgBot_v1.agent is in your project. Save your current draft, then open it from Local agents.'); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.list', expect.anything());
+    expect(rpc).not.toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.anything());
+    // Once the draft is recoverable again, the same callback opens the file.
+    await post(el, { type: 'dirty', dirty: true, draftKey: 'proj-1:file:force-app/bots/QC.agent', persisted: true, baseSha: SHA });
+    await act(async () => { await clickTime(RETRIEVED, () => true); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: RETRIEVED.path }));
+  });
+
+  it('re-lists explorer org agents when the org changes, keeping only the latest answer', async () => {
+    const el = await mount();
+    await ready(el);
+    const explorer = () => el.querySelector('[data-testid="salesforce-agent-script-explorer"]')!;
+    expect(byText(explorer(), 'button', /OrgBot/)).toBeTruthy();
+    const changeOrg = (projectId: string) => act(async () => { window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId } })); });
+    rpc.mockClear();
+    await changeOrg('another-project');
+    expect(rpc).not.toHaveBeenCalledWith('salesforce', 'studio.explorer', expect.anything());
+    let older!: (value: unknown) => void;
+    overrides['studio.explorer'] = () => new Promise(resolve => { older = resolve; });
+    await changeOrg('proj-1');
+    overrides['studio.explorer'] = () => ({ ok: true, nodes: [{ kind: 'org-agent', apiName: 'NewOrgBot' }] });
+    await changeOrg('proj-1');
+    await flush();
+    expect(byText(explorer(), 'button', /NewOrgBot/)).toBeTruthy();
+    await act(async () => { older({ ok: true, nodes: [{ kind: 'org-agent', apiName: 'StaleOrgBot' }] }); });
+    await flush();
+    expect(byText(explorer(), 'button', /StaleOrgBot/)).toBeUndefined();
+    expect(byText(explorer(), 'button', /NewOrgBot/)).toBeTruthy();
   });
 });
 

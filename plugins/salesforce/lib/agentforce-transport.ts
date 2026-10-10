@@ -4,6 +4,16 @@ const HOSTS = ['api.salesforce.com', 'test.api.salesforce.com', 'dev.api.salesfo
 export type SfapHost = typeof HOSTS[number];
 const MAX_BYTES = 2 * 1024 * 1024;
 
+/** Salesforce's own reason for a failed call, bounded: `{message}`, `[{message}]`, `{error:{message}}` or `{error}`. */
+function failureReason(body: unknown): string {
+  const row = (Array.isArray(body) ? body[0] : body) as Record<string, unknown> | undefined;
+  const nested = row?.error && typeof row.error === 'object' ? row.error as Record<string, unknown> : undefined;
+  const text = [row?.message, nested?.message, row?.errorMessage, row?.error_description, row?.error].find(value => typeof value === 'string' && value.trim());
+  if (typeof text !== 'string') return '';
+  const said = text.replace(/\s+/g, ' ').trim().slice(0, 300);
+  return ` Salesforce said: ${said}${/[.!?]$/.test(said) ? '' : '.'}`;
+}
+
 /** No caller-supplied URL, redirects, unbounded bodies, or replay after an ambiguous POST failure. */
 export class AgentforceTransport {
   constructor(private readonly fetcher: typeof fetch = fetch) {}
@@ -49,7 +59,7 @@ export class AgentforceTransport {
         ...(body !== undefined ? { body: JSON.stringify(body) } : {})
       }, signal);
       if (result.status === 404 && !host && candidate !== HOSTS.at(-1)) continue;
-      if (result.status < 200 || result.status >= 300) throw new Error(`Salesforce ${path.includes('/models/') ? 'Models' : 'Preview'} API returned HTTP ${result.status}. ${result.status === 401 || result.status === 403 ? 'Check org authentication, API scopes, and feature permissions.' : result.status === 404 ? 'This org or model does not support the requested API.' : 'The request was not retried; start a fresh run before continuing.'}`);
+      if (result.status < 200 || result.status >= 300) throw new Error(`Salesforce ${path.includes('/models/') ? 'Models' : 'Preview'} API returned HTTP ${result.status}.${failureReason(result.body)} ${result.status === 401 || result.status === 403 ? 'Check org authentication, API scopes, and feature permissions.' : result.status === 404 ? 'This org or model does not support the requested API.' : 'The request was not retried; start a fresh run before continuing.'}`);
       return { host: candidate, body: result.body };
     }
     throw new Error('Agentforce endpoint unavailable.');
