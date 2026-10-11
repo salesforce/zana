@@ -1,15 +1,20 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { ThreadTimelineViewRow } from '@zana-ai/zcc-thread-view';
 import { PlanExecutionCard } from './PlanExecutionCard.js';
+import { TimelineRows } from './TimelineRows.js';
 import {
   planCompletedCount,
   planExecutionCurrentIndex,
+  planExecutionFinished,
+  planExecutionStateKey,
   planExecutionTitle,
   planTaskStatusLabel,
-  planTaskVisual
+  planTaskVisual,
+  visiblePlanExecution
 } from './plan-execution-card.js';
 
 describe('planExecutionTitle', () => {
@@ -65,6 +70,42 @@ describe('planCompletedCount', () => {
       ])
     ).toBe(2);
     expect(planCompletedCount([])).toBe(0);
+  });
+});
+
+describe('planExecutionFinished / visiblePlanExecution', () => {
+  const done = [
+    { id: '1', text: 'a', status: 'completed' },
+    { id: '2', text: 'b', status: 'cancelled' }
+  ];
+  const live = [
+    { id: '1', text: 'a', status: 'completed' },
+    { id: '2', text: 'b', status: 'blocked' }
+  ];
+
+  it('treats a plan as finished only when every step is done or cancelled', () => {
+    expect(planExecutionFinished(done)).toBe(true);
+    expect(planExecutionFinished(live)).toBe(false);
+    expect(planExecutionFinished([{ id: '1', text: 'a', status: 'pending' }])).toBe(false);
+    expect(planExecutionFinished([])).toBe(false);
+  });
+
+  it('drops a finished or empty plan, and keeps a live one', () => {
+    expect(visiblePlanExecution({ title: 'Plan', tasks: done })).toBeNull();
+    expect(visiblePlanExecution({ title: 'Plan', tasks: live })?.tasks).toBe(live);
+    expect(visiblePlanExecution({ title: 'Plan', tasks: [] })).toBeNull();
+    expect(visiblePlanExecution(null)).toBeNull();
+  });
+});
+
+describe('planExecutionStateKey', () => {
+  it('scopes a choice to the thread, the plan, and its revision', () => {
+    const key = planExecutionStateKey('t1', 'plan-1', 2);
+    expect(planExecutionStateKey('t1', 'plan-1', 2)).toBe(key);
+    expect(planExecutionStateKey('t1', 'plan-1', 3)).not.toBe(key);
+    expect(planExecutionStateKey('t2', 'plan-1', 2)).not.toBe(key);
+    expect(planExecutionStateKey('t1', null, 2)).toBe(planExecutionStateKey('t1', undefined, 2));
+    expect(planExecutionStateKey('t1', null, 2)).not.toBe(key);
   });
 });
 
@@ -145,5 +186,110 @@ describe('PlanExecutionCard', () => {
   it('renders nothing when there are no tasks', () => {
     const { container } = render(<PlanExecutionCard title="Plan" tasks={[]} />);
     expect(container.querySelector('[data-testid="thread-plan-execution"]')).toBeNull();
+  });
+});
+
+const finishedTasks = [
+  { id: '1', text: 'Server: merge collab state', status: 'completed' },
+  { id: '2', text: 'Client: send Yjs state', status: 'completed' }
+];
+
+function header() {
+  return within(screen.getByTestId('thread-plan-execution')).getByRole('button');
+}
+
+describe('PlanExecutionCard open state', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('keeps a keyed choice across remounts, and a new revision starts fresh', () => {
+    const key = planExecutionStateKey('t-remount', 'plan', 1);
+    const first = render(<PlanExecutionCard title="Plan" tasks={planTasks} stateKey={key} />);
+    expect(header().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(header());
+    first.unmount();
+
+    render(<PlanExecutionCard title="Plan" tasks={planTasks} stateKey={key} />);
+    expect(header().getAttribute('aria-expanded')).toBe('false');
+    cleanup();
+
+    render(<PlanExecutionCard title="Plan" tasks={planTasks} stateKey={planExecutionStateKey('t-remount', 'plan', 2)} />);
+    expect(header().getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('keeps a reader-opened card open', () => {
+    const key = planExecutionStateKey('t-reopen', 'plan', 1);
+    const first = render(<PlanExecutionCard title="Plan" tasks={planTasks} stateKey={key} />);
+    fireEvent.click(header());
+    fireEvent.click(header());
+    first.unmount();
+    render(<PlanExecutionCard title="Plan" tasks={planTasks} stateKey={key} />);
+    expect(header().getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('keeps every mounted card for the same plan in step', () => {
+    const key = planExecutionStateKey('t-split', 'plan', 1);
+    render(
+      <>
+        <PlanExecutionCard title="Plan" tasks={planTasks} stateKey={key} />
+        <PlanExecutionCard title="Plan" tasks={planTasks} stateKey={key} />
+      </>
+    );
+    const [left, right] = screen.getAllByRole('button');
+    fireEvent.click(left!);
+    expect(left!.getAttribute('aria-expanded')).toBe('false');
+    expect(right!.getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
+function userRow(id: string, text: string): ThreadTimelineViewRow {
+  return {
+    id, threadId: 't', turnId: `turn-${id}`, sourceSeqStart: 1, sourceSeqEnd: 1, startedAt: 1, createdAt: 1,
+    kind: 'conversation', role: 'user', text, attachments: null, initiator: 'user', senderThreadId: null,
+    systemMessageKind: 'unlabeled', systemMessageSubject: null,
+    turnRequest: { kind: 'message', status: 'accepted', isGrouped: false }, mentions: []
+  } as ThreadTimelineViewRow;
+}
+
+const expansion = { liveFrontierRowIds: new Set<string>(), terminalFrontierRowIds: new Set<string>() };
+
+describe('TimelineRows plan card', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('stays closed when a new message moves the card under it', () => {
+    const plan = { title: 'Plan', tasks: planTasks, stateKey: planExecutionStateKey('t-follow', 'plan', 1) };
+    const first = [userRow('u1', 'First ask')];
+    const slot = render(<TimelineRows rows={first} expansion={expansion} planExecution={plan} threadIdle />);
+    fireEvent.click(header());
+    expect(header().getAttribute('aria-expanded')).toBe('false');
+
+    slot.rerender(
+      <TimelineRows rows={[...first, userRow('u2', 'Unrelated follow-up')]} expansion={expansion} planExecution={plan} />
+    );
+    const cards = screen.getAllByTestId('thread-plan-execution');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.closest('.thread-timeline-item')?.textContent).toContain('Unrelated follow-up');
+    expect(header().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('drops a plan once it finishes, and keeps it gone while the agent works on later messages', () => {
+    const stateKey = planExecutionStateKey('t-finished', 'plan', 1);
+    const rows = [userRow('u1', 'Ask')];
+    const slot = render(
+      <TimelineRows rows={rows} expansion={expansion} planExecution={{ title: 'Plan', tasks: planTasks, stateKey }} threadIdle={false} />
+    );
+    expect(screen.getByTestId('thread-plan-execution')).toBeTruthy();
+
+    const finished = { title: 'Plan', tasks: finishedTasks, stateKey };
+    slot.rerender(<TimelineRows rows={rows} expansion={expansion} planExecution={finished} threadIdle={false} />);
+    expect(screen.queryByTestId('thread-plan-execution')).toBeNull();
+
+    slot.rerender(
+      <TimelineRows rows={[...rows, userRow('u2', 'Unrelated follow-up')]} expansion={expansion} planExecution={finished} threadIdle={false} />
+    );
+    expect(screen.queryByTestId('thread-plan-execution')).toBeNull();
   });
 });

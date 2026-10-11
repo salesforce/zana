@@ -29,7 +29,7 @@ import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSign
 import { ThreadOpenFilePreviewButton } from './TimelineTitleView.js';
 import { ThreadImageLightbox } from './ThreadImageLightbox.js';
 import { PlanExecutionCard } from './PlanExecutionCard.js';
-import type { PlanExecutionTask } from './plan-execution-card.js';
+import type { PlanExecutionView } from './plan-execution-card.js';
 
 function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>): string | null {
   if (row.role !== 'user') return null;
@@ -68,7 +68,7 @@ export const ConversationRow = memo(function ConversationRow({
   onFork?: (sourceSeqEnd?: number) => void;
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
-  planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
+  planExecution?: PlanExecutionView | null;
   filePathHints?: readonly string[];
   forceExpanded?: boolean;
   onMessageExpand?: () => void;
@@ -406,7 +406,7 @@ export const ConversationRow = memo(function ConversationRow({
         />
       ) : null}
       {row.role === 'user' && planExecution && planExecution.tasks.length > 0 ? (
-        <PlanExecutionCard title={planExecution.title} tasks={planExecution.tasks} />
+        <PlanExecutionCard title={planExecution.title} tasks={planExecution.tasks} stateKey={planExecution.stateKey} />
       ) : null}
     </article>
   );

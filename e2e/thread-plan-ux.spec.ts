@@ -79,3 +79,50 @@ test('native Plan implementation requires an explicit execution mode', async ({ 
   expect(plan.requestedExecutionMode).toBe('build');
   expect(plan.revision).toBe(1);
 });
+
+test('a closed plan card stays closed across messages and reloads, and leaves once finished', async ({ app, home }) => {
+  test.setTimeout(120_000);
+  const win = app.window;
+  const path = join(home, 'plan-card-project'); mkdirSync(path);
+  const projectId = await win.evaluate(async path => {
+    const project = await window.cc.projects.add(path); if (!project.ok) throw new Error(project.message); return project.value.id;
+  }, path);
+  const request = (route: string, method = 'GET', body?: unknown) => win.evaluate(async ({ route, method, body }) => {
+    const response = await fetch(`/api/v1/${route}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: response.status, data: await response.json() };
+  }, { route, method, body });
+  const created = await request('threads', 'POST', { projectId, providerId: 'fake', input: 'plan_snapshot:initial' });
+  expect(created.status).toBe(201);
+  const id = created.data.thread.id;
+  const idle = () => expect.poll(async () => (await request(`threads/${id}`)).data.thread.status).toBe('idle');
+  await idle();
+  await win.evaluate(id => { history.pushState({}, '', `/threads/${id}`); dispatchEvent(new PopStateEvent('popstate')); }, id);
+  const card = win.getByTestId('thread-plan-execution');
+  const header = card.locator('.thread-plan-execution-header');
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+  await expect(card).toContainText('Obsolete step');
+  await header.click();
+  await expect(header).toHaveAttribute('aria-expanded', 'false');
+
+  // The card moves under each new message; the reader's choice moves with it.
+  const input = win.getByTestId('thread-command-input');
+  await input.fill('plan_snapshot:revised');
+  await win.getByTestId('thread-command-send').click();
+  await expect(card).toContainText('1/2');
+  await idle();
+  await expect(card).toHaveCount(1);
+  await expect(win.locator('.thread-timeline-item').filter({ has: card })).toContainText('plan_snapshot:revised');
+  await expect(header).toHaveAttribute('aria-expanded', 'false');
+
+  await win.reload();
+  await expect(card).toContainText('1/2');
+  await expect(header).toHaveAttribute('aria-expanded', 'false');
+
+  // A finished plan stops trailing the conversation; the Plan panel keeps it.
+  await input.fill('plan_snapshot:done');
+  await win.getByTestId('thread-command-send').click();
+  await expect.poll(async () => (await request(`threads/${id}/plan`)).data.plan.tasks.map((task: { status: string }) => task.status)).toEqual(['completed', 'completed']);
+  await idle();
+  await expect(card).toHaveCount(0);
+  await expect(win.getByTestId('thread-timeline')).toContainText('plan_snapshot:done');
+});

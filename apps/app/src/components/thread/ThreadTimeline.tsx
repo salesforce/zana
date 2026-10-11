@@ -10,7 +10,7 @@ import {
 import type { ActiveThinking, ThreadTimelineGoal } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
-import type { PlanExecutionTask } from './timeline/plan-execution-card.js';
+import type { PlanExecutionView } from './timeline/plan-execution-card.js';
 import { showOngoingThreadWork, timelineHasRunningWork, timelineRowsAwaitUser } from './thread-timeline-model.js';
 import { collectTimelineAutoExpansionRowIds } from './timeline/timeline-auto-expand.js';
 import {
@@ -60,7 +60,7 @@ export interface ThreadTimelineProps {
   searchHitRowId?: string | null;
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
-  planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
+  planExecution?: PlanExecutionView | null;
   loadError?: string | null;
   loading?: boolean;
   onRetryLoad?: () => void;

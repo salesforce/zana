@@ -15,6 +15,7 @@ import {
 } from './thread-plan-document.js';
 
 export type DurablePlanPanelView = {
+  id?: string | null;
   markdown: string | null;
   filePath?: string | null;
   status?: string | null;

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot } from 'lucide-react';
 import {
   planCompletedCount,
@@ -7,6 +7,7 @@ import {
   planTaskVisual,
   type PlanExecutionTask
 } from './plan-execution-card.js';
+import { planCardExpanded, setPlanCardExpanded, subscribePlanCardExpanded } from './plan-execution-expanded.js';
 
 function PlanTaskGlyph({ status }: { status: string }) {
   const props = { size: 14, className: 'thread-plan-execution-glyph', 'aria-hidden': true as const };
@@ -24,12 +25,23 @@ function PlanTaskGlyph({ status }: { status: string }) {
 
 export function PlanExecutionCard({
   title,
-  tasks
+  tasks,
+  stateKey
 }: {
   title: string;
   tasks: readonly PlanExecutionTask[];
+  stateKey?: string | null;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [localChoice, setLocalChoice] = useState<boolean | undefined>(undefined);
+  const readStoredChoice = () => (stateKey ? planCardExpanded(stateKey) : undefined);
+  const storedChoice = useSyncExternalStore(subscribePlanCardExpanded, readStoredChoice, readStoredChoice);
+  // The card remounts under each new user message, so a keyed choice lives
+  // outside it.
+  const expanded = (stateKey ? storedChoice : localChoice) ?? true;
+  const toggle = () => {
+    if (stateKey) setPlanCardExpanded(stateKey, !expanded);
+    else setLocalChoice(!expanded);
+  };
   if (tasks.length === 0) return null;
   const currentIndex = planExecutionCurrentIndex(tasks);
   const current = tasks[currentIndex];
@@ -49,7 +61,7 @@ export function PlanExecutionCard({
         type="button"
         className="thread-plan-execution-header"
         aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={toggle}
       >
         {expanded
           ? <ChevronDown size={12} className="thread-timeline-work-chevron" aria-hidden="true" />

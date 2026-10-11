@@ -4,6 +4,25 @@ export type PlanExecutionTask = {
   status: string;
 };
 
+export type PlanExecutionView = {
+  title: string;
+  tasks: readonly PlanExecutionTask[];
+  /** Remembers the reader's open/closed choice for this plan revision across messages and reloads. */
+  stateKey?: string | null;
+};
+
+/**
+ * One choice per approved plan revision. Provider step updates, even ones that
+ * rewrite the checklist, keep it, so a closed card does not pop back open.
+ */
+export function planExecutionStateKey(
+  threadId: string,
+  planId: string | null | undefined,
+  revision: number
+): string {
+  return JSON.stringify([threadId, planId ?? null, revision]);
+}
+
 export function planExecutionTitle(markdown: string | null | undefined): string {
   if (!markdown) return 'Plan';
   for (const raw of markdown.split('\n')) {
@@ -57,4 +76,22 @@ export function planTaskStatusLabel(status: string): string {
 /** How many tasks are done — the numerator of the progress counter. */
 export function planCompletedCount(tasks: readonly PlanExecutionTask[]): number {
   return tasks.reduce((count, task) => (planTaskVisual(task.status) === 'completed' ? count + 1 : count), 0);
+}
+
+/** Every step is settled (done or cancelled), so there is no progress left to watch. */
+export function planExecutionFinished(tasks: readonly PlanExecutionTask[]): boolean {
+  return tasks.length > 0 && tasks.every((task) => {
+    const visual = planTaskVisual(task.status);
+    return visual === 'completed' || visual === 'cancelled';
+  });
+}
+
+/**
+ * The card rides on the latest user message, and a thread keeps one plan for
+ * life, so a finished plan would trail every later message. The Plan panel
+ * keeps it instead.
+ */
+export function visiblePlanExecution(plan: PlanExecutionView | null | undefined): PlanExecutionView | null {
+  if (!plan?.tasks.length || planExecutionFinished(plan.tasks)) return null;
+  return plan;
 }

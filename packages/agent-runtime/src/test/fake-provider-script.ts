@@ -449,11 +449,12 @@ function beginTurn(threadId: string, input: unknown, clientRequestId?: string, o
       : `# Converter plan\n\n1. Implement Celsius and Fahrenheit conversions.\n2. ${plainPlan === 'revised' ? 'Add Kelvin and reject values below absolute zero.' : 'Test round trips.'}\n3. Run node:test.\n\nFixture: plain_plan:${plainPlan}`;
   }
 
-  const planSnapshot = /(?:^|\s)plan_snapshot:(initial|revised|empty)(?:\s|$)/.exec(inputText)?.[1];
+  const planSnapshot = /(?:^|\s)plan_snapshot:(initial|revised|done|empty)(?:\s|$)/.exec(inputText)?.[1];
   if (planSnapshot) {
     const steps = planSnapshot === 'initial'
       ? [{ step: 'Inspect implementation', status: 'active' }, { step: 'Obsolete step', status: 'pending' }]
-      : planSnapshot === 'revised' ? [{ step: 'Inspect implementation', status: 'completed' }, { step: 'Verify behavior', status: 'active' }] : [];
+      : planSnapshot === 'revised' ? [{ step: 'Inspect implementation', status: 'completed' }, { step: 'Verify behavior', status: 'active' }]
+      : planSnapshot === 'done' ? [{ step: 'Inspect implementation', status: 'completed' }, { step: 'Verify behavior', status: 'completed' }] : [];
     sendDeltas(threadId, [{
       kind: 'item.close', key: { providerItemId: `plan-${turnId}` },
       item: { type: 'planSteps', steps }, status: 'completed', providerTurnId: turnId,

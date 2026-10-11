@@ -45,7 +45,7 @@ import { useOptionalPaneContext, usePaneSecondaryPanelRegistration } from '../th
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
 import { ThreadPlanPanel, type DurablePlanPanelView } from '../../components/thread/secondary-panel/ThreadPlanPanel.js';
 import { planFileTabTitle, resolveThreadPlanDocument, isLivePlanFilePath } from '../../components/thread/secondary-panel/thread-plan-document.js';
-import { planExecutionTitle } from '../../components/thread/timeline/plan-execution-card.js';
+import { planExecutionStateKey, planExecutionTitle } from '../../components/thread/timeline/plan-execution-card.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
@@ -941,7 +941,11 @@ export function ThreadDetail({
               onRetryLoad={() => runLoadRef.current()}
               activeWorkflows={workflows}
               planExecution={durablePlan?.tasks.length
-                ? { title: planExecutionTitle(durablePlan.markdown), tasks: durablePlan.tasks }
+                ? {
+                  title: planExecutionTitle(durablePlan.markdown),
+                  tasks: durablePlan.tasks,
+                  stateKey: planExecutionStateKey(threadId, durablePlan.id, durablePlan.revision)
+                }
                 : null}
               lastReadSeq={lastReadSeq}
               onReachedBottom={markRead}

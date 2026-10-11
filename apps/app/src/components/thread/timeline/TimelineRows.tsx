@@ -30,7 +30,7 @@ import { pastRowDimClassName } from './timeline-title.js';
 import { TimelineDetailScroll } from './TimelineDetailScroll.js';
 import { isUserConversationRow, observeStickyUserPrompts, stickyTurnRanges } from './timeline-sticky-user.js';
 import type { TimelineTitleActionHandler, TimelineTitleLinkHandler } from './TimelineTitleView.js';
-import type { PlanExecutionTask } from './plan-execution-card.js';
+import { visiblePlanExecution, type PlanExecutionView } from './plan-execution-card.js';
 import {
   collectTimelineFilePreviewPaths,
   reuseStringListIfEqual
@@ -79,7 +79,7 @@ interface TimelineRowsProps {
   scopeActive?: boolean;
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
-  planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
+  planExecution?: PlanExecutionView | null;
   filePathHints?: readonly string[];
   targetRowId?: string | null;
   historyPage?: number;
@@ -126,6 +126,7 @@ export function TimelineRows(props: TimelineRowsProps) {
     const allTurns = stickyTurnRanges(rows);
     return allTurns.length > 0 ? rows[allTurns[allTurns.length - 1]!.start]?.id : null;
   }, [nested, rows]);
+  const latestPlan = visiblePlanExecution(planExecution);
   const renderItems = (slice: readonly ThreadTimelineViewRow[]) =>
     slice.map((row) => {
       const title = titles.get(row.id)!;
@@ -144,7 +145,7 @@ export function TimelineRows(props: TimelineRowsProps) {
             row={row}
             title={title}
             activeLatestBundleId={activeLatestBundleId}
-            planExecution={row.id === latestUserRowId ? planExecution : null}
+            planExecution={row.id === latestUserRowId ? latestPlan : null}
           />
         </div>
       );
