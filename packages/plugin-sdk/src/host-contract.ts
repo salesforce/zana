@@ -65,6 +65,13 @@ export interface ExperimentalHostPaths {
    * null for a call made without zcc.host.projectCall's projectId.
    */
   readonly projectRoot: string | null;
+  /**
+   * Absolute root under which this daemon keeps per-thread storage directories
+   * (`<daemon data dir>/thread-storage`), computed by the daemon itself, or
+   * null when the daemon did not provide one. The directory may not exist yet.
+   * Handlers must still realpath-confine anything they touch beneath it.
+   */
+  readonly threadStorageRoot: string | null;
 }
 
 export type ExperimentalHostWatchChangeType = "create" | "update" | "delete";

@@ -285,6 +285,10 @@ function applyVersion(database: SqliteDatabase, version: number, statements: rea
   })();
 }
 
+function hasColumn(database: SqliteDatabase, table: string, column: string): boolean {
+  return database.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get(table, column) !== undefined;
+}
+
 /** Keep one environments row per (project, host, path) so v2's unique index can apply. */
 export function collapseDuplicateEnvironmentPaths(database: SqliteDatabase): void {
   const duplicates = database
@@ -469,6 +473,16 @@ export function migrate(database: SqliteDatabase): void {
     )`
   ]);
   if (!applied.has(31)) applyVersion(database, 31, CONVERSATION_PRUNING_WORK_SCHEMA);
+  // Replayable like 29-31: a repaired lineage may run it over a table that already has the column.
+  if (!applied.has(32)) applyVersion(database, 32, [
+    // Absolute-epoch edit lease for the queued-message editor. A deadline, not a
+    // flag, so an abandoned editor (or a restart) cannot hold the queue forever.
+    ...(hasColumn(database, 'deferred_thread_messages', 'edit_held_until')
+      ? []
+      : ['ALTER TABLE deferred_thread_messages ADD COLUMN edit_held_until INTEGER']),
+    `CREATE INDEX IF NOT EXISTS deferred_thread_messages_edit_hold_idx
+       ON deferred_thread_messages(edit_held_until) WHERE edit_held_until IS NOT NULL`
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

@@ -86,7 +86,9 @@ import {
 // 42: plugin.host.call carries a server-realpath-confined projectRoot for
 // project-bound host RPC (OBL-001); worker trusts it, never re-resolves it.
 // 43: thread.background.stop stops one provider background task by item id.
-export const HOST_RPC_PROTOCOL_VERSION = 43;
+// 44: host.environment.replace pushes plugin-contributed environment to a
+// non-primary machine daemon (held in daemon memory only, never persisted).
+export const HOST_RPC_PROTOCOL_VERSION = 44;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -124,6 +126,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'plugin.host.call',
   'plugin.host.cancel',
   'plugin.host.dispose',
+  'host.environment.replace',
   'terminal.start',
   'terminal.start_cli',
   'terminal.input',
@@ -872,12 +875,80 @@ export const PluginHostCallCommandSchema = z.object({
 export const PluginHostCancelCommandSchema = z.object({ type: z.literal('plugin.host.cancel'), ...pluginHostIdentity, callId: z.string().min(1).max(200) }).strict();
 export const PluginHostDisposeCommandSchema = z.object({ type: z.literal('plugin.host.dispose'), ...pluginHostIdentity }).strict();
 
+/**
+ * Environment variable names a plugin (or the server) may never place in a
+ * daemon's process environment: they redirect execution, library loading,
+ * configuration lookup, network routing, trust roots or the daemon's own
+ * identity. Compared case-insensitively.
+ */
+const FORBIDDEN_HOST_ENVIRONMENT_NAMES = new Set([
+  'PATH', 'HOME', 'USERPROFILE', 'SHELL', 'USER', 'LOGNAME', 'TMPDIR', 'TEMP', 'TMP', 'IFS', 'BASH_ENV', 'ENV',
+  'ZDOTDIR', 'PROMPT_COMMAND', 'EDITOR', 'VISUAL', 'PAGER', 'XDG_CONFIG_HOME',
+  'PYTHONPATH', 'PYTHONHOME', 'PYTHONSTARTUP', 'PERL5LIB', 'PERL5OPT', 'RUBYLIB', 'RUBYOPT', 'JAVA_TOOL_OPTIONS',
+  '_JAVA_OPTIONS', 'GIT_EXEC_PATH', 'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GIT_CONFIG_GLOBAL',
+  'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_PARAMETERS', 'GIT_PAGER', 'GIT_EDITOR',
+  'GIT_SEQUENCE_EDITOR', 'GIT_PROXY_COMMAND', 'GIT_EXTERNAL_DIFF', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_TEMPLATE_DIR',
+  'GH_CONFIG_DIR', 'SSH_ASKPASS', 'SSH_AUTH_SOCK', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE',
+  'REQUESTS_CA_BUNDLE'
+]);
+const FORBIDDEN_HOST_ENVIRONMENT_PREFIXES = ['LD_', 'DYLD_', 'NODE_', 'ELECTRON_', 'ZCC_', 'BB_', 'NPM_CONFIG_'];
+const FORBIDDEN_HOST_ENVIRONMENT_SUFFIXES = ['_PROXY'];
+export function isForbiddenHostEnvironmentName(name: string): boolean {
+  const upper = name.toUpperCase();
+  return FORBIDDEN_HOST_ENVIRONMENT_NAMES.has(upper)
+    || FORBIDDEN_HOST_ENVIRONMENT_PREFIXES.some((prefix) => upper.startsWith(prefix))
+    || FORBIDDEN_HOST_ENVIRONMENT_SUFFIXES.some((suffix) => upper.endsWith(suffix));
+}
+/**
+ * The only git settings a forwarded `GIT_CONFIG_KEY_<n>` may name: credential helpers, URL rewrites and
+ * the commit identity. Anything else (`core.sshCommand`, `core.fsmonitor`, `alias.*`, ...) could change
+ * what git runs on the machine. This narrows a vocabulary; it is not a sandbox for a full-trust plugin.
+ */
+const FORWARDED_GIT_CONFIG_KEY = /^(?:credential(?:\.\S+)?\.helper|url\.\S+\.(?:insteadof|pushinsteadof)|user\.(?:name|email))$/i;
+const FORWARDED_GIT_CONFIG_KEY_NAME = /^GIT_CONFIG_KEY_\d+$/i;
+const FORWARDED_GIT_CONFIG_COUNT_MAX = 16;
+function isAcceptedHostEnvironmentValue(name: string, value: string): boolean {
+  if (FORWARDED_GIT_CONFIG_KEY_NAME.test(name)) return FORWARDED_GIT_CONFIG_KEY.test(value);
+  if (name.toUpperCase() === 'GIT_CONFIG_COUNT') {
+    return /^\d{1,2}$/.test(value) && Number(value) <= FORWARDED_GIT_CONFIG_COUNT_MAX;
+  }
+  return true;
+}
+export const HOST_ENVIRONMENT_MAX_ENTRIES = 128;
+export const HOST_ENVIRONMENT_MAX_VALUE_LENGTH = 8192;
+const HostEnvironmentNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+  .refine((name) => !isForbiddenHostEnvironmentName(name), { message: 'forbidden environment variable name' });
+export const HostEnvironmentEntrySchema = z.object({
+  name: HostEnvironmentNameSchema,
+  value: z.string().max(HOST_ENVIRONMENT_MAX_VALUE_LENGTH).refine((value) => !value.includes('\u0000'), { message: 'NUL is not allowed' }),
+  /** Entries sharing a group are applied atomically: all or none. */
+  group: z.string().min(1).max(128).optional(),
+  /** Names that must resolve in the machine's effective environment for this entry to apply. */
+  requires: z.array(z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).max(8).optional()
+}).strict().refine((entry) => isAcceptedHostEnvironmentValue(entry.name, entry.value), {
+  message: 'value is not allowed for this environment variable',
+  path: ['value']
+});
+export type HostEnvironmentEntry = z.infer<typeof HostEnvironmentEntrySchema>;
+export const HostEnvironmentReplaceCommandSchema = z.object({
+  type: z.literal('host.environment.replace'),
+  entries: z.array(HostEnvironmentEntrySchema).max(HOST_ENVIRONMENT_MAX_ENTRIES)
+}).strict();
+export type HostEnvironmentReplaceCommand = z.infer<typeof HostEnvironmentReplaceCommandSchema>;
+/** Names only: the result never echoes a value. */
+export const HostEnvironmentReplaceResultSchema = z.object({
+  applied: z.array(z.string().max(128)).max(HOST_ENVIRONMENT_MAX_ENTRIES),
+  skipped: z.array(z.string().max(128)).max(HOST_ENVIRONMENT_MAX_ENTRIES)
+}).strict();
+export type HostEnvironmentReplaceResult = z.infer<typeof HostEnvironmentReplaceResultSchema>;
+
 export const PreviewReplaceCommandSchema = z.object({ type: z.literal('preview.replace'), epoch: z.string().uuid(), generation: z.number().int().nonnegative(), targets: z.array(z.object({ port: z.number().int().min(1024).max(65535), expiresAt: z.number().int() }).strict()).max(32) }).strict();
 
 export const HostRpcCommandSchema = z.union([
   PreviewReplaceCommandSchema,
   z.object({ type: z.literal('host.git_history'), root: PathSchema, limit: z.number().int().min(1).max(100) }).strict(),
   PluginHostCallCommandSchema, PluginHostCancelCommandSchema, PluginHostDisposeCommandSchema,
+  HostEnvironmentReplaceCommandSchema,
   HostGitFileCommandSchema,
   ProviderStatusCommandSchema,
   CliDiscoveryCommandSchema,
@@ -1435,6 +1506,7 @@ export const HostRpcResultSchemaByType = {
   'plugin.host.call': z.object({ output: jsonValueSchema }).strict(),
   'plugin.host.cancel': z.object({ cancelled: z.boolean() }).strict(),
   'plugin.host.dispose': z.object({ disposed: z.boolean() }).strict(),
+  'host.environment.replace': HostEnvironmentReplaceResultSchema,
   'terminal.start': TerminalStartResultSchema,
   'terminal.start_cli': TerminalStartResultSchema,
   'terminal.input': TerminalInputResultSchema,

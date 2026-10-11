@@ -6,6 +6,7 @@ import {
   githubMentionItemsFromList,
   parseGithubMentionId
 } from './mentions.mjs';
+import { createCredentialSource, createGhRunner, loadGithubCredentials } from './credentials.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -19,7 +20,28 @@ export default function plugin(zcc, deps = {}) {
   // without spawning the real CLI (a real subprocess flakes under parallel load).
   const ghJson = deps.ghJson ?? defaultGhJson;
   const settings = zcc.settings.define({
-    repo: { type: 'string', label: 'Repository (owner/name)' }
+    repo: { type: 'string', label: 'Repository (owner/name)' },
+    machineGitCredentialsEnabled: {
+      type: 'boolean',
+      label: 'Forward the GitHub CLI login to remote machines',
+      description:
+        'Lets git and gh work on your other machines without signing in there: sessions on a non-primary machine get a GH_TOKEN from this computer\'s `gh auth login`, and git uses it for github.com over HTTPS. Held in memory only, never saved. A GH_TOKEN already set on the machine always wins. Turning this off stops forwarding at once.',
+      default: true
+    },
+    machineGitCommitIdentity: {
+      type: 'boolean',
+      label: 'Also commit as your GitHub account on remote machines',
+      description:
+        'Sets the git author and committer of those sessions to your GitHub login and email. This replaces any user.name and user.email configured on the machine, so leave it off where git is already set up.',
+      default: false
+    },
+    machineGitSshRemotes: {
+      type: 'boolean',
+      label: 'Also send GitHub SSH remotes over HTTPS on remote machines',
+      description:
+        'Rewrites git@github.com: and ssh://git@github.com/ remotes to HTTPS so they use the forwarded token. Useful on machines without a GitHub SSH key; on a machine with a working key it routes around that key.',
+      default: false
+    }
   });
 
   zcc.rpc.method('status', async () => {
@@ -102,4 +124,62 @@ export default function plugin(zcc, deps = {}) {
 
   registerKind('issue');
   registerKind('pr');
+  registerRemoteCredentials(zcc, settings, deps.runGh ?? createGhRunner());
+}
+
+/**
+ * Hand the local `gh` login to the host as environment for sessions on non-primary machines. The host calls
+ * the provider in the background, so nothing here can delay or fail a spawn.
+ */
+function registerRemoteCredentials(zcc, settings, runGh) {
+  let reported = null;
+  const report = (reason) => {
+    if (reported === reason) return;
+    reported = reason;
+    zcc.log.info(`gh credentials unavailable (${reason}); nothing is forwarded to remote machines`);
+  };
+  const credentials = createCredentialSource({
+    load: async () => {
+      const values = await settings.get();
+      const entries = await loadGithubCredentials(runGh, report, {
+        commitIdentity: values.machineGitCommitIdentity === true,
+        sshRemotes: values.machineGitSshRemotes === true
+      });
+      if (entries.length > 0 && reported !== null) {
+        reported = null;
+        zcc.log.info('gh credentials available again');
+      }
+      return entries;
+    },
+    onChange: () => refreshRemoteEnvironment(zcc)
+  });
+  const enabled = async () => (await settings.get()).machineGitCredentialsEnabled !== false;
+  try {
+    zcc.remoteEnvironment.provide(async () => {
+      if (!(await enabled())) {
+        credentials.clear();
+        return [];
+      }
+      return credentials.current();
+    });
+  } catch (error) {
+    zcc.log.info(`remote machine credentials are off: ${error instanceof Error ? error.message : 'unavailable'}`);
+    credentials.dispose();
+    return;
+  }
+  settings.onChange((next) => {
+    // Disabling drops what is held at once; any other change rebuilds it with the new options.
+    if (next?.machineGitCredentialsEnabled === false) credentials.clear();
+    else void credentials.reload();
+    refreshRemoteEnvironment(zcc);
+  });
+  zcc.onDispose(() => credentials.dispose());
+}
+
+function refreshRemoteEnvironment(zcc) {
+  try {
+    zcc.remoteEnvironment.refresh();
+  } catch {
+    /* the plugin is shutting down */
+  }
 }

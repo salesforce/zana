@@ -64,6 +64,7 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   salesforce: 'Developer tools',
   secrets: 'Host access',
   'side-chat': 'Agent interaction',
+  'storage-retention': 'Host access',
   tasks: 'Workflow management',
   workflows: 'Workflow management'
 };
@@ -105,6 +106,7 @@ const EXPECTED_ICONS: Record<string, string> = {
   salesforce: 'Cloud',
   secrets: 'KeyRound',
   'side-chat': 'MessagesSquare',
+  'storage-retention': 'DatabaseBackup',
   tasks: 'ListTodo',
   workflows: 'GitBranch'
 };
@@ -158,6 +160,12 @@ describe('bundled plugin registry invariants', () => {
       });
       expect(RECLAIM_UNINSTALLED_AUTOINSTALL_IDS).not.toContain(pluginId);
     }
+  });
+
+  it('installs Storage & retention disabled so its cleanup stays opt-in', () => {
+    expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'storage-retention')).toMatchObject({
+      autoInstall: true, defaultEnabled: false
+    });
   });
 
   it('keeps official plugins bundled but out of the auto-install builtins', () => {

@@ -217,6 +217,83 @@ test('Remove deletes paused queued messages, including the last one', async ({ a
   ]);
 });
 
+test('an edited queued message is held back from the drain until it is saved or cancelled', async ({ app }) => {
+  const { window } = app;
+  const support = window.getByRole('dialog', { name: 'Support Zana' });
+  if (await support.isVisible().catch(() => false)) {
+    await support.getByRole('button', { name: 'Dismiss' }).click();
+  }
+  await window.getByTestId('nav-home').click();
+  const homeComposer = window.locator('.thread-command-composer').first();
+  await expect(homeComposer.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  await homeComposer.getByTestId('thread-command-input').fill('delay:8000 keep this turn alive');
+  await homeComposer.getByTestId('thread-command-send').click();
+
+  const detail = window.getByTestId('thread-detail');
+  const timeline = detail.getByTestId('thread-timeline');
+  const composer = detail.locator('.thread-command-composer');
+  const input = composer.getByTestId('thread-command-input');
+  const queued = detail.getByTestId('thread-queued-messages');
+  await expect(composer.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Queue');
+  for (const message of ['Edit me first', 'Behind the edited one']) {
+    await input.fill(message);
+    await input.press('Enter');
+    await expect(queued).toContainText(message);
+  }
+
+  // Opening the editor takes the server-side hold before anything is typed.
+  const holdResponse = window.waitForResponse((response) => response.request().method() === 'POST'
+    && response.url().includes('/next-turn/') && response.url().endsWith('/edit-hold'));
+  await queued.locator('.thread-queued-ghost').filter({ hasText: 'Edit me first' })
+    .getByRole('button', { name: 'Edit queued message' }).click();
+  expect((await holdResponse).status()).toBe(200);
+  const editor = queued.getByRole('textbox', { name: 'Queued message text' });
+  await expect(editor).toHaveValue('Edit me first');
+  await editor.fill('Edited follow-up');
+
+  // The active turn finishes while the editor is still open: the drain must stop at the held row.
+  await expect(timeline).toContainText('Response to: delay:8000 keep this turn alive', { timeout: 30_000 });
+  await window.waitForTimeout(2_000);
+  await expect(editor).toHaveValue('Edited follow-up');
+  await expect(timeline.getByTestId('thread-user-text')).toHaveText(['delay:8000 keep this turn alive']);
+  await expect(queued.locator('.thread-queued-ghost')).toHaveCount(2);
+  await expect(timeline).not.toContainText('Response to: Edit me first');
+
+  // Saving sends the edited text, never the pre-edit text, and releases the row behind it.
+  const saveResponse = window.waitForResponse((response) => response.request().method() === 'PATCH'
+    && response.url().includes('/next-turn/'));
+  await queued.getByRole('button', { name: 'Save', exact: true }).click();
+  expect((await saveResponse).status()).toBe(200);
+  await expect(timeline).toContainText('Response to: Edited follow-up', { timeout: 20_000 });
+  await expect(timeline).toContainText('Response to: Behind the edited one', { timeout: 20_000 });
+  await expect(timeline.getByTestId('thread-user-text')).toHaveText([
+    'delay:8000 keep this turn alive', 'Edited follow-up', 'Behind the edited one'
+  ]);
+  await expect(timeline).not.toContainText('Response to: Edit me first');
+  await expect(queued).toHaveCount(0);
+
+  // Cancelling releases the hold and the original text goes out.
+  await input.fill('delay:8000 second turn');
+  await input.press('Enter');
+  await expect(composer.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Queue');
+  await input.fill('Cancelled edit text');
+  await input.press('Enter');
+  await expect(queued).toContainText('Cancelled edit text');
+  await queued.locator('.thread-queued-ghost').filter({ hasText: 'Cancelled edit text' })
+    .getByRole('button', { name: 'Edit queued message' }).click();
+  const cancelEditor = queued.getByRole('textbox', { name: 'Queued message text' });
+  await cancelEditor.fill('Never sent');
+  const releaseResponse = window.waitForResponse((response) => response.request().method() === 'DELETE'
+    && response.url().endsWith('/edit-hold'));
+  await queued.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect((await releaseResponse).status()).toBe(200);
+  await expect(queued.getByRole('textbox')).toHaveCount(0);
+  await expect(timeline).toContainText('Response to: Cancelled edit text', { timeout: 30_000 });
+  await expect(timeline).not.toContainText('Never sent');
+  await expect(queued).toHaveCount(0);
+  await expect(window.locator('.thread-status-badge.is-error')).toHaveCount(0);
+});
+
 test('a distant child completion keeps the parent Working and follow-ups queued', async ({ app }) => {
   const { window } = app;
   await window.getByTestId('nav-home').click();

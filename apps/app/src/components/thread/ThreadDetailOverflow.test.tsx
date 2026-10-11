@@ -44,6 +44,22 @@ describe('ThreadDetailOverflowMenu', () => {
     expect(html).toContain('tab-context-danger');
   });
 
+  it('offers the notification level only for a known thread', () => {
+    const props = {
+      canStop: false,
+      onUnread: () => undefined,
+      onRename: () => undefined,
+      onFork: () => undefined,
+      onStop: () => undefined,
+      onArchive: () => undefined,
+      onCloseFollowup: () => undefined
+    };
+    expect(renderToStaticMarkup(<ThreadDetailOverflowMenu {...props} />)).not.toContain('thread-notification-level');
+    expect(renderToStaticMarkup(<ThreadDetailOverflowMenu {...props} notificationsThreadId="thr_1" />)).toContain(
+      'data-testid="thread-notification-level"'
+    );
+  });
+
   it('adds Stop while the thread is busy', () => {
     const html = renderToStaticMarkup(
       <ThreadDetailOverflowMenu
@@ -79,6 +95,7 @@ describe('ThreadDetailOverflow wiring', () => {
     expect(source).toContain('threadOverflowMenuPosition(rect, window)');
     expect(source).toContain('queueMicrotask(() => setRenaming(true))');
     expect(source).toContain('onRenamed?.(next)');
+    expect(source).toContain('notificationsThreadId={threadId}');
   });
 
   it('stacks the portaled menu above the modal backdrop', () => {

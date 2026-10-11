@@ -57,6 +57,7 @@ import {
   withDeadline
 } from './plugin-mentions.js';
 import { callPluginHostRpc, disposePluginHostWorkers } from './plugin-host-rpc.js';
+import { parseRemoteEnvironmentNames } from '../services/hosts/remote-environment.js';
 import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
 import { loadPluginHostArtifactSnapshot } from './plugin-host-artifact.js';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
@@ -1002,10 +1003,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     let hostEntry: string | null = null;
     let serverEntry = row.serverEntry;
+    let remoteEnvironmentNames: string[] = [];
     try {
       const manifest = loadManifestFromDir(row.rootDir);
       hostEntry = manifest.hostEntry;
       if (manifest.serverEntry) serverEntry = manifest.serverEntry;
+      remoteEnvironmentNames = parseRemoteEnvironmentNames(manifest.extra);
     } catch {
       hostEntry = null;
     }
@@ -1064,6 +1067,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       registerPersonas: opts.registerPersonas,
       registerTeams: opts.registerTeams,
       productContext: opts.productContext,
+      remoteEnvironmentNames,
        hostCall: opts.productContext ? async (method, input, hostId, signal, timeoutMs, projectId) => {
         // Resolve only this plugin's active generation; renderer input cannot
         // choose an artifact or invoke another plugin's host entry.

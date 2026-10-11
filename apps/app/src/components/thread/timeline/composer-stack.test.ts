@@ -85,6 +85,22 @@ describe('message actions helpers', () => {
     expect(css).not.toContain('.thread-next-turn-send-now {');
   });
 
+  it('styles every class the queued-message editor renders and keeps its hold wiring', () => {
+    const source = readFileSync(new URL('./ComposerStackCards.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../../../styles/global.css', import.meta.url), 'utf8');
+    for (const className of ['thread-queued-ghost-edit', 'thread-queued-edit', 'thread-queued-edit-input', 'thread-queued-edit-actions']) {
+      expect(source).toContain(className);
+      expect(css).toContain(`.${className}`);
+    }
+    expect(source).toContain('useQueuedMessageEditHold');
+    expect(source).toContain('updateNextTurn');
+    expect(source).toContain('expectedUpdatedAt');
+    const hook = readFileSync(new URL('./useQueuedMessageEditHold.ts', import.meta.url), 'utf8');
+    expect(hook).toContain('holdNextTurnForEdit');
+    expect(hook).toContain('releaseNextTurnEditHold');
+    expect(hook).toContain('clearTimeout');
+  });
+
   it('allows editing accepted idle user messages only', () => {
     const request = { kind: 'message', status: 'accepted' };
     expect(canEditConversationMessage({ role: 'user', turnRequest: request }, true)).toBe(true);

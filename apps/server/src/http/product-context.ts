@@ -46,9 +46,14 @@ import {
 import { publishConversationLifecycleOutcome } from '../services/threads/conversation-lifecycle-outcome.js';
 import { healDisconnectedConversationThreadsForHost } from '../services/threads/conversation-host-recovery.js';
 import { HOST_ACTIVE_WORK_DISCONNECT_GRACE_MS } from '../services/threads/conversation-runtime-display.js';
-import { retryDueConversationSends } from '../services/threads/conversation-deferred-messages.js';
+import { retryDueConversationSends, wakeLapsedEditHolds } from '../services/threads/conversation-deferred-messages.js';
 import { startDeferredRetryLoop } from '../services/threads/deferred-retry-loop.js';
 import { disposeLocalHostDaemon } from '../services/hosts/host-relaunch.js';
+import {
+  createRemoteEnvironmentService,
+  nonPrimaryHostCheck,
+  type RemoteEnvironmentService
+} from '../services/hosts/remote-environment.js';
 import { startConversationHistoryMaintenance } from '../services/threads/conversation-history-maintenance.js';
 import { PersistentTerminalSessions } from './persistent-terminal-sessions.js';
 import { ProviderModelCatalogStore } from '../services/threads/provider-model-catalog-store.js';
@@ -73,6 +78,8 @@ export interface ProductHttpContext {
   db: ZccDatabase;
   hostHub: HostHub;
   modelCatalogs: ProviderModelCatalogStore;
+  /** Plugin-contributed environment for sessions on non-primary machines (memory only). */
+  remoteEnvironment: RemoteEnvironmentService;
   projects: ProjectStore;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
@@ -172,6 +179,7 @@ export function createProductHttpContext(
         disconnectHealTimers.delete(hostId);
       }
       if (!ctx) return;
+      ctx.remoteEnvironment.hostConnected(hostId);
       void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
       void flushDueConversationSendsForHost(ctx, hostId).catch(() => undefined);
       for (const provider of listThreadProviders().filter((row) => row.models?.scope === 'host')) {
@@ -200,6 +208,7 @@ export function createProductHttpContext(
     },
     onPluginHostEvent: event => { void ctx?.plugins?.emitHostEvent(event).catch(() => undefined); },
     onHostDisconnected: (hostId) => {
+      ctx?.remoteEnvironment.hostDisconnected(hostId);
       ctx?.cliCallbacks?.abortHost(hostId);
       const existing = disconnectHealTimers.get(hostId);
       if (existing) clearTimeout(existing);
@@ -210,6 +219,13 @@ export function createProductHttpContext(
         healDisconnectedConversationThreadsForHost(ctx.db, ctx.hub, hostId);
       }, HOST_ACTIVE_WORK_DISCONNECT_GRACE_MS));
     }
+  });
+  const remoteEnvironment = createRemoteEnvironmentService({
+    connectedHostIds: () => hostHub.connectedHostIds(),
+    isEligibleHost: nonPrimaryHostCheck(db),
+    callHost: (hostId, command, timeoutMs) => hostHub.callHostOnlineRpc({ hostId, command, timeoutMs }),
+    // Names, counts and host ids only: the service never passes a value to the logger.
+    log: { info: (message) => console.info(`[remote-env] ${message}`), warn: (message) => console.warn(`[remote-env] ${message}`) }
   });
   const modelCatalogs = new ProviderModelCatalogStore({
     db,
@@ -355,6 +371,7 @@ export function createProductHttpContext(
     db,
     hostHub,
     modelCatalogs,
+    remoteEnvironment,
     projects,
     config,
     inbox,
@@ -380,12 +397,18 @@ export function createProductHttpContext(
       disposeLocalHostDaemon(ctx);
       inboxRead.dispose();
       promptRegistry.stop();
+      remoteEnvironment.dispose();
       ctx.plugins?.stop?.();
     }
   };
   previewService(ctx);
   const stopHistoryMaintenance = startConversationHistoryMaintenance(db);
-  const stopRetries = startDeferredRetryLoop(() => retryDueConversationSends(ctx,
-    (threadId) => flushHeldConversationSends(ctx, threadId, { enforceConcurrencyCap: true })));
+  const stopRetries = startDeferredRetryLoop(async () => {
+    // A queued-message editor whose lease lapsed (closed tab, quit app, restart)
+    // would otherwise strand its row until the next unrelated drain.
+    await wakeLapsedEditHolds(ctx, (threadId) => flushHeldConversationSends(ctx, threadId));
+    await retryDueConversationSends(ctx,
+      (threadId) => flushHeldConversationSends(ctx, threadId, { enforceConcurrencyCap: true }));
+  });
   return ctx;
 }

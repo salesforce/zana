@@ -472,10 +472,25 @@ const api: CcApi = {
     flushNextTurn: async () => ({ ok: false }),
     sendNextTurn: (threadId, itemId) => ipcRenderer.invoke(IPC.uiSend, threadId, itemId),
     nextTurn: async () => ({ items: [] }),
+    holdNextTurnForEdit: async () => {
+      throw new Error('threads require the product server');
+    },
+    releaseNextTurnEditHold: async () => {
+      throw new Error('threads require the product server');
+    },
+    updateNextTurn: async () => {
+      throw new Error('threads require the product server');
+    },
     compact: async () => ({ ok: false }),
     promptHistory: async () => ({ entries: [] }),
     pin: async () => ({ thread: {} }),
     unpin: async () => ({ thread: {} }),
+    notificationLevel: async () => {
+      throw new Error('threads require the product server');
+    },
+    setNotificationLevel: async () => {
+      throw new Error('threads require the product server');
+    },
     search: async () => ({ threads: [] }),
     childSummary: async () => ({ total: 0, live: 0 }),
     resume: async () => ({ ok: false }),

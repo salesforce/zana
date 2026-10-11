@@ -1,6 +1,7 @@
 import type { ThreadHistoryQuery, ThreadHistoryPage, ConversationTranscript } from '@zana-ai/zcc-domain/product';
 import type { DesktopBrowserApi } from './browser.js';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
+import type { OwnNotificationLevel, ThreadNotificationState } from '@zana-ai/zcc-domain';
 import type {
   ProviderCliInstallActionKind,
   ProviderCliInstallEvent,
@@ -581,10 +582,20 @@ export interface CcApi {
     sendNextTurn(threadId: string, itemId: string): Promise<{ ok: boolean }>;
     deleteNextTurn(threadId: string, itemId: string): Promise<{ ok: boolean }>;
     nextTurn(threadId: string): Promise<{ ok?: boolean; items?: unknown[] }>;
+    /** Takes or renews the queued-message editor's lease (the server picks `leaseMs`); 404/409 mean the row is gone or already sent. */
+    holdNextTurnForEdit(threadId: string, itemId: string): Promise<{ ok: boolean; leaseMs: number; heldUntil: number }>;
+    /** Cancels the lease without saving. Idempotent. */
+    releaseNextTurnEditHold(threadId: string, itemId: string): Promise<{ ok: boolean }>;
+    /** Saves the edited text in one write that also ends the lease. */
+    updateNextTurn(threadId: string, itemId: string, input: { text: string; expectedUpdatedAt?: number }): Promise<{ ok: boolean; item: { id: string; text: string; updatedAt: number } }>;
     compact(threadId: string): Promise<{ ok: boolean }>;
     promptHistory(threadId: string): Promise<{ entries?: Array<{ input?: unknown }> }>;
     pin(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     unpin(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    /** The thread's own push-notification level, what it resolves to, and the defaults behind it. */
+    notificationLevel(threadId: string): Promise<ThreadNotificationState>;
+    /** Sets the thread's own level (`inherit` clears it); the server validates and answers with the resolved state. */
+    setNotificationLevel(threadId: string, level: OwnNotificationLevel): Promise<ThreadNotificationState>;
     search(query: string, projectId?: string): Promise<{ threads: unknown[] }>;
     childSummary(threadId: string): Promise<{ total: number; live: number }>;
     resume(threadId: string): Promise<{ ok: boolean }>;

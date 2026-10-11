@@ -32,7 +32,7 @@ If you use Zana Connect, the account service associates your signed-in identity 
 
 ## Notifications and device permissions
 
-Background push is not yet available for Zana Connect accounts. This build does not register legacy gateway push tokens or offer a notification toggle. Earlier builds may have registered a token with a gateway; removing a saved profile does not contact that gateway. Revoke the old device on its computer to remove that legacy registration.
+Background push is not yet available for Zana Connect accounts. This build does not register legacy gateway push tokens or offer a notification toggle. Earlier builds may have registered a token with a gateway; removing a saved profile does not contact that gateway. Revoke the old device on its computer to remove that legacy registration. For a device that still has a legacy registration, a notification shows the thread title and a short excerpt of the question or result (control characters and Markdown removed, secrets redacted, never file contents or tool output) through Expo's push service; turning off "Show previews in phone notifications" in Settings > Agents sends generic text instead. Each thread's notification level (All activity, Needs input only, Muted) is stored on the computer only.
 
 The current source does not request camera or local-network permission. Phone sign-in uses browser approval and HTTPS. Notification links retained from older builds are validated against saved profiles and cannot reconnect a retired profile.
 

@@ -1,5 +1,13 @@
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS, SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
+import {
+  NOTIFICATION_LEVELS,
+  NOTIFICATION_LEVEL_LABELS,
+  OWN_NOTIFICATION_LEVELS,
+  normalizeNotificationDefaults,
+  type NotificationLevel,
+  type OwnNotificationLevel
+} from '@zana-ai/zcc-domain';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { OverseerRecentPane } from '@/components/settings/OverseerRecentPane';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
@@ -18,6 +26,7 @@ export function AgentsSettingsView({
   // Auto mode defaults ON (absent ⇒ true). The Overseer only makes sense as the
   // fallback, so we soften its help text while auto mode is on.
   const autoModeOn = config.autoModeEnabled ?? true;
+  const notificationDefaults = normalizeNotificationDefaults(config);
   return (
     <>
       <AgentGuidanceSettings config={config} onUpdate={onUpdate} />
@@ -212,6 +221,46 @@ export function AgentsSettingsView({
           help="When an agent writes a report-looking markdown file (a report/summary/analysis/audit name, or any bare .md dropped at the project root) but never calls inbox_push itself, link it to the inbox automatically as soon as the agent goes idle — so it still shows up in that session’s Report tab. Pure filename match, spends no tokens. On by default."
           checked={config.autoReportLinkEnabled ?? true}
           onChange={(v) => onUpdate({ autoReportLinkEnabled: v })}
+        />
+        <Field
+          label="Phone notifications: default level"
+          searchId="agents.notification-default-level"
+          help="How much a thread may notify your phone unless it has its own setting (change one from the thread’s menu). All activity also tells you when a turn finishes; Needs input only is limited to questions and failures; Muted sends nothing. Threads started by another thread use the child thread level below instead."
+        >
+          <PopoverPicklist
+            value={notificationDefaults.defaultLevel}
+            ariaLabel="Phone notifications: default level"
+            searchable={false}
+            onChange={(notificationDefaultLevel) =>
+              onUpdate({ notificationDefaultLevel: notificationDefaultLevel as NotificationLevel })
+            }
+            options={NOTIFICATION_LEVELS.map((level) => ({ value: level, label: NOTIFICATION_LEVEL_LABELS[level] }))}
+          />
+        </Field>
+        <Field
+          label="Phone notifications: child thread level"
+          searchId="agents.notification-child-level"
+          help="The level for a thread started by another thread, unless it has its own setting. A muted or quieter parent always caps its children. Needs input only keeps a fleet of workers from pinging you for every finished turn."
+        >
+          <PopoverPicklist
+            value={notificationDefaults.childLevel}
+            ariaLabel="Phone notifications: child thread level"
+            searchable={false}
+            onChange={(notificationChildLevel) =>
+              onUpdate({ notificationChildLevel: notificationChildLevel as OwnNotificationLevel })
+            }
+            options={OWN_NOTIFICATION_LEVELS.map((level) => ({
+              value: level,
+              label: level === 'inherit' ? 'Same as default' : NOTIFICATION_LEVEL_LABELS[level]
+            }))}
+          />
+        </Field>
+        <CheckboxField
+          label="Show previews in phone notifications"
+          searchId="agents.notification-previews"
+          help="Show the thread title and a short excerpt of the question or result. Off sends only generic text, so nothing from a conversation reaches the push service. On by default."
+          checked={config.notificationPreviews ?? true}
+          onChange={(v) => onUpdate({ notificationPreviews: v })}
         />
       </Section>
 

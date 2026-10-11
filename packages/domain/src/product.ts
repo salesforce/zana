@@ -9,6 +9,7 @@ import type { ProjectIcon } from './project-icons.js';
 import type { TerminalThemeId } from './terminal-themes.js';
 import type { WorkflowArgument } from './workflow-args.js';
 import type { MenubarAgent } from './menubar-agent.js';
+import type { NotificationLevel, OwnNotificationLevel } from './notification-levels.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
 export type { TerminalThemeId } from './terminal-themes.js';
@@ -2163,6 +2164,25 @@ export interface AppConfig {
    * self-resolve). Set false to append every question the instant it's asked.
    */
   heldQuestionsEnabled?: boolean;
+  /**
+   * Default phone-notification level for a thread that has no level of its own
+   * (see `notification-levels.ts`): `all` (default) pushes questions, failures
+   * and finished turns, `input-only` only questions and failures, `muted`
+   * nothing. Invalid or missing values normalize to `all`.
+   */
+  notificationDefaultLevel?: NotificationLevel;
+  /**
+   * Level for a child thread (one with a parent) that has no level of its own;
+   * `inherit` uses {@link notificationDefaultLevel}. Missing or invalid values
+   * normalize to `input-only` so a spawning thread's children stay quiet.
+   */
+  notificationChildLevel?: OwnNotificationLevel;
+  /**
+   * Show a short readable excerpt (thread title plus the question or the last
+   * reply) in phone push notifications. These go through Expo's push service,
+   * so turn this off to send only generic text. Default on.
+   */
+  notificationPreviews?: boolean;
   /**
    * Idle dwell (seconds) before the idle-triage add-on fires its micro-call.
    * On the working/blocked → idle edge the service arms a timer of this length;

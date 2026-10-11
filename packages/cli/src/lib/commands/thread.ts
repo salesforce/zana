@@ -8,6 +8,13 @@ import {
   type ProductHttpDeps
 } from '../product-http.js';
 import {
+  NOTIFICATION_LEVEL_LABELS,
+  OWN_NOTIFICATION_LEVELS,
+  describeNotificationSource,
+  isOwnNotificationLevel,
+  type ThreadNotificationState
+} from '@zana-ai/zcc-domain';
+import {
   ControlError,
   ProductHttpClient,
   spawnThread as sdkSpawnThread,
@@ -431,6 +438,30 @@ export async function runThreadCommand(
     return renderOrJson(json, opened.data, `${id} opened\n`);
   }
 
+  if (subcommand === 'notifications') {
+    const id = rest[0];
+    const level = rest[1];
+    if (!id) return errResult('thread notifications requires a <threadId> [level]', 2);
+    if (rest.length > 2) return errResult('thread notifications takes at most a <threadId> and a level', 2);
+    if (level !== undefined && !isOwnNotificationLevel(level)) {
+      return errResult(`thread notifications level must be one of ${OWN_NOTIFICATION_LEVELS.join(', ')}`, 2);
+    }
+    const path = `/api/v1/threads/${encodeURIComponent(id)}/notification-level`;
+    const state = await productRequest<ThreadNotificationState>(
+      level === undefined ? 'GET' : 'PUT',
+      path,
+      level === undefined ? { deps } : { deps, body: { level } }
+    );
+    if (!state.ok) return state.result;
+    const { own, effective, source, defaultLevel, childLevel } = state.data;
+    return renderOrJson(
+      json,
+      state.data,
+      `${id}\t${effective}\t${NOTIFICATION_LEVEL_LABELS[effective]} (${describeNotificationSource(source)})\n` +
+        `own ${own}\tdefault ${defaultLevel}\tchild default ${childLevel}\n`
+    );
+  }
+
   if (subcommand === 'interactions') {
     const id = rest[0];
     if (!id) return errResult('thread interactions requires a <threadId>', 2);
@@ -444,7 +475,7 @@ export async function runThreadCommand(
   }
 
   return errResult(
-    `unknown thread command '${subcommand}'. Try list, spawn, show, log, tell, wait, background, stop, fork, archive, unarchive, open, interactions.`,
+    `unknown thread command '${subcommand}'. Try list, spawn, show, log, tell, wait, background, stop, fork, archive, unarchive, open, interactions, notifications.`,
     2
   );
 }

@@ -92,3 +92,25 @@ Zana needed additional changes for these fixes to hold:
   the ancestry query.
 
 The triage record is `.zcc/library/research/bb-upstream-review-2026-10-10.md`.
+
+## Subsystem ports (2026-10-11)
+
+These adapt BB subsystems reviewed at `3912f4aaefb7dff55c7e0cb5003b26b5cf1457dc`:
+
+- Queued-message editing (`dcc61a285`). Opening a queued message for editing holds it
+  in the deferred queue. The hold lease is capped at two minutes, and the drain stops at
+  a held message so later messages keep their order.
+- Per-thread notification levels and readable previews (`ba5a4c546`, `59a1fcc29`,
+  `d48bb915a`). Zana builds these into core instead of a plugin. Levels are stored with
+  the thread's metadata, and the mobile relay asks the server for a verdict before it
+  sends. Error notifications keep generic text.
+- GitHub CLI credentials forwarded to remote machines (`1ca5e0923`, `60eed057d`). Zana
+  implements this in the GitHub plugin over a generic remote-environment seam, with a
+  manifest allowlist of variable names. A machine's own values always win. The credential
+  helper is scoped to github.com, so helpers for other hosts keep working. The commit
+  identity and the SSH-to-HTTPS remote rewrite are opt-in settings, because an
+  environment identity overrides a machine's `user.name` and `user.email`.
+- Storage & retention (`7fe037e42`, `0e4540c2d`). This is a built-in plugin that is
+  installed disabled, and every policy defaults to Never. Retention clears a thread's
+  files but never deletes the thread. Deletion runs on the machine, confined to its
+  thread-storage directory.

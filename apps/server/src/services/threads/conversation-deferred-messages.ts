@@ -1,5 +1,6 @@
 import {
   DEFERRED_THREAD_MESSAGE_CAP,
+  clearLapsedDeferredEditHolds,
   countActiveConversationTurns,
   countDeferredThreadMessages,
   createDeferredThreadMessage,
@@ -14,10 +15,13 @@ import {
   postponeDeferredThreadRetry,
   markDeferredThreadMessageDispatching,
   holdDeferredThreadMessage,
+  holdDeferredThreadMessageForEdit,
   markDeferredThreadMessageFailed,
   pauseDeferredThreadMessagesForThread,
+  releaseDeferredThreadMessageEditHold,
   requeueDeferredThreadMessagesForThread,
   resumeDeferredThreadMessagesForThread,
+  updateDeferredThreadMessagePayload,
   type DeferredThreadMessageRow
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -26,6 +30,7 @@ import { ThreadCreateError } from '../../http/thread-create.js';
 import type { ThreadSendMode } from './conversation-dispatch-checkpoint.js';
 import { canDispatch } from './conversation-dispatch-checkpoint.js';
 import { findOpenConversationTurn } from './conversation-host-recovery.js';
+import { conversationNextTurnItemView } from './conversation-next-turn.js';
 
 export interface DeferredSendPayload {
   kind: 'send';
@@ -121,6 +126,117 @@ export function dropDeferredConversationMessage(
   }
 }
 
+/** A queued-message editor renews its lease every quarter of this. */
+export const DEFERRED_EDIT_HOLD_LEASE_MS = 120_000;
+/** Bounds what one edit may write into the durable queue. */
+export const MAX_QUEUED_EDIT_TEXT_CHARS = 100_000;
+
+function requireQueuedThread(ctx: Pick<ProductHttpContext, 'db'>, threadId: string): void {
+  if (!getConversationThread(ctx.db, threadId)) {
+    throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
+  }
+}
+
+const unknownQueuedSend = () => new ThreadCreateError(404, 'unknown-queued-send', 'Queued message not found');
+const queuedSendDispatching = () => new ThreadCreateError(409, 'queued-send-dispatching', 'Queued message is already being sent');
+
+/**
+ * Take or renew the editor's lease. The server picks the length (the client only
+ * learns it), the row stays in the queue, and the lease lapses by itself.
+ */
+export function holdDeferredConversationMessageForEdit(
+  ctx: Pick<ProductHttpContext, 'db'>,
+  threadId: string,
+  itemId: string,
+  now = Date.now()
+): { leaseMs: number; heldUntil: number } {
+  requireQueuedThread(ctx, threadId);
+  const heldUntil = now + DEFERRED_EDIT_HOLD_LEASE_MS;
+  const outcome = holdDeferredThreadMessageForEdit(ctx.db, { id: itemId, threadId, heldUntil });
+  if (outcome === 'not_found') throw unknownQueuedSend();
+  if (outcome === 'claimed') throw queuedSendDispatching();
+  return { leaseMs: DEFERRED_EDIT_HOLD_LEASE_MS, heldUntil };
+}
+
+/** Idempotent cancel; true means a lease was cleared and the queue should be re-attempted. */
+export function releaseDeferredConversationMessageEditHold(
+  ctx: Pick<ProductHttpContext, 'db'>,
+  threadId: string,
+  itemId: string
+): boolean {
+  requireQueuedThread(ctx, threadId);
+  return releaseDeferredThreadMessageEditHold(ctx.db, { id: itemId, threadId });
+}
+
+function isTextPart(part: unknown): part is { type: 'text'; text: string; mentions?: unknown } {
+  return !!part && typeof part === 'object' && (part as { type?: unknown }).type === 'text';
+}
+
+/** Swap the message text for the edit, keeping attachments and every other payload field. */
+function withEditedText(payload: DeferredSendPayload, text: string): DeferredSendPayload {
+  if (!Array.isArray(payload.input)) return { ...payload, input: text };
+  const parts: unknown[] = payload.input;
+  const firstText = parts.find(isTextPart);
+  const rest = parts.filter((part) => !isTextPart(part));
+  if (text.trim().length === 0) return { ...payload, input: rest };
+  // Mention offsets belong to the old text, so they cannot survive an edit.
+  const replacement = { ...(firstText ?? {}), type: 'text', text, mentions: [] };
+  if (!firstText) return { ...payload, input: [replacement, ...rest] };
+  return { ...payload, input: parts.flatMap((part) => (part === firstText ? [replacement] : isTextPart(part) ? [] : [part])) };
+}
+
+/**
+ * Save an edit: replaces the text, ends the lease and moves the revision in one
+ * write, so the drain can only ever send the version the user last saved.
+ */
+export function saveDeferredConversationMessageEdit(
+  ctx: Pick<ProductHttpContext, 'db'>,
+  threadId: string,
+  itemId: string,
+  args: { text: string; expectedUpdatedAt?: number }
+): { item: ReturnType<typeof conversationNextTurnItemView>; releasedEditHold: boolean } {
+  requireQueuedThread(ctx, threadId);
+  if (args.text.length > MAX_QUEUED_EDIT_TEXT_CHARS) {
+    throw new ThreadCreateError(413, 'queued_message_too_long', 'Queued message is too long');
+  }
+  const row = getDeferredThreadMessage(ctx.db, { id: itemId, threadId });
+  if (!row) throw unknownQueuedSend();
+  let payload: DeferredSendPayload;
+  try {
+    payload = parseDeferredSendPayload(row);
+  } catch {
+    throw new ThreadCreateError(422, 'malformed-queued-send', 'Queued message cannot be edited');
+  }
+  const edited = withEditedText(payload, args.text);
+  if (typeof edited.input === 'string' ? edited.input.trim().length === 0 : Array.isArray(edited.input) && edited.input.length === 0) {
+    throw new ThreadCreateError(400, 'empty_queued_message', 'Queued message cannot be empty');
+  }
+  const result = updateDeferredThreadMessagePayload(ctx.db, {
+    id: itemId, threadId, payload: JSON.stringify(edited),
+    ...(args.expectedUpdatedAt !== undefined ? { expectedUpdatedAt: args.expectedUpdatedAt } : {})
+  });
+  if (result.kind === 'not_found') throw unknownQueuedSend();
+  if (result.kind === 'claimed') throw queuedSendDispatching();
+  if (result.kind === 'stale') {
+    throw new ThreadCreateError(409, 'queued-send-changed', 'Queued message changed; reopen it to edit the latest text');
+  }
+  return { item: conversationNextTurnItemView(result.row), releasedEditHold: result.releasedEditHold };
+}
+
+/**
+ * Leases normally end by save/cancel. One that lapses (abandoned tab, quit app,
+ * server restart) is cleared here so the row that was waiting on it drains.
+ */
+export async function wakeLapsedEditHolds(
+  ctx: Pick<ProductHttpContext, 'db'>,
+  flush: (threadId: string) => Promise<void>,
+  now = Date.now()
+): Promise<void> {
+  for (const threadId of clearLapsedDeferredEditHolds(ctx.db, now)) {
+    try { await flush(threadId); } catch { /* the next sweep or idle drain retries */ }
+  }
+}
+
 export function conversationQueueIsPaused(ctx: ProductHttpContext, threadId: string): boolean {
   return isThreadQueueAutoSendPaused(ctx.db, threadId);
 }
@@ -187,6 +303,10 @@ function groupedFlushPrefix(rows: DeferredThreadMessageRow[]): DeferredThreadMes
   return grouped;
 }
 
+function isEditHeldGroup(rows: DeferredThreadMessageRow[], now: number): boolean {
+  return rows.some((row) => row.editHeldUntil !== null && row.editHeldUntil > now);
+}
+
 function mergeDeferredSendPayloads(rows: DeferredThreadMessageRow[]): DeferredSendPayload {
   const payloads = rows.map(parseDeferredSendPayload);
   const first = payloads[0]!;
@@ -246,7 +366,7 @@ export async function sendDeferredConversationMessage(
   }
   // Auto-drain and repeated clicks compete for the same atomic claim. Never
   // reclaim an in-flight row: that can submit the same prompt twice.
-  if (!markDeferredThreadMessageDispatching(ctx.db, { id: itemId, threadId, retryFailed: true, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) })) {
+  if (!markDeferredThreadMessageDispatching(ctx.db, { id: itemId, threadId, retryFailed: true, overrideEditHold: true, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) })) {
     throw new ThreadCreateError(409, 'queued-send-dispatching', 'This message is already being sent');
   }
   try {
@@ -298,6 +418,10 @@ export async function flushDeferredConversationMessages(
     const due = listDueDeferredThreadMessages(ctx.db, { threadId });
     const prefix = groupedFlushPrefix(due);
     if (prefix.length === 0) return { flushed };
+    // An open editor owns the first group until it saves, cancels or its lease
+    // lapses. Rows behind it wait so the edited message still goes first. An
+    // explicit Send now (force) is the user overriding their own edit.
+    if (!options.force && isEditHeldGroup(prefix, Date.now())) return { flushed, delayed: 'edit-held' };
     if (!options.force && isThreadQueueAutoSendPaused(ctx.db, threadId)) {
       return { flushed, delayed: 'queue-paused' };
     }
@@ -338,7 +462,7 @@ export async function flushDeferredConversationMessages(
     }
     const claimed: DeferredThreadMessageRow[] = [];
     for (const row of prefix) {
-      if (!markDeferredThreadMessageDispatching(ctx.db, { id: row.id, threadId })) continue;
+      if (!markDeferredThreadMessageDispatching(ctx.db, { id: row.id, threadId, ...(options.force ? { overrideEditHold: true } : {}) })) continue;
       claimed.push(row);
     }
     if (claimed.length === 0) return { flushed };

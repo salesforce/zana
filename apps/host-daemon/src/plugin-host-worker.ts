@@ -109,6 +109,7 @@ interface HostContext {
     readonly dataDir: string;
     readonly tempDir: string;
     readonly projectRoot: string | null;
+    readonly threadStorageRoot: string | null;
   };
   experimental_emitSignal(signal: string, payload: unknown): Promise<void>;
   experimental_watch(
@@ -386,6 +387,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const THREAD_STORAGE_ROOT_FLAG = "--thread-storage-root=";
+const workerArgs: string[] = [];
+let threadStorageRoot: string | null = null;
+let threadStorageRootInvalid = false;
+for (const arg of process.argv.slice(2)) {
+  if (arg.startsWith(THREAD_STORAGE_ROOT_FLAG)) {
+    const value = arg.slice(THREAD_STORAGE_ROOT_FLAG.length);
+    if (isAbsolute(value)) threadStorageRoot = value;
+    else threadStorageRootInvalid = true;
+    continue;
+  }
+  workerArgs.push(arg);
+}
 const [
   artifactPath,
   pluginId,
@@ -393,7 +407,7 @@ const [
   dataDir,
   tempDir,
   disposeTimeoutArg,
-] = process.argv.slice(2);
+] = workerArgs;
 const disposeTimeoutMs =
   disposeTimeoutArg === undefined
     ? DEFAULT_DISPOSE_TIMEOUT_MS
@@ -407,6 +421,7 @@ if (
   !isAbsolute(dataDir) ||
   tempDir === undefined ||
   !isAbsolute(tempDir) ||
+  threadStorageRootInvalid ||
   !Number.isSafeInteger(disposeTimeoutMs) ||
   disposeTimeoutMs <= 0
 ) {
@@ -576,6 +591,7 @@ async function handleCall(
         dataDir,
         tempDir,
         projectRoot: message.projectRoot ?? null,
+        threadStorageRoot,
       },
       async experimental_emitSignal(signalName, payload) {
         const signal = currentEntry.experimental_signals?.[signalName];

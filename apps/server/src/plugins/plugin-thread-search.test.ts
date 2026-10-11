@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { appendConversationThreadEvent, archiveConversationThread, createConversationThread, createEnvironment, openDatabase, upsertHost, type ZccDatabase } from '@zana-ai/zcc-db';
+import { appendConversationThreadEvent, archiveConversationThread, createConversationThread, createEnvironment, openDatabase, pinConversationThread, upsertHost, type ZccDatabase } from '@zana-ai/zcc-db';
 import { createPluginApi } from './plugin-api.js';
 
 let dir: string;
@@ -51,4 +51,13 @@ it('requires the product database', async () => {
   try {
     await expect(bare.api.sdk.threads.search({ query: 'worker' })).rejects.toThrow(/not available/);
   } finally { await bare.dispose(); }
+});
+
+it('reports the pinned flag so plugins can leave pinned threads alone', async () => {
+  const pinned = create('Pinned keepsake');
+  const loose = create('Loose keepsake');
+  pinConversationThread(db, pinned.id);
+  const found = await handle.api.sdk.threads.search({ query: 'keepsake' });
+  expect(found.find(thread => thread.id === pinned.id)?.pinnedAt).toEqual(expect.any(Number));
+  expect(found.find(thread => thread.id === loose.id)?.pinnedAt).toBeNull();
 });

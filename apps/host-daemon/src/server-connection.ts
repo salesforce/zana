@@ -10,6 +10,7 @@ import { createEventDelivery } from './event-delivery.js';
 import { PluginHostManager } from './plugin-host-manager.js';
 import { hostFsWatcher } from './workspace-fs-watch.js';
 import { createCommandRuntime, type CommandRuntime } from './command-dispatch.js';
+import { MachineEnvironment } from './machine-environment.js';
 import { handleHostRpcRequest } from './command-router.js';
 import { loadHostAppConfig, resolveZccDataDir } from './host-config.js';
 import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manager.js';
@@ -64,6 +65,8 @@ export function startEnrolledHostConnection(options: {
   let adapter: ThreadRuntimeAdapter | null = null;
   let enrolledPty: EnrolledPty | null = null;
   let desktopBrowserBroker: DesktopBrowserBroker | null = null;
+  // Server-pushed environment lives in this process only; it is dropped whenever the session ends.
+  let machineEnvironment: MachineEnvironment | undefined = options.runtime?.machineEnvironment;
   const sink: EventSink = createEventSink({
     isSessionOpen: () => socket?.connected === true,
     onPressure: paused => enrolledPty?.setOutputPaused(paused),
@@ -167,9 +170,11 @@ export function startEnrolledHostConnection(options: {
     enrolledPty = createEnrolledPty({
       emit: (event) => runtime.emit(event)
     });
+    machineEnvironment = new MachineEnvironment();
     return createCommandRuntime({
       dataDir: options.dataDir,
       pluginHosts,
+      machineEnvironment,
       emit: (event) => sink.emit(event),
       loadConfig,
       startWork: (input) => adapter!.startWork(input),
@@ -242,7 +247,10 @@ export function startEnrolledHostConnection(options: {
     onTerminated: () => { void stopConnection().catch(() => undefined); },
     onHello: hello => (runtime.pluginHosts ?? pluginHosts).reconcileGenerations(hello.pluginHostGenerations),
     onConnectionChange: connected => {
-      if (!connected) delivery.cancel();
+      if (!connected) {
+        delivery.cancel();
+        machineEnvironment?.clear();
+      }
       desktopBrowserBroker?.setConnected(connected);
       previewTunnel.setConnected(connected);
       options.onConnectionChange?.(connected);
@@ -263,6 +271,7 @@ export function startEnrolledHostConnection(options: {
   async function disposeConnection(): Promise<void> {
     closed = true;
     delivery.cancel();
+    machineEnvironment?.clear();
     options.onConnectionChange?.(false);
     socket?.close();
     previewTunnel.close();

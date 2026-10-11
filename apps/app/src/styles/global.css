@@ -11570,6 +11570,23 @@ button.statusbar-item {
   margin-left: auto;
 }
 
+.tab-context-menu .thread-notification-summary {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.tab-context-menu button.thread-notification-option {
+  padding-left: 31px;
+}
+
+.tab-context-menu .thread-notification-hint {
+  padding: 2px 10px 6px 31px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .opener-bar {
   display: flex;
   align-items: center;
@@ -36488,6 +36505,82 @@ textarea.thread-command-editor {
   .thread-queued-ghost-stop {
     opacity: 1;
   }
+}
+
+.thread-queued-ghost-edit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.thread-queued-ghost:hover .thread-queued-ghost-edit,
+.thread-queued-ghost:focus-within .thread-queued-ghost-edit,
+.thread-queued-ghost-edit:focus-visible {
+  opacity: 1;
+}
+
+.thread-queued-ghost-edit:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink-muted) 14%, transparent);
+}
+
+.thread-queued-ghost-edit:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+@media (hover: none) {
+  .thread-queued-ghost-edit {
+    opacity: 1;
+  }
+}
+
+.thread-queued-ghost[data-editing='true'] {
+  opacity: 1;
+}
+
+.thread-queued-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thread-queued-edit-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  max-height: 240px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary, var(--ink));
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.thread-queued-edit-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.thread-queued-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .thread-queued-card-header {

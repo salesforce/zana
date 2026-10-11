@@ -14,6 +14,8 @@ import {
   HostRpcCommandSchema,
   HostRpcRequestMessageSchema,
   HostRpcResponseMessageSchema,
+  isForbiddenHostEnvironmentName,
+  HostEnvironmentEntrySchema,
   parseHostRpcResult
 } from './host-rpc.js';
 
@@ -117,7 +119,7 @@ describe('host-rpc contract', () => {
       callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
       projectRoot: '/registered/project'
     };
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(43);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(44);
     expect(HostRpcRequestMessageSchema.parse({
       type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1', command
@@ -867,7 +869,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(43);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(44);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
@@ -920,4 +922,78 @@ it('validates bounded preview declarations and their owner generation', () => {
   for (const patch of [{ epoch: 'forged' }, { generation: -1 }, { targets: [{ port: 22, expiresAt: 1 }] }, { targets: Array(33).fill(command.targets[0]) }, { targetHost: 'other' }]) {
     expect(HostRpcCommandSchema.safeParse({ ...command, ...patch }).success).toBe(false);
   }
+});
+
+describe('host.environment.replace', () => {
+  const entry = { name: 'GH_TOKEN', value: 'token-value' };
+
+  it('is introduced at protocol 44 and parses a bounded, strict entry list', () => {
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(44);
+    const command = {
+      type: 'host.environment.replace',
+      entries: [
+        entry,
+        { name: 'GIT_AUTHOR_NAME', value: 'octocat', group: 'identity' },
+        { name: 'GIT_CONFIG_COUNT', value: '1', group: 'git-config', requires: ['GH_TOKEN'] }
+      ]
+    };
+    expect(HostRpcCommandSchema.parse(command)).toEqual(command);
+    expect(HostRpcCommandSchema.parse({ type: 'host.environment.replace', entries: [] }).type)
+      .toBe('host.environment.replace');
+  });
+
+  it('rejects malformed, oversized, forbidden or unknown-key entries', () => {
+    const base = { type: 'host.environment.replace' };
+    const bad: unknown[] = [
+      { ...base, entries: [{ name: '1BAD', value: 'x' }] },
+      { ...base, entries: [{ name: 'HAS SPACE', value: 'x' }] },
+      { ...base, entries: [{ name: 'GH_TOKEN', value: 'a\u0000b' }] },
+      { ...base, entries: [{ name: 'GH_TOKEN', value: 'x'.repeat(8193) }] },
+      { ...base, entries: [{ name: 'GH_TOKEN', value: 'x', extra: true }] },
+      { ...base, entries: [{ name: 'GH_TOKEN', value: 'x', group: '' }] },
+      { ...base, entries: [{ name: 'GH_TOKEN', value: 'x', requires: ['bad name'] }] },
+      { ...base, entries: Array.from({ length: 129 }, (_, i) => ({ name: `V_${i}`, value: 'x' })) },
+      { ...base, entries: [entry], unexpected: true },
+      { ...base }
+    ];
+    for (const command of bad) expect(HostRpcCommandSchema.safeParse(command).success).toBe(false);
+    for (const name of ['PATH', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'NODE_OPTIONS', 'HOME', 'ZCC_SERVER_URL', 'BB_TOKEN', 'ELECTRON_RUN_AS_NODE', 'path']) {
+      expect(HostRpcCommandSchema.safeParse({ ...base, entries: [{ name, value: 'x' }] }).success, name).toBe(false);
+    }
+  });
+
+  it('exposes the forbidden-name predicate used by the daemon and the server', () => {
+    expect(isForbiddenHostEnvironmentName('PATH')).toBe(true);
+    expect(isForbiddenHostEnvironmentName('ld_library_path')).toBe(true);
+    expect(isForbiddenHostEnvironmentName('GH_TOKEN')).toBe(false);
+    expect(isForbiddenHostEnvironmentName('GIT_CONFIG_KEY_0')).toBe(false);
+    expect(isForbiddenHostEnvironmentName('GIT_CONFIG_COUNT')).toBe(false);
+    for (const name of [
+      'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_PARAMETERS', 'GIT_PAGER', 'GIT_EDITOR', 'GIT_PROXY_COMMAND', 'GIT_EXTERNAL_DIFF',
+      'GH_CONFIG_DIR', 'ZDOTDIR', 'PROMPT_COMMAND', 'EDITOR', 'VISUAL', 'PAGER', 'XDG_CONFIG_HOME', 'PERL5OPT',
+      'RUBYOPT', 'PYTHONSTARTUP', 'JAVA_TOOL_OPTIONS', 'HTTPS_PROXY', 'http_proxy', 'ALL_PROXY', 'SSL_CERT_FILE'
+    ]) expect(isForbiddenHostEnvironmentName(name), name).toBe(true);
+  });
+
+  it('accepts only credential, URL-rewrite and identity git keys, and a small config count', () => {
+    const parse = (name: string, value: string) => HostEnvironmentEntrySchema.safeParse({ name, value }).success;
+    for (const key of [
+      'credential.helper', 'credential.https://github.com.helper', 'url.https://github.com/.insteadOf',
+      'url.https://github.com/.pushInsteadOf', 'user.name', 'user.email'
+    ]) expect(parse('GIT_CONFIG_KEY_0', key), key).toBe(true);
+    for (const key of [
+      'core.sshCommand', 'core.fsmonitor', 'core.hooksPath', 'core.pager', 'alias.st', 'include.path',
+      'credential.https://x .helper', 'url..insteadOf', ' user.name', ''
+    ]) expect(parse('GIT_CONFIG_KEY_3', key), key).toBe(false);
+    expect(parse('GIT_CONFIG_VALUE_0', '!f() { echo; }; f')).toBe(true);
+    expect(parse('GIT_CONFIG_COUNT', '4')).toBe(true);
+    for (const count of ['17', '-1', '1e3', '', 'four']) expect(parse('GIT_CONFIG_COUNT', count), count).toBe(false);
+  });
+
+  it('parses a names-only result and rejects values smuggled into it', () => {
+    expect(parseHostRpcResult('host.environment.replace', { applied: ['GH_TOKEN'], skipped: [] }))
+      .toEqual({ applied: ['GH_TOKEN'], skipped: [] });
+    expect(() => parseHostRpcResult('host.environment.replace', { applied: ['GH_TOKEN'], skipped: [], value: 'x' }))
+      .toThrow();
+  });
 });

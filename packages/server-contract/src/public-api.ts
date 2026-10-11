@@ -227,6 +227,17 @@ import type {
   WorkspacePathListResponse,
 } from "./api-types.js";
 import type {
+  SetThreadNotificationLevelRequest,
+  ThreadNotificationError,
+  ThreadNotificationLevelResponse,
+  ThreadNotificationVerdictQuery,
+  ThreadNotificationVerdictResponse,
+} from "./api/notifications.js";
+import {
+  setThreadNotificationLevelRequestSchema,
+  threadNotificationVerdictQuerySchema,
+} from "./api/notifications.js";
+import type {
   ThreadTabsResponse,
   UpdateThreadTabsRequest,
 } from "./api/thread-tabs.js";
@@ -1225,6 +1236,38 @@ export const publicApiRoutes = {
       method: "post",
       request: noRequest<PathId>(),
       response: jsonResponse<ThreadResponse>(),
+    }),
+    notificationLevel: defineRoute({
+      path: "/threads/:id/notification-level",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: [
+        jsonResponse<ThreadNotificationLevelResponse>(),
+        jsonResponse<ThreadNotificationError>({ status: 404 }),
+      ],
+    }),
+    setNotificationLevel: defineRoute({
+      path: "/threads/:id/notification-level",
+      method: "put",
+      request: jsonRequest<PathId, SetThreadNotificationLevelRequest>(
+        setThreadNotificationLevelRequestSchema,
+      ),
+      response: [
+        jsonResponse<ThreadNotificationLevelResponse>(),
+        jsonResponse<ThreadNotificationError>({ status: 404 }),
+        jsonResponse<ThreadNotificationError>({ status: 409 }),
+      ],
+    }),
+    notificationVerdict: defineRoute({
+      path: "/threads/:id/notification-verdict",
+      method: "get",
+      request: queryRequest<PathId, ThreadNotificationVerdictQuery>(
+        threadNotificationVerdictQuerySchema,
+      ),
+      response: [
+        jsonResponse<ThreadNotificationVerdictResponse>(),
+        jsonResponse<ThreadNotificationError>({ status: 404 }),
+      ],
     }),
     pinOrder: defineRoute({
       path: "/threads/:id/pin-order",

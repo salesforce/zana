@@ -769,6 +769,18 @@ function httpProduct(): Pick<
         }),
       nextTurn: async (threadId: string) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn`),
+      holdNextTurnForEdit: async (threadId: string, itemId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}/edit-hold`, {
+          method: 'POST', body: '{}'
+        }),
+      releaseNextTurnEditHold: async (threadId: string, itemId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}/edit-hold`, {
+          method: 'DELETE'
+        }),
+      updateNextTurn: async (threadId: string, itemId: string, input: { text: string; expectedUpdatedAt?: number }) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}`, {
+          method: 'PATCH', body: JSON.stringify(input)
+        }),
       compact: async (threadId: string) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/compact`, { method: 'POST', body: '{}' }),
       promptHistory: async (threadId: string) =>
@@ -777,6 +789,13 @@ function httpProduct(): Pick<
         apiJson(`/threads/${encodeURIComponent(threadId)}/pin`, { method: 'POST', body: '{}' }),
       unpin: async (threadId: string) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/unpin`, { method: 'POST', body: '{}' }),
+      notificationLevel: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/notification-level`),
+      setNotificationLevel: async (threadId: string, level: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/notification-level`, {
+          method: 'PUT',
+          body: JSON.stringify({ level })
+        }),
       search: async (query: string, projectId?: string) => {
         const params = new URLSearchParams({ q: query });
         if (projectId) params.set('projectId', projectId);

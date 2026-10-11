@@ -175,12 +175,18 @@ export {
   recoverInterruptedDeferredThreadMessages,
   markDeferredThreadMessageDispatching,
   holdDeferredThreadMessage,
+  clearLapsedDeferredEditHolds,
+  holdDeferredThreadMessageForEdit,
+  releaseDeferredThreadMessageEditHold,
+  updateDeferredThreadMessagePayload,
   markDeferredThreadMessageFailed,
   pauseDeferredThreadMessagesForThread,
   requeueDeferredThreadMessagesForThread,
   resumeDeferredThreadMessagesForThread,
   type DeferredThreadMessageRow,
-  type NextTurnSendStatus
+  type HoldDeferredThreadMessageForEditResult,
+  type NextTurnSendStatus,
+  type UpdateDeferredThreadMessagePayloadResult
 } from './data/deferred-thread-messages.js';
 export {
   clearDispatchAdmissionGeneration,

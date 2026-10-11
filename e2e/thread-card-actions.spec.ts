@@ -90,3 +90,44 @@ test('Modern thread actions work from Kanban and list hosts', async ({ app }) =>
   await listRow.click({ button: 'right' });
   await expect(window.getByTestId('thread-context-menu')).toContainText('Mark read');
 });
+
+test('Thread menu changes the phone notification level and the server gates on it', async ({ app }) => {
+  const { window } = app;
+  const title = 'Notification level probe';
+  const threadId = await createThread(window, title);
+
+  const readLevel = (id: string) =>
+    window.evaluate(async (threadId) => {
+      const state = await (await fetch(`/api/v1/threads/${threadId}/notification-level`)).json();
+      const verdict = await (
+        await fetch(`/api/v1/threads/${threadId}/notification-verdict?kind=turn-finished`)
+      ).json();
+      return { own: state.own, effective: state.effective, send: verdict.send };
+    }, id);
+
+  await window.locator('[data-testid="nav-agents"]').click();
+  const card = window.locator('.agent-card.is-thread', { hasText: title });
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  expect(await readLevel(threadId)).toEqual({ own: 'inherit', effective: 'all', send: true });
+
+  await card.click({ button: 'right' });
+  const menu = window.getByTestId('thread-context-menu');
+  const control = menu.getByTestId('thread-notification-level');
+  await expect(control).toHaveAccessibleName('Notifications: All activity');
+  await control.click();
+  await menu.getByRole('menuitemradio', { name: 'Muted' }).click();
+
+  await expect.poll(() => readLevel(threadId)).toEqual({ own: 'muted', effective: 'muted', send: false });
+  await expect(control).toHaveAccessibleName('Notifications: Muted');
+  await expect(menu.getByRole('menuitemradio', { name: 'Muted' })).toHaveAttribute('aria-checked', 'true');
+
+  // The menu reopens on what the server holds, and "Default" clears the override.
+  await window.keyboard.press('Escape');
+  await card.click({ button: 'right' });
+  await expect(window.getByTestId('thread-context-menu').getByTestId('thread-notification-level')).toHaveAccessibleName(
+    'Notifications: Muted'
+  );
+  await window.getByTestId('thread-notification-level').click();
+  await window.getByRole('menuitemradio', { name: 'Default' }).click();
+  await expect.poll(() => readLevel(threadId)).toEqual({ own: 'inherit', effective: 'all', send: true });
+});

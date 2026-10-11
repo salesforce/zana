@@ -329,6 +329,8 @@ export function createPluginApi(
     pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
     listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string; icon?: ProjectIcon }>>;
     productContext?: import('../http/product-context.js').ProductHttpContext;
+    /** Names the manifest allows this plugin to set on remote machines (`zcc.extra.remoteEnvironment`). */
+    remoteEnvironmentNames?: readonly string[];
     hostEntryPath?: string | null;
     providerUnavailableReason?: string;
     hostCall?: (method: string, input?: unknown, hostId?: string, signal?: AbortSignal, timeoutMs?: number, projectId?: string) => Promise<unknown>;
@@ -374,6 +376,7 @@ export function createPluginApi(
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
   };
+  let remoteEnvironmentRegistration: { refresh(): void; dispose(): void } | null = null;
   const resolveSdkPluginId = (requested: unknown): string => {
     const value = typeof requested === 'string' && requested.trim() ? requested.trim() : pluginId;
     const parsed = pluginIdSchema.safeParse(value);
@@ -1309,6 +1312,29 @@ export function createPluginApi(
         }, 60_000);
         disposeHooks.push(() => clearInterval(timer));
       },
+    },
+    remoteEnvironment: {
+      provide: (resolve) => {
+        assertLive();
+        if (typeof resolve !== 'function') throw new Error('remoteEnvironment.provide requires a function');
+        const service = options?.productContext?.remoteEnvironment;
+        if (!service) throw new Error('remoteEnvironment is not available in this runtime');
+        if (remoteEnvironmentRegistration) throw new Error('remoteEnvironment.provide is already registered');
+        const allowedNames = options?.remoteEnvironmentNames ?? [];
+        if (allowedNames.length === 0) {
+          throw new Error('declare zcc.extra.remoteEnvironment names in the plugin manifest to use remoteEnvironment');
+        }
+        const registration = service.register({ pluginId, allowedNames, resolve });
+        remoteEnvironmentRegistration = registration;
+        disposeHooks.push(() => {
+          if (remoteEnvironmentRegistration === registration) remoteEnvironmentRegistration = null;
+          registration.dispose();
+        });
+      },
+      refresh: () => {
+        assertLive();
+        remoteEnvironmentRegistration?.refresh();
+      }
     },
     agents: {
       contributeInstructions: (textOrProvider) => {

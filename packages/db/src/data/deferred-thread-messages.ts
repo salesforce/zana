@@ -20,6 +20,8 @@ export interface DeferredThreadMessageRow {
   retryAt: number | null;
   groupBoundaryId: string | null;
   updatedAt: number;
+  /** Absolute epoch ms; a row is held while this is in the future. */
+  editHeldUntil: number | null;
 }
 
 interface DeferredThreadMessageSqlRow {
@@ -36,6 +38,7 @@ interface DeferredThreadMessageSqlRow {
   retry_at?: number | null;
   group_boundary_id?: string | null;
   updated_at?: number | null;
+  edit_held_until?: number | null;
 }
 
 function toStatus(value: string | null | undefined): NextTurnSendStatus {
@@ -57,7 +60,8 @@ function toRow(row: DeferredThreadMessageSqlRow): DeferredThreadMessageRow {
     failureCount: row.failure_count ?? 0,
     retryAt: row.retry_at ?? null,
     groupBoundaryId: row.group_boundary_id ?? null,
-    updatedAt: row.updated_at ?? row.created_at
+    updatedAt: row.updated_at ?? row.created_at,
+    editHeldUntil: row.edit_held_until ?? null
   };
 }
 
@@ -86,7 +90,8 @@ export function createDeferredThreadMessage(
     failureCount: 0,
     retryAt: null,
     groupBoundaryId: input.groupBoundaryId ?? null,
-    updatedAt: now
+    updatedAt: now,
+    editHeldUntil: null
   };
   db.sqlite.prepare(
     `INSERT INTO deferred_thread_messages (
@@ -203,15 +208,104 @@ export function markDeferredThreadMessageFailed(
 
 export function markDeferredThreadMessageDispatching(
   db: ZccDatabase,
-  args: { id: string; threadId: string; retryFailed?: boolean; expectedUpdatedAt?: number }
+  args: {
+    id: string; threadId: string; retryFailed?: boolean; expectedUpdatedAt?: number;
+    /** Explicit user sends claim a row whose editor is still open; automatic claims never do. */
+    overrideEditHold?: boolean; now?: number;
+  }
 ): boolean {
+  const now = args.now ?? Date.now();
+  // Any claim ends the lease, so the editor's next renewal learns the row is gone.
   const result = db.sqlite.prepare(
     `UPDATE deferred_thread_messages
-        SET status = 'dispatching', updated_at = ?
+        SET status = 'dispatching', updated_at = ?, edit_held_until = NULL
       WHERE id = ? AND thread_id = ? AND (status = 'queued' OR (? = 1 AND status = 'failed'))
-        AND (? IS NULL OR updated_at = ?)`
-  ).run(Date.now(), args.id, args.threadId, args.retryFailed ? 1 : 0, args.expectedUpdatedAt ?? null, args.expectedUpdatedAt ?? null);
+        AND (? IS NULL OR updated_at = ?)
+        AND (? = 1 OR edit_held_until IS NULL OR edit_held_until <= ?)`
+  ).run(
+    Date.now(), args.id, args.threadId, args.retryFailed ? 1 : 0,
+    args.expectedUpdatedAt ?? null, args.expectedUpdatedAt ?? null,
+    args.overrideEditHold ? 1 : 0, now
+  );
   return Number(result.changes ?? 0) > 0;
+}
+
+export type HoldDeferredThreadMessageForEditResult = 'held' | 'not_found' | 'claimed';
+
+/**
+ * Take or renew the edit lease on a waiting row. The revision (`updated_at`) is
+ * deliberately untouched so the editor's later save still matches what it opened.
+ */
+export function holdDeferredThreadMessageForEdit(
+  db: ZccDatabase,
+  args: { id: string; threadId: string; heldUntil: number }
+): HoldDeferredThreadMessageForEditResult {
+  const result = db.sqlite.prepare(
+    `UPDATE deferred_thread_messages SET edit_held_until = ?
+      WHERE id = ? AND thread_id = ? AND status = 'queued'`
+  ).run(args.heldUntil, args.id, args.threadId);
+  if (Number(result.changes ?? 0) > 0) return 'held';
+  return getDeferredThreadMessage(db, args) ? 'claimed' : 'not_found';
+}
+
+/** Idempotent; true only when a live or lapsed lease was actually cleared. */
+export function releaseDeferredThreadMessageEditHold(
+  db: ZccDatabase,
+  args: { id: string; threadId: string }
+): boolean {
+  const result = db.sqlite.prepare(
+    `UPDATE deferred_thread_messages SET edit_held_until = NULL
+      WHERE id = ? AND thread_id = ? AND edit_held_until IS NOT NULL`
+  ).run(args.id, args.threadId);
+  return Number(result.changes ?? 0) > 0;
+}
+
+export type UpdateDeferredThreadMessagePayloadResult =
+  | { kind: 'updated'; row: DeferredThreadMessageRow; releasedEditHold: boolean }
+  | { kind: 'not_found' }
+  | { kind: 'claimed' }
+  | { kind: 'stale' };
+
+/** Save an edit and end its lease in the same write; the revision always moves forward. */
+export function updateDeferredThreadMessagePayload(
+  db: ZccDatabase,
+  args: { id: string; threadId: string; payload: string; expectedUpdatedAt?: number; now?: number }
+): UpdateDeferredThreadMessagePayloadResult {
+  return db.transaction((): UpdateDeferredThreadMessagePayloadResult => {
+    const existing = getDeferredThreadMessage(db, args);
+    if (!existing) return { kind: 'not_found' };
+    if (existing.status !== 'queued') return { kind: 'claimed' };
+    if (args.expectedUpdatedAt !== undefined && existing.updatedAt !== args.expectedUpdatedAt) return { kind: 'stale' };
+    const updatedAt = Math.max(args.now ?? Date.now(), existing.updatedAt + 1);
+    db.sqlite.prepare(
+      `UPDATE deferred_thread_messages SET payload = ?, updated_at = ?, edit_held_until = NULL
+        WHERE id = ? AND thread_id = ? AND status = 'queued'`
+    ).run(args.payload, updatedAt, args.id, args.threadId);
+    return {
+      kind: 'updated',
+      row: { ...existing, payload: args.payload, updatedAt, editHeldUntil: null },
+      releasedEditHold: existing.editHeldUntil !== null
+    };
+  });
+}
+
+/**
+ * Forget leases that ran out so the abandoned row can drain; returns each
+ * affected thread once. Bounded so a backlog cannot stall the event loop.
+ */
+export function clearLapsedDeferredEditHolds(db: ZccDatabase, now = Date.now(), limit = 100): string[] {
+  return db.transaction(() => {
+    const lapsed = db.sqlite.prepare(
+      `SELECT id, thread_id FROM deferred_thread_messages
+        WHERE edit_held_until IS NOT NULL AND edit_held_until <= ?
+        ORDER BY edit_held_until ASC LIMIT ?`
+    ).all(now, limit) as Array<{ id: string; thread_id: string }>;
+    const clear = db.sqlite.prepare(
+      'UPDATE deferred_thread_messages SET edit_held_until = NULL WHERE id = ? AND edit_held_until <= ?'
+    );
+    for (const row of lapsed) clear.run(row.id, now);
+    return [...new Set(lapsed.map((row) => row.thread_id))];
+  });
 }
 
 /** Admission wait retains the original row and any concurrent Stop pause. */

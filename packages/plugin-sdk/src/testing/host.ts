@@ -37,6 +37,7 @@ export interface ExperimentalCreateHostEntryHarnessOptions {
     readonly dataDir: string;
     readonly tempDir: string;
     readonly projectRoot?: string | null;
+    readonly threadStorageRoot?: string | null;
   };
   readonly experimental_watch?: (
     options: ExperimentalHostWatchOptions,
@@ -114,6 +115,7 @@ export function experimental_createHostEntryHarness<
     dataDir: "/test/plugin-data",
     tempDir: "/test/plugin-temp",
     projectRoot: null,
+    threadStorageRoot: null,
     ...harnessOptions.experimental_paths,
   };
   let disposePromise: Promise<void> | null = null;

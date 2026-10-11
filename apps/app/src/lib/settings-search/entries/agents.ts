@@ -1,4 +1,9 @@
-import { BUNDLED_PRODUCT_SKILLS } from '@zana-ai/zcc-domain';
+import {
+  BUNDLED_PRODUCT_SKILLS,
+  NOTIFICATION_LEVELS,
+  NOTIFICATION_LEVEL_LABELS,
+  normalizeNotificationDefaults
+} from '@zana-ai/zcc-domain';
 import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS, SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
 import type { SettingsSearchEntry } from '../types';
 
@@ -224,6 +229,41 @@ export const entries: readonly SettingsSearchEntry[] = [
     keywords: ['report', 'inbox', 'markdown', 'link', 'summary'],
     kind: 'setting',
     value: (s) => onOff(s.config.autoReportLinkEnabled ?? true),
+  },
+  {
+    id: 'agents.notification-default-level',
+    section: 'agents',
+    anchor: 'agent-attention',
+    label: 'Phone notifications: default level',
+    help: 'How much a thread may notify your phone unless it has its own setting (change one from the thread’s menu). All activity also tells you when a turn finishes; Needs input only is limited to questions and failures; Muted sends nothing. Threads started by another thread use the child thread level below instead.',
+    options: NOTIFICATION_LEVELS.map((level) => NOTIFICATION_LEVEL_LABELS[level]),
+    keywords: ['notifications', 'push', 'phone', 'mobile', 'mute', 'needs input', 'all activity'],
+    kind: 'setting',
+    value: (s) => NOTIFICATION_LEVEL_LABELS[normalizeNotificationDefaults(s.config).defaultLevel],
+  },
+  {
+    id: 'agents.notification-child-level',
+    section: 'agents',
+    anchor: 'agent-attention',
+    label: 'Phone notifications: child thread level',
+    help: 'The level for a thread started by another thread, unless it has its own setting. A muted or quieter parent always caps its children. Needs input only keeps a fleet of workers from pinging you for every finished turn.',
+    options: ['Same as default', ...NOTIFICATION_LEVELS.map((level) => NOTIFICATION_LEVEL_LABELS[level])],
+    keywords: ['notifications', 'push', 'phone', 'child thread', 'subagent', 'worker', 'spawned', 'mute'],
+    kind: 'setting',
+    value: (s) => {
+      const { childLevel } = normalizeNotificationDefaults(s.config);
+      return childLevel === 'inherit' ? 'Same as default' : NOTIFICATION_LEVEL_LABELS[childLevel];
+    },
+  },
+  {
+    id: 'agents.notification-previews',
+    section: 'agents',
+    anchor: 'agent-attention',
+    label: 'Show previews in phone notifications',
+    help: 'Show the thread title and a short excerpt of the question or result. Off sends only generic text, so nothing from a conversation reaches the push service. On by default.',
+    keywords: ['notifications', 'push', 'phone', 'preview', 'privacy', 'title', 'excerpt'],
+    kind: 'setting',
+    value: (s) => onOff(s.config.notificationPreviews ?? true),
   },
   {
     id: 'agents.scheduled.intro',

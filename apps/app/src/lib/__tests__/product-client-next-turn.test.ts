@@ -66,3 +66,38 @@ it('forwards Send now through the desktop bridge and returns its result', async 
   expect(sendNextTurn).toHaveBeenCalledExactlyOnceWith('thread/one', 'item two');
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it('takes, renews and cancels the queued-message edit hold over HTTP, even with a desktop bridge present', async () => {
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(Response.json({ ok: true, leaseMs: 120_000, heldUntil: 9 }))
+    .mockResolvedValueOnce(Response.json({ ok: true }));
+  const bridge = vi.fn();
+  vi.stubGlobal('window', { cc: { threads: { holdNextTurnForEdit: bridge, releaseNextTurnEditHold: bridge } } });
+  vi.stubGlobal('fetch', fetch);
+
+  await expect(product.threads.holdNextTurnForEdit('thread/one', 'item two')).resolves.toEqual({ ok: true, leaseMs: 120_000, heldUntil: 9 });
+  await expect(product.threads.releaseNextTurnEditHold('thread/one', 'item two')).resolves.toEqual({ ok: true });
+  expect(fetch.mock.calls[0][0]).toBe('/api/v1/threads/thread%2Fone/next-turn/item%20two/edit-hold');
+  expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'POST', body: '{}' });
+  expect(fetch.mock.calls[1][0]).toBe('/api/v1/threads/thread%2Fone/next-turn/item%20two/edit-hold');
+  expect(fetch.mock.calls[1][1]).toMatchObject({ method: 'DELETE' });
+  expect(bridge).not.toHaveBeenCalled();
+});
+
+it('saves a queued-message edit with the revision it was based on and surfaces the HTTP status of a refusal', async () => {
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(Response.json({ ok: true, item: { id: 'item', text: 'Edited', updatedAt: 3 } }))
+    .mockResolvedValueOnce(Response.json({ error: 'queued-send-dispatching', message: 'Already sending' }, { status: 409 }))
+    .mockResolvedValueOnce(Response.json({ error: 'unknown-queued-send', message: 'Gone' }, { status: 404 }));
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('fetch', fetch);
+
+  await expect(product.threads.updateNextTurn('thread', 'item', { text: 'Edited', expectedUpdatedAt: 2 }))
+    .resolves.toEqual({ ok: true, item: { id: 'item', text: 'Edited', updatedAt: 3 } });
+  expect(fetch.mock.calls[0][0]).toBe('/api/v1/threads/thread/next-turn/item');
+  expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'PATCH' });
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ text: 'Edited', expectedUpdatedAt: 2 });
+  // The renderer closes the editor on exactly these statuses, so the client must keep them.
+  await expect(product.threads.updateNextTurn('thread', 'item', { text: 'x' })).rejects.toMatchObject({ status: 409, code: 'queued-send-dispatching' });
+  await expect(product.threads.holdNextTurnForEdit('thread', 'item')).rejects.toMatchObject({ status: 404, code: 'unknown-queued-send' });
+});

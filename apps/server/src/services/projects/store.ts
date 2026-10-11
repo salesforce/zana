@@ -1,6 +1,6 @@
 import { isAgentsViewId } from '@zana-ai/zcc-domain/product';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
-import { isProjectIcon } from '@zana-ai/zcc-domain';
+import { isNotificationLevel, isOwnNotificationLevel, isProjectIcon } from '@zana-ai/zcc-domain';
 import { app } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync, renameSync, rmSync } from 'node:fs';
 import { join, basename, dirname, isAbsolute } from 'node:path';
@@ -953,6 +953,15 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.heldQuestionsEnabled === 'boolean') {
     normalized.heldQuestionsEnabled = input.heldQuestionsEnabled;
+  }
+  if (isNotificationLevel(input.notificationDefaultLevel)) {
+    normalized.notificationDefaultLevel = input.notificationDefaultLevel;
+  }
+  if (isOwnNotificationLevel(input.notificationChildLevel)) {
+    normalized.notificationChildLevel = input.notificationChildLevel;
+  }
+  if (typeof input.notificationPreviews === 'boolean') {
+    normalized.notificationPreviews = input.notificationPreviews;
   }
   if (typeof input.agentListNeedsYouFromTriage === 'boolean') {
     normalized.agentListNeedsYouFromTriage = input.agentListNeedsYouFromTriage;

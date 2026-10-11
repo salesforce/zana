@@ -16,6 +16,7 @@ import { SHOW_THREAD_FORK } from './thread/ThreadDetailOverflow.js';
 import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { clampMenuAnchor } from './agentCardActions.js';
 import { PromptModal } from './PromptModal.js';
+import { ThreadNotificationLevelControl } from './thread/ThreadNotificationLevel.js';
 import { isUnreadThread } from '../lib/unread-threads.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import {
@@ -325,6 +326,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
       >
         Rename
       </button>
+      {!thread.archivedAt && <ThreadNotificationLevelControl threadId={thread.id} />}
       {pluginActions.length > 0 ? <div className="tab-context-sep" /> : null}
       {pluginActions.map((slot) => {
         const Icon = slot.icon ? resolveIcon(slot.icon) : Puzzle;

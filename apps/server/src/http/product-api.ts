@@ -12,6 +12,7 @@ import { handleSharedProductApi } from './shared-product-api.js';
 import { projectSources } from '@zana-ai/zcc-domain/project';
 import { getPrimaryHost, countConversationThreadsForQuit } from '@zana-ai/zcc-db';
 import { handleProjectSourcesApi } from './project-sources-api.js';
+import { handleNotificationsApi } from './notifications-api.js';
 import { resolveProjectHost } from './project-host.js';
 import { mutateProjectFile } from './project-file-mutations.js';
 import { invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -62,6 +63,7 @@ import {
   cancelConversationPlan,
   flushHeldConversationSends,
   sendHeldConversationMessage,
+  wakeConversationQueueAfterEdit,
   forkConversation,
   resumeConversation,
   sendConversationTurn,
@@ -74,7 +76,13 @@ import { stopConversationBackgroundTasks } from '../services/threads/conversatio
 import { closeConversationWithFollowup } from '../services/threads/thread-close-followup.js';
 import { conversationPromptHistory, pagedConversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
 import { conversationNextTurnView } from '../services/threads/conversation-next-turn.js';
-import { dropDeferredConversationMessage } from '../services/threads/conversation-deferred-messages.js';
+import {
+  dropDeferredConversationMessage,
+  holdDeferredConversationMessageForEdit,
+  MAX_QUEUED_EDIT_TEXT_CHARS,
+  releaseDeferredConversationMessageEditHold,
+  saveDeferredConversationMessageEdit
+} from '../services/threads/conversation-deferred-messages.js';
 import { archiveAllConversationChildren, conversationChildSummary } from '../services/threads/conversation-child-ops.js';
 import { resolveConversationMentions, searchConversationThreadsWithHistory } from '../services/threads/conversation-search.js';
 import {
@@ -422,6 +430,9 @@ function publicTerminal(record: ProductTerminalRecord): TerminalSession {
 }
 
 const TERMINAL_LAUNCH_MAX = 10_000;
+// A JSON string can spend up to six bytes on one UTF-16 unit (`\u001f`), so the
+// body cap leaves room for the longest text the edit itself accepts.
+const QUEUED_EDIT_BODY_LIMIT = MAX_QUEUED_EDIT_TEXT_CHARS * 6 + 4096;
 
 function launchStringFromBody(body: { command?: unknown; prompt?: unknown }): string | undefined {
   const raw = typeof body.command === 'string'
@@ -526,6 +537,7 @@ export async function handleProductHttp(
 
     if (await handleSharedProductApi(request, response, ctx, path, method)) return true;
     if (await handleProjectSourcesApi(request, response, ctx, path, method)) return true;
+    if (await handleNotificationsApi(request, response, ctx, path, method, requestUrl)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {
       sendJson(response, 200, { projects: ctx.projects.list() });
@@ -2006,7 +2018,60 @@ export async function handleProductHttp(
       return true;
     }
 
+    // Edit lease: POST takes or renews it, DELETE cancels it. The server owns the
+    // lease length and the thread/row pairing; the editor is only advisory.
+    const nextTurnEditHold = routeParams(path, '/api/v1/threads/:id/next-turn/:itemId/edit-hold');
+    if (nextTurnEditHold && (method === 'POST' || method === 'DELETE')) {
+      try {
+        if (method === 'POST') {
+          const lease = holdDeferredConversationMessageForEdit(ctx, nextTurnEditHold.id, nextTurnEditHold.itemId);
+          sendJson(response, 200, { ok: true, ...lease });
+          return true;
+        }
+        const released = releaseDeferredConversationMessageEditHold(ctx, nextTurnEditHold.id, nextTurnEditHold.itemId);
+        sendJson(response, 200, { ok: true });
+        if (released) await wakeConversationQueueAfterEdit(ctx, nextTurnEditHold.id);
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     const nextTurnItem = routeParams(path, '/api/v1/threads/:id/next-turn/:itemId');
+    if (nextTurnItem && method === 'PATCH') {
+      try {
+        const body = (await readJsonBody(request, QUEUED_EDIT_BODY_LIMIT).catch((error: unknown) => {
+          throw error instanceof Error && error.message === 'request body too large'
+            ? new ThreadCreateError(413, 'queued_message_too_long', 'Queued message is too long')
+            : error;
+        })) as { text?: unknown; expectedUpdatedAt?: unknown } | null;
+        const expected = body?.expectedUpdatedAt;
+        if (typeof body?.text !== 'string' || (expected !== undefined && (!Number.isSafeInteger(expected) || Number(expected) < 0))) {
+          sendJson(response, 400, { error: 'invalid_queued_edit', message: 'Send the edited text and, optionally, the revision it was based on' });
+          return true;
+        }
+        const saved = saveDeferredConversationMessageEdit(ctx, nextTurnItem.id, nextTurnItem.itemId, {
+          text: body.text,
+          ...(expected !== undefined ? { expectedUpdatedAt: Number(expected) } : {})
+        });
+        const thread = getConversationThread(ctx.db, nextTurnItem.id);
+        if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
+        sendJson(response, 200, { ok: true, item: saved.item });
+        // A save ends the lease, so the queue may now be free to send this row.
+        await wakeConversationQueueAfterEdit(ctx, nextTurnItem.id);
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
     if (nextTurnItem && method === 'DELETE') {
       try {
         dropDeferredConversationMessage(ctx, nextTurnItem.id, nextTurnItem.itemId);

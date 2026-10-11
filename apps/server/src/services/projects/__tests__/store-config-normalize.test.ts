@@ -424,6 +424,23 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ heldQuestionsEnabled: 'yes' }).heldQuestionsEnabled).toBeUndefined();
   });
 
+  it('keeps only valid notification levels and a boolean notificationPreviews', () => {
+    expect(normalizeConfig({ notificationDefaultLevel: 'muted' }).notificationDefaultLevel).toBe('muted');
+    expect(normalizeConfig({ notificationChildLevel: 'inherit' }).notificationChildLevel).toBe('inherit');
+    expect(normalizeConfig({ notificationChildLevel: 'input-only' }).notificationChildLevel).toBe('input-only');
+    // The global default has no inherit; the child level does.
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ notificationDefaultLevel: 'inherit' }).notificationDefaultLevel).toBeUndefined();
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ notificationDefaultLevel: 'loud' }).notificationDefaultLevel).toBeUndefined();
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ notificationChildLevel: 3 }).notificationChildLevel).toBeUndefined();
+    expect(normalizeConfig({ notificationPreviews: false }).notificationPreviews).toBe(false);
+    expect(normalizeConfig({ notificationPreviews: true }).notificationPreviews).toBe(true);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ notificationPreviews: 'no' }).notificationPreviews).toBeUndefined();
+  });
+
   it('passes through a boolean feedNoiseClassifierEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ feedNoiseClassifierEnabled: true }).feedNoiseClassifierEnabled).toBe(true);
     expect(normalizeConfig({ feedNoiseClassifierEnabled: false }).feedNoiseClassifierEnabled).toBe(false);

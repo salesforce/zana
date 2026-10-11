@@ -13,6 +13,7 @@ import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { PromptModal } from '../PromptModal.js';
 import { shouldShowThreadStop } from './thread-timeline-model.js';
 import { dispatchThreadStopRequested } from './timeline/thread-optimistic-events.js';
+import { ThreadNotificationLevelControl } from './ThreadNotificationLevel.js';
 
 const MENU_GAP = 4;
 const VIEWPORT_GUTTER = 8;
@@ -49,6 +50,7 @@ export function ThreadDetailOverflowMenu({
   menuRef,
   onSearch,
   extraActions,
+  notificationsThreadId,
   style
 }: {
   canStop: boolean;
@@ -61,6 +63,8 @@ export function ThreadDetailOverflowMenu({
   menuRef?: Ref<HTMLDivElement>;
   onSearch?: () => void;
   extraActions?: ReactNode;
+  /** When set, the menu offers this thread's phone-notification level. */
+  notificationsThreadId?: string;
   style?: CSSProperties;
 }) {
   return (
@@ -83,6 +87,7 @@ export function ThreadDetailOverflowMenu({
       <button type="button" role="menuitem" onClick={onRename}>
         <Pencil size={13} /> Rename
       </button>
+      {notificationsThreadId ? <ThreadNotificationLevelControl threadId={notificationsThreadId} /> : null}
       {SHOW_THREAD_FORK ? (
         <button
           type="button"
@@ -188,6 +193,7 @@ export function ThreadDetailOverflow({
       style={compact ? undefined : menuPos}
       onSearch={onSearch ? () => { close(); onSearch(); } : undefined}
       extraActions={extraActions}
+      notificationsThreadId={threadId}
       canStop={canStop}
       onUnread={() => {
         close();

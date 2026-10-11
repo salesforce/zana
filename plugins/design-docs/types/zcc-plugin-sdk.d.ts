@@ -144,6 +144,15 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       service(name: string, start: () => void | (() => void) | Promise<void | (() => void)>): void;
       schedule(cron: string, job: () => void | Promise<void>): void;
     };
+    /** Environment for sessions on non-primary machines. Needs `zcc.extra.remoteEnvironment` in the manifest. */
+    readonly remoteEnvironment: {
+      provide(
+        resolve: () =>
+          | ReadonlyArray<{ name: string; value: string; group?: string; requires?: readonly string[] }>
+          | Promise<ReadonlyArray<{ name: string; value: string; group?: string; requires?: readonly string[] }>>
+      ): void;
+      refresh(): void;
+    };
     readonly cli: {
       register(registration: {
         name: string;

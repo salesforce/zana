@@ -131,6 +131,56 @@ describe('AgentsTab worktree isolation', () => {
   });
 });
 
+describe('AgentsTab phone notification settings', () => {
+  const render = (over: Partial<AppConfig> = {}) =>
+    renderToStaticMarkup(
+      <AgentsTab
+        config={{ ...config, ...over }}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+  it('shows the shipped defaults under Agent attention', () => {
+    const html = render();
+    const attention = html.indexOf('settings-anchor-agent-attention');
+    const scheduled = html.indexOf('settings-anchor-scheduled');
+    for (const label of [
+      'Phone notifications: default level',
+      'Phone notifications: child thread level',
+      'Show previews in phone notifications'
+    ]) {
+      const at = html.indexOf(label);
+      expect(at).toBeGreaterThan(attention);
+      expect(at).toBeLessThan(scheduled);
+    }
+    expect(html).toContain('All activity');
+    expect(html).toContain('Needs input only');
+    expect(html).toContain('aria-label="Show previews in phone notifications"');
+    expect(html).toContain('aria-checked="true" aria-label="Show previews in phone notifications"');
+  });
+
+  it('reflects configured levels and the previews opt-out', () => {
+    const html = render({
+      notificationDefaultLevel: 'muted',
+      notificationChildLevel: 'inherit',
+      notificationPreviews: false
+    });
+    expect(html).toContain('Muted');
+    expect(html).toContain('Same as default');
+    expect(html).toContain('aria-checked="false" aria-label="Show previews in phone notifications"');
+  });
+
+  it('falls back to the shipped defaults when the stored values are not valid levels', () => {
+    const html = render({
+      notificationDefaultLevel: 'loud' as never,
+      notificationChildLevel: 7 as never
+    });
+    expect(html).toContain('All activity');
+    expect(html).toContain('Needs input only');
+  });
+});
+
 describe('Agents settings search entries', () => {
   const snapshot = (over: Partial<AppConfig> = {}) => ({ config: { ...config, ...over } });
   const byId = new Map(agentsEntries.map((e) => [e.id, e]));
@@ -176,6 +226,9 @@ describe('Agents settings search entries', () => {
     expect(valueOf('agents.overseer-mode')).toBe('Off');
     expect(valueOf('agents.auto-mode-enabled')).toBe('On');
     expect(valueOf('agents.inject-bundled-skills')).toBe('On');
+    expect(valueOf('agents.notification-default-level')).toBe('All activity');
+    expect(valueOf('agents.notification-child-level')).toBe('Needs input only');
+    expect(valueOf('agents.notification-previews')).toBe('On');
   });
 
   it('reads configured values', () => {
@@ -192,6 +245,10 @@ describe('Agents settings search entries', () => {
     expect(valueOf('agents.heartbeat-message', { heartbeatMessage: 'Keep going' })).toBe('Keep going');
     expect(valueOf('agents.inject-product-guidance', { injectProductGuidance: false })).toBe('Off');
     expect(valueOf('agents.auto-mode-enabled', { autoModeEnabled: false })).toBe('Off');
+    expect(valueOf('agents.notification-default-level', { notificationDefaultLevel: 'muted' })).toBe('Muted');
+    expect(valueOf('agents.notification-child-level', { notificationChildLevel: 'inherit' })).toBe('Same as default');
+    expect(valueOf('agents.notification-child-level', { notificationChildLevel: 'muted' })).toBe('Muted');
+    expect(valueOf('agents.notification-previews', { notificationPreviews: false })).toBe('Off');
   });
 
   it('evaluates every value accessor without throwing', () => {

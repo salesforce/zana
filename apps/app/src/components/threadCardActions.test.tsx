@@ -263,6 +263,7 @@ describe('ThreadCardMenu', () => {
     expect(idle).toContain('Mark unread');
     expect(idle).toContain('Rename');
     expect(idle).toContain('Archive');
+    expect(idle).toContain('data-testid="thread-notification-level"');
     expect(idle).not.toContain('Stop');
 
     const busy = renderToStaticMarkup(
@@ -274,6 +275,15 @@ describe('ThreadCardMenu', () => {
       </MemoryRouter>
     );
     expect(busy).toContain('Stop');
+  });
+
+  it('leaves the notification level out for archived threads', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadCardMenu menu={{ thread: { ...thread, archivedAt: 5 }, x: 8, y: 12 }} setMenu={() => undefined} />
+      </MemoryRouter>
+    );
+    expect(html).not.toContain('thread-notification-level');
   });
 
   it('renders a one-click archive control', () => {

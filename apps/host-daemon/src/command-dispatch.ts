@@ -83,6 +83,7 @@ import type { DesktopBrowserBroker } from './desktop-browser-broker.js';
 import type { DesktopBrowserCommand } from '@zana-ai/zcc-host-daemon-contract';
 
 import type { PluginHostManager } from './plugin-host-manager.js';
+import type { MachineEnvironment } from './machine-environment.js';
 
 const MAX_LISTED_FILES = 500;
 const MAX_DIR_ENTRIES = 2000;
@@ -223,6 +224,8 @@ export interface CommandRuntime {
   homeDir?: string;
   peerSsh?: PeerDaemonSsh;
   desktopBrowserBroker?: DesktopBrowserBroker;
+  /** In-memory environment pushed by the server (host.environment.replace). */
+  machineEnvironment?: MachineEnvironment;
 }
 
 export function createCommandRuntime(options: {
@@ -285,6 +288,7 @@ export function createCommandRuntime(options: {
   homeDir?: string;
   peerSsh?: PeerDaemonSsh;
   desktopBrowserBroker?: DesktopBrowserBroker;
+  machineEnvironment?: MachineEnvironment;
 }): CommandRuntime {
   const terminals = new Map<string, { cwd: string }>();
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
@@ -326,6 +330,7 @@ export function createCommandRuntime(options: {
     homeDir: options.homeDir,
     peerSsh: options.peerSsh ?? createSystemPeerDaemonSsh(),
     desktopBrowserBroker: options.desktopBrowserBroker,
+    machineEnvironment: options.machineEnvironment,
     verifyProviders: options.verifyProviders ?? (async () => {
       const [results, extraInstalledAgents] = await Promise.all([
         verifyHarnesses(loadConfig()),
@@ -1236,6 +1241,9 @@ export async function dispatchHostCommand(
         artifactPath: command.artifactPath
       });
     }
+    case 'host.environment.replace':
+      if (!runtime.machineEnvironment) throw new HostCommandError('unsupported', 'Machine environment is unavailable');
+      return runtime.machineEnvironment.replace(command.entries);
     case 'preview.replace':
       if (!runtime.previewTunnel) throw new HostCommandError('unsupported', 'Preview sharing is unavailable on this machine');
       return runtime.previewTunnel.replace(command);

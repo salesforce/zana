@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createCommandRuntime, dispatchHostCommand } from './command-dispatch.js';
 import { HostCommandError } from './host-command-error.js';
+import { MachineEnvironment } from './machine-environment.js';
 import { handleHostRpcRequest } from './command-router.js';
 import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
@@ -1176,4 +1177,23 @@ it('reserves CLI ownership before spawn, cleans failures and rejects unsupported
     for (let i = 0; i < 128; i++) runtime.terminals.set(String(i), { cwd: root });
     await expect(dispatchHostCommand(runtime, { ...command, grant: { ...command.grant, sessionId: randomUUID() } })).rejects.toMatchObject({ code: 'terminal_limit' });
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('applies host.environment.replace through the machine environment and answers with names only', async () => {
+  const target: NodeJS.ProcessEnv = {};
+  const machineEnvironment = new MachineEnvironment(target);
+  const runtime = createCommandRuntime({ machineEnvironment });
+  const secret = 'ghp_dispatch_secret_value';
+  const result = await dispatchHostCommand(runtime, { type: 'host.environment.replace', entries: [{ name: 'GH_TOKEN', value: secret }] });
+  expect(result).toEqual({ applied: ['GH_TOKEN'], skipped: [] });
+  expect(JSON.stringify(result)).not.toContain(secret);
+  expect(target.GH_TOKEN).toBe(secret);
+  await dispatchHostCommand(runtime, { type: 'host.environment.replace', entries: [] });
+  expect(target.GH_TOKEN).toBeUndefined();
+});
+
+it('rejects host.environment.replace when the daemon has no machine environment', async () => {
+  const runtime = createCommandRuntime({});
+  await expect(dispatchHostCommand(runtime, { type: 'host.environment.replace', entries: [] }))
+    .rejects.toMatchObject({ code: 'unsupported' });
 });

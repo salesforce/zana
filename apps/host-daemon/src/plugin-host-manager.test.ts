@@ -900,6 +900,12 @@ describe("PluginHostManager", () => {
     );
   });
 
+  it("hands each worker the daemon-computed thread-storage root, never a plugin-chosen one", async () => {
+    const { dataDir, manager } = await createManagerFixture();
+    const result = await manager.call(callCommand({ method: "pathsAndSignal" }));
+    expect(result.output).toMatchObject({ threadStorageRoot: join(dataDir, "thread-storage") });
+  });
+
   it("forwards typed signals and owns persistent and generation-temp paths", async () => {
     const onSignal = vi.fn();
     const manager = await createManager({ onSignal });

@@ -46,6 +46,7 @@ export function threadSummary(row: ConversationThreadRow): PluginSdkThreadSummar
     originPluginId: row.originPluginId,
     visibility: row.visibility,
     archivedAt: row.archivedAt,
+    pinnedAt: row.pinnedAt,
     createdAt: row.createdAt,
     parentThreadId: row.parentThreadId,
     title: row.title,

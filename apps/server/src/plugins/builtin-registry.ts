@@ -139,6 +139,13 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     autoInstall: true,
     defaultEnabled: true,
     category: 'Host access'
+  },
+  {
+    name: 'storage-retention',
+    pluginId: 'storage-retention',
+    autoInstall: true,
+    defaultEnabled: false,
+    category: 'Host access'
   }
 ];
 

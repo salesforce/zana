@@ -106,6 +106,13 @@ export interface FakePluginHarness {
   lifecycle: {
     dispose(): Promise<void>;
   };
+  /** What `zcc.remoteEnvironment` recorded: the provider, how often a refresh was requested. */
+  remoteEnvironment: {
+    provider: (() => unknown) | null;
+    refreshCount: number;
+    /** Call the registered provider the way the host would. Rejects when none is registered. */
+    resolve(): Promise<unknown>;
+  };
   needsConfiguration: string | null;
   setSettings(values: Record<string, PluginSettingValue | undefined>): void;
   callRpc(name: string, args?: unknown): Promise<unknown>;
@@ -258,6 +265,10 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const disposeHooks: Array<() => void | Promise<void>> = [];
   let needsConfiguration: string | null = null;
   let stale = false;
+  const remoteEnvironmentState: { provider: (() => unknown) | null; refreshCount: number } = {
+    provider: null,
+    refreshCount: 0
+  };
   let pendingInteraction:
     | { resolve: (result: PluginInteractionResult) => void }
     | null = null;
@@ -683,6 +694,19 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       }
     },
+    remoteEnvironment: {
+      provide(resolve) {
+        assertLive();
+        if (typeof resolve !== 'function') throw new Error('remoteEnvironment.provide requires a function');
+        if (remoteEnvironmentState.provider) throw new Error('remoteEnvironment.provide is already registered');
+        remoteEnvironmentState.provider = resolve;
+        disposeHooks.push(() => { remoteEnvironmentState.provider = null; });
+      },
+      refresh() {
+        assertLive();
+        remoteEnvironmentState.refreshCount += 1;
+      }
+    },
     agents: {
       contributeInstructions(textOrProvider) {
         if (typeof textOrProvider === 'function') {
@@ -842,6 +866,15 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     mentionProviders,
     projectTabAvailability,
     agentConfigurers,
+    remoteEnvironment: {
+      get provider() { return remoteEnvironmentState.provider; },
+      get refreshCount() { return remoteEnvironmentState.refreshCount; },
+      async resolve() {
+        const provider = remoteEnvironmentState.provider;
+        if (!provider) throw new Error('no remoteEnvironment provider registered');
+        return provider();
+      }
+    },
     get cli() {
       return cliRegistration;
     },

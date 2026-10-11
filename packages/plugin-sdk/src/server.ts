@@ -285,6 +285,8 @@ export interface PluginSdkThreadSummary {
   originPluginId?: string | null;
   visibility?: string;
   archivedAt?: number | null;
+  /** Epoch ms the user pinned the thread, or null when it is not pinned. */
+  pinnedAt?: number | null;
   createdAt?: number;
   parentThreadId?: string | null;
 }
@@ -774,6 +776,35 @@ export interface PluginBackground {
   schedule(name: string, cron: string, job: () => void | Promise<void>): void;
 }
 
+/** One variable a plugin asks the host to set for sessions that run on non-primary machines. */
+export interface PluginRemoteEnvironmentEntry {
+  name: string;
+  value: string;
+  /** Entries that share a group are applied together or not at all. */
+  group?: string;
+  /** Apply only when every named variable is non-empty on the machine (after this push is applied). */
+  requires?: readonly string[];
+}
+
+/**
+ * Contribute environment for sessions on non-primary (remote) machines.
+ *
+ * The manifest must list the variable names it may set in
+ * `zcc.extra.remoteEnvironment` (exact names or a `PREFIX_*` pattern); anything
+ * else, and names that redirect execution (`PATH`, `LD_*`, ...), is dropped.
+ * Values are held in memory by the host and the target daemon and are never
+ * persisted. A value the machine user already set always wins. Spawning never
+ * waits on `resolve`: the host calls it in the background.
+ */
+export interface PluginRemoteEnvironment {
+  /** Register the single provider for this plugin. Throws when called twice. */
+  provide(
+    resolve: () => readonly PluginRemoteEnvironmentEntry[] | Promise<readonly PluginRemoteEnvironmentEntry[]>
+  ): void;
+  /** Ask the host to call the provider again soon (for example after a setting changed). Fire-and-forget. */
+  refresh(): void;
+}
+
 export interface PluginProviderCapabilities {
   supportsServiceTier: boolean;
   supportsNativeUserQuestion?: boolean;
@@ -1019,6 +1050,8 @@ export interface ZccPluginApi {
   readonly realtime: PluginRealtime;
   readonly storage: PluginStorage;
   readonly background: PluginBackground;
+  /** Environment for sessions on non-primary machines. Needs `zcc.extra.remoteEnvironment` in the manifest. */
+  readonly remoteEnvironment: PluginRemoteEnvironment;
   readonly cli: PluginCli;
   readonly agents: PluginAgents;
   readonly events: PluginEvents;

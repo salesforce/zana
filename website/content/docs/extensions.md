@@ -111,6 +111,7 @@ them elsewhere.
 | `memory` | Durable global and project memory |
 | `ask-user-question` | Agent questions that surface in the Inbox |
 | `plugin-guide` | Plugin Guide — annotated SDK surface map under Plugins |
+| `storage-retention` | Opt-in machine storage reports and thread retention (installed, disabled by default) |
 
 **Official store plugins** (`autoInstall: false` — install from Plugins → Browse
 or `zcc plugin install <name>`):

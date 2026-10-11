@@ -59,10 +59,14 @@ Open desktop previews in the in-app browser; give the private URL for phone acce
   zcc thread fork|archive|unarchive <id>
   zcc thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   zcc thread interactions <id>
+  zcc thread notifications <id> [inherit|all|input-only|muted]
 
 Default wait (--until turn) returns on idle/error even if a background Bash
 (npm run dev) is still running. Use --until quiet to wait until
 activity.activeBackgroundCommandCount is 0.
+thread notifications shows or sets how much a thread may notify your phone (muted sends nothing; input-only only
+questions and failures; a muted parent caps its children). Defaults: zcc settings general notificationDefaultLevel|notificationChildLevel <level>;
+child threads follow notificationChildLevel, not the default.
 zcc run and zcc agent send are deprecated aliases for spawn and tell.
 Give spawned threads a clear objective, constraints, deliverable, and what to report back.
 `

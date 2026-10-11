@@ -3,7 +3,7 @@ import { operationEnvironment } from "./operation-environment.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import type { Readable } from "node:stream";
@@ -468,7 +468,15 @@ export class PluginHostManager {
     try {
       child = fork(
         defaultWorkerEntryPath(),
-        [artifactPath, command.pluginId, command.generation, dataDir, tempDir],
+        [
+          artifactPath,
+          command.pluginId,
+          command.generation,
+          dataDir,
+          tempDir,
+          // The daemon owns this path; plugins never choose it.
+          `--thread-storage-root=${join(this.options.dataDir, "thread-storage")}`,
+        ],
         {
           env: sanitizeInheritedChildProcessEnv({
             env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },

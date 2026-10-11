@@ -588,6 +588,73 @@ describe('product API command groups', () => {
     expect((await runCli(['node', 'zcc', 'help'])).stdout).toContain('USAGE:');
   });
 
+  describe('thread notifications', () => {
+    const state = {
+      threadId: 'thr-1',
+      own: 'inherit',
+      effective: 'input-only',
+      source: 'child-default',
+      defaultLevel: 'all',
+      childLevel: 'input-only'
+    };
+
+    it('shows the effective level and where it comes from', async () => {
+      const fetchImpl = router({ 'GET /api/v1/threads/thr-1/notification-level': state });
+      const shown = await runCli(['node', 'zcc', 'thread', 'notifications', 'thr-1'], { fetchImpl });
+      expect(shown.exitCode).toBe(0);
+      expect(shown.stdout).toContain('thr-1\tinput-only\tNeeds input only (child-thread default)');
+      expect(shown.stdout).toContain('own inherit\tdefault all\tchild default input-only');
+      const json = await runCli(['node', 'zcc', 'thread', 'notifications', 'thr-1', '--json'], { fetchImpl });
+      expect(JSON.parse(json.stdout)).toMatchObject({ effective: 'input-only', source: 'child-default' });
+    });
+
+    it('sets a level with a PUT and encodes the thread id', async () => {
+      let seen: { method?: string; path?: string; body?: unknown } = {};
+      const fetchImpl = router({
+        'PUT /api/v1/threads/thr%2F1/notification-level': (url, init) => {
+          seen = { method: init?.method, path: url.pathname, body: JSON.parse(String(init?.body)) };
+          return { ...state, threadId: 'thr/1', own: 'muted', effective: 'muted', source: 'self' };
+        }
+      });
+      const set = await runCli(['node', 'zcc', 'thread', 'notifications', 'thr/1', 'muted'], { fetchImpl });
+      expect(set.exitCode).toBe(0);
+      expect(set.stdout).toContain('Muted (set on this thread)');
+      expect(seen).toEqual({
+        method: 'PUT',
+        path: '/api/v1/threads/thr%2F1/notification-level',
+        body: { level: 'muted' }
+      });
+    });
+
+    it('rejects a missing id, a bad level and stray arguments before calling the server', async () => {
+      const calls: string[] = [];
+      const fetchImpl = (async (input: RequestInfo | URL) => {
+        calls.push(String(input));
+        return jsonResponse(200, state);
+      }) as typeof fetch;
+      for (const argv of [
+        ['thread', 'notifications'],
+        ['thread', 'notifications', 'thr-1', 'loud'],
+        ['thread', 'notifications', 'thr-1', 'muted', 'extra']
+      ]) {
+        const result = await runCli(['node', 'zcc', ...argv], { fetchImpl });
+        expect(result.exitCode).toBe(2);
+      }
+      expect(calls).toEqual([]);
+    });
+
+    it('relays server failures as errors', async () => {
+      const fetchImpl = router({
+        'GET /api/v1/threads/thr-1/notification-level': jsonResponse(404, { error: 'unknown-thread', message: 'thread is not registered' }),
+        'PUT /api/v1/threads/thr-1/notification-level': jsonResponse(409, { error: 'notification-limit', message: 'too many overrides' })
+      });
+      expect((await runCli(['node', 'zcc', 'thread', 'notifications', 'thr-1'], { fetchImpl })).exitCode).not.toBe(0);
+      const full = await runCli(['node', 'zcc', 'thread', 'notifications', 'thr-1', 'muted'], { fetchImpl });
+      expect(full.exitCode).not.toBe(0);
+      expect(full.stderr).toContain('too many overrides');
+    });
+  });
+
   it('posts a confined file preview body on thread open --file', async () => {
     let body: unknown;
     const fetchImpl = router({

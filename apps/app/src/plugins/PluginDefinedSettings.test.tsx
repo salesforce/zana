@@ -168,3 +168,69 @@ describe('PluginDefinedSettings', () => {
     );
   });
 });
+
+describe('remote machine credentials toggle (default-on boolean plugin setting)', () => {
+  const key = 'machineGitCredentialsEnabled';
+  const label = 'Forward the GitHub CLI login to remote machines';
+  const descriptor = {
+    type: 'boolean' as const,
+    label,
+    description: 'Held in memory only, never saved. A GH_TOKEN already set on the machine always wins.',
+    default: true
+  };
+  const forwardingOn: PluginSettingsSnapshot = { descriptors: { [key]: descriptor }, values: { [key]: true } };
+  const forwardingOff: PluginSettingsSnapshot = { descriptors: { [key]: descriptor }, values: { [key]: false } };
+
+  beforeEach(() => {
+    vi.mocked(product.pluginApps.getSettings).mockReset();
+    setSettings.mockReset().mockImplementation(async (_pluginId, values) => ({
+      ...forwardingOn,
+      values: { ...forwardingOn.values, ...values }
+    }));
+  });
+
+  afterEach(() => {
+    cleanup();
+    setSettings.mockClear();
+  });
+
+  it('shows the default-on setting as an enabled switch with its description', () => {
+    const html = renderToStaticMarkup(<PluginSettingsForm snap={forwardingOn} onSave={() => undefined} />);
+    expect(html).toContain(label);
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="true"');
+    expect(html).toContain('never saved');
+  });
+
+  it('shows the switch off once the user turned forwarding off', () => {
+    const html = renderToStaticMarkup(<PluginSettingsForm snap={forwardingOff} onSave={() => undefined} />);
+    expect(html).toContain('aria-checked="false"');
+  });
+
+  it('saves the new value as soon as the switch is flipped, and again when it is flipped back', async () => {
+    vi.mocked(product.pluginApps.getSettings).mockResolvedValue(forwardingOn);
+    await act(async () => { render(<PluginDefinedSettings pluginId="remote-credentials-plugin" />); });
+    const toggle = await screen.findByRole('switch', { name: label });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+
+    await act(async () => { fireEvent.click(toggle); });
+    await waitFor(() => {
+      expect(setSettings).toHaveBeenCalledWith('remote-credentials-plugin', { [key]: false });
+    });
+    expect(screen.getByRole('switch', { name: label }).getAttribute('aria-checked')).toBe('false');
+
+    await act(async () => { fireEvent.click(screen.getByRole('switch', { name: label })); });
+    await waitFor(() => {
+      expect(setSettings).toHaveBeenLastCalledWith('remote-credentials-plugin', { [key]: true });
+    });
+    expect(setSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a failed save under the switch instead of pretending it was stored', async () => {
+    vi.mocked(product.pluginApps.getSettings).mockResolvedValue(forwardingOn);
+    setSettings.mockRejectedValueOnce(new Error('could not save'));
+    await act(async () => { render(<PluginDefinedSettings pluginId="remote-credentials-plugin" />); });
+    await act(async () => { fireEvent.click(await screen.findByRole('switch', { name: label })); });
+    expect((await screen.findByRole('alert')).textContent).toContain('could not save');
+  });
+});

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Send, Sparkles, Square, SquareTerminal, Workflow } from 'lucide-react';
+import { Loader2, Pencil, Send, Sparkles, Square, SquareTerminal, Workflow } from 'lucide-react';
 import type { GitHostPullRequest } from '@zana-ai/zcc-domain';
 import {
   isBackgroundAgentTaskType,
@@ -11,7 +11,9 @@ import { product } from '../../../lib/product-client.js';
 import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
 import { loadWorkspaceMeta } from '../secondary-panel/threadSecondaryPanelLogic.js';
 import { formatWorkingElapsed } from '../thread-timeline-model.js';
+import { useUi } from '../../../store.js';
 import { nextTurnItemText, queuedMessagePreview } from './queued-message-text.js';
+import { isQueuedEditConflict, queuedEditRejection, useQueuedMessageEditHold } from './useQueuedMessageEditHold.js';
 
 interface NextTurnItemView {
   id: string;
@@ -20,7 +22,10 @@ interface NextTurnItemView {
   retryAt: number | null;
   status: string;
   senderThreadId: string | null;
+  updatedAt: number | undefined;
 }
+
+const QUEUED_EDIT_CHANGED = 'This queued message was changed elsewhere. Save again to replace that version with your text.';
 
 export function QueuedMessagesCard({ threadId }: { threadId: string }) {
   const [items, setItems] = useState<NextTurnItemView[]>([]);
@@ -29,13 +34,28 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [flushError, setFlushError] = useState<string | null>(null);
+  // `baseUpdatedAt` is the revision the editor opened on; a save confirms against it, so a change
+  // made elsewhere meanwhile is reported instead of being overwritten.
+  const [editing, setEditing] = useState<{ threadId: string; id: string; baseUpdatedAt: number | undefined } | null>(null);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  // An editor belongs to the thread it was opened in, so switching threads drops it.
+  const editingId = editing && editing.threadId === threadId ? editing.id : null;
+  const closeEditor = useCallback(() => {
+    setEditing(null);
+    setEditError(null);
+  }, []);
+  const { finish: finishEditHold, pause: pauseEditHold, resume: resumeEditHold } = useQueuedMessageEditHold({
+    threadId, itemId: editingId, onRejected: closeEditor
+  });
 
-  const refresh = useCallback(() => {
-    void product.threads.nextTurn(threadId).then((body) => {
+  const refresh = useCallback((): Promise<NextTurnItemView[] | null> => {
+    return product.threads.nextTurn(threadId).then((body) => {
       const payload = body as { items?: unknown; paused?: unknown } | null | undefined;
       setPaused(payload?.paused === true);
       const rows = Array.isArray(payload?.items) ? payload.items : [];
-      setItems(rows.map((row) => {
+      const views = rows.map((row): NextTurnItemView => {
         const record = row as {
           id?: string;
           payload?: string;
@@ -45,6 +65,7 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
           retryAt?: unknown;
           status?: unknown;
           senderThreadId?: unknown;
+          updatedAt?: unknown;
         };
         const text = typeof record.text === 'string' && record.text.trim()
           ? record.text
@@ -55,23 +76,89 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
           failureReason: typeof record.failureReason === 'string' ? record.failureReason : null,
           status: typeof record.status === 'string' ? record.status : 'queued',
           retryAt: typeof record.retryAt === 'number' ? record.retryAt : null,
+          updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : undefined,
           senderThreadId: typeof record.senderThreadId === 'string' && record.senderThreadId.trim()
             ? record.senderThreadId.trim()
             : null
         };
-      }).filter((row) => row.id));
-    }).catch(() => undefined);
+      }).filter((row) => row.id);
+      setItems(views);
+      return views;
+    }).catch(() => null);
   }, [threadId]);
 
   useEffect(() => {
-    refresh();
+    void refresh();
     const stop = product.threads.onUpdated((payload) => {
       if (payload && typeof payload === 'object' && 'id' in payload && (payload as { id: unknown }).id === threadId) {
-        refresh();
+        void refresh();
       }
     });
     return stop;
   }, [refresh, threadId]);
+
+  // The editor only makes sense while its message is still waiting; once the queue moves on, say so.
+  useEffect(() => {
+    if (!editingId) return;
+    const current = items.find((row) => row.id === editingId);
+    if (current?.status === 'queued') return;
+    finishEditHold();
+    closeEditor();
+    useUi.getState().pushToast('This queued message was sent before the edit was saved.', 'info');
+  }, [items, editingId, finishEditHold, closeEditor]);
+
+  const startEdit = (item: NextTurnItemView) => {
+    setDraft(item.text);
+    setEditError(null);
+    setEditing({ threadId, id: item.id, baseUpdatedAt: item.updatedAt });
+  };
+
+  const saveEdit = async (item: NextTurnItemView) => {
+    if (saving || !editing) return;
+    setSaving(true);
+    setEditError(null);
+    try {
+      // A renewal that lands after the save would hold the row again with no editor to release it.
+      if (!(await pauseEditHold())) return;
+      let saved: Awaited<ReturnType<typeof product.threads.updateNextTurn>>;
+      try {
+        saved = await product.threads.updateNextTurn(threadId, item.id, { text: draft, expectedUpdatedAt: editing.baseUpdatedAt });
+      } catch (err) {
+        const rejection = queuedEditRejection(err);
+        if (rejection) {
+          finishEditHold();
+          closeEditor();
+          useUi.getState().pushToast(rejection, 'error');
+          void refresh();
+          return;
+        }
+        resumeEditHold();
+        if (!isQueuedEditConflict(err)) {
+          setEditError(err instanceof Error ? err.message : 'Failed to save queued message');
+          return;
+        }
+        setEditError(QUEUED_EDIT_CHANGED);
+        // Confirm the next save against the version that won, so saving again is a deliberate replace.
+        const latest = (await refresh())?.find((row) => row.id === item.id);
+        if (latest) {
+          setEditing((current) => (current?.id === item.id ? { ...current, baseUpdatedAt: latest.updatedAt } : current));
+        }
+        return;
+      }
+      // Saving ends the hold on the server, so closing must not send a release.
+      finishEditHold();
+      closeEditor();
+      const next = saved?.item;
+      if (next) {
+        setItems((current) => current.map((row) => (
+          row.id === item.id ? { ...row, text: next.text, updatedAt: next.updatedAt } : row
+        )));
+      }
+      void refresh();
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (items.length === 0) return null;
   return (
@@ -106,7 +193,54 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
         <p role="alert" className="thread-queued-failure" data-testid="thread-queued-flush-error">{flushError}</p>
       ) : null}
       <ul className="thread-queued-list">
-        {items.map((item) => (
+        {items.map((item) => editingId === item.id ? (
+          <li key={item.id} className="thread-queued-ghost" data-status={item.status} data-editing="true">
+            <div className="thread-queued-ghost-body thread-queued-edit" data-testid="thread-queued-edit">
+              <textarea
+                className="thread-queued-edit-input"
+                aria-label="Queued message text"
+                rows={3}
+                autoFocus
+                value={draft}
+                disabled={saving}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape' && !saving) {
+                    event.preventDefault();
+                    closeEditor();
+                  } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void saveEdit(item);
+                  }
+                }}
+              />
+              {editError ? (
+                <p role="alert" className="thread-queued-failure" data-testid="thread-queued-edit-error">{editError}</p>
+              ) : null}
+              <div className="thread-queued-edit-actions">
+                <button
+                  type="button"
+                  className="thread-queued-flush"
+                  data-testid="thread-queued-edit-cancel"
+                  disabled={saving}
+                  onClick={closeEditor}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="thread-queued-flush"
+                  data-testid="thread-queued-edit-save"
+                  aria-busy={saving}
+                  disabled={saving}
+                  onClick={() => { void saveEdit(item); }}
+                >
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </li>
+        ) : (
           <li key={item.id} className="thread-queued-ghost" data-status={item.status}>
             <div className="thread-queued-ghost-body">
               <p className="thread-queued-item-text">{queuedMessagePreview(item.text) || '(queued message)'}</p>
@@ -121,6 +255,19 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
                 <p className="thread-queued-failure" data-testid="thread-queued-failure">{item.failureReason}</p>
               ) : null}
             </div>
+            {item.status === 'queued' ? (
+              <button
+                type="button"
+                className="thread-queued-ghost-edit"
+                data-testid="thread-queued-edit-open"
+                aria-label="Edit queued message"
+                title="Edit queued message"
+                disabled={flushing || sendingId !== null || deletingId !== null || editingId !== null}
+                onClick={() => startEdit(item)}
+              >
+                <Pencil size={14} aria-hidden="true" />
+              </button>
+            ) : null}
             <button
               type="button"
               className="thread-queued-flush"

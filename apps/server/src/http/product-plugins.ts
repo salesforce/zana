@@ -132,6 +132,7 @@ function toPluginThreadSummary(row: {
   originPluginId?: string | null;
   visibility?: string;
   archivedAt?: number | null;
+  pinnedAt?: number | null;
   createdAt?: number;
   parentThreadId?: string | null;
 }): PluginSdkThreadSummary {
@@ -150,6 +151,7 @@ function toPluginThreadSummary(row: {
     originPluginId: row.originPluginId,
     visibility: row.visibility,
     archivedAt: row.archivedAt,
+    pinnedAt: row.pinnedAt,
     createdAt: row.createdAt,
     parentThreadId: row.parentThreadId
   };

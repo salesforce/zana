@@ -15,6 +15,7 @@ Handed to `export default function plugin(zcc)`.
 | `rpc.method` | Renderer/host RPC |
 | `realtime.publish` | Events |
 | `background.service` / `schedule` | Long-running work |
+| `remoteEnvironment.provide` / `refresh` | Environment variables for sessions on non-primary machines (manifest allowlist `zcc.extra.remoteEnvironment`; held in memory, never stored) |
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata` |
 | `ui.requestInput` | Host prompt |
 | `status.needsConfiguration` | Degraded-until-configured |
@@ -28,6 +29,20 @@ Handed to `export default function plugin(zcc)`.
 Plugins do not get `ctx.exec` permission tokens. They are full-trust in the
 server process and must not be given host-daemon tokens.
 
+`remoteEnvironment.provide(resolve)` lets a plugin contribute environment
+variables to sessions that run on other enrolled machines (never the primary
+machine). The plugin declares the exact names, or `PREFIX_*` patterns, it may
+set in `package.json` under `zcc.extra.remoteEnvironment`; names outside that
+list are dropped, and names that redirect how processes are found or loaded (`PATH`, `HOME`,
+`LD_*`, `NODE_*`, `ZCC_*`, `GIT_SSH*` and similar) are refused for every plugin. `resolve` must answer quickly
+(serve a cached value and refresh in the background); call `refresh()` when the
+values change. Entries may share a `group` (applied all or none) and list
+`requires` (only applied when those variables exist on the machine). Values live
+in the memory of the machine's daemon only: they are never written to disk, the
+database, logs or spawn-plan dumps, they are cleared when the daemon disconnects
+or the plugin is disposed, and a variable the user already set on the machine is
+never overridden.
+
 `sdk.threads.spawn` accepts `hostId`, `serviceTier: "default" | "fast"` and
 `environment: { kind: "unmanaged" | "personal" | "worktree" | "reuse", ... }`.
 The server validates environment choices and authorizes host/project access.
@@ -37,7 +52,11 @@ accepts `hostId` and returns `modelLoadError` when discovery fails.
 `sdk.files.read` and `sdk.files.write` resolve an omitted `hostId` to the
 primary host and retain the host file service's path confinement.
 `sdk.environments.pullRequest({ environmentId })` returns `pullRequest` or
-`unavailableReason`. Thread summaries include titles and update timestamps.
+`unavailableReason`. Thread summaries include titles and update timestamps,
+plus `pinnedAt` (epoch ms, or null when the thread is not pinned).
+A host entry's `experimental_paths.threadStorageRoot` is the absolute
+thread-storage directory of the daemon it runs on (null when the daemon did not
+provide one); the directory may not exist yet, so confine anything beneath it.
 Plugin HTTP bodies are capped at 25 MiB; JSON routes also receive parsed
 `body`, while attachment routes can consume the exact `rawBody` bytes.
 

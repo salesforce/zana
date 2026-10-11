@@ -69,3 +69,13 @@ it('leaves background stops to the product client', async () => {
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
   await expect(api.threads.stopBackground('thread-1', ['item-1'])).resolves.toEqual({ ok: false });
 });
+
+it('leaves queued-message editing to the product client', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  await expect(api.threads.holdNextTurnForEdit('thread-1', 'item-1')).rejects.toThrow('threads require the product server');
+  await expect(api.threads.releaseNextTurnEditHold('thread-1', 'item-1')).rejects.toThrow('threads require the product server');
+  await expect(api.threads.updateNextTurn('thread-1', 'item-1', { text: 'x' })).rejects.toThrow('threads require the product server');
+  expect(electron.invoke).not.toHaveBeenCalled();
+});

@@ -1932,6 +1932,10 @@ describe('product HTTP thread reasoning', () => {
     expect(source).toContain('flushHeldConversationSends');
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/next-turn/:itemId')");
     expect(source).toContain('dropDeferredConversationMessage');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/next-turn/:itemId/edit-hold')");
+    expect(source).toContain('holdDeferredConversationMessageForEdit');
+    expect(source).toContain('releaseDeferredConversationMessageEditHold');
+    expect(source).toContain('saveDeferredConversationMessageEdit');
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/compact')");
     expect(source).toContain('compactConversation');
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/background/stop')");

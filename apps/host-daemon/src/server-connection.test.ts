@@ -7,6 +7,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { startEnrolledHostConnection } from './server-connection.js';
 import type { CommandRuntime } from './command-dispatch.js';
+import { MachineEnvironment } from './machine-environment.js';
 
 const hostId = '11111111-1111-4111-8111-111111111111';
 const instanceId = '22222222-2222-4222-8222-222222222222';
@@ -57,7 +58,7 @@ async function fixture(connectCredential?: string) {
       hostKey: 'secret-machine-key', connectCredential, runtime, dataDir, onConnectionChange: value => changes.push(value) });
     void connection.ready.catch(() => {}); cleanup.push(() => connection.close()); return connection;
   };
-  return { connect, changes, hellos, reconcile, requests, messages, send: (message: unknown) => accepted.send(JSON.stringify(message)), get upgrades() { return upgrades; },
+  return { runtime, connect, changes, hellos, reconcile, requests, messages, send: (message: unknown) => accepted.send(JSON.stringify(message)), get upgrades() { return upgrades; },
     rejectNext: (count = 1, code = 503) => { failures = count; status = code; }, drop: () => accepted.terminate() };
 }
 
@@ -102,6 +103,27 @@ describe('enrolled host with BB ws transport', () => {
     await connection.sink.flush();
     const events = f.messages.filter(m => m.type === 'host.event').flatMap(m => m.events);
     expect(events.map(event => event.payload.data)).toEqual(['before ready', 'while offline']);
+  }, 12000);
+  it('holds server-pushed environment only while the session is open', async () => {
+    const f = await fixture();
+    const target: NodeJS.ProcessEnv = {};
+    f.runtime.machineEnvironment = new MachineEnvironment(target);
+    const connection = f.connect(); await connection.ready;
+    f.send({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: 'env-push',
+      command: { type: 'host.environment.replace', entries: [{ name: 'FORWARDED_TEST_TOKEN', value: 'secret-value' }] } });
+    await vi.waitFor(() => expect(f.messages.find(m => m.requestId === 'env-push')).toMatchObject({ ok: true }));
+    expect(f.messages.find(m => m.requestId === 'env-push')?.result).toEqual({ applied: ['FORWARDED_TEST_TOKEN'], skipped: [] });
+    expect(JSON.stringify(f.messages.find(m => m.requestId === 'env-push'))).not.toContain('secret-value');
+    expect(target.FORWARDED_TEST_TOKEN).toBe('secret-value');
+    f.rejectNext(); f.drop();
+    await vi.waitFor(() => expect(f.changes.at(-1)).toBe(false));
+    expect(target.FORWARDED_TEST_TOKEN).toBeUndefined();
+    await vi.waitFor(() => expect(f.changes.at(-1)).toBe(true), { timeout: 8000 });
+    f.send({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: 'env-push-2',
+      command: { type: 'host.environment.replace', entries: [{ name: 'FORWARDED_TEST_TOKEN', value: 'second' }] } });
+    await vi.waitFor(() => expect(target.FORWARDED_TEST_TOKEN).toBe('second'));
+    await connection.close();
+    expect(target.FORWARDED_TEST_TOKEN).toBeUndefined();
   }, 12000);
   it('rejects authentication failures and cancels retries on shutdown', async () => {
     const f = await fixture(); f.rejectNext(1, 401); const connection = f.connect();

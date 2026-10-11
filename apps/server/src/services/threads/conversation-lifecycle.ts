@@ -798,6 +798,19 @@ export async function flushHeldConversationSends(
 }
 
 /**
+ * A queued-message editor just saved or cancelled. The queue may have been
+ * waiting on that one row, so re-attempt it now rather than at the next sweep.
+ * Best effort: a busy thread simply stays queued for the idle drain.
+ */
+export async function wakeConversationQueueAfterEdit(ctx: ProductHttpContext, threadId: string): Promise<void> {
+  try {
+    await flushHeldConversationSends(ctx, threadId);
+  } catch {
+    // The periodic sweep and the idle drain retry.
+  }
+}
+
+/**
  * The HTTP route verifies a single-use approval from desktop main or the
  * authenticated phone gateway before entering this override path. Agent
  * session credentials cannot authorize it; the renderer never holds the signer.

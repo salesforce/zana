@@ -4,7 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter } from 'react-router-dom';
 import { useThreads, type ThreadListItem } from '../../thread-store.js';
 
-const threads = vi.hoisted(() => ({ archive: vi.fn(async () => ({ ok: true })), closeFollowup: vi.fn(async () => ({ ok: true })) }));
+const threads = vi.hoisted(() => ({
+  archive: vi.fn(async () => ({ ok: true })),
+  closeFollowup: vi.fn(async () => ({ ok: true })),
+  // The menu's notification-level control loads on open; these tests leave it loading.
+  notificationLevel: vi.fn(() => new Promise(() => undefined))
+}));
 vi.mock('../../lib/product-client.js', () => ({ product: { threads } }));
 
 import { ThreadDetailOverflow } from './ThreadDetailOverflow.js';
