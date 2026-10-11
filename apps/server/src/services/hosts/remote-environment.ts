@@ -61,6 +61,27 @@ export function nonPrimaryHostCheck(db: ZccDatabase): (hostId: string) => boolea
   };
 }
 
+/** The part of the host hub the service pushes through. */
+export interface RemoteEnvironmentHostHub {
+  connectedHostIds(): readonly string[];
+  callHostOnlineRpc(input: { hostId: string; command: HostRpcCommand; timeoutMs?: number }): Promise<unknown>;
+}
+
+/** The server's service: pushes to connected non-primary machines through the host hub. */
+export function createHostHubRemoteEnvironment(
+  hostHub: RemoteEnvironmentHostHub,
+  db: ZccDatabase,
+  logger: Pick<Console, 'info' | 'warn'> = console
+): RemoteEnvironmentService {
+  return createRemoteEnvironmentService({
+    connectedHostIds: () => hostHub.connectedHostIds(),
+    isEligibleHost: nonPrimaryHostCheck(db),
+    callHost: (hostId, command, timeoutMs) => hostHub.callHostOnlineRpc({ hostId, command, timeoutMs }),
+    // Names, counts and host ids only: the service never passes a value to the logger.
+    log: { info: (message) => logger.info(`[remote-env] ${message}`), warn: (message) => logger.warn(`[remote-env] ${message}`) }
+  });
+}
+
 export interface RemoteEnvironmentRegistration {
   /** Ask for a re-resolve soon. Fire-and-forget and coalesced. */
   refresh(): void;

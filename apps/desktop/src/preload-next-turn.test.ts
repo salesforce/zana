@@ -79,3 +79,12 @@ it('leaves queued-message editing to the product client', async () => {
   await expect(api.threads.updateNextTurn('thread-1', 'item-1', { text: 'x' })).rejects.toThrow('threads require the product server');
   expect(electron.invoke).not.toHaveBeenCalled();
 });
+
+it('leaves thread notification levels to the product client', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  await expect(api.threads.notificationLevel('thread-1')).rejects.toThrow('threads require the product server');
+  await expect(api.threads.setNotificationLevel('thread-1', 'muted')).rejects.toThrow('threads require the product server');
+  expect(electron.invoke).not.toHaveBeenCalled();
+});

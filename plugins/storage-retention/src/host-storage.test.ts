@@ -388,6 +388,12 @@ describe("discardLargeFiles", () => {
     expect(await exists(path.join(dir, "big.bin"))).toBe(true);
   });
 
+  it("does nothing when the root is missing", async () => {
+    await rm(root, { recursive: true });
+    expect(await harness.experimental_call("discardLargeFiles", { names: [uuid(1)], minBytes: 100_000 })).toEqual({ removed: [], skipped: [] });
+    expect(await exists(root)).toBe(false);
+  });
+
   it("rejects names that are not thread folders", async () => {
     await expect(harness.experimental_call("discardLargeFiles", { names: ["model-list"], minBytes: 100_000 })).rejects.toThrow(/invalid storage entry/i);
     await expect(harness.experimental_call("discardLargeFiles", { names: [trashName(1)], minBytes: 100_000 })).rejects.toThrow(/invalid storage entry/i);

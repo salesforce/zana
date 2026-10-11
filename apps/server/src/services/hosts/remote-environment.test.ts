@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase, upsertHost, type ZccDatabase } from '@zana-ai/zcc-db';
 import type { HostRpcCommand } from '@zana-ai/zcc-contracts/host-rpc';
 import {
+  createHostHubRemoteEnvironment,
   createRemoteEnvironmentService,
   nonPrimaryHostCheck,
   parseRemoteEnvironmentNames,
@@ -325,5 +326,39 @@ describe('nonPrimaryHostCheck', () => {
     expect(check(remote.id)).toBe(true);
     expect(check(gone.id)).toBe(false);
     expect(check('unknown')).toBe(false);
+  });
+});
+
+describe('createHostHubRemoteEnvironment', () => {
+  let dir: string;
+  let db: ZccDatabase;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'remote-env-hub-')); db = openDatabase(join(dir, 'db.sqlite')); });
+  afterEach(() => { db.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('pushes through the hub to connected non-primary machines and logs names only', async () => {
+    const primary = upsertHost(db, { name: 'Laptop', hostKeyHash: 'a'.repeat(64) });
+    const remote = upsertHost(db, { name: 'Remote', hostKeyHash: 'b'.repeat(64) });
+    const callHostOnlineRpc = vi.fn()
+      .mockResolvedValueOnce({ applied: ['GH_TOKEN'], skipped: [] })
+      .mockRejectedValueOnce(new Error(`upstream said ${SECRET}`));
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const service = active = createHostHubRemoteEnvironment(
+      { connectedHostIds: () => [primary.id, remote.id], callHostOnlineRpc }, db, logger);
+    let value = SECRET;
+    service.register({ pluginId: 'p', allowedNames: allow, resolve: () => token(value) });
+
+    await service.refresh();
+    expect(callHostOnlineRpc).toHaveBeenCalledExactlyOnceWith({
+      hostId: remote.id,
+      command: { type: 'host.environment.replace', entries: token() },
+      timeoutMs: expect.any(Number)
+    });
+    expect(logger.info).toHaveBeenCalledWith(`[remote-env] ${remote.id} applied [GH_TOKEN] skipped []`);
+
+    value = `${SECRET}_rotated`;
+    // register() already started a run, so this refresh queues one more behind it.
+    service.refresh();
+    await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledExactlyOnceWith(`[remote-env] push to ${remote.id} failed (Error); will retry`));
+    expect(JSON.stringify([...logger.info.mock.calls, ...logger.warn.mock.calls])).not.toContain(SECRET);
   });
 });

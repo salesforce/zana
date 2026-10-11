@@ -49,11 +49,7 @@ import { HOST_ACTIVE_WORK_DISCONNECT_GRACE_MS } from '../services/threads/conver
 import { retryDueConversationSends, wakeLapsedEditHolds } from '../services/threads/conversation-deferred-messages.js';
 import { startDeferredRetryLoop } from '../services/threads/deferred-retry-loop.js';
 import { disposeLocalHostDaemon } from '../services/hosts/host-relaunch.js';
-import {
-  createRemoteEnvironmentService,
-  nonPrimaryHostCheck,
-  type RemoteEnvironmentService
-} from '../services/hosts/remote-environment.js';
+import { createHostHubRemoteEnvironment, type RemoteEnvironmentService } from '../services/hosts/remote-environment.js';
 import { startConversationHistoryMaintenance } from '../services/threads/conversation-history-maintenance.js';
 import { PersistentTerminalSessions } from './persistent-terminal-sessions.js';
 import { ProviderModelCatalogStore } from '../services/threads/provider-model-catalog-store.js';
@@ -220,13 +216,7 @@ export function createProductHttpContext(
       }, HOST_ACTIVE_WORK_DISCONNECT_GRACE_MS));
     }
   });
-  const remoteEnvironment = createRemoteEnvironmentService({
-    connectedHostIds: () => hostHub.connectedHostIds(),
-    isEligibleHost: nonPrimaryHostCheck(db),
-    callHost: (hostId, command, timeoutMs) => hostHub.callHostOnlineRpc({ hostId, command, timeoutMs }),
-    // Names, counts and host ids only: the service never passes a value to the logger.
-    log: { info: (message) => console.info(`[remote-env] ${message}`), warn: (message) => console.warn(`[remote-env] ${message}`) }
-  });
+  const remoteEnvironment = createHostHubRemoteEnvironment(hostHub, db);
   const modelCatalogs = new ProviderModelCatalogStore({
     db,
     callHostOnlineRpc: (input) => hostHub.callHostOnlineRpc(input),
