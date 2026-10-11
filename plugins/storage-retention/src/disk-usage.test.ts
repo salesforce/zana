@@ -1,8 +1,8 @@
-import { chmod, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { measureTree } from "./disk-usage.js";
+import { allocatedBytes, measureTree } from "./disk-usage.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -27,6 +27,14 @@ describe("measureTree", () => {
     expect(usage!.sizeBytes).toBeLessThan(2_000_000);
     expect(usage!.partial).toBe(false);
     expect(usage!.largeCount).toBe(0);
+  });
+
+  it("measures a single file root by its own allocation", async () => {
+    await file("only.bin", 300_000);
+    const stats = await lstat(path.join(dir, "only.bin"), { bigint: true });
+    const usage = await measureTree(path.join(dir, "only.bin"), base);
+    expect(usage!.sizeBytes).toBe(allocatedBytes(stats));
+    expect(usage!.sizeBytes).toBeGreaterThanOrEqual(300_000);
   });
 
   it("aggregates large files and lists them only on request", async () => {

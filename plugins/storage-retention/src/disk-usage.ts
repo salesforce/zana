@@ -6,7 +6,8 @@ import { isFsErrorWithCode } from "./fs-errors.js";
 /**
  * Bounded, child-process-free disk usage walker.
  *
- * Reports allocated bytes (blocks * 512, what `du` reports), never follows a
+ * Reports allocated bytes (blocks * 512, what `du` reports, less the root
+ * folder's own allocation), never follows a
  * symbolic link, counts a hard-linked file once, yields to the event loop on
  * every filesystem call, and stops at an entry cap or a deadline. A walk that
  * stopped early, or skipped something it could not read, reports
@@ -139,7 +140,14 @@ export async function measureTree(root: string, options: MeasureOptions): Promis
     }
   };
 
-  account(root, rootStats);
+  // Clearing keeps the root folder, so its own allocation is never reclaimable:
+  // count only what it holds (an empty folder is 0 blocks on APFS, 4 KiB on ext4).
+  if (rootStats.isDirectory()) {
+    entryCount += 1;
+    pending.push(root);
+  } else {
+    account(root, rootStats);
+  }
 
   await new Promise<void>((resolve, reject) => {
     let active = 0;
