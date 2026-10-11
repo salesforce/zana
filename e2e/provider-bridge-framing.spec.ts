@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync,
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './fixtures/app.js';
+import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
 const INPUT = `framing-start ${'é🙂'.repeat(48_000)} framing-end`;
 const REPLY_PREFIX = 'The large framed turn reached the built provider.';
@@ -63,6 +64,7 @@ test('recording preserves large UTF-8 provider output, resumed turns, and app sh
   test.setTimeout(120_000);
   const root = join(app.home, 'framing-project');
   mkdirSync(root);
+  await waitForThreadProvider(app.window, 'codex');
   const threadId = await app.window.evaluate(async ({ path, input }) => {
     const project = await window.cc.projects.add(path);
     if (!project.ok) throw new Error('Project registration failed');
@@ -138,11 +140,7 @@ test('recording preserves large UTF-8 provider output, resumed turns, and app sh
 
 test('Stop reaps a SIGTERM-resistant ACP child through the built provider', async ({ app }) => {
   test.setTimeout(120_000);
-  await expect.poll(() => app.window.evaluate(async () => {
-    const response = await fetch('/api/v1/threads/providers');
-    if (!response.ok) throw new Error(`Provider catalog failed: ${response.status}`);
-    return (await response.json()).providers.map((provider: { id: string }) => provider.id);
-  }), { timeout: 30_000 }).toContain('acp-opencode');
+  await waitForThreadProvider(app.window, 'acp-opencode');
   const root = join(app.home, 'acp-stop-project');
   mkdirSync(root);
   const threadId = await app.window.evaluate(async path => {
@@ -326,6 +324,7 @@ test('native Codex questions reach the renderer and return selected labels and f
       { method: 'turn/completed', params: { threadId: 'codex-thread', turn: { id: 'native-turn', status: 'completed' } } }
     ]]
   }));
+  await waitForThreadProvider(app.window, 'codex');
   const id = await app.window.evaluate(async root => {
     const project = await window.cc.projects.add(root); if (!project.ok) throw Error(project.message);
     const response = await fetch('/api/v1/threads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: project.value.id, providerId: 'codex', input: 'Ask a native question', permissionMode: 'full' }) });

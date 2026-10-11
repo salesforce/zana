@@ -17,6 +17,7 @@ import {
   createFakeAdapter,
   fullRuntimeOptions,
   waitForRuntimeThreadEvent,
+  waitForThreadTurnCompleted,
   waitForThreadTurnStarted,
 } from "./test/runtime-test-harness.js";
 import type { AgentRuntime, AgentRuntimeBridgeLaunch } from "./types.js";
@@ -660,6 +661,64 @@ rl.on("line", (line) => {
       }),
     ).rejects.toThrow(/returned no provider request for turn\/start/);
     await runtime.shutdown();
+  });
+
+  it("records changed session settings when thread/resume plans no request", async () => {
+    const events: ThreadEvent[] = [];
+    const resumePlans: string[] = [];
+    const baseAdapter = createFakeAdapter(scriptPath);
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath: tmpDir,
+      onEvent: (event) => events.push(event),
+      onToolCall: async () => ({
+        contentItems: [{ type: "inputText", text: "ok" }],
+        success: true,
+      }),
+      adapterFactory: () => ({
+        ...baseAdapter,
+        buildCommandPlan(command) {
+          if (command.type === "thread/resume") {
+            resumePlans.push(command.options.model ?? "");
+            return { kind: "noop", reason: "settings apply per turn" };
+          }
+          return baseAdapter.buildCommandPlan(command);
+        },
+      }),
+    });
+
+    try {
+      await runtime.startThread({
+        environmentId: "env-1",
+        threadId: "t1",
+        projectId: "p1",
+        providerId: "fake",
+        options: fullRuntimeOptions,
+      });
+      const changedOptions = { ...fullRuntimeOptions, model: "test-model-2" };
+      await runtime.runTurn({
+        clientRequestId: "creq_222222224s",
+        threadId: "t1",
+        input: [promptTextInput({ text: "hello" })],
+        options: changedOptions,
+      });
+      await waitForThreadTurnCompleted({
+        events,
+        providerId: "fake",
+        runtime,
+        threadId: "t1",
+      });
+      // The turn ran without a session restore, and the new model was
+      // recorded, so the same options on the next turn plan no second resume.
+      await runtime.runTurn({
+        clientRequestId: "creq_222222224t",
+        threadId: "t1",
+        input: [promptTextInput({ text: "again" })],
+        options: changedOptions,
+      });
+      expect(resumePlans).toEqual(["test-model-2"]);
+    } finally {
+      await runtime.shutdown();
+    }
   });
 
   it("rejects no-op steer commands instead of silently dropping them", async () => {

@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { createSqliteDatabase } from '../packages/db/src/sqlite.js';
 import { test, expect } from './fixtures/app.js';
+import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
 test('background history cleanup preserves answers, output, capacity and continuation', async ({ app }) => {
   test.setTimeout(130_000);
   const { window, home } = app;
+  await waitForThreadProvider(window, 'codex');
   const id = await window.evaluate(async () => {
     const project = (await window.cc.projects.list())[0];
     const response = await fetch('/api/v1/threads', { method: 'POST', headers: { 'content-type': 'application/json' },

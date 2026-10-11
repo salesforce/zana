@@ -1115,12 +1115,7 @@ export function createCodexEventTranslator(
     // delegation (the interaction's id) in the turn that sent it. Reopening
     // the original item would replay it in the turn that spawned it, and
     // every copy would carry the sub-agent's whole history.
-    if (!isTrackedSubAgentOpen(tracked)) {
-      return beginCodexTrackedSubAgent(activity);
-    }
-    tracked.pendingFollowups += 1;
-    rearmTrackedSubAgent(tracked);
-    return [];
+    return beginCodexTrackedSubAgent(activity);
   }
 
   function hasConsumablePendingDelegationLink(args: {
