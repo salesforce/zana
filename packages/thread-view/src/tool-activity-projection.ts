@@ -1005,6 +1005,32 @@ export function onExecBegin(
     return;
   }
 
+  // A delegation's call id names one sub-agent and its children attach by that
+  // id, so a start for a finished delegation is a new round of the same row.
+  // A second row would render every child again, and nested follow-ups would
+  // multiply them. Commands keep a row per reused call id.
+  const historyMatch = findExecMessageInHistoryCells(state, call.callId);
+  if (
+    historyMatch &&
+    !existingRunning &&
+    historyMatch.call.kind === "delegation" &&
+    call.kind === "delegation"
+  ) {
+    historyMatch.call.status = "pending";
+    historyMatch.call.completedAt = null;
+    state.toolActivity.finalizedExecCallIds.delete(call.callId);
+    mergeExecutionSummary(historyMatch.call, call);
+    historyMatch.cell.sourceSeqEnd = Math.max(
+      historyMatch.cell.sourceSeqEnd,
+      call.sourceSeqEnd,
+    );
+    historyMatch.cell.createdAt = Math.max(
+      historyMatch.cell.createdAt,
+      call.createdAt,
+    );
+    return;
+  }
+
   flushActiveToolCell(state);
   state.toolActivity.activeCell = createExecMessage(call);
 }

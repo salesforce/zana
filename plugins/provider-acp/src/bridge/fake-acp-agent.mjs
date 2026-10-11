@@ -36,6 +36,14 @@
  *                            → fail session/set_config_option for model values
  * - FAKE_ACP_SET_CONFIG_FAST_ERROR=1
  *                            → fail session/set_config_option for Fast values
+ * - FAKE_ACP_EMPTY_MODEL_RESULT=1
+ *                            → answer model setters with an empty result
+ * - FAKE_ACP_IGNORE_MODEL_SET=1
+ *                            → acknowledge model setters with the unchanged
+ *                              state, leaving the selected model in place
+ * - FAKE_ACP_SET_CONFIG_EFFORT_ERROR=1|<model>
+ *                            → fail session/set_config_option for effort values
+ *                              (only while <model> is selected, when given)
  * - FAKE_ACP_CURSOR_PARAMETERIZED_MODELS=1
  *                            → mirror Cursor compatibility-vs-parameterized
  *                              model/config-option responses
@@ -83,6 +91,9 @@ const acceptNativeReasoning =
   process.env.FAKE_ACP_ACCEPT_NATIVE_REASONING === "1";
 const setConfigModelError = process.env.FAKE_ACP_SET_CONFIG_MODEL_ERROR === "1";
 const setConfigFastError = process.env.FAKE_ACP_SET_CONFIG_FAST_ERROR === "1";
+const emptyModelResult = process.env.FAKE_ACP_EMPTY_MODEL_RESULT === "1";
+const ignoreModelSet = process.env.FAKE_ACP_IGNORE_MODEL_SET === "1";
+const setConfigEffortError = process.env.FAKE_ACP_SET_CONFIG_EFFORT_ERROR;
 const modeConfig = process.env.FAKE_ACP_MODE_CONFIG === "1";
 const modeOptions = (process.env.FAKE_ACP_MODE_OPTIONS ?? "build:Build,plan:Plan")
   .split(",")
@@ -673,8 +684,14 @@ async function handleMessage(message) {
         });
         return;
       }
-      selectedModel = modelId;
-      send({ jsonrpc: "2.0", id: message.id, result: configState() });
+      if (!ignoreModelSet) {
+        selectedModel = modelId;
+      }
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: emptyModelResult ? {} : configState(),
+      });
       return;
     }
     case "session/set_config_option": {
@@ -707,11 +724,28 @@ async function handleMessage(message) {
           });
           return;
         }
-        selectedModel = value;
-        send({ jsonrpc: "2.0", id: message.id, result: configState() });
+        if (!ignoreModelSet) {
+          selectedModel = value;
+        }
+        send({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: emptyModelResult ? {} : configState(),
+        });
         return;
       }
       if (configId === "effort") {
+        if (
+          setConfigEffortError === "1" ||
+          setConfigEffortError === selectedModel
+        ) {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32603, message: "effort config update failed" },
+          });
+          return;
+        }
         const efforts = cursorParameterizedModels
           ? ["low", "medium", "high", "xhigh"]
           : effortsByModel.get(selectedModel);

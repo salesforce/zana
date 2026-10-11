@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyWorkflowMigrations,
   attachCallThread,
@@ -9,6 +9,7 @@ import {
   deleteTerminalRuns,
   getCall,
   getRunRequired,
+  hasQueuedRun,
   incrementRepairAttempts,
   listCallsForRunPage,
   listExpiredTerminalRuns,
@@ -532,6 +533,172 @@ describe("workflow durable data", () => {
         childThreadId: status === "running" ? `matrix-child-${status}` : null,
       });
     }
+  });
+
+  function terminal(
+    id: string,
+    patch: { notificationSent: 0 | 1; finishedAt: number; retentionDays: number },
+  ): void {
+    db.prepare(
+      `UPDATE workflow_runs SET status = 'succeeded', notification_sent = ?,
+       finished_at = ?, settings_json = json_set(settings_json, '$.retentionDays', ?)
+       WHERE id = ?`,
+    ).run(patch.notificationSent, patch.finishedAt, patch.retentionDays, id);
+  }
+
+  function recursiveHistoryQueries(prepare: { mock: { calls: unknown[][] } }) {
+    return prepare.mock.calls.filter(([sql]) =>
+      /WITH RECURSIVE/i.test(String(sql)),
+    );
+  }
+
+  it("expires notified runs at their own retention deadline", () => {
+    const run = newRun();
+    const finishedAt = Date.now() - 3 * 86_400_000;
+    const deadline = finishedAt + 2 * 86_400_000;
+    terminal(run.id, { notificationSent: 0, finishedAt, retentionDays: 2 });
+    expect(sweepExpired(deadline, 100)).toBe(0);
+    db.prepare(`UPDATE workflow_runs SET notification_sent = 1 WHERE id = ?`).run(
+      run.id,
+    );
+    expect(sweepExpired(deadline - 1, 100)).toBe(0);
+    expect(sweepExpired(deadline, 100)).toBe(1);
+    expect(() => getRunRequired(db, run.id)).toThrow("Unknown workflow run");
+  });
+
+  it("skips the ancestry-aware history query while no terminal run is due", () => {
+    const now = Date.now();
+    const unnotified = newRun();
+    terminal(unnotified.id, {
+      notificationSent: 0,
+      finishedAt: now - 9 * 86_400_000,
+      retentionDays: 1,
+    });
+    const fresh = newRun();
+    terminal(fresh.id, { notificationSent: 1, finishedAt: now, retentionDays: 30 });
+    newRun();
+
+    const prepare = vi.spyOn(db, "prepare");
+    try {
+      expect(listExpiredTerminalRuns(db, now, 100)).toEqual({
+        runIds: [],
+        childThreadIds: [],
+      });
+      expect(recursiveHistoryQueries(prepare)).toHaveLength(0);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
+  it("builds the ancestry-aware history query once a terminal run is due", () => {
+    const now = Date.now();
+    const due = newRun();
+    terminal(due.id, {
+      notificationSent: 1,
+      finishedAt: now - 3 * 86_400_000,
+      retentionDays: 1,
+    });
+    const prepare = vi.spyOn(db, "prepare");
+    try {
+      expect(listExpiredTerminalRuns(db, now, 100).runIds).toEqual([due.id]);
+      expect(recursiveHistoryQueries(prepare)).toHaveLength(1);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
+  it("checks for due runs through the retention expression index", () => {
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM workflow_runs INDEXED BY workflow_runs_expiry_idx
+         WHERE status IN ('succeeded', 'failed', 'cancelled') AND notification_sent = 1
+         AND finished_at + json_extract(settings_json, '$.retentionDays') * 86400000 <= ? LIMIT 1`,
+      )
+      .all(Date.now()) as Array<{ detail: string }>;
+    expect(plan.map((row) => row.detail).join("\n")).toMatch(
+      /SEARCH .*workflow_runs_expiry_idx/,
+    );
+  });
+
+  it("adds the retention expression index to an already-migrated database", () => {
+    db.close();
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(migrations.slice(0, -1).join("\n"));
+    const run = newRun();
+    terminal(run.id, {
+      notificationSent: 1,
+      finishedAt: Date.now() - 3 * 86_400_000,
+      retentionDays: 1,
+    });
+    const indexed = () =>
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'workflow_runs_expiry_idx'`,
+        )
+        .all();
+    expect(indexed()).toHaveLength(0);
+    db.exec(migrations.slice(-1).join("\n"));
+    expect(indexed()).toHaveLength(1);
+    // A host that replays the statement must not fail on the existing index.
+    expect(() => db.exec(migrations.slice(-1).join("\n"))).not.toThrow();
+    expect(sweepExpired(Date.now(), 100)).toBe(1);
+  });
+
+  it("reports queued runs with a bounded read-only existence probe", () => {
+    expect(hasQueuedRun(db)).toBe(false);
+    const running = newRun();
+    markRunning(running.id);
+    const finished = newRun();
+    terminal(finished.id, {
+      notificationSent: 1,
+      finishedAt: Date.now(),
+      retentionDays: 30,
+    });
+    expect(hasQueuedRun(db)).toBe(false);
+    const queued = newRun();
+    newRun();
+    expect(hasQueuedRun(db)).toBe(true);
+    db.prepare(`UPDATE workflow_runs SET status = 'cancelled' WHERE id = ?`).run(
+      queued.id,
+    );
+    expect(hasQueuedRun(db)).toBe(true);
+    db.prepare(`DELETE FROM workflow_runs WHERE status = 'queued'`).run();
+    expect(hasQueuedRun(db)).toBe(false);
+  });
+
+  it("probes for queued runs with LIMIT 1 and never writes or opens a transaction", () => {
+    const prepare = vi.spyOn(db, "prepare");
+    const transaction = vi.spyOn(db, "transaction");
+    try {
+      newRun();
+      prepare.mockClear();
+      expect(hasQueuedRun(db)).toBe(true);
+      const statements = prepare.mock.calls.map(([sql]) => String(sql));
+      expect(statements).toHaveLength(1);
+      expect(statements[0]).toMatch(/^\s*SELECT\b/i);
+      expect(statements[0]).toMatch(/\bLIMIT 1\s*$/i);
+      expect(statements[0]).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE)\b/i);
+      expect(transaction).not.toHaveBeenCalled();
+    } finally {
+      prepare.mockRestore();
+      transaction.mockRestore();
+    }
+  });
+
+  it("answers the queued-run probe from an existing status-prefixed covering index without scanning", () => {
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT 1 AS queued FROM workflow_runs WHERE status = 'queued' LIMIT 1`,
+      )
+      .all() as Array<{ detail: string }>;
+    const detail = plan.map((row) => row.detail).join("\n");
+    // The planner may pick either status-prefixed index (status, created_at) or
+    // (status, notification_sent, finished_at); both answer it from the index alone.
+    expect(detail).toMatch(
+      /SEARCH workflow_runs USING COVERING INDEX workflow_runs_\w+_idx \(status=\?\)/,
+    );
+    expect(detail).not.toMatch(/\bSCAN\b/);
   });
 
   it("retains active resume ancestry while deleting unrelated expired runs", () => {

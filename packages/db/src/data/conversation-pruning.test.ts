@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  appendConversationThreadEvent, conversationTimelineHeadEvents, createConversationThread, maintainConversationEventHistory,
-  nextConversationEventSequence, openDatabase, upsertHost, type ConversationPruningPolicy, type ZccDatabase
+  appendConversationThreadEvent, archiveConversationThread, conversationTimelineHeadEvents, createConversationThread,
+  CONVERSATION_PRUNING_POLICIES, maintainConversationEventHistory, nextConversationEventSequence, openDatabase, upsertHost,
+  type ConversationPruningPolicy, type ZccDatabase
 } from '../index.js';
 
 let db: ZccDatabase, dir: string, threadId: string;
@@ -211,4 +212,180 @@ it('migrates legacy malformed completed items safely and does not treat them as 
   expect(sweep('deltas')).toBe(0);
   expect(ids()).toHaveLength(3);
   expect(db.sqlite.prepare('SELECT version FROM runtime_schema_migrations WHERE version=24').get()).toEqual({ version: 24 });
+});
+
+describe('change-driven work queue', () => {
+  const POLICIES = [...CONVERSATION_PRUNING_POLICIES];
+  const hostId = () => (db.sqlite.prepare('SELECT host_id FROM threads WHERE id = ?').get(threadId) as { host_id: string }).host_id;
+  const thread = () => createConversationThread(db, { projectId: 'p', hostId: hostId(), providerId: 'codex' }).id;
+  const work = (policy?: string) => (db.sqlite.prepare(
+    `SELECT policy, thread_id AS threadId FROM conversation_pruning_work ${policy ? 'WHERE policy = ?' : ''} ORDER BY policy, thread_id`
+  ).all(...(policy ? [policy] : [])) as { policy: string; threadId: string }[]);
+  const settle = () => { for (const policy of POLICIES) sweep(policy); };
+  const changes = () => (db.sqlite.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
+  function visited(policy: ConversationPruningPolicy) {
+    const seen: string[] = [];
+    for (let i = 0; i < 200; i++) {
+      const { threadId: visit } = batch(policy);
+      if (visit === null) return [...new Set(seen)];
+      seen.push(visit);
+    }
+    throw new Error('Pruning cursor did not finish a cycle');
+  }
+
+  it('coalesces one pending marker per changed thread and fans it out to every policy', () => {
+    add('provider/rateLimits/updated'); add('provider/rateLimits/updated');
+    expect(work()).toEqual([{ policy: 'pending', threadId }]);
+    batch('rate-limits');
+    expect(work('pending')).toEqual([]);
+    // The rate-limit visit claimed its own row; the other policies still hold theirs.
+    expect(work().map(row => row.policy)).toEqual(POLICIES.filter(policy => policy !== 'rate-limits').sort());
+  });
+
+  it('does not touch event history or write at all when nothing changed', () => {
+    const others = [thread(), thread(), thread()];
+    for (const id of [threadId, ...others]) { add('provider/rateLimits/updated', {}, false, id); add('provider/rateLimits/updated', {}, false, id); }
+    settle();
+    expect(work()).toEqual([]);
+    const before = changes();
+    const prepare = vi.spyOn(db.sqlite, 'prepare');
+    for (const policy of POLICIES) expect(maintainConversationEventHistory(db, policy)[0]).toMatchObject({ threadId: null, scanned: 0, removed: 0 });
+    expect(changes()).toBe(before);
+    expect(prepare.mock.calls.every(([sql]) => !/\bthread_events\b/.test(sql))).toBe(true);
+  });
+
+  it('visits only threads whose events changed since their last clean visit', () => {
+    const [a, b, c] = [thread(), thread(), thread()];
+    for (const id of [threadId, a, b, c]) add('item/backgroundTask/progress', { item: { type: 'backgroundTask', id: 't' } }, false, id);
+    settle();
+    add('provider/rateLimits/updated', {}, false, b);
+    add('provider/rateLimits/updated', {}, false, b);
+    expect(visited('rate-limits')).toEqual([b]);
+    expect(visited('rate-limits')).toEqual([]);
+    expect(visited('token-usage')).toEqual([b]);
+  });
+
+  it('revisits a thread that changes while its visit is in progress, in the next cycle', () => {
+    for (let i = 0; i < 45; i++) add('provider/rateLimits/updated');
+    expect(batch('rate-limits')).toMatchObject({ threadId, removed: 32 });
+    const [late1, late2] = [add('provider/rateLimits/updated'), add('provider/rateLimits/updated')];
+    // The in-flight snapshot ends before the late events; finishing it must not lose their marker.
+    expect(sweep('rate-limits')).toBe(13);
+    expect(ids()).toEqual([late1.id, late2.id]);
+    expect(work('rate-limits')).toEqual([{ policy: 'rate-limits', threadId }]);
+    expect(sweep('rate-limits')).toBe(1);
+    expect(ids()).toEqual([late2.id]);
+    expect(work('rate-limits')).toEqual([]);
+  });
+
+  it('revisits old deltas when a final item arrives after the thread was settled', () => {
+    const first = add('item/agentMessage/delta', { itemId: 'm', delta: 'a' });
+    add('item/agentMessage/delta', { itemId: 'm', delta: 'b' });
+    settle();
+    expect(ids()).toHaveLength(2);
+    const final = add('item/completed', { item: { type: 'agentMessage', id: 'm', text: 'done' } });
+    expect(visited('deltas')).toEqual([threadId]);
+    expect(ids()).toEqual([first.id, final.id]);
+  });
+
+  it('queues rate-limit work when a thread is archived, without needing a new event', () => {
+    const limit = add('provider/rateLimits/updated');
+    const message = add('item/completed', { item: { type: 'agentMessage', id: 'a', text: 'answer' } });
+    settle();
+    expect(ids()).toEqual([limit.id, message.id]);
+    archiveConversationThread(db, threadId);
+    expect(work()).toEqual([{ policy: 'rate-limits', threadId }]);
+    expect(sweep('rate-limits')).toBe(1);
+    expect(ids()).toEqual([message.id]);
+    // Raw writers are covered too, and unarchiving removes nothing.
+    db.sqlite.prepare('UPDATE threads SET archived_at = NULL WHERE id = ?').run(threadId);
+    expect(work()).toEqual([]);
+    db.sqlite.prepare('UPDATE threads SET archived_at = 5 WHERE id = ?').run(threadId);
+    expect(work()).toEqual([{ policy: 'rate-limits', threadId }]);
+  });
+
+  it('does not queue work for unrelated thread updates', () => {
+    settle();
+    db.sqlite.prepare('UPDATE threads SET title = ?, updated_at = 9 WHERE id = ?').run('renamed', threadId);
+    db.sqlite.prepare('UPDATE threads SET archived_at = 5 WHERE id = ?').run(threadId);
+    db.sqlite.prepare('DELETE FROM conversation_pruning_work').run();
+    db.sqlite.prepare('UPDATE threads SET archived_at = 6 WHERE id = ?').run(threadId);
+    expect(work()).toEqual([]);
+  });
+
+  it('drops queued work with its thread and tolerates a claimed thread without events', () => {
+    const doomed = thread();
+    add('provider/rateLimits/updated', {}, false, doomed);
+    db.sqlite.prepare('DELETE FROM threads WHERE id = ?').run(doomed);
+    expect(work()).toEqual([]);
+    add('provider/rateLimits/updated');
+    db.sqlite.prepare('DELETE FROM thread_events WHERE thread_id = ?').run(threadId);
+    expect(batch('rate-limits')).toEqual({ policy: 'rate-limits', threadId, scanned: 0, removed: 0 });
+    expect(batch('rate-limits').threadId).toBeNull();
+    expect(db.sqlite.prepare("SELECT thread_id, upper_sequence FROM conversation_event_pruning_cursors WHERE policy = 'rate-limits'").get())
+      .toEqual({ thread_id: '', upper_sequence: 0 });
+  });
+
+  it('drains at most one bounded batch of pending threads per advance', () => {
+    const many = Array.from({ length: 40 }, () => thread());
+    for (const id of many) add('provider/rateLimits/updated', {}, false, id);
+    expect(work('pending')).toHaveLength(40);
+    batch('rate-limits');
+    expect(work('pending')).toHaveLength(8);
+    expect(work('token-usage')).toHaveLength(32);
+    expect(visited('rate-limits').length).toBeGreaterThan(0);
+  });
+
+  it('visits changed threads in id order and leaves a re-marked thread for the next cycle', () => {
+    const [a, b] = [thread(), thread()].sort();
+    for (const id of [a!, b!]) { add('provider/rateLimits/updated', {}, false, id); add('provider/rateLimits/updated', {}, false, id); }
+    expect(batch('rate-limits').threadId).toBe(a);
+    add('provider/rateLimits/updated', {}, false, a);
+    expect(batch('rate-limits').threadId).toBe(b);
+    expect(batch('rate-limits').threadId).toBeNull();
+    expect(work('rate-limits')).toEqual([{ policy: 'rate-limits', threadId: a }]);
+    expect(visited('rate-limits')).toEqual([a]);
+  });
+
+  it('finishes a usage visit in one batch when the thread has no usage events', () => {
+    add('turn/started');
+    expect(batch('context-usage')).toMatchObject({ threadId, scanned: 0, removed: 0 });
+    expect(db.sqlite.prepare("SELECT upper_sequence, phase FROM conversation_event_pruning_cursors WHERE policy = 'context-usage'").get())
+      .toEqual({ upper_sequence: 0, phase: 0 });
+    // A usage thread still needs its second (deletion) phase.
+    add('thread/tokenUsage/updated'); add('thread/tokenUsage/updated'); add('turn/completed');
+    expect(visited('token-usage')).toEqual([threadId]);
+    expect(ids()).toHaveLength(3);
+  });
+
+  it('upgrades a database made before the queue existed and prunes its existing history', () => {
+    const first = add('provider/rateLimits/updated'); const last = add('provider/rateLimits/updated');
+    const empty = thread();
+    sweepAll();
+    db.sqlite.exec(`DROP TRIGGER conversation_pruning_event_inserted; DROP TRIGGER conversation_pruning_thread_archived;
+      DROP TABLE conversation_pruning_work; DELETE FROM runtime_schema_migrations WHERE version = 31`);
+    db.sqlite.prepare("INSERT INTO thread_events (id,thread_id,sequence,type,payload,created_at) VALUES ('legacy-1',?,100,'provider/rateLimits/updated','{}',0), ('legacy-2',?,101,'provider/rateLimits/updated','{}',0)").run(threadId, threadId);
+    db.close(); db = openDatabase(join(dir, 'db.sqlite'));
+    expect(work().filter(row => row.threadId === threadId).map(row => row.policy)).toEqual([...POLICIES].sort());
+    expect(work().some(row => row.threadId === empty)).toBe(false);
+    // `last` and legacy-1 are both superseded by the newer legacy-2.
+    expect(sweep('rate-limits')).toBe(2);
+    expect(ids()).toEqual(['legacy-2']);
+    expect(first.id).not.toBe(last.id);
+  });
+
+  function sweepAll() { for (const policy of POLICIES) sweep(policy); }
+});
+
+it('reaches the change queue only through its primary key', () => {
+  add('provider/rateLimits/updated'); add('provider/rateLimits/updated');
+  const prepare = vi.spyOn(db.sqlite, 'prepare');
+  batch('rate-limits'); batch('rate-limits'); batch('rate-limits');
+  const statements = [...new Set(prepare.mock.calls.map(([sql]) => sql).filter(sql => /\bconversation_pruning_work\b/.test(sql)))];
+  expect(statements.length).toBeGreaterThanOrEqual(4);
+  for (const sql of statements) {
+    const parameters = (sql.match(/\?/g) ?? []).length;
+    const plan = (db.sqlite.prepare('EXPLAIN QUERY PLAN ' + sql).all(...Array.from({ length: parameters }, (_, i) => i === 0 ? '["rate-limits"]' : 'x')) as { detail: string }[]).map(row => row.detail);
+    expect(plan.filter(detail => /conversation_pruning_work/.test(detail) && !/SEARCH/.test(detail))).toEqual([]);
+  }
 });

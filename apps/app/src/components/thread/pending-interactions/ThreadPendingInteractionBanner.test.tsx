@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
@@ -579,5 +579,100 @@ describe('question drafts across navigation', () => {
         details: { selected: [], freeText: 'Draft details' }
       }
     });
+  });
+});
+
+describe('resolved cards stay locked until they unmount', () => {
+  const decisionIds = ['allow_once', 'allow_for_session', 'deny'];
+  const settle = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const approvalView = () => <MemoryRouter>
+    <ThreadPendingInteractionBanner interaction={commandInteraction()} threadId="thr-1" />
+  </MemoryRouter>;
+  function recommendedQuestion(id: string): PendingInteraction {
+    return {
+      ...commandInteraction(), id, resolution: null,
+      payload: { kind: 'user_question', questions: [{
+        id: 'approach', prompt: 'How should I proceed?', multiSelect: false, allowFreeText: true,
+        options: [{ value: 'tree', label: 'Use a worktree (Recommended)' }, { value: 'here', label: 'Work here' }]
+      }] }
+    } as PendingInteraction;
+  }
+  const questionView = (interaction: PendingInteraction) => <MemoryRouter>
+    <ThreadPendingInteractionBanner interaction={interaction} threadId="lock-thread" />
+  </MemoryRouter>;
+
+  it('keeps every approval decision disabled after a successful resolve so it cannot be double-submitted', async () => {
+    render(approvalView());
+    fireEvent.click(screen.getByTestId('thread-pending-decision-allow_once'));
+    await settle();
+    for (const id of decisionIds) {
+      expect((screen.getByTestId(`thread-pending-decision-${id}`) as HTMLButtonElement).disabled).toBe(true);
+    }
+    fireEvent.click(screen.getByTestId('thread-pending-decision-deny'));
+    fireEvent.keyDown(screen.getByTestId('thread-pending-decision-toolbar'), { key: 'Enter' });
+    expect(product.threads.interactions.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-enables the approval decisions and shows the error when resolving fails, then allows a retry', async () => {
+    vi.mocked(product.threads.interactions.resolve).mockRejectedValueOnce(new Error('Disconnected'));
+    render(approvalView());
+    fireEvent.click(screen.getByTestId('thread-pending-decision-deny'));
+    expect((screen.getByTestId('thread-pending-decision-deny') as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByText('Disconnected');
+    for (const id of decisionIds) {
+      expect((screen.getByTestId(`thread-pending-decision-${id}`) as HTMLButtonElement).disabled).toBe(false);
+    }
+    fireEvent.click(screen.getByTestId('thread-pending-decision-deny'));
+    await settle();
+    expect(product.threads.interactions.resolve).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Disconnected')).toBeNull();
+  });
+
+  it('falls back to a generic message when the approval failure is not an Error', async () => {
+    vi.mocked(product.threads.interactions.resolve).mockRejectedValueOnce('boom');
+    render(approvalView());
+    fireEvent.click(screen.getByTestId('thread-pending-decision-allow_once'));
+    await screen.findByText('Failed to resolve pending interaction');
+  });
+
+  it('gives a new interaction a fresh, enabled approval card after the previous one resolved', async () => {
+    const view = render(approvalView());
+    fireEvent.click(screen.getByTestId('thread-pending-decision-allow_once'));
+    await settle();
+    view.rerender(<MemoryRouter>
+      <ThreadPendingInteractionBanner key="pint_2" interaction={{ ...commandInteraction(), id: 'pint_2' }} threadId="thr-1" />
+    </MemoryRouter>);
+    expect((screen.getByTestId('thread-pending-decision-allow_once') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('keeps a successfully answered question on screen and locked instead of flashing it back to editable', async () => {
+    render(questionView(recommendedQuestion('lock-success')));
+    fireEvent.click(screen.getByRole('button', { name: 'Other…' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Something else' } });
+    fireEvent.click(screen.getByTestId('thread-pending-question-submit'));
+    await settle();
+    expect((screen.getByTestId('thread-pending-question-submit') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Work here' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Something else');
+    fireEvent.submit(screen.getByTestId('thread-pending-question-submit').closest('form')!);
+    expect(product.threads.interactions.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('unlocks a question whose submission failed, keeping the typed answer', async () => {
+    vi.mocked(product.threads.interactions.resolve).mockRejectedValueOnce(new Error('Offline'));
+    render(questionView(recommendedQuestion('lock-failure')));
+    fireEvent.click(screen.getByRole('button', { name: 'Other…' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Retry me' } });
+    fireEvent.click(screen.getByTestId('thread-pending-question-submit'));
+    await screen.findByText('Offline');
+    expect((screen.getByTestId('thread-pending-question-submit') as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Retry me');
+  });
+
+  it('falls back to a generic message when the question failure is not an Error', async () => {
+    vi.mocked(product.threads.interactions.resolve).mockRejectedValueOnce(undefined);
+    render(questionView(recommendedQuestion('lock-generic')));
+    fireEvent.click(screen.getByTestId('thread-pending-question-submit'));
+    await screen.findByText('Failed to answer question');
   });
 });

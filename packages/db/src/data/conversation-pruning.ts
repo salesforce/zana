@@ -1,12 +1,12 @@
 import type { ZccDatabase } from '../connection.js';
 import {
-  PRUNE_CAPACITY, PRUNE_DELTA_LIST, PRUNE_FINAL_OUTPUT, PRUNE_ITEM,
-  PRUNE_KIND, PRUNE_PARENT, PRUNE_TURN, PRUNE_ROOT_USAGE, qualifyPruningSql as qualified
+  CONVERSATION_PRUNING_PENDING, CONVERSATION_PRUNING_POLICY_NAMES, PRUNE_CAPACITY, PRUNE_DELTA_LIST, PRUNE_FINAL_OUTPUT,
+  PRUNE_ITEM, PRUNE_KIND, PRUNE_PARENT, PRUNE_TURN, PRUNE_ROOT_USAGE, qualifyPruningSql as qualified
 } from './conversation-pruning-sql.js';
 
 // Adapted from BB's usage/rate-limit/resolved-item pruning policies (MIT).
 export const CONVERSATION_PRUNING_BATCH_SIZE = 32;
-export const CONVERSATION_PRUNING_POLICIES = ['rate-limits', 'context-usage', 'token-usage', 'deltas', 'background'] as const;
+export const CONVERSATION_PRUNING_POLICIES = CONVERSATION_PRUNING_POLICY_NAMES;
 export type ConversationPruningPolicy = typeof CONVERSATION_PRUNING_POLICIES[number];
 interface Cursor {
   policy: ConversationPruningPolicy; thread_id: string; sequence: number;
@@ -44,24 +44,45 @@ const backgroundDelete = `DELETE FROM thread_events AS candidate WHERE candidate
       AND final.type = 'item/backgroundTask/completed' AND ${qualified(PRUNE_KIND, 'final')} = 'backgroundTask'
       AND final.sequence > candidate.sequence))`;
 
+const PENDING_MARKERS = `FROM conversation_pruning_work WHERE policy = '${CONVERSATION_PRUNING_PENDING}'`;
+const PENDING_BATCH = `SELECT thread_id ${PENDING_MARKERS} ORDER BY thread_id LIMIT ${CONVERSATION_PRUNING_BATCH_SIZE}`;
+
+/** Fan a bounded batch of event-changed threads out to every policy's queue. An idle pass only reads. */
+function drainPendingWork(db: ZccDatabase) {
+  if (!db.sqlite.prepare(`SELECT 1 ${PENDING_MARKERS} LIMIT 1`).get()) return;
+  db.sqlite.prepare(`INSERT INTO conversation_pruning_work (policy, thread_id)
+    SELECT policy.value, pending.thread_id FROM (${PENDING_BATCH}) AS pending, json_each(?) AS policy WHERE true
+    ON CONFLICT (policy, thread_id) DO NOTHING`).run(JSON.stringify(CONVERSATION_PRUNING_POLICIES));
+  db.sqlite.prepare(`DELETE FROM conversation_pruning_work
+    WHERE policy = '${CONVERSATION_PRUNING_PENDING}' AND thread_id IN (${PENDING_BATCH})`).run();
+}
+
 function advance(db: ZccDatabase, policy: ConversationPruningPolicy) {
+  drainPendingWork(db);
   const usage = policy === 'context-usage' || policy === 'token-usage';
   const filter = policy === 'deltas' ? `type IN (${PRUNE_DELTA_LIST})` : `type = '${TYPES[policy]}'`;
   const index = policy === 'deltas' ? 'thread_events_delta_candidates_idx' : 'thread_events_type_thread_seq_idx';
   const cursor = db.sqlite.prepare('SELECT * FROM conversation_event_pruning_cursors WHERE policy = ?').get(policy) as Cursor | undefined
     ?? { policy, thread_id: '', sequence: 0, upper_sequence: 0, phase: 0, root_id: null, capacity_id: null };
-  const save = () => db.sqlite.prepare(`INSERT INTO conversation_event_pruning_cursors
+  const initial = JSON.stringify(cursor);
+  // An idle pass changes nothing, so it must not take the write lock or touch the WAL.
+  const save = () => { if (JSON.stringify(cursor) !== initial) db.sqlite.prepare(`INSERT INTO conversation_event_pruning_cursors
     (policy, thread_id, sequence, upper_sequence, phase, root_id, capacity_id) VALUES (@policy, @thread_id, @sequence, @upper_sequence, @phase, @root_id, @capacity_id)
     ON CONFLICT(policy) DO UPDATE SET thread_id=excluded.thread_id, sequence=excluded.sequence,
-      upper_sequence=excluded.upper_sequence, phase=excluded.phase, root_id=excluded.root_id, capacity_id=excluded.capacity_id`).run(cursor);
+      upper_sequence=excluded.upper_sequence, phase=excluded.phase, root_id=excluded.root_id, capacity_id=excluded.capacity_id`).run(cursor); };
   const resetVisit = () => { cursor.sequence = 0; cursor.phase = 0; cursor.root_id = null; cursor.capacity_id = null; };
   if (cursor.upper_sequence === 0) {
-    const next = db.sqlite.prepare(`SELECT thread_id FROM thread_events INDEXED BY ${index}
-      WHERE ${filter} AND thread_id > ? ORDER BY thread_id, sequence LIMIT 1`).get(cursor.thread_id) as { thread_id: string } | undefined;
+    // Only threads whose events changed since this policy's last visit are queued. Claiming the row
+    // here, atomically with the cursor, means any later write re-queues the thread for another visit.
+    const next = db.sqlite.prepare(`SELECT thread_id FROM conversation_pruning_work
+      WHERE policy = ? AND thread_id > ? ORDER BY thread_id LIMIT 1`).get(policy, cursor.thread_id) as { thread_id: string } | undefined;
     resetVisit();
     cursor.thread_id = next?.thread_id ?? '';
     if (!next) { save(); return { policy, threadId: null, scanned: 0, removed: 0 }; }
-    cursor.upper_sequence = (db.sqlite.prepare('SELECT MAX(sequence) AS seq FROM thread_events WHERE thread_id = ?').get(next.thread_id) as { seq: number }).seq;
+    db.sqlite.prepare('DELETE FROM conversation_pruning_work WHERE policy = ? AND thread_id = ?').run(policy, next.thread_id);
+    cursor.upper_sequence = (db.sqlite.prepare('SELECT MAX(sequence) AS seq FROM thread_events WHERE thread_id = ?').get(next.thread_id) as { seq: number | null }).seq ?? 0;
+    // Its events were all removed since it was queued: nothing to scan.
+    if (cursor.upper_sequence === 0) { save(); return { policy, threadId: next.thread_id, scanned: 0, removed: 0 }; }
   }
   // Rewind/deletion may remove a keeper between discovery and deletion. Restart
   // discovery before discarding any older snapshots in that case.
@@ -95,16 +116,19 @@ function advance(db: ZccDatabase, policy: ConversationPruningPolicy) {
       ? remove.run({ root: cursor.root_id, capacity: cursor.capacity_id }, row.id)
       : remove.run(row.id)).changes;
   }
+  // A usage thread with no usage events at all has no keepers to find and nothing to delete.
+  const noUsage = cursor.sequence === 0 && rows.length === 0;
   cursor.sequence = rows.at(-1)?.sequence ?? cursor.sequence;
   if (rows.length < CONVERSATION_PRUNING_BATCH_SIZE || cursor.sequence >= cursor.upper_sequence) {
-    if (usage && cursor.phase === 0) { cursor.phase = 1; cursor.sequence = 0; }
+    if (usage && cursor.phase === 0 && !noUsage) { cursor.phase = 1; cursor.sequence = 0; }
     else { cursor.upper_sequence = 0; resetVisit(); }
   }
   save();
   return { policy, threadId: cursor.thread_id, scanned: rows.length, removed };
 }
 
-/** Every policy advances at most 32 indexed candidates, in one atomic visit.
+/** Every policy advances at most 32 indexed candidates, in one atomic visit, and only for threads whose
+ * events changed since its last visit (`conversation_pruning_work`), so an idle pass costs O(1), not O(threads).
  * Metadata and keeper IDs are the only values read into JavaScript. */
 export function maintainConversationEventHistory(db: ZccDatabase, policy?: ConversationPruningPolicy) {
   const timeout = db.sqlite.pragma('busy_timeout', { simple: true }) as number;

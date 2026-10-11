@@ -40,6 +40,16 @@ const RESIZE_SNAPSHOT_JPEG_QUALITY = 70;
 const RENDERER_RECOVERY_DELAY_MS = 250;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 2;
 const ERR_ABORTED = -3;
+// Open shadow roots are walked too; closed ones are unreachable, so those tabs stay muted only.
+const PAUSE_MEDIA_SCRIPT = `(() => {
+  const roots = [document];
+  for (const root of roots) {
+    root.querySelectorAll("video, audio").forEach((media) => media.pause());
+    for (const element of root.querySelectorAll("*")) {
+      if (element.shadowRoot) roots.push(element.shadowRoot);
+    }
+  }
+})()`;
 
 export const ZCC_BROWSER_PARTITION = 'persist:zcc-browser';
 
@@ -75,6 +85,7 @@ interface BrowserViewEntry {
   automationTargetId: string | null;
   activeFindRequestId: number | null;
   suppressNextFocusNotification: boolean;
+  mediaStartedPlayingListener: () => void;
 }
 
 export type DesktopBrowserHostWebContentsPayload =
@@ -268,8 +279,31 @@ export function createDesktopBrowserViewManager(options?: {
     return resizingHostIds.has(hostWindow.webContents.id);
   }
 
+  // A hidden tab keeps its page alive, so it must not keep making noise. Keyed on
+  // the logical `entry.visible` (not the transient resize/recovery view hide) and
+  // never resumed on reveal; the page decides when to play again. Automation tabs
+  // run hidden by design (and skip background throttling), so their media keeps
+  // playing for the agent driving them; muting alone keeps them quiet.
+  function pauseHiddenMedia(entry: BrowserViewEntry): void {
+    const webContents = entry.view.webContents;
+    if (entry.profile.kind !== 'personal') return;
+    if (entry.visible || webContents.isDestroyed() || entry.rendererRecoveryState !== 'healthy') return;
+    try {
+      for (const frame of webContents.mainFrame.framesInSubtree) {
+        if (frame.detached) continue;
+        frame.executeJavaScript(PAUSE_MEDIA_SCRIPT).catch(() => {
+          /* frame navigated or went away; the next hide/playback event retries */
+        });
+      }
+    } catch {
+      /* frame tree disposed mid-teardown; the view must still hide */
+    }
+  }
+
   function applyEntryVisibility(entry: BrowserViewEntry, hostWindow: DesktopBrowserHostWindow): void {
     if (entry.view.webContents.isDestroyed()) return;
+    entry.view.webContents.setAudioMuted(!entry.visible);
+    pauseHiddenMedia(entry);
     entry.view.setVisible(
       entry.visible && entry.rendererRecoveryState === 'healthy' && !isHostResizing(hostWindow)
     );
@@ -425,6 +459,8 @@ export function createDesktopBrowserViewManager(options?: {
       menu.popup();
     });
 
+    webContents.on('media-started-playing', entry.mediaStartedPlayingListener);
+
     webContents.on('render-process-gone', (_event, details) => {
       if (webContents.isDestroyed() || webContents.getURL().length === 0) return;
       clearEntryRendererRecoveryTimer(entry);
@@ -547,7 +583,8 @@ export function createDesktopBrowserViewManager(options?: {
       visible: false,
       automationTargetId: null,
       activeFindRequestId: null,
-      suppressNextFocusNotification: false
+      suppressNextFocusNotification: false,
+      mediaStartedPlayingListener: () => pauseHiddenMedia(entry)
     };
     wireWebContents(args.hostWindow, args.tabId, entry);
     args.hostWindow.contentView.addChildView(view);
@@ -568,6 +605,18 @@ export function createDesktopBrowserViewManager(options?: {
     });
   }
 
+  function closeEntryWebContents(entry: BrowserViewEntry): void {
+    const webContents = entry.view.webContents;
+    if (webContents.isDestroyed()) return;
+    webContents.removeListener('media-started-playing', entry.mediaStartedPlayingListener);
+    try {
+      if (webContents.debugger.isAttached()) webContents.debugger.detach();
+    } catch {
+      /* ignore */
+    }
+    webContents.close();
+  }
+
   function destroyEntry(hostWindow: DesktopBrowserHostWindow, key: string): void {
     const entry = entries.get(key);
     if (!entry) return;
@@ -575,14 +624,7 @@ export function createDesktopBrowserViewManager(options?: {
     if (entry.automationTargetId) automationTargets.delete(entry.automationTargetId);
     clearEntryRendererRecoveryTimer(entry);
     if (!hostWindow.isDestroyed()) hostWindow.contentView.removeChildView(entry.view);
-    if (!entry.view.webContents.isDestroyed()) {
-      try {
-        if (entry.view.webContents.debugger.isAttached()) entry.view.webContents.debugger.detach();
-      } catch {
-        /* ignore */
-      }
-      entry.view.webContents.close();
-    }
+    closeEntryWebContents(entry);
     notifyAutomationTabs();
   }
 
@@ -846,14 +888,7 @@ export function createDesktopBrowserViewManager(options?: {
         entries.delete(key);
         if (entry.automationTargetId) automationTargets.delete(entry.automationTargetId);
         clearEntryRendererRecoveryTimer(entry);
-        if (!entry.view.webContents.isDestroyed()) {
-          try {
-            if (entry.view.webContents.debugger.isAttached()) entry.view.webContents.debugger.detach();
-          } catch {
-            /* ignore */
-          }
-          entry.view.webContents.close();
-        }
+        closeEntryWebContents(entry);
       }
     },
     destroyAll() {
@@ -862,14 +897,7 @@ export function createDesktopBrowserViewManager(options?: {
       for (const [key, entry] of [...entries.entries()]) {
         entries.delete(key);
         clearEntryRendererRecoveryTimer(entry);
-        if (!entry.view.webContents.isDestroyed()) {
-          try {
-            if (entry.view.webContents.debugger.isAttached()) entry.view.webContents.debugger.detach();
-          } catch {
-            /* ignore */
-          }
-          entry.view.webContents.close();
-        }
+        closeEntryWebContents(entry);
       }
     },
     registerAutomationTarget({ tabId, targetId, hostWebContentsId }) {

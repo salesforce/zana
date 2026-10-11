@@ -27,7 +27,7 @@ export default function plugin(zcc) {
       supportsThreadRename: true,
       supportsWorkflows: false,
       permissionModes: ['accept-edits', 'auto', 'full'],
-      reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+      reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
     },
     models: { scope: 'host' },
     composerActions: ['plan', 'goal'],

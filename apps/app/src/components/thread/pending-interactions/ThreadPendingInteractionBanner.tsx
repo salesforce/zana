@@ -164,8 +164,11 @@ function ApprovalPendingInteractionBanner({
       interaction.id,
       buildPendingInteractionApprovalResolution(interaction, decision)
     ).catch((caught: unknown) => {
+      // Success keeps the card locked: it stays mounted until the resolve event or refetch
+      // removes it, and re-enabling it in that gap invites a double submit.
       setError(caught instanceof Error ? caught.message : 'Failed to resolve pending interaction');
-    }).finally(() => setBusy(false));
+      setBusy(false);
+    });
   };
   const moveFocus = (index: number) => {
     setActiveIndex(index);
@@ -393,8 +396,10 @@ function QuestionPendingInteractionBanner({
       kind: 'user_answer',
       answers: toUserAnswerResolution(questions, answers)
     }).then(() => clearQuestionDraft(draftKey, activeDraft)).catch((caught: unknown) => {
+      // Same as approvals: stay locked after success until the card unmounts; only a failure unlocks.
       setError(caught instanceof Error ? caught.message : 'Failed to answer question');
-    }).finally(() => setBusy(false));
+      setBusy(false);
+    });
   };
   const isLast = currentIndex >= total - 1;
   const currentOptions = current?.options ?? [];

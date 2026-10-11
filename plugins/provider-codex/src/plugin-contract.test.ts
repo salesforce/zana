@@ -29,12 +29,26 @@ describe('provider-codex plugin', () => {
         id: 'codex',
         displayName: 'Codex',
         composerActions: ['plan', 'goal'],
-        capabilities: { fork: 'checkpoint', permissionModes: ['accept-edits', 'auto', 'full'] }
+        capabilities: {
+          fork: 'checkpoint',
+          permissionModes: ['accept-edits', 'auto', 'full'],
+          reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+        }
       }
     ]);
     expect(harness.settings.memoryEnabled?.type).toBe('boolean');
     expect(harness.settings.subagentsDisabled?.type).toBe('boolean');
     await harness.dispose();
+  });
+
+  it('keeps the runtime server.mjs reasoning ladder in lockstep with server.ts', () => {
+    const ladderFrom = (src: string) => {
+      const body = /reasoningLevels:\s*\[([^\]]*)\]/.exec(src)?.[1] ?? '';
+      return [...body.matchAll(/['"]([^'"]+)['"]/g)].map((match) => match[1]);
+    };
+    const tsLadder = ladderFrom(readFileSync(join(root, 'server.ts'), 'utf8'));
+    expect(tsLadder).toContain('none');
+    expect(ladderFrom(readFileSync(join(root, 'server.mjs'), 'utf8'))).toEqual(tsLadder);
   });
 
   it('keeps the runtime server.mjs registration in lockstep with server.ts', () => {

@@ -239,6 +239,23 @@ function acpLaunchSpec(args: AgentLaunchArgs): Record<string, unknown> {
   };
 }
 
+/**
+ * The `providerOptions` a turn carries so the bridge can recompute the agent's
+ * model selection from that turn's execution options (the runtime sends the
+ * launch spec with every request).
+ */
+function launchProviderOptions(
+  args: AgentLaunchArgs,
+): Record<string, unknown> {
+  return {
+    ...(args.dialectId ? { acpDialect: args.dialectId } : {}),
+    ...(args.parameterizedModelPicker === true
+      ? { parameterizedModelPicker: true }
+      : {}),
+    acpLaunchSpec: acpLaunchSpec(args),
+  };
+}
+
 interface StartThreadArgs extends AgentLaunchArgs {
   permissionMode?: "accept-edits" | "full";
   permissionEscalation?: "ask" | "deny" | null;
@@ -407,6 +424,28 @@ async function waitForTurnCompleted(): Promise<Record<string, unknown>> {
     () => threadEventsOfType("turn/completed").at(-1),
     "turn/completed thread event",
   );
+}
+
+/** Run one follow-up turn with its own execution options; the last agent text. */
+async function completeTurnWith(
+  providerThreadId: string,
+  text: string,
+  options: Record<string, unknown>,
+): Promise<string | undefined> {
+  const completedBefore = threadEventsOfType("turn/completed").length;
+  const turnId = sendTurnRequest("turn/start", providerThreadId, {
+    input: [{ type: "text", text, mentions: [] }],
+    options,
+  });
+  expect((await waitForResponse(turnId)).error).toBeUndefined();
+  await waitFor(
+    () =>
+      threadEventsOfType("turn/completed").length > completedBefore
+        ? true
+        : undefined,
+    "next turn/completed thread event",
+  );
+  return agentMessageTexts().at(-1);
 }
 
 /**
@@ -1426,6 +1465,569 @@ describe("acp bridge", () => {
     await waitForTurnCompleted();
 
     expect(agentMessageTexts()).toContain("selected-effort:max");
+  });
+
+  it.each<{ label: string; env: Record<string, string> }>([
+    { label: "model config option", env: { FAKE_ACP_MODEL_CONFIG: "1" } },
+    { label: "session models state", env: { FAKE_ACP_MODELS_FIELD: "1" } },
+  ])(
+    "applies a changed ACP-native model before a follow-up prompt ($label)",
+    async ({ env }) => {
+      const requestLog = join(workspaceDir, "native-model-switch.jsonl");
+      const launch: AgentLaunchArgs = {
+        envVars: { ...env, FAKE_ACP_REQUEST_LOG: requestLog },
+      };
+      const { providerThreadId } = await startThread({
+        ...launch,
+        model: "fake/strong",
+      });
+      const turnOptions = (model: string) =>
+        executionOptions({
+          model,
+          providerOptions: launchProviderOptions(launch),
+        });
+
+      for (const model of ["fake/strong", "fake/default", "fake/strong"]) {
+        expect(
+          await completeTurnWith(
+            providerThreadId,
+            "echo-selected-model",
+            turnOptions(model),
+          ),
+        ).toBe(`selected-model:${model}`);
+      }
+      const methods = loggedAcpRequests(requestLog).map(
+        (request) => request.method,
+      );
+      expect(methods.filter((method) => method === "session/new")).toHaveLength(
+        1,
+      );
+      expect(methods).not.toContain("session/load");
+    },
+  );
+
+  it.each<{ label: string; env: Record<string, string> }>([
+    { label: "model config option", env: { FAKE_ACP_MODEL_CONFIG: "1" } },
+    { label: "session models state", env: { FAKE_ACP_MODELS_FIELD: "1" } },
+  ])(
+    "switches ACP-native models A to B to A when setters return no state ($label)",
+    async ({ env }) => {
+      const launch: AgentLaunchArgs = {
+        envVars: { ...env, FAKE_ACP_EMPTY_MODEL_RESULT: "1" },
+      };
+      const { providerThreadId } = await startThread({
+        ...launch,
+        model: "fake/strong",
+      });
+
+      for (const model of ["fake/default", "fake/strong"]) {
+        expect(
+          await completeTurnWith(
+            providerThreadId,
+            "echo-selected-model",
+            executionOptions({
+              model,
+              providerOptions: launchProviderOptions(launch),
+            }),
+          ),
+        ).toBe(`selected-model:${model}`);
+      }
+    },
+  );
+
+  it("applies a changed ACP-native effort before a follow-up prompt", async () => {
+    const launch: AgentLaunchArgs = {
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_THOUGHT_LEVEL_CONFIG: "1",
+      },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "fake/strong",
+      reasoningLevel: "low",
+    });
+
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-effort",
+        executionOptions({
+          model: "fake/strong",
+          reasoningLevel: "max",
+          providerOptions: launchProviderOptions(launch),
+        }),
+      ),
+    ).toBe("selected-effort:xhigh");
+  });
+
+  it("re-asserts the requested effort after a follow-up model change", async () => {
+    // fake/default has no "high" rung, so leaving it resets the agent's effort
+    // on the way back to fake/strong unless the bridge applies it again.
+    const launch: AgentLaunchArgs = {
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_THOUGHT_LEVEL_CONFIG: "1",
+        FAKE_ACP_DEFAULT_EFFORTS: "none,low",
+      },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "fake/strong",
+      reasoningLevel: "high",
+    });
+    const turnOptions = (model: string) =>
+      executionOptions({
+        model,
+        reasoningLevel: "high",
+        providerOptions: launchProviderOptions(launch),
+      });
+
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-model",
+        turnOptions("fake/default"),
+      ),
+    ).toBe("selected-model:fake/default");
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-effort",
+        turnOptions("fake/strong"),
+      ),
+    ).toBe("selected-effort:high");
+  });
+
+  it("applies a changed ACP-native service tier before a follow-up prompt", async () => {
+    const launch: AgentLaunchArgs = {
+      dialectId: "cursor",
+      parameterizedModelPicker: true,
+      envVars: { FAKE_ACP_CURSOR_PARAMETERIZED_MODELS: "1" },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "grok-4.6",
+      reasoningLevel: "low",
+      serviceTier: "default",
+    });
+    const turnOptions = (serviceTier: "default" | "fast") =>
+      executionOptions({
+        model: "grok-4.6",
+        reasoningLevel: "low",
+        serviceTier,
+        providerOptions: launchProviderOptions(launch),
+      });
+
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-fast",
+        turnOptions("fast"),
+      ),
+    ).toBe("selected-fast:true");
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-fast",
+        turnOptions("default"),
+      ),
+    ).toBe("selected-fast:false");
+  });
+
+  it("sends no ACP-native setters when a follow-up keeps the same selection", async () => {
+    const requestLog = join(workspaceDir, "native-model-unchanged.jsonl");
+    const launch: AgentLaunchArgs = {
+      dialectId: "cursor",
+      parameterizedModelPicker: true,
+      envVars: {
+        FAKE_ACP_CURSOR_PARAMETERIZED_MODELS: "1",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+      },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "grok-4.6",
+      reasoningLevel: "high",
+      serviceTier: "fast",
+    });
+    const setterCount = () =>
+      loggedAcpRequests(requestLog).filter(
+        (request) =>
+          request.method === "session/set_config_option" ||
+          request.method === "session/set_model",
+      ).length;
+    const afterStart = setterCount();
+    expect(afterStart).toBeGreaterThan(0);
+
+    for (let turn = 0; turn < 2; turn += 1) {
+      expect(
+        await completeTurnWith(
+          providerThreadId,
+          "echo-selected-model",
+          executionOptions({
+            model: "grok-4.6",
+            reasoningLevel: "high",
+            serviceTier: "fast",
+            providerOptions: launchProviderOptions(launch),
+          }),
+        ),
+      ).toBe("selected-model:grok-4.6");
+    }
+    expect(setterCount()).toBe(afterStart);
+  });
+
+  it("keeps the session's selection when a turn carries no launch spec or model", async () => {
+    const requestLog = join(workspaceDir, "native-model-no-spec.jsonl");
+    const launch: AgentLaunchArgs = {
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+      },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "fake/strong",
+    });
+    const afterStart = loggedAcpRequests(requestLog).length;
+
+    // No launch spec: the bridge cannot recompute a selection.
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-model",
+        executionOptions({ model: "fake/default" }),
+      ),
+    ).toBe("selected-model:fake/strong");
+    // A launch spec but no model (the default sentinel): nothing to pin.
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-model",
+        executionOptions({
+          model: "default",
+          providerOptions: launchProviderOptions(launch),
+        }),
+      ),
+    ).toBe("selected-model:fake/strong");
+
+    expect(
+      loggedAcpRequests(requestLog)
+        .slice(afterStart)
+        .filter((request) => request.method?.startsWith("session/set_")),
+    ).toEqual([]);
+  });
+
+  it("leaves a launch-flag model alone on a follow-up turn", async () => {
+    chmodSync(FAKE_AGENT_PATH, 0o755);
+    const requestLog = join(workspaceDir, "cli-model-follow-up.jsonl");
+    const cliModelLaunch: AgentLaunchArgs = {
+      agent: { command: FAKE_AGENT_PATH, args: [] },
+      modelListArgs: ["--list-models"],
+      selectFlag: "--model",
+      envVars: {
+        FAKE_ACP_MODEL_LINES: "pinme - Pin Me\nother - Other",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+      },
+    };
+    await waitForResponse(sendModelList(cliModelLaunch));
+    const { providerThreadId } = await startThread({
+      ...cliModelLaunch,
+      model: "pinme",
+    });
+
+    // The model rides the launch argv, which a live session cannot change.
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-argv",
+        executionOptions({
+          model: "other",
+          providerOptions: launchProviderOptions(cliModelLaunch),
+        }),
+      ),
+    ).toBe("argv:--model pinme");
+    expect(
+      loggedAcpRequests(requestLog).filter((request) =>
+        request.method?.startsWith("session/set_"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("fails a follow-up turn whose ACP-native model the agent rejects", async () => {
+    const promptLog = join(workspaceDir, "rejected-model-prompts.jsonl");
+    const launch: AgentLaunchArgs = {
+      envVars: { FAKE_ACP_MODEL_CONFIG: "1", FAKE_ACP_PROMPT_LOG: promptLog },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "fake/strong",
+    });
+
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-model", mentions: [] }],
+      options: executionOptions({
+        model: "fake/missing",
+        providerOptions: launchProviderOptions(launch),
+      }),
+    });
+
+    expect((await waitForResponse(turnId)).error?.message).toContain(
+      "model not found: fake/missing",
+    );
+    expect(loggedPrompts(promptLog)).toEqual([]);
+    // The rejected turn was never accepted, and the session still serves the
+    // model it was on once the host asks for that one again.
+    expect(JSON.stringify(output.messages)).not.toContain("input.accepted");
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-model",
+        executionOptions({
+          model: "fake/strong",
+          providerOptions: launchProviderOptions(launch),
+        }),
+      ),
+    ).toBe("selected-model:fake/strong");
+  });
+
+  it("fails a follow-up turn whose service tier the agent rejects, keeping the switched model", async () => {
+    const promptLog = join(workspaceDir, "rejected-tier-prompts.jsonl");
+    const launch: AgentLaunchArgs = {
+      dialectId: "cursor",
+      parameterizedModelPicker: true,
+      envVars: {
+        FAKE_ACP_CURSOR_PARAMETERIZED_MODELS: "1",
+        FAKE_ACP_SET_CONFIG_FAST_ERROR: "1",
+        FAKE_ACP_PROMPT_LOG: promptLog,
+      },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "grok-4.6",
+    });
+
+    // The model switches, then the Fast setter fails: the turn is refused and
+    // never reaches the agent.
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-model", mentions: [] }],
+      options: executionOptions({
+        model: "grok-4.5",
+        serviceTier: "fast",
+        providerOptions: launchProviderOptions(launch),
+      }),
+    });
+    expect((await waitForResponse(turnId)).error?.message).toContain(
+      "fast config update failed",
+    );
+    expect(loggedPrompts(promptLog)).toEqual([]);
+
+    // The agent is now on grok-4.5, so asking for the original model switches
+    // back instead of assuming the session never left it.
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-selected-model",
+        executionOptions({
+          model: "grok-4.6",
+          providerOptions: launchProviderOptions(launch),
+        }),
+      ),
+    ).toBe("selected-model:grok-4.6");
+  });
+
+  it("retries a rejected follow-up model instead of treating it as applied", async () => {
+    const requestLog = join(workspaceDir, "rejected-model-retry.jsonl");
+    const launch: AgentLaunchArgs = {
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+      },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "fake/strong",
+    });
+    const rejectedOptions = executionOptions({
+      model: "fake/missing",
+      providerOptions: launchProviderOptions(launch),
+    });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const turnId = sendTurnRequest("turn/start", providerThreadId, {
+        input: [{ type: "text", text: "echo-selected-model", mentions: [] }],
+        options: rejectedOptions,
+      });
+      expect((await waitForResponse(turnId)).error?.message).toContain(
+        "model not found: fake/missing",
+      );
+    }
+  });
+
+  it.each<{ label: string; env: Record<string, string> }>([
+    { label: "model config option", env: { FAKE_ACP_MODEL_CONFIG: "1" } },
+    { label: "session models state", env: { FAKE_ACP_MODELS_FIELD: "1" } },
+  ])(
+    "fails a follow-up turn when the agent acknowledges a model switch but stays on another model ($label)",
+    async ({ env }) => {
+      const requestLog = join(workspaceDir, "ignored-model-set.jsonl");
+      const promptLog = join(workspaceDir, "ignored-model-set-prompts.jsonl");
+      const launch: AgentLaunchArgs = {
+        envVars: {
+          ...env,
+          FAKE_ACP_IGNORE_MODEL_SET: "1",
+          FAKE_ACP_REQUEST_LOG: requestLog,
+          FAKE_ACP_PROMPT_LOG: promptLog,
+        },
+      };
+      // The agent answers the construction-time setter without switching; the
+      // session still starts, but must not remember fake/strong as applied.
+      const { providerThreadId } = await startThread({
+        ...launch,
+        model: "fake/strong",
+      });
+      const setterCount = () =>
+        loggedAcpRequests(requestLog).filter(
+          (request) =>
+            request.method === "session/set_config_option" ||
+            request.method === "session/set_model",
+        ).length;
+
+      let previousSetterCount = setterCount();
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const turnId = sendTurnRequest("turn/start", providerThreadId, {
+          input: [{ type: "text", text: "echo-selected-model", mentions: [] }],
+          options: executionOptions({
+            model: "fake/strong",
+            providerOptions: launchProviderOptions(launch),
+          }),
+        });
+        expect((await waitForResponse(turnId)).error?.message).toContain(
+          'did not switch to model "fake/strong"',
+        );
+        // Each attempt asks the agent again instead of trusting a recorded model.
+        expect(setterCount()).toBeGreaterThan(previousSetterCount);
+        previousSetterCount = setterCount();
+      }
+      expect(loggedPrompts(promptLog)).toEqual([]);
+      expect(JSON.stringify(output.messages)).not.toContain("input.accepted");
+    },
+  );
+
+  it("does not record a model the agent refused at session construction", async () => {
+    const promptLog = join(workspaceDir, "refused-start-model-prompts.jsonl");
+    const launch: AgentLaunchArgs = {
+      envVars: { FAKE_ACP_MODEL_CONFIG: "1", FAKE_ACP_PROMPT_LOG: promptLog },
+    };
+    // Construction tolerates the refusal (the thread still starts) ...
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "fake/missing",
+    });
+
+    // ... but a follow-up asking for that same model must not be waved through
+    // onto the agent's default.
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-model", mentions: [] }],
+      options: executionOptions({
+        model: "fake/missing",
+        providerOptions: launchProviderOptions(launch),
+      }),
+    });
+    expect((await waitForResponse(turnId)).error?.message).toContain(
+      "model not found: fake/missing",
+    );
+    expect(loggedPrompts(promptLog)).toEqual([]);
+  });
+
+  it.each<{ label: string; startLevel: "low" | undefined }>([
+    { label: "changed on a follow-up turn", startLevel: undefined },
+    { label: "applied at session construction", startLevel: "low" },
+  ])(
+    "retries an effort the agent failed to apply on the next turn ($label)",
+    async ({ startLevel }) => {
+      const requestLog = join(workspaceDir, "failed-effort-retry.jsonl");
+      const launch: AgentLaunchArgs = {
+        envVars: {
+          FAKE_ACP_MODEL_CONFIG: "1",
+          FAKE_ACP_THOUGHT_LEVEL_CONFIG: "1",
+          FAKE_ACP_SET_CONFIG_EFFORT_ERROR: "1",
+          FAKE_ACP_REQUEST_LOG: requestLog,
+        },
+      };
+      const { providerThreadId } = await startThread({
+        ...launch,
+        model: "fake/strong",
+        ...(startLevel ? { reasoningLevel: startLevel } : {}),
+      });
+      const effortSetterCount = () =>
+        loggedAcpRequests(requestLog).filter(
+          (request) =>
+            request.method === "session/set_config_option" &&
+            request.params?.configId === "effort",
+        ).length;
+      const afterStart = effortSetterCount();
+      expect(afterStart).toBe(startLevel ? 1 : 0);
+
+      // A failed effort does not fail the turn, but is not remembered either.
+      for (let turn = 1; turn <= 2; turn += 1) {
+        expect(
+          await completeTurnWith(
+            providerThreadId,
+            "echo-selected-model",
+            executionOptions({
+              model: "fake/strong",
+              reasoningLevel: startLevel ?? "high",
+              providerOptions: launchProviderOptions(launch),
+            }),
+          ),
+        ).toBe("selected-model:fake/strong");
+        expect(effortSetterCount()).toBe(afterStart + turn);
+      }
+    },
+  );
+
+  it("retries an effort that failed on a switched model even when it matches the previous model's", async () => {
+    const requestLog = join(workspaceDir, "failed-effort-switched.jsonl");
+    const launch: AgentLaunchArgs = {
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_THOUGHT_LEVEL_CONFIG: "1",
+        FAKE_ACP_DEFAULT_EFFORTS: "none,low,medium,high",
+        FAKE_ACP_SET_CONFIG_EFFORT_ERROR: "fake/default",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+      },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      model: "fake/strong",
+      reasoningLevel: "high",
+    });
+    const effortSetterCount = () =>
+      loggedAcpRequests(requestLog).filter(
+        (request) =>
+          request.method === "session/set_config_option" &&
+          request.params?.configId === "effort",
+      ).length;
+    // fake/strong took "high"; fake/default will refuse the same level.
+    expect(effortSetterCount()).toBe(1);
+
+    for (let turn = 1; turn <= 2; turn += 1) {
+      expect(
+        await completeTurnWith(
+          providerThreadId,
+          "echo-selected-model",
+          executionOptions({
+            model: "fake/default",
+            reasoningLevel: "high",
+            providerOptions: launchProviderOptions(launch),
+          }),
+        ),
+      ).toBe("selected-model:fake/default");
+      // The agent may have reset effort on the switch, so the matching level
+      // is not assumed applied: every turn asks again.
+      expect(effortSetterCount()).toBe(1 + turn);
+    }
   });
 
   it("keeps ACP-native models without thought_level at the single managed level", async () => {

@@ -313,8 +313,15 @@ function cursorParameterizedSelection(
     : { ...selection, reasoningLevel };
 }
 
-/** Sentinels that mean "leave the agent's own default pinned". Never forwarded. */
-function buildAcpModelSelectionParam(
+/**
+ * The model pin a set of execution options asks for. The bridge calls this at
+ * session construction and again on every follow-up turn, so both read the
+ * selection through one mapping.
+ *
+ * Sentinels that mean "leave the agent's own default pinned" are never
+ * forwarded.
+ */
+export function buildAcpModelSelectionParam(
   profile: AcpAgentProfile,
   options: AcpSessionExecutionOptions,
   parameterizedModelPicker: boolean,

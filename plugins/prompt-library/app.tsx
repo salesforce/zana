@@ -9,10 +9,14 @@ export function PromptLibrary() {
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState('starred');
   const [query, setQuery] = useState('');
-  const [entries, setEntries] = useState<SavedPrompt[]>([]);
+  const [results, setResults] = useState<{ scope: string; entries: SavedPrompt[] }>({ scope: 'starred', entries: [] });
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Rows stay on screen while the next search loads or fails, but only within the scope that produced them:
+  // another scope's rows would carry the wrong Star/Unstar action.
+  const entries = results.scope === scope ? results.entries : [];
+  const updateEntries = (update: (rows: SavedPrompt[]) => SavedPrompt[]) => setResults(current => ({ ...current, entries: update(current.entries) }));
   const context = composer.scope;
   const threadId = 'threadId' in context ? context.threadId : undefined;
   const projectId = 'projectId' in context ? context.projectId : undefined;
@@ -20,12 +24,12 @@ export function PromptLibrary() {
     if (!open) return;
     const version = ++generation.current;
     let cancelled = false;
-    setLoading(true); setError(''); setEntries([]); setCursor(null);
+    setLoading(true); setError(''); setCursor(null);
     const timer = setTimeout(() => {
       void rpc.call(scope === 'starred' ? 'list' : 'history', { scope, threadId, projectId, query }).then(result => {
         if (cancelled || version !== generation.current) return;
         const page = result as { entries: SavedPrompt[]; nextCursor?: string };
-        setEntries(page.entries); setCursor(page.nextCursor ?? null);
+        setResults({ scope, entries: page.entries }); setCursor(page.nextCursor ?? null);
       }).catch(reason => { if (!cancelled) setError(String(reason)); }).finally(() => { if (!cancelled) setLoading(false); });
     }, 150);
     return () => { cancelled = true; generation.current++; clearTimeout(timer); };
@@ -36,7 +40,7 @@ export function PromptLibrary() {
     try {
       const page = await rpc.call('history', { scope, threadId, projectId, query, cursor }) as { entries: SavedPrompt[]; nextCursor?: string };
       if (version !== generation.current) return;
-      setEntries(rows => [...rows, ...page.entries]); setCursor(page.nextCursor ?? null);
+      updateEntries(rows => [...rows, ...page.entries]); setCursor(page.nextCursor ?? null);
     } catch (reason) { if (version === generation.current) setError(String(reason)); } finally { if (version === generation.current) setLoading(false); }
   };
   const textOf = (row: SavedPrompt) => row.input.filter(part => part.type === 'text').map(part => part.text).join('\n');
@@ -62,6 +66,7 @@ export function PromptLibrary() {
         <button type="button" onClick={() => setOpen(false)}>Close</button>
       </div>
       {error && <p role="alert">{error}</p>}
+      {loading && <p role="status">Loading…</p>}
       {entries.filter(row => scope !== 'starred' || textOf(row).toLowerCase().includes(query.toLowerCase())).map(row => <article key={row.id} style={{padding:'12px 0', borderBottom:'1px solid var(--border)'}}>
         <p style={{whiteSpace:'pre-wrap'}}>{textOf(row).slice(0,800) || 'Attachments'}</p>
         <button type="button" onClick={() => {
@@ -69,10 +74,9 @@ export function PromptLibrary() {
           else composer.setText(textOf(row));
           composer.focus(); setOpen(false);
         }}>Use prompt</button>
-        <button type="button" onClick={() => { void rpc.call(scope === 'starred' ? 'remove' : 'star', row).then(() => { if (scope === 'starred') setEntries(rows => rows.filter(item => item.id !== row.id)); }).catch(reason => setError(String(reason))); }}>{scope === 'starred' ? 'Unstar' : 'Star'}</button>
+        <button type="button" onClick={() => { void rpc.call(scope === 'starred' ? 'remove' : 'star', row).then(() => { if (scope === 'starred') updateEntries(rows => rows.filter(item => item.id !== row.id)); }).catch(reason => setError(String(reason))); }}>{scope === 'starred' ? 'Unstar' : 'Star'}</button>
       </article>)}
-      {!loading && !entries.length && <p>No prompts found.</p>}
-      {loading && <p role="status">Loading…</p>}
+      {!loading && !error && !entries.length && <p>No prompts found.</p>}
       {cursor && <button type="button" disabled={loading} onClick={() => void more()}>Load more</button>}
     </div>}
   </>;

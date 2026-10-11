@@ -20,7 +20,7 @@ import {
 import { isAllowedHostInternalHost, requestHostHeader, resolvePublicAppUrl } from './public-app-url.js';
 import { generateHostKey, hashHostKey, hostKeyMatches } from './host-hub.js';
 import { headerValue } from './browser-request-guard.js';
-import { readJsonBody, sendJson } from './json.js';
+import { beginSlowJson, readJsonBody, sendJson } from './json.js';
 import { sendHostArtifactFile } from './host-artifact-response.js';
 import type { ProductHttpContext } from './product-context.js';
 import {
@@ -363,6 +363,9 @@ async function handleHostToolCall(
   const ac = new AbortController();
   const onClose = () => ac.abort();
   response.on('close', onClose);
+  // Policy and plugin tools can wait on a person (a question card) far longer than
+  // the daemon's fetch or the pairing relay would hold a silent response.
+  const reply = beginSlowJson(response);
   try {
     const policy = await ctx.plugins.decideToolPolicy({
       invocationId: randomUUID(),
@@ -373,7 +376,7 @@ async function handleHostToolCall(
       input: (parsed.data.arguments ?? {}) as Record<string, unknown>
     });
     if (policy.action === 'deny') {
-      sendJson(response, 200, hostDaemonToolCallResponseSchema.parse({
+      reply.send(hostDaemonToolCallResponseSchema.parse({
         success: false,
         contentItems: [{ type: 'inputText', text: `Tool "${parsed.data.tool}" denied: ${policy.reason}` }]
       }));
@@ -389,9 +392,9 @@ async function handleHostToolCall(
         signal: ac.signal
       }
     });
-    sendJson(response, 200, hostDaemonToolCallResponseSchema.parse(result));
+    reply.send(hostDaemonToolCallResponseSchema.parse(result));
   } catch (error) {
-    sendJson(response, 200, hostDaemonToolCallResponseSchema.parse({
+    reply.send(hostDaemonToolCallResponseSchema.parse({
       success: false,
       contentItems: [{
         type: 'inputText',
@@ -399,6 +402,7 @@ async function handleHostToolCall(
       }]
     }));
   } finally {
+    reply.stop();
     response.removeListener('close', onClose);
   }
   return true;

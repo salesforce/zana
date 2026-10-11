@@ -14,8 +14,11 @@ describe("mapCodexReasoningLevelToBb", () => {
 });
 
 describe("mapBbReasoningLevelToCodex", () => {
-  it("returns null for none and ultracode", () => {
-    expect(mapBbReasoningLevelToCodex("none")).toBeNull();
+  it("passes none through so reasoning can be disabled", () => {
+    expect(mapBbReasoningLevelToCodex("none")).toBe("none");
+  });
+
+  it("returns null for ultracode", () => {
     expect(mapBbReasoningLevelToCodex("ultracode")).toBeNull();
   });
 });

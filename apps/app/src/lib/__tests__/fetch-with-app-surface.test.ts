@@ -13,6 +13,19 @@ describe('fetchWithAppSurface', () => {
     const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(headers.get(APP_SURFACE_HEADER)).toBe('web');
   });
+
+  it('keeps API requests out of the browser HTTP cache unless the caller picks a mode', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchWithAppSurface('/api/v1/system/providers');
+    await fetchWithAppSurface('/api/v1/system/providers', { cache: undefined });
+    await fetchWithAppSurface('/api/v1/system/providers', { method: 'POST', cache: 'default' });
+    await fetchWithAppSurface('/api/v1/system/providers', { cache: 'force-cache' });
+
+    expect(fetchMock.mock.calls.map(([, init]) => init?.cache)).toEqual(['no-store', 'no-store', 'default', 'force-cache']);
+    expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('POST');
+  });
 });
 
 describe('apiJson', () => {
@@ -42,6 +55,16 @@ describe('apiJson', () => {
     await expect(apiJson('/threads', method ? { method } : undefined)).resolves.toBeUndefined();
 
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).has('content-type')).toBe(false);
+  });
+
+  it('defaults JSON reads to no-store and forwards an explicit cache mode', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiJson('/system/providers');
+    await apiJson('/system/providers', { cache: 'default' });
+
+    expect(fetchMock.mock.calls.map(([, init]) => init?.cache)).toEqual(['no-store', 'default']);
   });
 
   it('marks request bodies as JSON and preserves their contents', async () => {

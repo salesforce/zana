@@ -73,6 +73,7 @@ import {
 import { normalizeRegisteredAgentTool } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import {
   PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES,
+  PLUGIN_INTERACTION_MAX_TIMEOUT_MS,
   PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
   PLUGIN_CLI_COMMAND_NAME_PATTERN,
   RESERVED_ZCC_CLI_COMMANDS,
@@ -1644,8 +1645,8 @@ export function validatePluginRequestInput(request: PluginInteractionRequest): {
     throw new Error('ui.requestInput payload must be JSON-serializable');
   }
   const timeoutMs = request.timeoutMs ?? 10 * 60 * 1000;
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60 * 60 * 1000) {
-    throw new Error('ui.requestInput timeoutMs must be between 1 and 3600000');
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > PLUGIN_INTERACTION_MAX_TIMEOUT_MS) {
+    throw new Error(`ui.requestInput timeoutMs must be between 1 and ${PLUGIN_INTERACTION_MAX_TIMEOUT_MS}`);
   }
   return {
     threadId: request.threadId,

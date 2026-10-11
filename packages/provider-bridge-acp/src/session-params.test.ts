@@ -8,6 +8,7 @@ import { SAMPLE_LIST } from "./bridge/model-catalog.fixture.js";
 import { acpLaunchSpecSchema, type AcpLaunchSpec } from "./launch-spec.js";
 import {
   buildAcpModelListParams,
+  buildAcpModelSelectionParams,
   buildAcpSessionParams,
   type AcpSessionExecutionOptions,
   type AcpSessionParams,
@@ -394,6 +395,116 @@ gemini-3.5-flash claude-sonnet-4 gpt-5-mini gemini-2.5-flash kimi-k3 kimi-k2.7-c
     expect(() => cursorSessionParams({ permissionMode: "auto" })).toThrow(
       'does not support permission mode "auto"',
     );
+  });
+});
+
+describe("buildAcpModelSelectionParams", () => {
+  const reasoningCli: NonNullable<AcpLaunchSpec["reasoningCli"]> = {
+    flag: "--reasoning-effort",
+    supportedLevels: ["low", "medium", "high"],
+    levelValues: { max: "high" },
+    defaultLevel: "high",
+  };
+  const cliSpec = launchSpecFor({
+    displayName: "Custom ACP",
+    command: "custom-agent",
+    args: ["serve"],
+    env: {},
+    modelCli: {
+      listArgs: ["models", "list"],
+      selectFlag: "--model",
+      primaryModels: [],
+    },
+    reasoningCli,
+  });
+  const protocolSpec = launchSpecFor({
+    displayName: "Custom ACP",
+    command: "custom-agent",
+    args: ["serve"],
+    env: {},
+  });
+
+  it("returns no selection for the synthetic default or an absent model", () => {
+    expect(
+      buildAcpModelSelectionParams(
+        protocolSpec,
+        { model: "acp-default" },
+        false,
+        undefined,
+      ),
+    ).toEqual({});
+    expect(
+      buildAcpModelSelectionParams(protocolSpec, {}, false, undefined),
+    ).toEqual({});
+  });
+
+  it("selects a CLI-discovered model through its launch flag", () => {
+    expect(
+      buildAcpModelSelectionParams(
+        cliSpec,
+        { model: "strong", reasoningLevel: "max", serviceTier: "fast" },
+        false,
+        undefined,
+      ),
+    ).toEqual({
+      modelSelection: {
+        listCommand: {
+          command: "custom-agent",
+          args: ["models", "list"],
+        },
+        selectFlag: "--model",
+        model: "strong",
+        reasoningLevel: "max",
+        serviceTier: "fast",
+      },
+      launchReasoningLevel: "max",
+    });
+  });
+
+  it("drops the default service tier from a CLI-flag selection", () => {
+    const { modelSelection } = buildAcpModelSelectionParams(
+      cliSpec,
+      { model: "strong", serviceTier: "default" },
+      false,
+      undefined,
+    );
+    expect(modelSelection).not.toHaveProperty("serviceTier");
+  });
+
+  it("selects natively and carries the service tier only for a parameterized picker", () => {
+    expect(
+      buildAcpModelSelectionParams(
+        protocolSpec,
+        { model: "strong", reasoningLevel: "low", serviceTier: "fast" },
+        false,
+        undefined,
+      ),
+    ).toEqual({ modelSelection: { modelId: "strong", reasoningLevel: "low" } });
+    expect(
+      buildAcpModelSelectionParams(
+        protocolSpec,
+        { model: "strong", reasoningLevel: "low", serviceTier: "fast" },
+        true,
+        undefined,
+      ),
+    ).toEqual({
+      modelSelection: {
+        modelId: "strong",
+        reasoningLevel: "low",
+        serviceTier: "fast",
+      },
+    });
+  });
+
+  it("pins the launch reasoning level even when no model is selected", () => {
+    expect(
+      buildAcpModelSelectionParams(
+        cliSpec,
+        { reasoningLevel: "high" },
+        false,
+        undefined,
+      ),
+    ).toEqual({ launchReasoningLevel: "high" });
   });
 });
 

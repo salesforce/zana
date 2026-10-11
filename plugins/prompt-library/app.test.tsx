@@ -30,3 +30,46 @@ it('contains keyboard focus and keeps pagination failures visible',async()=>{
  mocks.call.mockRejectedValueOnce(new Error('page failed'));fireEvent.click(last);await screen.findByRole('alert');expect(screen.getByRole('alert').textContent).toContain('page failed');
  expect(screen.getByText('Remember @file')).toBeTruthy();
 });
+const open=async()=>{render(<PromptLibrary/>);fireEvent.click(screen.getByRole('button',{name:'Prompt Library'}));await screen.findByText('Remember @file');};
+const deferred=()=>{let resolve!:(value:unknown)=>void;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
+const typed=async(value:string,calls:number)=>{fireEvent.change(screen.getByLabelText('Search prompts'),{target:{value}});await waitFor(()=>expect(mocks.call).toHaveBeenCalledTimes(calls));};
+it('keeps the previous results on screen while the next search loads',async()=>{
+ mocks.call.mockResolvedValueOnce({entries:[row],nextCursor:'next'});await open();
+ const next=deferred();mocks.call.mockImplementationOnce(()=>next.promise);
+ await typed('Rem',2);
+ expect(screen.getByText('Remember @file')).toBeTruthy();expect(screen.getByRole('status').textContent).toBe('Loading…');
+ expect(screen.queryByText('No prompts found.')).toBeNull();expect(screen.queryByRole('button',{name:'Load more'})).toBeNull();
+ next.resolve({entries:[{...row,id:'q',input:[{type:'text',text:'Remember again',mentions:[]}]}],nextCursor:null});
+ await screen.findByText('Remember again');expect(screen.queryByText('Remember @file')).toBeNull();expect(screen.queryByRole('status')).toBeNull();
+});
+it('keeps the previous results and shows the error when the next search fails',async()=>{
+ await open();mocks.call.mockRejectedValueOnce(new Error('offline'));
+ await typed('Rem',2);
+ expect((await screen.findByRole('alert')).textContent).toContain('offline');
+ expect(screen.getByText('Remember @file')).toBeTruthy();expect(screen.queryByText('No prompts found.')).toBeNull();expect(screen.queryByRole('status')).toBeNull();
+ mocks.call.mockResolvedValueOnce({entries:[row],nextCursor:null});await typed('Reme',3);
+ await waitFor(()=>expect(screen.queryByRole('alert')).toBeNull());expect(screen.getByText('Remember @file')).toBeTruthy();
+});
+it('shows only the error, not "No prompts found.", when a search fails with nothing loaded',async()=>{
+ mocks.call.mockRejectedValueOnce(new Error('offline'));render(<PromptLibrary/>);fireEvent.click(screen.getByRole('button',{name:'Prompt Library'}));
+ expect((await screen.findByRole('alert')).textContent).toContain('offline');expect(screen.queryByText('No prompts found.')).toBeNull();
+});
+it('ignores a slow response that a newer search has already replaced',async()=>{
+ const slow=deferred();mocks.call.mockImplementationOnce(()=>slow.promise);
+ render(<PromptLibrary/>);fireEvent.click(screen.getByRole('button',{name:'Prompt Library'}));await waitFor(()=>expect(mocks.call).toHaveBeenCalledTimes(1));
+ await typed('Rem',2);await screen.findByText('Remember @file');
+ slow.resolve({entries:[{...row,id:'old',input:[{type:'text',text:'Remember stale',mentions:[]}]}],nextCursor:null});
+ await new Promise(done=>setTimeout(done,20));
+ expect(screen.queryByText('Remember stale')).toBeNull();expect(screen.getByText('Remember @file')).toBeTruthy();expect(screen.queryByRole('status')).toBeNull();
+});
+it('does not carry another scope\'s rows over while a scope change loads or fails',async()=>{
+ await open();expect(screen.getByRole('button',{name:'Unstar'})).toBeTruthy();
+ const next=deferred();mocks.call.mockImplementationOnce(()=>next.promise);
+ fireEvent.change(screen.getByLabelText('Prompt scope'),{target:{value:'all'}});await waitFor(()=>expect(mocks.call).toHaveBeenCalledTimes(2));
+ expect(screen.queryByText('Remember @file')).toBeNull();expect(screen.queryByRole('button',{name:'Unstar'})).toBeNull();
+ next.resolve({entries:[row],nextCursor:null});await screen.findByText('Remember @file');expect(screen.getByRole('button',{name:'Star',exact:true})).toBeTruthy();
+ mocks.call.mockRejectedValueOnce(new Error('offline'));
+ fireEvent.change(screen.getByLabelText('Prompt scope'),{target:{value:'starred'}});
+ expect((await screen.findByRole('alert')).textContent).toContain('offline');
+ expect(screen.queryByText('Remember @file')).toBeNull();expect(screen.queryByRole('button',{name:'Star',exact:true})).toBeNull();
+});

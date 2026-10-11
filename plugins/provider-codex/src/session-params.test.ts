@@ -666,6 +666,24 @@ describe("buildCodexConfig", () => {
     ).toMatchObject({ model_reasoning_effort: "ultra" });
   });
 
+  it("forwards the none reasoning level so reasoning stays disabled", () => {
+    expect(
+      configFor({ ...FULL_OPTIONS, reasoningLevel: "none" }),
+    ).toMatchObject({ model_reasoning_effort: "none" });
+  });
+
+  it("rejects ultracode instead of forwarding it to model_reasoning_effort", () => {
+    expect(() =>
+      configFor({ ...FULL_OPTIONS, reasoningLevel: "ultracode" }),
+    ).toThrow("Codex does not support the ultracode reasoning level.");
+  });
+
+  it("omits model_reasoning_effort when no reasoning level is set", () => {
+    expect(configFor(FULL_OPTIONS)).not.toHaveProperty(
+      "model_reasoning_effort",
+    );
+  });
+
   it("omits the writable-roots key for a full-access session", () => {
     expectWorkspaceWriteWritableRootsConfigAbsent(
       buildCodexConfig({
@@ -708,6 +726,10 @@ describe("toCodexReasoningEffort", () => {
   it("maps the top of the bb reasoning ladder", () => {
     expect(toCodexReasoningEffort("max")).toBe("max");
     expect(toCodexReasoningEffort("ultra")).toBe("ultra");
+  });
+
+  it("maps the disabled level", () => {
+    expect(toCodexReasoningEffort("none")).toBe("none");
   });
 
   it("rejects ultracode because Codex does not support it", () => {

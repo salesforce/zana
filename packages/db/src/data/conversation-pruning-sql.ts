@@ -46,3 +46,43 @@ export const CONVERSATION_PRUNING_INDEXES = [
   `CREATE INDEX thread_events_context_capacity_idx ON thread_events(thread_id, sequence)
     WHERE type = 'thread/contextWindowUsage/updated' AND ${PRUNE_CAPACITY} IS NOT NULL`
 ];
+
+export const CONVERSATION_PRUNING_POLICY_NAMES = ['rate-limits', 'context-usage', 'token-usage', 'deltas', 'background'] as const;
+/** Policy value of the per-thread "events changed" marker the insert trigger coalesces. */
+export const CONVERSATION_PRUNING_PENDING = 'pending';
+
+/**
+ * Migration 31: a change queue so idle pruning visits only threads whose events
+ * changed since a policy's last clean visit, instead of every thread holding an
+ * event of the policy's type. Triggers (not call-site hooks) keep every writer
+ * covered, including raw inserts from other connections. The bootstrap queues
+ * existing history once; a policy added later needs its own bootstrap migration.
+ * Idempotent, like migration 29, so lineage repairs can replay it safely.
+ */
+export const CONVERSATION_PRUNING_WORK_SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS conversation_pruning_work (
+    policy TEXT NOT NULL,
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    PRIMARY KEY (policy, thread_id)
+  ) WITHOUT ROWID`,
+  'CREATE INDEX IF NOT EXISTS conversation_pruning_work_thread_idx ON conversation_pruning_work(thread_id)',
+  // ON CONFLICT DO NOTHING (unlike OR IGNORE) is not overridden by the firing statement's own conflict clause.
+  `CREATE TRIGGER IF NOT EXISTS conversation_pruning_event_inserted AFTER INSERT ON thread_events
+    BEGIN
+      INSERT INTO conversation_pruning_work (policy, thread_id) VALUES ('pending', NEW.thread_id)
+        ON CONFLICT (policy, thread_id) DO NOTHING;
+    END`,
+  // Archiving makes superseded-or-not rate-limit snapshots prunable without any new event.
+  `CREATE TRIGGER IF NOT EXISTS conversation_pruning_thread_archived AFTER UPDATE OF archived_at ON threads
+    WHEN OLD.archived_at IS NULL AND NEW.archived_at IS NOT NULL
+    BEGIN
+      INSERT INTO conversation_pruning_work (policy, thread_id) VALUES ('rate-limits', NEW.id)
+        ON CONFLICT (policy, thread_id) DO NOTHING;
+    END`,
+  `INSERT INTO conversation_pruning_work (policy, thread_id)
+    SELECT policy.name, threads.id FROM threads
+    CROSS JOIN (SELECT 'rate-limits' AS name UNION ALL SELECT 'context-usage' UNION ALL SELECT 'token-usage'
+      UNION ALL SELECT 'deltas' UNION ALL SELECT 'background') AS policy
+    WHERE EXISTS (SELECT 1 FROM thread_events WHERE thread_events.thread_id = threads.id)
+    ON CONFLICT (policy, thread_id) DO NOTHING`
+];

@@ -1304,6 +1304,7 @@ function createAgentRuntimeInternal(
         proc,
         message: plan,
         resultSchema: threadIdentityResultSchema,
+        timeoutMs: THREAD_CREATION_REQUEST_TIMEOUT_MS,
         recovery: {
           providerId: currentConfig.providerId,
           providerThreadId: adapterCommand.providerThreadId,
@@ -2180,6 +2181,7 @@ function createAgentRuntimeInternal(
             proc,
             message: cmd,
             resultSchema: threadIdentityResultSchema,
+            timeoutMs: THREAD_CREATION_REQUEST_TIMEOUT_MS,
             recovery: {
               providerId,
               providerThreadId: adapterCommand.providerThreadId,

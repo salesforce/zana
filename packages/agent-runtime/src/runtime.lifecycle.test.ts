@@ -163,6 +163,129 @@ rl.on("line", (line) => {
       }
     });
 
+    it.each([
+      { path: "resumeThread" },
+      { path: "reconfigure before a turn" },
+    ] as const)(
+      "gives thread/resume the two-minute construction deadline ($path)",
+      async ({ path }) => {
+        vi.useFakeTimers();
+        const releasePath = join(tmpDir, "release-slow-thread-resume");
+        const slowResumeScriptPath = join(tmpDir, "slow-resume-provider.cjs");
+        writeFileSync(
+          slowResumeScriptPath,
+          `
+const { existsSync } = require("node:fs");
+const readline = require("node:readline");
+const releasePath = ${JSON.stringify(releasePath)};
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+function waitForRelease(callback) {
+  if (existsSync(releasePath)) {
+    callback();
+    return;
+  }
+  setImmediate(() => waitForRelease(callback));
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: {} });
+    return;
+  }
+
+  if (message.method === "thread/start") {
+    send({ jsonrpc: "2.0", id: message.id, result: { threadId: "prov-1" } });
+    return;
+  }
+
+  if (message.method === "thread/resume") {
+    process.stderr.write("thread/resume received\\n");
+    waitForRelease(() => {
+      send({ jsonrpc: "2.0", id: message.id, result: { threadId: "prov-1" } });
+    });
+  }
+});
+`,
+          "utf8",
+        );
+
+        let markResumeReceived: (() => void) | undefined;
+        const resumeReceived = new Promise<void>((resolve) => {
+          markResumeReceived = resolve;
+        });
+        const runtime = createAgentRuntimeWithAdapters({
+          workspacePath: tmpDir,
+          onEvent: () => undefined,
+          onStderr: (line) => {
+            if (line === "thread/resume received") {
+              markResumeReceived?.();
+            }
+          },
+          onToolCall: async () => ({
+            contentItems: [{ type: "inputText", text: "ok" }],
+            success: true,
+          }),
+          adapterFactory: () => createFakeAdapter(slowResumeScriptPath),
+        });
+        const threadArgs = {
+          environmentId: "env-1",
+          threadId: "t1",
+          projectId: "p1",
+          providerId: "fake",
+          options: fullRuntimeOptions,
+        };
+
+        try {
+          let restoration: Promise<unknown>;
+          if (path === "resumeThread") {
+            restoration = runtime.resumeThread({
+              ...threadArgs,
+              providerThreadId: "prov-1",
+            });
+          } else {
+            await runtime.startThread(threadArgs);
+            // A changed model is a session-level setting, so the next turn
+            // restores the provider session before it can start.
+            restoration = runtime.runTurn({
+              clientRequestId: "creq_222222223j",
+              threadId: "t1",
+              input: [promptTextInput({ text: "follow up" })],
+              options: { ...fullRuntimeOptions, model: "test-model-2" },
+            });
+          }
+          let settled = false;
+          const outcome = restoration.then(
+            (result) => ({ status: "resolved" as const, result }),
+            (error: unknown) => ({ status: "rejected" as const, error }),
+          );
+          void outcome.then(() => {
+            settled = true;
+          });
+
+          await resumeReceived;
+          // Past the 30s transport default, inside the construction deadline.
+          await vi.advanceTimersByTimeAsync(30_001);
+          expect(settled).toBe(false);
+
+          await vi.advanceTimersByTimeAsync(90_000);
+          expect(await outcome).toEqual({
+            status: "rejected",
+            error: new Error("JSON-RPC request timed out: thread/resume"),
+          });
+        } finally {
+          writeFileSync(releasePath, "release", "utf8");
+          vi.useRealTimers();
+          await runtime.shutdown();
+        }
+      },
+    );
+
     it("accepts thread/start results with a null providerThreadId", async () => {
       const nullIdentityScriptPath = join(tmpDir, "null-identity-provider.cjs");
       writeFileSync(

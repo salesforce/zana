@@ -53,3 +53,42 @@ preserves edits, rewinds, and writes from other database connections. Optional
 Settings pages now load on navigation rather than during initial shell loading,
 following the bundle-boundary approach in #4512. The measurement and verification
 record is `.zcc/library/findings/bb-performance-adaptations-2026-10-06.md`.
+
+## Upstream fixes (2026-10-10)
+
+The October 10 update reviews BB through `3912f4aaefb7dff55c7e0cb5003b26b5cf1457dc`.
+Zana adapts the following upstream fixes:
+
+- Providers: a separate timeline row for each Codex sub-agent follow-up (`5b757139f`),
+  disabled Codex reasoning (`be17db2d3`), changed ACP model, effort and tier on
+  follow-up turns (`eb3d8956d`, `2eba81bc6`), applied to both
+  `packages/provider-bridge-acp` and the built-in ACP plugin bridge, the construction
+  deadline for session restore (`04c6371b8`), and Claude plugin UI notifications
+  classified as noise (`a0fe13536`).
+- Background work: event-history pruning that visits only changed threads (`9d9a094ed`,
+  implemented in Zana with SQLite triggers feeding a work queue), and workflow queue
+  claims that wake on change instead of polling (`67869c0e6`).
+- Desktop and app: hidden browser media paused and muted (`f135a001e`), app API
+  requests kept out of the HTTP cache (`488ec9ffb`), pending-interaction cards held
+  busy after submit (part of `d16b7317a`), and file-preview reading offsets retained
+  per panel tab (`bb5a62f3b`).
+- Plugins: Ask User Question waits up to seven days (`849b7def3`), and Prompt Library
+  keeps results during search (part of `c505f22e6`).
+
+Zana needed additional changes for these fixes to hold:
+
+- The seven-day question only works end to end because plugin worker calls carrying a
+  caller's `AbortSignal` are bounded by the interaction ceiling, not the 120-second RPC
+  deadline. Their signal slots are released when the call settles, so a long-running
+  runtime no longer stops at 1,024 calls. Host tool-call responses stream whitespace
+  heartbeats, so neither the daemon's 300-second fetch timeout nor the pairing relay's
+  idle limit ends the wait. The question card closes when the agent's call is torn down.
+- Hidden automation browser tabs are muted but not paused, because an agent may be
+  driving their media.
+- An ACP follow-up turn re-applies only the model, effort or tier that changed. It fails
+  when the agent refuses a changed model, instead of running on the old one.
+- The workflow worker's maintenance pass makes a read-only check for queued runs that
+  nothing woke it for. Retention checks for a due run through an index before running
+  the ancestry query.
+
+The triage record is `.zcc/library/research/bb-upstream-review-2026-10-10.md`.

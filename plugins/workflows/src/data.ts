@@ -238,6 +238,11 @@ export const migrations = [
   `UPDATE workflow_runs SET replay_barrier_index = NULL
      WHERE replay_safety_version = 1;`,
   `ALTER TABLE workflow_calls ADD COLUMN provider_retry_attempts INTEGER NOT NULL DEFAULT 0;`,
+  // Lets the retention check find "is any notified terminal run past its own
+  // deadline" with one index seek instead of scanning every run each second.
+  `CREATE INDEX IF NOT EXISTS workflow_runs_expiry_idx
+     ON workflow_runs(finished_at + json_extract(settings_json, '$.retentionDays') * 86400000)
+     WHERE status IN ('succeeded', 'failed', 'cancelled') AND notification_sent = 1;`,
 ];
 
 export function applyWorkflowMigrations(database: {
@@ -340,6 +345,23 @@ export function listRuns(
     )
     .all(args.projectId, args.limit)
     .map(runRow);
+}
+
+/**
+ * Read-only probe that stops at the first hit and is answered from a
+ * status-prefixed covering index (`workflow_runs_status_created_idx` or
+ * `workflow_runs_terminal_retention_idx`) without touching the table. The idle
+ * worker uses it to notice queued runs nothing woke it for, without opening a
+ * write transaction.
+ */
+export function hasQueuedRun(db: Db): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 AS queued FROM workflow_runs WHERE status = 'queued' LIMIT 1`,
+      )
+      .get() !== undefined
+  );
 }
 
 export function claimQueuedRun(
@@ -872,6 +894,16 @@ export function listExpiredTerminalRuns(
   now: number,
   limit: number,
 ): ExpiredTerminalRuns {
+  // The recursive ancestry query reads every run; only build it once something is actually due.
+  const due = db
+    .prepare(
+      `SELECT id FROM workflow_runs INDEXED BY workflow_runs_expiry_idx
+       WHERE status IN ('succeeded', 'failed', 'cancelled') AND notification_sent = 1
+         AND finished_at + json_extract(settings_json, '$.retentionDays') * 86400000 <= ?
+       LIMIT 1`,
+    )
+    .get(now);
+  if (due === undefined) return { runIds: [], childThreadIds: [] };
   const runIds = (
     db.prepare(EXPIRED_TERMINAL_RUN_IDS_SQL).all(now, now, limit) as Array<{
       id: string;

@@ -108,6 +108,7 @@ import {
 } from "./fork-capability.js";
 import {
   buildAcpModelListParams,
+  buildAcpModelSelectionParam,
   buildAcpSessionParams,
   type AcpModelListParams,
   type AcpSessionParams,
@@ -206,8 +207,29 @@ interface AcpThreadSession {
   turnSettled: Promise<void> | undefined;
   pendingPermissions: Set<PendingAcpPermission>;
   configOptions: readonly AcpConfigOption[] | undefined;
+  /** The agent's legacy `models` state, kept current as models are switched. */
+  models: AcpSessionModels | undefined;
+  /**
+   * The ACP-native model, effort, and service tier last handed to the agent,
+   * so a follow-up turn re-applies only what its options changed. Undefined
+   * when the session carries no ACP-native selection (no model preference, or
+   * a model chosen by launch flag).
+   */
+  appliedSelection: AcpNativeModelSelection | undefined;
   acpMode: string | undefined;
   cursorMcpApproval: CursorMcpApproval | undefined;
+}
+
+type AcpNativeModelSelection = Extract<
+  NonNullable<AcpSessionParams["modelSelection"]>,
+  { modelId: string }
+>;
+
+/** Which parts of a native selection a follow-up turn changed. */
+interface AcpNativeSelectionChange {
+  model: boolean;
+  reasoning: boolean;
+  serviceTier: boolean;
 }
 
 const sessionsByBbThreadId = new Map<string, AcpThreadSession>();
@@ -1186,19 +1208,18 @@ async function loadSessionDiscoveredModels(
 /**
  * Pin the ACP session to a model. Prefer the advertised "model" config option
  * (`session/set_config_option`); fall back to `session/set_model` for agents
- * such as OpenCode that historically only implement the legacy method.
+ * such as OpenCode that historically only implement the legacy method. Throws
+ * the agent's error when it refuses the model both ways.
  */
-async function setAcpSessionModel(args: {
+async function requestAcpSessionModel(args: {
   connection: AcpAgentConnection;
   sessionId: string;
   modelId: string;
   modelOption: AcpConfigOption | undefined;
 }): Promise<AcpConfigStateResult | null> {
-  let configState: AcpConfigStateResult | null = null;
-  let useSetModel = true;
   if (args.modelOption) {
     try {
-      configState = await args.connection.request({
+      return await args.connection.request({
         method: "session/set_config_option",
         params: {
           sessionId: args.sessionId,
@@ -1207,24 +1228,33 @@ async function setAcpSessionModel(args: {
         },
         resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
       });
-      useSetModel = false;
     } catch {
-      useSetModel = true;
+      // Fall through to the legacy method.
     }
   }
-  if (useSetModel) {
-    try {
-      configState = await args.connection.request({
-        method: "session/set_model",
-        params: { sessionId: args.sessionId, modelId: args.modelId },
-        resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
-      });
-    } catch {
-      // A stale or catalog-mismatched id must not abort session construction.
-      // Leave the agent's advertised current model in place.
-    }
+  return args.connection.request({
+    method: "session/set_model",
+    params: { sessionId: args.sessionId, modelId: args.modelId },
+    resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
+  });
+}
+
+/**
+ * `requestAcpSessionModel` for callers that must not abort on a refusal (model
+ * discovery probes): a stale or catalog-mismatched id leaves the agent's
+ * advertised current model in place.
+ */
+async function setAcpSessionModel(args: {
+  connection: AcpAgentConnection;
+  sessionId: string;
+  modelId: string;
+  modelOption: AcpConfigOption | undefined;
+}): Promise<AcpConfigStateResult | null> {
+  try {
+    return await requestAcpSessionModel(args);
+  } catch {
+    return null;
   }
-  return configState;
 }
 
 async function discoverAcpNativeReasoningByModel(args: {
@@ -1422,50 +1452,218 @@ async function resolveAgentLaunchArgs(
   };
 }
 
+/**
+ * Apply an ACP-native model, effort, and service tier to the session and keep
+ * `session.configOptions` / `session.models` current with what the agent
+ * reports back.
+ *
+ * Construction (no `followUp`) applies everything and tolerates an agent that
+ * refuses the model: the session keeps the model the agent advertised. A
+ * follow-up turn applies only the parts that changed (a changed model also
+ * re-asserts effort and tier, which belong to the model) and surfaces the
+ * agent's refusal instead of running the prompt on the wrong model.
+ *
+ * `appliedSelection` records only what the agent confirmed: a model it
+ * refused, or an effort that failed to apply, stays unrecorded so the next
+ * turn asks the agent again rather than assuming it already took effect.
+ */
 async function selectAcpNativeModel(args: {
-  connection: AcpAgentConnection;
+  session: AcpThreadSession;
   sessionId: string;
   configOptions: readonly AcpConfigOption[] | undefined;
   models: AcpSessionModels | undefined;
   modelSelection: AcpSessionParams["modelSelection"];
   nativeReasoning: AcpBridgeNativeReasoning | undefined;
+  followUp?: AcpNativeSelectionChange;
 }): Promise<void> {
+  const { session, followUp } = args;
+  session.configOptions = args.configOptions;
+  session.models = args.models;
   const selection = args.modelSelection;
   if (!selection || !("modelId" in selection)) {
     return;
   }
-  let configOptions = args.configOptions;
-  const modelOption = findAcpModelConfigOption(args.configOptions);
-  const availableSessionModels = args.models?.availableModels ?? [];
-  const sessionModelsIncludeSelection = availableSessionModels.some(
-    (model) => model.modelId === selection.modelId,
-  );
-  const shouldSetModel =
-    (modelOption && modelOption.currentValue !== selection.modelId) ||
-    (!modelOption &&
-      sessionModelsIncludeSelection &&
-      args.models?.currentModelId !== selection.modelId);
-  if (shouldSetModel) {
-    const configState = await setAcpSessionModel({
-      connection: args.connection,
-      sessionId: args.sessionId,
-      modelId: selection.modelId,
-      modelOption,
-    });
-    configOptions = configState?.configOptions ?? configOptions;
+  const modelSet = followUp === undefined || followUp.model;
+  if (
+    modelSet &&
+    acpNativeModelNeedsSet(
+      selection.modelId,
+      session.configOptions,
+      session.models,
+    )
+  ) {
+    const modelOption = findAcpModelConfigOption(session.configOptions);
+    try {
+      const configState = await requestAcpSessionModel({
+        connection: session.connection,
+        sessionId: args.sessionId,
+        modelId: selection.modelId,
+        modelOption,
+      });
+      recordAcpConfigState(session, configState);
+      // An agent that acknowledges without state still switched: remember the
+      // model so a later turn can tell where the session stands.
+      if (configState?.configOptions === undefined) {
+        session.configOptions = withAcpConfigValue(
+          session.configOptions,
+          modelOption?.id,
+          selection.modelId,
+        );
+      }
+      if (configState?.models === undefined && session.models) {
+        session.models = {
+          ...session.models,
+          currentModelId: selection.modelId,
+        };
+      }
+    } catch (error) {
+      if (followUp !== undefined) {
+        throw error;
+      }
+      // A stale or catalog-mismatched id must not abort session construction.
+      // Leave the agent's advertised current model in place.
+    }
   }
-  await selectAcpNativeReasoning({
-    connection: args.connection,
-    sessionId: args.sessionId,
-    configOptions,
-    modelSelection: selection,
-    nativeReasoning: args.nativeReasoning,
-  });
-  await selectAcpNativeServiceTier({
-    connection: args.connection,
-    sessionId: args.sessionId,
-    configOptions,
-    modelSelection: selection,
+  // A setter that resolved but left the agent on another model is as much a
+  // refusal as one that threw: only the agent's own state confirms the model.
+  const modelConfirmed =
+    !modelSet ||
+    !acpNativeModelNeedsSet(
+      selection.modelId,
+      session.configOptions,
+      session.models,
+    );
+  if (!modelConfirmed && followUp !== undefined) {
+    throw new Error(
+      `ACP agent did not switch to model "${selection.modelId}".`,
+    );
+  }
+  if (modelSet && modelConfirmed) {
+    // Effort and tier belong to the model and the agent may have reset them:
+    // start over and record each as it settles.
+    session.appliedSelection = { modelId: selection.modelId };
+  }
+  // The applied selection is recorded as each part settles, so a later setter
+  // that throws (the service tier) cannot leave a switched model looking
+  // unapplied. A changed model always re-applies effort, which records it.
+  if (followUp === undefined || followUp.model || followUp.reasoning) {
+    let reasoningApplied = true;
+    try {
+      recordAcpConfigState(
+        session,
+        await selectAcpNativeReasoning({
+          connection: session.connection,
+          sessionId: args.sessionId,
+          configOptions: session.configOptions,
+          modelSelection: selection,
+          nativeReasoning: args.nativeReasoning,
+        }),
+      );
+    } catch {
+      // Unsupported or stale thought levels should leave the agent default
+      // intact. They are not recorded, so the next turn tries again.
+      reasoningApplied = false;
+    }
+    if (modelConfirmed && reasoningApplied) {
+      session.appliedSelection = {
+        ...session.appliedSelection,
+        modelId: selection.modelId,
+        reasoningLevel: selection.reasoningLevel,
+      };
+    }
+  }
+  if (followUp === undefined || followUp.model || followUp.serviceTier) {
+    recordAcpConfigState(
+      session,
+      await selectAcpNativeServiceTier({
+        connection: session.connection,
+        sessionId: args.sessionId,
+        configOptions: session.configOptions,
+        modelSelection: selection,
+      }),
+    );
+    if (modelConfirmed) {
+      session.appliedSelection = {
+        ...session.appliedSelection,
+        modelId: selection.modelId,
+        serviceTier: selection.serviceTier,
+      };
+    }
+  }
+}
+
+/** Whether the agent's reported state says `modelId` still has to be set. */
+function acpNativeModelNeedsSet(
+  modelId: string,
+  configOptions: readonly AcpConfigOption[] | undefined,
+  models: AcpSessionModels | undefined,
+): boolean {
+  const modelOption = findAcpModelConfigOption(configOptions);
+  if (modelOption) {
+    return modelOption.currentValue !== modelId;
+  }
+  return (
+    (models?.availableModels ?? []).some((model) => model.modelId === modelId) &&
+    models?.currentModelId !== modelId
+  );
+}
+
+/** Take the config state a setter returned as the session's latest. */
+function recordAcpConfigState(
+  session: AcpThreadSession,
+  configState: AcpConfigStateResult | null | undefined,
+): void {
+  if (configState?.configOptions !== undefined) {
+    session.configOptions = configState.configOptions;
+  }
+  if (configState?.models !== undefined) {
+    session.models = configState.models;
+  }
+}
+
+function withAcpConfigValue(
+  configOptions: readonly AcpConfigOption[] | undefined,
+  configId: string | undefined,
+  value: string,
+): readonly AcpConfigOption[] | undefined {
+  return configOptions?.map((option) =>
+    option.id === configId ? { ...option, currentValue: value } : option,
+  );
+}
+
+/**
+ * Re-apply the model, effort, and service tier a follow-up turn asks for, when
+ * they differ from what the session last applied. A selection that rides a
+ * launch flag (or no selection at all) is left alone: this bridge cannot
+ * relaunch a live agent, and an absent model never resets one.
+ */
+async function reconcileAcpNativeSelection(
+  session: AcpThreadSession,
+  requested: AcpSessionParams["modelSelection"],
+  nativeReasoning: AcpBridgeNativeReasoning | undefined,
+): Promise<void> {
+  if (!requested || !("modelId" in requested)) {
+    return;
+  }
+  const applied = session.appliedSelection;
+  const followUp: AcpNativeSelectionChange = {
+    model: requested.modelId !== applied?.modelId,
+    reasoning: requested.reasoningLevel !== applied?.reasoningLevel,
+    serviceTier: requested.serviceTier !== applied?.serviceTier,
+  };
+  if (!followUp.model && !followUp.reasoning && !followUp.serviceTier) {
+    return;
+  }
+  // A refusal throws out of here with `appliedSelection` still on the previous
+  // model, so the next turn asks the agent again.
+  await selectAcpNativeModel({
+    session,
+    sessionId: session.providerThreadId,
+    configOptions: session.configOptions,
+    models: session.models,
+    modelSelection: requested,
+    nativeReasoning,
+    followUp,
   });
 }
 
@@ -1478,37 +1676,33 @@ async function selectAcpNativeReasoning(args: {
     { modelId: string }
   >;
   nativeReasoning: AcpBridgeNativeReasoning | undefined;
-}): Promise<void> {
+}): Promise<AcpConfigStateResult | undefined> {
   const reasoningLevel = args.modelSelection.reasoningLevel;
   if (reasoningLevel === undefined) {
-    return;
+    return undefined;
   }
   const thoughtLevelOption =
     findAcpThoughtLevelConfigOption(args.configOptions) ??
     nativeReasoningToThoughtLevelOption(args.nativeReasoning);
   if (!thoughtLevelOption) {
-    return;
+    return undefined;
   }
   const value = acpNativeReasoningLevelToValue(
     reasoningLevel,
     thoughtLevelOption,
   );
   if (value === undefined) {
-    return;
+    return undefined;
   }
-  try {
-    await args.connection.request({
-      method: "session/set_config_option",
-      params: {
-        sessionId: args.sessionId,
-        configId: thoughtLevelOption.id,
-        value,
-      },
-      resultSchema: acpConfigStateResultSchema,
-    });
-  } catch {
-    // Unsupported or stale thought levels should leave the agent default intact.
-  }
+  return args.connection.request({
+    method: "session/set_config_option",
+    params: {
+      sessionId: args.sessionId,
+      configId: thoughtLevelOption.id,
+      value,
+    },
+    resultSchema: acpConfigStateResultSchema,
+  });
 }
 
 async function selectAcpNativeServiceTier(args: {
@@ -1519,19 +1713,19 @@ async function selectAcpNativeServiceTier(args: {
     AcpSessionParams["modelSelection"],
     { modelId: string }
   >;
-}): Promise<void> {
+}): Promise<AcpConfigStateResult | undefined> {
   const serviceTier = args.modelSelection.serviceTier;
   if (serviceTier === undefined) {
-    return;
+    return undefined;
   }
   const fastOption = (args.configOptions ?? []).find(
     (option) => option.id === "fast" && option.type === "select",
   );
   const value = serviceTier === "fast" ? "true" : "false";
   if (!fastOption?.options?.some((option) => option.value === value)) {
-    return;
+    return undefined;
   }
-  await args.connection.request({
+  return args.connection.request({
     method: "session/set_config_option",
     params: {
       sessionId: args.sessionId,
@@ -2075,6 +2269,8 @@ async function startAgentSession(
     turnSettled: undefined,
     pendingPermissions: new Set(),
     configOptions: undefined,
+    models: undefined,
+    appliedSelection: undefined,
     acpMode: params.acpMode,
     cursorMcpApproval: undefined,
   };
@@ -2193,14 +2389,13 @@ async function startAgentSession(
       });
       sessionId = newSession.sessionId;
       await selectAcpNativeModel({
-        connection,
+        session,
         sessionId,
         configOptions: newSession.configOptions,
         models: newSession.models,
         modelSelection: params.modelSelection,
         nativeReasoning: params.nativeReasoning,
       });
-      session.configOptions = newSession.configOptions;
       session.configOptions = await selectAcpNativeMode({
         connection,
         sessionId,
@@ -2215,14 +2410,13 @@ async function startAgentSession(
       }
     } else {
       await selectAcpNativeModel({
-        connection,
+        session,
         sessionId,
         configOptions: loadedConfigOptions,
         models: loadedModels,
         modelSelection: params.modelSelection,
         nativeReasoning: params.nativeReasoning,
       });
-      session.configOptions = loadedConfigOptions;
       session.configOptions = await selectAcpNativeMode({
         connection,
         sessionId,
@@ -2909,6 +3103,23 @@ async function handleRequest(
       if (session.activePromptKind !== null) {
         sendError(request.id, -32000, "A turn is already active");
         return;
+      }
+      // Apply a model, effort, or service tier the host changed since the last
+      // turn before the input is accepted: a model the agent refuses fails the
+      // turn without leaving an accepted-input correlation behind.
+      const profile = decodeLaunchProfile(params.options.providerOptions);
+      if (profile !== null) {
+        await reconcileAcpNativeSelection(
+          session,
+          buildAcpModelSelectionParam(
+            profile,
+            params.options,
+            decodeAcpModelPickerOptions(params.options.providerOptions)
+              .parameterizedModelPicker,
+            decodeDialectId(params.options.providerOptions),
+          ).modelSelection,
+          profile.nativeReasoning,
+        );
       }
       // Accepted-input correlation (turn/input/accepted): queue onto the
       // translator so its onTurnStart drains it into the opening turn; a

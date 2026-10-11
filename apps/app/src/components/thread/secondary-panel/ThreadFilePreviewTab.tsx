@@ -16,6 +16,7 @@ import type { PluginFileOpenerRegistration } from '@zana-ai/zcc-plugin-sdk';
 import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import { videoContentType } from '@zana-ai/zcc-domain';
 import { ThreadVideoPreview, videoPreviewUrl } from './ThreadVideoPreview.js';
+import { useRetainedFilePreviewScroll } from './filePreviewScrollPositionContext.js';
 import {
   copyText,
   loadFilePreview,
@@ -54,6 +55,7 @@ export function ThreadFilePreviewView({
   storage?: boolean;
   lineNumber?: number | null;
 }) {
+  const retainScroll = useRetainedFilePreviewScroll();
   if (error && content === null) return <p className="thread-detail-empty">{error}</p>;
   if (content === null) {
     return (
@@ -73,7 +75,7 @@ export function ThreadFilePreviewView({
     );
   }
   return (
-    <div className="thread-file-preview" data-testid="thread-file-preview">
+    <div ref={retainScroll} className="thread-file-preview" data-testid="thread-file-preview">
       {error ? <p role="status" className="thread-detail-empty">Refresh failed: {error}</p> : null}
       <DocContent
         path={path}

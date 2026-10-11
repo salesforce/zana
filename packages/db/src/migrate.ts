@@ -1,5 +1,5 @@
 import type { SqliteDatabase } from './connection.js';
-import { CONVERSATION_PRUNING_INDEXES } from './data/conversation-pruning-sql.js';
+import { CONVERSATION_PRUNING_INDEXES, CONVERSATION_PRUNING_WORK_SCHEMA } from './data/conversation-pruning-sql.js';
 
 const CREATE_TABLES_V1 = [
   `CREATE TABLE hosts (
@@ -468,6 +468,7 @@ export function migrate(database: SqliteDatabase): void {
       compacted_at INTEGER NOT NULL
     )`
   ]);
+  if (!applied.has(31)) applyVersion(database, 31, CONVERSATION_PRUNING_WORK_SCHEMA);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

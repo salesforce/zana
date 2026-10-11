@@ -2,6 +2,7 @@ import { z } from "zod";
 import { jsonValueSchema } from "./json-value.js";
 import {
   PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES,
+  PLUGIN_INTERACTION_MAX_TIMEOUT_MS,
   PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
   jsonByteLength,
 } from "./plugin-interaction-limits.js";
@@ -13,6 +14,7 @@ import {
 
 export {
   PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES,
+  PLUGIN_INTERACTION_MAX_TIMEOUT_MS,
   PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
 };
 

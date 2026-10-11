@@ -455,4 +455,77 @@ describe('host internal plugin tool-call', () => {
     expect(signal?.aborted).toBe(false);
     expect(captured.status).toBe(200);
   });
+
+  it('streams heartbeats while a slow tool waits and still answers with parseable JSON', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+      vi.mocked(getConversationThread).mockReturnValue(thread as never);
+      let answer!: (value: unknown) => void;
+      const invokeAgentTool = vi.fn(() => new Promise((resolve) => { answer = resolve; }));
+      const decideToolPolicy = vi.fn(async () => ({ action: 'allow' as const }));
+      const captured = captureResponse();
+      const writes: string[] = [];
+      const flushHeaders = vi.fn();
+      Object.assign(captured.response, {
+        writableEnded: false, destroyed: false, flushHeaders,
+        write(chunk: string) { writes.push(chunk); return true; },
+        end(chunk?: string) { writes.push(chunk ?? ''); }
+      });
+      const pending = handleHostInternalHttp(request({
+        sessionId: 'inst-1', threadId: thread.id, providerThreadId: 'prov-1', turnId: 'turn-1', callId: 'call-1', tool: 'ask_user_question'
+      }), captured.response, {
+        config: { getConfig: () => ({}) },
+        db: {},
+        plugins: { invokeAgentTool, decideToolPolicy }
+      } as unknown as ProductHttpContext);
+      await vi.waitFor(() => expect(invokeAgentTool).toHaveBeenCalled());
+      expect(captured.status).toBe(0);
+      vi.advanceTimersByTime(20_000);
+      expect(captured.status).toBe(200);
+      expect(flushHeaders).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(40_000);
+      expect(writes).toEqual([' ', ' ', ' ']);
+      answer({ success: true, contentItems: [{ type: 'inputText', text: 'Blue' }] });
+      await pending;
+      expect(JSON.parse(writes.join(''))).toEqual({ success: true, contentItems: [{ type: 'inputText', text: 'Blue' }] });
+      vi.advanceTimersByTime(60_000);
+      expect(writes).toHaveLength(4);
+      expect(captured.response.listenerCount('close')).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the heartbeat and aborts the tool when the daemon goes away', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+      vi.mocked(getConversationThread).mockReturnValue(thread as never);
+      const invokeAgentTool = vi.fn((args: { ctx: { signal: AbortSignal } }) => new Promise((_resolve, reject) => {
+        args.ctx.signal.addEventListener('abort', () => reject(new Error('aborted by caller')));
+      }));
+      const decideToolPolicy = vi.fn(async () => ({ action: 'allow' as const }));
+      const captured = captureResponse();
+      const write = vi.fn(() => true);
+      Object.assign(captured.response, { writableEnded: false, destroyed: false, flushHeaders: vi.fn(), write });
+      const pending = handleHostInternalHttp(request({
+        sessionId: 'inst-1', threadId: thread.id, providerThreadId: 'prov-1', turnId: 'turn-1', callId: 'call-1', tool: 'ask_user_question'
+      }), captured.response, {
+        config: { getConfig: () => ({}) },
+        db: {},
+        plugins: { invokeAgentTool, decideToolPolicy }
+      } as unknown as ProductHttpContext);
+      await vi.waitFor(() => expect(invokeAgentTool).toHaveBeenCalled());
+      vi.advanceTimersByTime(20_000);
+      expect(write).toHaveBeenCalledOnce();
+      Object.assign(captured.response, { destroyed: true });
+      captured.response.emit('close');
+      await pending;
+      vi.advanceTimersByTime(60_000);
+      expect(write).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

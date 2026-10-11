@@ -10,6 +10,10 @@ from another project are copied into the destination before sending or
 queuing; machine-local paths require the same host. Remove unavailable
 attachments or upload them again before using them on another host.
 
+Results stay on screen while the next search loads, and after a failed search
+the error appears above them; changing the scope clears them, since each scope
+has its own rows and actions.
+
 History uses bounded cursor pages. Starred storage retains at most 100 prompts
 and 240 KB; each structured prompt is capped at 32 KB. Older saved prompts are
 evicted when these limits are reached.

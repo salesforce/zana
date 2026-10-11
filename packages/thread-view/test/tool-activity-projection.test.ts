@@ -619,6 +619,176 @@ describe("tool activity projection", () => {
     ]);
   });
 
+  it("reopens a finished delegation in place when its call id starts again", () => {
+    const state = createProjectionState();
+
+    onExecBegin(
+      state,
+      eventMeta(1),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({ status: "pending" }),
+    );
+    onExecEnd(
+      state,
+      eventMeta(2),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({
+        completedAt: 2,
+        output: "first review",
+        status: "completed",
+      }),
+    );
+    expect(delegationMessages(state)).toMatchObject([
+      { completedAt: 2, status: "completed" },
+    ]);
+
+    onExecBegin(
+      state,
+      eventMeta(3),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({ status: "pending" }),
+    );
+
+    expect(state.toolActivity.activeCell).toBeNull();
+    expect(delegationMessages(state)).toMatchObject([
+      { completedAt: null, status: "pending", sourceSeqEnd: 3 },
+    ]);
+    expect(
+      state.toolActivity.finalizedExecCallIds.has("delegation-1"),
+    ).toBe(false);
+
+    onExecEnd(
+      state,
+      eventMeta(4),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({
+        completedAt: 4,
+        output: "second review",
+        status: "completed",
+      }),
+    );
+
+    expect(delegationMessages(state)).toHaveLength(1);
+    expect(delegationMessages(state)).toMatchObject([
+      {
+        completedAt: 4,
+        output: "second review",
+        sourceSeqEnd: 4,
+        status: "completed",
+      },
+    ]);
+    expect(state.toolActivity.finalizedExecCallIds.has("delegation-1")).toBe(
+      true,
+    );
+  });
+
+  it("reopens an interrupted delegation in place when its call id starts again", () => {
+    const state = createProjectionState();
+
+    onExecBegin(
+      state,
+      eventMeta(1),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({ status: "pending" }),
+    );
+    interruptPendingToolActivity(state, {
+      completedAt: 2,
+      turnIds: new Set(["turn-1"]),
+    });
+    onExecEnd(
+      state,
+      eventMeta(3),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({ completedAt: 3, output: "stale", status: "completed" }),
+    );
+    expect(delegationMessages(state)).toMatchObject([
+      { completedAt: 2, status: "interrupted" },
+    ]);
+
+    onExecBegin(
+      state,
+      eventMeta(4),
+      "thread-1",
+      "turn-2",
+      delegationUpdate({ status: "pending" }),
+    );
+    onExecEnd(
+      state,
+      eventMeta(5),
+      "thread-1",
+      "turn-2",
+      delegationUpdate({ completedAt: 5, output: "done", status: "completed" }),
+    );
+
+    expect(state.toolActivity.activeCell).toBeNull();
+    expect(delegationMessages(state)).toMatchObject([
+      { completedAt: 5, output: "done", status: "completed" },
+    ]);
+  });
+
+  it("keeps a delegation start with a fresh call id as its own row", () => {
+    const state = createProjectionState();
+
+    onExecBegin(
+      state,
+      eventMeta(1),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({ status: "pending" }),
+    );
+    onExecEnd(
+      state,
+      eventMeta(2),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({ completedAt: 2, status: "completed" }),
+    );
+    onExecBegin(state, eventMeta(3), "thread-1", "turn-1", {
+      ...delegationUpdate({ status: "pending" }),
+      callId: "delegation-2",
+    });
+    onExecEnd(state, eventMeta(4), "thread-1", "turn-1", {
+      ...delegationUpdate({ completedAt: 4, status: "completed" }),
+      callId: "delegation-2",
+    });
+
+    expect(delegationMessages(state).map((message) => message.callId)).toEqual([
+      "delegation-1",
+      "delegation-2",
+    ]);
+  });
+
+  it("does not let a delegation start reopen a command row that reuses its call id", () => {
+    const state = createProjectionState();
+
+    onExecBegin(state, eventMeta(1), "thread-1", "turn-1", {
+      ...commandUpdate({ status: "pending" }),
+      callId: "delegation-1",
+    });
+    onExecEnd(state, eventMeta(2), "thread-1", "turn-1", {
+      ...commandUpdate({ output: "done", status: "completed" }),
+      callId: "delegation-1",
+    });
+    onExecBegin(
+      state,
+      eventMeta(3),
+      "thread-1",
+      "turn-1",
+      delegationUpdate({ status: "pending" }),
+    );
+
+    expect(commandMessages(state)).toMatchObject([{ status: "completed" }]);
+    expect(activeDelegationMessage(state)).toMatchObject({
+      status: "pending",
+    });
+  });
+
   it("lets error replace an interrupted command timestamp", () => {
     const state = createProjectionState();
     beginCommand(state);

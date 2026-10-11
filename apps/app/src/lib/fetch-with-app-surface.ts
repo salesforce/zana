@@ -9,7 +9,10 @@ export async function fetchWithAppSurface(
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set(APP_SURFACE_HEADER, getAppSurface());
-  const response = await fetch(input, { ...init, headers });
+  // App API reads are cached by React Query/stores already. The default HTTP cache mode only
+  // adds Chrome's per-URL cache lock: one stalled GET makes a second GET for the same URL wait
+  // ~20 s (seen over Connect/remote). Callers that want revalidation pass `cache` explicitly.
+  const response = await fetch(input, { ...init, cache: init.cache ?? 'no-store', headers });
   if (response.status === 401) getNativeShell()?.post({ type: 'auth-required' });
   return response;
 }

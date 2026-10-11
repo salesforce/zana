@@ -21,6 +21,7 @@ import {
   getLatestRunForOriginThread,
   getRun,
   getRunRequired,
+  hasQueuedRun,
   incrementRepairAttempts,
   listCallsForRun,
   listCallsForRunPage,
@@ -406,6 +407,32 @@ export function createWorkflowService(
 ): WorkflowService {
   let shuttingDown = false;
   let currentSettings = initialSettings;
+  // The worker only touches the claim queue when something that can change its
+  // answer happened (run queued, capacity freed, settings changed). It starts
+  // true so the first pass claims whatever recovery left queued.
+  let claimRequested = true;
+  let wakeWaiter: (() => void) | null = null;
+
+  function wakeWorker(): void {
+    claimRequested = true;
+    wakeWaiter?.();
+  }
+
+  /** Resolves on a wake, on abort, or after `ms` (the next maintenance deadline). */
+  function waitForWork(ms: number, signal: AbortSignal): Promise<void> {
+    if (claimRequested || signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      const settle = () => {
+        clearTimeout(timeout);
+        signal.removeEventListener("abort", settle);
+        wakeWaiter = null;
+        resolve();
+      };
+      const timeout = setTimeout(settle, Math.max(0, ms));
+      wakeWaiter = settle;
+      signal.addEventListener("abort", settle, { once: true });
+    });
+  }
   const controllers = new Map<string, AbortController>();
   const idleHandlers = new Set<string>();
   const handlerTasks = new Set<Promise<void>>();
@@ -524,6 +551,7 @@ export function createWorkflowService(
       settingsJson: JSON.stringify(currentSettings),
       resumedFromRunId: input.resumedFromRunId,
     });
+    wakeWorker();
     publishRunsChanged(created.originThreadId);
     return created;
   }
@@ -1189,6 +1217,7 @@ export function createWorkflowService(
     args: Parameters<typeof settleRun>[1],
   ): Promise<void> {
     const outstanding = settleRun(db, args);
+    wakeWorker();
     const settled = getRun(db, args.id);
     if (settled !== null) publishRunsChanged(settled.originThreadId);
     controllers.get(args.id)?.abort();
@@ -1445,7 +1474,7 @@ export function createWorkflowService(
     deleteTerminalRuns(db, expired.runIds);
   }
 
-  async function maintenanceTick(): Promise<void> {
+  async function maintenanceTick(hasCapacity: () => boolean): Promise<void> {
     const now = Date.now();
     const isolated = async (
       name: string,
@@ -1462,6 +1491,12 @@ export function createWorkflowService(
     await isolated("reconcile-workers", reconcileRunningCalls);
     await isolated("enforce-timeouts", () => enforceTimeouts(now));
     await isolated("retention", () => sweepExpiredRuns(now));
+    // Safety net for queued runs nothing woke the worker for (a row written by
+    // another process or migration, a claim that lost a race). Read-only: it only
+    // requests a claim pass when one can succeed, so an idle worker never writes.
+    await isolated("queued-claims", () => {
+      if (!claimRequested && hasCapacity() && hasQueuedRun(db)) wakeWorker();
+    });
   }
 
   async function runWorker(signal: AbortSignal): Promise<void> {
@@ -1476,8 +1511,11 @@ export function createWorkflowService(
     await stopChildren(recoverInterruptedRuns(db));
     const active = new Set<Promise<void>>();
     let nextMaintenanceAt = 0;
+    claimRequested = true;
     while (!signal.aborted) {
-      while (active.size < currentSettings.maxActiveRuns) {
+      const shouldClaim = claimRequested;
+      claimRequested = false;
+      while (shouldClaim && active.size < currentSettings.maxActiveRuns) {
         const run = claimQueuedRun(db, currentSettings.maxActiveRuns);
         if (run === null) break;
         publishRunsChanged(run.originThreadId);
@@ -1488,11 +1526,12 @@ export function createWorkflowService(
         const execution = executeRun(run, controller.signal).finally(() => {
           signal.removeEventListener("abort", abortRun);
           active.delete(execution);
+          wakeWorker();
         });
         active.add(execution);
       }
       if (Date.now() >= nextMaintenanceAt) {
-        await maintenanceTick();
+        await maintenanceTick(() => active.size < currentSettings.maxActiveRuns);
         nextMaintenanceAt = Date.now() + 1_000;
       }
       for (const pending of listPendingNotificationRuns(db, Date.now(), 100)) {
@@ -1504,7 +1543,7 @@ export function createWorkflowService(
           );
         }
       }
-      await sleep(active.size === 0 ? 250 : 50, signal);
+      await waitForWork(nextMaintenanceAt - Date.now(), signal);
     }
     shuttingDown = true;
     for (const controller of controllers.values()) controller.abort();
@@ -1517,6 +1556,7 @@ export function createWorkflowService(
   async function stop(runId: string): Promise<boolean> {
     const childThreadIds = activeChildThreadsForRun(db, runId);
     const stopped = cancelRun(db, runId);
+    wakeWorker();
     if (stopped) {
       const run = getRun(db, runId);
       if (run !== null) publishRunsChanged(run.originThreadId);
@@ -1537,6 +1577,7 @@ export function createWorkflowService(
     stop,
     updateSettings(settings) {
       currentSettings = settings;
+      wakeWorker();
     },
     runWorker,
     onThreadIdle,

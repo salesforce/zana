@@ -1,7 +1,8 @@
 /** @vitest-environment happy-dom */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { ThreadFilePreviewTab } from './ThreadFilePreviewTab.js';
+import { ThreadFilePreviewTab, ThreadFilePreviewView } from './ThreadFilePreviewTab.js';
+import { FilePreviewScrollPositionContext } from './filePreviewScrollPositionContext.js';
 
 const mocks = vi.hoisted(() => ({ readFile: vi.fn(), hostFileContent: vi.fn(), storageContent: vi.fn() }));
 vi.mock('../../../lib/product-client.js', () => ({
@@ -253,5 +254,69 @@ describe('HTML file preview', () => {
     const view = render(<ThreadFilePreviewTab path="notes.txt" threadId="t1" />);
     await waitFor(() => expect(view.getByTestId('thread-file-preview').textContent).toContain('plain'));
     expect(view.queryByTestId('thread-file-preview-mode-code')).toBeNull();
+  });
+});
+
+describe('retained reading offset', () => {
+  const doc = (position: { scrollTop: number } | null, content: string | null = 'plain text') => (
+    <FilePreviewScrollPositionContext.Provider value={position}>
+      <ThreadFilePreviewView path="notes.txt" content={content} error={null} />
+    </FilePreviewScrollPositionContext.Provider>
+  );
+
+  it('opens at the retained offset and writes scrolling back to it', () => {
+    const position = { scrollTop: 320 };
+    const view = render(doc(position));
+    const node = view.getByTestId('thread-file-preview');
+    expect(node.scrollTop).toBe(320);
+    node.scrollTop = 515;
+    fireEvent.scroll(node);
+    expect(position.scrollTop).toBe(515);
+  });
+
+  it('stops tracking when the document unmounts or its tab changes', () => {
+    const first = { scrollTop: 10 };
+    const second = { scrollTop: 20 };
+    const view = render(doc(first));
+    const node = view.getByTestId('thread-file-preview');
+    view.rerender(doc(second));
+    expect(node.scrollTop).toBe(20);
+    node.scrollTop = 99;
+    fireEvent.scroll(node);
+    expect(first.scrollTop).toBe(10);
+    expect(second.scrollTop).toBe(99);
+    view.unmount();
+    node.scrollTop = 0;
+    fireEvent.scroll(node);
+    expect(second.scrollTop).toBe(99);
+  });
+
+  it('restores only once the document is ready', () => {
+    const position = { scrollTop: 240 };
+    const view = render(doc(position, null));
+    expect(view.queryByTestId('thread-file-preview')).toBeNull();
+    expect(position.scrollTop).toBe(240);
+    view.rerender(doc(position));
+    expect(view.getByTestId('thread-file-preview').scrollTop).toBe(240);
+  });
+
+  it('leaves a targeted line list and a standalone preview alone', () => {
+    const position = { scrollTop: 77 };
+    const lines = render(
+      <FilePreviewScrollPositionContext.Provider value={position}>
+        <ThreadFilePreviewView path="a.ts" content={'one\ntwo'} error={null} lineNumber={2} />
+      </FilePreviewScrollPositionContext.Provider>
+    );
+    const list = lines.getByTestId('thread-file-preview');
+    list.scrollTop = 5;
+    fireEvent.scroll(list);
+    expect(position.scrollTop).toBe(77);
+    lines.unmount();
+
+    const standalone = render(doc(null));
+    const node = standalone.getByTestId('thread-file-preview');
+    node.scrollTop = 33;
+    fireEvent.scroll(node);
+    expect(node.scrollTop).toBe(33);
   });
 });

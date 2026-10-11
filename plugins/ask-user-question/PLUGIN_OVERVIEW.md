@@ -9,6 +9,6 @@ Agents on providers without a native question tool can stop and ask you to choos
 
 ## How it works
 
-The plugin gives agents an `AskUserQuestion` tool. The tool opens the card and waits for your answer. If you dismiss the card or do not answer in time, the agent continues with its own judgement. Only one card can wait for you at a time. The agent therefore puts all of its questions in one call.
+The plugin gives agents an `AskUserQuestion` tool. The tool opens the card and waits for your answer. A card stays open for 30 minutes by default; choose anywhere from 1 hour to 7 days with the Question timeout setting, which applies to questions asked after you change it. If you dismiss the card or do not answer in time, the agent continues with its own judgement. Only one card can wait for you at a time. The agent therefore puts all of its questions in one call.
 
 The tool is added only to providers that lack a native question tool. Providers with their own question tool, such as Claude Code, keep their native behavior.

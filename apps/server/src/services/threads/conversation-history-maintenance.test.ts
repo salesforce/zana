@@ -88,6 +88,43 @@ it('drains 10,000 completed deltas in yielded batches while retaining the final 
 });
 
 
+it('keeps an idle sweep at one call per policy however many threads exist, and visits only changed ones', async () => {
+  const actual = await vi.importActual<typeof import('@zana-ai/zcc-db')>('@zana-ai/zcc-db');
+  vi.mocked(maintainConversationHistory).mockImplementation(actual.maintainConversationHistory);
+  vi.mocked(maintainConversationEventHistory).mockImplementation(actual.maintainConversationEventHistory);
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-maintenance-idle-'));
+  const db = actual.openDatabase(join(dir, 'audit.sqlite'));
+  let stop = () => {};
+  try {
+    const host = actual.upsertHost(db, { name: 'audit', hostKeyHash: 'unused' });
+    const threads = Array.from({ length: 25 }, () => actual.createConversationThread(db, { hostId: host.id, projectId: 'p', providerId: 'fake', status: 'idle' }).id);
+    const limits = (threadId: string, count: number) => {
+      for (let i = 0; i < count; i++) actual.appendConversationThreadEvent(db, { threadId, type: 'provider/rateLimits/updated', payload: { scope: { kind: 'thread' } } });
+    };
+    const remaining = (threadId: string) => (db.sqlite.prepare('SELECT COUNT(*) AS count FROM thread_events WHERE thread_id = ?').get(threadId) as { count: number }).count;
+    for (const threadId of threads) limits(threadId, 3);
+    stop = startConversationHistoryMaintenance(db);
+    vi.advanceTimersByTime(40_000);
+    expect(threads.map(remaining)).toEqual(threads.map(() => 1));
+    expect(db.sqlite.prepare('SELECT COUNT(*) AS count FROM conversation_pruning_work').get()).toEqual({ count: 0 });
+
+    const cursors = () => db.sqlite.prepare('SELECT * FROM conversation_event_pruning_cursors ORDER BY policy').all();
+    const settled = cursors();
+    vi.mocked(maintainConversationEventHistory).mockClear();
+    vi.advanceTimersByTime(30_000);
+    const idle = vi.mocked(maintainConversationEventHistory).mock.calls.map(([, policy]) => policy);
+    expect(idle).toEqual(['rate-limits', 'context-usage', 'token-usage', 'deltas', 'background']);
+    expect(cursors()).toEqual(settled);
+
+    limits(threads[7]!, 3);
+    vi.mocked(maintainConversationEventHistory).mockClear();
+    vi.advanceTimersByTime(30_000);
+    expect(vi.mocked(maintainConversationEventHistory).mock.calls.length).toBeLessThanOrEqual(15);
+    expect(remaining(threads[7]!)).toBe(1);
+    expect(threads.filter(id => id !== threads[7]).map(remaining)).toEqual(Array(24).fill(1));
+  } finally { stop(); db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('continues a full scanned snapshot batch even when every row is a protected keeper', () => {
   vi.mocked(maintainConversationHistory).mockReturnValueOnce({ outputs: 0, snapshots: 0, scannedSnapshots: 32 });
   const stop = startConversationHistoryMaintenance({} as ZccDatabase);

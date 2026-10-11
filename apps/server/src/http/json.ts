@@ -35,6 +35,52 @@ export function sendJson(response: ServerResponse, status: number, body: unknown
   response.end(JSON.stringify(body));
 }
 
+/**
+ * A 200 JSON response whose body may take minutes (a tool waiting on a person).
+ * A fast answer goes out as plain `sendJson`. Once `heartbeatMs` passes, the
+ * headers are flushed and a space is written every interval so client
+ * header/body timeouts and relay idle limits never fire; JSON ignores the
+ * leading whitespace. The status is fixed at 200 once streaming starts.
+ */
+export function beginSlowJson(
+  response: ServerResponse,
+  heartbeatMs = 20_000
+): { send(body: unknown): void; stop(): void } {
+  let streaming = false;
+  const timer = setInterval(() => {
+    if (response.writableEnded || response.destroyed) {
+      stop();
+      return;
+    }
+    if (!streaming) {
+      streaming = true;
+      response.writeHead(
+        200,
+        headersWithCors(response, {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/json; charset=utf-8',
+          'X-Content-Type-Options': 'nosniff'
+        })
+      );
+      response.flushHeaders();
+    }
+    response.write(' ');
+  }, heartbeatMs);
+  const stop = () => {
+    clearInterval(timer);
+    response.removeListener('close', stop);
+  };
+  response.on('close', stop);
+  return {
+    send(body) {
+      stop();
+      if (streaming) response.end(JSON.stringify(body));
+      else sendJson(response, 200, body);
+    },
+    stop
+  };
+}
+
 export function sendNoContent(response: ServerResponse): void {
   response.writeHead(204, headersWithCors(response, { 'Cache-Control': 'no-store' })).end();
 }

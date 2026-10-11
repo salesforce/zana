@@ -1111,10 +1111,16 @@ export function createCodexEventTranslator(
     if (!tracked.terminal) {
       return [];
     }
-    const wasOpen = isTrackedSubAgentOpen(tracked);
+    // A follow-up to a finished sub-agent is a new round: it opens its own
+    // delegation (the interaction's id) in the turn that sent it. Reopening
+    // the original item would replay it in the turn that spawned it, and
+    // every copy would carry the sub-agent's whole history.
+    if (!isTrackedSubAgentOpen(tracked)) {
+      return beginCodexTrackedSubAgent(activity);
+    }
     tracked.pendingFollowups += 1;
     rearmTrackedSubAgent(tracked);
-    return wasOpen ? [] : [buildCodexSubAgentOpenDelta(tracked)];
+    return [];
   }
 
   function hasConsumablePendingDelegationLink(args: {

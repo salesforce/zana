@@ -7,6 +7,7 @@ import { HostRpcCommandSchema } from '@zana-ai/zcc-contracts/host-rpc';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { PLUGIN_INTERACTION_MAX_TIMEOUT_MS } from '@zana-ai/zcc-domain/thread-runtime';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createPluginApi,
@@ -73,6 +74,30 @@ describe('plugin requestInput validation', () => {
     })).toThrow(/title/);
   });
 
+  it('defaults the timeout to ten minutes and accepts up to seven days', () => {
+    const base = { threadId: 'thr-1', rendererId: 'form', title: 'Hi', payload: {} };
+    expect(validatePluginRequestInput(base).timeoutMs).toBe(10 * 60 * 1000);
+    expect(validatePluginRequestInput({ ...base, timeoutMs: 30 * 60 * 1000 }).timeoutMs).toBe(30 * 60 * 1000);
+    expect(validatePluginRequestInput({ ...base, timeoutMs: 24 * 60 * 60 * 1000 }).timeoutMs).toBe(24 * 60 * 60 * 1000);
+    expect(PLUGIN_INTERACTION_MAX_TIMEOUT_MS).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(
+      validatePluginRequestInput({ ...base, timeoutMs: PLUGIN_INTERACTION_MAX_TIMEOUT_MS }).timeoutMs
+    ).toBe(PLUGIN_INTERACTION_MAX_TIMEOUT_MS);
+  });
+
+  it('keeps the seven-day cap inside the setTimeout range so the waiter timer cannot overflow', () => {
+    // Node clamps a delay above 2^31-1 ms to 1 ms, which would expire the card at once.
+    expect(PLUGIN_INTERACTION_MAX_TIMEOUT_MS).toBeLessThanOrEqual(2 ** 31 - 1);
+  });
+
+  it('rejects timeouts above seven days, fractions, negatives, and non-numbers', () => {
+    const base = { threadId: 'thr-1', rendererId: 'form', title: 'Hi', payload: {} };
+    const range = `between 1 and ${PLUGIN_INTERACTION_MAX_TIMEOUT_MS}`;
+    for (const timeoutMs of [PLUGIN_INTERACTION_MAX_TIMEOUT_MS + 1, 1.5, -1, Number.NaN, '1000' as never]) {
+      expect(() => validatePluginRequestInput({ ...base, timeoutMs })).toThrow(range);
+    }
+  });
+
   it('throws when requestInput has no backend', async () => {
     const handle = createPluginApi('ask-user', '/tmp');
     await expect(handle.api.ui.requestInput({
@@ -81,6 +106,21 @@ describe('plugin requestInput validation', () => {
       title: 'Go',
       payload: {}
     })).rejects.toThrow(/not available/);
+  });
+
+  it('forwards a seven-day timeout to the interaction backend and rejects a longer one before it', async () => {
+    const requestPluginInteraction = vi.fn(async () => ({ outcome: 'submitted' as const, value: null }));
+    const handle = createPluginApi('ask-user', '/tmp', { requestPluginInteraction });
+    const base = { threadId: 'thr-1', rendererId: 'form', title: 'Go', payload: {} };
+    await handle.api.ui.requestInput({ ...base, timeoutMs: PLUGIN_INTERACTION_MAX_TIMEOUT_MS });
+    expect(requestPluginInteraction).toHaveBeenCalledWith(
+      expect.objectContaining({ pluginId: 'ask-user', timeoutMs: PLUGIN_INTERACTION_MAX_TIMEOUT_MS })
+    );
+    await expect(
+      handle.api.ui.requestInput({ ...base, timeoutMs: PLUGIN_INTERACTION_MAX_TIMEOUT_MS + 1 })
+    ).rejects.toThrow(/timeoutMs/);
+    expect(requestPluginInteraction).toHaveBeenCalledTimes(1);
+    await handle.dispose();
   });
 
   it('waits on the interaction backend and interrupts on dispose', async () => {

@@ -10,6 +10,12 @@ import {
 import { startColumnResize } from './threadSecondaryPanelLogic.js';
 import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
 import { MobilePanelNavigation } from './MobilePanelNavigation.js';
+import {
+  FilePreviewScrollPositionContext,
+  filePreviewScrollPositionFor,
+  pruneFilePreviewScrollPositions,
+  type FilePreviewScrollPositions
+} from './filePreviewScrollPositionContext.js';
 import './mobile-panel.css';
 
 export function ThreadSecondaryPanel({
@@ -53,6 +59,16 @@ export function ThreadSecondaryPanel({
   const activeTabRef = useRef<HTMLSpanElement>(null);
   const pin = activePinnedView(state);
   const activeTab = activeClosableTab(state);
+  // Only the active surface is mounted, so a file's scroll container disappears whenever the
+  // reader visits another tab. Offsets live here, keyed by open tab id, to survive that.
+  const [scrollPositions] = useState<FilePreviewScrollPositions>(() => new Map());
+  const scrollPosition = activeTab?.kind === 'file-preview' || activeTab?.kind === 'storage-preview'
+    ? filePreviewScrollPositionFor(scrollPositions, activeTab.id)
+    : null;
+
+  useEffect(() => {
+    pruneFilePreviewScrollPositions(scrollPositions, state.tabs.map((tab) => tab.id));
+  }, [scrollPositions, state.tabs]);
 
   useEffect(() => {
     if (compact) viewToggleRef.current?.focus({ preventScroll: true });
@@ -192,7 +208,9 @@ export function ThreadSecondaryPanel({
         </div>
       </div>
       </>}
-      <div className="thread-secondary-body" hidden={compact && viewsOpen}>{children}</div>
+      <div className="thread-secondary-body" hidden={compact && viewsOpen}>
+        <FilePreviewScrollPositionContext.Provider value={scrollPosition}>{children}</FilePreviewScrollPositionContext.Provider>
+      </div>
       {footer && secondaryPanelShowsInspectorFooter(state) ? (
         <div className="thread-secondary-footer" data-testid="thread-secondary-footer" hidden={compact && viewsOpen}>
           {footer}
