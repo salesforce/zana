@@ -429,6 +429,9 @@ export const DESIGN_DOCS_STYLES = `
 }
 .dd-doc-title { font-size: 18px; font-weight: 650; line-height: 1.3; letter-spacing: -0.01em; color: var(--text-bright, var(--text-primary)); flex: 0 1 auto; }
 .dd-doc-header-compact .dd-doc-title { font-size: 14px; }
+.dd-doc-header-compact button.dd-doc-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.dd-doc-header-compact .dd-doc-updated { min-width: 0; overflow: hidden; white-space: nowrap; }
+.dd-doc-header-compact .dd-doc-updated > * { overflow: hidden; text-overflow: ellipsis; }
 input.dd-doc-title { width: 100%; }
 .dd-doc-summary { margin-top: 2px; color: var(--text-muted); font-size: 13px; line-height: 1.5; width: 100%; }
 textarea.dd-doc-summary { display: block; }
@@ -456,6 +459,10 @@ textarea.dd-doc-summary { display: block; }
 /* Ask agent */
 .dd-ask-trigger { height: 28px; padding: 0 10px; }
 .dd-ask-compact { padding: 0 8px; gap: 4px; }
+.dd-publish-trigger { height: 28px; padding: 0 10px; gap: 5px; }
+.dd-publish-intro { margin: 0 0 14px; font-size: 12px; line-height: 1.5; }
+.dd-publish-fields { display: flex; flex-direction: column; gap: 12px; }
+.dd-publish-problem { margin: 10px 0 0; font-size: 12px; color: var(--danger); }
 .dd-ask { width: 360px; padding: 0; }
 .dd-ask-head { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px 8px; }
 .dd-ask-head .dd-muted { font-size: 12px; }
@@ -782,4 +789,7 @@ textarea.dd-doc-summary { display: block; }
   .dd-tree { flex-basis: 180px; width: 180px; }
   .dd-mode-label, .dd-file-meta { display: none; }
 }
+/* A phone already is the phone width: the preview-width switcher is noise. */
+.dd-doc-narrow .dd-html-widths { display: none; }
+.dd-doc-narrow .dd-html-toolbar { padding: 2px 8px; }
 `;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Check, Globe, Hash, MoreHorizontal, Plus, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Globe, Hash, MoreHorizontal, Plus, X } from 'lucide-react';
 import { DOC_STATUSES, type DesignDocDetail, type DocStatus } from '../shared/contract.js';
 import { useDocActions } from './DocActions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TAG_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH } from '../shared/limits.js';
@@ -172,18 +172,22 @@ export function DocHeader({
   doc,
   projects,
   compact,
+  collapsible = false,
   actions,
   onDeleted
 }: {
   doc: DesignDocDetail;
   projects: ProjectInfo[];
   compact: boolean;
+  /** Narrow screens: start compact, with the summary and tags behind a toggle. */
+  collapsible?: boolean;
   /** Primary actions (Ask agent) rendered at the right of the title row. */
   actions?: ReactNode;
   onDeleted(): void;
 }) {
   const api = useApi();
   const [menu, setMenu] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const docActions = useDocActions(projects);
   const project = doc.projectId ? projects.find((entry) => entry.id === doc.projectId) : null;
 
@@ -196,8 +200,9 @@ export function DocHeader({
     }
   };
 
+  const collapsed = compact || (collapsible && !expanded);
   return (
-    <header className={`dd-doc-header${compact ? ' dd-doc-header-compact' : ''}`}>
+    <header className={`dd-doc-header${compact || collapsible ? ' dd-doc-header-compact' : ''}`}>
       <div className="dd-doc-title-row">
         <EditableText
           className="dd-doc-title"
@@ -218,7 +223,7 @@ export function DocHeader({
           {docActions.items(doc, () => setMenu(false), onDeleted)}
         </Popover>
       </div>
-      {compact ? null : (
+      {collapsed ? null : (
         <EditableText
           className="dd-doc-summary"
           label="Summary"
@@ -235,11 +240,19 @@ export function DocHeader({
           {project ? null : <Globe size={12} aria-hidden />}
           {project ? project.name : doc.projectId ? 'Unknown project' : 'Global'}
         </span>
-        {compact ? null : <TagEditor tags={doc.tags} onChange={(tags) => void update({ tags }).catch(() => undefined)} />}
+        {collapsed ? null : <TagEditor tags={doc.tags} onChange={(tags) => void update({ tags }).catch(() => undefined)} />}
         <span className="dd-spacer" />
         <span className="dd-doc-updated">
           <ActorLabel actor={doc.updatedBy} /> <TimeAgo at={doc.updatedAt} now={Date.now()} />
         </span>
+        {collapsible ? (
+          <IconButton
+            icon={expanded ? ChevronUp : ChevronDown}
+            label={expanded ? 'Hide summary and tags' : 'Show summary and tags'}
+            active={expanded}
+            onClick={() => setExpanded(!expanded)}
+          />
+        ) : null}
       </div>
       {docActions.dialogs}
     </header>

@@ -34,6 +34,8 @@ export interface HarnessOptions {
   projects?: Array<{ id: string; name: string }>;
   /** What `navigate.openThreadPanel` returns (false: no thread to attach to). */
   threadPanel?: boolean;
+  /** Whether the page has a side panel for agents (`navigate.openPanelAgent`). */
+  panelAgent?: boolean;
   context?: { projectId?: string | null; threadId?: string | null };
   /** Serve standalone pages at this URL (`pageLink`); unset, the RPC refuses. */
   pageUrl?(docId: string, path: string): string;
@@ -102,7 +104,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     ])
   );
 
-  const installed = installTestPluginRuntime({ rpc, context: options.context ?? {} });
+  const installed = installTestPluginRuntime({ rpc, context: options.context ?? {}, panelAgent: options.panelAgent });
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: Record<string, unknown> }).__ZCC_PLUGIN_RUNTIME__!;
   const toasts: Toast[] = [];
   runtime.toast = (message: string, kind: 'info' | 'error' = 'info') => {

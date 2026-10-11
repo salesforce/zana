@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ThreadChat, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { ThreadChat, useZccNavigate, type ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { ArrowLeft, AtSign, Bot, ChevronDown, ExternalLink, Sparkles, Unlink } from 'lucide-react';
 import { AGENT_ACTIONS, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import type { DesignDocDetail, ThreadRole } from '../shared/contract.js';
@@ -16,6 +16,17 @@ const ROLE_LABELS: Record<ThreadRole, string> = {
 
 /** The thread-panel action id shared by the directive card, the message action and Ask agent. */
 export const DOC_PANEL_ACTION = 'design-doc';
+
+/**
+ * Show an agent a doc started. It opens in this page's side panel, so the user
+ * stays on the doc; a host without one shows the doc beside the agent's thread.
+ */
+export function showDocAgent(navigate: ZccNavigate, doc: { id: string; title: string }, threadId: string): void {
+  // Optional call: hosts older than the side-panel agent lack it.
+  if (navigate.openPanelAgent?.({ threadId, title: doc.title })) return;
+  navigate.openThreadPanel({ actionId: DOC_PANEL_ACTION, title: doc.title, params: { docId: doc.id }, threadId });
+  navigate.toThread(threadId);
+}
 
 /**
  * The doc's linked threads. With `onOpenChat` a thread opens embedded in the
@@ -170,8 +181,7 @@ export function AskAgentButton({
         path: focusFile ? activePath : null,
         ...(needsProject ? { projectId: chosenProject } : {})
       });
-      navigate.openThreadPanel({ actionId: DOC_PANEL_ACTION, title: doc.title, params: { docId: doc.id }, threadId: result.threadId });
-      navigate.toThread(result.threadId);
+      showDocAgent(navigate, doc, result.threadId);
       toast(`Agent started on “${doc.title}”. Its edits appear here live.`);
       setOpen(false);
       setPrompt('');

@@ -169,8 +169,8 @@ describe('Design Docs RPC', () => {
       projectId: 'p1',
       title: 'Review · Sync',
       providerId: 'codex',
-      visibility: 'visible',
-      pluginMetadata: { designDocId: doc.id, action: 'review' }
+      visibility: 'hidden',
+      pluginMetadata: { designDocId: doc.id, action: 'review', panelAgent: { panel: 'design-docs', view: doc.id } }
     });
     expect(request.prompt).toContain('Focus on README.md.');
     expect(request.prompt).toContain(`::design-doc{id="${doc.id}"}`);
@@ -219,11 +219,45 @@ describe('Design Docs RPC', () => {
     expect(spawn).toHaveBeenCalledTimes(1);
   });
 
+  it('publishes a doc through a linked agent thread', async () => {
+    const { call, spawn, store, changed } = setup();
+    const doc = await call('create', { title: 'Collab', projectId: 'p1', template: 'html-design' });
+    await expect(call('publish', { doc: doc.id, repo: 'https://github.com/o/site', branch: 'main', folder: 'docs' })).resolves.toEqual({
+      threadId: 'thread-42',
+      projectId: 'p1'
+    });
+    const request = (spawn.mock.calls[0] as unknown[])[0] as Record<string, any>;
+    expect(request).toMatchObject({
+      projectId: 'p1',
+      title: 'Publish · Collab',
+      visibility: 'hidden',
+      pluginMetadata: { designDocId: doc.id, action: 'publish', panelAgent: { panel: 'design-docs', view: doc.id } }
+    });
+    expect(request.prompt).toContain('https://github.com/o/site, branch main, folder /docs');
+    expect(store.get(doc.id).threads[0]).toMatchObject({ threadId: 'thread-42', role: 'assistant', title: 'Publish · Collab' });
+    expect(changed).toHaveBeenLastCalledWith(doc.id);
+  });
+
+  it('validates publish requests', async () => {
+    const { call, spawn } = setup();
+    const site = await call('create', { title: 'Site', template: 'html-design' });
+    const notes = await call('create', { title: 'Notes', projectId: 'p1', template: 'blank' });
+    await expect(call('publish', { doc: site.id, branch: 'a b' })).rejects.toThrow(/valid git branch/);
+    await expect(call('publish', { doc: site.id, repo: 'file:///x', branch: 'main' })).rejects.toThrow(/clone URL/);
+    await expect(call('publish', { doc: notes.id, branch: 'main' })).rejects.toThrow(/no HTML pages/);
+    await expect(call('publish', { doc: site.id, branch: 'main' })).rejects.toThrow(/choose a project/);
+    await expect(call('publish', { doc: site.id, branch: 'main', projectId: 'p-unknown' })).rejects.toThrow(/unknown project/);
+    expect(spawn).not.toHaveBeenCalled();
+    await expect(call('publish', { doc: site.id, branch: 'main', projectId: 'p1' })).resolves.toMatchObject({ projectId: 'p1' });
+    expect((spawn.mock.calls[0] as unknown[])[0]).toMatchObject({ projectId: 'p1' });
+    expect(((spawn.mock.calls[0] as unknown[])[0] as { prompt: string }).prompt).toContain("this project's repository");
+  });
+
   it('registers every handler as an rpc method', () => {
     const method = vi.fn();
     const { store } = setup();
     registerRpc({ rpc: { method } } as never, { store, changed: () => {}, sdk: {} as never });
     expect(method.mock.calls.map(([name]) => name)).toContain('askAgent');
-    expect(method).toHaveBeenCalledTimes(27);
+    expect(method).toHaveBeenCalledTimes(28);
   });
 });

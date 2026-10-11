@@ -93,7 +93,9 @@ describe('creating docs', () => {
     expect(spawned.prompt).toContain('Phones lose signal in tunnels.');
     const doc = harness.store.list({})[0]!;
     expect(spawned.pluginMetadata.designDocId).toBe(doc.id);
+    // Without a side panel on the page, the doc opens beside the agent's thread.
     expect(harness.navigateCalls).toEqual([
+      { method: 'openPanelAgent', options: { threadId: 'thread-1', title: 'Offline sync' } },
       { method: 'openThreadPanel', options: { actionId: 'design-doc', title: 'Offline sync', params: { docId: doc.id }, threadId: 'thread-1' } },
       { method: 'toThread', threadId: 'thread-1' }
     ]);

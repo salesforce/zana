@@ -788,6 +788,13 @@ export interface ZccNavigate {
     params?: JsonValue;
     threadId?: string;
   }): boolean;
+  /**
+   * Show a conversation in the agent tab of this plugin page's side panel,
+   * focusing its tab when one is already open. False when the page has no
+   * side panel (outside the desktop app, or older hosts); fall back to
+   * `openThreadPanel` or `toThread`.
+   */
+  openPanelAgent(options: { threadId: string; title?: string }): boolean;
 }
 
 export interface ThreadChatMessageAction {

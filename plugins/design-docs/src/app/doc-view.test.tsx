@@ -871,7 +871,7 @@ describe('agents', () => {
   });
 
   it('starts an agent from an action or a custom request', async () => {
-    const harness = createHarness();
+    const harness = createHarness({ panelAgent: true });
     const doc = simpleDoc(harness);
     renderDoc(harness, doc.id, { path: 'api.md' });
     await findPane('api.md');
@@ -886,10 +886,8 @@ describe('agents', () => {
     const [review] = harness.spawn.mock.calls[0] as unknown as [{ projectId: string; prompt: string; title: string }];
     expect(review).toMatchObject({ projectId: 'p1', title: 'Review · Simple' });
     expect(review.prompt).toContain('api.md');
-    expect(harness.navigateCalls.slice(-2)).toEqual([
-      { method: 'openThreadPanel', options: { actionId: 'design-doc', title: 'Simple', params: { docId: doc.id }, threadId: 'thread-1' } },
-      { method: 'toThread', threadId: 'thread-1' }
-    ]);
+    // The agent opens in the page's side panel; the user stays on the doc.
+    expect(harness.navigateCalls).toEqual([{ method: 'openPanelAgent', options: { threadId: 'thread-1', title: 'Simple' } }]);
     expect(harness.toasts.at(-1)).toEqual({ message: 'Agent started on “Simple”. Its edits appear here live.', kind: 'info' });
     await waitFor(() => expect(screen.queryByText('Ask an agent')).toBeNull());
     expect(harness.store.get(doc.id).threads[0]).toMatchObject({ threadId: 'thread-1', role: 'reviewer' });
@@ -1000,6 +998,52 @@ describe('layout', () => {
       // A zero width (hidden panel) is unmeasured, which keeps the wide layout.
       resize(0);
       expect(tree()).toBeTruthy();
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
+  it('collapses the header on a phone-width doc, with the summary and tags behind a toggle', async () => {
+    const observers: Array<{ callback: ResizeObserverCallback }> = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        disconnect = vi.fn();
+        constructor(public callback: ResizeObserverCallback) {
+          observers.push(this);
+        }
+        observe() {}
+      }
+    );
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 390 } as DOMRect);
+    const resize = (width: number) =>
+      act(() => observers.at(-1)!.callback([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver));
+    try {
+      const harness = createHarness();
+      const doc = simpleDoc(harness);
+      renderDoc(harness, doc.id);
+      await findPane('README.md');
+
+      const header = () => document.querySelector('.dd-doc-header')!;
+      expect(document.querySelector('.dd-doc')!.className).toContain('dd-doc-narrow');
+      expect(header().className).toContain('dd-doc-header-compact');
+      expect(screen.queryByTitle('Edit summary')).toBeNull();
+      expect(screen.queryByRole('button', { name: /Tag/ })).toBeNull();
+      expect(document.querySelector('.dd-ask-compact')).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Show summary and tags' }));
+      expect(screen.getByTitle('Edit summary')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Tag/ })).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Hide summary and tags' }));
+      expect(screen.queryByTitle('Edit summary')).toBeNull();
+
+      // Wide enough for the full header: no toggle, everything shown.
+      resize(600);
+      expect(document.querySelector('.dd-doc')!.className).not.toContain('dd-doc-narrow');
+      expect(header().className).not.toContain('dd-doc-header-compact');
+      expect(screen.getByTitle('Edit summary')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Show summary and tags' })).toBeNull();
+      expect(document.querySelector('.dd-ask-compact')).toBeNull();
     } finally {
       rect.mockRestore();
     }

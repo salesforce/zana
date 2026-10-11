@@ -22,6 +22,7 @@ import { hrefForPluginNavPanel, hrefForPluginProjectTab } from './plugin-nav-hre
 import { ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
+import { requestPluginPanelAgent } from './plugin-panel-agent.js';
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
 
@@ -142,6 +143,9 @@ function useZccNavigateImpl(): ZccNavigate {
           title: options.title,
           params: options.params ?? null
         });
+      },
+      openPanelAgent(options) {
+        return requestPluginPanelAgent({ pluginId, threadId: options.threadId, title: options.title });
       }
     }),
     [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId]

@@ -31,7 +31,8 @@ export type NavigateCall =
   | {
       method: 'openThreadPanel';
       options: { actionId: string; title?: string; params?: unknown };
-    };
+    }
+  | { method: 'openPanelAgent'; options: { threadId: string; title?: string } };
 
 export interface RenderSlotOptions {
   rpc?: Record<string, (input: unknown) => unknown | Promise<unknown>>;
@@ -39,6 +40,8 @@ export interface RenderSlotOptions {
   context?: Partial<ZccContext>;
   composer?: { text?: string; scope?: PluginComposerScope };
   realtimeConnectionState?: 'connecting' | 'connected' | 'reconnecting';
+  /** Whether the page has a side panel to show agents in (`navigate.openPanelAgent`). Defaults to false. */
+  panelAgent?: boolean;
 }
 
 export interface RenderedSlot extends RenderResult {
@@ -141,6 +144,10 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     openThreadPanel(panelOptions) {
       navigateCalls.push({ method: 'openThreadPanel', options: panelOptions });
       return true;
+    },
+    openPanelAgent(agentOptions) {
+      navigateCalls.push({ method: 'openPanelAgent', options: agentOptions });
+      return options.panelAgent === true;
     }
   };
 

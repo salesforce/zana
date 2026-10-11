@@ -17,6 +17,7 @@ import type {
   TextEdit
 } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
+import type { PublishFolder } from '../shared/publish.js';
 import type { PageRenderReport, RenderedPage, SiteFile } from '../shared/page.js';
 
 export interface TemplateInfo {
@@ -93,6 +94,8 @@ export interface DesignDocsApi {
   deleteComment(doc: string, id: string): Promise<void>;
   unlinkThread(doc: string, threadId: string): Promise<void>;
   askAgent(doc: string, args: { action?: string; prompt?: string; path?: string | null; projectId?: string }): Promise<{ threadId: string; projectId: string }>;
+  /** Start an agent thread that exports the doc as a site and pushes it to GitHub Pages. */
+  publish(doc: string, args: { repo?: string; branch: string; folder: PublishFolder; projectId?: string }): Promise<{ threadId: string; projectId: string }>;
 }
 
 type Call = (method: string, args?: unknown) => Promise<unknown>;
@@ -133,7 +136,8 @@ export function createApi(call: Call): DesignDocsApi {
     setCommentStatus: (doc, id, status) => typed('setCommentStatus', { doc, id, status }),
     deleteComment: (doc, id) => done(typed('deleteComment', { doc, id })),
     unlinkThread: (doc, threadId) => done(typed('unlinkThread', { doc, threadId })),
-    askAgent: (doc, args) => typed('askAgent', { doc, ...args, path: args.path ?? undefined })
+    askAgent: (doc, args) => typed('askAgent', { doc, ...args, path: args.path ?? undefined }),
+    publish: (doc, args) => typed('publish', { doc, ...args })
   };
 }
 

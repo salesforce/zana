@@ -1,4 +1,4 @@
-import { type ReactNode, useRef } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 import { Bot, PanelRight } from 'lucide-react';
 import { getDesktopBrowserApi } from '../../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
@@ -6,6 +6,7 @@ import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/Th
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
 import { PanelAgentTab } from '../../components/thread/secondary-panel/PanelAgentTab.js';
+import { onPluginPanelAgentRequest } from '../../plugins/plugin-panel-agent.js';
 import { useSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import {
   activeClosableTab
@@ -60,6 +61,15 @@ function PluginPanelBrowserHost({
     if (latest) panel.activateTab(latest.id);
     else newAgent();
   };
+  // The page asked to show a conversation (`navigate.openPanelAgent`); an open
+  // tab for it is focused, not duplicated.
+  const addTab = panel.addTab;
+  useEffect(
+    () => onPluginPanelAgentRequest(pluginId, ({ threadId, title }) => {
+      addTab({ kind: 'agent', title: title ?? 'Agent', threadId });
+    }),
+    [addTab, pluginId]
+  );
 
   let panelBody = null;
   if (closable?.kind === 'agent') {
