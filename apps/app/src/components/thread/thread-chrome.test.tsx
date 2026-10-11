@@ -867,7 +867,7 @@ describe('expandable row and chips', () => {
     const column = source.slice(columnAt);
     expect(column).toContain('<ThreadTimeline');
     expect(column).toContain('loadError={loadError}');
-    expect(column).toContain('planExecution={durablePlan?.tasks.length');
+    expect(column).toContain('planExecution={timelinePlanExecution(threadId, durablePlan)}');
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
     expect(source).toContain('executionModeRequested={executionModeRequested}');

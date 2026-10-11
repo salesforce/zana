@@ -14,6 +14,7 @@ import {
   planExecutionTitle,
   planTaskStatusLabel,
   planTaskVisual,
+  timelinePlanExecution,
   visiblePlanExecution
 } from './plan-execution-card.js';
 
@@ -106,6 +107,21 @@ describe('planExecutionStateKey', () => {
     expect(planExecutionStateKey('t2', 'plan-1', 2)).not.toBe(key);
     expect(planExecutionStateKey('t1', null, 2)).toBe(planExecutionStateKey('t1', undefined, 2));
     expect(planExecutionStateKey('t1', null, 2)).not.toBe(key);
+  });
+});
+
+describe('timelinePlanExecution', () => {
+  it('builds the card from a durable plan with steps, else nothing', () => {
+    const tasks = [{ id: '1', text: 'a', status: 'pending' }];
+    expect(timelinePlanExecution('t1', { id: 'plan-1', markdown: '# Ship it', revision: 2, tasks })).toEqual({
+      title: 'Ship it',
+      tasks,
+      stateKey: planExecutionStateKey('t1', 'plan-1', 2)
+    });
+    expect(timelinePlanExecution('t1', { markdown: null, revision: 0, tasks })?.stateKey)
+      .toBe(planExecutionStateKey('t1', null, 0));
+    expect(timelinePlanExecution('t1', { id: 'plan-1', markdown: null, revision: 0, tasks: [] })).toBeNull();
+    expect(timelinePlanExecution('t1', null)).toBeNull();
   });
 });
 

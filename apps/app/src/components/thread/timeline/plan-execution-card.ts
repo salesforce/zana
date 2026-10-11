@@ -23,6 +23,24 @@ export function planExecutionStateKey(
   return JSON.stringify([threadId, planId ?? null, revision]);
 }
 
+/** The timeline card for a thread's durable plan, or null when it has no steps. */
+export function timelinePlanExecution(
+  threadId: string,
+  plan: {
+    id?: string | null;
+    markdown: string | null;
+    revision: number;
+    tasks: readonly PlanExecutionTask[];
+  } | null | undefined
+): PlanExecutionView | null {
+  if (!plan?.tasks.length) return null;
+  return {
+    title: planExecutionTitle(plan.markdown),
+    tasks: plan.tasks,
+    stateKey: planExecutionStateKey(threadId, plan.id, plan.revision)
+  };
+}
+
 export function planExecutionTitle(markdown: string | null | undefined): string {
   if (!markdown) return 'Plan';
   for (const raw of markdown.split('\n')) {
