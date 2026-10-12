@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SalesforceDeps, PublicOrgView } from './types.js';
 import type { OrgAgent, OrgAgentCatalog, OrgAgentRetrieval, RetrievedOrgAgent } from './org-agent-contract.js';
@@ -8,6 +8,10 @@ import type { OrgAgent, OrgAgentCatalog, OrgAgentRetrieval, RetrievedOrgAgent } 
 const LIMIT = 1000;
 const SOURCE_LIMIT = 180_000;
 const TIMEOUT = 120_000;
+const META_LIMIT = 64_000;
+/** How many of an agent's newest authoring bundles one version read retrieves. */
+const VERSION_CANDIDATES = 10;
+const META_SUFFIX = '.bundle-meta.xml';
 const NAME = /^[A-Za-z][A-Za-z0-9_]*(?:#[1-9][0-9]*|\.v[1-9][0-9]*)?$/;
 const validName = (value: unknown): value is string => typeof value === 'string' && value.length <= 240 && NAME.test(value);
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -62,6 +66,43 @@ function sourceFiles(root: string): string[] {
   return files;
 }
 
+/**
+ * The Agent Script of the retrieved bundle whose metadata targets `target` (`Name.vN`).
+ * `order` is newest first, so the newest bundle wins when two published the same version.
+ */
+function targetSource(root: string, target: string, order: readonly string[]): { fullName: string; content: string } | null {
+  const scripts = new Map<string, string[]>();
+  const metas: string[] = [];
+  let entries = 0;
+  const walk = (directory: string, depth: number) => {
+    if (depth > 10) throw Error('The retrieved bundles have too many nested folders.');
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (++entries > 100 * VERSION_CANDIDATES) throw Error('The retrieved bundles contain too many files.');
+      if (entry.isSymbolicLink()) throw Error('The retrieved bundle contains a symbolic link.');
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) walk(path, depth + 1);
+      else if (entry.isFile() && entry.name.endsWith(META_SUFFIX)) metas.push(path);
+      else if (entry.isFile() && entry.name.endsWith('.agent')) scripts.set(directory, [...(scripts.get(directory) ?? []), path]);
+    }
+  };
+  walk(root, 0);
+  const matched = new Map<string, string>();
+  for (const meta of metas) {
+    if (statSync(meta).size > META_LIMIT) continue;
+    const targets = [...readFileSync(meta, 'utf8').matchAll(/<target>([^<]*)<\/target>/g)].map(match => match[1]!.trim());
+    if (targets.includes(target)) matched.set(basename(meta).slice(0, -META_SUFFIX.length), dirname(meta));
+  }
+  for (const fullName of new Set([...order, ...matched.keys()])) {
+    const directory = matched.get(fullName);
+    if (!directory) continue;
+    const files = scripts.get(directory) ?? [];
+    if (files.length !== 1) throw Error(`${fullName} has no single Agent Script.`);
+    if (statSync(files[0]!).size > SOURCE_LIMIT) throw Error('This version exceeds the editor size limit.');
+    return { fullName, content: readFileSync(files[0]!, 'utf8') };
+  }
+  return null;
+}
+
 function safeDirectory(root: string, parts: string[]): string {
   let path = root;
   for (const part of parts) {
@@ -79,10 +120,11 @@ function safeDirectory(root: string, parts: string[]): string {
 export class OrgAgentService {
   private readonly jobs = new Map<string, { root: string; at: number; controller: AbortController; result: OrgAgentRetrieval }>();
   private listing = 0;
+  private reading: AbortController | null = null;
   private disposed = false;
   constructor(private readonly deps: { execSf: SalesforceDeps['execSf']; connect(): Promise<PublicOrgView> }) {}
 
-  dispose() { this.disposed = true; for (const job of this.jobs.values()) job.controller.abort(); this.jobs.clear(); }
+  dispose() { this.disposed = true; for (const job of this.jobs.values()) job.controller.abort(); this.jobs.clear(); this.reading?.abort(); }
 
   async list(): Promise<OrgAgentCatalog> {
     if (this.disposed || this.listing >= 2) throw Error('Agent discovery is busy. Try again shortly.');
@@ -92,6 +134,43 @@ export class OrgAgentService {
       const result = await this.deps.execSf(['org', 'list', 'metadata', '--metadata-type', 'AiAuthoringBundle', '--target-org', org.alias, '--json'], { timeoutMs: 30_000 });
       return { org: { alias: org.alias, orgId: org.orgId }, ...parseAgentCatalog(cliResult(result)) };
     } finally { this.listing--; }
+  }
+
+  /**
+   * Reads the Agent Script behind one BotVersion into a temp folder, then deletes the folder.
+   * Bundle names count source versions, so each bundle's `<target>` says which BotVersion it published.
+   * The project is never written. One read runs at a time.
+   */
+  async readVersion(org: PublicOrgView, apiName: string, versionNumber: number): Promise<{ fullName: string; content: string }> {
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(apiName) || !Number.isSafeInteger(versionNumber) || versionNumber < 1) throw Error('Pick a version to open.');
+    if (this.disposed) throw Error('The Salesforce plugin is restarting. Retry shortly.');
+    if (this.reading) throw Error('A version is already opening. Wait for it to finish.');
+    const controller = new AbortController();
+    this.reading = controller;
+    const { signal } = controller;
+    let temporary = '';
+    try {
+      temporary = mkdtempSync(join(tmpdir(), 'zcc-sf-version-'));
+      const listed = cliResult(await this.deps.execSf(['org', 'list', 'metadata', '--metadata-type', 'AiAuthoringBundle', '--target-org', org.alias, '--json'], { timeoutMs: 30_000, signal }));
+      const candidates = (parseAgentCatalog(listed).agents.find(agent => agent.name === apiName)?.versions ?? [])
+        .slice(0, VERSION_CANDIDATES)
+        .map(version => version.fullName);
+      const older = 'Versions built before the new Agentforce Builder have no Agent Script.';
+      if (!candidates.length) throw Error(`${apiName} has no authoring bundle on ${org.alias}. ${older}`);
+      signal.throwIfAborted();
+      mkdirSync(join(temporary, 'force-app'));
+      writeFileSync(join(temporary, 'sfdx-project.json'), JSON.stringify({ packageDirectories: [{ path: 'force-app', default: true }] }), { mode: 0o600 });
+      const metadata = candidates.flatMap(fullName => ['--metadata', `AiAuthoringBundle:${fullName}`]);
+      const result = cliResult(await this.deps.execSf(['project', 'retrieve', 'start', ...metadata, '--target-org', org.alias, '--json', '--wait', '2'], { cwd: temporary, timeoutMs: TIMEOUT, signal }));
+      signal.throwIfAborted();
+      if (record(result).success === false || record(result).done === false) throw Error('Salesforce did not complete the retrieval. Retry after it finishes.');
+      const found = targetSource(join(temporary, 'force-app'), `${apiName}.v${versionNumber}`, candidates);
+      if (!found) throw Error(`None of the ${candidates.length} newest ${apiName} authoring bundles on ${org.alias} published v${versionNumber}. ${older}`);
+      return found;
+    } finally {
+      if (temporary) rmSync(temporary, { recursive: true, force: true });
+      if (this.reading === controller) this.reading = null;
+    }
   }
 
   async start(root: string, input: unknown): Promise<{ jobId: string }> {

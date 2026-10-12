@@ -24,8 +24,21 @@ export interface TraceStep {
   label: string; latencyMs?: number; inputPreview?: string; outputPreview?: string; source?: { path: string; line: number };
 }
 export interface TurnTrace { runId: string; turn: number; planId?: string; available: boolean; reason?: string; steps: TraceStep[] }
-export interface ScenarioCase { id: string; name: string; utterances: string[]; expect: { topic?: string; actions?: string[]; contains?: string[]; criteria?: string } }
-export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, { outcome: 'pass' | 'fail' | 'inconclusive'; runId: string; at: number }> }
+export interface ScenarioCase {
+  id: string; name: string; utterances: string[]; expect: { topic?: string; actions?: string[]; contains?: string[]; criteria?: string };
+  /** Set when the case was pinned from a Preview conversation. */
+  pinned?: { runId: string; at: number };
+}
+export type CaseOutcome = 'pass' | 'fail' | 'inconclusive';
+/** The last `sf agent test run-eval` of a suite against the org's published agent. */
+export interface SuiteEval {
+  at: number; org: string; orgId: string; passed: boolean; specPath: string; botVersionId?: string;
+  /** False when the CLI reported totals only, so cases carry no outcome. */
+  perCase: boolean; results: Record<string, { outcome: CaseOutcome }>;
+  /** Cases with more than one utterance; the spec runs their opening turn. */
+  multiTurn: string[];
+}
+export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, { outcome: CaseOutcome; runId: string; at: number }>; lastEval?: SuiteEval }
 export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
 export interface LightningTypeProperty { name: string; type?: string; title?: string; description?: string; required: boolean }
 /** One Lightning Type as `studio.lightningType` returns it: a project bundle, a standard platform type, or a missing reference. */
@@ -39,10 +52,19 @@ export const STUDIO_RPC = {
   viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType',
   comments: 'studio.comments.list', commentAdd: 'studio.comments.add', commentResolve: 'studio.comments.resolve',
   trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run',
+  suiteImport: 'studio.suites.import', suiteSpec: 'studio.suites.spec', suiteEval: 'studio.suites.eval',
+  loopStart: 'studio.loop.start', loopStop: 'studio.loop.stop', loopGet: 'studio.loop.get',
   outcome: 'control.outcome',
 } as const;
 export const UI_WAKE_CHANNEL = 'sf.ui.wake'; // payload {viewId} only - never command data
-export const STUDIO_CHANGED_CHANNEL = 'sf.studio.changed'; // {projectId, path?, kind:'threads'|'comments'|'suites'}
+export const STUDIO_CHANGED_CHANNEL = 'sf.studio.changed'; // {projectId, path?, kind:'threads'|'comments'|'suites'|'loop'}
+export const CONTEXT_CHANGED_CHANNEL = 'context.changed'; // {projectId, changeId, origin?} - origin names the window that made the change
+
+/** The `origin` a window tags its context RPCs with, or null when absent or malformed. */
+export function contextOrigin(args: unknown): string | null {
+  const value = args && typeof args === 'object' ? (args as Record<string, unknown>).origin : undefined;
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
+}
 
 export const STUDIO_LIMITS = { diagnostics: 50, selectionText: 2000, quote: 2000 } as const;
 export const STUDIO_TOOLS: readonly StudioTool[] = ['code', 'preview', 'tests', 'graph', 'actions', 'data', 'deploy', 'assistant', 'comments', 'agents'];

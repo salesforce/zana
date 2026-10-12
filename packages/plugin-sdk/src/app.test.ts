@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { definePluginApp, isPluginAppDefinition } from './app.js';
+import { describe, expect, it, vi } from 'vitest';
+import { definePluginApp, isPluginAppDefinition, useWindowTitle } from './app.js';
 import {
   collectPluginApp,
   PLUGIN_COMPOSER_SCOPE_KINDS,
@@ -57,6 +57,25 @@ describe('definePluginApp', () => {
   it('throws when callPluginRpc has no host bridge', async () => {
     const { callPluginRpc } = await import('./app.js');
     await expect(callPluginRpc('notes', 'ping')).rejects.toThrow(/plugin host is not available/);
+  });
+
+  it('asks the host for a Zana-drawn approval and fails closed without one', async () => {
+    const { experimental_requestApproval } = await import('./app.js');
+    const request = { binding: { action: 'agent.publish', target: 'org', targetLabel: 'dev', subject: 'Help' }, title: 'Publish' };
+    const g = globalThis as { __ZCC_PLUGIN_HOST__?: unknown };
+    const previous = g.__ZCC_PLUGIN_HOST__;
+    try {
+      delete g.__ZCC_PLUGIN_HOST__;
+      await expect(experimental_requestApproval('notes', request)).resolves.toEqual({ approved: false, reason: 'unavailable' });
+      g.__ZCC_PLUGIN_HOST__ = { callRpc: async () => null };
+      await expect(experimental_requestApproval('notes', request)).resolves.toEqual({ approved: false, reason: 'unavailable' });
+      const requestApproval = vi.fn(async () => ({ approved: true as const, token: 't', expiresAt: 1 }));
+      g.__ZCC_PLUGIN_HOST__ = { callRpc: async () => null, requestApproval };
+      await expect(experimental_requestApproval('notes', request)).resolves.toEqual({ approved: true, token: 't', expiresAt: 1 });
+      expect(requestApproval).toHaveBeenCalledWith('notes', request);
+    } finally {
+      g.__ZCC_PLUGIN_HOST__ = previous;
+    }
   });
 
   it('collects provider icons, composer, and content scripts without throwing', () => {
@@ -392,6 +411,24 @@ describe('definePluginApp', () => {
         })
       )
     ).toThrow(/unlisted/);
+  });
+});
+
+describe('useWindowTitle', () => {
+  it('forwards to the host and does nothing on a host without it', () => {
+    const g = globalThis as { __ZCC_PLUGIN_RUNTIME__?: { useWindowTitle?: (title: unknown) => void } };
+    const previous = g.__ZCC_PLUGIN_RUNTIME__;
+    try {
+      g.__ZCC_PLUGIN_RUNTIME__ = {};
+      expect(() => useWindowTitle({ title: 'Studio' })).not.toThrow();
+      const host = vi.fn();
+      g.__ZCC_PLUGIN_RUNTIME__ = { useWindowTitle: host };
+      useWindowTitle({ title: 'Studio', badge: 'Production', tone: 'danger' });
+      useWindowTitle(null);
+      expect(host.mock.calls).toEqual([[{ title: 'Studio', badge: 'Production', tone: 'danger' }], [null]]);
+    } finally {
+      g.__ZCC_PLUGIN_RUNTIME__ = previous;
+    }
   });
 });
 

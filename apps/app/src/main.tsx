@@ -1,7 +1,9 @@
+import type { ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
+import { getPluginViewTarget } from './lib/pluginViewSurface.js';
 // Prevent the OS from navigating to files dropped outside the terminal area.
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
@@ -45,20 +47,36 @@ if (!root) {
       // Keep repair mode outside App: importing App initializes renderer stores
       // backed by data that migration has not made safe to read yet.
       const isRepair = startup.mode === 'repair-required';
-      const Content = isRepair
-        ? (await import('./components/StartupRepair.js')).StartupRepair
-        : (await import('./App.js')).App;
-      appRoot.render(
-        <ErrorBoundary>
-          {isRepair ? (
-            <Content />
-          ) : (
-            <BrowserRouter>
-              <Content />
-            </BrowserRouter>
-          )}
-        </ErrorBoundary>
-      );
+      // A plugin view window (`?surface=plugin-view`) shows one plugin project
+      // tab and never imports `./App`, so it cannot restore sessions or drive
+      // main-window state.
+      const pluginView = isRepair ? null : getPluginViewTarget();
+      if (!isRepair) {
+        // Every window needs main's open plugin view set from the start, so a
+        // navigation can bring an open one forward before any pane subscribes.
+        const { startPluginViewMirror } = await import('./plugins/plugin-view-windows.js');
+        startPluginViewMirror();
+      }
+      let content: ReactElement;
+      if (isRepair) {
+        const { StartupRepair } = await import('./components/StartupRepair.js');
+        content = <StartupRepair />;
+      } else if (pluginView) {
+        const { PluginViewApp } = await import('./views/plugin-view/PluginViewApp.js');
+        content = (
+          <BrowserRouter>
+            <PluginViewApp target={pluginView} />
+          </BrowserRouter>
+        );
+      } else {
+        const { App } = await import('./App.js');
+        content = (
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        );
+      }
+      appRoot.render(<ErrorBoundary>{content}</ErrorBoundary>);
     } catch (error) {
       console.error('[renderer] startup state failed:', error);
       const { StartupError } = await import('./components/StartupRepair.js');

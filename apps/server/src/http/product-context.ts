@@ -54,6 +54,7 @@ import { startConversationHistoryMaintenance } from '../services/threads/convers
 import { PersistentTerminalSessions } from './persistent-terminal-sessions.js';
 import { ProviderModelCatalogStore } from '../services/threads/provider-model-catalog-store.js';
 import { createUiSendVerifier } from './ui-send-proof.js';
+import { createPluginApprovalVerifier } from './plugin-approval-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
@@ -104,6 +105,8 @@ export interface ProductHttpContext {
   /** Main-only session grants; absent on a server without a CLI coordinator. */
   cliCallbacks?: import('../services/launch/cli-callback-authority.js').CliCallbackAuthority;
   verifyUiSend: (proof: unknown, threadId: string, itemId: string, caller?: import('./ui-send-proof.js').UiSendCaller) => boolean;
+  /** Consumes a desktop-signed plugin approval (plugin-approval-proof.ts). Absent or secretless servers refuse every token. */
+  verifyPluginApproval?: (token: unknown, pluginId: string, binding: unknown) => boolean;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;
@@ -348,8 +351,10 @@ export function createProductHttpContext(
   });
 
   let verifyUiSend: ProductHttpContext['verifyUiSend'] = rejectUiSend;
+  let verifyPluginApproval: NonNullable<ProductHttpContext['verifyPluginApproval']> = rejectUiSend;
   if (options.uiSendSecret && options.uiSendSecret.length >= 32) {
     verifyUiSend = createUiSendVerifier(options.uiSendSecret);
+    verifyPluginApproval = createPluginApprovalVerifier(options.uiSendSecret);
   }
 
   ctx = {
@@ -375,6 +380,7 @@ export function createProductHttpContext(
     terminalSessions,
     pluginHostArtifacts: new PluginHostArtifactRegistry(),
     verifyUiSend,
+    verifyPluginApproval,
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);

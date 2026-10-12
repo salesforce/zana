@@ -1938,6 +1938,14 @@ export interface AppConfig {
   windowBounds?: { x?: number; y?: number; width: number; height: number };
   /** macOS Option-green zoom/maximize state; native fullscreen is never restored. */
   windowMaximized?: boolean;
+  /**
+   * Plugin view window geometry, keyed `pluginId/tabId@projectId`. Main owns
+   * it; the newest 24 entries are kept.
+   */
+  pluginViewWindowBounds?: Record<
+    string,
+    { bounds?: { x?: number; y?: number; width: number; height: number }; maximized?: boolean; at: number }
+  >;
   /** Global default model passed to claude CLI (absent = let claude decide). */
   defaultModel?: 'opus' | 'sonnet' | 'haiku' | 'default';
   /** Global default permission mode for new claude sessions. */

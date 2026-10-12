@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, realpathSync, cpSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test as base, expect } from './fixtures/app.js';
@@ -92,6 +93,22 @@ if (args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata') {
   if (state() === 'empty') result = [];
   if (state() === 'denied') { console.log(JSON.stringify({ status: 1, message: 'Metadata API access denied for this org.' })); process.exit(1); }
 }
+// Opt-in org versions for the Release viewer: { fullName: { target, content } }.
+const versionsPath = path.join(process.env.HOME, 'sf-version-bundles');
+const versionBundles = fs.existsSync(versionsPath) ? JSON.parse(fs.readFileSync(versionsPath, 'utf8')) : null;
+if (versionBundles && args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata') result = Object.keys(versionBundles).map(fullName => ({ fullName }));
+if (versionBundles && args[0] === 'project' && args[1] === 'retrieve') {
+  args.forEach((flag, index) => {
+    if (flag !== '--metadata') return;
+    const fullName = args[index + 1].split(':')[1];
+    const dir = path.join(process.cwd(), 'force-app/main/default/aiAuthoringBundles', fullName);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, fullName + '.agent'), versionBundles[fullName].content);
+    fs.writeFileSync(path.join(dir, fullName + '.bundle-meta.xml'), '<AiAuthoringBundle><target>' + versionBundles[fullName].target + '</target></AiAuthoringBundle>');
+  });
+  console.log(JSON.stringify({ status: 0, result: { success: true, done: true } }));
+  process.exit(0);
+}
 if (args[0] === 'project' && args[1] === 'retrieve') {
   const fullName = args[args.indexOf('--metadata') + 1].split(':')[1];
   if (fullName === 'Unavailable_v1') { console.log(JSON.stringify({ status: 1, message: 'Source access denied' })); process.exit(1); }
@@ -103,7 +120,7 @@ if (args[0] === 'project' && args[1] === 'retrieve') {
   fs.appendFileSync(path.join(process.env.HOME, 'agent-retrievals.jsonl'), JSON.stringify({ args, cwd: process.cwd(), home: process.env.HOME }) + '\\n');
 }
 if (args[0] === 'agent' && args[1] === 'preview') result = { sessionId:'cli-preview', messages:[{ message: args[2] === 'send' ? 'CLI preview response. '.repeat(1100) + 'CLI_END_OF_RESPONSE' : 'Ready' }] };
-if (args[0] === 'agent' && ['validate', 'preview', 'test', 'publish'].includes(args[1])) {
+if (args[0] === 'agent' && ['validate', 'preview', 'test', 'publish', 'activate', 'deactivate'].includes(args[1])) {
   fs.appendFileSync(path.join(process.env.HOME, 'agent-cli.jsonl'), JSON.stringify({ args, cwd: process.cwd(), home: process.env.HOME }) + '\\n');
   if (!fs.existsSync(path.join(process.cwd(), 'sfdx-project.json'))) { console.log(JSON.stringify({ status: 1, message: 'Agent command needs its DX project cwd' })); process.exit(1); }
   if (args[1] === 'test') {
@@ -322,6 +339,17 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(preview.getByRole('alert')).toContainText('503');
   const lab = studio.locator('[data-testid="agentforce-lab"]:visible');
   await openTool(studio, 'Tests');
+  // Tests open on the case table; an imported sf agent test spec becomes rows.
+  const tests = studio.getByTestId('studio-tests-pane');
+  await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Cases' })).toHaveAttribute('aria-pressed', 'true');
+  await tests.getByTestId('tests-import-input').setInputFiles({
+    name: 'orders.yaml',
+    mimeType: 'application/x-yaml',
+    buffer: Buffer.from('testCases:\n  - utterance: "Where is my order?"\n    expectedTopic: "Orders"\n')
+  });
+  await expect(tests.getByRole('status')).toHaveText('Imported 1 case from orders.yaml.');
+  await expect(tests.getByTestId('tests-table')).toContainText('Where is my order?');
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' }).click();
   await lab.getByLabel('Conversation budget').selectOption('2');
   await lab.getByRole('button', { name: /Run AI role-play/ }).click();
   await expect(lab.getByText('Run complete')).toBeVisible({ timeout: 30_000 });
@@ -808,6 +836,153 @@ test('Agentforce Studio: create local agents and control the visible workbench t
   expect(await command(await view('workbench'), 'view.open', { view: 'data' })).toMatchObject({ ok: true, viewState: { view: 'data' } });
   expect(await command(await view('data'), 'query.show', { resultId: query.resultId })).toMatchObject({ ok: true, viewState: { rows: 1 } });
   await expect(page.getByRole('cell', { name: 'Workbench result account', exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; cancel, forged and replayed tokens change nothing', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = page.getByTestId('salesforce-agent-script-panel');
+  await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
+  const explorer = studio.getByTestId('salesforce-agent-script-explorer');
+  for (const folder of ['default', 'aiAuthoringBundles', 'Customer_Service_Agent_With_A_Long_Name']) await explorer.getByRole('button', { name: folder, exact: true }).click();
+  await studio.getByTestId(`salesforce-agent-script-file:${toolbarFile}`).click();
+  await expect(studio.locator('.af-draft-state')).toHaveText('Saved');
+  const apiName = 'Customer_Service_Agent_With_A_Long_Name';
+  const dx = realpathSync(join(home, 'dx'));
+  const cliLog = join(home, 'agent-cli.jsonl');
+  const cliCalls = (verb: string) => existsSync(cliLog)
+    ? readFileSync(cliLog, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(call => call.args[1] === verb)
+    : [];
+  // Main draws the sheet; the test reaches it only from main, like a person's click.
+  const sheet = <T,>(script: string) => app.electron.evaluate(async ({ BrowserWindow }, script) => {
+    const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && w.getTitle() === 'Zana approval');
+    return win ? await win.webContents.executeJavaScript(script) as T : null;
+  }, script);
+  const sheetWindow = () => app.electron.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && w.getTitle() === 'Zana approval');
+    return win ? { modal: win.isModal(), parent: win.getParentWindow()?.getTitle() ?? null } : null;
+  });
+  const sheetText = async () => (await sheet<string>('document.body.innerText')) ?? '';
+  // Approve arms a moment after the sheet takes focus, and each focus re-arms it,
+  // so a click can land while it is off. Press again until the sheet answers and closes.
+  const press = (id: 'approve' | 'cancel') => expect.poll(() => sheet<boolean>(`(() => {
+    const button = document.getElementById('${id}');
+    if (!button.disabled) setTimeout(() => button.click(), 0);
+    return true;
+  })()`)).toBeNull();
+
+  // Publish opens the Release tool on the file's org and versions.
+  await studio.getByTestId('salesforce-agent-script-publish').click();
+  const release = studio.getByTestId('studio-release-pane');
+  await expect(release.getByTestId('release-org')).toHaveText('studio (sandbox)');
+  const v7 = release.getByRole('list', { name: 'Versions' }).getByRole('listitem').filter({ hasText: 'v7' });
+  await expect(v7).toContainText('Inactive');
+  await expect(v7).toContainText('No eval');
+  await expect(release).toContainText('Uploads a new inactive version.');
+
+  // A token the host did not sign never reaches the CLI.
+  const runArgs = { projectId, path: toolbarFile, action: 'agent.publish' };
+  expect(await page.evaluate(args => window.cc.pluginApps.callRpc('salesforce', 'release.run', { ...args, token: 'forged.token' }), runArgs))
+    .toMatchObject({ ok: false, code: 'approval_invalid' });
+  expect(cliCalls('publish')).toHaveLength(0);
+
+  // Approve: the sheet shows the exact source revision, then one publish runs in the DX project.
+  const revision = createHash('sha256').update(readFileSync(join(home, 'dx', toolbarFile), 'utf8')).digest('hex');
+  await release.getByRole('button', { name: 'Publish…', exact: true }).click();
+  await expect.poll(sheetText).toContain(`Publish ${apiName}`);
+  const text = await sheetText();
+  expect(text).toContain('studio (sandbox)');
+  expect(text).toContain(revision.slice(0, 12));
+  // The eyebrow is styled uppercase, and innerText follows the CSS.
+  expect(text).toMatch(/asks for approval/i);
+  expect(await sheet('typeof window.cc + typeof require + typeof process')).toBe('undefinedundefinedundefined');
+  expect(await sheetWindow()).toMatchObject({ modal: true, parent: expect.any(String) });
+  await expect(release.getByRole('button', { name: 'Publishing…', exact: true })).toBeDisabled();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('release-publishing.png'));
+  const sheetPng = await app.electron.evaluate(async ({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && w.getTitle() === 'Zana approval');
+    return win ? (await win.webContents.capturePage()).toPNG().toString('base64') : '';
+  });
+  expect(sheetPng).not.toBe('');
+  writeFileSync(testInfo.outputPath('release-approval-sheet.png'), Buffer.from(sheetPng, 'base64'));
+  await press('approve');
+  await expect(release).toContainText(`Published inactive version of ${apiName}`);
+  await expect(release).toContainText('No changes since.');
+  await expect.poll(sheetWindow).toBeNull();
+  expect(cliCalls('publish')).toEqual([expect.objectContaining({ cwd: dx, args: expect.arrayContaining(['--api-name', apiName, '--target-org', 'studio']) })]);
+
+  // Cancel changes nothing; a second request while a sheet is open is refused as busy.
+  await release.getByRole('button', { name: 'Publish…', exact: true }).click();
+  await expect.poll(sheetText).toContain(`Publish ${apiName}`);
+  const binding = { action: 'agent.publish', target: '00D000000000001', targetLabel: 'studio (sandbox)', subject: apiName, revision };
+  expect(await page.evaluate(binding => window.cc.pluginApprovals.request({ pluginId: 'salesforce', binding, title: 'Second sheet' }), binding))
+    .toEqual({ approved: false, reason: 'busy' });
+  await press('cancel');
+  await expect(release).toContainText('Cancelled. Nothing changed.');
+  await expect.poll(sheetWindow).toBeNull();
+  expect(cliCalls('publish')).toHaveLength(1);
+
+  // A plugin that is not installed gets no sheet at all.
+  expect(await page.evaluate(binding => window.cc.pluginApprovals.request({ pluginId: 'not-installed', binding, title: 'Publish' }), binding))
+    .toEqual({ approved: false, reason: 'invalid' });
+  await expect.poll(sheetWindow).toBeNull();
+
+  // A signed token is single use, and only fits the binding it was signed for.
+  const prepared = await page.evaluate(args => window.cc.pluginApps.callRpc('salesforce', 'release.prepare', args), runArgs) as { ok: boolean; data: { request: unknown } };
+  expect(prepared).toMatchObject({ ok: true, data: { request: { binding } } });
+  const pending = page.evaluate(request => window.cc.pluginApprovals.request({ ...(request as object), pluginId: 'salesforce' } as never), prepared.data.request);
+  await expect.poll(sheetText).toContain(`Publish ${apiName}`);
+  await press('approve');
+  const signed = await pending as { approved: true; token: string };
+  expect(signed).toMatchObject({ approved: true, token: expect.any(String) });
+  const run = (extra: Record<string, unknown>) => page.evaluate(args => window.cc.pluginApps.callRpc('salesforce', 'release.run', args), { ...runArgs, token: signed.token, ...extra });
+  expect(await run({ action: 'agent.activate', versionNumber: 7 })).toMatchObject({ ok: false, code: 'approval_invalid' });
+  expect(cliCalls('activate')).toHaveLength(0);
+  expect(await run({})).toMatchObject({ ok: true, summary: `Published inactive version of ${apiName}` });
+  expect(cliCalls('publish')).toHaveLength(2);
+  expect(await run({})).toMatchObject({ ok: false, code: 'approval_invalid' });
+  expect(cliCalls('publish')).toHaveLength(2);
+
+  // View: v7 opens read-only from a temp retrieve and diffs against the draft; the project is not written.
+  const draft = readFileSync(join(home, 'dx', toolbarFile), 'utf8');
+  writeFileSync(join(home, 'sf-version-bundles'), JSON.stringify({
+    [`${apiName}_v8`]: { target: `${apiName}.v8`, content: 'not this one' },
+    [`${apiName}_v7`]: { target: `${apiName}.v7`, content: `${draft}# ONLY_IN_V7\n` },
+  }));
+  await v7.getByRole('button', { name: 'View v7', exact: true }).click();
+  const viewer = release.getByTestId('release-version-viewer');
+  await expect(viewer).toContainText(`${apiName}_v7 · Read-only`);
+  await expect(viewer.getByTestId('release-version-source')).toContainText('# ONLY_IN_V7');
+  await viewer.getByRole('button', { name: 'Diff with draft', exact: true }).click();
+  await expect(viewer.getByTestId('release-version-diff-stats')).toHaveText(/^0 added and [12] removed in your draft, against v7\.$/);
+  await expect(viewer.getByTestId('release-version-diff')).toContainText('−# ONLY_IN_V7');
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('release-version-diff.png'));
+  expect(readFileSync(join(home, 'dx', toolbarFile), 'utf8')).toBe(draft);
+  expect(existsSync(join(home, 'dx', 'agentforce'))).toBe(false);
+  await viewer.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(viewer).toHaveCount(0);
+
+  // Activate: the sheet names the version and says it is untested on this sandbox.
+  await v7.getByRole('button', { name: 'Activate…', exact: true }).click();
+  await expect.poll(sheetText).toContain(`Activate ${apiName} v7`);
+  expect(await sheetText()).toContain('No eval evidence for this version. Activating it is untested.');
+  await press('approve');
+  await expect(release).toContainText(`Activated ${apiName}`);
+  expect(cliCalls('activate')).toEqual([expect.objectContaining({ cwd: dx, args: expect.arrayContaining(['--api-name', apiName, '--target-org', 'studio', '--version', '7']) })]);
   expect(errors).toEqual([]);
 });
 

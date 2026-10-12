@@ -18,6 +18,7 @@ Handed to `export default function plugin(zcc)`.
 | `remoteEnvironment.provide` / `refresh` | Environment variables for sessions on non-primary machines (manifest allowlist `zcc.extra.remoteEnvironment`; held in memory, never stored) |
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata` |
 | `ui.requestInput` | Host prompt |
+| `ui.experimental_consumeApproval` | Verify and burn a host-signed approval token (see `approvals`) |
 | `status.needsConfiguration` | Degraded-until-configured |
 | `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
 | `sdk.system.defaultHost()` | Primary enrolled host ID, or `null` when none is configured |
@@ -91,7 +92,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Project shell
 
-- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry). Use `header: 'custom'` when the component supplies its own toolbar; render its `headerActions` prop there to retain the host split-pane controls without an extra title row.
+- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry). Use `header: 'custom'` when the component supplies its own toolbar; render its `headerActions` prop there to retain the host split-pane controls without an extra title row. Set `detachable: true` to offer **Open in new window** (desktop only): the tab then runs in its own OS window, one per project, and other windows show `detachedPlaceholder` (`PluginDetachedTabProps`: `focusWindow()`, `bringBack()`) or a host card instead of mounting it. Inside that window `useZccContext().surface` is `'plugin-view'` and no thread sits beside it; `useZccNavigate().openInWindow?(projectId, { tabId })` opens or focuses it. `useWindowTitle({ title, detail?, badge?, tone? })` titles that window while the calling component is mounted: `title` replaces the tab label, `detail` follows the project name, and `badge` (tone `neutral`, `warning` or `danger`) shows as a pill and leads the OS title, e.g. `Production · Agentforce · Help — Acme · prod`. It does nothing in the main or a project window, and the host trims and caps each part. Persist edits the window must not lose (drafts) and publish cross-window state over `zcc.realtime`.
 - `experimental_agentsView` — add a layout after Board, List and Flow in the global and project Agents view selectors. See [Adding an Agents view](#adding-an-agents-view).
 - `experimental_agentsBoardAction` — toolbar control on the Agents board (`projectId` is `null` on the cross-project Agents nav)
 - `experimental_agentCardAction` — right-click item on an Agents board card
@@ -136,6 +137,7 @@ Headless (no pixels), plus picker chrome:
 - `settings-define` — `zcc.settings.define`
 - `background` — `zcc.background.service` / `schedule`
 - `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
+- `approvals` — host-signed approvals (experimental): `experimental_requestApproval(pluginId, { binding, title, summary?, details?, confirmLabel?, tone? })` from `@zana-ai/zcc-plugin-sdk/app` has desktop main draw its own sandboxed sheet and sign the binding it showed; the server calls `zcc.ui.experimental_consumeApproval({ token, binding })` with a binding rebuilt from its own sources before acting. One plugin, one binding (`action`, `target`, `targetLabel`, `subject`, `revision?`, `confirmText?`), one use, five minutes. `confirmText` must be typed. Web, mobile and headless return `{ approved: false, reason: 'unavailable' }`. Agent-initiated actions keep `sdk.confirm`. Tests: `harness.approve(binding)`.
 - `contentScripts` — `contentScripts.register`
 - `experimental_providerIcon` — picker glyph for a provider id
 

@@ -5,7 +5,8 @@ export const AGENTFORCE_PLAYGROUND_ACTION = 'playground';
 export const AGENTFORCE_PREVIEW_ACTION = 'preview';
 
 /** Extra thread-panel params from chat cards and guardrail rows: a file, a line, a tool tab, a dependency. */
-export interface StudioFocus { path?: string; line?: number; apiName?: string; tool?: AgentScriptTool; readOnly?: boolean }
+/** `nonce` makes a repeated open of the same place move the editor again. */
+export interface StudioFocus { path?: string; line?: number; apiName?: string; tool?: AgentScriptTool; readOnly?: boolean; nonce?: number }
 
 const API_NAME = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)?$/;
 
@@ -21,11 +22,22 @@ export function parseAgentforcePanelFocus(params: unknown): StudioFocus {
   const tool = AGENT_SCRIPT_TOOLS.find(row => row.id === raw.tool);
   if (tool) focus.tool = tool.id;
   if (raw.readOnly === true || raw.readOnly === '1' || raw.readOnly === 'true') focus.readOnly = true;
+  if (Number.isSafeInteger(raw.nonce) && Number(raw.nonce) > 0) focus.nonce = Number(raw.nonce);
   return focus;
 }
 
 export const parseStudioFocus = parseAgentforcePanelFocus;
-export const focusKey = (focus: StudioFocus) => JSON.stringify([focus.path ?? '', focus.line ?? 0, focus.apiName ?? '', focus.tool ?? '', focus.readOnly ?? false]);
+
+/** A `::sf-preview{runId turn}` card opens Preview on one run; the turn is 1-based over agent replies. */
+export function parseAgentforcePanelRun(params: unknown): { runId: string; turn?: number } | null {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
+  const raw = params as Record<string, unknown>;
+  const runId = typeof raw.runId === 'string' ? raw.runId.trim() : '';
+  if (!runId || runId.length > 256) return null;
+  const turn = typeof raw.turn === 'number' ? raw.turn : typeof raw.turn === 'string' && /^\d{1,4}$/.test(raw.turn.trim()) ? Number(raw.turn) : NaN;
+  return Number.isInteger(turn) && turn >= 1 ? { runId, turn } : { runId };
+}
+export const focusKey = (focus: StudioFocus) => JSON.stringify([focus.path ?? '', focus.line ?? 0, focus.apiName ?? '', focus.tool ?? '', focus.readOnly ?? false, focus.nonce ?? 0]);
 
 export const parseAgentforcePanelPath = (params: unknown): string | undefined => parseAgentforcePanelFocus(params).path;
 export const parseAgentforcePanelApiName = (params: unknown): string | undefined => parseAgentforcePanelFocus(params).apiName;

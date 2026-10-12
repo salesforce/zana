@@ -11,6 +11,7 @@ import { OrgPicker } from './OrgPicker.js';
 import { SalesforceOrgsPanel } from './SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './SalesforceProjectTab.js';
 import app from '../../app.tsx';
+import { CONTEXT_ORIGIN } from './context-sync.js';
 
 const orgs = [
   {
@@ -148,7 +149,7 @@ describe('OrgPicker and Salesforce project tab', () => {
     expect(picker.title).toBe('dev (sandbox) · dev@example.com · CLI default');
     expect(picker.options[1].textContent).toContain('prod@example.com');
     await act(async () => { fireEvent.change(picker, { target: { value: 'prod' } }); });
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'context.select', { projectId: 'proj-1', selectedAlias: 'prod' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'context.select', { projectId: 'proj-1', selectedAlias: 'prod', origin: CONTEXT_ORIGIN });
     expect(onSelect).toHaveBeenCalledWith('prod');
   });
 
@@ -170,7 +171,7 @@ describe('OrgPicker and Salesforce project tab', () => {
     expect(el.querySelector('.sf-org-switcher-name')?.textContent).toBe('Select org');
     expect(setSettings).not.toHaveBeenCalled();
     await act(async () => { fireEvent.change(picker, { target: { value: 'dev' } }); });
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'context.select', { projectId: 'proj-1', selectedAlias: 'dev' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'context.select', { projectId: 'proj-1', selectedAlias: 'dev', origin: CONTEXT_ORIGIN });
   });
 
   it('matches a selected username to its aliased option', async () => {
@@ -227,7 +228,7 @@ describe('OrgPicker and Salesforce project tab', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs.login.start', { instance: 'production', alias: undefined });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs.login.start', { instance: 'production', alias: undefined, origin: CONTEXT_ORIGIN });
   });
 
   it('renders CLI orgs on the Salesforce project tab', async () => {
@@ -272,7 +273,7 @@ describe('OrgPicker and Salesforce project tab', () => {
     await act(async () => { fireEvent.change(el.querySelector('[aria-label="Search connected orgs"]')!, { target: { value: 'prod' } }); });
     expect(el.querySelectorAll('[data-testid^="salesforce-org:"]')).toHaveLength(1);
     await act(async () => { [...el.querySelectorAll('button')].find(button => button.textContent === 'Use shared default')!.click(); });
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'context.select', { projectId: 'proj-1', selectedAlias: '' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'context.select', { projectId: 'proj-1', selectedAlias: '', origin: CONTEXT_ORIGIN });
     expect(onSelect).toHaveBeenCalledWith('');
   });
 
@@ -290,7 +291,7 @@ describe('OrgPicker and Salesforce project tab', () => {
       fireEvent.change(el.querySelector('[aria-label="Org alias"]')!, { target: { value: ' new ' } });
     });
     await act(async () => { fireEvent.submit(el.querySelector('form')!); });
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs.login.start', { projectId: 'proj-1', instance: 'custom', instanceUrl: 'company.my.salesforce.com', alias: 'new' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs.login.start', { projectId: 'proj-1', instance: 'custom', instanceUrl: 'company.my.salesforce.com', alias: 'new', origin: CONTEXT_ORIGIN });
     expect(el.querySelector('form')).toBeNull();
     expect(el.querySelector('[role="status"]')?.textContent).toContain('selected it for this project');
     expect(onSelect).toHaveBeenCalledWith('prod');
@@ -383,7 +384,7 @@ describe('OrgPicker and Salesforce project tab', () => {
     expect(el.querySelector('dialog')).toBeNull();
     expect(el.querySelector('[role="status"]')?.textContent).toContain('Connected dev');
     expect(rpc.mock.calls.filter(([, method]) => method === 'orgs.login.start')).toHaveLength(1);
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs.login.start', { instance: 'sandbox', alias: undefined });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs.login.start', { instance: 'sandbox', alias: undefined, origin: CONTEXT_ORIGIN });
   });
 
   it('renders the Salesforce orgs sidebar panel', async () => {

@@ -93,6 +93,7 @@ import type {
   PluginThreadEventName,
   PluginThreadEventPayloads,
   PluginUi,
+  PluginApprovalBinding,
   PluginRpcError,
   PluginRpcValidationIssue,
   StandardSchemaV1,
@@ -341,6 +342,12 @@ export interface FakePluginBehaviorDrivers {
   submitInteraction(id: string, value: JsonValue): void;
   cancelInteraction(id: string): void;
   /**
+   * Stand in for a user approving the host's approval sheet: returns a token
+   * that `ui.experimental_consumeApproval` accepts once, for exactly this
+   * binding. Unknown, reused or mismatched tokens resolve false, as in ZCC.
+   */
+  approve(binding: PluginApprovalBinding): string;
+  /**
    * Apply a settings update the way the host's settings save does:
    * validate against the declared descriptors (`null` unsets), store, and
    * fire `onChange` listeners when effective values changed. Throws on
@@ -446,6 +453,12 @@ export interface FakePluginLifecycleControls {
    * PluginContextStaleError). Idempotent.
    */
   dispose(): Promise<void>;
+}
+
+/** Field-by-field identity of an approval binding, as the host signs it. */
+function approvalKey(binding: unknown): string {
+  const row = binding && typeof binding === "object" ? (binding as Record<string, unknown>) : {};
+  return JSON.stringify(["action", "target", "targetLabel", "subject", "revision", "confirmText"].map((key) => row[key] ?? ""));
 }
 
 /**
@@ -1575,9 +1588,21 @@ function createFakePluginHostInternal(
   };
 
   // --- ui ---
+  // Tokens from `approve`, keyed to the binding they cover; consumed once.
+  const approvals = new Map<string, string>();
+  let approvalSequence = 0;
   const mentionProviders: FakeMentionProviderRecord[] = [];
   const ui: PluginUi = {
     requestInput,
+    async experimental_consumeApproval(request) {
+      assertLive();
+      const token = request && typeof request === "object" ? request.token : undefined;
+      const approved = typeof token === "string" ? approvals.get(token) : undefined;
+      if (approved === undefined) return false;
+      if (approved !== approvalKey(request.binding)) return false;
+      approvals.delete(token as string);
+      return true;
+    },
     registerMentionProvider(provider) {
       assertLive();
       const id = provider?.id;
@@ -2201,6 +2226,11 @@ function createFakePluginHostInternal(
       clearTimeout(pending.timer);
       pendingInteractions.delete(id);
       pending.resolve({ outcome: "cancelled", reason: "user" });
+    },
+    approve(binding) {
+      const token = `fake-approval-${++approvalSequence}`;
+      approvals.set(token, approvalKey(binding));
+      return token;
     },
 
     async setSettings(values) {

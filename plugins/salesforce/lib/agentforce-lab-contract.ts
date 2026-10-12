@@ -29,6 +29,8 @@ export interface LabSnapshot {
   turns: LabTurn[];
   closed: boolean;
   failed: boolean;
+  /** Project-relative .agent file the run started from, when the caller named it. A label, never read. */
+  path?: string;
 }
 export const LAB_SCENARIOS: Array<{ name: string; scenario: LabScenario }> = [
   { name: 'Happy path', scenario: { persona: 'A cooperative customer who answers questions briefly.', goal: 'Understand what the agent can do and complete one supported request.', opening: 'Hi! What can you help me with?', criteria: 'Explain supported capabilities, ask for missing details, and give a clear next step without inventing a completed action.', maxTurns: 4 } },

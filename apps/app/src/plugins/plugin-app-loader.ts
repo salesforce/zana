@@ -291,6 +291,13 @@ export async function refreshPluginApps(): Promise<void> {
     getSettings: (pluginId) => product.pluginApps.getSettings(pluginId).then(toSdkSettingsSnapshot),
     setSettings: async (pluginId, values) => {
       await product.pluginApps.setSettings(pluginId, values);
+    },
+    // Desktop only: main draws the sheet and signs the token. Web and mobile
+    // have no signer, so the plugin's action fails closed there.
+    requestApproval: async (pluginId, request) => {
+      const approvals = typeof window === 'undefined' ? undefined : window.cc?.pluginApprovals;
+      if (!approvals) return { approved: false, reason: 'unavailable' };
+      return approvals.request({ ...request, pluginId });
     }
   };
   (globalThis as { __ZCC_PLUGIN_HOST__?: PluginHostBridge }).__ZCC_PLUGIN_HOST__ = host;

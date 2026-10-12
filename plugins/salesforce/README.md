@@ -198,7 +198,7 @@ the playground stays open. Editing after a run shows a stale-snapshot notice.
 playground also closes its local handles. Draft Preview has no documented remote
 DELETE contract: Salesforce owns remote expiry. Server handles expire after
 30 minutes of inactivity and do not survive a plugin restart. Export evidence
-before leaving; saved scenario suites and cross-run comparison are future work.
+before leaving; cross-run comparison is future work.
 
 The separate **Org preview** panel retains the CLI workflow for saved authoring
 bundles and published agents. Published agents always execute live actions and
@@ -225,7 +225,7 @@ The Studio adapts to the width of its container, so the same component serves th
 | Simulate | Salesforce Preview API, simulated actions | Planner trace per turn (up to 200 steps, previews clipped, sensitive paths redacted); steps link to source lines |
 | Live | CLI `agent preview` with real actions | Not available (the trace needs a Simulate session) |
 
-Open a step to reveal its line. **Save as scenario** appends the run to the agent's suite.
+Open a step to reveal its line. **Save as scenario** appends the run to the agent's suite and pins the case to that run (`pinned: {runId, at}`), so the table can say where a case came from.
 
 **Scenario suites** are repo files at `tests/<AgentName>.scenario.json` (written with the same confined, SHA-checked path rules as agent files):
 
@@ -238,6 +238,18 @@ Open a step to reveal its line. **Save as scenario** appends the run to the agen
 ```
 
 A suite holds 1-50 cases with unique ids and 1-8 utterances each. `expect` is optional: `contains` is deterministic, `topic` and `actions` need a Simulate trace, and `criteria` adds an advisory AI verdict. Results are stored per case (`pass`, `fail`, `inconclusive`) outside the repo and shown as chips in Preview and the explorer.
+
+**Tests** opens on the agent's case table; **Role-play** switches to the AI role-play lab. Each row shows what the case expects and its last result per column:
+
+| Column | Runs | Notes |
+| --- | --- | --- |
+| Simulate | The editor source, unsaved changes included, through Salesforce Preview | Stored per case; expand a row for expected vs actual and the agent's turns |
+| Org eval | `sf agent test run-eval` against the agent published on the org | Per case when the CLI reports cases, else totals. Multi-turn cases run their first turn only. A pass counts as Release eval evidence. Production and unknown orgs need **Allow reads…** (one `org.read` approval) first |
+| Proposal | An agent's pending proposal, in Simulate | Shown while a proposal is open. Results are not stored |
+
+**Import YAML / JSON** reads an `sf agent test` spec (`testCases`, `tests` or `utterances`, up to 256 KB) into the suite; ids that already exist get a `-2` suffix. **Write eval spec** writes `tests/<AgentName>.eval.yaml` from the suite.
+
+**Make this pass** starts a bounded fix loop on the failing Simulate cases and hands them to a linked thread. The agent proposes edits with `ui.command editor.proposeEdit` and checks each candidate with `sf_workbench suites.run` and the `loopId`. Each run spends one attempt (3 by default, at most 5), covers only the loop's cases, runs in Simulate and is not stored. The loop ends when they pass, the budget is spent, you press Stop, it idles for 30 minutes or a new loop starts on the same file. A loop never saves, publishes or runs an org eval. Save first: the agent starts from the file on disk.
 
 **Chat cards.** Agents can emit directives that render as live cards: `::sf-agent{path="..." line="42"}` (open the file at a line; optional `tool`, `apiName` and `readOnly` open a tool or a dependency), `::sf-preview{runId="..." turn="2"}` (open a run) and `::sf-operation{id="..."}` (live deploy/test status). Guardrail rows deep link into the same panel params.
 
@@ -352,7 +364,7 @@ The UI and automation share the same operations. `sf_workbench` with `action: ca
 
 File paths, including evaluation `specPath`, are relative to the registered project. For drafts in `agentforce-drafts`, compile, preview, evaluation and publication resolve that confined DX child as the CLI working directory. `zcc sf lint [path]` also works from the parent project. An explicit source path must identify that exact bundle; a different file with the same name is never substituted. Retrieved versioned sources must first be copied with `draft.create` before publication.
 
-Workbench controls use explicit, short-lived view IDs. List `ui.views`, submit `ui.command`, and poll `ui.result` for the renderer acknowledgement and committed `viewState`. Controls cover workbench tabs, Agentforce files/panels, Data queries/records, Apex forms/logs and deployment selections/history. Dirty source and changed query/form values refuse conflicting replacements. No active view means no claimed UI success. `query.execute` returns a server-owned result ID that the Data view can display with `query.show`.
+Workbench controls use explicit, short-lived view IDs. List `ui.views`, submit `ui.command`, and poll `ui.result` for the renderer acknowledgement and committed `viewState`. `ui.views` reports each view's `window`, `visible` and `focused`, and lists the window the user is focused on first; with the Studio in its own window, prefer that view. Controls cover workbench tabs, Agentforce files/panels, Data queries/records, Apex forms/logs and deployment selections/history. Dirty source and changed query/form values refuse conflicting replacements. No active view means no claimed UI success. `query.execute` returns a server-owned result ID that the Data view can display with `query.show`.
 
 
 | Workflow | Agent / CLI operation | Policy |
@@ -367,7 +379,7 @@ Workbench controls use explicit, short-lived view IDs. List `ui.views`, submit `
 | LWC source and Jest | `sf_lwc` | Confined local project |
 | Metadata preview, validation, retrieve, deploy, job results | `sf_workbench metadata.list`, `operations.*` | Explicit components/tests and existing write confirmation |
 | Show a view/file/query/record/log/job, manage Agentforce tools | `sf_workbench ui.views`, `ui.command`, `ui.result` | Explicit mounted view; project and org must match; acknowledgement required |
-| What the user is viewing, review comments, suites, planner trace | `sf_workbench view.state`, `comments.list/add/resolve`, `suites.list`, `preview.trace` | Local reads; `preview.trace` reads the org; shared view only |
+| What the user is viewing, review comments, suites, fix loops, planner trace | `sf_workbench view.state`, `comments.list/add/resolve`, `suites.list`, `suites.run`, `loop.status`, `preview.trace` | Local reads; `suites.run` and `preview.trace` read the org; a `loopId` spends one attempt of a loop the user started; shared view only |
 
 Studio-specific `ui.command` verbs (Agentforce view): `editor.proposeEdit` (`path`, `expectedSha256`, `content` or `edits`, `summary`; the user accepts hunks and the result reports `accepted`, `rejected` or `partial`), `preview.start` and `preview.send` (`text`, `engine`: start or send in the selected engine), `trace.focus` (`runId`, `turn`, `step`), `graph.focus` (`node`) and `layout.set` (`compact`). `ui.result` accepts `waitMs` (up to 20 000) to wait for the acknowledgement instead of polling; proposals report their outcome through the same result once resolved.
 

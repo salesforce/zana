@@ -84,7 +84,10 @@ export function diffRuns(a: RunRecord, b: RunRecord): RunDiffRow[] {
 }
 
 let caseCounter = 0;
-/** Turns a finished conversation into a saved scenario: user turns replayed, observed routing becomes the expectation. */
+/**
+ * Turns a finished conversation into a saved scenario: user turns replayed, observed routing becomes the expectation.
+ * The case remembers the run it was pinned from.
+ */
 export function caseFromRun(run: RunRecord, name: string, criteria?: string): ScenarioCase {
   const utterances = run.turns.filter(t => t.role === 'user').map(t => t.text.slice(0, 4000)).slice(0, 8);
   const traces = run.turns.filter(t => t.role === 'agent' && t.planId).map(t => run.traces[t.planId!]);
@@ -93,7 +96,11 @@ export function caseFromRun(run: RunRecord, name: string, criteria?: string): Sc
   const trimmed = name.trim().slice(0, 200) || 'Saved conversation';
   const id = `${trimmed.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'case'}-${(++caseCounter).toString(36)}${Date.now().toString(36).slice(-4)}`;
   const note = criteria?.trim();
-  return { id, name: trimmed, utterances, expect: { ...(topic ? { topic } : {}), ...(actions.length ? { actions } : {}), ...(note ? { criteria: note.slice(0, 4000) } : {}) } };
+  return {
+    id, name: trimmed, utterances,
+    expect: { ...(topic ? { topic } : {}), ...(actions.length ? { actions } : {}), ...(note ? { criteria: note.slice(0, 4000) } : {}) },
+    pinned: { runId: run.runId.slice(0, 80), at: run.at }
+  };
 }
 
 export type ChipState = 'pass' | 'fail' | 'inconclusive' | 'unrun';

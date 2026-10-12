@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { listComposerCustomizations, listCreateProjectActions, listHomepageSections, listNavPanels, listPendingInteractionSlots, listProjectTabs } from './plugin-slots.js';
 import { pluginAppIsLoadable, reconcilePluginApps, refreshPluginApps, usePluginAppModules } from './plugin-app-loader.js';
@@ -368,6 +368,26 @@ describe('server plugin app loader', () => {
       expect(usePluginAppModules.getState().modules).toEqual([]);
       expect(usePluginAppModules.getState().runtimeLoadedIds.size).toBe(0);
     } finally {
+      product.pluginApps.list = originalList;
+    }
+  });
+
+  it('routes approval requests to desktop main and fails closed elsewhere', async () => {
+    const originalList = product.pluginApps.list;
+    product.pluginApps.list = async () => [];
+    const request = { binding: { action: 'agent.publish', target: 'org', targetLabel: 'dev', subject: 'Help' }, title: 'Publish' };
+    try {
+      await refreshPluginApps();
+      const host = (globalThis as { __ZCC_PLUGIN_HOST__?: { requestApproval?: (id: string, req: typeof request) => Promise<unknown> } }).__ZCC_PLUGIN_HOST__;
+      await expect(host?.requestApproval?.('salesforce', request)).resolves.toEqual({ approved: false, reason: 'unavailable' });
+      vi.stubGlobal('window', {});
+      await expect(host?.requestApproval?.('salesforce', request)).resolves.toEqual({ approved: false, reason: 'unavailable' });
+      const approve = vi.fn(async () => ({ approved: true, token: 't', expiresAt: 1 }));
+      vi.stubGlobal('window', { cc: { pluginApprovals: { request: approve } } });
+      await expect(host?.requestApproval?.('salesforce', request)).resolves.toEqual({ approved: true, token: 't', expiresAt: 1 });
+      expect(approve).toHaveBeenCalledWith({ ...request, pluginId: 'salesforce' });
+    } finally {
+      vi.unstubAllGlobals();
       product.pluginApps.list = originalList;
     }
   });

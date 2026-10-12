@@ -9,6 +9,7 @@ import { GuardrailReview } from './src/app/GuardrailReview.js';
 import { OrgPicker } from './src/app/OrgPicker.js';
 import { SalesforceOrgsPanel } from './src/app/SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './src/app/SalesforceProjectTab.js';
+import { SalesforceStudioDetachedCard } from './src/app/SalesforceStudioDetachedCard.js';
 import { openAgentforcePlayground, openAgentforcePreview } from './src/app/agentforce-panel-params.js';
 
 function hostReact() {
@@ -164,6 +165,7 @@ export default definePluginApp((app) => {
     extensions: ['agent', 'afscript'],
     component: AgentFileOpener
   });
+  // The Studio can run in its own window; the main-window tab then shows its status.
   app.slots.projectTab({
     id: 'salesforce',
     label: 'Salesforce',
@@ -171,7 +173,9 @@ export default definePluginApp((app) => {
     order: 80,
     global: false,
     header: 'custom',
-    component: SalesforceProjectTab
+    component: SalesforceProjectTab,
+    detachable: true,
+    detachedPlaceholder: SalesforceStudioDetachedCard
   });
   app.slots.threadPanelAction({
     id: 'playground',

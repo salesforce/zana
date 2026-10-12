@@ -74,6 +74,15 @@ describe('plugin guide surfaces', () => {
     expect(composer?.bullets.some((line) => line.includes('experimental_setLaunchPatch'))).toBe(true);
   });
 
+  it('documents detachable project tabs and their placeholder', () => {
+    const surface = SURFACES.find((row) => row.id === 'projectTab')!;
+    expect(surface.apiSymbols).toContain('PluginDetachedTabProps');
+    const reference = copyPluginSurfaceAgentReference(surface);
+    for (const term of ['detachable: true', 'detachedPlaceholder', 'bringBack()', 'plugin-view', 'useWindowTitle']) expect(reference).toContain(term);
+    const sdkReference = readFileSync(join(repoRoot, 'docs/extensions-sdk-reference.md'), 'utf8');
+    for (const term of ['detachable: true', 'PluginDetachedTabProps', 'openInWindow', "'plugin-view'", 'useWindowTitle']) expect(sdkReference).toContain(term);
+  });
+
   it('documents unlisted navPanels and footer toPluginPanel', () => {
     const nav = SURFACES.find((row) => row.id === 'navPanel');
     expect(nav?.bullets.some((line) => line.includes('unlisted'))).toBe(true);

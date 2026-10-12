@@ -43,9 +43,11 @@ export const WORKBENCH_ACTIONS = {
   'comments.add': ['studio.comments.add', 'local', 'Add a review comment: path, line, endLine, body'],
   'comments.resolve': ['studio.comments.resolve', 'local', 'Resolve a review comment: id, note'],
   'suites.list': ['studio.suites.list', 'local', 'List scenario suites and last results'],
+  'suites.run': ['studio.suites.run', 'org', 'Run a scenario suite in Simulate: agentPath; optional source (a candidate, else the saved file), caseIds, loopId. With loopId, each run spends one attempt of a fix loop the user started, runs only its cases and is not stored; follow the returned next'],
+  'loop.status': ['studio.loop.get', 'local', 'Read a fix loop the user started in Tests: loopId (or agentPath for the newest)'],
   'preview.trace': ['agentLab.trace', 'org', 'Read the planner trace of a Studio turn: id, planId'],
-  'ui.views': ['control.views', 'local', 'List active workbench surfaces and their view IDs'],
-  'ui.command': ['control.command', 'local', 'Control a specific view: viewId, command, input; poll ui.result for acknowledgement'],
+  'ui.views': ['control.views', 'local', 'List active workbench surfaces and their view IDs, the focused window first; each view names its window (main, project-window, plugin-view for the Studio window) and whether it is visible and focused'],
+  'ui.command': ['control.command', 'local', 'Control a specific view: viewId, command, input; poll ui.result for acknowledgement. A reveal (file.open, editor.reveal, trace.focus, graph.focus) can complete with viewState.held "typing" or "paused": the Studio holds it for the user, so do not repeat it'],
   'ui.result': ['control.result', 'local', 'Check UI acknowledgement: commandId'],
 } as const;
 export type WorkbenchAction = keyof typeof WORKBENCH_ACTIONS;

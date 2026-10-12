@@ -142,6 +142,16 @@ ${STUDIO_TOKENS}.sf-as { container-type: inline-size; background:var(--sf-surfac
 .sf-btn-small:hover:not(:disabled) { border-color:var(--sf-accent); }
 .sf-btn-small:disabled { opacity:.5; cursor:default; }
 .sf-problems-empty { margin:0; padding:12px 10px; font-size:12px; color:var(--sf-muted); }
+.sf-compile { margin:0; padding:6px 10px; font-size:12px; border-bottom:1px solid var(--sf-border); white-space:pre-wrap; overflow-wrap:anywhere; }
+.sf-compile.is-running { color:var(--sf-muted); } .sf-compile.is-passed { color:var(--sf-success); } .sf-compile.is-failed { color:var(--sf-danger); }
+.sf-follow-chip { display:inline-flex; align-items:center; gap:6px; max-width:260px; height:26px; padding:0 8px; border:1px solid var(--sf-border); border-radius:13px; background:var(--sf-soft); color:var(--sf-text); font-size:12px; cursor:pointer; }
+.sf-follow-chip:hover { border-color:var(--sf-accent); }
+.sf-follow-chip.is-paused { color:var(--sf-warn); }
+.sf-follow-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.sf-follow-action { display:inline-flex; align-items:center; gap:3px; color:var(--sf-muted); flex:none; }
+.sf-follow-toast { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--sf-border); background:var(--sf-elevated); color:var(--sf-text); font-size:12px; }
+.sf-follow-toast > span:first-child { flex:1; min-width:0; overflow-wrap:anywhere; }
+.sf-follow-why { color:var(--sf-muted); }
 .sf-problems-list { list-style:none; margin:0; padding:0; }
 .sf-problem { display:grid; grid-template-columns:16px minmax(0,1fr) auto; gap:8px; align-items:baseline; width:100%; border:0; background:transparent; color:var(--sf-text); font:inherit; font-size:12px; text-align:left; padding:5px 10px; cursor:pointer; }
 .sf-problem:hover { background:color-mix(in srgb,var(--sf-accent) 8%,transparent); }

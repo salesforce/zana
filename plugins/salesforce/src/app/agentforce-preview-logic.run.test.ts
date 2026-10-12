@@ -51,7 +51,7 @@ describe('run helpers', () => {
   });
   it('builds a scenario case from a run', () => {
     const c = caseFromRun(run('a'), ' My Case! ', ' be nice ');
-    expect(c).toMatchObject({ name: 'My Case!', utterances: ['hello'], expect: { topic: 'Orders', actions: ['GetOrder'], criteria: 'be nice' } });
+    expect(c).toMatchObject({ name: 'My Case!', utterances: ['hello'], expect: { topic: 'Orders', actions: ['GetOrder'], criteria: 'be nice' }, pinned: { runId: 'a', at: 1 } });
     expect(c.id).toMatch(/^my-case-/);
     const bare = caseFromRun({ ...run('a'), traces: {} }, '   ');
     expect(bare.name).toBe('Saved conversation');

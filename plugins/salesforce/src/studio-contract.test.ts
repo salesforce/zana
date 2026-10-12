@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isProposalOutcome, isProposeEditInput, isStudioComment, isStudioDiagnostic, isStudioDiagnostics, isStudioViewState,
-  STUDIO_CHANGED_CHANNEL, STUDIO_RPC, UI_WAKE_CHANNEL
+  CONTEXT_CHANGED_CHANNEL, STUDIO_CHANGED_CHANNEL, STUDIO_RPC, UI_WAKE_CHANNEL, contextOrigin
 } from '../lib/studio-contract.js';
 
 const sha = 'a'.repeat(64);
@@ -15,6 +15,11 @@ describe('studio contract', () => {
     expect(STUDIO_RPC.outcome).toBe('control.outcome');
     expect(UI_WAKE_CHANNEL).toBe('sf.ui.wake');
     expect(STUDIO_CHANGED_CHANNEL).toBe('sf.studio.changed');
+    expect(CONTEXT_CHANGED_CHANNEL).toBe('context.changed');
+  });
+  it('accepts only a short, plain window origin', () => {
+    expect(contextOrigin({ origin: 'w_1-a' })).toBe('w_1-a');
+    for (const bad of [null, 'w1', {}, { origin: '' }, { origin: 'a'.repeat(65) }, { origin: 'a b' }, { origin: 'a/b' }, { origin: 7 }]) expect(contextOrigin(bad)).toBeNull();
   });
   it('validates diagnostics and bounds the list', () => {
     expect(isStudioDiagnostic({ ...diag, code: 'x' })).toBe(true);

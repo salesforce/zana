@@ -11,7 +11,9 @@ import type {
   DesktopBrowserScopedOpenTabRequest,
   DesktopBrowserSnapshot,
   DesktopBrowserState,
-  DesktopBrowserViewBounds
+  DesktopBrowserViewBounds,
+  PluginApprovalSheetRequest,
+  PluginViewTarget
 } from '@zana-ai/zcc-desktop-contract';
 import {
   parseDesktopBrowserAutomationOpenRequest,
@@ -1313,7 +1315,26 @@ const api: CcApi = {
   },
   windows: {
     openProject: (projectId: string) =>
-      ipcRenderer.invoke(IPC.windows.openProject, projectId)
+      ipcRenderer.invoke(IPC.windows.openProject, projectId),
+    openPluginView: (target: PluginViewTarget) =>
+      ipcRenderer.invoke(IPC.windows.openPluginView, target),
+    closePluginView: (target: PluginViewTarget) =>
+      ipcRenderer.invoke(IPC.windows.closePluginView, target),
+    listPluginViews: () => ipcRenderer.invoke(IPC.windows.listPluginViews),
+    onPluginViewsChanged: (cb: (views: PluginViewTarget[]) => void) => {
+      const handler = (_e: unknown, views: PluginViewTarget[]) => cb(views);
+      ipcRenderer.on(IPC.windows.onPluginViewsChanged, handler);
+      return () => ipcRenderer.off(IPC.windows.onPluginViewsChanged, handler);
+    },
+    showInMain: (path: string) => ipcRenderer.invoke(IPC.windows.showInMain, path),
+    onNavigate: (cb: (path: string) => void) => {
+      const handler = (_e: unknown, path: string) => cb(path);
+      ipcRenderer.on(IPC.windows.onNavigate, handler);
+      return () => ipcRenderer.off(IPC.windows.onNavigate, handler);
+    }
+  },
+  pluginApprovals: {
+    request: (input: PluginApprovalSheetRequest) => ipcRenderer.invoke(IPC.pluginApprovals.request, input)
   },
   updates: {
     check: () => ipcRenderer.invoke(IPC.updates.check),

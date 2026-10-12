@@ -87,9 +87,11 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'Receives `pluginId` and `projectId`.',
           'The project topbar labels the tab; fill the slot, not the list pane.',
           '`header: "custom"` removes that title row; render the supplied `headerActions` in your toolbar to retain split-pane controls.',
-          '`global: false` hides the global sidebar entry.'
+          '`global: false` hides the global sidebar entry.',
+          '`detachable: true` adds Open in new window (desktop). One window per project owns the tab; other windows show `detachedPlaceholder` (`focusWindow()`, `bringBack()`) or a host card. In that window `useZccContext().surface` is `"plugin-view"`.',
+          '`useWindowTitle({ title, detail, badge, tone })` titles that window while mounted, e.g. a `danger` "Production" badge; elsewhere it does nothing.'
         ],
-        apiSymbols: ['PluginAppSlots.projectTab', 'PluginProjectTabRegistration'],
+        apiSymbols: ['PluginAppSlots.projectTab', 'PluginProjectTabRegistration', 'PluginDetachedTabProps', 'useWindowTitle', 'ZccWindowTitle'],
         firstParty: ['Library', 'Salesforce']
       },
       {
@@ -309,7 +311,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     blurb: 'APIs with no pixels — skills, CLI, MCP, workers.',
     sections: [
       { title: 'Agent capabilities', surfaceIds: ['skills', 'cli', 'mcp'] },
-      { title: 'Host services', surfaceIds: ['settings-define', 'background', 'desktop-browsers'] },
+      { title: 'Host services', surfaceIds: ['settings-define', 'background', 'desktop-browsers', 'approvals'] },
       { title: 'Runtime', surfaceIds: ['contentScripts', 'experimental_providerIcon'] }
     ],
     surfaces: [
@@ -384,6 +386,20 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'PluginSdkDesktopBrowserScope'
         ],
         firstParty: ['Browser Automation'],
+        experimental: true
+      },
+      {
+        id: 'approvals',
+        title: 'Host-signed approvals',
+        tagline: 'A confirmation your own code cannot click.',
+        summary: 'Desktop main draws the sheet for a risky button and signs exactly what it showed.',
+        bullets: [
+          '`experimental_requestApproval` in the app; `zcc.ui.experimental_consumeApproval` on the server before acting.',
+          'A token covers one plugin, action, target, subject and revision, once, for five minutes.',
+          '`confirmText` makes the person type it first. Web, mobile and headless return `unavailable`: fail closed.'
+        ],
+        apiSymbols: ['PluginUi.experimental_consumeApproval', 'PluginApprovalBinding', 'PluginApprovalRequest'],
+        firstParty: ['Salesforce'],
         experimental: true
       },
       {

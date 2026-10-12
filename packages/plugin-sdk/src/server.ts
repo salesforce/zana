@@ -940,6 +940,8 @@ export interface PluginAgents {
 }
 
 import type { JsonObject, JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PluginApprovalBinding } from './approval-contract.js';
+export type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult } from './approval-contract.js';
 import type { PluginServices } from './plugin-services.js';
 import type {
   PluginProviderExtensionKindDeclaration,
@@ -1032,6 +1034,14 @@ export interface PluginUi {
     request: PluginInteractionRequest,
     options?: { signal?: AbortSignal }
   ): Promise<PluginInteractionResult>;
+  /**
+   * Consume a token the app obtained with `experimental_requestApproval`.
+   * Pass the binding rebuilt from your own sources: it resolves true once,
+   * for this plugin, within five minutes, when every field matches what the
+   * user approved. Anything else, including a host without a desktop signer,
+   * resolves false.
+   */
+  experimental_consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
   registerMentionProvider(registration: PluginMentionProviderRegistration): void;
   registerProjectTabAvailability(registration: PluginProjectTabAvailabilityRegistration): void;
   readonly interactions: PluginInteractions;

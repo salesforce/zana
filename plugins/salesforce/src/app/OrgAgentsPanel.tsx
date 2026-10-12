@@ -3,6 +3,7 @@ import { Bot, Download, Plus, RefreshCw, Search } from 'lucide-react';
 import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import type { OrgAgentCatalog, OrgAgentRetrieval, RetrievedOrgAgent } from '../../lib/org-agent-contract.js';
 import { EmptyState, LoadingState, SalesforceState } from './components/SalesforceState.js';
+import { useContextChangeRelay } from './context-sync.js';
 
 export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOpen, onNew, localFiles = [], onLocalOpen, onPublish, focus, onFocusHandled }: {
   pluginId: string; projectId?: string; visible: boolean; editorReady: boolean;
@@ -16,6 +17,7 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
   /** Called once a request is taken, so the owner can drop it and a remounted panel never replays it. */
   onFocusHandled?(seq: number): void;
 }) {
+  useContextChangeRelay();
   const [catalog, setCatalog] = useState<OrgAgentCatalog | null>(null);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Record<string, string>>({});

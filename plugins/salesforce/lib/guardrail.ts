@@ -57,6 +57,7 @@ export function reusesSession(kind: EnvelopeKind): boolean {
   return (
     kind !== 'agent.publish' &&
     kind !== 'agent.activate' &&
+    kind !== 'agent.deactivate' &&
     kind !== 'agent.preview.live' &&
     kind !== 'org.write'
   );
@@ -92,6 +93,8 @@ export function envelopeTitle(kind: EnvelopeKind): string {
       return 'Confirm Agentforce publish';
     case 'agent.activate':
       return 'Confirm Agentforce activate';
+    case 'agent.deactivate':
+      return 'Confirm Agentforce deactivate';
     case 'agent.preview.live':
       return 'Confirm Agentforce live preview';
     default:

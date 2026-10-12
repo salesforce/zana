@@ -28,6 +28,7 @@ describe('Agentforce rehearsal UI', () => {
     fireEvent.click(screen.getByRole('button', { name: /Start conversation/ }));
     await screen.findByText('Conversation ready');
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.start', expect.objectContaining({ source: props.source, engine: 'preview', projectId: 'p1' }));
+    expect(rpc.mock.calls.find(c => c[1] === 'agentLab.start')![2]).not.toHaveProperty('threadId');
     fireEvent.change(screen.getByLabelText('Rehearsal message'), { target: { value: 'Find my order' } });
     fireEvent.submit(screen.getByLabelText('Rehearsal message').closest('form')!);
     await screen.findByText('Let me help with your order.');
@@ -46,7 +47,7 @@ describe('Agentforce rehearsal UI', () => {
     expect(screen.queryByRole('region', { name: 'AI evaluation' })).toBeNull();
   });
   it('runs bounded AI role-play, retains the scenario and labels the assessment as advisory', async () => {
-    render(<AgentforceLabPanel {...props} mode="test" />);
+    render(<AgentforceLabPanel {...props} threadId="owner" mode="test" />);
     fireEvent.click(screen.getByRole('button', { name: /AI rehearsal/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Missing details' }));
     fireEvent.change(screen.getByLabelText('Customer persona'), { target: { value: 'A busy buyer' } });
@@ -59,7 +60,7 @@ describe('Agentforce rehearsal UI', () => {
     await screen.findByText('Run complete');
     expect(rpc.mock.calls.filter(c => c[1] === 'agentLab.send')).toHaveLength(2);
     expect(rpc.mock.calls.filter(c => c[1] === 'agentLab.next')).toHaveLength(1);
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.start', expect.objectContaining({ model: 'CustomModel', engine: 'rehearsal', scenario: { persona: 'A busy buyer', goal: 'Find an order', opening: 'Where is my order?', criteria: 'Ask for the order ID', maxTurns: 2 } }));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.start', expect.objectContaining({ model: 'CustomModel', engine: 'rehearsal', threadId: 'owner', scenario: { persona: 'A busy buyer', goal: 'Find an order', opening: 'Where is my order?', criteria: 'Ask for the order ID', maxTurns: 2 } }));
     expect(screen.getByText('Criteria met')).toBeTruthy();
     expect(screen.getByText('Advisory result · not release approval')).toBeTruthy();
   });

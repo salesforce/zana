@@ -2,7 +2,7 @@
 import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { useSalesforceControl } from './useSalesforceControl.js';
-import { AgentScriptPanel } from './AgentScriptPanel.js';
+import { AgentScriptPanel, AgentforcePlaygroundPanel } from './AgentScriptPanel.js';
 import { SalesforceProjectTab } from './SalesforceProjectTab.js';
 import { SoqlExplorerPanel } from './soql/SoqlExplorerPanel.js';
 import { ApexPanel } from './panels/WorkbenchPanels.js';
@@ -39,8 +39,8 @@ beforeEach(() => {
   (globalThis as any).__ZCC_PLUGIN_RUNTIME__ = { useZccContext: () => ({ projectId: 'p', threadId: 'thread' }), useSettings: () => ({ values: {}, isLoading: false }), useZccNavigate: () => ({ toCompose: vi.fn(), openThreadPanel: vi.fn() }) };
 });
 afterEach(() => { cleanup(); delete (globalThis as any).__ZCC_PLUGIN_HOST__; delete (globalThis as any).__ZCC_PLUGIN_RUNTIME__; });
-async function execute(surface: string, command: string, input: Record<string, unknown> = {}) {
-  let result: unknown; await act(async () => { result = await controls.get(surface)!.execute({ id: 'cmd', command: command as any, input }); }); return result;
+async function execute(surface: string, command: string, input: Record<string, unknown> = {}, extra: { user?: true } = {}) {
+  let result: unknown; await act(async () => { result = await controls.get(surface)!.execute({ id: 'cmd', command: command as any, input, ...extra }); }); return result;
 }
 it('controls the real editor tool state and refuses invalid, missing and dirty opens', async () => {
   const mounted = render(<AgentScriptPanel {...props} />);
@@ -60,11 +60,35 @@ it('controls the real editor tool state and refuses invalid, missing and dirty o
   await act(async () => window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, origin: location.origin, data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty', dirty: true } })));
   await expect(execute('agentforce', 'file.open', { path: 'Help.agent' })).rejects.toThrow('Save the current');
 });
+it('scopes a side panel to the thread that owns it, else the focused thread', async () => {
+  const owned = render(<AgentforcePlaygroundPanel pluginId="salesforce" projectId="p" threadId="owner" />);
+  await waitFor(() => expect(controls.get('agentforce')?.threadId).toBe('owner'));
+  owned.unmount(); controls.clear();
+  render(<AgentforcePlaygroundPanel pluginId="salesforce" projectId="p" />);
+  await waitFor(() => expect(controls.get('agentforce')?.threadId).toBe('thread'));
+});
 it('switches Salesforce views by name and validates the destination', async () => {
   render(<SalesforceProjectTab {...props} />);
   await execute('workbench', 'state');
   await execute('workbench', 'view.open', { view: 'deployments' }); expect(controls.get('workbench')!.state().view).toBe('deployments');
   await expect(execute('workbench', 'view.open', { view: 'unknown' })).rejects.toThrow('Choose');
+});
+it('opens an agent sent from a card in another window, and only for the person\'s own command', async () => {
+  render(<SalesforceProjectTab {...props} />);
+  await expect(execute('workbench', 'view.open', { view: 'agentforce', path: 'Help.agent' })).rejects.toThrow('file.open');
+  expect(controls.get('workbench')!.state().view).toBe('overview');
+  await expect(execute('workbench', 'view.open', { view: 'data', path: 'Help.agent' }, { user: true })).rejects.toThrow('agent path');
+  await expect(execute('workbench', 'view.open', { view: 'agentforce', line: 3 }, { user: true })).rejects.toThrow('agent path');
+  expect(controls.has('agentforce')).toBe(false);
+  await execute('workbench', 'view.open', { view: 'agentforce', path: 'Help.agent', line: 2 }, { user: true });
+  expect(controls.get('workbench')!.state().view).toBe('agentforce');
+  await waitFor(() => expect(controls.get('agentforce')?.state().path).toBe('Help.agent'));
+  // Leaving Agents drops the routed file, so the next visit restores the person's own selection.
+  await execute('workbench', 'view.open', { view: 'data' });
+  controls.delete('agentforce');
+  await execute('workbench', 'view.open', { view: 'agentforce' });
+  await waitFor(() => expect(controls.has('agentforce')).toBe(true));
+  expect(controls.get('agentforce')!.state().path).toBeNull();
 });
 it('controls query, schema, filters and trusted results without overwriting changed text', async () => {
   render(<SoqlExplorerPanel {...props} />);

@@ -304,6 +304,8 @@ function AppShell() {
       off();
     };
   }, []);
+  // A plugin view window has no shell of its own; main routes its links here.
+  useEffect(() => product.windows.onNavigate((path) => void navigateRef.current(path)), []);
   // In a per-project window, the project this window is locked to (else null).
   // Drives scoped rendering of the Agents board (and is the anchor the other
   // panels filter against via getScopedProjectId).

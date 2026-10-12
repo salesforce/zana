@@ -171,6 +171,36 @@ export type HostBootstrapEvent =
 
 export interface ProjectFileScope { projectId: string; hostId: string; environmentId?: string }
 
+/** What a plugin asks main to approve (the SDK's `PluginApprovalRequest`, plus who asks). */
+export interface PluginApprovalSheetRequest {
+  pluginId: string;
+  binding: {
+    action: string;
+    target: string;
+    targetLabel: string;
+    subject: string;
+    revision?: string;
+    confirmText?: string;
+  };
+  title: string;
+  summary?: string;
+  details?: string[];
+  confirmLabel?: string;
+  tone?: 'default' | 'danger';
+}
+
+export type PluginApprovalSheetResult =
+  | { approved: true; token: string; expiresAt: number }
+  | { approved: false; reason: 'cancelled' | 'unavailable' | 'busy' | 'invalid' };
+
+/** One plugin project tab shown in its own window (`windows.openPluginView`). */
+export interface PluginViewTarget {
+  pluginId: string;
+  /** The tab's slot id (`app.slots.projectTab({ id })`). */
+  tabId: string;
+  projectId: string;
+}
+
 export interface CcApi {
   /** Isolated in-app browser overlay. Present only in the desktop preload. */
   browser: DesktopBrowserApi;
@@ -1322,7 +1352,7 @@ export interface CcApi {
     /** Quit the whole app (footer power button). */
     quit(): Promise<void>;
   };
-  /** Multi-window control surface (open a window scoped to one project). */
+  /** Multi-window control surface (project windows and plugin view windows). */
   windows: {
     /**
      * Open (or focus) a window locked to a single project — the renderer-side
@@ -1330,6 +1360,31 @@ export interface CcApi {
      * an existing window for the same project. Resolves `true` once handled.
      */
     openProject(projectId: string): Promise<boolean>;
+    /**
+     * Open (or focus) a window showing one plugin project tab. Main checks the
+     * project and plugin; the window's renderer checks the tab opted in with
+     * `detachable`. Resolves `false` when main refuses.
+     */
+    openPluginView(target: PluginViewTarget): Promise<boolean>;
+    /** Close the window showing this tab, if one is open. */
+    closePluginView(target: PluginViewTarget): Promise<boolean>;
+    /** The plugin view windows open now. */
+    listPluginViews(): Promise<PluginViewTarget[]>;
+    /** Pushed to every window when a plugin view window opens or closes. */
+    onPluginViewsChanged(cb: (views: PluginViewTarget[]) => void): () => void;
+    /** Route the main window to a relative in-app path and bring it forward. */
+    showInMain(path: string): Promise<boolean>;
+    /** Main window only: main asks the renderer to navigate to `path`. */
+    onNavigate(cb: (path: string) => void): () => void;
+  };
+  /** Approval sheets main draws for a plugin's own buttons. */
+  pluginApprovals: {
+    /**
+     * Show the sheet attached to the calling window and resolve with a token
+     * signed for `request.binding`, or the reason there is none. Main checks
+     * the plugin is running and refuses a second sheet on the same window.
+     */
+    request(input: PluginApprovalSheetRequest): Promise<PluginApprovalSheetResult>;
   };
   skills: {
     list(projectPath?: string): Promise<SkillEntry[]>;

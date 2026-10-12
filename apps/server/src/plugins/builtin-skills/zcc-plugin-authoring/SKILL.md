@@ -114,6 +114,8 @@ this list fails CI):
   `lastAssistantText` (idle), and `error` (failed).
 - `zcc.ui` — `ui.requestInput({ threadId, rendererId, title, payload, timeoutMs? })`.
   Pair with `pendingInteraction` so the thread workbench can render the form.
+  `ui.experimental_consumeApproval({ token, binding })` checks a host-signed
+  approval (see [Host-signed approvals](#host-signed-approvals)) and burns it.
   `ui.registerMentionProvider({ id, label, triggers?, search(ctx), resolve(itemId) })`
   feeds `@` / `#` typeahead. `search` receives `{ query, trigger, projectId?,
   threadId? }` and returns `{ id, label, insertText? }[]`. `resolve` returns
@@ -225,11 +227,11 @@ Frontend runtime exports you may import from `@zana-ai/zcc-plugin-sdk/app`:
 `navPanelListsInExtensionsHub`,
 `useRpc`, `useRealtime`,
 `useRealtimeConnectionState`, `useSettings`, `useZccContext`,
-`useZccNavigate`, `useComposer`, `useComposerView`,
+`useZccNavigate`, `useWindowTitle`, `useComposer`, `useComposerView`,
 `experimental_useSidebarThreads`, `experimental_useSidebarThreadActions`,
 `experimental_useSidebarThreadPullRequest`,
 `experimental_useSidebarThreadSplit`, `ThreadChat`, `Markdown`,
-`experimental_NewThreadComposer`.
+`experimental_NewThreadComposer`, `experimental_requestApproval`.
 
 `composer.customize({ id, scopes?, actions?, banners?, plusMenu?, richText?, meta?, advanced? })`
 adds chrome on the shared prompt box. `scopes` may include `"cli-agent"` for the
@@ -251,7 +253,7 @@ runs a headless same-origin script with an `AbortSignal` on unload.
   from `sidebarFooterAction` or `commandPaletteAction` via `toPluginPanel`.
 - `settingsSection` — `id`, `title`, `description`, `component`. Props: `pluginId`.
 - `homepageSection` — `id`, `title`, `component`. Props: `pluginId`, `projectId`.
-- `projectTab` — `id`, `label`, `icon`, `order`, `global`, `component`. A panel with its own toolbar may set `header: 'custom'`; render the component's `headerActions` prop in that toolbar to retain the host's split-pane controls without a duplicate title row.
+- `projectTab` — `id`, `label`, `icon`, `order`, `global`, `component`. A panel with its own toolbar may set `header: 'custom'`; render the component's `headerActions` prop in that toolbar to retain the host's split-pane controls without a duplicate title row. `detachable: true` lets the user open the tab in its own window (one per project); other windows show `detachedPlaceholder` (`PluginDetachedTabProps`) or a host card, and the window's `useZccContext().surface` is `'plugin-view'`. `useWindowTitle({ title, detail, badge, tone })` titles that window (a `danger` badge such as "Production" leads its OS title); it does nothing elsewhere.
   Props: `pluginId`, `projectId`.
 - `sidebarFooterAction` — `id`, `title`, `icon`, `run`. `run` receives
   `{ openSettings(), toPluginPanel(path) }`. `openSettings()` opens this plugin’s
@@ -364,6 +366,33 @@ Three ways a plugin teaches an agent:
   `["skills"]`; `[]` opts out).
 - Runtime `zcc.agents.contributeSkills(rootPaths)`.
 - Generated `plugin-commands` from `zcc.cli.register`.
+
+## Host-signed approvals
+
+For a button the person presses in your own UI (Publish, Activate, Delete) that
+must not run on a forged or replayed click, ask desktop main to draw the
+confirmation. Main shows its own sandboxed sheet, which your code cannot click
+or restyle, and signs exactly what it showed:
+
+```ts
+// Renderer
+const result = await experimental_requestApproval(pluginId, {
+  binding: { action: 'agent.publish', target: orgId, targetLabel: 'dev (sandbox)', subject: 'Help_Agent', revision: sha, confirmText: undefined },
+  title: 'Publish Help_Agent', details: ['Compile passed'], confirmLabel: 'Publish', tone: 'default'
+});
+if (result.approved) await callPluginRpc(pluginId, 'publish', { path, token: result.token });
+
+// Server: rebuild the binding from your own sources (live org id, file SHA), never from the request
+if (!(await zcc.ui.experimental_consumeApproval({ token: input.token, binding }))) throw new Error('approval required');
+```
+
+A token covers one plugin, one binding (`action`, `target`, `targetLabel`,
+`subject`, optional `revision` and `confirmText`), one use, and five minutes.
+`confirmText` makes the person type that text first. Web, mobile and headless
+runs have no signer and return `{ approved: false, reason: 'unavailable' }`, so
+fail closed there. Agent-initiated actions keep using `sdk.confirm` and the
+thread guardrail. In tests, `harness.approve(binding)` returns a token the fake
+host accepts once.
 
 ## Thread list hooks
 

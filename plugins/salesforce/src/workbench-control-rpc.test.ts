@@ -9,6 +9,7 @@ describe('uiCommandReadsOrg', () => {
     expect(uiCommandReadsOrg('view.open', undefined)).toBe(true);
     expect(uiCommandReadsOrg('panel.open', { tool: 'agents' })).toBe(true);
     expect(uiCommandReadsOrg('panel.open', { tool: 'org-preview' })).toBe(true);
+    expect(uiCommandReadsOrg('panel.open', { tool: 'release' })).toBe(true);
   });
   it('treats preview.start/send as org reads unless the engine is rehearse', () => {
     for (const command of ['preview.start', 'preview.send']) {
@@ -42,6 +43,8 @@ describe('registerControlRpc', () => {
     expect(await handlers.get('control.result')!({ commandId })).toMatchObject({ ok: true, state: 'pending' });
     const polled = handlers.get('control.poll')!({ viewId, state: {} });
     expect(polled.commands).toHaveLength(1);
+    // A renderer command comes from the person's own UI.
+    expect(polled.commands[0]).toMatchObject({ user: true });
     expect(handlers.get('control.ack')!({ viewId, commandId, ok: true, state: {} })).toMatchObject({ ok: true });
     expect(handlers.get('control.close')!({ viewId })).toEqual({ ok: true });
     project = undefined;

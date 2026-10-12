@@ -17,6 +17,12 @@ import { projectTerminalsAnchorId } from '@/lib/split-layout/agentSessionPortal'
 import { decodeRouteParam, getProjectModeRoutePath } from '@/lib/route-paths';
 import { useNavigate } from 'react-router-dom';
 import { SplitPaneHeaderActions } from '@/views/thread-detail/SplitPaneHeaderActions';
+import {
+  DetachedPluginTab,
+  OpenInWindowButton,
+  usePluginTabDetached,
+  withOpenInWindow
+} from '@/views/project/DetachablePluginTab';
 import { PaneEmptyState } from '@/components/PaneEmptyState';
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
 
@@ -78,6 +84,8 @@ export function ProjectModePane({
     ? slotTabs.find((tab) => projectTabView(tab, slotTabs) === viewMode)
     : undefined;
   const extModule = project ? resolveProjectTabModule(viewMode, diskProjectTabModules) : undefined;
+  // A tab open in its own window is not mounted here, so one window owns it.
+  const slotTabDetached = usePluginTabDetached(slotTab, projectId);
   const isExtTab = !!extModule || !!slotTab;
   const isAgents = viewMode === 'agents' && !!project;
   const isExplorer = viewMode === 'explorer' && !!project;
@@ -149,7 +157,7 @@ export function ProjectModePane({
 
   return (
     <div className="project-mode-pane" data-testid="project-mode-pane" data-mode={viewMode}>
-      {!isAgents && slotTab?.header !== 'custom' && (
+      {!isAgents && (slotTab?.header !== 'custom' || slotTabDetached) && (
         <div className="project-topbar">
           <div className="project-topbar-tabs">
             {isTerminals ? (
@@ -200,6 +208,7 @@ export function ProjectModePane({
                 </span>
               </div>
             )}
+            {slotTab && !slotTabDetached ? <OpenInWindowButton tab={slotTab} projectId={project.id} /> : null}
             <SplitPaneHeaderActions />
           </div>
         </div>
@@ -247,12 +256,27 @@ export function ProjectModePane({
             <ProjectFeedView project={project} />
           </Suspense>
         )}
-        {isExtTab && slotTab && (
+        {isExtTab && slotTab && slotTabDetached && (
+          <div className="project-ext-tab">
+            <DetachedPluginTab tab={slotTab} projectId={project.id} />
+          </div>
+        )}
+        {isExtTab && slotTab && !slotTabDetached && (
           <div className="project-ext-tab">
             <PluginSlotBoundary pluginId={slotTab.pluginId} generation={slotTab.generation}>
               {(() => {
                 const Component = slotTab.component;
-                return <Component pluginId={slotTab.pluginId} projectId={project.id} headerActions={slotTab.header === 'custom' ? <SplitPaneHeaderActions /> : undefined} />;
+                return (
+                  <Component
+                    pluginId={slotTab.pluginId}
+                    projectId={project.id}
+                    headerActions={
+                      slotTab.header === 'custom'
+                        ? withOpenInWindow(slotTab, project.id, <SplitPaneHeaderActions />)
+                        : undefined
+                    }
+                  />
+                );
               })()}
             </PluginSlotBoundary>
           </div>

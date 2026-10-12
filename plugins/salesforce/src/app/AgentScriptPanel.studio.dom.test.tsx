@@ -3,7 +3,7 @@
  */
 import React, { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 
@@ -12,7 +12,7 @@ vi.mock('./useSalesforceControl.js', () => ({ useSalesforceControl: (options: un
 vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine} data-dirty={String(Boolean(p.dirty))} data-command={p.command ? JSON.stringify(p.command) : ""}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button><button data-testid="stub-handled" onClick={() => p.onCommandHandled(p.command?.seq ?? -1)}>handled</button><button data-testid="stub-stale" onClick={() => p.onCommandHandled(0)}>stale</button></div> }));
 vi.mock('./studio/AssistantRail.js', () => ({ AssistantRail: () => <div data-testid="stub-assistant" /> }));
 vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)} /> }));
-vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: () => <div data-testid="stub-agents" /> }));
+vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: (p: any) => <div data-testid="stub-agents"><button data-testid="stub-agents-publish" onClick={() => p.onPublish?.('force-app/bots/Help.agent')}>publish</button></div> }));
 vi.mock('./AgentforceLabPanel.js', () => ({ AgentforceLabPanel: () => <div data-testid="stub-lab" /> }));
 vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data-testid="stub-ops" /> }));
 const { AgentScriptPanel } = await import('./AgentScriptPanel.js');
@@ -23,7 +23,7 @@ let width = 1000;
 const observers: Array<(w: number) => void> = [];
 const SHA = 'a'.repeat(64);
 const SOURCE = 'start_agent:\n  a\n  b\n';
-const rpc = vi.fn(async (_p: string, method: string, args?: any) => {
+const baseRpc = async (_p: string, method: string, args?: any): Promise<unknown> => {
   if (method === 'status') return { dxProject: true, agentScriptDialect: 'agentforce', projectRoot: '/proj' };
   if (method === 'agentFiles.list') return { ok: true, files: [{ apiName: 'QC', path: 'force-app/bots/QC.agent', lines: 4 }, { apiName: 'Help', path: 'force-app/bots/Help.agent', lines: 4 }] };
   if (method === 'org') return { ok: true, org: { alias: 'dev', username: 'd@x.com', orgId: '00D', instanceUrl: 'https://x', apiVersion: '62.0', kind: 'sandbox', isDefault: true } };
@@ -35,8 +35,10 @@ const rpc = vi.fn(async (_p: string, method: string, args?: any) => {
   if (method === 'studio.comments.list') return { ok: true, comments: [] };
   if (method === 'studio.comments.add') return { ok: true };
   if (method === 'studio.askAgent') return { ok: true, threadId: 't1' };
+  if (method === 'release.state') return { ok: true, data: { org: { alias: 'dev', orgId: '00D', kind: 'sandbox' }, agent: { apiName: 'QC', path: args?.path, revision: SHA, versioned: false, lastPublish: null }, needsReadApproval: false, readUntil: null, versions: [] } };
   return { ok: false };
-});
+};
+const rpc = vi.fn(baseRpc);
 let realtime: ((p: unknown) => void) | undefined;
 const nodes: Array<() => void> = [];
 
@@ -317,5 +319,109 @@ describe('AgentScriptPanel studio layout', () => {
     await ready(el2);
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/QC.agent' }));
     expect(sent(el2).some((m: any) => m.type === 'revealLine' && m.line === 3)).toBe(true);
+  });
+});
+
+describe('AgentScriptPanel follows the driving thread', () => {
+  const from = { threadId: 'thr-9', title: 'Fix QC' };
+  const run = (command: string, input: Record<string, unknown>, source?: typeof from) =>
+    control.options.execute({ id: `c-${command}`, command, input, ...(source ? { from: source } : {}) });
+  const reveals = (el: HTMLElement, line: number) => sent(el).filter((m: any) => m.type === 'revealLine' && m.line === line).length;
+  const chip = (el: HTMLElement) => el.querySelector<HTMLButtonElement>('[data-testid="salesforce-follow-chip"]');
+  const toast = (el: HTMLElement) => el.querySelector('[data-testid="salesforce-follow-toast"]');
+  const button = (root: Element, name: string) => [...root.querySelectorAll('button')].find(b => b.textContent === name)!;
+
+  it('holds a reveal as a toast while the user types, then shows it on request', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    expect(chip(el)).toBeNull();
+    const start = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+    // A command from a thread names who the Studio follows; reveals apply while nobody types.
+    await act(async () => { expect(await run('editor.reveal', { line: 3 }, from)).toMatchObject({ revealedLine: 3 }); });
+    expect(reveals(el, 3)).toBe(1);
+    expect(chip(el)!.textContent).toContain('Following Fix QC');
+    expect(chip(el)!.getAttribute('aria-pressed')).toBe('true');
+    // An edit from the reveal itself is not typing.
+    await post(el, { type: 'dirty', dirty: true });
+    await act(async () => { expect(await run('editor.reveal', { line: 1 }, from)).toMatchObject({ revealedLine: 1 }); });
+    clock.mockReturnValue(start + 5000);
+    await post(el, { type: 'dirty', dirty: true });
+    let result: unknown;
+    await act(async () => { result = await run('editor.reveal', { line: 2 }, from); });
+    expect(result).toEqual({ held: 'typing' });
+    expect(reveals(el, 2)).toBe(0);
+    expect(toast(el)!.textContent).toBe('Fix QC wants to go to line 2. Held while you were typing.ShowDismiss');
+    expect(control.options.state()).toMatchObject({ follow: 'on', heldReveal: 'editor.reveal' });
+    // A file switch over the unsaved draft is refused now rather than held behind the typing.
+    await act(async () => { await expect(run('file.open', { path: 'force-app/bots/Other.agent' }, from)).rejects.toThrow('Save the current draft before switching files.'); });
+    expect(toast(el)!.textContent).toContain('go to line 2');
+    // Proposals and preview never wait: they do not move the cursor.
+    await act(async () => { await run('layout.set', { compact: true }, from); });
+    expect(sent(el).filter((m: any) => m.type === 'setLayout').pop()).toMatchObject({ compact: true });
+    await act(async () => { fireEvent.click(button(toast(el)!, 'Show')); });
+    await flush();
+    expect(reveals(el, 2)).toBe(1);
+    expect(toast(el)).toBeNull();
+    expect(control.options.state().heldReveal).toBeUndefined();
+  });
+
+  it('pauses following: reveals wait until shown or dismissed, and resume restores them', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await act(async () => { await run('graph.focus', { node: 'topic.main' }, { threadId: 'thr-2' }); });
+    expect(el.querySelector('[data-testid="stub-graph"]')!.getAttribute('data-focus')).toBe('topic.main:1');
+    // An untitled thread still shows the chip.
+    expect(chip(el)!.textContent).toContain('Following The agent');
+    await act(async () => { fireEvent.click(chip(el)!); });
+    expect(chip(el)!.getAttribute('aria-pressed')).toBe('false');
+    expect(chip(el)!.textContent).toContain('Following paused');
+    expect(control.options.state().follow).toBe('paused');
+    let result: unknown;
+    await act(async () => { result = await run('graph.focus', { node: 'topic.billing' }); });
+    expect(result).toEqual({ held: 'paused' });
+    expect(toast(el)!.textContent).toContain('The agent wants to show topic.billing in the graph. Held while following is paused.');
+    await act(async () => { fireEvent.click(button(toast(el)!, 'Dismiss')); });
+    expect(toast(el)).toBeNull();
+    expect(el.querySelector('[data-testid="stub-graph"]')!.getAttribute('data-focus')).toBe('topic.main:1');
+    // A held reveal that fails when shown reports why.
+    await act(async () => { await run('file.open', { path: 'force-app/bots/Missing.agent' }); });
+    await post(el, { type: 'dirty', dirty: true });
+    await act(async () => { fireEvent.click(button(toast(el)!, 'Show')); });
+    await flush();
+    expect(toast(el)).toBeNull();
+    expect(el.textContent).toContain('Save the current draft before switching files.');
+    await post(el, { type: 'dirty', dirty: false });
+    await act(async () => { fireEvent.click(chip(el)!); });
+    expect(control.options.state().follow).toBe('on');
+    // Well after the last edit, so a slow run cannot read it as typing.
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 5000);
+    await act(async () => { expect(await run('editor.reveal', { line: 2 })).toMatchObject({ revealedLine: 2 }); });
+  });
+
+  it('opens the Release tool from Publish and from an agent card, compiled state and all', async () => {
+    rpc.mockImplementation(baseRpc);
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await act(async () => { fireEvent.click(el.querySelector('[data-testid="salesforce-agent-script-publish"]')!); });
+    await flush();
+    const pane = el.querySelector('[data-testid="studio-release-pane"]')!;
+    expect(pane).toBeTruthy();
+    await waitFor(() => expect(pane.textContent).toContain('dev (sandbox)'));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'release.state', expect.objectContaining({ projectId: 'proj-1', path: 'force-app/bots/QC.agent' }));
+    expect(pane.textContent).toContain('No published versions yet.');
+    expect(pane.textContent).toContain('Not compiled yet.');
+    await act(async () => { fireEvent.click([...pane.querySelectorAll('button')].find(b => b.textContent === 'Compile')!); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentScript.compile', expect.objectContaining({ path: 'force-app/bots/QC.agent' }));
+    expect(el.querySelector('[data-testid="studio-release-pane"]')!.textContent).toMatch(/Failed\. See Problems\.|Out of date\./);
+
+    await act(async () => { await exec('panel.open', { tool: 'agents' }); });
+    await flush();
+    await act(async () => { fireEvent.click(el.querySelector('[data-testid="stub-agents-publish"]')!); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'release.state', expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
+    expect(el.querySelector('[data-testid="studio-release-pane"]')).toBeTruthy();
   });
 });

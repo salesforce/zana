@@ -7,6 +7,7 @@ export const AGENT_SCRIPT_TOOLS = [
   { id: 'graph', title: 'Graph view', description: 'Topics, actions, and conversation routes', icon: 'M6 3v6h12V3 M12 9v6 M9 15h6v6H9z' },
   { id: 'preview', title: 'Preview', description: 'Try the current draft in a conversation', icon: 'm8 4 12 8-12 8z' },
   { id: 'test', title: 'Tests', description: 'Run scenarios and review evaluations', icon: 'M9 3h6 M10 3v7L4 20h16l-6-10V3 M7 16h10' },
+  { id: 'release', title: 'Release', description: 'Publish, activate and roll back versions', icon: 'M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2 M12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2Z M9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0 M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5' },
   { id: 'actions', title: 'Actions', description: 'Inspect Apex, Flow, inputs, and outputs', icon: 'm8 6-6 6 6 6 M16 6l6 6-6 6 M14 3l-4 18' },
   { id: 'org-preview', title: 'Org preview', description: 'Talk to an agent in your connected org', icon: 'M7 18h11a4 4 0 0 0 0-8 6 6 0 0 0-11-3 5.5 5.5 0 0 0 0 11Z' },
   { id: 'assistant', title: 'Assistant', description: 'Ask an agent about this file, with the screen as context', icon: 'M4 5h16v11H9l-5 4z' },

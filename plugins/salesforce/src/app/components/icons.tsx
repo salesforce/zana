@@ -45,3 +45,10 @@ export const CircleCheck = icon(
     <path d="m8 12 3 3 5-6" />
   </>,
 );
+export const Home = icon(<path d="m3 11 9-8 9 8M5 9.5V21h5v-6h4v6h5V9.5" />);
+export const AppWindow = icon(
+  <>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 9h18M7 6.5h.01M10 6.5h.01" />
+  </>,
+);

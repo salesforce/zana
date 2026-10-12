@@ -4,13 +4,15 @@ import { toolkitRuntimeLoader } from './toolkit-runtime.js';
 import type { SalesforceToolCallContext, ToolkitRuntime } from './tool-provider-contract.js';
 import { WorkbenchResults } from './workbench-results.js';
 import { WORKBENCH_ACTIONS, actionCatalog, actionInput, actionParameters, isWorkbenchAction, workbenchActionNames } from './workbench-actions.js';
-import { WorkbenchControl } from './workbench-control.js';
+import { WorkbenchControl, type UiCommandSource } from './workbench-control.js';
 import { registerControlRpc, uiCommandReadsOrg } from './workbench-control-rpc.js';
 import { rpcString, type StudioServerContext } from './studio-server-context.js';
+import { CONTEXT_CHANGED_CHANNEL, contextOrigin } from './studio-contract.js';
 import { registerStudioAssistant } from './studio-threads.js';
 import { registerStudioContext } from './studio-view.js';
 import { registerStudioComments } from './studio-comments.js';
-import { registerStudioPreview } from './scenario-suites.js';
+import { registerStudioPreview, type SuiteEvalReply } from './scenario-suites.js';
+import { evalCaseOutcomes } from './eval-spec.js';
 import { registerStudioExplorer } from './studio-explorer.js';
 import { createAgentDraft, draftDestination, DRAFT_PROJECT } from './agent-drafts.js';
 import type { AgentDraftInput } from './agent-draft-contract.js';
@@ -18,6 +20,7 @@ import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } fr
 import { randomUUID } from 'node:crypto';
 import {
   activateArgs,
+  deactivateArgs,
   agentCliOpts,
   BOT_VERSION_SOQL,
   canActivate,
@@ -69,8 +72,11 @@ import {
   createAgentFile,
   listAgentFiles,
   readAgentFile,
+  sha256Hex,
   writeAgentFile
 } from './agent-files.js';
+import { createReleaseService, ReadGrants } from './release.js';
+import { RELEASE_RPC } from './release-contract.js';
 import { parseAgentScriptSource } from './agent-script-parse.js';
 import { readOrgAction, readProjectAction } from './action-source.js';
 import { visualizeFlowSnapshot } from './flow-visualizer.js';
@@ -104,6 +110,7 @@ import {
   type PublicOrgView,
   type SafetyEnvelope,
   type SalesforceDeps,
+  type ToolFailure,
   type ToolResult
 } from './types.js';
 
@@ -186,13 +193,32 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   };
   const guardrail = new Guardrail(async (envelope, threadId) => confirmEnvelope(zcc, envelope, threadId));
   const evalEvidence = new EvalEvidenceStore(zcc.storage.kv);
+  const readGrants = new ReadGrants(deps.now);
+  const releaseScope = () => contexts.current()?.projectId ?? 'global';
+  // A release run has no thread: the host-signed sheet approved its one action, and any other gate stays closed.
+  const releaseCtx = (): PluginAgentToolContext => ({ threadId: '', projectId: contexts.current()?.projectId ?? '', signal: new AbortController().signal });
   const lab = new AgentforceLab({
     transport: labTransport,
     connect: () => connections.connect(),
+    // Same gate as agentPreview.* and query.execute: production and unknown orgs confirm in the thread.
+    authorize: async (org, { engine, threadId }) => {
+      const verb = engine === 'preview' ? 'Simulate' : 'Rehearse';
+      const mediated = await guardrail.mediate({
+        threadId,
+        orgAlias: org.alias,
+        orgId: org.orgId,
+        orgKind: org.kind,
+        summary: `${verb} an Agentforce draft on ${org.alias} (${org.kind}). This makes Salesforce model calls in that org.`
+      });
+      if (mediated.approved) return;
+      throw new Error(mediated.reason === 'headless'
+        ? `${org.alias} is a ${org.kind} org. Start this run beside a thread to approve it, or pick a sandbox.`
+        : `Operator ${mediated.reason} the ${verb.toLowerCase()} run.`);
+    },
     scope: () => contexts.current()?.projectId ?? contexts.current()?.settings.projectRoot ?? 'global'
   });
   zcc.onDispose(() => lab.dispose());
-  for (const method of ['start', 'send', 'next', 'evaluate', 'end'] as const) {
+  for (const method of ['start', 'send', 'next', 'evaluate', 'end', 'get'] as const) {
     registerRpc(`agentLab.${method}`, async (args) => ({ ok: true, data: await lab[method](args) }));
   }
   let lastDoctor: DoctorReport | null = null;
@@ -236,10 +262,15 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     get: <T>(key: string) => zcc.storage.kv.get<T>(contexts.key(key)),
     set: (key, value) => zcc.storage.kv.set(contexts.key(key), value)
   }, deps.now);
+  // Every window refreshes on this; the one that made the change skips its own echo.
+  const publishContextChanged = (projectId: string | null | undefined, args: unknown) => {
+    const origin = contextOrigin(args);
+    zcc.realtime.publish(CONTEXT_CHANGED_CHANNEL, { projectId, changeId: randomUUID(), ...(origin ? { origin } : {}) });
+  };
   registerRpc('context.select', async (args) => {
     const orgs = await sdk.listOrgs();
     await contexts.select(args, orgs.flatMap(org => [org.alias, org.username]));
-    zcc.realtime.publish('context.changed', { projectId: contexts.current()?.projectId });
+    publishContextChanged(contexts.current()?.projectId, args);
     return { ok: true };
   });
   registerRpc('project.connect', async (args) => {
@@ -247,7 +278,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     await connectDxProject(contexts.current()!, rpcString(args, 'selectedAlias'), deps, aliases);
     await contexts.select(args, aliases);
     await zcc.sdk.projects.setIcon({ projectId: contexts.current()!.projectId!, icon: 'Cloud' });
-    zcc.realtime.publish('context.changed', { projectId: contexts.current()!.projectId });
+    publishContextChanged(contexts.current()!.projectId, args);
     return { ok: true };
   });
 
@@ -365,7 +396,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       onConnected: context.projectId ? async (alias, orgs) => {
         await contexts.select({ projectId: context.projectId, selectedAlias: alias }, orgs.flatMap(org => [org.alias, org.username]));
         projectSelected = alias;
-        zcc.realtime.publish('context.changed', { projectId: context.projectId });
+        publishContextChanged(context.projectId, args);
       } : undefined,
     });
     if (!result.ok) return result;
@@ -567,6 +598,39 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     return result.ok ? { ok: true, result: result.result } : { ok: false, error: result.error };
   });
   registerRpc('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
+  // A "Load versions" approval also lets Compile reach a production org from the window.
+  registerRpc('agentScript.compile', (args) => runUiCompile(args, readGrants.wrap(sdk, releaseScope()), deps, readSettings));
+  const release = createReleaseService({
+    sdk,
+    evidence: evalEvidence,
+    kv: zcc.storage.kv,
+    grants: readGrants,
+    now: deps.now,
+    scope: releaseScope,
+    source: async (path) => {
+      const loaded = await loadAgentBundles({ path }, await readSettings(), deps);
+      if (!('projectRoot' in loaded)) return loaded as ToolFailure;
+      if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${path}`) as ToolFailure;
+      const metadata = readConfinedFile(loaded.projectRoot, loaded.bundle.path.replace(/\.agent$/, '.bundle-meta.xml'), deps);
+      return {
+        apiName: loaded.bundle.apiName,
+        path,
+        revision: sha256Hex(deps.readFile(loaded.bundle.path) ?? ''),
+        versioned: Boolean(metadata && /<target(?:\s|>)/.test(metadata))
+      };
+    },
+    consume: (token, binding) => zcc.ui.experimental_consumeApproval({ token, binding }),
+    versionSource: (org, apiName, versionNumber) => orgAgents.readVersion(org, apiName, versionNumber),
+    run: {
+      publish: async (plan, approved) => runAgentPublish(plan, releaseCtx(), approved, artifacts, deps, await readSettings()),
+      activate: async (plan, approved) => runAgentActivate(plan, releaseCtx(), approved, artifacts, deps, await readSettings(), evalEvidence),
+      deactivate: async (plan, approved) => runAgentDeactivate(plan, releaseCtx(), approved, artifacts, deps, await readSettings())
+    }
+  });
+  registerRpc(RELEASE_RPC.state, args => release.state(args));
+  registerRpc(RELEASE_RPC.prepare, args => release.prepare(args));
+  registerRpc(RELEASE_RPC.run, args => release.run(args));
+  registerRpc(RELEASE_RPC.versionSource, args => release.versionSource(args));
   registerRpc('agentPreview.start', (args) =>
     runUiPreview('preview.start', args, sdk, artifacts, deps, readSettings)
   );
@@ -624,6 +688,14 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const control = new WorkbenchControl();
   zcc.onDispose(() => control.dispose());
 
+  const commandSource = async (ctx: PluginAgentToolContext): Promise<UiCommandSource | undefined> => {
+    if (!ctx.threadId) return undefined;
+    try {
+      const thread = await zcc.sdk.threads.get({ threadId: ctx.threadId });
+      const title = thread?.projectId === ctx.projectId ? thread.title || thread.titleFallback || '' : '';
+      return { threadId: ctx.threadId, ...(title ? { title } : {}) };
+    } catch { return { threadId: ctx.threadId }; }
+  };
   const invokeAction = async (action: string, input: unknown, ctx: PluginAgentToolContext): Promise<unknown> => {
     try {
       if (action === 'capabilities') return { ok: true, actions: actionCatalog(), toolkit: await toolkit.catalog() };
@@ -643,7 +715,10 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         const { mediated } = await mediateOrgRead(ctx, sdk, `Salesforce ${action}`);
         if (!mediated.approved) return { ok: false, code: 'refused', error: `Operator ${mediated.reason} ${action}.` };
       }
-      const result = await rpcHandlers.get(method)!({ ...data, projectId: ctx.projectId, threadId: ctx.threadId });
+      // ui.command names the thread that sent it, so the Studio can show who it follows.
+      const result = action === 'ui.command'
+        ? { ok: true, ...control.request(ctx.projectId, data, await commandSource(ctx)) }
+        : await rpcHandlers.get(method)!({ ...data, projectId: ctx.projectId, threadId: ctx.threadId });
       if (JSON.stringify(result).length > 750_000) throw Error('Result is too large. Narrow the selection.');
       return result;
     } catch (error) { return agentFilesFailure(error); }
@@ -669,7 +744,22 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerStudioAssistant(studio);
   registerStudioContext(studio);
   registerStudioComments(studio);
-  registerStudioPreview(studio);
+  registerStudioPreview(studio, {
+    agent: async (path) => {
+      const loaded = await loadAgentBundles({ path }, await readSettings(), deps);
+      if (!('projectRoot' in loaded)) return loaded as ToolFailure;
+      if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${path}`) as ToolFailure;
+      return { apiName: loaded.bundle.apiName, source: deps.readFile(loaded.bundle.path) ?? '' };
+    },
+    // The suite path is confined under the project; a production org needs the Studio read grant (Release "Load versions").
+    runEval: async (spec) => {
+      const settings = await readSettings();
+      const root = await requireDxRoot(settings, deps);
+      if (!('projectRoot' in root)) return root as SuiteEvalReply;
+      const plan: AgentPlan = { action: 'eval.run', apiName: spec.apiName, specPath: spec.specPath, allowUntested: false, published: false, live: false };
+      return await runEvalSpecFile({ file: spec.absolute, text: spec.text, label: spec.specPath, cwd: root.projectRoot }, plan, releaseCtx(), readGrants.wrap(sdk, releaseScope()), artifacts, deps, evalEvidence) as SuiteEvalReply;
+    }
+  });
   registerStudioExplorer(studio);
   zcc.agents.registerTool({
     desktopOnly: ['ui.views', 'ui.command', 'ui.result'],
@@ -846,7 +936,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     desktopOnly: ['ui.views', 'ui.command', 'ui.result'],
     name: 'sf_agent',
     description:
-      'Agentforce lifecycle: LSP diagnose (diagnostics/hover/complete/definition/symbols) on a confined .agent file, compile/inspect, preview (simulate by default; live confirms), eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Edit source in the Agentforce Playground side panel or file tools. Publish, activate, and live preview always confirm.',
+      'Agentforce lifecycle: LSP diagnose (diagnostics/hover/complete/definition/symbols) on a confined .agent file, compile/inspect, preview (simulate by default; live confirms), eval via a confined YAML/JSON spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate/deactivate. Edit source in the Agentforce Playground side panel or file tools. Publish, activate, deactivate, and live preview always confirm.',
     parameters: {
       type: 'object',
       properties: {
@@ -864,6 +954,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
             'lifecycle.list',
             'lifecycle.publish',
             'lifecycle.activate',
+            'lifecycle.deactivate',
             ...workbenchActionNames.filter(name => /^(source|draft|files|studio|actions)\./.test(name))
           ]
         },
@@ -1208,7 +1299,7 @@ async function runAgent(
   const snapshot = await readSettings();
   try {
     if (parsed.plan.action === 'compile' || parsed.plan.action === 'inspect') {
-      return await runAgentLocal(parsed.plan, snapshot, sdk, deps);
+      return await runAgentLocal(parsed.plan, snapshot, sdk, deps, ctx);
     }
     if (parsed.plan.action === 'diagnose') {
       return await runAgentDiagnose(parsed.plan, snapshot, deps);
@@ -1224,6 +1315,9 @@ async function runAgent(
     }
     if (parsed.plan.action === 'lifecycle.publish') {
       return await runAgentPublish(parsed.plan, ctx, sdk, artifacts, deps, snapshot);
+    }
+    if (parsed.plan.action === 'lifecycle.deactivate') {
+      return await runAgentDeactivate(parsed.plan, ctx, sdk, artifacts, deps, snapshot);
     }
     return await runAgentActivate(parsed.plan, ctx, sdk, artifacts, deps, snapshot, evalEvidence);
   } catch (error) {
@@ -1246,7 +1340,8 @@ async function runAgentLocal(
   plan: AgentPlan,
   snapshot: PluginSettingsValues,
   sdk: SalesforceSdk,
-  deps: SalesforceDeps
+  deps: SalesforceDeps,
+  ctx: PluginAgentToolContext
 ): Promise<ToolResult> {
   const loaded = await loadAgentBundles(plan, snapshot, deps);
   if (!('projectRoot' in loaded)) return loaded;
@@ -1292,7 +1387,15 @@ async function runAgentLocal(
   if (!alias) {
     return fail('not_configured', 'Select an org on this project’s Salesforce tab to compile with sf agent validate. Local editing and diagnostics remain available.');
   }
-  const result = await sdk.execSf(validateArgs(loaded.bundle.apiName, alias), agentCliOpts(loaded.projectRoot));
+  // sf agent validate compiles in the org, so it passes the same org read gate as preview and query.
+  const apiName = loaded.bundle.apiName;
+  const { org, mediated } = await mediateOrgRead(ctx, sdk, connected => `Compile ${apiName} with sf agent validate on ${connected.alias} (${connected.kind})`, undefined, { preview: apiName });
+  if (!mediated.approved) {
+    return fail('refused', mediated.reason === 'headless'
+      ? `${org.alias} is a ${org.kind} org. Compile beside a thread to approve sf agent validate, or pick a sandbox.`
+      : `Operator ${mediated.reason} compile.`);
+  }
+  const result = await sdk.execSf(validateArgs(apiName, org.alias), agentCliOpts(loaded.projectRoot));
   const parsedCli = parseSfJson(result.stdout);
   const cliText = `${result.stdout}\n${result.stderr}`;
   if (result.code === 127 || /command agent not found|is not a sf command|unknown topic:? agent/i.test(cliText)) {
@@ -1401,6 +1504,27 @@ async function mediateOrgRead(
     preview: extra?.preview
   }, ctx.threadId);
   return { org, mediated };
+}
+
+/** The Studio Compile button: the same compile as sf_agent, answered in the window instead of a chat. */
+async function runUiCompile(
+  args: unknown,
+  sdk: SalesforceSdk,
+  deps: SalesforceDeps,
+  readSettings: () => Promise<PluginSettingsValues>
+): Promise<ToolResult> {
+  const parsed = parseAgentInput({ action: 'compile', path: rpcString(args, 'path') || undefined });
+  if (!parsed.ok) return fail('invalid_input', parsed.error);
+  const ctx: PluginAgentToolContext = {
+    threadId: rpcString(args, 'threadId'),
+    projectId: rpcString(args, 'projectId'),
+    signal: new AbortController().signal
+  };
+  try {
+    return await runAgentLocal(parsed.plan, await readSettings(), sdk, deps, ctx);
+  } catch (error) {
+    return connectionFailure(error);
+  }
 }
 
 async function runUiPreview(
@@ -1517,13 +1641,27 @@ async function runAgentEvalSpec(
   if (!specFile || !resolveUnderRoot(root.projectRoot, specFile, deps.realpath)) return fail('path_refused', 'Eval spec must stay inside the configured DX project root.');
   const specText = deps.readFile(specFile);
   if (specText === null) return fail('not_found', `Eval spec not found: ${plan.specPath}`);
+  return runEvalSpecFile({ file: specFile, text: specText, label: plan.specPath ?? '', cwd: root.projectRoot }, plan, ctx, sdk, artifacts, deps, evalEvidence);
+}
+
+/** `sf agent test run-eval` on a spec file already confined by the caller, run from the DX project. */
+async function runEvalSpecFile(
+  spec: { file: string; text: string; label: string; cwd: string },
+  plan: AgentPlan,
+  ctx: PluginAgentToolContext,
+  sdk: SalesforceSdk,
+  artifacts: ArtifactStore,
+  deps: SalesforceDeps,
+  evalEvidence: EvalEvidenceStore
+): Promise<ToolResult> {
+  const { file: specFile, text: specText } = spec;
   const { org, mediated } = await mediateOrgRead(
     ctx,
     sdk,
-    (connected) => `eval.run ${plan.specPath} on ${connected.alias} (${connected.kind})`
+    (connected) => `eval.run ${spec.label} on ${connected.alias} (${connected.kind})`
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} eval.run.`);
-  const result = await sdk.execSf(runEvalArgs(specFile, org.alias), agentCliOpts(root.projectRoot));
+  const result = await sdk.execSf(runEvalArgs(specFile, org.alias), agentCliOpts(spec.cwd));
   const parsedCli = parseSfJson(result.stdout);
   if (result.code !== 0 || parsedCli.status !== 0) {
     return fail(
@@ -1547,7 +1685,7 @@ async function runAgentEvalSpec(
     summary: summary.passed
       ? `Eval passed (${summary.passedCount}/${testCount || summary.passedCount}) for ${botVersionId}`
       : `Eval failed (${summary.failedCount} failure(s)) for ${botVersionId}`,
-    data: { ...summary, botVersionId, orgId: org.orgId, testCount },
+    data: { ...summary, botVersionId, orgId: org.orgId, orgAlias: org.alias, orgKind: org.kind, testCount, caseOutcomes: evalCaseOutcomes(parsedCli.result ?? parsedCli, testCount) },
     artifactId
   };
 }
@@ -1736,6 +1874,39 @@ async function runAgentActivate(
     data: parsedCli.result,
     artifactId
   };
+}
+
+/**
+ * The rollback step: takes the active version offline. It needs no eval evidence,
+ * since it only stops an agent, but it always confirms, on every org kind.
+ */
+async function runAgentDeactivate(
+  plan: AgentPlan,
+  ctx: PluginAgentToolContext,
+  sdk: SalesforceSdk,
+  artifacts: ArtifactStore,
+  deps: SalesforceDeps,
+  snapshot: PluginSettingsValues
+): Promise<ToolResult> {
+  const apiName = plan.apiName ?? '';
+  const { org, mediated } = await mediateOrgRead(
+    ctx,
+    sdk,
+    (connected) => `Deactivate Agentforce ${apiName} on ${connected.alias} (${connected.kind}). Its users lose the agent until a version is activated again.`,
+    'agent.deactivate',
+    { preview: apiName }
+  );
+  if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} lifecycle.deactivate.`);
+  const result = await sdk.execSf(deactivateArgs(apiName, org.alias), agentCliOpts(dxProjectRoot(snapshot, deps)));
+  const parsedCli = parseSfJson(result.stdout);
+  if (result.code !== 0 || parsedCli.status !== 0) {
+    return fail(
+      'deactivate_failed',
+      parsedCli.message || result.stderr.trim() || result.stdout.trim() || 'sf agent deactivate failed'
+    );
+  }
+  const artifactId = await artifacts.put('agent-deactivate', parsedCli.result ?? { stdout: result.stdout });
+  return { ok: true, summary: `Deactivated ${apiName}`, data: parsedCli.result, artifactId };
 }
 
 function dxProjectRoot(snapshot: PluginSettingsValues, deps: SalesforceDeps): string | undefined {

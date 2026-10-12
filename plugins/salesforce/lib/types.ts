@@ -39,6 +39,7 @@ export type EnvelopeKind =
   | 'soql.export'
   | 'agent.publish'
   | 'agent.activate'
+  | 'agent.deactivate'
   | 'agent.preview.live';
 
 export type AgentCompilerKind = 'library' | 'cli' | 'missing';

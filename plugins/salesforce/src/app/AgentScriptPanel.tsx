@@ -1,6 +1,6 @@
 import { useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Bot, Cloud, Code, FlaskConical, Files, MessageSquare, Network, Play, Search, Sparkles, Zap } from 'lucide-react';
+import { Bot, Cloud, Code, FlaskConical, Files, MessageSquare, Network, Play, Rocket, Search, Sparkles, Zap } from 'lucide-react';
 import { callPluginRpc, useRealtime, useSettings, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { type AgentScriptDialect, type PublicOrgView } from '../../lib/types.js';
 import {
@@ -24,7 +24,12 @@ import {
   type PlaygroundFileRef
 } from './playground-bridge.js';
 import { usePlaygroundBridge } from './studio/usePlaygroundBridge.js';
+import { compilerDiagnostic, parseCompileReply, type CompileState } from './studio/compile-result.js';
+import { ReleasePane } from './studio/ReleasePane.js';
+import { TestsPane } from './studio/TestsPane.js';
 import { createStudioCommandExecutor } from './studio/studio-commands.js';
+import { commandAuthor, holdCommand, holdReason, REVEAL_COMMANDS, type HeldReveal } from './studio/follow-gate.js';
+import { FollowChip, FollowToast } from './studio/FollowControl.js';
 import {
   PLAYGROUND_LOAD_ERROR,
   PLAYGROUND_READY_MS,
@@ -43,6 +48,7 @@ import type { RetrievedOrgAgent } from '../../lib/org-agent-contract.js';
 import { AgentScriptGraphPanel } from './AgentScriptGraphPanel.js';
 import { AgentforcePreviewPanel } from './AgentforcePreviewPanel.js';
 import type { AgentAction } from '../../lib/agent-action-model.js';
+import type { UiCommand } from '../../lib/workbench-control.js';
 import { AgentActionExplorer, AgentActionPanel } from './AgentActionPanel.js';
 import { AGENT_ACTION_STYLES } from './agent-action-styles.js';
 import { agentDraftKey, readAgentDraft, writeAgentDraft, clearAgentDraft, rememberAgentSelection, recalledAgentSelection } from './agent-script-drafts.js';
@@ -69,6 +75,7 @@ import { applyProposalEdits } from './studio/proposal-edits.js';
 import { BottomTests, BottomTrace } from './studio/BottomPanes.js';
 import { STUDIO_TOKENS } from './studio/studio-tokens.js';
 import { useSuites, withSuiteBadges } from './studio/useSuites.js';
+import { useContextChangeRelay } from './context-sync.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -119,24 +126,27 @@ type StatusPayload = {
 const TOOL_ICON: Record<CompactTool, ReactNode> = {
   code: <Code size={16} aria-hidden="true" />, agents: <Bot size={16} aria-hidden="true" />, files: <Files size={16} aria-hidden="true" />,
   graph: <Network size={16} aria-hidden="true" />, preview: <Play size={16} aria-hidden="true" />, test: <FlaskConical size={16} aria-hidden="true" />,
+  release: <Rocket size={16} aria-hidden="true" />,
   actions: <Zap size={16} aria-hidden="true" />, 'org-preview': <Cloud size={16} aria-hidden="true" />,
   assistant: <Sparkles size={16} aria-hidden="true" />, comments: <MessageSquare size={16} aria-hidden="true" />
 };
 const TOOL_TITLE: Record<CompactTool, string> = {
-  code: 'Code', agents: 'Agents', files: 'Files', graph: 'Graph', preview: 'Preview', test: 'Tests', actions: 'Actions',
+  code: 'Code', agents: 'Agents', files: 'Files', graph: 'Graph', preview: 'Preview', test: 'Tests', release: 'Release', actions: 'Actions',
   'org-preview': 'Org preview', assistant: 'Assistant', comments: 'Comments'
 };
 /** Tools offered by the compact strip, in order. Files (QuickOpen) and Assistant (ContextStrip) are intentionally absent. */
-const COMPACT_TOOLS: readonly CompactTool[] = ['code', 'agents', 'graph', 'preview', 'test', 'actions', 'comments', 'org-preview'];
+const COMPACT_TOOLS: readonly CompactTool[] = ['code', 'agents', 'graph', 'preview', 'test', 'release', 'actions', 'comments', 'org-preview'];
 const HIDDEN_COMPACT: readonly AgentScriptTool[] = ['files', 'assistant'];
 const HIDDEN_WIDE: readonly AgentScriptTool[] = ['files'];
 const NO_HIDDEN: readonly AgentScriptTool[] = [];
 const stripItem = (id: CompactTool, badge?: number): StripItem => ({ id, title: TOOL_TITLE[id], icon: TOOL_ICON[id], ...(badge ? { badge } : {}) });
-const STUDIO_TOOL_FOR: Record<string, StudioTool | null> = { test: 'tests', files: 'code', 'org-preview': null, new: null };
+const STUDIO_TOOL_FOR: Record<string, StudioTool | null> = { test: 'tests', release: 'deploy', files: 'code', 'org-preview': null, new: null };
 const TARGET_PATTERN = /^(apex|flow):\/\/([A-Za-z][A-Za-z0-9_.]*)$/;
 const basename = (path: string) => path.split('/').pop() ?? path;
 const targetAction = (target: string, owner: string): AgentAction => ({ id: `dependency:${target}`, name: target.split('://')[1] ?? target, owner, target, line: 1, description: '', inputs: [], outputs: [], uses: [] });
 const SAVE_DEBOUNCE_MS = 150;
+/** Edits reported this soon after an agent reveal come from the reveal, not the person. */
+const OWN_MOVE_MS = 1000;
 
 type AgentScriptPanelProps = {
   pluginId: string;
@@ -145,8 +155,13 @@ type AgentScriptPanelProps = {
   params?: unknown;
   headerActions?: ReactNode;
   orgPicker?: boolean;
+  /** The thread that owns a side panel; it wins over the focused route's thread. */
+  threadId?: string;
+  /** The open agent file, then null once the panel goes away. Pass a stable function. */
+  onActivePath?: (path: string | null) => void;
 };
 export function AgentScriptPanel(props: AgentScriptPanelProps) {
+  useContextChangeRelay();
   const context = useZccContext();
   const projectId = props.projectId ?? context.projectId ?? undefined;
   return <AgentScriptWorkspace key={projectId ?? 'shared'} {...props} projectId={projectId} />;
@@ -156,6 +171,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const pluginId = props.pluginId || PLUGIN_ID;
   const context = useZccContext();
   const projectId = props.projectId ?? context.projectId ?? undefined;
+  const threadId = props.threadId || context.threadId || undefined;
   const focus = parseAgentforcePanelFocus(props.params);
   const focusSignature = focusKey(focus);
   const initialPath = focus.path ?? props.subPath ?? null;
@@ -177,12 +193,15 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const saving = useRef(false);
   const lastSave = useRef(0);
   const pendingProposals = useRef(new Map<string, (outcome: ProposalOutcome) => void>());
+  // The source an agent proposes while its proposal is open, so Tests can run it before it is accepted.
+  const [proposalSource, setProposalSource] = useState<string | null>(null);
   const settleProposals = useCallback((note: string) => {
     for (const [proposalId, resolve] of pendingProposals.current) {
       resolve({ outcome: 'rejected', acceptedHunks: 0, rejectedHunks: 0, note });
       send.clearProposal(proposalId);
     }
     pendingProposals.current.clear();
+    setProposalSource(null);
   }, [send]);
   useEffect(() => {
     alive.current = true;
@@ -234,6 +253,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const activePathRef = useRef(activePath);
   const targetTabActive = useRef(false);
   activePathRef.current = activePath;
+  const onActivePath = props.onActivePath;
+  useEffect(() => { onActivePath?.(activePath); }, [activePath, onActivePath]);
+  useEffect(() => () => onActivePath?.(null), [onActivePath]);
   const shaRef = useRef(sha256);
   shaRef.current = sha256;
   const sourceRef = useRef(source);
@@ -497,12 +519,32 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     const result = (await callPluginRpc(pluginId, STUDIO_RPC.askAgent, { ...rpcArgs({ path, ...(action ? { action } : {}), ...extra }) })) as { ok?: boolean; error?: string } | null;
     if (result?.ok === false) throw new Error(result.error || 'Could not start the agent.');
   }, [pluginId, rpcArgs]);
+  // The last Compile answer, shown only for the file it was run on; a failed compile joins the problems.
+  const [compileState, setCompileState] = useState<CompileState | null>(null);
+  const compiled = compileState?.path === activePath ? compileState : null;
+  const problems = useMemo(
+    () => compiled?.status === 'failed' && compiled.code === 'compile_failed' ? [...diagnostics, compilerDiagnostic(compiled.message)] : diagnostics,
+    [compiled, diagnostics]
+  );
+  const compile = useCallback(async () => {
+    const path = activePathRef.current;
+    if (!path) return;
+    const sha = shaRef.current;
+    setCompileState({ status: 'running', path, ...(sha ? { sha } : {}) });
+    patch({ bottomOpen: true, bottomTab: 'problems' });
+    let reply: unknown;
+    try { reply = await callPluginRpc(pluginId, 'agentScript.compile', rpcArgs({ path, ...(threadId ? { threadId } : {}) })); }
+    catch (err) { reply = { ok: false, error: err instanceof Error ? err.message : String(err) }; }
+    if (!alive.current) return;
+    setCompileState(current => current?.status === 'running' && current.path === path ? parseCompileReply(path, sha, reply) : current);
+  }, [patch, pluginId, rpcArgs, threadId]);
+
   const fixWithAgent = useCallback(async () => {
     setFixBusy(true); setError(null);
-    try { await askAgent('fix-problems', { diagnostics: diagnostics.slice(0, 50) }); }
+    try { await askAgent('fix-problems', { diagnostics: problems.slice(0, 50) }); }
     catch (err) { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }
     finally { if (alive.current) setFixBusy(false); }
-  }, [askAgent, diagnostics]);
+  }, [askAgent, problems]);
 
   const save = useCallback(() => {
     const now = Date.now();
@@ -552,6 +594,14 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     [pluginId, refreshFiles, rpcArgs, saveEnabled, sha256, openFile, draftScope, send]
   );
 
+  // Follow the driving thread without stealing the cursor: a reveal waits as a toast while the
+  // person types or has paused following. Edits right after a reveal are the reveal's own.
+  const [followPaused, setFollowPaused] = useState(false);
+  const followPausedRef = useRef(false); followPausedRef.current = followPaused;
+  const [heldReveal, setHeldReveal] = useState<HeldReveal | null>(null);
+  const [driver, setDriver] = useState<string | undefined>(undefined);
+  const lastEditAt = useRef(0);
+  const ownMoveUntil = useRef(0);
   const executeCommand = createStudioCommandExecutor({
     getSource: () => source,
     isBusyOrDirty: () => dirty || busy,
@@ -566,6 +616,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         try {
           const content = input.content ?? applyProposalEdits(sourceRef.current, input.edits ?? []);
           pendingProposals.current.set(proposalId, resolve);
+          setProposalSource(content);
           if (compact) patch({ tool: 'code' });
           send.proposeEdit({ proposalId, content, summary: input.summary, actor: 'Agent' });
         } catch (err) { reject(err); }
@@ -590,10 +641,27 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     layoutSet: setEditorCompactOverride
   });
 
-  useSalesforceControl({ pluginId, projectId, orgAlias: org?.alias, threadId: context.threadId ?? undefined, surface: 'agentforce', enabled: playgroundReady,
+  const applyReveal = (command: UiCommand) => {
+    if (REVEAL_COMMANDS.has(command.command)) ownMoveUntil.current = Date.now() + OWN_MOVE_MS;
+    return executeCommand(command);
+  };
+  const followCommand = async (command: UiCommand) => {
+    if (command.from) setDriver(commandAuthor(command));
+    const reason = holdReason(command, { paused: followPausedRef.current, lastEditAt: lastEditAt.current, now: Date.now(), dirty: dirty || busy });
+    if (!reason) return applyReveal(command);
+    setHeldReveal(holdCommand(command, reason));
+    return { held: reason };
+  };
+  const showHeldReveal = () => {
+    const held = heldReveal;
+    setHeldReveal(null);
+    if (held) void applyReveal(held.command).catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); });
+  };
+
+  useSalesforceControl({ pluginId, projectId, orgAlias: org?.alias, threadId, surface: 'agentforce', enabled: playgroundReady,
     commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set'],
-    state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id) }),
-    execute: executeCommand,
+    state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id), follow: followPaused ? 'paused' : 'on', ...(heldReveal ? { heldReveal: heldReveal.command.command } : {}) }),
+    execute: followCommand,
   });
 
   bridgeHandlers.current = {
@@ -631,6 +699,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       void openFile(file);
     },
     onDirty: message => {
+      if (message.dirty && Date.now() > ownMoveUntil.current) lastEditAt.current = Date.now();
       setDirty(message.dirty);
       if (message.draftKey) setSha256(message.baseSha);
       setDraftWarning(message.persisted === false);
@@ -645,6 +714,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     onProposalResolved: message => {
       const resolve = pendingProposals.current.get(message.proposalId);
       pendingProposals.current.delete(message.proposalId);
+      if (pendingProposals.current.size === 0) setProposalSource(null);
       setSource(message.content);
       if (message.outcome !== 'rejected') setDirty(true);
       resolve?.({
@@ -691,13 +761,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   }, [wide, studio.railSeeded, patch, tools.state.tabs, tools.openTool]);
 
   const { view, setShare } = useStudioView({
-    pluginId, projectId, threadId: context.threadId,
+    pluginId, projectId, threadId: threadId ?? null,
     input: {
       surface: 'studio', path: activePath, ...(sha256 ? { sha256 } : {}), dirty,
       ...(cursor ? { cursor } : {}), ...(selection ? { selection } : {}),
       tool: STUDIO_TOOL_FOR[currentTool] === undefined ? (currentTool as StudioTool) : STUDIO_TOOL_FOR[currentTool],
       ...(lastRun ? { lastRun: { runId: lastRun.runId, engine: lastRun.engine, turn: lastRun.turn } } : {}),
-      diagnostics, ...(org?.alias ? { orgAlias: org.alias } : {})
+      diagnostics: problems, ...(org?.alias ? { orgAlias: org.alias } : {})
     }
   });
 
@@ -734,14 +804,15 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         <AgentScriptDocumentBar path={activePath} dirty={dirty} busy={busy} issues={issues}
           saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={tools.state.open}
           headerActions={props.headerActions}
+          follow={layout !== 'legacy' && (driver || threadId || followPaused) ? <FollowChip driver={driver ?? (threadId ? 'this thread' : undefined)} paused={followPaused} onToggle={() => setFollowPaused(paused => !paused)} /> : undefined}
           orgPicker={props.orgPicker !== false && <OrgPicker pluginId={pluginId} projectId={projectId} compact />}
           onBrowse={() => browseAgents()} onSave={() => void save()}
           onSaveAs={() => { setError(null); setSaveAsOpen(true); }} onShowPanel={tools.toggle}
           {...(layout === 'legacy' ? {} : {
             shortcutHint: wide, hidePanelToggle: compact,
             onQuickOpen: () => setQuickOpen(true),
-            onCompile: () => composeFor('Diagnose and compile this Salesforce Agentforce draft with sf_agent, show any issues, and do not publish or activate it.'),
-            onPublish: () => composeFor('Review and publish this Salesforce Agentforce draft to the selected project org as an inactive version. Diagnose and compile it first, show any issues and use sf_agent lifecycle.publish with the normal confirmation. Do not activate.')
+            onCompile: () => void compile(), compiling: compiled?.status === 'running',
+            onPublish: () => openTool('release')
           })} />
         {orgSessionLabel(org) ? (
           <span hidden className="sf-as-crumb-seg" data-testid="salesforce-playground-org">
@@ -765,7 +836,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     </div>
   ) : false;
 
-  const problemsCount = diagnostics.length;
+  const problemsCount = problems.length;
   const tabs = layout === 'legacy' ? false : (
     <EditorTabs tabs={studio.tabs} active={studio.activeTab} dirtyId={dirty && activePath ? `agent:${activePath}` : null} problems={problemsCount}
       onSelect={selectTab} onClose={closeTab} />
@@ -776,11 +847,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     <BottomPanel open={studio.bottomOpen} active={bottomActive} problems={problemsCount} compact={compact}
       onToggle={() => patch({ bottomOpen: !studio.bottomOpen })} onSelect={tab => patch({ bottomTab: tab, bottomOpen: true })}
       render={(tab, visible) => {
-        if (tab === 'problems') return <ProblemsPanel path={activePath} diagnostics={diagnostics} compact={compact} busy={fixBusy}
+        if (tab === 'problems') return <ProblemsPanel path={activePath} diagnostics={problems} compact={compact} busy={fixBusy}
+          compile={compiled} stale={Boolean(compiled && (dirty || compiled.sha !== (sha256 || undefined)))}
           onReveal={line => revealLine(line)} onFixWithAgent={() => void fixWithAgent()} />;
         if (tab === 'trace') return <BottomTrace pluginId={pluginId} path={activePath} run={lastRun} visible={visible} onOpenPreview={() => openTool('preview')}
           onRevealSource={(path, line) => { if (path === activePathRef.current) revealLine(line); else void openFile(path).then(opened => { if (opened) revealLine(line); }); }} />;
-        if (tab === 'output') return visible ? <OperationsPanel pluginId={pluginId} projectId={projectId} orgAlias={org?.alias} threadId={context.threadId ?? undefined} /> : null;
+        if (tab === 'output') return visible ? <OperationsPanel pluginId={pluginId} projectId={projectId} orgAlias={org?.alias} threadId={threadId} /> : null;
         return <BottomTests suites={suites} onOpenTests={() => openTool('test')} />;
       }} />
   ) : false;
@@ -849,6 +921,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         <AgentforceStudioSplit open={splitOpen} mode={splitMode} storageKey={`salesforce:studio:split:${draftScope}`} editor={<div className="af-action-workspace">
           {tabs}
           {documentBar}
+          {heldReveal && <FollowToast held={heldReveal} onShow={showHeldReveal} onDismiss={() => setHeldReveal(null)} />}
           {targetTabView}
           {playgroundFailed ? (
           <div data-testid="salesforce-agent-script-playground-error"><SalesforceState kind="error" art="code" title="Editor unavailable">{PLAYGROUND_LOAD_ERROR}</SalesforceState></div>
@@ -874,7 +947,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         )}
         </div>}>
           <AgentScriptTools tools={tools} hiddenTools={hiddenTools} chrome={!compact} open={compact ? splitOpen : undefined} render={(id, visible) => {
-            if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => file.path.includes('aiAuthoringBundles/'))} onLocalOpen={path => void openFile(path)} onPublish={path => navigate.toCompose({ initialPrompt: `Review and publish this Salesforce Agentforce draft to the selected project org as an inactive version. Diagnose and compile it first, show any issues and use sf_agent lifecycle.publish with the normal confirmation. Do not activate.\nProject: ${projectId}\nSource: ${path}`, focusPrompt: true })} onOpen={openRetrieved} />;
+            if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => file.path.includes('aiAuthoringBundles/'))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
             if (id === 'files') return layout === 'legacy' ? explorerNode : null;
             if (id === 'assistant') return compact ? null : <AssistantRail pluginId={pluginId} projectId={projectId} path={activePath} view={view} onShareChange={setShare} />;
             if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}
@@ -883,11 +956,16 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
               onAddressWithAgent={() => { void askAgent('address-comments').catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }} />;
             if (id === 'graph') return <AgentScriptGraphPanel source={source} visible={visible} compact={compact} focusNode={graphFocus.node} focusSeq={graphFocus.seq} onOpenAction={id => { const action = actions.find(row => row.id === id); if (action) openAction(action); }} />;
             if (id === 'preview') return <PreviewWorkbench pluginId={pluginId} projectId={projectId} source={source} fileLabel={activePath?.split('/').pop() ?? 'Draft'}
-              engine={previewEngine} onEngineChange={setPreviewEngine} path={activePath ?? undefined} orgAlias={org?.alias} threadId={context.threadId ?? undefined}
+              engine={previewEngine} onEngineChange={setPreviewEngine} path={activePath ?? undefined} orgAlias={org?.alias} threadId={threadId}
               onRunChange={setLastRun} command={previewCommand} onCommandHandled={previewCommandHandled} dirty={dirty}
               onRevealSource={(path, line) => { if (path === activePathRef.current) revealLine(line); else void openFile(path).then(opened => { if (opened) revealLine(line); }); }} />;
-            if (id === 'test') return <AgentforceLabPanel pluginId={pluginId} projectId={projectId} source={source} mode="test" fileLabel={activePath?.split('/').pop() ?? 'Draft'} />;
+            if (id === 'test') return <TestsPane pluginId={pluginId} projectId={projectId} threadId={threadId} path={activePath} source={source} visible={visible} dirty={dirty}
+              proposalSource={proposalSource} onAskAgent={composeFor}
+              roleplay={<AgentforceLabPanel pluginId={pluginId} projectId={projectId} threadId={threadId} source={source} mode="test" fileLabel={activePath?.split('/').pop() ?? 'Draft'} />} />;
             if (id === 'org-preview') return <AgentforcePreviewPanel pluginId={pluginId} projectId={projectId} />;
+            if (id === 'release') return <ReleasePane pluginId={pluginId} projectId={projectId} path={activePath} visible={visible} dirty={dirty} sha256={sha256} source={source}
+              compile={compiled} compileStale={Boolean(compiled && (dirty || compiled.sha !== (sha256 || undefined)))}
+              onSave={() => void save()} onCompile={() => void compile()} onAskAgent={composeFor} />;
             return <div className="af-action-workspace">
           {actionTabs.length > 0 && <div className="af-related-tabs" aria-label="Open agent files">
             <div className={`af-related-tab${!selectedActionId ? ' is-active' : ''}`}><button aria-pressed={!selectedActionId} onClick={() => setSelectedActionId(null)}>All actions</button></div>
@@ -913,6 +991,7 @@ export function AgentforcePlaygroundPanel(props: {
   params?: unknown;
   headerActions?: ReactNode;
   orgPicker?: boolean;
+  onActivePath?: (path: string | null) => void;
 }) {
   return (
     <AgentScriptPanel
@@ -921,6 +1000,8 @@ export function AgentforcePlaygroundPanel(props: {
       params={props.params}
       headerActions={props.headerActions}
       orgPicker={props.orgPicker}
+      threadId={props.threadId}
+      onActivePath={props.onActivePath}
     />
   );
 }

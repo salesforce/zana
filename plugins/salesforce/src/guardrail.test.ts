@@ -77,7 +77,10 @@ describe('guardrail', () => {
     await expect(
       guard.mediate({ ...publish, kind: 'org.write', summary: 'PATCH Account' })
     ).resolves.toMatchObject({ approved: true });
-    expect(prompts).toBe(6);
+    // Deactivate asks every time too: an earlier yes never takes another agent offline.
+    await expect(guard.mediate({ ...publish, kind: 'agent.deactivate', summary: 'deactivate' })).resolves.toMatchObject({ approved: true });
+    await expect(guard.mediate({ ...publish, kind: 'agent.deactivate', summary: 'deactivate' })).resolves.toMatchObject({ approved: true });
+    expect(prompts).toBe(8);
   });
 
   it('names every guardrail envelope and can clear a thread session', async () => {
@@ -110,6 +113,7 @@ describe('guardrail', () => {
     expect(envelopeTitle('apex.anonymous')).toMatch(/anonymous/);
     expect(envelopeTitle('agent.publish')).toMatch(/publish/);
     expect(envelopeTitle('agent.activate')).toMatch(/activate/);
+    expect(envelopeTitle('agent.deactivate')).toBe('Confirm Agentforce deactivate');
     expect(envelopeTitle('agent.preview.live')).toMatch(/live preview/);
     expect(envelopeTitle('not-a-kind' as 'soql.export')).toMatch(/Salesforce/);
   });

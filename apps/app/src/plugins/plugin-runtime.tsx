@@ -6,7 +6,9 @@ import type {
   PluginSdkApp,
   PluginSettingsState,
   ThreadChatProps,
-  ZccNavigate
+  ZccContext,
+  ZccNavigate,
+  ZccWindowTitle
 } from '@zana-ai/zcc-plugin-sdk/app';
 import { callPluginRpc, getPluginSettings } from '@zana-ai/zcc-plugin-sdk/app';
 import { MarkdownContent } from '../components/MarkdownContent.js';
@@ -18,10 +20,20 @@ import {
   NEW_THREAD_ROUTE_PATH
 } from '../lib/route-paths.js';
 import { appNavigate } from '../lib/app-navigate.js';
+import { getPluginViewTarget } from '../lib/pluginViewSurface.js';
+import { isScopedWindow } from '../lib/windowScope.js';
 import { hrefForPluginNavPanel, hrefForPluginProjectTab } from './plugin-nav-href.js';
+import { listProjectTabs } from './plugin-slots.js';
+import {
+  isPluginViewOpen,
+  listOpenPluginViews,
+  openPluginViewWindow,
+  showInMainWindow
+} from './plugin-view-windows.js';
 import { ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
+import { claimPluginViewTitle, sanitizePluginViewTitle, type PluginViewTitleSlot } from './plugin-view-title.js';
 import { requestPluginPanelAgent } from './plugin-panel-agent.js';
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
@@ -98,9 +110,48 @@ function useRealtimeConnectionStateImpl() {
   );
 }
 
-function useZccContextImpl() {
+function useZccContextImpl(): ZccContext {
   const route = useRouteState();
-  return { projectId: route.focusedProjectId, threadId: route.threadId };
+  const view = getPluginViewTarget();
+  // A plugin view window shows one project tab and has no routes of its own.
+  if (view) return { projectId: view.projectId, threadId: null, surface: 'plugin-view' };
+  return {
+    projectId: route.focusedProjectId,
+    threadId: route.threadId,
+    surface: isScopedWindow() ? 'project-window' : 'main'
+  };
+}
+
+/** Titles the plugin view window, and only when it shows this plugin's own tab. */
+function useWindowTitleImpl(title: ZccWindowTitle | null | undefined): void {
+  const { pluginId } = usePluginRuntimeContext();
+  const own = getPluginViewTarget()?.pluginId === pluginId;
+  const slot = useRef<PluginViewTitleSlot | null>(null);
+  // The place is held from mount to unmount, so a changed title does not jump above a nested one.
+  useEffect(() => {
+    if (!own) return;
+    const claimed = claimPluginViewTitle();
+    slot.current = claimed;
+    return () => {
+      slot.current = null;
+      claimed.release();
+    };
+  }, [own]);
+  const clean = sanitizePluginViewTitle(title);
+  const text = clean?.title;
+  const detail = clean?.detail;
+  const badge = clean?.badge;
+  const tone = clean?.tone;
+  useEffect(() => {
+    slot.current?.set(text && tone ? { title: text, ...(detail ? { detail } : {}), ...(badge ? { badge } : {}), tone } : null);
+  }, [own, badge, detail, text, tone]);
+}
+
+/** This plugin's detachable project tab: the named one, else its first. */
+function detachableProjectTab(pluginId: string, tabId: string | undefined) {
+  return listProjectTabs().find(
+    (tab) => tab.pluginId === pluginId && tab.detachable === true && (tabId === undefined || tab.id === tabId)
+  );
 }
 
 function useZccNavigateImpl(): ZccNavigate {
@@ -108,29 +159,48 @@ function useZccNavigateImpl(): ZccNavigate {
   const { pluginId } = usePluginRuntimeContext();
   const route = useRouteState();
   const panelOwnerId = useThreadPanelOwnerId();
-  return useMemo(
-    () => ({
+  return useMemo(() => {
+    const view = getPluginViewTarget();
+    // A plugin view window has no routes: send in-app navigation to the main window.
+    const go = (to: string, options?: { replace?: boolean }) => {
+      if (view) void showInMainWindow(to);
+      else void navigate(to, options);
+    };
+    return {
       toThread(threadId: string) {
-        void navigate(getThreadRoutePath(threadId));
+        go(getThreadRoutePath(threadId));
       },
       toProject(projectId: string, options?: { tabId?: string }) {
-        const to = options?.tabId
-          ? hrefForPluginProjectTab(pluginId, projectId, options.tabId)
-          : getProjectRoutePath(projectId);
-        void navigate(to);
+        if (options?.tabId) {
+          const target = { pluginId, tabId: options.tabId, projectId };
+          // A tab open in its own window (this one included) lives there; bring that window forward.
+          if (isPluginViewOpen(view ? [view, ...listOpenPluginViews()] : listOpenPluginViews(), target)) {
+            void openPluginViewWindow(target);
+            return;
+          }
+          go(hrefForPluginProjectTab(pluginId, projectId, options.tabId));
+          return;
+        }
+        go(getProjectRoutePath(projectId));
       },
       toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }) {
-        const to = hrefForPluginNavPanel(pluginId, path, options?.subPath);
-        void navigate(to, { replace: options?.replace });
+        go(hrefForPluginNavPanel(pluginId, path, options?.subPath), { replace: options?.replace });
       },
       toCompose(options?: { initialPrompt?: string; focusPrompt?: boolean }) {
         const params = new URLSearchParams();
         if (options?.initialPrompt) params.set('prompt', options.initialPrompt);
         if (options?.focusPrompt) params.set('focus', '1');
         const query = params.toString();
-        void navigate(query ? `${NEW_THREAD_ROUTE_PATH}?${query}` : NEW_THREAD_ROUTE_PATH);
+        go(query ? `${NEW_THREAD_ROUTE_PATH}?${query}` : NEW_THREAD_ROUTE_PATH);
+      },
+      openInWindow(projectId: string, options?: { tabId?: string }) {
+        const tab = detachableProjectTab(pluginId, options?.tabId);
+        if (!tab) return Promise.resolve(false);
+        return openPluginViewWindow({ pluginId, tabId: tab.id, projectId });
       },
       openThreadPanel(options) {
+        // No conversation sits beside a plugin view window.
+        if (view) return false;
         return openPluginThreadPanel({
           pluginId,
           threadId: resolveThreadPanelOwnerId([
@@ -147,9 +217,8 @@ function useZccNavigateImpl(): ZccNavigate {
       openPanelAgent(options) {
         return requestPluginPanelAgent({ pluginId, threadId: options.threadId, title: options.title });
       }
-    }),
-    [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId]
-  );
+    };
+  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId]);
 }
 
 const composerFallback: PluginComposerApi = {
@@ -215,6 +284,7 @@ export function installPluginRuntime(): void {
     useSettings: useSettingsImpl,
     useZccContext: useZccContextImpl,
     useZccNavigate: useZccNavigateImpl,
+    useWindowTitle: useWindowTitleImpl,
     useComposer: () => {
       const { pluginId } = usePluginRuntimeContext();
       const api = getActiveComposerApi() ?? composerFallback;

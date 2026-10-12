@@ -53,7 +53,7 @@ import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, cleanupHa
 import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
-import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { IPC, type PluginViewTarget } from '@zana-ai/zcc-desktop-contract';
 import { signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
 import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
@@ -212,6 +212,18 @@ import type { QuickPrompt } from '@zana-ai/zcc-domain/product';
 import type { InboxOrigin } from '@zana-ai/zcc-domain/product';
 import { LibraryStore, type ILibraryStore } from '@zana-ai/zcc-server/services/library/library-store';
 import { createBoundsStateController, restoreWindowState } from './window/bounds-state.js';
+import {
+  pluginViewKey,
+  pluginViewRendererParams,
+  pluginViewWindowGeometry,
+  readPluginViewBounds,
+  writePluginViewBounds
+} from './window/plugin-view-windows.js';
+import { createPluginViewHost } from './window/plugin-view-host.js';
+import { registerPluginViewIpc } from './ipc/windows.js';
+import { showApprovalSheet } from './window/approval-sheet.js';
+import { createPluginApprovalHandler } from './ipc/plugin-approvals.js';
+import { listPluginAppsFromProductServer } from './ipc/plugin-apps-loopback.js';
 import type { LibraryDoc, LibraryAddInput, LibraryScope } from '@zana-ai/zcc-domain/product';
 import { startMcpServer, type McpServerHandle } from '@zana-ai/zcc-server/services/mcp/mcp-server';
 import { MobileGatewayManager } from '@zana-ai/zcc-server/mobile/manager';
@@ -867,8 +879,11 @@ function setActiveProjectSkillsWatcher(
  * scope is a display lock, not an isolation boundary (see windowScope.ts). If a
  * real per-project isolation guarantee is ever required, filter here by the
  * target window's `projectId` for the project-bearing channels.
+ *
+ * A plugin view window (`view`) shows one plugin project tab. It also carries
+ * the tab's `projectId`, so it is scoped like a project window.
  */
-const windows = new Map<number, { win: BrowserWindow; projectId?: string }>();
+const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget }>();
 const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
 const rendererReadiness = new RendererReadiness();
 
@@ -3207,6 +3222,8 @@ function safeSend(channel: string, ...args: unknown[]) {
  */
 function sendToFocused(channel: string, ...args: unknown[]) {
   const target = BrowserWindow.getFocusedWindow() ?? mainWindow();
+  /* v8 ignore next -- menu routing runs in built Electron; routeMenu is unit-tested */
+  if (pluginViews.routeMenu(target, channel, args)) return;
   if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return;
   try {
     target.webContents.send(channel, ...args);
@@ -3282,8 +3299,10 @@ function openProjectWindow(projectId: string) {
     logMainError('openProjectWindow', `unknown projectId ${projectId}`);
     return;
   }
-  for (const { win, projectId: pid } of windows.values()) {
-    if (pid === projectId && !win.isDestroyed()) {
+  // A plugin view window carries the project id too, but it is not the project's window.
+  /* v8 ignore next -- project windows open through built-Electron IPC (E2E) */
+  for (const { win, projectId: pid, view } of windows.values()) {
+    if (pid === projectId && !view && !win.isDestroyed()) {
       if (E2E_LAUNCH) return; // E2E: keep hidden, never steal focus
       if (win.isMinimized()) win.restore();
       win.show();
@@ -3293,6 +3312,20 @@ function openProjectWindow(projectId: string) {
   }
   createWindow(projectId);
 }
+
+/* v8 ignore next -- wiring to Electron windows; createPluginViewHost is unit-tested and the windows are covered by built-Electron E2E */
+const pluginViews = createPluginViewHost({
+  windows,
+  listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
+  projectIds: () => store.listProjects().map((project) => project.id),
+  createWindow: (view) => createWindow(view.projectId, false, view),
+  ensureMainWindowReady,
+  mainWindow: unscopedWindow,
+  showMainWindow,
+  broadcast: safeSend,
+  logError: logMainError,
+  keepHidden: E2E_LAUNCH
+});
 
 /**
  * Loud-tier (`InboxNotifyLevel === 'loud'`) OS presence — a native banner when
@@ -6151,7 +6184,7 @@ function createMainTeamProductOps() {
  * out across.
  */
 /* v8 ignore next -- window construction runs only at the built-Electron boundary */
-function createWindow(projectId?: string, repairOnly = false) {
+function createWindow(projectId?: string, repairOnly = false, view?: PluginViewTarget) {
   // Capture the window the user invoked from BEFORE creating the new one, so a
   // scoped window cascades off its actual opener (not whatever `mainWindow()`
   // would pick, and never off itself once it's in the map).
@@ -6167,15 +6200,28 @@ function createWindow(projectId?: string, repairOnly = false) {
     screen.getAllDisplays(),
     screen.getPrimaryDisplay()
   );
+  // A plugin view window keeps its own geometry per tab and project.
+  const viewKey = view ? pluginViewKey(view) : undefined;
+  const viewGeometry = viewKey
+    ? pluginViewWindowGeometry(
+        readPluginViewBounds(config.pluginViewWindowBounds, viewKey),
+        screen.getAllDisplays(),
+        screen.getPrimaryDisplay()
+      )
+    : undefined;
 
   const win = new BrowserWindow({
-    width: projectId || repairOnly ? 1400 : restored.bounds.width,
-    height: projectId || repairOnly ? 900 : restored.bounds.height,
-    x: projectId || repairOnly ? undefined : restored.bounds.x,
-    y: projectId || repairOnly ? undefined : restored.bounds.y,
-    minWidth: projectId || repairOnly ? 900 : restored.minWidth,
-    /* v8 ignore next -- window geometry is covered by built-Electron E2E */
-    minHeight: projectId || repairOnly ? 600 : restored.minHeight,
+    ...(viewGeometry
+      ? viewGeometry.options
+      : {
+          width: projectId || repairOnly ? 1400 : restored.bounds.width,
+          height: projectId || repairOnly ? 900 : restored.bounds.height,
+          x: projectId || repairOnly ? undefined : restored.bounds.x,
+          y: projectId || repairOnly ? undefined : restored.bounds.y,
+          minWidth: projectId || repairOnly ? 900 : restored.minWidth,
+          /* v8 ignore next -- window geometry is covered by built-Electron E2E */
+          minHeight: projectId || repairOnly ? 600 : restored.minHeight
+        }),
     title: 'Zana',
     icon: productIconImage(),
     backgroundColor: '#181818',
@@ -6204,10 +6250,12 @@ function createWindow(projectId?: string, repairOnly = false) {
     }
   });
 
-  windows.set(win.id, { win, projectId });
+  windows.set(win.id, { win, projectId, view });
+  if (view) pluginViews.broadcast();
   rendererReadiness.reset(win.id);
-  win.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
-    if (isMainFrame) rendererReadiness.reset(win.id);
+  /* v8 ignore next -- Electron navigation event is covered by boundary E2E; navigationStarted is unit-tested */
+  win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    rendererReadiness.navigationStarted(win.id, isInPlace, isMainFrame);
   });
   win.webContents.on('render-process-gone', () => rendererReadiness.remove(win.id));
   win.webContents.on('did-fail-load', (_event, _code, _description, _url, isMainFrame) => {
@@ -6254,11 +6302,12 @@ function createWindow(projectId?: string, repairOnly = false) {
     rendererReadiness.remove(win.id);
     windows.delete(win.id);
     boundsControllers.delete(win.id);
+    if (view) pluginViews.broadcast();
   });
 
   // A scoped window opens slightly offset from its opener so a freshly-opened
   // project window isn't hidden exactly behind the window it was opened from.
-  if (projectId && opener && opener !== win && !opener.isDestroyed()) {
+  if (projectId && !view && opener && opener !== win && !opener.isDestroyed()) {
     const b = opener.getBounds();
     win.setBounds({ x: b.x + 36, y: b.y + 36, width: b.width, height: b.height });
   }
@@ -6282,14 +6331,31 @@ function createWindow(projectId?: string, repairOnly = false) {
   });
 
   // Persist bounds on resize/move (debounced) so a relaunch restores them.
-  // Only the unscoped main window owns the saved bounds.
-  if (!projectId && !repairOnly) {
-    const controller = createBoundsStateController({
-      win,
-      initialBounds: restored.bounds,
-      initialMaximized: config.windowMaximized,
-      write: (state) => store.setConfig(state)
-    });
+  // The unscoped main window owns the saved bounds; a plugin view window keeps
+  // its own entry in a capped record. Project windows open at the default size.
+  if ((!projectId && !repairOnly) || viewKey) {
+    const controller = viewKey
+      ? createBoundsStateController({
+          win,
+          initialBounds: viewGeometry?.bounds,
+          initialMaximized: viewGeometry?.maximized,
+          // Read-modify-write in one synchronous turn, so writes cannot interleave.
+          write: (state) =>
+            store.setConfig({
+              pluginViewWindowBounds: writePluginViewBounds(
+                store.getConfig().pluginViewWindowBounds,
+                viewKey,
+                state,
+                Date.now()
+              )
+            })
+        })
+      : createBoundsStateController({
+          win,
+          initialBounds: restored.bounds,
+          initialMaximized: config.windowMaximized,
+          write: (state) => store.setConfig(state)
+        });
     boundsControllers.set(win.id, controller);
     win.on('resize', controller.scheduleBounds);
     win.on('move', controller.scheduleBounds);
@@ -6318,15 +6384,24 @@ function createWindow(projectId?: string, repairOnly = false) {
   });
 
   // The scoped project id rides in as a query param so the renderer can lock to
-  // it before first paint (read in main.tsx). Unscoped windows get no param.
-  const url = rendererUrl(projectId ? { projectId } : {});
+  // it before first paint (read in main.tsx). Unscoped windows get no param. A
+  // plugin view window also names its plugin and tab.
+  const params: Record<string, string> = view ? pluginViewRendererParams(view) : projectId ? { projectId } : {};
+  const url = rendererUrl(params);
   if (url) {
     win.loadURL(url);
   } else {
     // Startup-repair can render before normal bootstrap starts the local static
     // host. It is the only permitted file-backed product surface.
+    const search = new URLSearchParams(params).toString();
     win.loadFile(join(__dirname, '../renderer/index.html'), {
-      search: projectId ? `projectId=${encodeURIComponent(projectId)}` : undefined
+      search: search || undefined
+    });
+  }
+
+  if (viewGeometry?.maximized) {
+    win.once('ready-to-show', () => {
+      if (!win.isDestroyed() && !win.isFullScreen()) win.maximize();
     });
   }
 
@@ -6870,6 +6945,15 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
 
 function registerIpc() {
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
+  // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
+  /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
+  safeHandleFromWindow(IPC.pluginApprovals.request, createPluginApprovalHandler({
+    secret: ensureProductServerCredential,
+    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
+    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options))
+  }), () => ({ approved: false as const, reason: 'unavailable' as const }));
+  /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
+  registerPluginViewIpc(safeHandle, pluginViews);
   safeHandleFromWindow(IPC.sharedClient.list, () => sharedClient.instances(), err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.signIn, () => sharedClient.signIn(), err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.select, (_win, id: unknown) => sharedClient.select(id), err => { throw err; });

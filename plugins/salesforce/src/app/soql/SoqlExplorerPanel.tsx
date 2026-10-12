@@ -31,6 +31,7 @@ import { ActionDialog } from '../components/ActionDialog.js';
 import { useSalesforceDraft } from '../components/drafts.js';
 import { OrgPicker } from '../OrgPicker.js';
 import { QueryEditorPane } from './QueryEditorPane.js';
+import { useContextChangeRelay } from '../context-sync.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -98,6 +99,7 @@ type QueryState = QueryPage & { soql?: string; sobjectName?: string; useToolingA
 type RpcFail = { ok: false; code?: string; error?: string; line?: number; column?: number };
 
 export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string; orgAlias?: string; threadId?: string; initialQuery?: string; draftId?: string; onAddToPrompt?(text: string): void; onOpenRecord?(recordId: string, objectName: string, orgAlias: string): void }) {
+  useContextChangeRelay();
   const pluginId = props.pluginId || PLUGIN_ID;
   const call = useSalesforceCall(pluginId, { projectId: props.projectId, orgAlias: props.orgAlias }, props.threadId);
   const epoch = useRef(0);

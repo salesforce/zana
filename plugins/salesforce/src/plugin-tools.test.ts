@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import { envelopeTitle } from '../lib/guardrail.js';
@@ -92,6 +92,11 @@ function mockDeps(options?: {
       }
       if (args[0] === 'agent' && args[1] === 'activate') {
         return { code: 0, stdout: JSON.stringify({ status: 0, result: { success: true } }), stderr: '' };
+      }
+      if (args[0] === 'agent' && args[1] === 'deactivate') {
+        return args.includes('Broken')
+          ? { code: 1, stdout: JSON.stringify({ status: 1, message: 'No active version for Broken.' }), stderr: '' }
+          : { code: 0, stdout: JSON.stringify({ status: 0, result: { success: true } }), stderr: '' };
       }
       if (args[0] === 'agent' && args[1] === 'test') {
         if (args.includes('--help')) {
@@ -649,8 +654,11 @@ describe('salesforce family tools', () => {
       cwd: '/proj',
       args: expect.arrayContaining(['agent', 'test', 'run-eval', '--spec', '/proj/evals/spec.json'])
     });
+    // A YAML spec in the sf agent test format counts its own cases, so the run reports n/n of the spec.
     await expect(agentEval.execute({ action: 'eval.run', specPath: 'evals/spec.yaml' }, ctx)).resolves.toMatchObject({
-      ok: true
+      ok: true,
+      summary: expect.stringContaining('(1/1)'),
+      data: { testCount: 1 }
     });
     await expect(agent.execute({ action: 'eval.run', specPath: '../secret.json' }, ctx)).resolves.toMatchObject({
       code: 'path_refused'
@@ -1093,6 +1101,40 @@ describe('salesforce family tools', () => {
   });
 });
 
+describe('sf_agent lifecycle.deactivate', () => {
+  it('confirms on every org kind, then takes the agent offline with sf agent deactivate', async () => {
+    const calls: string[][] = [];
+    const base = mockDeps();
+    const deps: SalesforceDeps = { ...base, execSf: async (args, opts) => { calls.push(args); return base.execSf(args, opts); } };
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
+    await createSalesforcePlugin(zcc, deps);
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
+    const deactivations = () => calls.filter((args) => args[0] === 'agent' && args[1] === 'deactivate');
+    await expect(agent.execute({ action: 'lifecycle.deactivate' }, ctx)).resolves.toMatchObject({ code: 'invalid_input', error: expect.stringContaining('apiName') });
+    // A sandbox still asks: deactivate is never a silent org read.
+    const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+    const cancelled = agent.execute({ action: 'lifecycle.deactivate', apiName: 'MyBot' }, ctx);
+    await vi.waitFor(() => expect(confirmation).toHaveBeenCalledOnce());
+    expect(confirmation.mock.calls[0]![0]).toMatchObject({ payload: { kind: 'agent.deactivate', orgAlias: 'dev', orgKind: 'sandbox', preview: 'MyBot', summary: expect.stringContaining('lose the agent') } });
+    harness.cancelInteraction();
+    await expect(cancelled).resolves.toMatchObject({ ok: false, code: 'refused', error: 'Operator cancelled lifecycle.deactivate.' });
+    expect(deactivations()).toHaveLength(0);
+    const approved = agent.execute({ action: 'lifecycle.deactivate', apiName: 'MyBot' }, ctx);
+    await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(2));
+    harness.submitInteraction({ approved: true });
+    await expect(approved).resolves.toMatchObject({ ok: true, summary: 'Deactivated MyBot', artifactId: expect.any(String) });
+    expect(deactivations()).toEqual([['agent', 'deactivate', '--json', '--api-name', 'MyBot', '--target-org', 'dev']]);
+    const broken = agent.execute({ action: 'lifecycle.deactivate', apiName: 'Broken' }, ctx);
+    await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(3));
+    harness.submitInteraction({ approved: true });
+    await expect(broken).resolves.toMatchObject({ ok: false, code: 'deactivate_failed', error: 'No active version for Broken.' });
+    // Without a thread there is no one to ask, so nothing goes offline.
+    await expect(agent.execute({ action: 'lifecycle.deactivate', apiName: 'MyBot' }, { ...ctx, threadId: '' })).resolves.toMatchObject({ code: 'refused', error: 'Operator headless lifecycle.deactivate.' });
+    expect(deactivations()).toHaveLength(2);
+  });
+});
+
 describe('salesforce helpers', () => {
   it('names every guardrail envelope', () => {
     expect(envelopeTitle('org.production.read')).toMatch(/production/i);
@@ -1103,6 +1145,7 @@ describe('salesforce helpers', () => {
     expect(envelopeTitle('soql.export')).toMatch(/export/i);
     expect(envelopeTitle('agent.publish')).toMatch(/publish/i);
     expect(envelopeTitle('agent.activate')).toMatch(/activate/i);
+    expect(envelopeTitle('agent.deactivate')).toMatch(/deactivate/i);
     expect(envelopeTitle('agent.preview.live')).toMatch(/live preview/i);
   });
 

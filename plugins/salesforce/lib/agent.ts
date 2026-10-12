@@ -19,7 +19,8 @@ export type AgentAction =
   | 'eval.run'
   | 'lifecycle.list'
   | 'lifecycle.publish'
-  | 'lifecycle.activate';
+  | 'lifecycle.activate'
+  | 'lifecycle.deactivate';
 
 export type AgentLspQuery = 'diagnostics' | 'hover' | 'complete' | 'definition' | 'symbols';
 
@@ -87,7 +88,8 @@ const ACTIONS: readonly AgentAction[] = [
   'eval.run',
   'lifecycle.list',
   'lifecycle.publish',
-  'lifecycle.activate'
+  'lifecycle.activate',
+  'lifecycle.deactivate'
 ];
 
 const LSP_QUERIES: readonly AgentLspQuery[] = ['diagnostics', 'hover', 'complete', 'definition', 'symbols'];
@@ -157,6 +159,9 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
   }
   if (action === 'lifecycle.activate' && !apiName && !botVersionId) {
     return { ok: false, error: 'lifecycle.activate requires apiName or botVersionId.' };
+  }
+  if (action === 'lifecycle.deactivate' && !apiName) {
+    return { ok: false, error: 'lifecycle.deactivate requires the agent apiName.' };
   }
 
   return {
@@ -325,19 +330,82 @@ export function compactPreviewDigest(payload: unknown, utterance?: string): Reco
   };
 }
 
-export function parseEvalSpec(text: string): { ok: true; spec: unknown; testCount: number } | { ok: false; error: string } {
-  const parsed = (() => {
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      return null;
+const EVAL_LIST_KEYS = ['testCases', 'tests', 'utterances'];
+const SPEC_SHAPE_ERROR = 'Eval spec must be a JSON object or a YAML mapping.';
+const SPEC_EMPTY_ERROR = 'Eval spec needs a non-empty testCases, tests or utterances list.';
+
+/**
+ * Counts an eval spec's cases, in JSON or the YAML `sf agent test` format.
+ * `sf agent test run-eval` parses the spec itself; this only labels the run, so
+ * YAML outside the plain block or one-line flow list reads as uncounted.
+ */
+export function parseEvalSpec(text: string): { ok: true; format: 'json' | 'yaml'; testCount: number } | { ok: false; error: string } {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    const parsed = (() => {
+      try {
+        return JSON.parse(trimmed) as unknown;
+      } catch {
+        return null;
+      }
+    })();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false, error: SPEC_SHAPE_ERROR };
+    const row = parsed as Record<string, unknown>;
+    const tests = EVAL_LIST_KEYS.map(key => row[key]).find(Array.isArray);
+    if (!tests || tests.length === 0) return { ok: false, error: SPEC_EMPTY_ERROR };
+    return { ok: true, format: 'json', testCount: tests.length };
+  }
+  const counted = yamlEvalCaseCount(trimmed);
+  if (counted === null) return { ok: false, error: SPEC_SHAPE_ERROR };
+  if (counted === 0) return { ok: false, error: SPEC_EMPTY_ERROR };
+  return { ok: true, format: 'yaml', testCount: counted };
+}
+
+/** Items in the first top-level case list; 0 for a mapping without one, null when the text is not a readable mapping. */
+function yamlEvalCaseCount(text: string): number | null {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  let keys = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const key = lines[i]!.match(/^([A-Za-z_][\w-]*)\s*:(?:\s+(.*))?$/);
+    if (!key) continue;
+    keys++;
+    if (!EVAL_LIST_KEYS.includes(key[1]!)) continue;
+    const inline = (key[2] ?? '').replace(/\s+#.*$/, '').trim();
+    if (inline) return inline.startsWith('[') && inline.endsWith(']') ? flowListLength(inline.slice(1, -1)) : null;
+    let indent: number | null = null;
+    let count = 0;
+    for (const row of lines.slice(i + 1)) {
+      const body = row.trimStart();
+      if (!body || body.startsWith('#')) continue;
+      const lead = row.length - body.length;
+      const item = body === '-' || body.startsWith('- ');
+      // The next top-level key ends the list; YAML lets the items sit at the key's own indent.
+      if (lead === 0 && !item) break;
+      if (indent === null) {
+        if (!item) return null;
+        indent = lead;
+      }
+      if (lead < indent) break;
+      if (item && lead === indent) count++;
     }
-  })();
-  if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'Eval spec must be a JSON object.' };
-  const row = parsed as { tests?: unknown; utterances?: unknown };
-  const tests = Array.isArray(row.tests) ? row.tests : Array.isArray(row.utterances) ? row.utterances : null;
-  if (!tests || tests.length === 0) return { ok: false, error: 'Eval spec needs a non-empty tests or utterances array.' };
-  return { ok: true, spec: parsed, testCount: tests.length };
+    return count;
+  }
+  return keys > 0 ? 0 : null;
+}
+
+function flowListLength(body: string): number {
+  let depth = 0;
+  let quote: string | null = null;
+  let items = body.trim() ? 1 : 0;
+  for (const char of body) {
+    if (quote) { if (char === quote) quote = null; continue; }
+    if (char === '"' || char === "'") quote = char;
+    else if (char === '[' || char === '{') depth++;
+    else if (char === ']' || char === '}') depth--;
+    else if (char === ',' && depth === 0) items++;
+  }
+  // A trailing comma closes the list without adding an item.
+  return body.trim().endsWith(',') ? items - 1 : items;
 }
 
 export function evalCaseCount(text: string): number {
@@ -464,6 +532,11 @@ export function activateArgs(apiName: string, alias: string, versionNumber?: num
   const args = ['agent', 'activate', '--json', '--api-name', apiName, '--target-org', alias];
   if (versionNumber !== undefined) args.push('--version', String(versionNumber));
   return args;
+}
+
+/** Takes the agent's active version offline; the org keeps every version for a later activate. */
+export function deactivateArgs(apiName: string, alias: string): string[] {
+  return ['agent', 'deactivate', '--json', '--api-name', apiName, '--target-org', alias];
 }
 
 export function validateArgs(apiName: string, alias: string): string[] {

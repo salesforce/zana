@@ -45,18 +45,26 @@ const rpc = vi.fn(async (_pluginId: string, method: string, args?: Record<string
 });
 
 const baseRpc = rpc.getMockImplementation()!;
+const navigate = { openThreadPanel: vi.fn(() => true) };
+const run = {
+  id: 'run-1', engine: 'preview', orgAlias: 'dev', sourceHash: 'h', model: 'm', closed: true, failed: false, path: 'force-app/bots/QC.agent',
+  turns: [{ role: 'agent', text: 'Welcome', planId: 'p0' }, { role: 'user', text: 'Where is my order?' }, { role: 'agent', text: 'Order 42 ships today.', planId: 'p1', latencyMs: 1200 }]
+};
+const trace = { runId: 'run-1', turn: 2, planId: 'p1', available: true, steps: [{ kind: 'action', label: 'FindOrder', source: { path: 'force-app/bots/QC.agent', line: 7 } }] };
 describe('AgentforcePreviewPanel', () => {
   const nodes: Array<{ unmount: () => void }> = [];
 
   beforeEach(() => {
     rpc.mockClear();
     rpc.mockImplementation(baseRpc);
+    navigate.openThreadPanel.mockClear();
     (globalThis as { __ZCC_PLUGIN_HOST__?: unknown }).__ZCC_PLUGIN_HOST__ = {
       callRpc: rpc,
       setSettings: async () => undefined
     };
     (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__ = {
       useZccContext: () => ({ projectId: 'proj-1', threadId: 'thr-1' }),
+      useZccNavigate: () => navigate,
       useSettings: () => ({ values: { defaultOrg: 'dev' }, isLoading: false })
     };
   });
@@ -231,5 +239,53 @@ describe('AgentforcePreviewPanel', () => {
     rpc.mockClear();
     await act(async () => { nodes.pop()!.unmount(); });
     expect(rpc.mock.calls.some(([, method]) => method === 'agentPreview.end')).toBe(false);
+  });
+
+  it('reopens a linked run read-only, traces the chosen turn and reveals its line', async () => {
+    rpc.mockImplementation(async (id: string, method: string, args?: Record<string, unknown>) =>
+      method === 'agentLab.get' ? { ok: true, data: run } : method === 'agentLab.trace' ? { ok: true, data: { ...trace, planId: args?.planId } } : baseRpc(id, method, args));
+    const el = await mount({ runId: 'run-1', turn: '2' });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.get', { projectId: 'proj-1', id: 'run-1' });
+    const replay = el.querySelector('[data-testid="salesforce-preview-run"]')!;
+    expect(replay.textContent).toContain('Simulate run');
+    expect(replay.textContent).toContain('QC.agent');
+    expect(replay.textContent).toContain('Ended');
+    expect(el.querySelector('[data-testid="salesforce-agentforce-preview-transcript"]')).toBeNull();
+    expect(el.querySelector('[aria-label="Turn 2"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.trace', { projectId: 'proj-1', id: 'run-1', planId: 'p1', turn: 2, path: 'force-app/bots/QC.agent' });
+    const step = [...el.querySelectorAll<HTMLButtonElement>('button.sf-trace-row')].find(b => b.textContent?.includes('FindOrder'))!;
+    await act(async () => { step.click(); });
+    expect(navigate.openThreadPanel).toHaveBeenCalledWith({ actionId: 'playground', title: 'Playground', params: { path: 'force-app/bots/QC.agent', line: '7' }, threadId: 'thr-1' });
+    // With the Studio in its own window, the step opens there instead.
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation(async (id: string, method: string, args?: Record<string, unknown>) =>
+      method === 'control.views' ? { ok: true, views: [{ id: 'studio', surface: 'workbench', window: 'plugin-view', commands: ['view.open'] }] }
+        : method === 'control.command' ? { ok: true, commandId: 'c' }
+          : method === 'control.result' ? { ok: true, state: 'completed' } : base(id, method, args));
+    navigate.openThreadPanel.mockClear();
+    await act(async () => { step.click(); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'control.command', expect.objectContaining({ viewId: 'studio', input: { view: 'agentforce', path: 'force-app/bots/QC.agent', line: 7 } }));
+    expect(navigate.openThreadPanel).not.toHaveBeenCalled();
+    rpc.mockImplementation(base);
+    await act(async () => { el.querySelector<HTMLButtonElement>('[aria-label="Turn 1"]')!.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(rpc).toHaveBeenLastCalledWith('salesforce', 'agentLab.trace', expect.objectContaining({ planId: 'p0', turn: 1 }));
+    await act(async () => { [...el.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Close run')!.click(); });
+    expect(el.querySelector('[data-testid="salesforce-preview-run"]')).toBeNull();
+    expect(el.querySelector('[data-testid="salesforce-agentforce-preview-transcript"]')).toBeTruthy();
+  });
+
+  it('explains an expired run and starting a new preview drops the replay', async () => {
+    rpc.mockImplementation(async (id: string, method: string, args?: Record<string, unknown>) =>
+      method === 'agentLab.get' ? { ok: false, error: 'This run has expired or belongs to another project. Start a new run.' } : baseRpc(id, method, args));
+    const el = await mount({ runId: 'gone' });
+    await act(async () => { await Promise.resolve(); });
+    expect(el.querySelector('[role="alert"]')?.textContent).toContain('expired');
+    expect(el.querySelector('[role="alert"]')?.textContent).toContain('30 idle minutes');
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(el.querySelector('[data-testid="salesforce-preview-run"]')).toBeNull();
+    expect(el.querySelector('[data-testid="salesforce-agentforce-preview-transcript"]')?.textContent).toContain('Simulate preview started.');
   });
 });

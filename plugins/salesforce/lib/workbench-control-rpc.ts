@@ -10,7 +10,7 @@ import { UI_WAKE_CHANNEL } from './studio-contract.js';
 export function uiCommandReadsOrg(command: unknown, input: Record<string, unknown> | undefined): boolean {
   return ['object.select', 'record.open', 'log.open'].includes(String(command))
     || (command === 'view.open' && input?.view !== 'agentforce')
-    || (command === 'panel.open' && ['agents', 'org-preview'].includes(String(input?.tool)))
+    || (command === 'panel.open' && ['agents', 'org-preview', 'release'].includes(String(input?.tool)))
     // Simulate/live sessions talk to the org; only the LLM role-play engine stays local.
     || ((command === 'preview.start' || command === 'preview.send') && input?.engine !== 'rehearse');
 }
@@ -25,7 +25,8 @@ export function registerControlRpc({ registerRpc, control, contexts, zcc }: Pick
   registerRpc('control.close', args => { control.close(controlScope(), rpcString(args, 'viewId')); return { ok: true }; });
   registerRpc('control.ack', args => ({ ok: true, ...control.acknowledge(controlScope(), args) }));
   registerRpc('control.views', () => ({ ok: true, views: control.list(controlScope()) }));
-  registerRpc('control.command', args => ({ ok: true, ...control.request(controlScope(), args) }));
+  // Renderer commands come from the person's own UI (a card or panel in another window), never from a thread.
+  registerRpc('control.command', args => ({ ok: true, ...control.request(controlScope(), args, undefined, true) }));
   registerRpc('control.outcome', args => ({ ok: true, ...control.outcome(controlScope(), args) }));
   registerRpc('control.result', async args => ({ ok: true, ...await control.resultWait(controlScope(), rpcString(args, 'commandId'), (args as Record<string, unknown> | undefined)?.waitMs) }));
 }

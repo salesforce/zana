@@ -140,6 +140,23 @@ describe('plugin requestInput validation', () => {
     await handle.dispose();
     expect(interrupted).toEqual(['ask-user']);
   });
+
+  it('consumes approvals only through the host verifier, for its own plugin id', async () => {
+    const binding = { action: 'agent.publish', target: 'org', targetLabel: 'dev', subject: 'Help' };
+    const bare = createPluginApi('salesforce', '/tmp');
+    await expect(bare.api.ui.experimental_consumeApproval({ token: 't', binding })).resolves.toBe(false);
+    const consumePluginApproval = vi.fn(({ token }: { token: string }) => token === 'good');
+    const handle = createPluginApi('salesforce', '/tmp', { consumePluginApproval });
+    await expect(handle.api.ui.experimental_consumeApproval({ token: 'good', binding })).resolves.toBe(true);
+    await expect(handle.api.ui.experimental_consumeApproval({ token: 'bad', binding })).resolves.toBe(false);
+    expect(consumePluginApproval).toHaveBeenCalledWith({ pluginId: 'salesforce', token: 'good', binding });
+    for (const request of [null, 'good', { binding }, { token: 7, binding }]) {
+      await expect(handle.api.ui.experimental_consumeApproval(request as never)).resolves.toBe(false);
+    }
+    expect(consumePluginApproval).toHaveBeenCalledTimes(2);
+    await handle.dispose();
+    await expect(handle.api.ui.experimental_consumeApproval({ token: 'good', binding })).rejects.toThrow();
+  });
 });
 
 describe('plugin realtime', () => {

@@ -91,11 +91,12 @@ describe('PreviewWorkbench', () => {
 
   it('switches engines and runs the rehearse flow with an approximation trace', async () => {
     const onRun = vi.fn(); const onEngine = vi.fn();
-    const el = await mount({ onRunChange: onRun, onEngineChange: onEngine });
+    const el = await mount({ onRunChange: onRun, onEngineChange: onEngine, threadId: 'owner' });
     await click(btn(el, 'Rehearse'));
     expect(onEngine).toHaveBeenCalledWith('rehearse');
     await click(btn(el, 'Start'));
-    expect(calls.find(c => c.method === 'agentLab.start')?.args).toMatchObject({ engine: 'rehearsal' });
+    // The owning thread is where a production org gets approved.
+    expect(calls.find(c => c.method === 'agentLab.start')?.args).toMatchObject({ engine: 'rehearsal', threadId: 'owner' });
     expect(el.textContent).toContain('Welcome');
     await typeAndSend(el, 'hello');
     expect(el.textContent).toContain('Hi there');
@@ -113,6 +114,7 @@ describe('PreviewWorkbench', () => {
     const el = await mount({ onRevealSource: reveal });
     await click(btn(el, 'Start'));
     expect(calls.find(c => c.method === 'agentLab.start')?.args).toMatchObject({ engine: 'preview' });
+    expect(calls.find(c => c.method === 'agentLab.start')?.args).not.toHaveProperty('threadId');
     await typeAndSend(el, 'hello');
     await click(btn(el, 'trace'));
     expect(calls.filter(c => c.method === 'agentLab.trace')).toHaveLength(1);
@@ -175,9 +177,9 @@ describe('PreviewWorkbench', () => {
   });
 
   it('runs the suite, reruns one case and reloads on realtime', async () => {
-    const el = await mount();
+    const el = await mount({ threadId: 'owner' });
     await click(btn(el, 'Run suite'));
-    expect(calls.find(c => c.method === 'studio.suites.run')?.args).toMatchObject({ path: 'tests/A.scenario.json', engine: 'preview', source: 'agent_label: x' });
+    expect(calls.find(c => c.method === 'studio.suites.run')?.args).toMatchObject({ path: 'tests/A.scenario.json', engine: 'preview', source: 'agent_label: x', threadId: 'owner' });
     expect([...el.querySelectorAll('.sf-pw-chip')].map(c => c.getAttribute('data-state'))).toEqual(['fail', 'pass']);
     await click(btn(el, '✗ Refund'));
     expect(calls.filter(c => c.method === 'studio.suites.run').pop()?.args).toMatchObject({ caseIds: ['c1'] });

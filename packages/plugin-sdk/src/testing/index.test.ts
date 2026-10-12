@@ -79,6 +79,18 @@ describe('createFakePluginHost', () => {
     });
   });
 
+  it('accepts a harness approval once, for exactly its binding', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'release' });
+    const binding = { action: 'agent.publish', target: 'org', targetLabel: 'dev', subject: 'Help', revision: 'abc' };
+    await expect(zcc.ui.experimental_consumeApproval({ token: 'fake-approval-1', binding })).resolves.toBe(false);
+    const token = harness.approve(binding);
+    await expect(zcc.ui.experimental_consumeApproval({ token, binding: { ...binding, revision: 'abd' } })).resolves.toBe(false);
+    await expect(zcc.ui.experimental_consumeApproval({ token, binding })).resolves.toBe(true);
+    await expect(zcc.ui.experimental_consumeApproval({ token, binding })).resolves.toBe(false);
+    await expect(zcc.ui.experimental_consumeApproval(null as never)).resolves.toBe(false);
+    expect(harness.approve(binding)).not.toBe(token);
+  });
+
   it('poisons the api after dispose', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'gone' });
     await harness.dispose();

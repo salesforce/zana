@@ -41520,3 +41520,131 @@ textarea.thread-command-editor {
   color: var(--text-dim);
   font-size: 10.5px;
 }
+
+/* Plugin view window: one plugin project tab in its own OS window
+   (views/plugin-view/PluginViewApp.tsx). A drag strip on top, the tab below. */
+.plugin-view-shell {
+  --titlebar-h: 38px;
+  display: grid;
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.plugin-view-shell[data-traffic-lights='true'] {
+  /* Same centering on the native controls as `.app-shell`. */
+  --titlebar-h: 44px;
+}
+
+.plugin-view-titlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+
+.plugin-view-shell[data-traffic-lights='true'] .plugin-view-titlebar {
+  padding-left: 84px;
+}
+
+.plugin-view-title {
+  max-width: min(60vw, 520px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.plugin-view-title-project {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.plugin-view-title-badge {
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.plugin-view-title-badge.is-warning {
+  border-color: color-mix(in srgb, var(--warn, #c27803) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn, #c27803) 12%, transparent);
+  color: var(--warn, #c27803);
+}
+
+.plugin-view-title-badge.is-danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.plugin-view-bring-back {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.plugin-view-bring-back:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.plugin-view-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.plugin-view-body > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The main-window tab while its plugin view window is open. */
+.plugin-tab-detached {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.plugin-tab-detached > * {
+  flex: 1 1 auto;
+}
+
+.plugin-tab-detached-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 12px;
+}

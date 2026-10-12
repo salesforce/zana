@@ -9,6 +9,16 @@ export type DiffLine = { type: 'same' | 'add' | 'del'; text: string };
 /** Past this many changed lines on either side the diff gives up (returns null) instead of freezing the renderer. */
 export const MAX_DIFF_LINES = 1500;
 
+/**
+ * Text to show and compare when only the content matters, such as an org version against a local draft:
+ * Windows line endings become `\n` and one final newline goes, so neither shows up as a change.
+ * Proposals diff the raw text instead, because their hunks are applied back to it.
+ */
+export function comparableText(text: string): string {
+  const unix = text.replace(/\r\n?/g, '\n');
+  return unix.endsWith('\n') ? unix.slice(0, -1) : unix;
+}
+
 export function lineDiff(before: string, after: string, maxLines = MAX_DIFF_LINES): DiffLine[] | null {
   const a = before.split('\n');
   const b = after.split('\n');

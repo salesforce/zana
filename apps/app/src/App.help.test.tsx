@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, useNavigate } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { useHelp } from './components/help/HelpProvider.js';
 
 const fixtures = vi.hoisted(() => ({
   compact: false, unread: 0, drawer: vi.fn(),
   pluginChanged: null as null | ((entries: unknown[]) => void),
+  navigateFromMain: null as null | ((path: string) => void),
   recoverCatalogs: vi.fn(), reconcilePlugins: vi.fn().mockResolvedValue(undefined),
   unsubscribePlugins: vi.fn()
 }));
@@ -14,6 +15,9 @@ vi.mock('./lib/product-client.js', () => ({ product: new Proxy({}, { get: (_targ
   get: (_target, method) => String(surface) === 'pluginApps' && String(method) === 'onChanged' ? (callback: (entries: unknown[]) => void) => {
     fixtures.pluginChanged = callback;
     return fixtures.unsubscribePlugins;
+  } : String(surface) === 'windows' && String(method) === 'onNavigate' ? (callback: (path: string) => void) => {
+    fixtures.navigateFromMain = callback;
+    return () => {};
   } : String(method).startsWith('on') ? () => () => {} : async () => []
 }) }) }));
 vi.mock('./components/thread/pickers/thread-model-catalog.js', async importOriginal => ({
@@ -41,8 +45,9 @@ vi.mock('./components/MobileShellChrome.js', () => ({
   MobileNavDrawer: ({ children, shortcuts, enabled }: any) => <>{children}{enabled ? shortcuts : null}</>
 }));
 vi.mock('./components/Sidebar.js', () => ({ Sidebar: () => {
-  const help = useHelp(), navigate = useNavigate();
+  const help = useHelp(), navigate = useNavigate(), location = useLocation();
   return <><button onClick={() => help.explore('sidebar')}>Explore project navigation</button>
+    <output data-testid="location">{location.pathname + location.search}</output>
     <output data-testid="active-hint">{help.activeSurface}</output>
     <button onClick={() => navigate('/?tab=next')}>Change page query</button></>;
 } }));
@@ -106,6 +111,13 @@ it('retries unavailable model catalogs on plugin changes and ignores late pushes
   await act(async () => { notify([]); });
   expect(fixtures.recoverCatalogs).toHaveBeenCalledOnce();
   expect(fixtures.reconcilePlugins).toHaveBeenCalledOnce();
+});
+
+it('follows links that a plugin view window routes to the main window', async () => {
+  fixtures.compact = false; fixtures.unread = 0;
+  render(<MemoryRouter><App /></MemoryRouter>);
+  await act(async () => { fixtures.navigateFromMain!('/settings?tab=plugins'); });
+  expect(screen.getByTestId('location').textContent).toBe('/settings?tab=plugins');
 });
 
 it('shares Help between the titlebar and navigation and clears exploration on query navigation', () => {

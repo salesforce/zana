@@ -139,7 +139,9 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     await click(node(/Bar/));
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
     await click(node(/Scn/));
-    expect(el.querySelector('[data-testid="stub-lab"]')).toBeTruthy();
+    // A scenario opens the Tests tool on its case table; role-play stays behind its switch.
+    expect(el.querySelector('[data-testid="studio-tests-pane"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="stub-lab"]')).toBeNull();
     el.querySelector<HTMLElement>('[data-testid="stub-agents"]')?.remove();
     await click(node(/OrgBot/));
     // An org-agent row asks the Agents panel to retrieve and open that agent, not just to show the list.
@@ -458,5 +460,64 @@ describe('AgentScriptPanel startup and focus routing', () => {
     await act(async () => { await exec('panel.open', { tool: 'files' }); });
     await resize(1000);
     expect(el.querySelector('.sf-studio')!.getAttribute('data-layout')).toBe('wide');
+  });
+});
+
+describe('AgentScriptPanel Compile', () => {
+  const compileButton = (el: HTMLElement) => el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agent-script-compile"]')!;
+  const status = (el: HTMLElement) => el.querySelector('[data-testid="salesforce-compile-status"]')?.textContent;
+  const problems = (el: HTMLElement) => [...el.querySelectorAll('.sf-problem-message')].map(row => row.textContent);
+
+  it('compiles the saved file in the window and reports the result under Problems', async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    overrides['agentScript.compile'] = () => new Promise(resolve => { answer = resolve; });
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await click(compileButton(el));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentScript.compile', { projectId: 'proj-1', path: 'force-app/bots/QC.agent' });
+    expect(compileButton(el).disabled).toBe(true);
+    expect(compileButton(el).textContent).toBe('Compiling…');
+    expect(status(el)).toBe('Compiling…');
+    await act(async () => { answer({ ok: true, summary: 'Compiled QC (library)' }); });
+    await flush();
+    expect(status(el)).toBe('Compiled QC (library)');
+    expect(compileButton(el).textContent).toBe('Compile');
+    // An edit after the compile marks the answer stale and blocks a compile of the old file on disk.
+    await post(el, { type: 'dirty', dirty: true });
+    expect(status(el)).toBe('Compiled QC (library) · edited since');
+    expect(compileButton(el).disabled).toBe(true);
+    expect(compileButton(el).title).toMatch(/Save first/);
+  });
+
+  it('turns a compiler failure into a problem at the line it names and hands it to Fix with agent', async () => {
+    overrides['agentScript.compile'] = () => ({ ok: false, code: 'compile_failed', error: 'force-app/bots/QC.agent:3:5 unexpected token' });
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await post(el, SNAPSHOT);
+    await click(compileButton(el));
+    expect(status(el)).toBe('Compile failed');
+    expect(problems(el)).toEqual(['bad token', 'force-app/bots/QC.agent:3:5 unexpected token']);
+    expect(byText(el, '.sf-problem-where', /compiler/)?.textContent).toBe('compiler · Ln 3, Col 5');
+    await click(byText(el, 'button', /Fix with agent/));
+    const ask = rpc.mock.calls.find(c => c[1] === 'studio.askAgent')![2];
+    expect(ask.diagnostics.map((row: { code?: string }) => row.code)).toEqual([undefined, 'compiler']);
+    // The answer belongs to its file: another file shows no compile result.
+    await post(el, { type: 'requestOpen', path: 'force-app/bots/Help.agent' });
+    expect(status(el)).toBeUndefined();
+  });
+
+  it('shows why the compiler could not run, including a thrown RPC, without inventing a problem', async () => {
+    overrides['agentScript.compile'] = () => ({ ok: false, code: 'compiler_missing', error: 'No Agentforce compiler.' });
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await click(compileButton(el));
+    expect(status(el)).toBe('No Agentforce compiler.');
+    expect(problems(el)).toEqual([]);
+    overrides['agentScript.compile'] = () => { throw new Error('host gone'); };
+    await click(compileButton(el));
+    expect(status(el)).toBe('host gone');
+    overrides['agentScript.compile'] = () => null;
+    await click(compileButton(el));
+    expect(status(el)).toBe('The compiler did not answer.');
   });
 });

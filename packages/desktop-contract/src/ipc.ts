@@ -565,9 +565,28 @@ export const IPC = {
    * locked to a single project — the gesture behind "Open in New Window". Main
    * validates the projectId against the store before opening (the renderer is
    * untrusted) and de-dupes against any window already showing that project.
+   *
+   * Plugin view windows show one detachable plugin project tab on its own.
+   * Main validates the target, keeps one window per tab and project, and
+   * pushes the open set on `onPluginViewsChanged`. `showInMain` asks main to
+   * route the main window (`onNavigate`) to a relative in-app path.
    */
   windows: {
-    openProject: 'windows:openProject'
+    openProject: 'windows:openProject',
+    openPluginView: 'windows:openPluginView',
+    closePluginView: 'windows:closePluginView',
+    listPluginViews: 'windows:listPluginViews',
+    onPluginViewsChanged: 'windows:onPluginViewsChanged',
+    showInMain: 'windows:showInMain',
+    onNavigate: 'windows:onNavigate'
+  },
+  /**
+   * Host-drawn approvals for plugin buttons (release actions with no thread).
+   * Main validates the request, draws the sheet in its own window, and signs
+   * a single-use token for the approved binding; renderers never hold the key.
+   */
+  pluginApprovals: {
+    request: 'pluginApprovals:request'
   },
   /**
    * Auto-update (electron-updater), notify-only. `check`/`download`/`skip`/

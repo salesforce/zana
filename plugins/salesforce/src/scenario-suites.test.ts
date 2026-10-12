@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ScenarioSuites, SUITE_LIMITS, confineSuitePath, judgeCase, parseScenarioCases, registerStudioPreview, suitePathForAgent } from '../lib/scenario-suites.js';
+import { ScenarioSuites, SUITE_LIMITS, confineSuitePath, judgeCase, loopNext, parseScenarioCases, registerStudioPreview, specPathForSuite, suitePathForAgent, type StudioPreviewOptions } from '../lib/scenario-suites.js';
 import { sha256Hex } from '../lib/agent-files.js';
+import { GENERATED_SPEC_MARKER } from '../lib/eval-spec.js';
+import type { FixLoop } from '../lib/fix-loop.js';
 import { STUDIO_RPC } from '../lib/studio-contract.js';
 import type { TurnTrace } from '../lib/studio-contract.js';
 
@@ -50,6 +52,13 @@ describe('suite paths', () => {
       expect(() => confineSuitePath(ROOT, bad, deps), bad).toThrow(/Scenario|live at/);
     }
   });
+  it('confines eval specs to tests/<name>.eval.yaml', () => {
+    const { deps } = fsFake();
+    expect(specPathForSuite('tests/Bot.scenario.json')).toBe('tests/Bot.eval.yaml');
+    expect(confineSuitePath(ROOT, 'tests/Bot.eval.yaml', deps, 'spec')).toBe(`${ROOT}/tests/Bot.eval.yaml`);
+    expect(() => confineSuitePath(ROOT, 'tests/Bot.scenario.json', deps, 'spec')).toThrow(/Eval specs live at/);
+    expect(() => confineSuitePath(ROOT, 'tests/Bot.eval.yaml', deps)).toThrow(/Scenario suites live at/);
+  });
   it('refuses a tests folder or file that symlinks outside the project', () => {
     const outside = fsFake({ [`${ROOT}/tests/a.scenario.json`]: '{}' }, { [`${ROOT}/tests`]: '/elsewhere/tests' });
     expect(() => confineSuitePath(ROOT, 'tests/a.scenario.json', outside.deps)).toThrow(/inside the project/);
@@ -64,6 +73,16 @@ describe('case parsing', () => {
     expect(c).toMatchObject({ id: 'a_b_', name: 'N', expect: { topic: 't', actions: ['A'], contains: ['c'], criteria: 'crit' } });
     expect(c!.utterances).toHaveLength(SUITE_LIMITS.utterances);
     expect(parseScenarioCases([{ utterances: ['x'] }])[0]).toMatchObject({ id: 'case-1', name: 'Case 1' });
+  });
+  it('keeps a pinned run reference only when it is well formed', () => {
+    const [pinned, noTime, noRun] = parseScenarioCases([
+      { ...caseA, id: 'a', pinned: { runId: 'run-9', at: 12 } },
+      { ...caseA, id: 'b', pinned: { runId: 'run-9', at: 'soon' } },
+      { ...caseA, id: 'c', pinned: { at: 12 } }
+    ]);
+    expect(pinned!.pinned).toEqual({ runId: 'run-9', at: 12 });
+    expect(noTime).not.toHaveProperty('pinned');
+    expect(noRun).not.toHaveProperty('pinned');
   });
   it('rejects empty, oversized, duplicate and utterance-less suites', () => {
     expect(() => parseScenarioCases([])).toThrow();
@@ -186,6 +205,16 @@ describe('ScenarioSuites.run', () => {
     slow.lab.start.mockResolvedValue({ id: 'y', turns: [] } as never);
     await first;
   });
+  it('keeps a candidate run out of the stored results', async () => {
+    const s = store({ files });
+    await s.suites.run({ ...input, caseIds: ['other'] });
+    s.changed.mockClear();
+    const candidate = await s.suites.run({ ...input, caseIds: ['refund'], store: false });
+    expect(Object.keys(candidate.results)).toEqual(['refund']);
+    expect(candidate.suite.lastResults).toEqual({ other: expect.objectContaining({ outcome: 'fail' }) });
+    expect(s.kv.get('studio:suites:p1')).toEqual({ Bot: { other: expect.objectContaining({ outcome: 'fail' }) } });
+    expect(s.changed).not.toHaveBeenCalled();
+  });
   it('bounds stored suite results', async () => {
     const s = store({ files });
     for (let i = 0; i < SUITE_LIMITS.stored + 3; i++) {
@@ -196,23 +225,111 @@ describe('ScenarioSuites.run', () => {
   });
 });
 
+describe('ScenarioSuites specs and org evals', () => {
+  const agentPath = 'force-app/Bot.agent';
+  const suiteFile = `${ROOT}/tests/Bot.scenario.json`;
+  const specFile = `${ROOT}/tests/Bot.eval.yaml`;
+  const two = [caseA, { id: 'greet', name: 'Greet', utterances: ['Hi', 'Order?'], expect: { topic: 'Orders' } }];
+  const withSuite = () => store({ files: { [suiteFile]: JSON.stringify({ cases: two }) } });
+
+  it('imports a YAML spec into a new suite, then merges more cases with suffixed ids', async () => {
+    const s = store();
+    const first = await s.suites.importSpec({ agentPath, text: 'testCases:\n  - utterance: I want a refund\n    expectedTopic: Billing\n' });
+    expect(first.imported).toBe(1);
+    expect(first.suite.cases).toEqual([{ id: 'i-want-a-refund', name: 'I want a refund', utterances: ['I want a refund'], expect: { topic: 'Billing' } }]);
+    const again = await s.suites.importSpec({ agentPath, text: JSON.stringify({ utterances: ['I want a refund', 'Bye'] }) });
+    expect(again.suite.cases.map(c => c.id)).toEqual(['i-want-a-refund', 'case-1', 'case-2']);
+    const third = await s.suites.importSpec({ agentPath, text: JSON.stringify([{ id: 'case-1', utterance: 'x' }]) });
+    expect(third.suite.cases.map(c => c.id).at(-1)).toBe('case-1-2');
+    expect(JSON.parse(s.files.get(suiteFile)!).cases).toHaveLength(4);
+  });
+
+  it('refuses an unreadable spec as invalid input', async () => {
+    const s = store();
+    await expect(s.suites.importSpec({ agentPath, text: '' })).rejects.toMatchObject({ code: 'invalid_input', message: 'The spec is empty.' });
+    await expect(s.suites.importSpec({ agentPath, text: JSON.stringify([{ name: 'No words' }]) })).rejects.toMatchObject({ code: 'invalid_input' });
+  });
+
+  it('writes the spec beside the suite, overwrites its own file and refuses anyone else\'s', async () => {
+    const s = withSuite();
+    const written = await s.suites.writeSpec({ agentPath, apiName: 'Bot_Api' });
+    expect(written).toMatchObject({ specPath: 'tests/Bot.eval.yaml', absolute: specFile, multiTurn: ['greet'] });
+    expect(s.files.get(specFile)).toBe(written.text);
+    expect(written.text).toContain('subjectName: "Bot_Api"');
+    await expect(s.suites.writeSpec({ agentPath, apiName: 'Bot_Api' })).resolves.toMatchObject({ specPath: 'tests/Bot.eval.yaml' });
+    s.files.set(specFile, 'name: Hand written\n');
+    await expect(s.suites.writeSpec({ agentPath, apiName: 'Bot_Api' })).rejects.toMatchObject({ code: 'path_refused', message: expect.stringContaining('was not written by the Studio') });
+    expect(s.files.get(specFile)).toBe('name: Hand written\n');
+    await expect(store().suites.writeSpec({ agentPath, apiName: 'Bot_Api' })).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('records per-case org eval outcomes and lists them with the suite', async () => {
+    const s = withSuite();
+    const runEval = vi.fn(async (spec: { absolute: string; text: string }) => {
+      expect(spec.text.startsWith(GENERATED_SPEC_MARKER)).toBe(true);
+      return { ok: true as const, summary: '1 of 2 passed', data: { passed: false, orgId: '00D1', orgAlias: 'dev', botVersionId: 'v-2', caseOutcomes: ['pass', 'fail'] as Array<'pass' | 'fail'> } };
+    });
+    const out = await s.suites.evaluate({ agentPath, apiName: 'Bot' }, runEval);
+    expect(out).toMatchObject({ summary: '1 of 2 passed', lastEval: { org: 'dev', orgId: '00D1', passed: false, perCase: true, botVersionId: 'v-2', specPath: 'tests/Bot.eval.yaml', multiTurn: ['greet'], results: { refund: { outcome: 'pass' }, greet: { outcome: 'fail' } } } });
+    expect(runEval).toHaveBeenCalledWith(expect.objectContaining({ absolute: specFile, specPath: 'tests/Bot.eval.yaml' }));
+    expect(s.changed).toHaveBeenCalledWith({ path: 'tests/Bot.scenario.json', kind: 'suites' });
+    expect((await s.suites.list(agentPath))[0]!.lastEval!.results.greet!.outcome).toBe('fail');
+    // A saved suite keeps showing its last eval.
+    const listed = (await s.suites.list(agentPath))[0]!;
+    expect((await s.suites.save({ agentPath, cases: two, expectedSha256: listed.sha256 })).lastEval).toMatchObject({ orgId: '00D1' });
+  });
+
+  it('falls back to the run totals without a per-case list and passes failures through', async () => {
+    const s = withSuite();
+    const passed = await s.suites.evaluate({ agentPath, apiName: 'Bot' }, async () => ({ ok: true, data: { passed: true, orgId: '00D1' } }));
+    expect(passed).toMatchObject({ lastEval: { org: '00D1', perCase: false, results: { refund: { outcome: 'pass' }, greet: { outcome: 'pass' } } } });
+    expect(passed).not.toHaveProperty('summary');
+    const failed = await s.suites.evaluate({ agentPath, apiName: 'Bot' }, async () => ({ ok: true, data: { passed: false, orgId: '00D1', caseOutcomes: null } }));
+    expect(failed).toMatchObject({ lastEval: { results: { refund: { outcome: 'inconclusive' } } } });
+    expect(await s.suites.evaluate({ agentPath, apiName: 'Bot' }, async () => ({ ok: false, code: 'refused', error: 'Production needs approval.' }))).toEqual({ ok: false, code: 'refused', error: 'Production needs approval.' });
+    expect(await s.suites.evaluate({ agentPath, apiName: 'Bot' }, async () => ({ ok: false }))).toEqual({ ok: false, code: 'eval_failed', error: 'The org eval failed.' });
+  });
+
+  it('runs one org eval per project at a time and bounds stored evals', async () => {
+    const s = withSuite();
+    let release!: () => void;
+    const first = s.suites.evaluate({ agentPath, apiName: 'Bot' }, () => new Promise(r => { release = () => r({ ok: true, data: { passed: true, orgId: '00D1' } }); }));
+    await new Promise(r => setTimeout(r, 0));
+    await expect(s.suites.evaluate({ agentPath, apiName: 'Bot' }, async () => ({ ok: false }))).rejects.toThrow(/already running/);
+    release();
+    await first;
+    // The lock is released after a refusal too.
+    await expect(store().suites.evaluate({ agentPath, apiName: 'Bot' }, async () => ({ ok: false }))).rejects.toMatchObject({ code: 'not_found' });
+    for (let i = 0; i < SUITE_LIMITS.stored + 2; i++) {
+      s.files.set(`${ROOT}/tests/S${i}.scenario.json`, JSON.stringify({ cases: [caseA] }));
+      await s.suites.evaluate({ agentPath: `S${i}.agent`, apiName: 'Bot' }, async () => ({ ok: true, data: { passed: true, orgId: '00D1' } }));
+    }
+    expect(Object.keys(s.kv.get('studio:suite-evals:p1') as object)).toHaveLength(SUITE_LIMITS.stored);
+  });
+});
+
 describe('registerStudioPreview', () => {
-  function harness() {
+  function harness(options?: StudioPreviewOptions) {
     const fake = fsFake();
     const handlers = new Map<string, (args: unknown) => Promise<unknown>>();
     const published: unknown[] = [];
+    const kv = new Map<string, unknown>();
     const lab = { trace: vi.fn(async () => ({ runId: 'r', turn: 1, available: false, reason: 'Approximation', steps: [] })), start: vi.fn(), send: vi.fn(), evaluate: vi.fn(), end: vi.fn() };
     registerStudioPreview({
-      zcc: { storage: { kv: { get: async () => undefined, set: async () => undefined } }, realtime: { publish: (...a: unknown[]) => published.push(a) } },
+      zcc: { storage: { kv: { get: async (k: string) => kv.get(k), set: async (k: string, v: unknown) => { kv.set(k, v); } } }, realtime: { publish: (...a: unknown[]) => published.push(a) } },
       registerRpc: (name: string, h: (args: unknown) => unknown) => handlers.set(name, async a => h(a)),
       contexts: { current: () => ({ projectId: 'p1', settings: { projectRoot: ROOT } }) },
       deps: { ...fake.deps, now: () => 5 }, lab
-    } as never);
-    return { handlers, lab, published, files: fake.files };
+    } as never, options);
+    const call = (name: string, args: unknown = {}) => handlers.get(name)!(args) as Promise<Record<string, any>>;
+    return { handlers, lab, published, files: fake.files, call };
   }
-  it('registers trace and the three suite RPCs', async () => {
+  it('registers trace, the suite, eval and fix-loop RPCs', async () => {
     const h = harness();
-    expect([...h.handlers.keys()].sort()).toEqual([STUDIO_RPC.suiteRun, STUDIO_RPC.suiteSave, STUDIO_RPC.suites, STUDIO_RPC.trace].sort());
+    expect([...h.handlers.keys()].sort()).toEqual([
+      STUDIO_RPC.suiteRun, STUDIO_RPC.suiteSave, STUDIO_RPC.suites, STUDIO_RPC.trace, STUDIO_RPC.suiteImport, STUDIO_RPC.suiteSpec,
+      STUDIO_RPC.suiteEval, STUDIO_RPC.loopStart, STUDIO_RPC.loopGet, STUDIO_RPC.loopStop
+    ].sort());
     expect(await h.handlers.get(STUDIO_RPC.trace)!({ id: 'r' })).toMatchObject({ ok: true, data: { available: false } });
     expect(await h.handlers.get(STUDIO_RPC.suites)!({})).toEqual({ ok: true, suites: [] });
     const saved = await h.handlers.get(STUDIO_RPC.suiteSave)!({ agentPath: 'Bot.agent', cases: [caseA] }) as { ok: boolean; suite: { sha256: string; path: string } };
@@ -227,14 +344,112 @@ describe('registerStudioPreview', () => {
     h.files.set(`${ROOT}/tests/Bot.scenario.json`, JSON.stringify({ cases: [caseA] }));
     h.lab.start.mockResolvedValue({ id: 'run-1', turns: [] } as never);
     h.lab.send.mockResolvedValue({ turns: [{ role: 'user', text: 'q' }, { role: 'agent', text: 'a refund is coming' }] } as never);
-    const out = await h.handlers.get(STUDIO_RPC.suiteRun)!({ agentPath: 'Bot.agent', source: 'config', engine: 'rehearsal', caseIds: ['refund'] }) as { ok: boolean; results: Record<string, { outcome: string }> };
+    const out = await h.handlers.get(STUDIO_RPC.suiteRun)!({ agentPath: 'Bot.agent', source: 'config', engine: 'rehearsal', caseIds: ['refund'], threadId: 'owner' }) as { ok: boolean; results: Record<string, { outcome: string }> };
     expect(out.ok).toBe(true);
     expect(out.results.refund!.outcome).toBe('pass');
-    expect(h.lab.start.mock.calls[0]![0]).toMatchObject({ engine: 'rehearsal' });
+    // The owning thread rides along so a production org can be approved there.
+    expect(h.lab.start.mock.calls[0]![0]).toMatchObject({ engine: 'rehearsal', threadId: 'owner' });
   });
   it('turns thrown errors into failures', async () => {
     const h = harness();
     h.lab.trace.mockRejectedValue(new Error('boom'));
     expect(await h.handlers.get(STUDIO_RPC.trace)!({})).toEqual({ ok: false, code: 'failed', error: 'boom' });
+  });
+
+  describe('with agent files and an org eval runner', () => {
+    const agentPath = 'Bot.agent';
+    const twoCases = [caseA, { id: 'late', name: 'Late', utterances: ['Where is it?'], expect: { contains: ['tracking'] } }];
+    function wired(over: Partial<StudioPreviewOptions> = {}) {
+      const agent = vi.fn(async (path: string) => path === agentPath ? { apiName: 'Bot_Api', source: 'config: disk' } : { ok: false as const, code: 'not_found', error: `No agent at ${path}` });
+      const runEval = vi.fn(async () => ({ ok: true as const, data: { passed: false, orgId: '00D1', orgAlias: 'dev', caseOutcomes: ['pass', 'fail'] as Array<'pass' | 'fail'> } }));
+      let n = 0;
+      const h = harness({ agent, runEval, loopId: () => `loop-${++n}`, ...over });
+      h.files.set(`${ROOT}/tests/Bot.scenario.json`, JSON.stringify({ cases: twoCases }));
+      h.lab.start.mockImplementation((async () => ({ id: 'run-1', turns: [] })) as never);
+      return { ...h, agent, runEval };
+    }
+    const reply = (h: ReturnType<typeof harness>, text: string) => h.lab.send.mockResolvedValue({ turns: [{ role: 'user', text: 'q' }, { role: 'agent', text }] } as never);
+
+    it('imports a spec, writes it and runs the org eval with the agent API name', async () => {
+      const h = wired();
+      expect(await h.call(STUDIO_RPC.suiteImport, { agentPath, text: 'testCases:\n  - utterance: Cancel my order\n' })).toMatchObject({ ok: true, imported: 1, suite: { cases: [{ id: 'refund' }, { id: 'late' }, { id: 'cancel-my-order' }] } });
+      expect(await h.call(STUDIO_RPC.suiteImport, { agentPath })).toMatchObject({ ok: false, code: 'invalid_input' });
+      const spec = await h.call(STUDIO_RPC.suiteSpec, { agentPath });
+      expect(spec).toMatchObject({ ok: true, specPath: 'tests/Bot.eval.yaml', multiTurn: [] });
+      expect(spec.text).toContain('subjectName: "Bot_Api"');
+      const evaluated = await h.call(STUDIO_RPC.suiteEval, { agentPath });
+      expect(evaluated).toMatchObject({ ok: true, lastEval: { org: 'dev', results: { refund: { outcome: 'pass' }, late: { outcome: 'fail' }, 'cancel-my-order': { outcome: 'inconclusive' } } } });
+      expect(h.runEval).toHaveBeenCalledWith(expect.objectContaining({ apiName: 'Bot_Api', specPath: 'tests/Bot.eval.yaml', absolute: `${ROOT}/tests/Bot.eval.yaml` }));
+      h.runEval.mockResolvedValueOnce({ ok: false, code: 'refused', error: 'Allow reads first.' } as never);
+      expect(await h.call(STUDIO_RPC.suiteEval, { agentPath })).toEqual({ ok: false, code: 'refused', error: 'Allow reads first.' });
+    });
+
+    it('refuses evals and specs without a configured runner, an agent file or a known agent', async () => {
+      const bare = harness();
+      expect(await bare.call(STUDIO_RPC.suiteEval, { agentPath })).toMatchObject({ ok: false, code: 'not_configured' });
+      expect(await bare.call(STUDIO_RPC.suiteSpec, { agentPath })).toMatchObject({ ok: false, code: 'not_configured' });
+      const h = wired();
+      expect(await h.call(STUDIO_RPC.suiteSpec, {})).toMatchObject({ ok: false, code: 'invalid_input', error: 'Pick an agent file first.' });
+      expect(await h.call(STUDIO_RPC.suiteEval, { agentPath: 'Other.agent' })).toEqual({ ok: false, code: 'not_found', error: 'No agent at Other.agent' });
+    });
+
+    it('runs the saved file when a caller sends no source', async () => {
+      const h = wired();
+      reply(h, 'a refund is coming');
+      expect(await h.call(STUDIO_RPC.suiteRun, { agentPath, caseIds: ['refund'] })).toMatchObject({ ok: true, results: { refund: { outcome: 'pass' } } });
+      expect(h.lab.start.mock.calls[0]![0]).toMatchObject({ source: 'config: disk', engine: 'preview' });
+      const bare = harness();
+      expect(await bare.call(STUDIO_RPC.suiteRun, { agentPath, source: '  ' })).toMatchObject({ ok: false, code: 'invalid_input', error: 'run requires the agent source.' });
+    });
+
+    it('spends a fix loop on Simulate runs of its cases only, without storing them, until they pass', async () => {
+      const h = wired();
+      expect(await h.call(STUDIO_RPC.loopStart, { agentPath, caseIds: ['late', 'ghost', 7] })).toMatchObject({ ok: true, loop: { id: 'loop-1', caseIds: ['late'], budget: 3, status: 'running' } });
+      expect(h.published.at(-1)).toEqual(['sf.studio.changed', { projectId: 'p1', path: agentPath, kind: 'loop', loopId: 'loop-1' }]);
+      reply(h, 'Sorry, I cannot help');
+      const miss = await h.call(STUDIO_RPC.suiteRun, { agentPath, source: 'candidate 1', loopId: 'loop-1', engine: 'rehearsal', caseIds: ['refund'] });
+      expect(miss).toMatchObject({ ok: true, results: { late: { outcome: 'fail' } }, loop: { attempts: [{ n: 1, pass: 0, failing: ['late'] }] }, next: '2 attempts left. Still failing: late.' });
+      expect(h.lab.start.mock.calls[0]![0]).toMatchObject({ engine: 'preview', source: 'candidate 1' });
+      reply(h, 'Here is your tracking link');
+      const hit = await h.call(STUDIO_RPC.suiteRun, { agentPath, source: 'candidate 2', loopId: 'loop-1' });
+      expect(hit).toMatchObject({ loop: { status: 'passed' }, next: 'All 1 cases pass. Propose this source with ui.command editor.proposeEdit, then stop.' });
+      expect(await h.call(STUDIO_RPC.suites, { agentPath })).toMatchObject({ suites: [{ id: 'Bot' }] });
+      expect((await h.call(STUDIO_RPC.suites, { agentPath })).suites[0]).not.toHaveProperty('lastResults');
+      expect(await h.call(STUDIO_RPC.suiteRun, { agentPath, source: 'candidate 3', loopId: 'loop-1' })).toMatchObject({ ok: false, code: 'loop_passed' });
+      expect(await h.call(STUDIO_RPC.suiteRun, { agentPath: 'Other.agent', source: 'x', loopId: 'loop-1' })).toMatchObject({ ok: false, code: 'path_refused' });
+      expect(await h.call(STUDIO_RPC.loopGet, { agentPath })).toMatchObject({ ok: true, loop: { id: 'loop-1', status: 'passed' }, next: expect.stringContaining('All 1 cases pass') });
+    });
+
+    it('reads, stops and refuses loops', async () => {
+      const h = wired();
+      expect(await h.call(STUDIO_RPC.loopGet, { agentPath })).toEqual({ ok: true, loop: null });
+      expect(await h.call(STUDIO_RPC.loopStart, { agentPath, caseIds: ['ghost'] })).toMatchObject({ ok: false, code: 'invalid_input' });
+      expect(await h.call(STUDIO_RPC.loopStart, { agentPath: 'Other.agent', caseIds: ['late'] })).toMatchObject({ ok: false, code: 'not_found' });
+      expect(await h.call(STUDIO_RPC.loopStart, { caseIds: ['late'] })).toMatchObject({ ok: false, code: 'not_found' });
+      await h.call(STUDIO_RPC.loopStart, { agentPath, caseIds: ['late'], budget: 1 });
+      expect(await h.call(STUDIO_RPC.loopGet, { loopId: 'loop-1' })).toMatchObject({ loop: { budget: 1 }, next: '1 attempt left. Still failing: late.' });
+      expect(await h.call(STUDIO_RPC.loopStop, { loopId: 'loop-1' })).toMatchObject({ ok: true, loop: { status: 'stopped' } });
+      expect(h.published.at(-1)).toEqual(['sf.studio.changed', { projectId: 'p1', path: agentPath, kind: 'loop', loopId: 'loop-1' }]);
+      expect(await h.call(STUDIO_RPC.loopGet, { loopId: 'loop-1' })).toMatchObject({ next: 'This fix loop is stopped. Stop and report what you changed.' });
+      expect(await h.call(STUDIO_RPC.loopStop, { loopId: 'nope' })).toMatchObject({ ok: false, code: 'not_found' });
+      expect(await h.call(STUDIO_RPC.suiteRun, { agentPath, source: 'x', loopId: 'nope' })).toMatchObject({ ok: false, code: 'not_found' });
+    });
+
+    it('tells the agent to propose its best candidate when the budget runs out', async () => {
+      const h = wired();
+      await h.call(STUDIO_RPC.loopStart, { agentPath, caseIds: ['late'], budget: 1 });
+      reply(h, 'no idea');
+      expect(await h.call(STUDIO_RPC.suiteRun, { agentPath, source: 'x', loopId: 'loop-1' })).toMatchObject({ loop: { status: 'exhausted' }, next: expect.stringContaining('No attempts left (0 of 1 pass)') });
+    });
+  });
+});
+
+describe('loopNext', () => {
+  const loop = (over: Partial<FixLoop>): FixLoop => ({ id: 'l', projectId: 'p', agentPath: 'a', suitePath: 's', caseIds: ['x'], budget: 2, attempts: [], status: 'running', startedAt: 0, updatedAt: 0, ...over });
+  it('guides the agent from the loop state', () => {
+    expect(loopNext(null)).toBe('This fix loop is gone. Stop and report what you changed.');
+    expect(loopNext(loop({}))).toBe('2 attempts left. Still failing: x.');
+    expect(loopNext(loop({ status: 'exhausted' }))).toContain('No attempts left (0 of 1 pass)');
+    expect(loopNext(loop({ status: 'expired' }))).toBe('This fix loop is expired. Stop and report what you changed.');
   });
 });

@@ -6,7 +6,7 @@ import { LoadingState } from './components/SalesforceState.js';
 import { TracePanel } from './preview/TracePanel.js';
 import type { TurnTrace } from '../../lib/studio-contract.js';
 
-export function AgentforceLabPanel(props: { pluginId: string; projectId?: string; source: string; mode: 'rehearse' | 'test'; fileLabel: string; hidden?: boolean }) {
+export function AgentforceLabPanel(props: { pluginId: string; projectId?: string; threadId?: string; source: string; mode: 'rehearse' | 'test'; fileLabel: string; hidden?: boolean }) {
   const [engine, setEngine] = useState<LabEngine>('preview');
   const [model, setModel] = useState(DEFAULT_LAB_MODEL);
   const [scenario, setScenario] = useState<LabScenario>({ ...LAB_SCENARIOS[0].scenario });
@@ -66,7 +66,7 @@ export function AgentforceLabPanel(props: { pluginId: string; projectId?: string
     runDetails.current = { source: props.source, file: props.fileLabel, scenario: selected };
     setRunSource(props.source);
     setStatus(engine === 'preview' ? 'Compiling draft in Salesforce…' : 'Preparing AI rehearsal…');
-    const started = await rpc<LabSnapshot>('start', { engine, model, source: props.source, ...(selected ? { scenario: selected } : {}) });
+    const started = await rpc<LabSnapshot>('start', { engine, model, source: props.source, ...(props.threadId ? { threadId: props.threadId } : {}), ...(selected ? { scenario: selected } : {}) });
     update(started);
     if (cancelled.current || !alive.current) { update(await rpc<LabSnapshot>('end', { id: started.id })); return; }
     if (!selected) { setStatus('Conversation ready'); return; }

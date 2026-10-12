@@ -26,6 +26,16 @@ describe('RendererReadiness', () => {
     await expect(waiting).resolves.toBe(false);
   });
 
+  it('stays ready through in-page and subframe navigations, not a main-frame load', async () => {
+    const readiness = new RendererReadiness();
+    readiness.markReady(1);
+    readiness.navigationStarted(1, true, true);
+    readiness.navigationStarted(1, false, false);
+    await expect(readiness.wait(1, 1)).resolves.toBe(true);
+    readiness.navigationStarted(1, false, true);
+    await expect(readiness.wait(1, 1)).resolves.toBe(false);
+  });
+
   it('times out instead of hanging forever', async () => {
     vi.useFakeTimers();
     const readiness = new RendererReadiness();

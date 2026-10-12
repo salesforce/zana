@@ -136,6 +136,12 @@ export interface FakePluginHarness {
   ): Promise<unknown>;
   submitInteraction(value: unknown): void;
   cancelInteraction(): void;
+  /**
+   * Stand in for the person approving a Zana-drawn sheet: returns a token
+   * that `ui.experimental_consumeApproval` accepts once, for exactly this
+   * binding.
+   */
+  approve(binding: import('../server.js').PluginApprovalBinding): string;
   reload(factory: ZccPluginFactory): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -228,8 +234,17 @@ export interface FakePluginHostOptions {
   services?: PluginServicesRegistry;
 }
 
+/** The fields a host-signed approval covers, in signing order. */
+function approvalKey(binding: unknown): string {
+  const row = binding && typeof binding === 'object' ? (binding as Record<string, unknown>) : {};
+  return JSON.stringify(['action', 'target', 'targetLabel', 'subject', 'revision', 'confirmText'].map((key) => row[key] ?? ''));
+}
+
 export function createFakePluginHost(options?: FakePluginHostOptions): FakePluginHost {
   const pluginId = options?.pluginId ?? 'test';
+  // Tokens from `harness.approve`, keyed to the binding they cover; consumed once.
+  const approvals = new Map<string, string>();
+  let approvalSequence = 0;
   const kv = new Map<string, unknown>();
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
   const settings: Record<string, PluginSettingDescriptor> = {};
@@ -770,6 +785,13 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     ui: {
+      async experimental_consumeApproval(request) {
+        assertLive();
+        const token = request && typeof request === 'object' ? request.token : undefined;
+        if (typeof token !== 'string' || approvals.get(token) !== approvalKey(request.binding)) return false;
+        approvals.delete(token);
+        return true;
+      },
       requestInput(_request: PluginInteractionRequest) {
         assertLive();
         return new Promise<PluginInteractionResult>((resolve) => {
@@ -995,6 +1017,11 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     cancelInteraction() {
       pendingInteraction?.resolve({ outcome: 'cancelled', reason: 'user' });
       pendingInteraction = null;
+    },
+    approve(binding) {
+      const token = `fake-approval-${++approvalSequence}`;
+      approvals.set(token, approvalKey(binding));
+      return token;
     },
     async reload(factory) {
       try {

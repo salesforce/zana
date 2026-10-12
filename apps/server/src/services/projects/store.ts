@@ -531,16 +531,52 @@ function sanitizeRemoteField(
 }
 
 function normalizeBounds(
-  bounds: AppConfig['windowBounds'] | undefined
+  bounds: AppConfig['windowBounds'] | undefined,
+  minWidth = 900,
+  minHeight = 600
 ): AppConfig['windowBounds'] | undefined {
-  if (!bounds) return undefined;
+  if (!bounds || typeof bounds !== 'object') return undefined;
   if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) return undefined;
-  const width = Math.max(900, Math.round(bounds.width));
-  const height = Math.max(600, Math.round(bounds.height));
+  const width = Math.max(minWidth, Math.round(bounds.width));
+  const height = Math.max(minHeight, Math.round(bounds.height));
   const next: AppConfig['windowBounds'] = { width, height };
   if (typeof bounds.x === 'number' && Number.isFinite(bounds.x)) next.x = Math.round(bounds.x);
   if (typeof bounds.y === 'number' && Number.isFinite(bounds.y)) next.y = Math.round(bounds.y);
   return next;
+}
+
+const PLUGIN_VIEW_BOUNDS_LIMIT = 24;
+// `pluginId/tabId@projectId`, as written by apps/desktop/src/window/plugin-view-windows.ts.
+const PLUGIN_VIEW_BOUNDS_KEY = /^[a-z0-9][a-z0-9-]{0,127}\/[A-Za-z0-9_-]{1,64}@(.{1,256})$/s;
+
+function isPluginViewBoundsKey(key: string): boolean {
+  const projectId = PLUGIN_VIEW_BOUNDS_KEY.exec(key)?.[1];
+  if (!projectId) return false;
+  for (let i = 0; i < projectId.length; i++) {
+    const code = projectId.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
+
+function normalizePluginViewWindowBounds(
+  input: unknown
+): AppConfig['pluginViewWindowBounds'] | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const entries = Object.entries(input).flatMap(([key, value]) => {
+    if (!isPluginViewBoundsKey(key) || !value || typeof value !== 'object') return [];
+    const { bounds, maximized, at } = value as Record<string, unknown>;
+    if (typeof at !== 'number' || !Number.isFinite(at)) return [];
+    const normalizedBounds = normalizeBounds(bounds as AppConfig['windowBounds'], 720, 480);
+    return [[key, {
+      ...(normalizedBounds ? { bounds: normalizedBounds } : {}),
+      ...(maximized === true ? { maximized: true } : {}),
+      at: Math.round(at)
+    }] as const];
+  });
+  if (!entries.length) return undefined;
+  entries.sort(([, a], [, b]) => b.at - a.at);
+  return Object.fromEntries(entries.slice(0, PLUGIN_VIEW_BOUNDS_LIMIT));
 }
 
 /** Clamp bounds for a non-zero {@link AppConfig.executionPlanStartupGraceMs} (0 disables). */
@@ -1266,6 +1302,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.windowMaximized === 'boolean') {
     normalized.windowMaximized = input.windowMaximized;
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'pluginViewWindowBounds')) {
+    normalized.pluginViewWindowBounds = normalizePluginViewWindowBounds(input.pluginViewWindowBounds);
   }
 
   // Autonomous team run backstops: support 0-means-disabled for both timeout and

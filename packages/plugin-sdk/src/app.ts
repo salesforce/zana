@@ -10,9 +10,12 @@ import type {
   PluginSettingsState,
   ThreadChatProps,
   ZccContext,
-  ZccNavigate
+  ZccNavigate,
+  ZccWindowTitle
 } from './app-contract.js';
 import type { PluginSettingValue, PluginSettingsSnapshot } from './server.js';
+import type { PluginApprovalRequest, PluginApprovalResult } from './approval-contract.js';
+export type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult } from './approval-contract.js';
 
 export type {
   ComposerCustomization,
@@ -60,6 +63,7 @@ export type {
   PluginPendingInteractionProps,
   PluginPendingInteractionRegistration,
   PluginPendingInteractionView,
+  PluginDetachedTabProps,
   PluginProjectTabRegistration,
   PluginProjectMenuActionRegistration,
   PluginProjectMenuActionContext,
@@ -95,7 +99,10 @@ export type {
   ThreadChatMessageReference,
   ThreadChatProps,
   ZccContext,
-  ZccNavigate
+  ZccNavigate,
+  ZccSurface,
+  ZccWindowTitle,
+  ZccWindowTitleTone
 } from './app-contract.js';
 
 export {
@@ -118,6 +125,8 @@ export interface PluginHostBridge {
     pluginId: string,
     values: Record<string, PluginSettingValue | undefined>
   ): Promise<void>;
+  /** Absent on hosts that cannot draw an approval sheet (web, mobile). */
+  requestApproval?(pluginId: string, request: PluginApprovalRequest): Promise<PluginApprovalResult>;
 }
 
 function pluginHost(): PluginHostBridge {
@@ -139,6 +148,23 @@ function missing(name: string): never {
 /** Call a server `zcc.rpc.method` from a plugin app bundle. */
 export async function callPluginRpc(pluginId: string, method: string, args?: unknown): Promise<unknown> {
   return pluginHost().callRpc(pluginId, method, args);
+}
+
+/**
+ * Ask the host to draw an approval sheet for an action the user started from
+ * this plugin's own UI, such as a Publish button. The host shows the binding,
+ * collects any typed confirmation, and returns a single-use token signed for
+ * that binding; pass it to your server, which rebuilds the binding and calls
+ * `zcc.ui.experimental_consumeApproval`. Resolves `unavailable` where no
+ * desktop host can draw the sheet, so the action must fail closed there.
+ */
+export async function experimental_requestApproval(
+  pluginId: string,
+  request: PluginApprovalRequest
+): Promise<PluginApprovalResult> {
+  const host = (globalThis as { __ZCC_PLUGIN_HOST__?: PluginHostBridge }).__ZCC_PLUGIN_HOST__;
+  if (!host?.requestApproval) return { approved: false, reason: 'unavailable' };
+  return host.requestApproval(pluginId, request);
 }
 
 export async function getPluginSettings(pluginId: string): Promise<PluginSettingsSnapshot> {
@@ -190,6 +216,16 @@ export function useZccContext(): ZccContext {
 
 export function useZccNavigate(): ZccNavigate {
   return pluginRuntime().useZccNavigate?.() ?? missing('useZccNavigate');
+}
+
+/**
+ * Titles this plugin's own window (a detachable project tab opened with `openInWindow`) while
+ * the calling component is mounted; pass null to keep the tab label. With several callers the
+ * one mounted last shows, and a changed title keeps its caller's place. It does nothing in the
+ * main or a project window, whose title belongs to the host, and on hosts that predate it.
+ */
+export function useWindowTitle(title: ZccWindowTitle | null | undefined): void {
+  pluginRuntime().useWindowTitle?.(title);
 }
 
 export function useComposer(): PluginComposerApi {

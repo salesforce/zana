@@ -8,7 +8,7 @@ import { sourceLocations } from './agent-script-parse.js';
 
 const PREVIEW = '/einstein/ai-agent/v1.1/preview/sessions';
 type Session = {
-  id: string; scope: string; engine: LabEngine; source: string; sourceHash: string; orgAlias: string;
+  id: string; scope: string; engine: LabEngine; source: string; sourceHash: string; orgAlias: string; path?: string;
   model: string; token: string; remoteId?: string; host?: SfapHost; sequence: number;
   scenario?: LabScenario; turns: LabTurn[]; busy: boolean; closed: boolean; failed: boolean;
   touched: number; calls: number; controller: AbortController;
@@ -34,6 +34,8 @@ export class AgentforceLab {
   constructor(private readonly deps: {
     connect(): Promise<ResolvedOrg>;
     scope(): string;
+    /** Throws to refuse a run on the connected org (production and unknown orgs need the operator). */
+    authorize?(org: ResolvedOrg, request: { engine: LabEngine; threadId: string }): Promise<void>;
     transport?: Pick<AgentforceTransport, 'bootstrap' | 'request'>;
     now?: () => number;
   }) { this.transport = deps.transport ?? new AgentforceTransport(); this.now = deps.now ?? Date.now; }
@@ -47,7 +49,7 @@ export class AgentforceLab {
     for (const [id, s] of this.sessions) if (this.now() - s.touched > 30 * 60_000) { s.controller.abort(); this.sessions.delete(id); }
   }
   private snapshot(s: Session): LabSnapshot {
-    return { id: s.id, engine: s.engine, orgAlias: s.orgAlias, sourceHash: s.sourceHash, model: s.model, turns: s.turns.map(t => ({ ...t })), closed: s.closed, failed: s.failed };
+    return { id: s.id, engine: s.engine, orgAlias: s.orgAlias, sourceHash: s.sourceHash, model: s.model, turns: s.turns.map(t => ({ ...t })), closed: s.closed, failed: s.failed, ...(s.path ? { path: s.path } : {}) };
   }
   private session(input: unknown): Session {
     this.prune();
@@ -86,13 +88,15 @@ export class AgentforceLab {
     const model = raw.model === undefined ? DEFAULT_LAB_MODEL : labText(raw.model, 'Model API name', 160);
     if (!/^[a-zA-Z0-9_]+$/.test(model)) throw new Error('Choose a valid Salesforce model API name.');
     const scenario = raw.scenario === undefined ? undefined : parseLabScenario(raw.scenario);
+    const path = typeof raw.path === 'string' && raw.path.trim() && raw.path.length <= 512 ? raw.path.trim() : undefined;
     const scope = this.deps.scope();
     const controller = new AbortController();
     this.starts.add(controller);
     try {
       const org = await this.deps.connect();
+      await this.deps.authorize?.(org, { engine: raw.engine, threadId: typeof raw.threadId === 'string' ? raw.threadId.slice(0, 128) : '' });
       const token = await this.transport.bootstrap(org, controller.signal);
-      const s: Session = { id: randomUUID(), scope, engine: raw.engine, source, sourceHash: createHash('sha256').update(source).digest('hex'), orgAlias: org.alias, model, token, sequence: 0, scenario, turns: [], busy: false, closed: false, failed: false, touched: this.now(), calls: 0, controller, traces: new TraceCache(), traceCalls: 0 };
+      const s: Session = { id: randomUUID(), scope, engine: raw.engine, source, path, sourceHash: createHash('sha256').update(source).digest('hex'), orgAlias: org.alias, model, token, sequence: 0, scenario, turns: [], busy: false, closed: false, failed: false, touched: this.now(), calls: 0, controller, traces: new TraceCache(), traceCalls: 0 };
       if (s.engine === 'preview') {
         const compiled = await this.transport.request(token, '/einstein/ai-agent/v1.1/authoring/scripts', {
           assets: [{ type: 'AFScript', name: 'AFScript', content: source }], afScriptVersion: '2.0.0'
@@ -185,7 +189,7 @@ export class AgentforceLab {
     if (++s.traceCalls > MAX_TRACE_CALLS) return unavailableTrace(ref, 'Trace request budget reached for this run.');
     const agentTurns = s.turns.filter(t => t.role === 'agent' && t.planId);
     const turn = ref.turn ?? Math.max(1, agentTurns.findIndex(t => t.planId === planId) + 1);
-    const path = typeof raw.path === 'string' && raw.path.length <= 512 ? raw.path : undefined;
+    const path = typeof raw.path === 'string' && raw.path.length <= 512 ? raw.path : s.path;
     try {
       const result = await this.transport.request(s.token, `${PREVIEW}/${encodeURIComponent(s.remoteId)}/plans/${encodeURIComponent(planId)}`, undefined, s.host, AbortSignal.timeout(30_000));
       const trace = normalizeTrace(result.body, { runId: s.id, turn, planId, path, locations: path ? sourceLocations(s.source) : undefined });
@@ -195,6 +199,11 @@ export class AgentforceLab {
       const message = error instanceof Error ? error.message : String(error);
       return unavailableTrace({ ...ref, turn }, /HTTP 404/.test(message) ? 'Salesforce has no trace for this plan (HTTP 404). The org may not expose planner traces for previews.' : message);
     }
+  }
+
+  /** Read-only snapshot of a run in this project, so a chat card can reopen it. */
+  get(input: unknown): LabSnapshot {
+    return this.snapshot(this.session(input));
   }
 
   end(input: unknown): LabSnapshot {

@@ -15,8 +15,19 @@ const MAX_AWAITING_PER_VIEW = 4;
 export const UI_COMMANDS = ['state', 'view.open', 'filter.set', 'form.set', 'query.show', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'query.set', 'object.select', 'record.open', 'log.open', 'operation.open', ...STUDIO_UI_COMMANDS] as const;
 export type UiCommandName = typeof UI_COMMANDS[number];
 export type ControlState = Record<string, unknown>;
-export interface UiCommand { id: string; command: UiCommandName; input: ControlState }
-type View = { id: string; scope: string; surface: string; target: string; threadId?: string; at: number; state: ControlState; commands: UiCommandName[] };
+/** The thread that queued a command, shown by the Studio's Following chip. A label, never an authority. */
+export interface UiCommandSource { threadId: string; title?: string }
+/** `user` marks a command sent by the person's own UI in another window: it applies at once and may carry a file to open. */
+export interface UiCommand { id: string; command: UiCommandName; input: ControlState; from?: UiCommandSource; user?: true }
+/** The host window a view renders in (`useZccContext().surface`). */
+export const VIEW_WINDOWS = ['main', 'project-window', 'plugin-view'] as const;
+export type ViewWindow = typeof VIEW_WINDOWS[number];
+type View = {
+  id: string; scope: string; surface: string; target: string; threadId?: string; window?: ViewWindow;
+  /** Presence from the last poll: the document is visible, and its window has focus. */
+  visible: boolean; focused: boolean; focusedAt: number;
+  at: number; state: ControlState; commands: UiCommandName[];
+};
 export interface ControlResult { ok: boolean; viewState?: ControlState; error?: string; outcome?: ProposalOutcome }
 type Job = { scope: string; viewId: string; command: UiCommand; at: number; touched: number; delivered: boolean; awaiting?: { proposalId: string; at: number; viewState: ControlState }; result?: ControlResult };
 export type WakeListener = (viewId: string) => void;
@@ -58,7 +69,8 @@ export class WorkbenchControl {
     if (this.views.size >= 40) throw Error('Too many active Salesforce views.');
     if (!['workbench', 'agentforce', 'data', 'apex', 'deployments', 'logs', 'operations'].includes(String(row.surface))) throw Error('Unknown Salesforce surface.');
     if (!Array.isArray(row.commands) || row.commands.some(c => !(UI_COMMANDS as readonly unknown[]).includes(c))) throw Error('Unknown UI command.');
-    const view: View = { id: randomUUID(), scope, target, surface: String(row.surface), threadId: typeof row.threadId === 'string' ? row.threadId : undefined, commands: row.commands, state: {}, at: this.now() };
+    const host = VIEW_WINDOWS.find(name => name === row.window);
+    const view: View = { id: randomUUID(), scope, target, surface: String(row.surface), threadId: typeof row.threadId === 'string' ? row.threadId : undefined, ...(host ? { window: host } : {}), visible: true, focused: false, focusedAt: 0, commands: row.commands, state: {}, at: this.now() };
     this.views.set(view.id, view);
     return { viewId: view.id };
   }
@@ -70,16 +82,26 @@ export class WorkbenchControl {
   assertTarget(scope: string, id: string, target: string) {
     if (this.view(scope, id).target !== target) throw Error('This view targets a different org. Align its org with the project and list views again.');
   }
-  list(scope: string) { this.prune(); return [...this.views.values()].filter(view => view.scope === scope).map(({ scope: _scope, at: _at, ...view }) => view); }
+  /** The focused window's views first, then visible ones, then the most recently focused. */
+  list(scope: string) {
+    this.prune();
+    return [...this.views.values()].filter(view => view.scope === scope)
+      .sort((a, b) => Number(b.focused) - Number(a.focused) || Number(b.visible) - Number(a.visible) || b.focusedAt - a.focusedAt || b.at - a.at)
+      .map(({ scope: _scope, at: _at, focusedAt: _focusedAt, ...view }) => view);
+  }
   poll(scope: string, input: unknown) {
     const row = object(input); const view = this.view(scope, String(row.viewId));
     view.at = this.now(); view.state = object(row.state);
+    const presence = row.presence && typeof row.presence === 'object' ? row.presence as Record<string, unknown> : {};
+    if (typeof presence.visible === 'boolean') view.visible = presence.visible;
+    if (typeof presence.focused === 'boolean') view.focused = presence.focused;
+    if (view.focused) view.focusedAt = view.at;
     const commands: UiCommand[] = [];
     for (const job of this.jobs.values()) if (job.viewId === view.id && !job.delivered && !job.result && this.now() - job.at < ACK_WINDOW_MS) { job.delivered = true; job.touched = this.now(); commands.push(job.command); }
     return { commands };
   }
   close(scope: string, id: string) { this.view(scope, id); this.views.delete(id); }
-  request(scope: string, input: unknown) {
+  request(scope: string, input: unknown, from?: UiCommandSource, user = false) {
     const row = object(input); const view = this.view(scope, String(row.viewId));
     if (!view.commands.includes(row.command as UiCommandName)) throw Error('This view does not support that command.');
     const commandInput = row.input === undefined ? {} : object(row.input);
@@ -88,7 +110,8 @@ export class WorkbenchControl {
     const live = [...this.jobs.values()].filter(j => j.viewId === view.id && !j.result && !j.awaiting && this.now() - j.at < ACK_WINDOW_MS).length;
     if (this.jobs.size >= 200 || live >= 8) throw Error('Workbench controls are busy. Wait for pending commands.');
     const id = randomUUID(); const at = this.now();
-    this.jobs.set(id, { scope, viewId: view.id, at, touched: at, delivered: false, command: { id, command: row.command as UiCommandName, input: commandInput } });
+    const source = from?.threadId ? { threadId: from.threadId.slice(0, 200), ...(from.title ? { title: from.title.slice(0, 120) } : {}) } : undefined;
+    this.jobs.set(id, { scope, viewId: view.id, at, touched: at, delivered: false, command: { id, command: row.command as UiCommandName, input: commandInput, ...(source ? { from: source } : {}), ...(user && !source ? { user: true as const } : {}) } });
     try { this.wake?.(view.id); } catch { /* a failed wake only delays delivery to the next poll */ }
     return { commandId: id, state: 'pending' };
   }

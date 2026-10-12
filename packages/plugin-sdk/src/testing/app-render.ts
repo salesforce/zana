@@ -14,7 +14,8 @@ import type {
   ThreadChatMessageReference,
   ThreadChatProps,
   ZccContext,
-  ZccNavigate
+  ZccNavigate,
+  ZccWindowTitle
 } from '../app-contract.js';
 import { collectTestPluginApp } from './app.js';
 
@@ -32,7 +33,8 @@ export type NavigateCall =
       method: 'openThreadPanel';
       options: { actionId: string; title?: string; params?: unknown };
     }
-  | { method: 'openPanelAgent'; options: { threadId: string; title?: string } };
+  | { method: 'openPanelAgent'; options: { threadId: string; title?: string } }
+  | { method: 'openInWindow'; projectId: string; options?: { tabId?: string } };
 
 export interface RenderSlotOptions {
   rpc?: Record<string, (input: unknown) => unknown | Promise<unknown>>;
@@ -48,6 +50,8 @@ export interface RenderedSlot extends RenderResult {
   inspection: {
     rpcCalls: RpcCall[];
     navigateCalls: NavigateCall[];
+    /** The newest `useWindowTitle` value still mounted, or null. The fake records it on every surface. */
+    readonly windowTitle: ZccWindowTitle | null;
   };
   lifecycle: {
     unmount(): void;
@@ -90,13 +94,16 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
   rpcCalls: RpcCall[];
   navigateCalls: NavigateCall[];
   emitRealtime(channel: string, payload?: unknown): void;
+  windowTitle(): ZccWindowTitle | null;
 } {
   const rpcCalls: RpcCall[] = [];
   const navigateCalls: NavigateCall[] = [];
+  let windowTitles: Array<{ token: symbol; title: ZccWindowTitle | null }> = [];
   const realtimeHandlers = new Map<string, (payload: unknown) => void>();
   const context: ZccContext = {
     projectId: options.context?.projectId ?? null,
-    threadId: options.context?.threadId ?? null
+    threadId: options.context?.threadId ?? null,
+    ...(options.context?.surface !== undefined ? { surface: options.context.surface } : {})
   };
   let composerText = options.composer?.text ?? '';
   const composerScope = options.composer?.scope ?? defaultComposerScope(context);
@@ -148,6 +155,14 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     openPanelAgent(agentOptions) {
       navigateCalls.push({ method: 'openPanelAgent', options: agentOptions });
       return options.panelAgent === true;
+    },
+    openInWindow(projectId, windowOptions) {
+      navigateCalls.push({
+        method: 'openInWindow',
+        projectId,
+        ...(windowOptions !== undefined ? { options: windowOptions } : {})
+      });
+      return Promise.resolve(true);
     }
   };
 
@@ -210,6 +225,24 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     },
     useZccNavigate() {
       return navigate;
+    },
+    useWindowTitle(title) {
+      const key = title ? JSON.stringify(title) : '';
+      const slot = React.useRef<symbol | null>(null);
+      // Like the host: one place per caller from mount to unmount, updated in place.
+      React.useEffect(() => {
+        const token = Symbol('window-title');
+        slot.current = token;
+        windowTitles = [...windowTitles, { token, title: null }];
+        return () => {
+          slot.current = null;
+          windowTitles = windowTitles.filter((entry) => entry.token !== token);
+        };
+      }, []);
+      React.useEffect(() => {
+        const title = key ? (JSON.parse(key) as ZccWindowTitle) : null;
+        windowTitles = windowTitles.map((entry) => (entry.token === slot.current ? { ...entry, title } : entry));
+      }, [key]);
     },
     useComposer() {
       return composerApi;
@@ -276,7 +309,8 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     navigateCalls,
     emitRealtime(channel, payload) {
       realtimeHandlers.get(channel)?.(payload);
-    }
+    },
+    windowTitle: () => [...windowTitles].reverse().find((entry) => entry.title)?.title ?? null
   };
 }
 
@@ -311,7 +345,10 @@ export function renderSlot<Props extends object>(
     ...result,
     inspection: {
       rpcCalls: installed.rpcCalls,
-      navigateCalls: installed.navigateCalls
+      navigateCalls: installed.navigateCalls,
+      get windowTitle() {
+        return installed.windowTitle();
+      }
     },
     lifecycle: {
       unmount: result.unmount

@@ -6,11 +6,12 @@ import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import { createNodeDeps } from '../lib/node-deps.js';
 import type { SalesforceDeps } from '../lib/types.js';
+import type { AgentforceTransport } from '../lib/agentforce-transport.js';
 const roots: string[] = [];
 const disposals: Array<() => unknown> = [];
 const ctx = { projectId: 'p', threadId: '', signal: new AbortController().signal };
 afterEach(async () => { for (const dispose of disposals.splice(0)) await dispose(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
-async function fixture(production = false) {
+async function fixture(production = false, labTransport?: AgentforceTransport) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'sf-actions-'))); roots.push(root);
   const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p', name: 'Project', path: root }, { id: 'other', name: 'Other', path: root }] });
   const org = { alias: 'dev', username: 'test@example.com', id: '00D000000000001', orgId: '00D000000000001', instanceUrl: 'https://example.salesforce.com', accessToken: 'TEST_TOKEN', isSandbox: !production };
@@ -18,7 +19,7 @@ async function fixture(production = false) {
   const exec = vi.fn<SalesforceDeps['execSf']>(async args => ({ code: 0, stderr: '', stdout: JSON.stringify({ status: 0, result: args[0] === 'agent' ? { sessionId: 'preview', success: true, passedCount: 1, failedCount: 0, botVersionId: 'version-1' } : args.includes('display') ? org : args.includes('metadata') ? [{ fullName: 'Help_v1' }] : { [production ? 'nonScratchOrgs' : 'sandboxes']: [org] } }) }));
   const request = vi.fn<SalesforceDeps['request']>(async () => ({ status: 200, json: { totalSize: 1, done: true, records: [{ Id: '001000000000001' }] }, text: '{}' }));
   deps.execSf = exec; deps.request = request;
-  await createSalesforcePlugin(zcc, deps);
+  await createSalesforcePlugin(zcc, deps, labTransport);
   harness.setSettings({ defaultOrg: 'dev' });
   // The fake host owns plugin cleanup hooks.
   disposals.push(() => harness.dispose());
@@ -68,6 +69,67 @@ it('mediates org reads and UI reads but permits offline local drafts', async () 
   expect(await action('ui.command', { viewId: view.viewId, command: 'record.open', input: {} })).toMatchObject({ code: 'refused' });
   expect(request).not.toHaveBeenCalled();
   expect(exec.mock.calls.some(([args]) => args.includes('metadata'))).toBe(false);
+});
+it('gates Agentforce lab runs on an org that is not a known sandbox, like every other org read', async () => {
+  const bootstrap = vi.fn(async () => 'JWT');
+  const { harness, zcc } = await fixture(true, { bootstrap, request: vi.fn() } as unknown as AgentforceTransport);
+  const start = (extra: Record<string, unknown> = {}) =>
+    harness.callRpc('agentLab.start', { projectId: 'p', engine: 'rehearsal', source: 'config:\n  agent_name: Help', ...extra }) as Promise<any>;
+  // No thread to ask in: refused before Salesforce is called.
+  expect(await start()).toMatchObject({ ok: false, error: expect.stringContaining('beside a thread') });
+  expect(bootstrap).not.toHaveBeenCalled();
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  const cancelled = start({ threadId: 'thread' });
+  await vi.waitFor(() => expect(confirmation).toHaveBeenCalledOnce());
+  expect(confirmation.mock.calls[0]![0]).toMatchObject({ threadId: 'thread', payload: { kind: 'org.unknown.read', orgAlias: 'dev', summary: expect.stringContaining('Rehearse') } });
+  harness.cancelInteraction();
+  expect(await cancelled).toMatchObject({ ok: false, error: 'Operator cancelled the rehearse run.' });
+  expect(bootstrap).not.toHaveBeenCalled();
+  const approved = start({ threadId: 'thread', engine: 'preview' });
+  await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(2));
+  expect(confirmation.mock.calls[1]![0]).toMatchObject({ payload: { summary: expect.stringContaining('Simulate') } });
+  harness.submitInteraction({ approved: true });
+  await approved;
+  expect(bootstrap).toHaveBeenCalledOnce();
+});
+it('runs Agentforce lab rehearsals on a sandbox without asking', async () => {
+  const bootstrap = vi.fn(async () => 'JWT');
+  const { harness, zcc } = await fixture(false, { bootstrap, request: vi.fn() } as unknown as AgentforceTransport);
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  expect(await harness.callRpc('agentLab.start', { projectId: 'p', engine: 'rehearsal', source: 'config:\n  agent_name: Help' })).toMatchObject({ ok: true, data: { engine: 'rehearsal', orgAlias: 'dev' } });
+  expect(confirmation).not.toHaveBeenCalled();
+  expect(bootstrap).toHaveBeenCalledOnce();
+});
+it('compiles from the Studio button behind the same org gate as every other org read', async () => {
+  const { action, harness, zcc, exec } = await fixture(true);
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  const compile = (extra: Record<string, unknown> = {}) =>
+    harness.callRpc('agentScript.compile', { projectId: 'p', path: draft.file.path, ...extra }) as Promise<any>;
+  const validations = () => exec.mock.calls.filter(([args]) => args[0] === 'agent' && args[1] === 'validate');
+  expect(await harness.callRpc('agentScript.compile', { projectId: 'p' })).toMatchObject({ ok: false, code: 'invalid_input' });
+  // sf agent validate runs in the org: with no thread to ask in, an org that is not a known sandbox is refused first.
+  expect(await compile()).toMatchObject({ ok: false, code: 'refused', error: expect.stringContaining('Compile beside a thread') });
+  expect(validations()).toHaveLength(0);
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  const denied = compile({ threadId: 'thread' });
+  await vi.waitFor(() => expect(confirmation).toHaveBeenCalledOnce());
+  expect(confirmation.mock.calls[0]![0]).toMatchObject({ threadId: 'thread', payload: { kind: 'org.unknown.read', orgAlias: 'dev', summary: 'Compile Help with sf agent validate on dev (unknown)', preview: 'Help' } });
+  harness.cancelInteraction();
+  expect(await denied).toMatchObject({ ok: false, code: 'refused', error: 'Operator cancelled compile.' });
+  expect(validations()).toHaveLength(0);
+  const approved = compile({ threadId: 'thread' });
+  await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(2));
+  harness.submitInteraction({ approved: true });
+  expect(await approved).toMatchObject({ ok: true, summary: 'Compiled Help (cli)' });
+  expect(validations()[0]![0]).toEqual(['agent', 'validate', 'authoring-bundle', '--json', '--api-name', 'Help', '--target-org', 'dev']);
+});
+it('compiles on a sandbox from the Studio button without asking', async () => {
+  const { action, harness, zcc } = await fixture();
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  expect(await harness.callRpc('agentScript.compile', { projectId: 'p', path: draft.file.path })).toMatchObject({ ok: true, summary: 'Compiled Help (cli)' });
+  expect(confirmation).not.toHaveBeenCalled();
+  expect(await harness.callRpc('agentScript.compile', { projectId: 'p', path: '../outside.agent' })).toMatchObject({ ok: false, code: 'path_refused' });
 });
 it('runs bounded queries, stores real results and refuses cross-project presentation', async () => {
   const { action, harness, request } = await fixture();

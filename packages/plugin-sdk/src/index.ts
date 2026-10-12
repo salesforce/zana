@@ -122,6 +122,9 @@ export type {
   PluginProjectTabAvailabilityRegistration,
   PluginInteractionRequest,
   PluginInteractionResult,
+  PluginApprovalBinding,
+  PluginApprovalRequest,
+  PluginApprovalResult,
   PluginInteractionCancelReason,
   PluginStatusApi,
   PluginSettingsSnapshot,
@@ -241,7 +244,9 @@ export type {
   PluginComposerScope,
   PluginComposerScopeKind,
   PluginSdkApp,
-  PluginSlotBase
+  PluginSlotBase,
+  ZccWindowTitle,
+  ZccWindowTitleTone
 } from './app-contract.js';
 
 export {
@@ -256,6 +261,7 @@ export {
   useSettings,
   useZccContext,
   useZccNavigate,
+  useWindowTitle,
   useComposer,
   useComposerView,
   experimental_useSidebarThreads,

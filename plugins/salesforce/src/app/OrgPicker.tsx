@@ -8,6 +8,7 @@ import type { PublicListedOrg } from '../../lib/types.js';
 import { parseOrgLoginInput, type OrgLoginInstance } from '../../lib/org-login.js';
 import { signInWithBrowser } from './org-login-rpc.js';
 import { OrgLoginDialog } from './OrgLoginDialog.js';
+import { CONTEXT_ORIGIN, useContextChangeRelay } from './context-sync.js';
 
 export type OrgsRpc =
   | { ok: true; orgs: PublicListedOrg[]; selectedAlias: string | null; connectedAlias?: string | null; warning?: string }
@@ -49,6 +50,7 @@ type OrgPickerProps = {
 };
 
 export function OrgPicker(props: OrgPickerProps) {
+  useContextChangeRelay();
   const call = useSalesforceCall(props.pluginId, { projectId: props.projectId });
   const generation = useRef(0);
   const scopeGeneration = useRef(0);
@@ -121,7 +123,7 @@ export function OrgPicker(props: OrgPickerProps) {
     setNotice(null);
     try {
       const payload = parseOrgsRpc(
-        await signInWithBrowser(call, input, controller.signal)
+        await signInWithBrowser(call, { ...input, origin: CONTEXT_ORIGIN }, controller.signal)
       );
       if (scope !== scopeGeneration.current) return;
       if (!payload.ok) {
@@ -156,7 +158,7 @@ export function OrgPicker(props: OrgPickerProps) {
     }
     setError(null);
     try {
-      if (props.projectId) requireResult(await call('context.select', { selectedAlias: alias }));
+      if (props.projectId) requireResult(await call('context.select', { selectedAlias: alias, origin: CONTEXT_ORIGIN }));
       else await setPluginSettings(props.pluginId, { defaultOrg: alias });
       setResolvedAlias(alias || null);
       if (!alias) await refresh();

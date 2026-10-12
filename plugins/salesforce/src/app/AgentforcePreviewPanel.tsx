@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
-import { callPluginRpc, useZccContext } from '@zana-ai/zcc-plugin-sdk/app';
-import { parseAgentforcePanelApiName, parseAgentforcePanelPath } from './agentforce-panel-params.js';
+import { callPluginRpc, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { AGENTFORCE_PLAYGROUND_ACTION, agentforcePanelParams, parseAgentforcePanelApiName, parseAgentforcePanelPath, parseAgentforcePanelRun } from './agentforce-panel-params.js';
+import { queueAgentScriptOpen } from './agent-script-open.js';
+import { openInStudioWindow } from './studio-window-route.js';
+import { PreviewRunReplay } from './preview/PreviewRunReplay.js';
 import type { PlaygroundFileRef } from './playground-bridge.js';
 import {
   appendPreviewTurn,
@@ -43,6 +46,7 @@ export function AgentforcePreviewPanel(props: {
 }) {
   const pluginId = props.pluginId || PLUGIN_ID;
   const ctx = useZccContext();
+  const navigate = useZccNavigate();
   const resource = props.params && typeof props.params === 'object' ? props.params as Record<string, unknown> : {};
   const pinnedOrg = props.orgAlias ?? (typeof resource.orgAlias === 'string' ? resource.orgAlias : undefined);
   const projectId = props.projectId ?? (typeof resource.projectId === 'string' ? resource.projectId : undefined) ?? ctx.projectId ?? undefined;
@@ -56,6 +60,11 @@ export function AgentforcePreviewPanel(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [org, setOrg] = useState<PublicOrgView | null>(null);
+  const linkedRun = parseAgentforcePanelRun(props.params);
+  const runKey = linkedRun ? `${linkedRun.runId}:${linkedRun.turn ?? ''}` : '';
+  const [run, setRun] = useState(linkedRun);
+  // Another card can retarget an open panel; follow it.
+  useEffect(() => { setRun(parseAgentforcePanelRun(props.params)); }, [runKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const apiName = parseAgentforcePanelApiName(props.params);
   const targetPath = path || (apiName ? null : files[0]?.path ?? null);
   const hasTarget = Boolean(targetPath || apiName);
@@ -130,6 +139,7 @@ export function AgentforcePreviewPanel(props: {
   );
 
   const start = useCallback(async () => {
+    setRun(null);
     const result = await callPreview('agentPreview.start');
     const nextSession = result?.data?.sessionId ?? null;
     if (result?.ok && nextSession) {
@@ -249,7 +259,21 @@ export function AgentforcePreviewPanel(props: {
             : 'Local bundles use simulated actions. Published agents always use live actions and require confirmation.'}
         </div>
       )}
-      <div className="sf-as-body" style={{ flexDirection: 'column' }}>
+      {run ? (
+        <PreviewRunReplay
+          key={`${run.runId}:${run.turn ?? ''}`}
+          pluginId={pluginId}
+          projectId={projectId}
+          runId={run.runId}
+          turn={run.turn}
+          onClose={() => setRun(null)}
+          onRevealSource={async (file, line) => {
+            if (projectId && await openInStudioWindow({ pluginId, projectId, path: file, line, navigate })) return;
+            if (projectId) queueAgentScriptOpen(projectId, file);
+            navigate.openThreadPanel({ actionId: AGENTFORCE_PLAYGROUND_ACTION, title: 'Playground', params: agentforcePanelParams(file, undefined, { line }), ...(threadId ? { threadId } : {}) });
+          }}
+        />
+      ) : <div className="sf-as-body" style={{ flexDirection: 'column' }}>
         <div
           data-testid="salesforce-agentforce-preview-transcript"
           className="af-transcript"
@@ -288,7 +312,7 @@ export function AgentforcePreviewPanel(props: {
             Send
           </button>
         </form>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -35,6 +35,40 @@ describe('scoped workbench controls', () => {
     now = 300_001; expect(() => service.result('p', commandId)).toThrow('not found');
     service.dispose();
   });
+  it('lists the focused window first and records each view window from untrusted input', () => {
+    let now = 1000; const service = new WorkbenchControl(() => now);
+    const main = service.register('p', { surface: 'agentforce', commands: ['state'], window: 'main' }).viewId;
+    const studio = service.register('p', { surface: 'workbench', commands: ['view.open'], window: 'plugin-view' }).viewId;
+    const odd = service.register('p', { surface: 'data', commands: [], window: 'elsewhere' }).viewId;
+    expect(service.list('p').find(view => view.id === odd)).not.toHaveProperty('window');
+    expect(service.list('p')[0]).toMatchObject({ visible: true, focused: false });
+    now = 1100; service.poll('p', { viewId: main, state: {}, presence: { visible: true, focused: true } });
+    now = 1200; service.poll('p', { viewId: odd, state: {}, presence: { visible: false, focused: false } });
+    expect(service.list('p').map(view => view.id)).toEqual([main, studio, odd]);
+    // Focus moves to the Studio window; the main window stays visible behind it.
+    now = 1300; service.poll('p', { viewId: main, state: {}, presence: { visible: true, focused: false } });
+    now = 1400; service.poll('p', { viewId: studio, state: {}, presence: { visible: true, focused: true } });
+    const listed = service.list('p');
+    expect(listed.map(view => view.id)).toEqual([studio, main, odd]);
+    expect(listed[0]).toMatchObject({ window: 'plugin-view', visible: true, focused: true });
+    expect(listed[0]).not.toHaveProperty('focusedAt');
+    // A malformed presence keeps the last report; the more recently focused view wins a tie.
+    now = 1500; service.poll('p', { viewId: studio, state: {}, presence: 'focused' });
+    service.poll('p', { viewId: studio, state: {}, presence: { visible: false, focused: false } });
+    expect(service.list('p').map(view => view.id)).toEqual([main, studio, odd]);
+  });
+  it('marks commands from the person\'s own UI, never ones a thread sent', () => {
+    const service = new WorkbenchControl();
+    const { viewId } = service.register('p', { surface: 'agentforce', commands: ['file.open'] });
+    service.request('p', { viewId, command: 'file.open', input: { path: 'a.agent' } }, undefined, true);
+    service.request('p', { viewId, command: 'file.open', input: { path: 'b.agent' } }, { threadId: 't' }, true);
+    service.request('p', { viewId, command: 'file.open', input: { path: 'c.agent' } });
+    const [own, thread, agent] = service.poll('p', { viewId, state: {} }).commands;
+    expect(own).toMatchObject({ user: true });
+    expect(thread).not.toHaveProperty('user');
+    expect(thread!.from).toEqual({ threadId: 't' });
+    expect(agent).not.toHaveProperty('user');
+  });
   it('bounds views, commands and payloads and reports renderer errors', () => {
     const service = new WorkbenchControl();
     expect(() => service.register('p', [])).toThrow('payload');

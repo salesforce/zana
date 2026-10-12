@@ -3,6 +3,7 @@ import {
   activateArgs,
   agentCliOpts,
   agentEvalHelpAvailable,
+  evalCaseCount,
   agentPluginAvailable,
   canActivate,
   compactPreviewDigest,
@@ -184,6 +185,8 @@ describe('sf_agent compile probes and CLI parsing', () => {
     expect(parseEvalSpec('{').ok).toBe(false);
     expect(parseEvalSpec(JSON.stringify({ tests: [{ utterance: 'hi' }] }))).toMatchObject({ ok: true, testCount: 1 });
     expect(parseEvalSpec(JSON.stringify({ utterances: ['a', 'b'] }))).toMatchObject({ ok: true, testCount: 2 });
+    expect(parseEvalSpec(JSON.stringify({ testCases: [{}, {}, {}] }))).toEqual({ ok: true, format: 'json', testCount: 3 });
+    expect(parseEvalSpec(JSON.stringify({ tests: [] }))).toEqual({ ok: false, error: expect.stringContaining('non-empty') });
     expect(summarizeEvalRun({ success: true }, 3)).toEqual({ passed: true, passedCount: 3, failedCount: 0 });
     expect(summarizeEvalRun({ passedCount: 1, failedCount: 1 }, 2)).toEqual({
       passed: false,
@@ -352,5 +355,50 @@ describe('sf_agent activation gate', () => {
       }
     });
     expect(await reloaded.get('00D', 'bv-1')).toEqual(evidence);
+  });
+});
+
+describe('YAML eval specs', () => {
+  const official = [
+    '# sf agent test create --spec',
+    'name: Help Tests',
+    'subjectType: AGENT',
+    'subjectName: Help',
+    'testCases:',
+    '  - utterance: "Where is my order?"',
+    '    expectedTopic: orders',
+    '    expectedActions:',
+    '      - lookup_order',
+    '',
+    '    # a comment between cases',
+    '  - utterance: Refund please',
+    '    expectedOutcome: >',
+    '      - starts with a dash but sits deeper',
+    '  -',
+    '    utterance: third',
+    'description: trailing key'
+  ].join('\n');
+
+  it('counts the cases of the official sf agent test format', () => {
+    expect(parseEvalSpec(official)).toEqual({ ok: true, format: 'yaml', testCount: 3 });
+    expect(evalCaseCount(official)).toBe(3);
+    expect(parseEvalSpec('testCases:\n- utterance: a\n- utterance: b\nname: x')).toMatchObject({ testCount: 2 });
+    expect(parseEvalSpec('tests:\r\n  - a\r\n  - b\r\n')).toMatchObject({ testCount: 2 });
+  });
+
+  it('counts one-line flow lists, ignoring commas inside quotes and nested values', () => {
+    expect(parseEvalSpec('utterances: ["hi, there", \'b\', {u: [1, 2]}]  # three')).toMatchObject({ testCount: 3 });
+    expect(parseEvalSpec('utterances: [a, b,]')).toMatchObject({ testCount: 2 });
+    expect(parseEvalSpec('utterances: []')).toEqual({ ok: false, error: expect.stringContaining('non-empty') });
+  });
+
+  it('reports a mapping without cases, and text it cannot read as a mapping, without throwing', () => {
+    expect(parseEvalSpec('name: Empty')).toEqual({ ok: false, error: expect.stringContaining('non-empty') });
+    expect(parseEvalSpec('testCases:\nname: x')).toEqual({ ok: false, error: expect.stringContaining('non-empty') });
+    expect(parseEvalSpec('- just a list')).toEqual({ ok: false, error: expect.stringContaining('YAML mapping') });
+    expect(parseEvalSpec('testCases: one')).toEqual({ ok: false, error: expect.stringContaining('YAML mapping') });
+    expect(parseEvalSpec('testCases: [a,\n  b]')).toMatchObject({ ok: false });
+    expect(parseEvalSpec('testCases:\n  utterance: not a list')).toMatchObject({ ok: false });
+    expect(evalCaseCount('plain words')).toBe(0);
   });
 });

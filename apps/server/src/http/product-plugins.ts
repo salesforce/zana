@@ -175,6 +175,7 @@ export function createAttachedProductPluginService(
     interruptPluginInteractions: (pluginId) => {
       ctx.pendingInteractions.interruptPluginInteractions(pluginId);
     },
+    consumePluginApproval: ({ pluginId, token, binding }) => ctx.verifyPluginApproval?.(token, pluginId, binding) ?? false,
     getInteraction: async ({ pluginId, interactionId }) => {
       const row = interactions.get(interactionId);
       return row && row.pluginId === pluginId ? row : null;

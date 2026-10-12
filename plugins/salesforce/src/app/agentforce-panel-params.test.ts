@@ -7,7 +7,8 @@ import {
   openAgentforcePlayground,
   openAgentforcePreview,
   parseAgentforcePanelApiName,
-  parseAgentforcePanelPath
+  parseAgentforcePanelPath,
+  parseAgentforcePanelRun
 } from './agentforce-panel-params.js';
 
 describe('agentforce panel params', () => {
@@ -18,6 +19,12 @@ describe('agentforce panel params', () => {
     expect(parseAgentforcePanelApiName('nope')).toBeUndefined();
     expect(agentforcePanelParams('a.agent', 'A')).toEqual({ path: 'a.agent', apiName: 'A' });
     expect(agentforcePanelParams()).toEqual({});
+  });
+  it('reads a linked run and its 1-based turn from string or number params', () => {
+    expect(parseAgentforcePanelRun({ runId: ' r1 ', turn: '3' })).toEqual({ runId: 'r1', turn: 3 });
+    expect(parseAgentforcePanelRun({ runId: 'r1', turn: 2 })).toEqual({ runId: 'r1', turn: 2 });
+    for (const turn of [0, '0', 'x', '12345', 1.5, null]) expect(parseAgentforcePanelRun({ runId: 'r1', turn })).toEqual({ runId: 'r1' });
+    for (const params of [null, [], 'r1', {}, { runId: '' }, { runId: 'x'.repeat(257) }, { runId: 7 }]) expect(parseAgentforcePanelRun(params)).toBeNull();
   });
 
   it('opens Playground as a thread side panel and queues the file', () => {

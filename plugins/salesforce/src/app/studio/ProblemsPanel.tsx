@@ -1,5 +1,6 @@
 import { Sparkles } from 'lucide-react';
 import type { StudioDiagnostic } from '../../../lib/studio-contract.js';
+import type { CompileState } from './compile-result.js';
 
 const SEVERITY_ORDER: Record<StudioDiagnostic['severity'], number> = { error: 0, warning: 1, info: 2, hint: 3 };
 const SEVERITY_MARK: Record<StudioDiagnostic['severity'], string> = { error: '●', warning: '▲', info: 'ℹ', hint: '·' };
@@ -14,13 +15,24 @@ export interface ProblemsPanelProps {
   onFixWithAgent?(): void;
   /** True while the agent hand-off is in flight. */
   busy?: boolean;
+  /** The Compile button's last answer for this file; a failed compile is already one of the diagnostics. */
+  compile?: CompileState | null;
+  /** The file changed after that compile. */
+  stale?: boolean;
+}
+
+function compileLine(compile: CompileState, stale: boolean): string {
+  const since = stale ? ' · edited since' : '';
+  if (compile.status === 'running') return 'Compiling…';
+  if (compile.status === 'passed') return `${compile.summary}${since}`;
+  return compile.code === 'compile_failed' ? `Compile failed${since}` : compile.message;
 }
 
 export function sortDiagnostics(diagnostics: StudioDiagnostic[]): StudioDiagnostic[] {
   return [...diagnostics].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.line - b.line || a.column - b.column);
 }
 
-export function ProblemsPanel({ path, diagnostics, compact, onReveal, onFixWithAgent, busy }: ProblemsPanelProps) {
+export function ProblemsPanel({ path, diagnostics, compact, onReveal, onFixWithAgent, busy, compile, stale = false }: ProblemsPanelProps) {
   const rows = sortDiagnostics(diagnostics);
   return <section className="sf-problems" data-compact={compact ? 'true' : undefined} aria-label="Problems">
     <header className="sf-problems-head">
@@ -29,6 +41,7 @@ export function ProblemsPanel({ path, diagnostics, compact, onReveal, onFixWithA
         <Sparkles size={12} aria-hidden="true" />{busy ? 'Asking…' : 'Fix with agent'}
       </button>}
     </header>
+    {compile && <p className={`sf-compile is-${compile.status}`} role="status" data-testid="salesforce-compile-status">{compileLine(compile, stale)}</p>}
     {rows.length === 0
       ? <p className="sf-problems-empty">{path ? 'The compiler found nothing to fix in this file.' : 'Open a project file to see its problems.'}</p>
       : <ul className="sf-problems-list">

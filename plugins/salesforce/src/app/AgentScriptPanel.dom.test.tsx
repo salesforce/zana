@@ -83,7 +83,7 @@ describe('AgentScriptPanel', () => {
     delete (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__;
   });
 
-  async function mount(subPath = '', projectId = 'proj-1', orgPicker = true) {
+  async function mount(subPath = '', projectId = 'proj-1', orgPicker = true, extra: { onActivePath?: (path: string | null) => void } = {}) {
     const el = document.createElement('div');
     document.body.appendChild(el);
     const root = createRoot(el);
@@ -94,7 +94,7 @@ describe('AgentScriptPanel', () => {
       }
     });
     await act(async () => {
-      root.render(createElement(AgentScriptPanel, { pluginId: 'salesforce', subPath, projectId, orgPicker }));
+      root.render(createElement(AgentScriptPanel, { pluginId: 'salesforce', subPath, projectId, orgPicker, ...extra }));
     });
     await act(async () => {
       await Promise.resolve();
@@ -188,6 +188,14 @@ describe('AgentScriptPanel', () => {
       'agentFiles.read',
       expect.objectContaining({ path: 'force-app/bots/QC.agent', projectId: 'proj-1' })
     );
+  });
+
+  it('reports the open agent file, then null once it goes away', async () => {
+    const onActivePath = vi.fn();
+    await mount('force-app/bots/QC.agent', 'proj-1', true, { onActivePath });
+    expect(onActivePath).toHaveBeenLastCalledWith('force-app/bots/QC.agent');
+    await act(async () => { nodes.pop()!.unmount(); });
+    expect(onActivePath).toHaveBeenLastCalledWith(null);
   });
 
   it('opens a queued path after the playground is ready', async () => {
@@ -284,7 +292,9 @@ describe('AgentScriptPanel', () => {
     await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: el.querySelector('iframe')!.contentWindow, data })); });
     expect(start.disabled).toBe(false);
     await openTool(el, 'Tests');
-    const lab = within(el).getByRole('tabpanel', { name: 'Tests' }).querySelector<HTMLElement>('[data-testid="agentforce-lab"]')!;
+    const tests = within(el).getByRole('tabpanel', { name: 'Tests' });
+    await act(async () => { within(tests).getByRole('button', { name: 'Role-play' }).click(); });
+    const lab = tests.querySelector<HTMLElement>('[data-testid="agentforce-lab"]')!;
     await act(async () => { [...lab.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Missing details')!.click(); });
     const persona = lab.querySelector<HTMLTextAreaElement>('textarea')!.value;
     expect(persona).toContain('distracted');

@@ -113,6 +113,84 @@ describe('org agent sources', () => {
     await expect(service.list()).rejects.toThrow('busy');
   });
 
+  describe('reading one version', () => {
+    type Bundle = { target?: string; content?: string; scripts?: number; meta?: string };
+    function reader(bundles: Record<string, Bundle>, after?: (folder: string) => void) {
+      const { service, execSf } = fixture(); let temporary = '';
+      execSf.mockImplementation(async (args, options) => {
+        if (args[0] === 'org') return ok(Object.keys(bundles).map(fullName => ({ fullName })));
+        temporary = options!.cwd!;
+        const root = join(temporary, 'force-app/main/default/aiAuthoringBundles');
+        const requested = args.filter(arg => arg.startsWith('AiAuthoringBundle:')).map(arg => arg.slice('AiAuthoringBundle:'.length));
+        for (const [fullName, bundle] of Object.entries(bundles).filter(([name]) => requested.includes(name))) {
+          const folder = join(root, fullName);
+          mkdirSync(folder, { recursive: true });
+          for (let index = 0; index < (bundle.scripts ?? 1); index++) writeFileSync(join(folder, `${fullName}${index ? index : ''}.agent`), bundle.content ?? `${fullName} source`);
+          writeFileSync(join(folder, `${fullName}.bundle-meta.xml`), bundle.meta ?? `<AiAuthoringBundle><target> ${bundle.target ?? ''} </target></AiAuthoringBundle>`);
+        }
+        after?.(root);
+        return ok({ success: true, done: true });
+      });
+      return { service, execSf, temporary: () => temporary };
+    }
+
+    it('retrieves the newest bundles once, picks the one whose target is the version and deletes the folder', async () => {
+      const bundles = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`Help_v${index + 1}`, { target: `Help.v${index + 1}` }]));
+      const { service, execSf, temporary } = reader({ ...bundles, Help_v13: { target: 'Help.v12' }, Other_v1: { target: 'Help.v12' } });
+      await expect(service.readVersion(org, 'Help', 12)).resolves.toEqual({ fullName: 'Help_v13', content: 'Help_v13 source' });
+      const retrieve = execSf.mock.calls[1]![0];
+      expect(retrieve.filter(arg => arg.startsWith('AiAuthoringBundle:'))).toEqual(['13', '12', '11', '10', '9', '8', '7', '6', '5', '4'].map(n => `AiAuthoringBundle:Help_v${n}`));
+      expect(execSf.mock.calls[1]![1]).toMatchObject({ cwd: temporary(), timeoutMs: 120_000, signal: expect.any(AbortSignal) });
+      expect(existsSync(temporary())).toBe(false);
+      await expect(service.readVersion(org, 'Help', 1)).rejects.toThrow('None of the 10 newest Help authoring bundles on sandbox published v1.');
+    });
+
+    it.each([
+      ['symlink', { Help_v1: { target: 'Help.v1' } }, (root: string) => symlinkSync(tmpdir(), join(root, 'escape')), 'symbolic link'],
+      ['too-many', { Help_v1: { target: 'Help.v1' } }, (root: string) => { for (let index = 0; index < 1001; index++) writeFileSync(join(root, `${index}.txt`), ''); }, 'too many files'],
+      ['deep', { Help_v1: { target: 'Help.v1' } }, (root: string) => mkdirSync(join(root, ...Array.from({ length: 12 }, () => 'd')), { recursive: true }), 'nested folders'],
+      ['large', { Help_v1: { target: 'Help.v1', content: 'x'.repeat(180_001) } }, undefined, 'size limit'],
+      ['ambiguous', { Help_v1: { target: 'Help.v1', scripts: 2 } }, undefined, 'no single Agent Script'],
+      ['oversized metadata', { Help_v1: { meta: `<target>Help.v1</target>${' '.repeat(64_001)}` } }, undefined, 'published v1'],
+    ] as const)('cleans up after a %s retrieval', async (_mode, bundles, after, error) => {
+      const { service, temporary } = reader(bundles, after);
+      await expect(service.readVersion(org, 'Help', 1)).rejects.toThrow(error);
+      expect(existsSync(temporary())).toBe(false);
+    });
+
+    it('frees the read when the temp folder cannot be made', async () => {
+      const { service, execSf } = reader({ Help_v1: { target: 'Help.v1' } });
+      const saved = process.env.TMPDIR;
+      process.env.TMPDIR = join(tmpdir(), 'zcc-sf-missing-tmp', 'gone');
+      try {
+        await expect(service.readVersion(org, 'Help', 1)).rejects.toThrow('ENOENT');
+      } finally {
+        if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved;
+      }
+      expect(execSf).not.toHaveBeenCalled();
+      await expect(service.readVersion(org, 'Help', 1)).resolves.toEqual({ fullName: 'Help_v1', content: 'Help_v1 source' });
+    });
+
+    it('refuses bad input, unfinished retrievals and a second read, and aborts on disposal', async () => {
+      const { service, execSf } = reader({ Help_v1: { target: 'Help.v1' } });
+      for (const [name, version] of [["Help' OR", 1], ['Help', 0], ['Help', 1.5]] as const) await expect(service.readVersion(org, name, version)).rejects.toThrow('Pick a version');
+      expect(execSf).not.toHaveBeenCalled();
+      await expect(service.readVersion(org, 'Missing', 1)).rejects.toThrow('Missing has no authoring bundle on sandbox.');
+      execSf.mockImplementationOnce(async () => ok([{ fullName: 'Help_v1' }])).mockImplementationOnce(async () => ok({ done: false }));
+      await expect(service.readVersion(org, 'Help', 1)).rejects.toThrow('did not complete');
+      let release!: () => void; let signal!: AbortSignal;
+      execSf.mockImplementationOnce(async (_args, options) => { signal = options!.signal!; await new Promise<void>(resolve => { release = resolve; }); return ok([{ fullName: 'Help_v1' }]); });
+      const first = service.readVersion(org, 'Help', 1);
+      await vi.waitFor(() => expect(signal).toBeDefined());
+      await expect(service.readVersion(org, 'Help', 1)).rejects.toThrow('already opening');
+      service.dispose();
+      expect(signal.aborted).toBe(true);
+      release();
+      await expect(first).rejects.toThrow();
+      await expect(service.readVersion(org, 'Help', 1)).rejects.toThrow('restarting');
+    });
+  });
+
   it('bounds concurrent inventories and surfaces malformed CLI output', async () => {
     const { service, execSf } = fixture(); let release!: (value: ReturnType<typeof ok>) => void;
     const pending = new Promise<ReturnType<typeof ok>>(resolve => { release = resolve; });

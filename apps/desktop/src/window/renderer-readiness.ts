@@ -14,6 +14,15 @@ export class RendererReadiness {
     this.ready.delete(windowId);
   }
 
+  /**
+   * A main-frame load replaces the renderer, so it must acknowledge again. A
+   * same-document navigation (a router `pushState`) keeps the renderer and its
+   * listeners, so it stays ready.
+   */
+  navigationStarted(windowId: number, isInPlace: boolean, isMainFrame: boolean): void {
+    if (isMainFrame && !isInPlace) this.reset(windowId);
+  }
+
   remove(windowId: number): void {
     this.ready.delete(windowId);
     const waiters = this.waiters.get(windowId);

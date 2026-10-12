@@ -1,6 +1,6 @@
 export { IPC } from './ipc.js';
 export type { RuntimePerformanceSnapshot, RuntimeProcessSample } from './performance.js';
-export type { CcApi, HostBootstrapEvent, ProjectFileScope, ZccDesktopApi } from './cc-api.js';
+export type { CcApi, HostBootstrapEvent, PluginApprovalSheetRequest, PluginApprovalSheetResult, PluginViewTarget, ProjectFileScope, ZccDesktopApi } from './cc-api.js';
 export {
   DESKTOP_BROWSER_MAX_EVAL_SCRIPT_LENGTH,
   DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH,

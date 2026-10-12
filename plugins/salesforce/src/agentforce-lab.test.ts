@@ -107,6 +107,19 @@ describe('Agentforce lab', () => {
     request.mockResolvedValueOnce({ host: 'api.salesforce.com', body: {} });
     await expect(lab.send({ id: s.id, text: 'hello' })).rejects.toThrow('AI response');
   });
+  it('asks authorize about the connected org before any Salesforce call, and a refusal frees the slot', async () => {
+    const { request, bootstrap, connect, args } = setup();
+    const authorize = vi.fn(async () => { throw new Error('Operator cancelled the run.'); });
+    const lab = new AgentforceLab({ connect, scope: () => 'project-a', authorize, transport: { request, bootstrap } });
+    for (let i = 0; i < 13; i++) await expect(lab.start({ ...args, threadId: 't'.repeat(200) })).rejects.toThrow('Operator cancelled');
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ alias: 'dev' }), { engine: 'preview', threadId: 't'.repeat(128) });
+    expect(bootstrap).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+    authorize.mockResolvedValue(undefined);
+    await lab.start({ ...args, engine: 'rehearsal', threadId: 42 });
+    expect(authorize).toHaveBeenLastCalledWith(expect.anything(), { engine: 'rehearsal', threadId: '' });
+    expect(bootstrap).toHaveBeenCalledOnce();
+  });
 });
 describe('scenario and verdict contracts', () => {
   it('rejects oversized/empty criteria, invalid turn limits and false green evidence', () => {
@@ -171,6 +184,23 @@ describe('Agentforce lab trace', () => {
     const budget = await ready(() => ({}));
     for (let i = 0; i < 200; i++) await budget.lab.trace({ id: budget.session.id, planId: `p${i}` });
     expect(await budget.lab.trace({ id: budget.session.id, planId: 'late' })).toMatchObject({ available: false, reason: expect.stringContaining('budget') });
+  });
+  it('reopens a run in its project with its path, and traces it with that path by default', async () => {
+    const h = await ready();
+    const { lab, setScope, args, request } = h;
+    expect(lab.get({ id: h.session.id })).not.toHaveProperty('path');
+    const named = await lab.start({ ...args, source: 'config:\n  name: Helper\ntopic orders:\n  description: Orders', path: '  force-app/Bot.agent ' });
+    expect(named.path).toBe('force-app/Bot.agent');
+    await lab.send({ id: named.id, text: 'Hello' });
+    lab.end({ id: named.id });
+    expect(lab.get({ id: named.id })).toMatchObject({ id: named.id, closed: true, path: 'force-app/Bot.agent', turns: [{ role: 'agent' }, { role: 'user', text: 'Hello' }, { role: 'agent' }] });
+    const before = request.mock.calls.length;
+    // No path in the request: the run's own path still maps the topic to its line.
+    expect((await lab.trace({ id: named.id, planId: 'plan1' })).steps[0]).toMatchObject({ kind: 'topic', source: { path: 'force-app/Bot.agent', line: 3 } });
+    expect(request.mock.calls.length).toBe(before + 1);
+    for (const path of ['', 'x'.repeat(513), 7]) expect((await lab.start({ ...args, path })).path).toBeUndefined();
+    setScope('project-b');
+    expect(() => lab.get({ id: named.id })).toThrow('another project');
   });
   it('still serves traces after the run ended', async () => {
     const { lab, session } = await ready();

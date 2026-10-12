@@ -133,7 +133,8 @@ describe('salesforce plugin contract', () => {
       { id: 'orgs', title: 'Connected orgs', component: expect.any(Function) }
     ]);
     expect(set.projectTabs.map((tab) => tab.id)).toEqual(['salesforce']);
-    expect(set.projectTabs[0]).toMatchObject({ label: 'Salesforce', icon: 'Cloud', global: false });
+    expect(set.projectTabs[0]).toMatchObject({ label: 'Salesforce', icon: 'Cloud', global: false, detachable: true });
+    expect(typeof set.projectTabs[0]?.detachedPlaceholder).toBe('function');
     expect(set.threadPanelActions.map((row) => row.id)).toEqual(['sf-org', 'sf-soql', 'sf-object', 'sf-record', 'sf-logs', 'sf-deployments', 'sf-operations', 'playground', 'preview']);
     expect(set.threadPanelActions.find(row => row.id === 'playground')).toMatchObject({ title: 'Playground', layout: 'flush' });
     expect(set.threadPanelActions.find(row => row.id === 'preview')).toMatchObject({ title: 'Preview', layout: 'flush' });
@@ -214,6 +215,14 @@ describe('salesforce plugin behavior', () => {
     await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ orgsError: 'Could not read Salesforce CLI connections. Check the CLI, then try again.' });
     mode = 'connected';
     await harness.callRpc('context.select', { projectId: 'p1', selectedAlias: 'dev' });
+    await harness.callRpc('context.select', { projectId: 'p1', selectedAlias: 'dev', origin: 'window-a' });
+    await harness.callRpc('context.select', { projectId: 'p1', selectedAlias: 'dev', origin: 'bad origin' });
+    // Other windows sync from the signal; the origin lets the changing window skip its own echo.
+    expect(harness.published.filter(row => row.event === 'context.changed').map(row => row.payload)).toEqual([
+      { projectId: 'p1', changeId: expect.any(String) },
+      { projectId: 'p1', changeId: expect.any(String), origin: 'window-a' },
+      { projectId: 'p1', changeId: expect.any(String) }
+    ]);
     await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ targetSource: 'project', selectedAlias: 'dev', orgsError: null });
     expect(await zcc.storage.kv.get('sf:project:p1:org')).toBe('dev');
     expect(harness.needsConfiguration).toBeNull();
@@ -556,6 +565,8 @@ describe('salesforce plugin behavior', () => {
     const methods = Object.values(WORKBENCH_ACTIONS).map(([method]) => method);
     expect(methods).not.toContain('apex.anonymous.run');
     expect(methods).not.toContain('apex.anonymous.target');
+    // Org evals and fix loops start from the Studio; an agent only spends a loop the user started.
+    for (const method of ['studio.suites.eval', 'studio.loop.start', 'studio.loop.stop', 'release.run', 'release.prepare']) expect(methods).not.toContain(method);
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, mockDeps('sandbox', () => ({ status: 200, json: { compiled: true, success: true }, text: '{}' })));
     harness.setSettings({ defaultOrg: 'dev' });

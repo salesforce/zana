@@ -62,7 +62,24 @@ export interface PluginProjectTabRegistration extends PluginSlotBase {
   global?: boolean;
   /** Own the toolbar instead of adding a host title row. Render the supplied headerActions in it. */
   header?: 'custom';
+  /**
+   * Let the user open this tab in its own OS window (desktop only). While it is
+   * open there, the tab is not mounted in other windows; they show
+   * `detachedPlaceholder`, or a host card when it is omitted.
+   */
+  detachable?: boolean;
+  /** Shown in place of the tab while it is open in its own window. */
+  detachedPlaceholder?: ComponentType<PluginDetachedTabProps>;
   component: ComponentType<{ pluginId: string; projectId: string; headerActions?: ReactNode }>;
+}
+
+export interface PluginDetachedTabProps {
+  pluginId: string;
+  projectId: string;
+  /** Bring the tab's window to the front. */
+  focusWindow(): void;
+  /** Close the tab's window and show the tab here again. */
+  bringBack(): void;
 }
 
 export interface ZccNavigateToProjectOptions {
@@ -767,9 +784,35 @@ export interface PluginSettingsState {
 
 export type PluginRealtimeConnectionState = 'connecting' | 'connected' | 'reconnecting';
 
+/**
+ * Where plugin UI renders: the main window, a per-project window, or a
+ * detachable project tab open in its own window (`plugin-view`).
+ */
+export type ZccSurface = 'main' | 'project-window' | 'plugin-view';
+
 export interface ZccContext {
   projectId: string | null;
   threadId: string | null;
+  /** Absent on hosts that predate detachable tabs. */
+  surface?: ZccSurface;
+}
+
+/** How much a window badge should stand out: `danger` for work that could hurt, `warning` for the unknown. */
+export type ZccWindowTitleTone = 'neutral' | 'warning' | 'danger';
+
+/**
+ * What a plugin's own window shows in its title strip and OS title (see `useWindowTitle`).
+ * The host trims each part and caps `title` at 120, `detail` at 80 and `badge` at 24 characters.
+ */
+export interface ZccWindowTitle {
+  /** Replaces the tab label, e.g. "Agentforce · Help". */
+  title: string;
+  /** Follows the project name, e.g. the account or environment in use. */
+  detail?: string;
+  /** A short risk marker shown as a pill and leading the OS title, e.g. "Production". */
+  badge?: string;
+  /** Defaults to `neutral`. */
+  tone?: ZccWindowTitleTone;
 }
 
 export interface ZccNavigate {
@@ -795,6 +838,12 @@ export interface ZccNavigate {
    * `openThreadPanel` or `toThread`.
    */
   openPanelAgent(options: { threadId: string; title?: string }): boolean;
+  /**
+   * Open one of this plugin's `detachable` project tabs in its own window, or
+   * focus that window when it is already open. Resolves `false` outside the
+   * desktop app or when the tab is not detachable. Absent on older hosts.
+   */
+  openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions): Promise<boolean>;
 }
 
 export interface ThreadChatMessageAction {
@@ -874,6 +923,7 @@ export interface PluginSdkApp {
   useSettings(): PluginSettingsState;
   useZccContext(): ZccContext;
   useZccNavigate(): ZccNavigate;
+  useWindowTitle(title: ZccWindowTitle | null | undefined): void;
   useComposer(): PluginComposerApi;
   useComposerView(): ComposerView;
   experimental_useSidebarThreads(): { status: 'loading' | 'ready' | 'error'; threads: PluginSidebarThread[]; projects: { id: string; name: string }[] };

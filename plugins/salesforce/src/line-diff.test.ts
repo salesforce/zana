@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyHunks, computeHunks, currentHunkStart, diffStats, foldDiff, hunkDelta, hunkEdit, hunkSignature, lineDiff, type LineTextEdit } from '../lib/line-diff.js';
+import { applyHunks, comparableText, computeHunks, currentHunkStart, diffStats, foldDiff, hunkDelta, hunkEdit, hunkSignature, lineDiff, type LineTextEdit } from '../lib/line-diff.js';
 
 function applyEdit(text: string, e: LineTextEdit): string {
   const lines = text.split('\n');
@@ -7,6 +7,17 @@ function applyEdit(text: string, e: LineTextEdit): string {
   return text.slice(0, offset(e.startLine, e.startColumn)) + e.text + text.slice(offset(e.endLine, e.endColumn));
 }
 const lens = (text: string) => { const l = text.split('\n'); return { count: l.length, len: (n: number) => l[n - 1]!.length }; };
+
+describe('comparableText', () => {
+  it('drops Windows line endings and one final newline only', () => {
+    expect(comparableText('a\r\nb\r\n')).toBe('a\nb');
+    expect(comparableText('a\rb')).toBe('a\nb');
+    expect(comparableText('a\n\n')).toBe('a\n');
+    expect(comparableText('a')).toBe('a');
+    expect(comparableText('')).toBe('');
+    expect(lineDiff(comparableText('a\r\nb\r\n'), comparableText('a\nb'))!.every(line => line.type === 'same')).toBe(true);
+  });
+});
 
 describe('lineDiff / fold / stats', () => {
   it('diffs, folds and counts', () => {

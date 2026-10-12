@@ -93,6 +93,22 @@ describe('AgentCard', () => {
     expect(navigate.toProject).toHaveBeenCalledWith('p1', { tabId: 'salesforce' });
     takeQueuedAgentScriptOpen('p1');
   });
+  it('opens the agent in the Studio window when it is open, instead of a second editor here', async () => {
+    const studio = { id: 'studio', surface: 'workbench', window: 'plugin-view', commands: ['view.open'] };
+    const openInWindow = vi.fn(async () => true);
+    Object.assign(navigate, { openInWindow });
+    rpc.mockImplementation(async (_p, method) => method === 'agentFiles.read' ? file : method === 'control.views' ? { ok: true, views: [studio] }
+      : method === 'control.command' ? { ok: true, commandId: 'c' } : method === 'control.result' ? { ok: true, state: 'completed' } : { ok: true });
+    const { el } = await mount(AgentCard, { path: 'force-app/Bot.agent', line: '2' });
+    await act(async () => (el.querySelector('.plugin-directive-card-main') as HTMLButtonElement).click());
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'control.command', expect.objectContaining({ viewId: 'studio', command: 'view.open', input: { view: 'agentforce', path: 'force-app/Bot.agent', line: 2 } }));
+    await act(async () => (el.querySelector('.plugin-directive-card-open') as HTMLButtonElement).click());
+    expect(openInWindow).toHaveBeenCalledTimes(2);
+    expect(navigate.openThreadPanel).not.toHaveBeenCalled();
+    expect(navigate.toProject).not.toHaveBeenCalled();
+    expect(takeQueuedAgentScriptOpen('p1')).toBeNull();
+    delete (navigate as Record<string, unknown>).openInWindow;
+  });
   it('tolerates not_implemented comments and view RPCs', async () => {
     rpc.mockImplementation(async (_p, method) => method === 'agentFiles.read' ? file : { ok: false, code: 'not_implemented', error: 'nope' });
     const { el } = await mount(AgentCard, { path: 'force-app/Bot.agent' });

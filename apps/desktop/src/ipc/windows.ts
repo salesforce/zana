@@ -2,6 +2,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
+import type { PluginViewHost } from '../window/plugin-view-host.js';
 
 export function registerWindowsIpc(): void {
   
@@ -17,3 +18,17 @@ export function registerWindowsIpc(): void {
   );
 }
 
+/**
+ * Plugin view windows. Trust gate (CLAUDE.md #1): main parses every
+ * renderer-supplied target and path itself (window/plugin-view-host.ts) before
+ * it opens, closes or navigates a window.
+ */
+export function registerPluginViewIpc(
+  safeHandle: (channel: string, handler: (...args: any[]) => unknown, fallback: () => unknown) => void,
+  views: Pick<PluginViewHost, 'open' | 'close' | 'list' | 'showPath'>
+): void {
+  safeHandle(IPC.windows.openPluginView, (target: unknown) => views.open(target), () => false);
+  safeHandle(IPC.windows.closePluginView, (target: unknown) => views.close(target), () => false);
+  safeHandle(IPC.windows.listPluginViews, () => views.list(), () => []);
+  safeHandle(IPC.windows.showInMain, (path: unknown) => views.showPath(path), () => false);
+}

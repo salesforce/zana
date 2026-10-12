@@ -249,6 +249,8 @@ export function createPluginApi(
       signal?: AbortSignal;
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
+    /** Consumes a host-signed approval for this plugin; absent means every token is refused. */
+    consumePluginApproval?: (args: { pluginId: string; token: string; binding: unknown }) => boolean;
     getInteraction?: (args: { pluginId: string; interactionId: string }) => Promise<InteractionContract | null>;
     upsertInteraction?: (args: {
       pluginId: string;
@@ -1418,6 +1420,12 @@ export function createPluginApi(
           timeoutMs: parsed.timeoutMs,
           signal: requestOptions?.signal
         });
+      },
+      experimental_consumeApproval: async (request) => {
+        assertLive();
+        // Fail closed: a missing verifier, a malformed request or a reused token all refuse.
+        if (!request || typeof request !== 'object' || typeof request.token !== 'string') return false;
+        return options?.consumePluginApproval?.({ pluginId, token: request.token, binding: request.binding }) ?? false;
       },
       registerMentionProvider: (registration) => {
         assertLive();

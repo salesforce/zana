@@ -152,6 +152,68 @@ describe('normalizeConfig — window state', () => {
   });
 });
 
+describe('normalizeConfig — plugin view window state', () => {
+  const key = 'salesforce/salesforce@p-1';
+
+  it('does not add omitted plugin view state', () => {
+    expect(normalizeConfig({})).not.toHaveProperty('pluginViewWindowBounds');
+  });
+
+  it('keeps well-formed entries, rounding and clamping to the view minimum', () => {
+    expect(normalizeConfig({
+      pluginViewWindowBounds: {
+        [key]: { bounds: { x: 10.4, y: -3.6, width: 300, height: 1000.2 }, maximized: true, at: 12.7 }
+      }
+    }).pluginViewWindowBounds).toEqual({
+      [key]: { bounds: { x: 10, y: -4, width: 720, height: 1000 }, maximized: true, at: 13 }
+    });
+  });
+
+  it('keeps an entry that has no bounds yet and drops a false maximize flag', () => {
+    expect(normalizeConfig({
+      pluginViewWindowBounds: { [key]: { bounds: { width: Number.NaN, height: 1 }, maximized: false, at: 5 } }
+    }).pluginViewWindowBounds).toEqual({ [key]: { at: 5 } });
+  });
+
+  it.each([
+    ['a bad plugin id', 'Sales/tab@p-1'],
+    ['a bad tab id', 'salesforce/a.b@p-1'],
+    ['no project id', 'salesforce/tab@'],
+    ['a control character in the project id', 'salesforce/tab@p\u00011'],
+    ['a project id that is too long', `salesforce/tab@${'p'.repeat(257)}`]
+  ])('drops a key with %s', (_label, badKey) => {
+    expect(normalizeConfig({
+      pluginViewWindowBounds: { [badKey]: { at: 1 }, [key]: { at: 2 } }
+    }).pluginViewWindowBounds).toEqual({ [key]: { at: 2 } });
+  });
+
+  it('drops entries without a finite timestamp or with a non-object value', () => {
+    expect(normalizeConfig({
+      pluginViewWindowBounds: { [key]: { at: Number.POSITIVE_INFINITY }, 'salesforce/b@p-1': 'x' } as never
+    })).toMatchObject({ pluginViewWindowBounds: undefined });
+  });
+
+  it.each([null, 'x', ['a']])('clears malformed state %j', (value) => {
+    expect(normalizeConfig({ pluginViewWindowBounds: value as never })).toMatchObject({ pluginViewWindowBounds: undefined });
+  });
+
+  it('keeps only the 24 newest entries', () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 30 }, (_, i) => [`salesforce/t${i}@p-1`, { at: i }])
+    );
+    const kept = normalizeConfig({ pluginViewWindowBounds: input }).pluginViewWindowBounds!;
+    expect(Object.keys(kept)).toHaveLength(24);
+    expect(kept['salesforce/t29@p-1']).toEqual({ at: 29 });
+    expect(kept['salesforce/t5@p-1']).toBeUndefined();
+  });
+
+  it('retains plugin view state through unrelated config writes', () => {
+    store.setConfig({ pluginViewWindowBounds: { [key]: { bounds: { width: 1000, height: 700 }, at: 3 } } });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig().pluginViewWindowBounds).toEqual({ [key]: { bounds: { width: 1000, height: 700 }, at: 3 } });
+  });
+});
+
 describe('normalizeProjectSettings — harness routing reset', () => {
   it('removes routing when a project clears its last provider override', () => {
     expect(normalizeProjectSettings({ harnessRouting: undefined }).harnessRouting).toBeUndefined();
