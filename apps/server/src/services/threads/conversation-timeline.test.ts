@@ -158,6 +158,63 @@ describe('conversationTimeline', () => {
     expect(timeline.rows).toEqual([]);
   });
 
+  it('offers Preview for attachment reads only when the thread has a project', () => {
+    const threadId = '11111111-1111-4111-8111-111111111111';
+    const attachment = '/data/attachments/proj-1/shot.png';
+    const readIntent = (projectId: string | null) => {
+      vi.mocked(getConversationThread).mockReturnValueOnce({
+        id: threadId,
+        projectId,
+        hostId: 'host-1',
+        environmentId: null,
+        providerId: 'claude-code',
+        status: 'active',
+        title: 'Hello'
+      } as never);
+      vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([
+        {
+          id: 'evt-1',
+          threadId,
+          sequence: 1,
+          type: 'turn/started',
+          payload: { type: 'turn/started', threadId, providerThreadId: 'p1', scope: { kind: 'turn', turnId: 'turn-1' } },
+          createdAt: 1
+        },
+        {
+          id: 'evt-2',
+          threadId,
+          sequence: 2,
+          type: 'item/completed',
+          payload: {
+            type: 'item/completed',
+            threadId,
+            providerThreadId: 'p1',
+            scope: { kind: 'turn', turnId: 'turn-1' },
+            item: {
+              type: 'commandExecution',
+              id: 'cmd-1',
+              command: `head -c 100 ${attachment}`,
+              cwd: '',
+              aggregatedOutput: '',
+              exitCode: 0,
+              status: 'completed',
+              approvalStatus: null
+            }
+          },
+          createdAt: 2
+        }
+      ]);
+      resetTimelineLatestRowsCache();
+      const timeline = conversationTimeline({ db: {}, dataDir: '/data' } as ProductHttpContext, threadId);
+      const row = timeline.rows.find((candidate) => candidate.kind === 'work' && candidate.workKind === 'command');
+      return row && 'activityIntents' in row ? row.activityIntents[0] : undefined;
+    };
+
+    expect(readIntent('proj-1')).toMatchObject({ type: 'read', path: attachment });
+    expect(readIntent('proj-1')).not.toHaveProperty('previewable');
+    expect(readIntent(null)).toMatchObject({ type: 'read', path: attachment, previewable: false });
+  });
+
   it('projects a latest window that dropped turn/started instead of failing the timeline', () => {
     const threadId = '11111111-1111-4111-8111-111111111111';
     vi.mocked(getConversationThread).mockReturnValueOnce({
