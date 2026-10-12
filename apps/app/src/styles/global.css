@@ -35213,7 +35213,11 @@ body.split-frame-guard webview {
   flex: 0 0 auto;
 }
 
-/* Focused split pane: the thread header carries the pane-bar accent. */
+/* Focused split pane: the thread header carries the pane-bar accent. Every
+   split pane gets the room under it, so focus changes never shift content. */
+.split-workspace[data-split='true'] .split-pane .thread-detail-header {
+  padding-top: 8px;
+}
 .split-workspace[data-split='true'] .split-pane.is-focused .thread-detail-header {
   box-shadow: inset 0 2px var(--accent);
 }
