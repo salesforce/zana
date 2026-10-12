@@ -255,6 +255,8 @@ export interface ExecutionRecord {
   request: ExecutionRequestSnapshotV1;
   /** Main-created shared checkout for this squad execution, if isolation applied. */
   squadWorktree?: SquadWorktreeRecord;
+  /** User completed retained-worktree handling without deleting its checkout. */
+  squadWorktreeDisposition?: 'left';
   /** Terminal worktree effects completed for this exact terminal generation. */
   terminalWorktreeEffectsStateVersion?: number;
   attempt: number;
@@ -1334,6 +1336,29 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (!terminalStates.has(record.state) || !record.squadWorktree) throw new Error('terminal squad worktree is unavailable');
       if (record.terminalWorktreeEffectsStateVersion === expectedStateVersion) return clone(record);
       record.terminalWorktreeEffectsStateVersion = expectedStateVersion;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /** Terminal lifecycle action completed. Leave preserves checkout but closes its action surface. */
+  async function disposeSquadWorktree(
+    executionId: string,
+    expectedStateVersion: number,
+    disposition: 'left' | 'deleted'
+  ): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      if (!terminalStates.has(record.state) || !record.squadWorktree) throw new Error('terminal squad worktree is unavailable');
+      if (disposition === 'left') record.squadWorktreeDisposition = 'left';
+      else {
+        record.squadWorktree = undefined;
+        record.squadWorktreeDisposition = undefined;
+      }
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
       return clone(record);
@@ -2987,7 +3012,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listUndisposedSquadWorktrees, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listUndisposedSquadWorktrees, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

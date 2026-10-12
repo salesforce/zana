@@ -688,6 +688,11 @@ export class ExecutionService {
           return { ok: false, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message: preflight?.message ?? 'workflow profile is unavailable' };
         }
       }
+      // Preparing a managed worktree touches project activity. Authorize after it
+      // so the preissued launch bindings fence the post-preparation store state.
+      if (this.deps.prepareSquadWorktree) {
+        record = await this.deps.prepareSquadWorktree(record, request);
+      }
       const authorization = await this.deps.authorizeTeamLaunch(
         callerPrincipalId, request.teamId, projectId, record.teamLaunchRequestId,
         request.policy ?? {}, request.slots, request.coordinationMode, admission.digest
@@ -736,9 +741,6 @@ export class ExecutionService {
       if (!await this.launchMayProceed(record)) {
         await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
         return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed before Team launch' };
-      }
-      if (this.deps.prepareSquadWorktree) {
-        record = await this.deps.prepareSquadWorktree(record, request);
       }
       const launched = await this.deps.launchTeam(request.teamId, projectId, {
         callerPrincipalId, launchRequestId: record.teamLaunchRequestId, slots: authorization.value.slots,

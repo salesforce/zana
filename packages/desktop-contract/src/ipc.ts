@@ -41,6 +41,7 @@ export const IPC = {
     retryDelivery: 'executionBoard:retryDelivery',
     recoverTimedOut: 'executionBoard:recoverTimedOut',
     recoverRetained: 'executionBoard:recoverRetained',
+    worktreeAction: 'executionBoard:worktreeAction',
     /** @deprecated Compatibility alias for retained fresh-plan recovery. */
     resumeRun: 'executionBoard:resumeRun',
     clearResumeToken: 'executionBoard:clearResumeToken',

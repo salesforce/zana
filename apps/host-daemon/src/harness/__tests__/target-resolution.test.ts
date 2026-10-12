@@ -42,7 +42,7 @@ describe('target-resolution main authorization', () => {
   it('resolves model routing through Agent > Persona > Project > Global precedence', () => {
     const global = {
       schemaVersion: 1 as const,
-      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-luna-1M' } }
+      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6-luna' } }
     };
     const project = {
       schemaVersion: 1 as const,
@@ -61,12 +61,12 @@ describe('target-resolution main authorization', () => {
       ...overrides
     });
 
-    expect(resolve()).toMatchObject({ source: 'global', targetId: 'llmgw/gpt-5.6-luna-1M' });
+    expect(resolve()).toMatchObject({ source: 'global', targetId: 'llmgw/gpt-6-luna' });
     expect(resolve({ projectSettings: { harnessRouting: project } })).toMatchObject({
       source: 'project', targetId: 'llmgw/gpt-5.6-terra-1M'
     });
     expect(resolve({ projectSettings: { harnessRouting: project }, persona })).toMatchObject({
-      source: 'persona', targetId: 'llmgw/gpt-5.6-sol-1M'
+      source: 'persona', targetId: 'llmgw/gpt-6.1-sol'
     });
     expect(resolve({ projectSettings: { harnessRouting: project }, persona, perTabRouting: agent })).toMatchObject({
       source: 'per-tab', targetId: 'llmgw/gemini-3.5-flash'
@@ -86,14 +86,14 @@ describe('target-resolution main authorization', () => {
         modelLevel: 'low',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } }
+          byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } }
         }
       }
     });
 
     expect(resolved).toMatchObject({
       source: 'persona',
-      targetId: 'llmgw/gpt-5.6-sol-1M',
+      targetId: 'llmgw/gpt-6.1-sol',
       structuredSelected: true
     });
   });
@@ -235,7 +235,7 @@ describe('target-resolution main authorization', () => {
       perTabRouting: {
         schemaVersion: 1,
         byAdapter: {
-          opencode: { providerTargetId: 'google', modelTargetId: 'llmgw/gpt-5.6-sol-1M' }
+          opencode: { providerTargetId: 'google', modelTargetId: 'llmgw/gpt-6.1-sol' }
         }
       }
     })).toThrow('model target does not belong to selected provider');
@@ -265,7 +265,7 @@ describe('target-resolution main authorization', () => {
         baseProfile: 'opencode',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { providerTargetId: 'openai', modelTargetId: 'llmgw/gpt-5.6-sol-1M' } }
+          byAdapter: { opencode: { providerTargetId: 'openai', modelTargetId: 'llmgw/gpt-6.1-sol' } }
         }
       }
     });
@@ -273,7 +273,7 @@ describe('target-resolution main authorization', () => {
     expect(resolved).toMatchObject({
       source: 'persona',
       providerTargetId: 'openai',
-      targetId: 'llmgw/gpt-5.6-sol-1M'
+      targetId: 'llmgw/gpt-6.1-sol'
     });
   });
 
@@ -306,8 +306,8 @@ describe('target-resolution main authorization', () => {
       },
       scope: 'local'
     });
-    expect(resolved.targetId).toBe('llmgw/gpt-5.6-sol-1M');
-    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-5.6-sol-1M']);
+    expect(resolved.targetId).toBe('llmgw/gpt-6.1-sol');
+    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-6.1-sol']);
   });
 
   it('maps one portable project model level through the selected harness', () => {
@@ -319,7 +319,7 @@ describe('target-resolution main authorization', () => {
       scope: 'local'
     });
     expect(resolved.source).toBe('project');
-    expect(resolved.targetId).toBe('llmgw/gpt-5.6-sol-1M');
+    expect(resolved.targetId).toBe('llmgw/gpt-6.1-sol');
   });
 
   it.each([
@@ -352,12 +352,12 @@ describe('target-resolution main authorization', () => {
         modelLevel: 'low',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } }
+          byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } }
         }
       },
       scope: 'local'
     });
-    expect(resolved.targetId).toBe('llmgw/gpt-5.6-sol-1M');
+    expect(resolved.targetId).toBe('llmgw/gpt-6.1-sol');
   });
 
   it('prefers portable persona model over project model', () => {
@@ -367,7 +367,7 @@ describe('target-resolution main authorization', () => {
       persona: { id: 'p', name: 'P', modelLevel: 'high' }
     });
     expect(resolved.source).toBe('persona');
-    expect(resolved.targetId).toBe('llmgw/gpt-5.6-sol-1M');
+    expect(resolved.targetId).toBe('llmgw/gpt-6.1-sol');
   });
 
   it('keeps neutral legacy concrete Persona and Project models on Claude/Codex adapters', () => {

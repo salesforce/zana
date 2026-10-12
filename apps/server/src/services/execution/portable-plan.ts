@@ -24,10 +24,12 @@ export type PortablePlanParse =
 const STEP_MARKER = /<!--\s*executable-step\s*-->/i;
 const HEADING = /^\s*###\s+(.*)$/;
 const SECTION_BREAK = /^\s*(#{1,3})\s+/; // next H1/H2/H3 ends a step block
-// Two shapes count as a field LABEL:
+// Three shapes count as a field LABEL:
 //   (a) BULLET_LABEL — a leading list marker + space at any indent (`- **Work:**`,
 //       `  - **Work:**`).
-//   (b) BARE_LABEL — an UNINDENTED, non-bulleted top-level `**Work:**`. The prior
+//   (b) PLAIN_BULLET_LABEL — a renderer-safe Markdown-stripped list label
+//       (`- Work:`). The Team composer stores this form in launch requests.
+//   (c) BARE_LABEL — an UNINDENTED, non-bulleted top-level `**Work:**`. The prior
 //       grammar accepted this and real/persisted plans still use it (e.g.
 //       `**Work:** inspect only`); requiring a marker regressed those to
 //       "missing Work" and collapsed the whole plan to coordinator-derive.
@@ -35,13 +37,16 @@ const SECTION_BREAK = /^\s*(#{1,3})\s+/; // next H1/H2/H3 ends a step block
 // label: it is an inner sub-bold on a continuation line, folded into the current
 // label's multi-line value. Same for a `**bold**` inside prose (no `:` inside).
 const BULLET_LABEL = /^\s*[-*]\s+\*\*([^:*]+):\*\*\s*(.*)$/;
+const PLAIN_BULLET_LABEL = /^\s*[-*]\s+([A-Za-z][A-Za-z /-]*):\s*(.*)$/;
 const BARE_LABEL = /^\*\*([^:*]+):\*\*\s*(.*)$/;
 const FENCE = /^\s*(```|~~~)/; // fenced-code delimiter: freeze label detection inside
 
-/** Match a field-label line (bulleted at any indent, or an unindented bare label). */
+/** Match a field-label line from Markdown or composer-normalized plain text. */
 function matchLabel(raw: string): { key: string; rest: string } | null {
   const bullet = BULLET_LABEL.exec(raw);
   if (bullet) return { key: bullet[1].trim().toLowerCase(), rest: bullet[2] };
+  const plainBullet = PLAIN_BULLET_LABEL.exec(raw);
+  if (plainBullet) return { key: plainBullet[1].trim().toLowerCase(), rest: plainBullet[2] };
   const bare = BARE_LABEL.exec(raw);
   if (bare) return { key: bare[1].trim().toLowerCase(), rest: bare[2] };
   return null;
@@ -58,6 +63,7 @@ function matchLabel(raw: string): { key: string; rest: string } | null {
  */
 class FenceTracker {
   private marker: '```' | '~~~' | null = null;
+  get open(): boolean { return this.marker !== null; }
   step(line: string): boolean {
     const match = FENCE.exec(line);
     if (match) {
@@ -221,6 +227,9 @@ export function parsePortablePlan(text: string): PortablePlanParse {
       const inFence = fence.step(lines[j]);
       if (!inFence && SECTION_BREAK.test(lines[j])) break;
       body.push(lines[j]);
+    }
+    if (fence.open) {
+      return { ok: false, reason: `step contains an unterminated code fence: ${stripInlineComment(headingMatch[1])}` };
     }
     blocks.push({ heading: headingMatch[1], body });
     i = j - 1;

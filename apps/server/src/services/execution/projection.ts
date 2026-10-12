@@ -253,6 +253,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     updatedAt: record.updatedAt,
     ...(record.request.objective ? { objective: record.request.objective } : {}),
     ...(record.summary ? { summary: record.summary } : {}),
+    ...(terminal && record.squadWorktree ? { retainedWorktree: { ...record.squadWorktree, ...(record.squadWorktreeDisposition ? { disposition: record.squadWorktreeDisposition } : {}) } } : {}),
     sources: (record.request.sourceBundle?.sources ?? []).map((source) => ({
       id: source.id, name: source.name, mediaType: source.mediaType, byteSize: source.byteSize,
       contentDigest: source.contentDigest, extractionWarnings: source.extractionWarnings

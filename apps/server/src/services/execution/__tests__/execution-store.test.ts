@@ -1507,6 +1507,25 @@ describe('execution store', () => {
     expect(await store.listUndisposedSquadWorktrees()).toEqual([]);
   }));
 
+  it('records leave disposition and clears deleted retained worktrees', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/.worktrees/execution-1', branch: 'zcc/execution-1'
+    });
+    const starting = await store.transition(prepared.id, prepared.stateVersion, 'STARTING', 'info', 'Starting');
+    const running = await store.transition(starting.id, starting.stateVersion, 'RUNNING', 'info', 'Running');
+    const stopped = await store.transition(running.id, running.stateVersion, 'STOPPED', 'info', 'Stopped');
+
+    await expect(store.disposeSquadWorktree(stopped.id, stopped.stateVersion, 'left')).resolves.toMatchObject({
+      squadWorktreeDisposition: 'left', squadWorktree: { path: '/repo/.worktrees/execution-1' }
+    });
+    const deleted = await store.disposeSquadWorktree(stopped.id, stopped.stateVersion, 'deleted');
+    expect(deleted.squadWorktree).toBeUndefined();
+    expect(deleted.squadWorktreeDisposition).toBeUndefined();
+  }));
+
   it('persists terminal squad worktree completion marker across restart', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const claimed = await store.claim(request());

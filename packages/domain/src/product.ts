@@ -890,6 +890,8 @@ export interface LibraryDoc {
   relPath: string;            // posix, relative to its library dir
   title: string;
   summary?: string;
+  /** Terminal shared checkout retained for recovery or a follow-up agent. */
+  retainedWorktree?: { path: string; branch: string; baseBranch?: string; disposition?: 'left' };
   tags?: string[];
   kind: LibraryDocKind;       // derived from ext
   createdAt: number;
@@ -5812,6 +5814,8 @@ export interface ExecutionBoardProjection {
   teamName?: string;
   objective?: string;
   summary?: string;
+  /** Terminal shared checkout retained for recovery or a follow-up agent. */
+  retainedWorktree?: { path: string; branch: string; baseBranch?: string; disposition?: 'left' };
   sources?: Array<{
     id: string;
     name: string;

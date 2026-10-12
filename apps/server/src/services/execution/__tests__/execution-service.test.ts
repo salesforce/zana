@@ -181,12 +181,17 @@ describe('execution admission', () => {
 
   it('prepares one persisted squad worktree before launching the Team', async () => fixture(async (filePath) => {
     const launchTeam = vi.fn(async () => ({ ok: true }));
+    const authorizeTeamLaunch = vi.fn(async () => ({ ok: true as const, value: {
+      teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: []
+      }
+    } }));
     const prepareSquadWorktree = vi.fn(async (record: ExecutionRecord) =>
       await serviceDeps.store.setSquadWorktree(record.id, record.stateVersion, {
         path: '/repo/.worktrees/team-execution-1', branch: 'zcc/team-execution-1', baseBranch: 'main'
       })
     );
-    const serviceDeps = deps(filePath, { launchTeam, prepareSquadWorktree });
+    const serviceDeps = deps(filePath, { launchTeam, authorizeTeamLaunch, prepareSquadWorktree });
     const service = new ExecutionService(serviceDeps);
 
     const started = await service.start('owner', 'project-1', { ...request, worktree: true });
@@ -195,6 +200,7 @@ describe('execution admission', () => {
       path: '/repo/.worktrees/team-execution-1', branch: 'zcc/team-execution-1', baseBranch: 'main'
     } } });
     expect(prepareSquadWorktree).toHaveBeenCalledOnce();
+    expect(prepareSquadWorktree.mock.invocationCallOrder[0]).toBeLessThan(authorizeTeamLaunch.mock.invocationCallOrder[0]!);
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ worktree: true }));
   }));
 

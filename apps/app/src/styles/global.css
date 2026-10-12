@@ -14298,6 +14298,10 @@ body.resizing-col .explorer-resizer::after {
 .execution-details > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .execution-details-close { flex: none; }
 .execution-details-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.execution-details-primary-actions { margin: 12px 0 16px; }
+.execution-worktree { margin: 16px 0; }
+.execution-worktree textarea { margin-top: 10px; }
+.execution-worktree .execution-details-actions { margin-top: 10px; }
 .execution-details-copy { display: flex; justify-content: flex-end; margin-top: 8px; }
 .execution-details-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 14px 0; }
 .execution-details-meta dt { color: var(--text-muted); font-size: 12px; }
@@ -16154,6 +16158,7 @@ body.resizing-col .explorer-resizer::after {
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   color: var(--accent-gold);
+  overflow-wrap: anywhere;
 }
 
 .inbox-md .inbox-md-file-chip {
@@ -31740,6 +31745,7 @@ body.resizing-col .library-split-resizer::after {
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   color: var(--accent-gold);
+  overflow-wrap: anywhere;
 }
 
 .inbox-md .inbox-md-file-chip {

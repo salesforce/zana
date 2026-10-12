@@ -30,6 +30,20 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({ ...base, harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'selected/model' } } } }, services)).rejects.toThrow('selected machine offline');
     expect(provider.discoverRoleTargets).not.toHaveBeenCalled(); expect(provider.discoverModelTargets).not.toHaveBeenCalled();
   });
+
+  it('maps an OpenCode portable level through the live inventory before launch', async () => {
+    const provider = new OpenCodeProvider();
+    const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => [
+      'llmgw/gpt-7-luna', 'llmgw/gpt-7-terra', 'llmgw/gpt-7-sol'
+    ]) };
+    const services = { ...deps(), provider, discovery };
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p', projectPath: '/selected/source', scope: 'local',
+      mode: 'interactive', idempotencyKey: 'live-level', persona: { id: 'p', name: 'P', modelLevel: 'low' }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+    expect(discovery.models).toHaveBeenCalled();
+    expect(provider.adapter.descriptor.targets?.modelLevelMapping?.low).toBe('llmgw/gpt-7-luna');
+  });
   const deps = () => ({
     consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },
     installedVersion: vi.fn(async () => '1.18.10')
@@ -74,7 +88,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: unset, profile: 'opencode', projectId: 'p1', scope: 'local', mode: 'interactive',
       idempotencyKey: 'auto-on', harnessRouting: {
-        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } }
+        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } }
       }
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
@@ -84,7 +98,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: { ...config(), harnessOpenCodeEnabled: false }, profile: 'opencode', projectId: 'p1',
       scope: 'local', mode: 'interactive', idempotencyKey: 'hidden',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } } }
     }, services)).resolves.toEqual({ decision: 'blocked', reason: 'selected harness is disabled' });
   });
   it('uses remote enablement and version without borrowing the coordinator installation', async () => {
@@ -114,7 +128,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', scope: 'local', mode: 'interactive',
       idempotencyKey: 'model', harnessRouting: {
-        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } }
+        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } }
       }
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
@@ -161,7 +175,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', scope: 'remote',
       mode: 'interactive', idempotencyKey: 'remote-model',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } } }
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'remote' });
   });
 
@@ -408,7 +422,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
       mode: 'interactive', idempotencyKey: 'drift-gone',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } } }
     }, { ...services, provider })).resolves.toEqual({ decision: 'blocked', reason: 'model target unavailable' });
   });
 
@@ -421,7 +435,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
       mode: 'interactive', idempotencyKey: 'probe-unavailable',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } } }
     }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 

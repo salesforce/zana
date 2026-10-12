@@ -131,6 +131,8 @@ describe('jobWorkerPrompt — delivery instructions', () => {
 
   it('forbids polling and requires waiting for an injected notification before pulling', () => {
     expect(withExecution).toContain('Do not poll `agent_inbox`');
+    expect(withExecution).toContain('call `execution.snapshot` once for this execution');
+    expect(withExecution).toContain('If it shows a work unit CLAIMED for your slot, execute that unit');
     expect(withExecution).toContain('do not poll `execution.delivery.pull`');
     expect(withExecution).toContain('Call `execution.delivery.pull` only after an injected notification');
   });

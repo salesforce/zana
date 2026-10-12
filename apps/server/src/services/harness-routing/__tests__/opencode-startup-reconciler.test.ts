@@ -11,7 +11,7 @@ import {
 
 const catalog = [
   { id: 'llmgw/old', provider: 'openai' },
-  { id: 'llmgw/gpt-5.6-sol-1M', provider: 'openai' }
+  { id: 'llmgw/gpt-6.1-sol', provider: 'openai' }
 ];
 
 const baseConfig = (route?: AppConfig['harnessRouting']): AppConfig => ({

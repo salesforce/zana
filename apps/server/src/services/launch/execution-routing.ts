@@ -62,6 +62,9 @@ export async function preflightTerminalExecution(
   let resolved: ReturnType<typeof resolveExecutionState>;
   let preflight: ReturnType<typeof resolveStructuredRouting>;
   try {
+    // Discovery results are launch-scoped: never resolve a new request through a
+    // prior project's cached live inventory if its own probe is unavailable.
+    provider.clearDiscoveredModelTargets?.();
     resolved = resolveExecutionState(provider, {
       config: input.config,
       persona: input.persona,
@@ -72,6 +75,26 @@ export async function preflightTerminalExecution(
       scope: input.scope
     });
     preflight = resolveStructuredRouting(provider, input);
+    // A portable level must follow the currently installed gateway catalog. Probe
+    // after the initial resolution tells us a level was selected, then resolve
+    // again against the provider's live overlay before authorization or spawn.
+    if (preflight.model.level && provider.discoverModelTargets && input.projectPath) {
+      const liveModels = await (deps.discovery
+        ? deps.discovery.models()
+        : provider.discoverModelTargets({ cwd: input.projectPath, config: input.config }));
+      if (liveModels) provider.applyDiscoveredModelTargets?.(liveModels);
+      else provider.clearDiscoveredModelTargets?.();
+      resolved = resolveExecutionState(provider, {
+        config: input.config,
+        persona: input.persona,
+        projectSettings: input.projectSettings,
+        perTabRouting: input.harnessRouting,
+        profile: effectiveProfile,
+        extraArgs: input.extraArgs ?? [],
+        scope: input.scope
+      });
+      preflight = resolveStructuredRouting(provider, input);
+    }
   } catch (error) {
     return {
       decision: 'blocked',
@@ -191,6 +214,8 @@ async function preflightStructuredRouting(
     const liveModels = provider.discoverModelTargets && input.projectPath
       ? await (discovery ? discovery.models() : provider.discoverModelTargets({ cwd: input.projectPath, config: input.config }))
       : undefined;
+    if (liveModels) provider.applyDiscoveredModelTargets?.(liveModels);
+    else provider.clearDiscoveredModelTargets?.();
     if (liveModels) {
       if (!liveModels.includes(model.targetId)) return 'model target unavailable';
     } else if (snapshotTarget) {

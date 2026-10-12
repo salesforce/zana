@@ -42,6 +42,7 @@ import { openScheduleFromAgents } from '@/components/scheduler/openScheduledLive
 import { PaneEmptyState } from '@/components/PaneEmptyState';
 import { MobilePageHeader } from '@/components/MobilePageHeader';
 import { hasDesktopBridge } from '@/lib/app-surface';
+import { takePendingSquadDetailsTarget } from '@/lib/squad-details-target';
 
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
@@ -142,6 +143,17 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const [hasMoreExecutions, setHasMoreExecutions] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
+
+  useEffect(() => {
+    const pending = takePendingSquadDetailsTarget();
+    if (pending) setSelectedExecution(pending);
+    const openExecution = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; executionId?: string }>).detail;
+      if (detail?.projectId && detail.executionId) setSelectedExecution({ projectId: detail.projectId, executionId: detail.executionId });
+    };
+    window.addEventListener('zana:open-squad-details', openExecution);
+    return () => window.removeEventListener('zana:open-squad-details', openExecution);
+  }, []);
 
   const loadMoreExecutions = async () => {
     // Can be invoked while the board is in GLOBAL scope (no scoped project) —

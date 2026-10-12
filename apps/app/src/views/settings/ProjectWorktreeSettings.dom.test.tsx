@@ -47,6 +47,7 @@ describe('ProjectWorktreeSettings eligibility', () => {
     const view = renderSettings(input);
 
     await waitFor(() => expect((view.getByLabelText('Worktree isolation') as HTMLButtonElement).disabled).toBe(true));
+    expect(view.getByLabelText('Worktree isolation').textContent).toContain('Project does not support worktrees');
     expect(view.getByText('Worktrees need a local Git project. Squads here run in the project folder.')).not.toBeNull();
     expect(set).not.toHaveBeenCalled();
     if (input.remote || input.quickAgent) expect(isRepo).not.toHaveBeenCalled();

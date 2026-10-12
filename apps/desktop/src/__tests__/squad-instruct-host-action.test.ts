@@ -7,11 +7,11 @@ import { currentRetainedSquadWorktreeAction, isCurrentRetainedSquadWorktreeActio
 describe('retained squad instruct host action', () => {
   const host = readFileSync(new URL('../host.ts', import.meta.url), 'utf8');
 
-  it('offers operator instruction beside terminal worktree lifecycle actions', () => {
-    expect(host).toContain("{ id: 'delete', label: 'Delete' }");
-    expect(host).toContain("{ id: 'leave', label: 'Leave' }");
-    expect(host).toContain("{ id: 'instruct', label: 'Instruct an agent' }");
-    expect(host).toContain("textOptionId: 'instruct'");
+  it('reports retained terminal worktree status without rendering lifecycle actions as Inbox questions', () => {
+    expect(host).toContain("subject: 'Squad worktree retained'");
+    expect(host).toContain('Open Squad details to inspect recovery options and manage the retained worktree.');
+    const terminalNotice = host.slice(host.indexOf('async function handleSquadWorktreeTerminal'), host.indexOf('async function replayUndisposedSquadWorktreeTerminalEffects'));
+    expect(terminalNotice).not.toContain("questions: [{ prompt: 'Choose worktree disposition'");
   });
 
   it('keeps squad push guard and terminal actions fenced until cohort teardown confirms', () => {
@@ -21,7 +21,7 @@ describe('retained squad instruct host action', () => {
       host.indexOf('setWorktreePushProtection(project.path, worktree.path, false)')
     );
     expect(host.indexOf('if (!mayReleaseSquadWorktreeGuard(teardown)) return;')).toBeLessThan(
-      host.indexOf("{ id: 'instruct', label: 'Instruct an agent' }")
+      host.indexOf("subject: 'Squad worktree retained'")
     );
   });
 

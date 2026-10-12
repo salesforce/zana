@@ -24,6 +24,16 @@ const correctionArtifactPaths = (executionId: string) => new Set([
   correctionDiffRelPath(executionId)
 ]);
 
+function planReviewSummary(reason: string, units: ExecutionWorkUnitInput[]): string {
+  const steps = units.map((unit, index) => {
+    const dependencies = unit.dependencies.length ? ` after ${unit.dependencies.map((id) => `\`${id}\``).join(', ')}` : '';
+    const writes = unit.files?.length ? ` Writes ${unit.files.map((path) => `\`${path}\``).join(', ')}.` : ' No declared file writes.';
+    const verification = unit.verification?.length ? ` Verification: ${unit.verification.join(' ')}` : '';
+    return `${index + 1}. **${unit.title}** (\`${unit.id}\`)${dependencies}.${writes}${verification}`;
+  });
+  return `Correction needed: ${reason}\n\nProposed plan: ${units.length} step${units.length === 1 ? '' : 's'}.\n\n${steps.join('\n')}`;
+}
+
 interface PlanCorrectionActionRef {
   executionId: string;
   offerId: string;
@@ -167,22 +177,31 @@ export class PlanCorrectionService {
   /** Re-publish a durable offer after an inbox append/bind failure or restart. */
   private async publishPendingOffer(current: PlanCorrectionRecord): Promise<'wait' | 'reject'> {
     const ctx = current.ctx;
+    const reviewReady = !!current.offeredDigest;
     const entry = await this.deps.appendInbox({
       projectId: ctx.projectId,
       projectLabel: undefined,
       sessionId: ctx.sessionId,
       hostActionRequired: true,
+      // Coordinator idle and process recovery may retry this exact offer. Keep
+      // one actionable inbox card until the operator chooses an option.
+      dedupeKey: `plan-correction:${ctx.executionId}:${current.offeredActionId ?? 'pending'}`,
       subject: 'Plan correction required',
-      comments: 'A submitted plan needs your review before work can continue. A revised plan has been prepared when available.\n\nApprove uses this exact revised plan and starts work. Request changes sends it back for revision. Cancel stops this run.',
+      comments: reviewReady
+        ? `${planReviewSummary(current.reason, current.offeredUnits ?? [])}\n\nReview the proposed corrected plan below before work can continue. Approve starts work using this exact revision. Request changes sends it back for revision. Cancel stops this run.`
+        : 'No valid revised plan is ready to review. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.',
       decisionGuidance: {
         kind: 'plan-correction',
         diagnostic: current.reason,
-        correctedPlanPath: correctedPlanRelPath(ctx.executionId)
+        ...(reviewReady ? {
+          originalPlanPath: authoredPlanRelPath(ctx.executionId),
+          correctedPlanPath: correctedPlanRelPath(ctx.executionId)
+        } : {})
       },
       questions: [{
-        prompt: current.offeredDigest ? 'Approve corrected plan, request changes, or cancel?' : 'Request a corrected plan or cancel?',
+        prompt: reviewReady ? 'Review the proposed plan, then approve, request changes, or cancel.' : 'Request a corrected plan or cancel.',
         options: [
-          ...(current.offeredDigest ? [{ id: 'approve', label: 'Approve' }] : []),
+          ...(reviewReady ? [{ id: 'approve', label: 'Approve' }] : []),
           { id: 'changes', label: 'Request changes' },
           { id: 'cancel', label: 'Cancel' }
         ]

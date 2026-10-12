@@ -185,7 +185,7 @@ describe('PtyManager.create — persona layer integration', () => {
         harnessRouting: {
           schemaVersion: 1,
           byAdapter: {
-            opencode: { modelTargetId: 'llmgw/gpt-5.6-luna-1M', executionState: 'plan' }
+            opencode: { modelTargetId: 'llmgw/gpt-6-luna', executionState: 'plan' }
           }
         }
       },
@@ -210,9 +210,9 @@ describe('PtyManager.create — persona layer integration', () => {
     expect(argv).toContain('llmgw/gemini-3.5-flash');
     expect(argv).toContain('build');
     expect(argv).toContain('--auto');
-    expect(argv).not.toContain('llmgw/gpt-5.6-luna-1M');
+    expect(argv).not.toContain('llmgw/gpt-6-luna');
     expect(argv).not.toContain('llmgw/gpt-5.6-terra-1M');
-    expect(argv).not.toContain('llmgw/gpt-5.6-sol-1M');
+    expect(argv).not.toContain('llmgw/gpt-6.1-sol');
     expect(argv).not.toContain('plan');
   });
 

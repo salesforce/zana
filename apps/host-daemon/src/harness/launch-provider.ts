@@ -273,6 +273,12 @@ export interface LaunchProvider {
    */
   discoverModelTargets?(context: { cwd: string; config: AppConfig }): Promise<readonly string[] | undefined>;
 
+  /** Apply a main-authorized live inventory so portable model levels map to its current ids. */
+  applyDiscoveredModelTargets?(targets: readonly string[]): void;
+
+  /** Discard a prior live inventory when the current launch cannot refresh it. */
+  clearDiscoveredModelTargets?(): void;
+
   /** Dynamic role catalogs are revalidated in main before launch. */
   acceptsDynamicRoleTargets?: boolean;
 

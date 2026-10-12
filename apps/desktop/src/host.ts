@@ -1298,7 +1298,9 @@ const inboxStore: IInboxStore = createInboxStore();
 const inboxActionRegistry = createInboxActionRegistry(executionDatabase);
 const SQUAD_WORKTREE_ACTION = 'squad-worktree-lifecycle';
 const planCorrection = new PlanCorrectionService({
-  appendInbox: (input) => inboxStore.append(input),
+  // One durable correction offer maps to one Inbox decision, including after
+  // a transient bind failure or process recovery.
+  appendInbox: (input) => inboxStore.appendOnce(input),
   bindInboxAction: (entry, action) => inboxActionRegistry.bind(entry, action),
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
   readCorrectedPlan,
@@ -4823,7 +4825,7 @@ export function jobWorkerPrompt(input: {
   return [
     `Team worker standby. You are ${input.label} (${input.personaName}), slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}.`,
     'Your working directory is the trusted project workspace. Wait for an assignment for this slot; each assignment carries a fully-specified work unit — its task is the complete instruction. When it arrives, EXECUTE it: do the task using the file scope, the upstream results included in the assignment, and your own reading of the project workspace. Do the work yourself; do not wait for extra "source context" to be pushed to you and do not ask the coordinator to re-explain a task you can carry out. Do not, however, start the overall job or units not assigned to this slot.',
-    'Do not poll `agent_inbox`. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not an AI Suite Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
+    'Do not poll `agent_inbox`. After your standby prompt settles, call `execution.snapshot` once for this execution. If it shows a work unit CLAIMED for your slot, execute that unit using its task and claim fence even when no pasted assignment is visible; this recovers a launch-time terminal-input race. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not an AI Suite Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
     'Use `execution.work.block` ONLY when you genuinely cannot proceed, and pick the audience: `audience: "coordinator"` when you need ONE specific, decidable plan/spec choice from the coordinator (e.g. which of two interfaces to target, an ambiguous path) — phrase it as a single concrete question the coordinator can answer, and the worker resumes automatically once answered; `audience: "human"` (the default) only when a real human decision or credential is required. Do not block just because a task looks large or under-detailed — attempt it. Do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.'
   ].join('\n\n');
 }
@@ -4994,12 +4996,17 @@ async function resolveTeamModelSnapshots(
   const personaSnapshot = personas.list();
   const verified = await verifyHarnesses(config);
   const observedAt = Date.now();
-  return slots.map((slot, index) => {
+  return Promise.all(slots.map(async (slot, index) => {
     const persona = personaSnapshot.find((candidate) => candidate.id === slot.personaId);
     if (!persona) throw new Error(`unknown persona: ${slot.personaId}`);
     const profile = resolvedTeamProfile(project, personaSnapshot, persona);
     const provider = providerFor(profile);
     const input = { config, persona, projectSettings, profile, extraArgs: [], scope: launchExecutionScope(project, {}, config) };
+    const liveModels = provider.discoverModelTargets
+      ? await provider.discoverModelTargets({ cwd: project.path, config })
+      : undefined;
+    if (liveModels) provider.applyDiscoveredModelTargets?.(liveModels);
+    else provider.clearDiscoveredModelTargets?.();
     const model = resolveModelTarget(provider, input);
     const role = resolveRoleTarget(provider, input);
     const roleOwnedModel = !!role.targetId && provider.nativeRolePinsModel;
@@ -5020,7 +5027,7 @@ async function resolveTeamModelSnapshots(
       maxAgeMs: 30_000,
       ...(roleOwnedModel ? { roleOwnedModel: true } : {})
     };
-  });
+  }));
 }
 
 export function authorizeTeamLaunch(
@@ -6074,15 +6081,16 @@ async function handleSquadWorktreeTerminal(record: ExecutionRecord): Promise<voi
         }
       }
     }
-    await appendSquadWorktreeNotice(
-      record,
-      `Execution ${record.state.toLowerCase()}. Shared worktree remains at \`${worktree.path}\`.`,
-      [
-        { id: 'delete', label: 'Delete' },
-        { id: 'leave', label: 'Leave' },
-        { id: 'instruct', label: 'Instruct an agent' }
-      ]
-    );
+    // Inbox records the terminal outcome only. Recovery and retained-worktree
+    // lifecycle controls belong to Squad details, where their run state is visible.
+    await inboxStore.appendOnce({
+      projectId: record.projectId,
+      projectLabel: project?.name,
+      executionId: record.id,
+      subject: 'Squad worktree retained',
+      comments: `Execution ${record.state.toLowerCase()}. The shared worktree remains at \`${worktree.path}\`. Open Squad details to inspect recovery options and manage the retained worktree.`,
+      dedupeKey: `squad-worktree-retained:${record.id}:${record.stateVersion}`
+    });
     await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);
   });
 }
@@ -6118,11 +6126,7 @@ async function retainedSquadWorktreeForInstruct(record: ExecutionRecord): Promis
   return { project, worktree: { ...record.squadWorktree, path } };
 }
 
-inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, async ({ ref, input }) => {
-  let action: Partial<RetainedSquadWorktreeAction>;
-  try { action = JSON.parse(ref) as Partial<RetainedSquadWorktreeAction>; } catch { throw new Error('invalid squad worktree action'); }
-  if (!action.executionId || !action.phase || !Number.isInteger(action.stateVersion)) throw new Error('invalid squad worktree action');
-  const fencedAction = action as RetainedSquadWorktreeAction;
+async function runSquadWorktreeAction(fencedAction: RetainedSquadWorktreeAction, input?: { optionId?: string; text?: string }): Promise<void | { keepPending: true }> {
   const currentRecord = async (): Promise<ExecutionRecord & { squadWorktree: SquadWorktreeRecord }> => {
     try {
       return (await currentRetainedSquadWorktreeAction(
@@ -6134,8 +6138,11 @@ inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, async ({ ref, input }) => {
     }
   };
   const record = await currentRecord();
-  const disposition = resolveSquadWorktreeDisposition(action.phase, input?.optionId);
-  if (disposition === 'leave') return;
+  const disposition = resolveSquadWorktreeDisposition(fencedAction.phase, input?.optionId);
+  if (disposition === 'leave') {
+    await executionStore.disposeSquadWorktree(record.id, record.stateVersion, 'left');
+    return;
+  }
   if (disposition === 'instruct') {
     if (squadWorktreeHasActiveFollowUp(record.id)) {
       throw new InboxActionOperatorError('Worktree is in use by an active follow-up agent. Wait for it to exit, then try again.');
@@ -6232,7 +6239,7 @@ inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, async ({ ref, input }) => {
       throw new InboxActionOperatorError('This confirmation is unavailable because the retained Squad worktree or branch no longer exists.', true);
     }
     const state = await worktreeState(retained.worktree.path);
-    if (state.dirty) {
+    if (state.dirty && disposition !== 'force') {
       throw new InboxActionOperatorError('Worktree has uncommitted changes. Clean or commit them, then try again.');
     }
     if (state.commits > 0 && disposition !== 'force') {
@@ -6244,13 +6251,40 @@ inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, async ({ ref, input }) => {
     } catch {
       throw new InboxActionOperatorError('This confirmation is unavailable because the retained Squad worktree or branch no longer exists.', true);
     }
-    const removed = await removeWorktree(latest.project.path, latest.worktree.path, state.commits > 0);
+    const removed = await removeWorktree(latest.project.path, latest.worktree.path, disposition === 'force');
     if (!removed.ok) throw new Error(removed.message ?? 'could not delete squad worktree');
+    await executionStore.disposeSquadWorktree(current.id, current.stateVersion, 'deleted');
     const unavailable = 'This confirmation is unavailable because the retained Squad worktree was deleted.';
     inboxActionRegistry.markUnavailable(SQUAD_WORKTREE_ACTION, JSON.stringify({ executionId: current.id, phase: 'confirm', stateVersion: current.stateVersion }), unavailable);
     inboxActionRegistry.markUnavailable(SQUAD_WORKTREE_ACTION, JSON.stringify({ executionId: current.id, phase: 'choose', stateVersion: current.stateVersion }), unavailable);
   });
+}
+
+inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, async ({ ref, input }) => {
+  let action: Partial<RetainedSquadWorktreeAction>;
+  try { action = JSON.parse(ref) as Partial<RetainedSquadWorktreeAction>; } catch { throw new Error('invalid squad worktree action'); }
+  if (!action.executionId || !action.phase || !Number.isInteger(action.stateVersion)) throw new Error('invalid squad worktree action');
+  return runSquadWorktreeAction(action as RetainedSquadWorktreeAction, input);
 });
+
+async function squadWorktreeAction(
+  projectId: string,
+  executionId: string,
+  stateVersion: number,
+  action: 'leave' | 'instruct' | 'delete' | 'force-delete',
+  instruction?: string
+): Promise<Result<true>> {
+  const phase = action === 'instruct' ? 'choose' : 'confirm';
+  const optionId = action === 'delete' ? 'confirm-delete' : action === 'force-delete' ? 'force-delete' : action;
+  try {
+    const record = await executionStore.getInProject(projectId, executionId);
+    if (!record || record.stateVersion !== stateVersion) return { ok: false, code: 'CONFLICT', message: 'Squad run changed. Refresh details and try again.' };
+    await runSquadWorktreeAction({ executionId, phase, stateVersion }, { optionId, ...(instruction === undefined ? {} : { text: instruction }) });
+    return { ok: true, value: true };
+  } catch (error) {
+    return { ok: false, code: error instanceof InboxActionOperatorError ? 'CONFLICT' : 'UNAVAILABLE', message: error instanceof Error ? error.message : 'squad worktree action failed' };
+  }
+}
 
 // Idle-gated assignment delivery for the engine cascade — see
 // `IdleGatedInjector`. The cascade pushes a newly-ready unit the instant a
@@ -7771,6 +7805,7 @@ function registerIpc() {
     get showMainWindow() { return showMainWindow; },
     get skillBundles() { return skillBundles; },
     get squadExecutionService() { return squadExecutionService; },
+    get squadWorktreeAction() { return squadWorktreeAction; },
     get sshHostProviderRegistry() { return sshHostProviderRegistry; },
     get stampFeedEvent() { return stampFeedEvent; },
     get startTeamJobFromUi() { return startTeamJobFromUi; },

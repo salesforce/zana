@@ -17,7 +17,8 @@ const state = vi.hoisted(() => ({
   markAnswered: vi.fn(),
   resolve: vi.fn(),
   restore: vi.fn(),
-  answered: false
+  answered: false,
+  projects: [{ id: 'p', name: 'Project', path: '/project' }]
 }));
 
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => false }));
@@ -25,7 +26,7 @@ vi.mock('../store.js', () => ({
   useInbox: (pick: Function) => pick({ entries: [state.entry], loading: false }),
   useInboxSelection: (pick: Function) => pick({ selectedEntryId: state.entry.id, select: vi.fn() }),
   useInboxRead: (pick: Function) => pick({ markRead: vi.fn() }),
-  useData: (pick: Function) => pick({ projects: [{ id: 'p', name: 'Project', path: '/project' }], terminals: { p: [{ id: 'terminal', title: 'Live terminal', status: 'running' }] }, structuredQuestionsEnabled: true, restoreTerminal: state.restore, createTerminal: state.create }),
+  useData: (pick: Function) => pick({ projects: state.projects, terminals: { p: [{ id: 'terminal', title: 'Live terminal', status: 'running' }] }, structuredQuestionsEnabled: true, restoreTerminal: state.restore, createTerminal: state.create }),
   useUi: Object.assign((pick: Function) => pick({ setNav: vi.fn(), selectTab: vi.fn(), pushToast: vi.fn() }), { getState: () => ({ enterProjectFocus: vi.fn() }) }),
   useInboxKeep: (pick: Function) => pick({ keptIds: {} }),
   useSavedMark: (pick: Function) => pick({ savedEntryIds: {} }),
@@ -56,6 +57,7 @@ describe('InboxDetail host-owned actions', () => {
     state.hostActionsLoading = false;
     state.hostActionsError = false;
     state.answered = false;
+    state.projects = [{ id: 'p', name: 'Project', path: '/project' }];
     state.hostRun.mockResolvedValue(true);
     state.readDecisionArtifact.mockImplementation(async (_entryId: string, path: string) => ({ ok: true, value: { content: `contents of worktree/${path}` } }));
   });
@@ -88,6 +90,27 @@ describe('InboxDetail host-owned actions', () => {
     expect(state.create).not.toHaveBeenCalled();
   });
 
+  it('routes retained Squad worktree actions to Agents instead of rendering legacy Inbox choices', async () => {
+    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1' };
+    state.action = { ...state.action!, kind: 'squad-worktree-lifecycle' };
+    render(view());
+    expect(await screen.findByText('This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open Squad details' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
+    expect(screen.queryByRole('radio', { name: /Delete/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continue', exact: true })).toBeNull();
+  });
+
+  it('keeps the Squad-details link when project and legacy host binding are gone', async () => {
+    state.projects = [];
+    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1' };
+    state.action = undefined;
+    render(view());
+    expect(await screen.findByRole('button', { name: 'Open Squad details' })).toBeTruthy();
+    expect(screen.queryByText(/Project no longer exists/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
+  });
+
   it.each(['pending', 'failed'] as const)('keeps %s host form actionable despite ordinary answered marker', async (status) => {
     state.answered = true;
     state.action = { ...state.action!, status, message: 'Try again after checking the worktree.' };
@@ -105,7 +128,7 @@ describe('InboxDetail host-owned actions', () => {
     expect(state.create).not.toHaveBeenCalled();
   });
 
-  it('keeps plan diagnostics out of main content until Details opens', async () => {
+  it('opens review-ready plan artifacts before an approval decision', async () => {
     state.entry = {
       ...state.entry,
       subject: 'Plan correction required',
@@ -121,19 +144,12 @@ describe('InboxDetail host-owned actions', () => {
 
     render(view());
     expect(screen.getByText('A submitted plan needs your review before work can continue.')).toBeTruthy();
-    expect(screen.queryByText('parser expected a dependency')).toBeNull();
-    expect(screen.queryByText('.zana/execution-plan-e-1.md')).toBeNull();
-    expect(screen.queryByText('.zana/execution-plan-corrected-e-1.md')).toBeNull();
-    expect(screen.queryByText('.zana/execution-plan-diff-e-1.md')).toBeNull();
-
-    const details = screen.getByText('Details').closest('details')!;
-    details.open = true;
-    fireEvent(details, new Event('toggle'));
-
+    expect(screen.getByText('Review proposed plan')).toBeTruthy();
     expect(screen.getByText('parser expected a dependency')).toBeTruthy();
     expect(screen.getByText('.zana/execution-plan-e-1.md')).toBeTruthy();
     expect(screen.getByText('.zana/execution-plan-corrected-e-1.md')).toBeTruthy();
     expect(screen.getByText('.zana/execution-plan-diff-e-1.md')).toBeTruthy();
+
     expect(await screen.findByText('contents of worktree/.zana/execution-plan-e-1.md')).toBeTruthy();
     expect(screen.getByText('contents of worktree/.zana/execution-plan-corrected-e-1.md')).toBeTruthy();
     expect(screen.getByText('contents of worktree/.zana/execution-plan-diff-e-1.md')).toBeTruthy();

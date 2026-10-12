@@ -121,6 +121,7 @@ export interface IpcCtx {
   ensureMainWindowReady: any;
   skillBundles: any;
   squadExecutionService: any;
+  squadWorktreeAction: any;
   sshHostProviderRegistry: any;
   stampFeedEvent: any;
   startTeamJobFromUi: any;

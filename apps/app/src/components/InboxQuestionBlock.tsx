@@ -254,7 +254,7 @@ export function QuestionBlock({
               </div>
             )}
             <div className="inbox-question-options" role={multi ? 'group' : 'radiogroup'}>
-              {q.options.map((opt) => {
+              {q.options.map((opt, optionIndex) => {
                 // In radio mode an active Other row deselects every option; in
                 // multi mode options and Other coexist.
                 const on = st.selected.has(opt.id) && (multi || !st.otherActive);
@@ -267,7 +267,7 @@ export function QuestionBlock({
                     aria-checked={on}
                     onClick={() => toggle(qi, opt.id)}
                   >
-                    <span className="inbox-question-key">{opt.id}</span>
+                    <span className="inbox-question-key">{String.fromCharCode(65 + optionIndex)}</span>
                     <span className="inbox-question-label">{opt.label}</span>
                   </button>
                 );

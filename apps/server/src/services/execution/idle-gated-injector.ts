@@ -203,7 +203,9 @@ export class IdleGatedInjector {
     // Latch `booted` BEFORE the busy check so the rest edge that proves boot
     // (a headless worker's first `waiting`/`idle`) also promotes it to the
     // narrowed busy set and flushes on this same edge.
-    if (REST_STATES.has(state)) this.booted.add(sessionId);
+    if (REST_STATES.has(state)) {
+      this.booted.add(sessionId);
+    }
     if (this.busyStates(sessionId).has(state)) return;
     const queue = this.pending.get(sessionId);
     if (!queue?.length) return;

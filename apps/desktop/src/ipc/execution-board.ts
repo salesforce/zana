@@ -30,7 +30,7 @@ type ExecutionCaller = { kind: 'window'; window: BrowserWindow } | { kind: 'shar
 export function registerExecutionBoardIpc(): void {
   const { safeHandle, safeHandleFromWindow, ptys, teams, personas, windows,
     executionStore, executionResumeTokens, executionSources, squadExecutionService,
-    startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability } = ctx;
+    startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability, squadWorktreeAction } = ctx;
 
   // The product-server credential identifies the authenticated instance owner.
   // A remote caller never supplies a window or receives a fabricated local one.
@@ -151,6 +151,7 @@ export function registerExecutionBoardIpc(): void {
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution dismissal unavailable' })
   );
+
 
   handleFromCaller<[string, string, number], Result<ExecutionBoardProjection>>(
     IPC.executionBoard.stop,
@@ -295,6 +296,19 @@ export function registerExecutionBoardIpc(): void {
       return result.ok ? { ok: true, value: executionProjection(result.value) } : { ok: false, code: result.code, message: result.message };
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'retained recovery unavailable' })
+  );
+
+  handleFromCaller<[string, string, number, 'leave' | 'instruct' | 'delete' | 'force-delete', string | undefined], Result<true>>(
+    IPC.executionBoard.worktreeAction,
+    async (win, projectId, executionId, expectedStateVersion, action, instruction) => {
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      if (!Number.isInteger(expectedStateVersion) || !['leave', 'instruct', 'delete', 'force-delete'].includes(action)
+        || instruction !== undefined && typeof instruction !== 'string') {
+        return { ok: false, code: 'INVALID', message: 'invalid squad worktree action' };
+      }
+      return squadWorktreeAction(projectId, executionId, expectedStateVersion, action, instruction);
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'squad worktree action unavailable' })
   );
 
   handleFromCaller<[string, string, number, boolean | undefined], Result<ExecutionBoardProjection>>(

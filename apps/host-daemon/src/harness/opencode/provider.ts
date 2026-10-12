@@ -59,12 +59,14 @@ import type {
 import { BaseLaunchProvider } from '../base-provider.js';
 import type {
   HarnessRoleTarget,
+  HarnessModelTarget,
   ModelLevel,
   OpenCodeAgentDescriptor,
   OpenCodeAgentDiscoveryFailureReason,
   OpenCodeAgentDiscoveryResult
 } from '@zana-ai/zcc-domain/harness-adapter';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { spawn } from 'node:child_process';
 import { closeSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -78,9 +80,9 @@ const OPENCODE_MIN_VERSION = '1.18.0';
 const OPENCODE_REVIEWED_AT = '2026-09-02';
 const OPENCODE_VERIFIED_SCOPES = ['local', 'remote'] as const;
 const OPENCODE_MODEL_IDS = [
-  'llmgw/gpt-5.6-luna-1M',
+  'llmgw/gpt-6-luna',
   'llmgw/gpt-5.6-terra-1M',
-  'llmgw/gpt-5.6-sol-1M',
+  'llmgw/gpt-6.1-sol',
   'llmgw/gemini-3.1-pro-preview',
   'llmgw/gemini-3.5-flash',
   'llmgw/grok-4.6'
@@ -129,20 +131,19 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-6.1-sol', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
-      // Single-family monotonic ladder (matches claude haiku/sonnet/opus, codex
-      // openai): the gpt-5.6 family is the only family spanning all three tiers.
-      // gemini + grok stay catalog-selectable but off the default ladder.
+      // Monotonic OpenAI ladder. Gemini + Grok stay catalog-selectable but off
+      // the default level mapping.
       modelLevelMapping: {
-        low: 'llmgw/gpt-5.6-luna-1M',
+        low: 'llmgw/gpt-6-luna',
         medium: 'llmgw/gpt-5.6-terra-1M',
-        high: 'llmgw/gpt-5.6-sol-1M',
+        high: 'llmgw/gpt-6.1-sol',
         'extra-high': undefined
       },
       executionStateMapping: {
@@ -495,6 +496,24 @@ function discoverOpenCodeModels(context: { cwd: string; config: AppConfig }): Pr
   return modelDiscoveryCache.discover(JSON.stringify([command, context.cwd]), () => runOpenCodeModelDiscovery(command, context.cwd));
 }
 
+function openCodeProviderFor(id: string): 'openai' | 'google' | 'xai' {
+  if (/gemini/i.test(id)) return 'google';
+  if (/grok/i.test(id)) return 'xai';
+  return 'openai';
+}
+
+function openCodeModelLevelMapping(models: readonly HarnessModelTarget[]) {
+  const pick = (...terms: string[]) => models.find(({ id }) =>
+    terms.some((term) => new RegExp(`(?:^|[-_/])${term}(?:[-_/]|$)`, 'i').test(id))
+  )?.id;
+  return {
+    low: pick('luna'),
+    medium: pick('terra'),
+    high: pick('sol'),
+    'extra-high': undefined
+  };
+}
+
 /**
  * Pane commands that mean the OpenCode agent is RUNNING. The CLI is an npm
  * (`opencode-ai`) node binary, so a remote tmux pane running it reports either
@@ -533,7 +552,29 @@ export function classifyOpenCodePaneCommand(command: string): AgentLiveness {
 
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
-  readonly adapter = OPENCODE_ADAPTER;
+  private discoveredModels: readonly HarnessModelTarget[] = [];
+
+  get adapter(): TrustedHarnessAdapter {
+    if (!this.discoveredModels.length) return OPENCODE_ADAPTER;
+    const { models, evidence } = overlayDiscoveredModels(
+      this.discoveredModels,
+      OPENCODE_ADAPTER.evidence,
+      OPENCODE_MIN_VERSION,
+      (id, scope) => openCodeEvidence(id, 'Live OpenCode model inventory and --model contribution verified.', scope)
+    );
+    return {
+      ...OPENCODE_ADAPTER,
+      evidence,
+      descriptor: {
+        ...OPENCODE_ADAPTER.descriptor,
+        targets: {
+          ...OPENCODE_ADAPTER.descriptor.targets!,
+          models,
+          modelLevelMapping: openCodeModelLevelMapping(models)
+        }
+      }
+    };
+  }
   readonly acceptsDynamicRoleTargets = true;
   // An OpenCode `--agent <role>` pins the agent's own model; a forced catalog
   // `--model` overrides that pin and dies with ProviderModelNotFoundError (dead
@@ -630,10 +671,25 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   async discoverModelTargets(context: { cwd: string; config: AppConfig }): Promise<readonly string[] | undefined> {
     try {
       const ids = await discoverOpenCodeModels(context);
-      return ids.length > 0 ? ids : undefined;
+      if (!ids.length) return undefined;
+      this.applyDiscoveredModelTargets(ids);
+      return ids;
     } catch {
       return undefined;
     }
+  }
+
+  applyDiscoveredModelTargets(ids: readonly string[]): void {
+    this.discoveredModels = ids.map((id) => ({
+      id,
+      label: id,
+      provider: openCodeProviderFor(id),
+      scope: [...OPENCODE_VERIFIED_SCOPES]
+    }));
+  }
+
+  clearDiscoveredModelTargets(): void {
+    this.discoveredModels = [];
   }
 
   /**

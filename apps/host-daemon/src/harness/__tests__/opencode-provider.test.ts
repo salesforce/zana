@@ -439,17 +439,17 @@ describe('OpenCodeProvider', () => {
   it('exposes every configured OpenCode model target for verified local and remote launches', () => {
     const models = p.adapter.descriptor.targets?.models ?? [];
     expect(models.map((model) => model.id)).toEqual([
-      'llmgw/gpt-5.6-luna-1M',
+      'llmgw/gpt-6-luna',
       'llmgw/gpt-5.6-terra-1M',
-      'llmgw/gpt-5.6-sol-1M',
+      'llmgw/gpt-6.1-sol',
       'llmgw/gemini-3.1-pro-preview',
       'llmgw/gemini-3.5-flash',
       'llmgw/grok-4.6'
     ]);
     expect(Object.fromEntries(models.map((model) => [model.id, model.level]))).toMatchObject({
-      'llmgw/gpt-5.6-luna-1M': 'low',
+      'llmgw/gpt-6-luna': 'low',
       'llmgw/gpt-5.6-terra-1M': 'medium',
-      'llmgw/gpt-5.6-sol-1M': 'high',
+      'llmgw/gpt-6.1-sol': 'high',
       'llmgw/gemini-3.1-pro-preview': 'medium',
       'llmgw/gemini-3.5-flash': 'low',
       'llmgw/grok-4.6': 'medium'
@@ -641,7 +641,7 @@ describe('OpenCodeProvider', () => {
         harnessRouting: {
           schemaVersion: 1,
           byAdapter: {
-            opencode: { modelTargetId: 'llmgw/gpt-5.6-luna-1M', executionState: 'plan' }
+            opencode: { modelTargetId: 'llmgw/gpt-6-luna', executionState: 'plan' }
           }
         }
       },
@@ -779,16 +779,16 @@ describe('OpenCodeProvider', () => {
 describe('parseOpenCodeModelIds', () => {
   it('keeps provider/model ids, trims, dedupes first-seen, and drops noise', () => {
     expect(parseOpenCodeModelIds([
-      '  llmgw/gpt-5.6-sol-1M  ',
+      '  llmgw/gpt-6.1-sol  ',
       'Available models:',        // banner — no slash
       'llmgw/grok-4.6',
-      'llmgw/gpt-5.6-sol-1M',     // duplicate
+      'llmgw/gpt-6.1-sol',     // duplicate
       '',                         // blank
       '-flag',                    // starts with '-' → rejected id shape
       'bare-model',               // no slash
       'llmgw/gemini-3.5-flash'
     ].join('\n'))).toEqual([
-      'llmgw/gpt-5.6-sol-1M',
+      'llmgw/gpt-6.1-sol',
       'llmgw/grok-4.6',
       'llmgw/gemini-3.5-flash'
     ]);
@@ -840,11 +840,22 @@ describe('OpenCodeProvider.discoverModelTargets', () => {
   });
 
   it('returns the live gateway ids parsed from `opencode models`', async () => {
-    const bin = fakeBinary('printf "llmgw/gpt-5.6-sol-1M\\nllmgw/grok-4.6\\n"');
+    const bin = fakeBinary('printf "llmgw/gpt-6.1-sol\\nllmgw/grok-4.6\\n"');
     const cfg: AppConfig = { ...CONFIG, opencodeBinary: bin };
     // Unique cwd per binary keeps the module-level discovery cache from colliding.
     await expect(p.discoverModelTargets({ cwd: tmpdir(), config: cfg }))
-      .resolves.toEqual(['llmgw/gpt-5.6-sol-1M', 'llmgw/grok-4.6']);
+      .resolves.toEqual(['llmgw/gpt-6.1-sol', 'llmgw/grok-4.6']);
+  });
+
+  it('maps portable levels from live Luna, Terra, and Sol ids rather than snapshot ids', async () => {
+    const bin = fakeBinary('printf "llmgw/gpt-7-luna\\nllmgw/gpt-7-terra\\nllmgw/gpt-7-sol\\n"');
+    const cfg: AppConfig = { ...CONFIG, opencodeBinary: bin };
+    await p.discoverModelTargets({ cwd: tmpdir(), config: cfg });
+    expect(p.adapter.descriptor.targets?.modelLevelMapping).toMatchObject({
+      low: 'llmgw/gpt-7-luna',
+      medium: 'llmgw/gpt-7-terra',
+      high: 'llmgw/gpt-7-sol'
+    });
   });
 
   it('returns undefined when the CLI exits non-zero (probe unavailable → snapshot fallback)', async () => {

@@ -39,6 +39,7 @@ import { QuestionBlock } from './InboxQuestionBlock.js';
 import { MarkdownContent } from './MarkdownContent.js';
 import { InboxDocContent, readInboxDocPreview } from './InboxDocContent.js';
 import { renderReportHtml, type ReportDoc } from '../lib/renderReportHtml.js';
+import { setPendingSquadDetailsTarget } from '../lib/squad-details-target.js';
 import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inboxPresentation.js';
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import { resolveAnswerSurface } from '../lib/answerSurface.js';
@@ -230,6 +231,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
 
   const hasDocs = (entry.docs?.length ?? 0) > 0;
   const hasComments = (entry.comments ?? '').trim().length > 0;
+  const squadWorktreeNotice = !!entry.executionId && /(?:squad|shared) worktree/i.test(`${entry.subject ?? ''}\n${entry.comments ?? ''}`);
   const decisionGuidance = entry.decisionGuidance;
   // One-or-many questions, normalized to a flat list (see inboxQuestions).
   // The interactive lettered-option form is an experimental display choice; when
@@ -515,7 +517,15 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // Unknown ownership is fail-closed until main confirms this exact entry is non-host.
   const ownershipLoading = ownership?.loading ?? true;
   const ownershipError = ownership?.error === true;
-  const hostActionSurface = ownershipLoading ? (
+  const hostActionSurface = squadWorktreeNotice ? (
+    <div className="inbox-reply" role="status">
+      <p>This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.</p>
+      <button type="button" className="btn" onClick={() => {
+        setPendingSquadDetailsTarget({ projectId: entry.projectId, executionId: entry.executionId! });
+        setNav('agents');
+      }}>Open Squad details</button>
+    </div>
+  ) : ownershipLoading ? (
     <div className="inbox-reply" role="status">Loading host action…</div>
   ) : ownershipError ? (
     <div className="inbox-reply" role="alert">
@@ -523,19 +533,21 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
       <button type="button" onClick={() => void resolveInboxHostAction(entry)}>Retry</button>
     </div>
   ) : hostAction ? (
-    <HostActionSurface
-      entry={entry}
-      action={hostAction}
-      questions={questionSet}
-      prompt={entry.comments}
-      onAction={hostOptionAction}
-    />
+    hostAction.kind === 'squad-worktree-lifecycle' ? null : (
+      <HostActionSurface
+        entry={entry}
+        action={hostAction}
+        questions={questionSet}
+        prompt={entry.comments}
+        onAction={hostOptionAction}
+      />
+    )
   ) : null;
   // Host action ownership permits only viewing its recorded origin. A fresh or
   // resumed terminal could escape the host-controlled worktree and authority.
   const ownershipPending = ownershipLoading || ownershipError;
   const canOpenHostOrigin = !!originatingThread || !!originalSession;
-  const canOpen = projectAlive && !ownershipPending && (!hostAction || canOpenHostOrigin);
+  const canOpen = !squadWorktreeNotice && projectAlive && !ownershipPending && (!hostAction || canOpenHostOrigin);
 
   const answerSurface = hostActionSurface ?? (
     <>
@@ -810,7 +822,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
               {openLabel}
               {compact ? ' agent' : null}
             </button>
-          ) : (
+          ) : !squadWorktreeNotice && (
             <div className="inbox-detail-unavailable">
               Project no longer exists — nowhere to open.
             </div>
@@ -885,10 +897,11 @@ function PlanCorrectionDetails({
   entryId: string;
   guidance: NonNullable<InboxEntry['decisionGuidance']>;
 }) {
-  const [open, setOpen] = useState(false);
+  const reviewReady = !!guidance.correctedPlanPath;
+  const [open, setOpen] = useState(reviewReady);
   return (
     <details className="inbox-plan-correction-details" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>Details</summary>
+      <summary>{reviewReady ? 'Review proposed plan' : 'Details'}</summary>
       {open && <dl>
           <dt>Technical diagnostic</dt>
           <dd>{guidance.diagnostic}</dd>

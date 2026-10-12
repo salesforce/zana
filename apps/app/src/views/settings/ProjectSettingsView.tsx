@@ -424,7 +424,12 @@ export function ProjectWorktreeSettings({
     >
       {gitRepo === false ? (
         <>
-          <ProjectWorktreeIsolationField value={false} disabled onChange={() => {}} />
+          <ProjectWorktreeIsolationField
+            value={value}
+            disabled
+            unavailableLabel="Project does not support worktrees"
+            onChange={() => {}}
+          />
           <p className="settings-help">Worktrees need a local Git project. Squads here run in the project folder.</p>
         </>
       ) : loaded ? (
@@ -923,10 +928,12 @@ export function CodexHarnessFiles({
 export function ProjectWorktreeIsolationField({
   value,
   disabled = false,
+  unavailableLabel,
   onChange
 }: {
   value: boolean | undefined;
   disabled?: boolean;
+  unavailableLabel?: string;
   onChange: (value: boolean | undefined) => void;
 }) {
   const selected = value === true ? 'on' : value === false ? 'off' : 'inherit';
@@ -937,7 +944,7 @@ export function ProjectWorktreeIsolationField({
       help="Controls the initial Worktree choice for new agents in this project. Main still verifies the folder is a Git repository before creating a worktree."
     >
       <PopoverPicklist
-        value={selected}
+        value={unavailableLabel ? 'unavailable' : selected}
         disabled={disabled}
         ariaLabel="Worktree isolation"
         searchable={false}
@@ -945,6 +952,7 @@ export function ProjectWorktreeIsolationField({
           onChange(next === 'on' ? true : next === 'off' ? false : undefined);
         }}
         options={[
+          ...(unavailableLabel ? [{ value: 'unavailable', label: unavailableLabel }] : []),
           { value: 'inherit', label: 'Use global default' },
           { value: 'on', label: 'Always use worktrees' },
           { value: 'off', label: 'Never use worktrees' }

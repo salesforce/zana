@@ -98,20 +98,28 @@ describe('PlanCorrectionService', () => {
     expect(PlanCorrectionService.sourcePlanPresent('  ### task: Title <!--  EXECUTABLE-STEP  -->')).toBe(true);
   });
 
-  it('presents plan correction as a user decision without exposing diagnostics in guidance', async () => {
+  it('presents a review-ready correction with source and proposed plan artifacts', async () => {
     const { service, appendInbox } = create();
     await service.begin(ctx.executionId, 'parser expected a dependency', false);
 
     await service.review(ctx, source);
 
     const entry = appendInbox.mock.calls[0]![0];
-    expect(entry.comments).not.toContain('parser expected a dependency');
-    expect(entry.comments).toContain('A submitted plan needs your review before work can continue.');
+    expect(entry.comments).toContain('Correction needed: parser expected a dependency');
+    expect(entry.comments).toContain('Proposed plan: 1 step.');
+    expect(entry.comments).toContain('1. **Source** (`source`). No declared file writes.');
+    expect(entry.comments).toContain('Review the proposed corrected plan below');
     expect(entry.decisionGuidance).toEqual({
       kind: 'plan-correction',
       diagnostic: 'parser expected a dependency',
+      originalPlanPath: '.zana/execution-plan-e-1.md',
       correctedPlanPath: '.zana/execution-plan-corrected-e-1.md'
     });
+    expect(entry.questions[0]?.options).toEqual([
+      { id: 'approve', label: 'Approve' },
+      { id: 'changes', label: 'Request changes' },
+      { id: 'cancel', label: 'Cancel' }
+    ]);
   });
 
   it('requests revision without changing the source plan', async () => {
@@ -123,11 +131,19 @@ describe('PlanCorrectionService', () => {
   });
 
   it('allows changes and cancellation for an offer without a corrected digest', async () => {
-    const { service, bindInboxAction, records, nudge, readCorrectedPlan } = create();
+    const { service, appendInbox, bindInboxAction, records, nudge, readCorrectedPlan } = create();
     const invalid = { status: 'invalid' as const, reason: 'missing steps' };
     readCorrectedPlan.mockResolvedValue(invalid);
     await service.begin(ctx.executionId, 'bad plan', false);
     await service.review(ctx, invalid);
+    const entry = appendInbox.mock.calls[0]![0];
+    expect(entry.comments).toContain('No valid revised plan is ready to review.');
+    expect(entry.decisionGuidance).toEqual({ kind: 'plan-correction', diagnostic: 'bad plan' });
+    expect(entry.questions[0]?.options).toEqual([
+      { id: 'changes', label: 'Request changes' },
+      { id: 'cancel', label: 'Cancel' }
+    ]);
+    expect(entry.dedupeKey).toMatch(/^plan-correction:e-1:[0-9a-f-]+$/);
     const firstOffer = latestOffer(bindInboxAction);
     expect(firstOffer.digest).toBe('');
 
@@ -138,6 +154,19 @@ describe('PlanCorrectionService', () => {
     await service.review(ctx, invalid);
     await expect(service.respond(ctx.executionId, 'cancel', latestOffer(bindInboxAction))).resolves.toBe('cancelled');
     expect(records.get(ctx.executionId)).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('coalesces a retried pending offer under its durable offer id', async () => {
+    const { service, appendInbox, bindInboxAction, records } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    const pending = records.get(ctx.executionId);
+    const entry = appendInbox.mock.calls[0]![0];
+
+    expect(entry.dedupeKey).toBe(`plan-correction:e-1:${pending.offeredActionId}`);
+    await service.review(ctx, source);
+    expect(appendInbox).toHaveBeenCalledOnce();
+    expect(bindInboxAction).toHaveBeenCalledOnce();
   });
 
   it('never approves an offer without an immutable corrected digest', async () => {
