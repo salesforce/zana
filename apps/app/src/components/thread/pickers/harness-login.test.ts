@@ -42,6 +42,14 @@ describe('harness login status', () => {
     expect(harnessLoginStatus('grok', catalog(), true)?.state).toBe('checking');
   });
 
+  it('keeps the last known result while a provider refreshes in the background', () => {
+    const entry = { models: [], selectedOnlyModels: [], modelLoadError: null };
+    const refreshing = (id: string, value: object) => catalog({ byProvider: { [id]: { ...entry, ...value } }, inflight: new Set([id]) });
+    expect(harnessLoginStatus('codex', refreshing('codex', { lastAttemptAt: 1, lastSuccessAt: 1 }), true)?.state).toBe('signed_in');
+    expect(harnessLoginStatus('codex', refreshing('codex', { lastAttemptAt: 1, modelLoadError: 'auth_required' }), true)?.state).toBe('sign_in_required');
+    expect(harnessLoginStatus('codex', refreshing('codex', {}), true)?.state).toBe('checking');
+  });
+
   it('surfaces sign-in required from auth_required and signed in when listing succeeded', () => {
     expect(harnessLoginStatus('cursor', catalog({
       byProvider: { 'acp-cursor': { models: [], selectedOnlyModels: [], modelLoadError: 'auth_required' } }

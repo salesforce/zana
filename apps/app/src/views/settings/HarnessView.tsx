@@ -28,9 +28,9 @@ import { StencilForm, Skeleton } from '@/components/ui/Skeleton';
 import { providerUiSchema } from '@zana-ai/zcc-domain/launch-provider';
 import {
   getThreadModelCatalog,
-  prefetchThreadModelCatalog,
   reloadThreadProviderModels,
-  subscribeThreadModelCatalog
+  subscribeThreadModelCatalog,
+  threadModelCatalogForHost
 } from '../../components/thread/pickers/thread-model-catalog.js';
 import {
   emptyModelsHint,
@@ -698,7 +698,8 @@ export function ThreadProviderCatalog({
 function ThreadProvidersPanel() {
   const [providers, setProviders] = useState<ThreadProviderListItem[] | null>(null);
   useEffect(() => {
-    void prefetchThreadModelCatalog();
+    // Reuse a fresh catalog; it only refetches when stale or never loaded.
+    void threadModelCatalogForHost().ensure();
   }, []);
   useEffect(() => {
     let cancelled = false;
@@ -771,10 +772,10 @@ export function HarnessView({
     }
   }, [thisMachineId]);
 
-  // Re-probe whenever the AI Harness tab mounts so a CLI installed since boot
-  // (or a changed binary path) is reflected without a full app restart.
+  // The store probes at boot; reopening the tab reuses that result. Only probe
+  // here when nothing is loaded yet — Check status is the explicit re-probe.
   useEffect(() => {
-    runCheck(false);
+    if (status.length === 0) runCheck(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 

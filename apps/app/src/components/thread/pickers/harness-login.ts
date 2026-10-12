@@ -66,7 +66,8 @@ export function harnessLoginStatus(
   const login = LOGIN_BY_FAMILY[family];
   if (!login || !installed) return null;
   const entry = catalog.byProvider[login.providerId];
-  if (!entry || catalog.inflight.has(login.providerId)) {
+  // A background refresh keeps the last known result; only a first load checks.
+  if (!entry || (catalog.inflight.has(login.providerId) && entry.lastAttemptAt == null)) {
     return { state: 'checking', loginCommand: login.loginCommand };
   }
   if (entry.modelLoadError === 'auth_required') {

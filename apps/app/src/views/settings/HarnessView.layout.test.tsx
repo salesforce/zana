@@ -80,8 +80,17 @@ describe('Harness setup layout', () => {
     expect(screen.queryByText('experimental_registerProvider')).toBeNull();
   });
 
+  it('reuses loaded status on reopen and only re-probes on Check status', async () => {
+    render(<View />);
+    await waitFor(() => expect(state.descriptors).toHaveBeenCalled());
+    expect(state.refresh).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
+    expect(state.refresh).toHaveBeenCalledWith({ refreshModels: true });
+  });
+
   it('shows probe progress, disables repeat checks, and recovers when the probe completes', async () => {
     let finish!: () => void;
+    state.rows = [];
     state.refresh.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
     render(<View />);
     expect(state.refresh).toHaveBeenCalledWith({ refreshModels: false });
