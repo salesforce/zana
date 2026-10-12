@@ -787,6 +787,8 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
     "host.list_branches may omit exact selected-branch classification when the caller only needs a branch option page.",
   "hostDaemonOnlineRpcCommandSchema.nativeSkillRoots":
     "host skill discovery may omit nativeSkillRoots for providers with daemon-owned discovery rules.",
+  "hostDaemonOnlineRpcCommandSchema.nativeRoots":
+    "host.list_commands accepts resolved native roots when available; static-root callers may omit them.",
   "hostDaemonCommandSchema.threadStoragePath":
     "thread.start may include a storage path so the daemon creates the directory before the agent starts.",
   "hostDaemonCommandSchema.fork":
