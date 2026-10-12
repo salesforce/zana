@@ -85,7 +85,7 @@ import { useCompactLayout } from './hooks/useCompactLayout.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
-import { TitlebarProjectButton } from './components/TitlebarProjectButton.js';
+import { ShellTitlebarTitle } from './components/TitlebarProjectButton.js';
 import { keepsProjectFocusRail, resolveShellLayout, shellTitlebarLabel } from './lib/shellLayout.js';
 import { installShortcuts } from './shortcuts.js';
 import { isLibraryPluginModule } from './lib/libraryPlugin.js';
@@ -748,13 +748,11 @@ function AppShell() {
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
-        {titlebarProject && !mobileNavigation.isCompact ? (
-          <TitlebarProjectButton project={titlebarProject} />
-        ) : (
-          <span className="titlebar-title" title={titlebarProject?.path ?? undefined}>
-            {titlebarLabel}
-          </span>
-        )}
+        <ShellTitlebarTitle
+          project={titlebarProject}
+          label={titlebarLabel}
+          compact={mobileNavigation.isCompact}
+        />
         <HelpToggle />
         <button
           type="button"

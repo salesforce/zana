@@ -49,3 +49,25 @@ export function TitlebarProjectButton({ project }: { project: Project }) {
     </>
   );
 }
+
+/**
+ * The shell titlebar's centered title: the project actions button while a
+ * single project is showing on desktop, else the plain label (compact layouts
+ * and the cross-project shell).
+ */
+export function ShellTitlebarTitle({
+  project,
+  label,
+  compact
+}: {
+  project?: Project | null;
+  label: string;
+  compact: boolean;
+}) {
+  if (project && !compact) return <TitlebarProjectButton project={project} />;
+  return (
+    <span className="titlebar-title" title={project?.path ?? undefined}>
+      {label}
+    </span>
+  );
+}

@@ -11,7 +11,7 @@ vi.mock('./listpane/FocusedProjectMenu.js', () => ({
   )
 }));
 
-import { TitlebarProjectButton } from './TitlebarProjectButton.js';
+import { ShellTitlebarTitle, TitlebarProjectButton } from './TitlebarProjectButton.js';
 
 const project: Project = {
   id: 'proj-1',
@@ -83,5 +83,28 @@ describe('TitlebarProjectButton', () => {
   it('marks remote projects like the rail did', () => {
     render(<TitlebarProjectButton project={{ ...project, remote: { host: 'limited-pony' } } as Project} />);
     expect(screen.getByLabelText('Remote SSH project')).toBeTruthy();
+  });
+});
+
+describe('ShellTitlebarTitle', () => {
+  afterEach(cleanup);
+
+  it('renders the project actions button for a desktop single-project view', () => {
+    render(<ShellTitlebarTitle project={project} label="btgsdigico--agentaidev" compact={false} />);
+    expect(screen.getByTestId('titlebar-project')).toBeTruthy();
+  });
+
+  it('keeps the plain label on the compact layout, with the project path as its tooltip', () => {
+    render(<ShellTitlebarTitle project={project} label="Agents" compact />);
+    expect(screen.queryByTestId('titlebar-project')).toBeNull();
+    const title = screen.getByText('Agents');
+    expect(title.className).toBe('titlebar-title');
+    expect(title.getAttribute('title')).toBe('/tmp/agentaidev');
+  });
+
+  it('shows the plain wordmark without a tooltip outside a project view', () => {
+    render(<ShellTitlebarTitle project={null} label="Zana" compact={false} />);
+    expect(screen.queryByTestId('titlebar-project')).toBeNull();
+    expect(screen.getByText('Zana').hasAttribute('title')).toBe(false);
   });
 });
