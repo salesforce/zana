@@ -19,7 +19,7 @@ describe('provider-acp plugin', () => {
     expect(derivePluginId(pkg.name)).toBe('provider-acp');
     expect(manifest.serverEntry).toBe('./server.mjs');
     expect(manifest.appEntry).toBe('./app.tsx');
-    expect(manifest.hostEntry).toBe('./src/bridge/bridge.ts');
+    expect(manifest.hostEntry).toBe('./src/host.ts');
     expect(manifest.extra.threadProvider).toBe(true);
   });
 

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
@@ -17,7 +17,7 @@ describe('provider-codex plugin', () => {
     expect(derivePluginId(pkg.name)).toBe('provider-codex');
     expect(manifest.serverEntry).toBe('./server.mjs');
     expect(manifest.appEntry).toBe('./app.tsx');
-    expect(manifest.hostEntry).toBe('./src/bridge/bridge.ts');
+    expect(manifest.hostEntry).toBe('./src/native-host.ts');
     expect(manifest.extra.threadProvider).toBe(true);
   });
 
@@ -51,13 +51,18 @@ describe('provider-codex plugin', () => {
     expect(ladderFrom(readFileSync(join(root, 'server.mjs'), 'utf8'))).toEqual(tsLadder);
   });
 
-  it('keeps the runtime server.mjs registration in lockstep with server.ts', () => {
-    const idsFrom = (src: string) =>
-      [...src.matchAll(/experimental_registerProvider\(\{\s*id:\s*['"]([^'"]+)['"]/g)].map((match) => match[1]);
-    const tsIds = idsFrom(readFileSync(join(root, 'server.ts'), 'utf8'));
-    const mjsIds = idsFrom(readFileSync(join(root, 'server.mjs'), 'utf8'));
-    expect(tsIds).toEqual(['codex']);
-    expect(mjsIds).toEqual(tsIds);
+  it('keeps the runtime server.mjs registration in lockstep with server.ts', async () => {
+    const retained = await import(pathToFileURL(join(root, 'server.mjs')).href);
+    const typedHost = createFakePluginHost({ pluginId: 'provider-codex' });
+    const runtimeHost = createFakePluginHost({ pluginId: 'provider-codex' });
+    await plugin(typedHost.zcc);
+    await retained.default(runtimeHost.zcc);
+    expect(typedHost.harness.providers.map((row) => row.id)).toEqual(['codex']);
+    expect(runtimeHost.harness.providers.map((row) => row.id)).toEqual(
+      typedHost.harness.providers.map((row) => row.id)
+    );
+    await typedHost.harness.dispose();
+    await runtimeHost.harness.dispose();
   });
 
   it('registers a Codex provider icon', () => {

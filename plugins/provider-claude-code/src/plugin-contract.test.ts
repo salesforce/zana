@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
@@ -17,7 +17,7 @@ describe('provider-claude-code plugin', () => {
     expect(derivePluginId(pkg.name)).toBe('provider-claude-code');
     expect(manifest.serverEntry).toBe('./server.mjs');
     expect(manifest.appEntry).toBe('./app.tsx');
-    expect(manifest.hostEntry).toBe('./src/bridge/bridge.ts');
+    expect(manifest.hostEntry).toBe('./src/host.ts');
     expect(manifest.extra.threadProvider).toBe(true);
   });
 
@@ -37,13 +37,18 @@ describe('provider-claude-code plugin', () => {
     await harness.dispose();
   });
 
-  it('keeps the runtime server.mjs registration in lockstep with server.ts', () => {
-    const idsFrom = (src: string) =>
-      [...src.matchAll(/experimental_registerProvider\(\{\s*id:\s*['"]([^'"]+)['"]/g)].map((match) => match[1]);
-    const tsIds = idsFrom(readFileSync(join(root, 'server.ts'), 'utf8'));
-    const mjsIds = idsFrom(readFileSync(join(root, 'server.mjs'), 'utf8'));
-    expect(tsIds).toEqual(['claude-code']);
-    expect(mjsIds).toEqual(tsIds);
+  it('keeps the runtime server.mjs registration in lockstep with server.ts', async () => {
+    const retained = await import(pathToFileURL(join(root, 'server.mjs')).href);
+    const typedHost = createFakePluginHost({ pluginId: 'provider-claude-code' });
+    const runtimeHost = createFakePluginHost({ pluginId: 'provider-claude-code' });
+    await plugin(typedHost.zcc);
+    await retained.default(runtimeHost.zcc);
+    expect(typedHost.harness.providers.map((row) => row.id)).toEqual(['claude-code']);
+    expect(runtimeHost.harness.providers.map((row) => row.id)).toEqual(
+      typedHost.harness.providers.map((row) => row.id)
+    );
+    await typedHost.harness.dispose();
+    await runtimeHost.harness.dispose();
   });
 
   it('registers a Claude Code provider icon', () => {
