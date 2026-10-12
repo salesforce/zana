@@ -573,13 +573,12 @@ export function createCodexEventTranslator(
       ) {
         continue;
       }
-      if (isTrackedSubAgentOpen(tracked)) {
+      if (!tracked.terminal) {
         closes.push(
           buildCodexSubAgentCloseDelta({ status: "failed", tracked }),
         );
       }
       tracked.terminal = true;
-      tracked.pendingFollowups = 0;
       clearTrackedSubAgentLinks(tracked);
       if (
         trackedSubAgentCallIdsByAgentThreadId.get(tracked.agentThreadId) ===
@@ -963,7 +962,6 @@ export function createCodexEventTranslator(
       callId: activity.item.id,
       parentProviderThreadId: activity.providerThreadId,
       parentTurnId: activity.turnId,
-      pendingFollowups: 0,
       terminal: false,
     };
     trackedSubAgentsByCallId.set(tracked.callId, tracked);
@@ -1003,24 +1001,6 @@ export function createCodexEventTranslator(
       interactionKindsByProviderThreadId.delete(args.providerThreadId);
     }
     return kind;
-  }
-
-  function rearmTrackedSubAgent(tracked: CodexTrackedSubAgent): void {
-    trackedSubAgentCallIdsByAgentThreadId.set(
-      tracked.agentThreadId,
-      tracked.callId,
-    );
-    if (tracked.agentThreadId !== tracked.parentProviderThreadId) {
-      delegationParentToolCallIdsByProviderThreadId.set(
-        tracked.agentThreadId,
-        tracked.callId,
-      );
-    }
-    enqueuePendingDelegationTurnLink({
-      callId: tracked.callId,
-      parentTurnId: tracked.parentTurnId,
-      providerThreadId: tracked.parentProviderThreadId,
-    });
   }
 
   function queueUnclassifiedCodexInteraction(
@@ -1182,25 +1162,14 @@ export function createCodexEventTranslator(
     return materialized;
   }
 
-  function isTrackedSubAgentOpen(tracked: CodexTrackedSubAgent): boolean {
-    return !tracked.terminal || tracked.pendingFollowups > 0;
-  }
-
   function completeCodexTrackedSubAgent(args: {
     status: "completed" | "failed" | "interrupted";
     tracked: CodexTrackedSubAgent;
   }): ThreadDelta | null {
-    const wasOpen = isTrackedSubAgentOpen(args.tracked);
-    const alreadyTerminal = args.tracked.terminal;
+    const wasOpen = !args.tracked.terminal;
     args.tracked.terminal = true;
     clearTrackedSubAgentLinks(args.tracked);
-    if (alreadyTerminal && args.tracked.pendingFollowups > 0) {
-      args.tracked.pendingFollowups -= 1;
-    }
-    if (args.tracked.pendingFollowups > 0) {
-      rearmTrackedSubAgent(args.tracked);
-    }
-    if (!wasOpen || isTrackedSubAgentOpen(args.tracked)) {
+    if (!wasOpen) {
       return null;
     }
     return buildCodexSubAgentCloseDelta(args);
@@ -1599,7 +1568,6 @@ interface CodexTrackedSubAgent {
   parentProviderThreadId: string;
   parentToolCallId?: string;
   parentTurnId: string;
-  pendingFollowups: number;
   terminal: boolean;
 }
 
