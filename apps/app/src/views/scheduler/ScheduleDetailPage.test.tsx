@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
     isMaximized: boolean;
     onToggleMaximize?: () => void;
     onRequestClose?: () => void;
+    onMoveToSide?: (side: 'left' | 'right' | 'top' | 'bottom') => void;
   },
   navigate: vi.fn(),
   locationState: null as unknown,
@@ -226,5 +227,16 @@ describe('ScheduleDetailPage', () => {
     expect(onToggleMaximize).toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('split-pane-close'));
     expect(onRequestClose).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Move pane', exact: true })).toBeNull();
+  });
+
+  it('offers the pane move menu when the split can move the pane', () => {
+    tasks.push(sample);
+    const onMoveToSide = vi.fn();
+    h.pane = { isSplitPane: true, isFocused: true, isMaximized: false, onMoveToSide };
+    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Move pane', exact: true }));
+    fireEvent.click(screen.getByRole('option', { name: 'Move pane below' }));
+    expect(onMoveToSide).toHaveBeenCalledWith('bottom');
   });
 });
