@@ -36,6 +36,7 @@ import { listProjectTabs, projectTabView, subscribePluginSlots } from '../plugin
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useProjectTabAvailability } from '../hooks/useProjectTabAvailability.js';
 import { useRouteState } from '../hooks/useRouteState.js';
+import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import {
   getInboxRoutePath,
   getNewThreadRoutePath,
@@ -131,6 +132,9 @@ export function ProjectScopedNav({
   );
   const diskProjectTabModules = projectTabModules.filter((module) => !slotPluginIds.has(module.id));
   const onProjects = nav === 'projects';
+  // Desktop names the project (and owns its menu) in the titlebar; the compact
+  // layout has no titlebar project button, so the rail keeps the project row.
+  const compact = useCompactLayout();
 
   const modeItems = MODE_ITEMS.filter(
     (item) =>
@@ -314,7 +318,7 @@ export function ProjectScopedNav({
     {
       kind: 'section',
       id: PROJECT_SESSIONS_SECTION_SORT_ID,
-      node: <ProjectSessionRail project={project} />
+      node: <ProjectSessionRail project={project} projectRow={compact} />
     }
   ];
 

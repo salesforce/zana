@@ -49,7 +49,8 @@ const h = vi.hoisted(() => {
     unreadInbox: 15,
     agentCounts: { active: 0, blocked: 0 },
     scheduleCount: 6,
-    tabAvailability: {} as Record<string, { available: boolean; reason?: string }>
+    tabAvailability: {} as Record<string, { available: boolean; reason?: string }>,
+    compact: false
   };
 });
 
@@ -103,12 +104,18 @@ vi.mock('../SidebarRail', async (importOriginal) => {
 vi.mock('../../hooks/useProjectTabAvailability', () => ({
   useProjectTabAvailability: () => h.tabAvailability
 }));
+vi.mock('../../hooks/useCompactLayout', () => ({ useCompactLayout: () => h.compact }));
 vi.mock('../../lib/libraryPlugin', () => ({
   resolveProjectTabModule: () => undefined
 }));
 vi.mock('../listpane/project-session-rail', () => ({
-  ProjectSessionRail: ({ hideThreads }: { hideThreads?: boolean }) => (
-    <section className="sidebar-projects" data-testid="project-session-rail" data-threads-hidden={hideThreads === true}>
+  ProjectSessionRail: ({ hideThreads, projectRow }: { hideThreads?: boolean; projectRow?: boolean }) => (
+    <section
+      className="sidebar-projects"
+      data-testid="project-session-rail"
+      data-threads-hidden={hideThreads === true}
+      data-project-row={projectRow === true}
+    >
       <span>Project</span>
     </section>
   )
@@ -217,6 +224,19 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     );
     expect(markup).not.toContain('data-sortable-sidebar-section-id="sidebar-section:project-sessions"');
     expect(markup).toContain('>Project<');
+    // Desktop: the titlebar names the project and owns its menu, so the rail
+    // drops its redundant project row.
+    expect(markup).toContain('data-project-row="false"');
+  });
+
+  it('keeps the rail project row on the compact layout, which has no titlebar project button', () => {
+    h.compact = true;
+    try {
+      const markup = renderNav(<ProjectScopedNav project={project} variant="focus" onBack={() => undefined} />);
+      expect(markup).toContain('data-project-row="true"');
+    } finally {
+      h.compact = false;
+    }
   });
 
   it('badges this project Agents row from the scoped fleet count', () => {

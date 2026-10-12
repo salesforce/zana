@@ -747,6 +747,44 @@ button.statusbar-update {
   white-space: nowrap;
 }
 
+/* Single-project views: the centered name is the project actions trigger. */
+.titlebar-project {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.titlebar-project:hover,
+.titlebar-project.active {
+  background: var(--bg-hover);
+}
+
+.titlebar-project:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.titlebar-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.titlebar-project-chevron {
+  flex: none;
+  color: var(--text-muted);
+}
+
 .titlebar-beta {
   font-size: 9px;
   font-weight: 600;
@@ -2157,6 +2195,21 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 
 .project-scoped-nav .project-terminals {
   margin: 1px 0 4px 8px;
+}
+
+/* Titlebar-owned project: sessions sit directly under the section heading. */
+.project-scoped-nav .project-terminals--flat {
+  margin: 0 0 4px;
+}
+
+.sidebar-projects-header > .project-badge {
+  margin-right: 8px;
+}
+
+.sidebar-projects-empty {
+  padding: 4px 8px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
 .list-pane {

@@ -35,7 +35,11 @@ test('global and focused project menus open the checkout in external editors thr
   await globalRow.getByRole('button', { name: 'Open editor project with spaces', exact: true }).click();
   const focusedRail = win.getByTestId('project-session-rail');
   await expect(focusedRail).toBeVisible();
-  const focusedRow = focusedRail.locator('.project-item');
+  // Desktop single-project views name the project in the titlebar, which owns
+  // its actions menu; the rail no longer repeats a project row.
+  await expect(focusedRail.locator('.project-item')).toHaveCount(0);
+  const focusedRow = win.getByTestId('titlebar-project');
+  await expect(focusedRow).toHaveText('editor project with spaces');
   await focusedRow.click({ button: 'right' });
   await expect(menu.getByRole('button', { name: 'Open in VS Code', exact: true })).toBeVisible();
   if (process.env.ZCC_PROJECT_MENU_SCREENSHOTS === '1') {
@@ -43,7 +47,7 @@ test('global and focused project menus open the checkout in external editors thr
   }
   await menu.getByRole('button', { name: 'Open in VS Code', exact: true }).click();
   await expect.poll(() => readFileSync(log, 'utf8')).toContain(`code\n-n\n${canonicalProjectPath}\n`);
-  await focusedRail.getByRole('button', { name: 'Project actions for editor project with spaces' }).focus();
+  await win.getByRole('button', { name: 'Project actions for editor project with spaces' }).focus();
   await win.keyboard.press('Enter');
   // The first action receives focus; Tab reaches the remaining editors.
   await expect(menu.getByRole('button', { name: 'Open in Cursor' })).toBeFocused();

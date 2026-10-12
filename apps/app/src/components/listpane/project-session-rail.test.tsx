@@ -167,6 +167,35 @@ describe('ProjectSessionRail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Project actions for zana-command-center' }));
     expect(screen.getByTestId('focused-project-menu').dataset.project).toBe(project.id);
   });
+  it('drops the project row and becomes a flat Sessions list when the titlebar owns the project', () => {
+    h.data.terminals = { 'proj-1': [session({ id: 'live-cli', title: 'Running CLI' })] };
+    h.threads = [thread({ id: 'live-thread', status: 'active', title: 'Working review' })];
+    render(<MemoryRouter><ProjectSessionRail project={project} projectRow={false} /></MemoryRouter>);
+    const heading = screen.getByTestId('project-session-rail-heading');
+    expect(heading.textContent).toBe('Sessions');
+    expect(heading.getAttribute('aria-label')).toBe('Collapse Sessions section');
+    expect(screen.getByTestId('project-session-rail').querySelector('.sidebar-projects-header .project-badge')?.textContent).toBe('2');
+    expect(screen.queryByRole('button', { name: 'Open zana-command-center' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Project actions for zana-command-center' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New agent in zana-command-center' })).toBeNull();
+    const list = screen.getByRole('list', { name: 'Sessions in zana-command-center' });
+    expect(list.className).toBe('project-terminals project-terminals--flat');
+    expect(list.textContent).toContain('Working review');
+    expect(list.textContent).toContain('Running CLI');
+  });
+
+  it('shows an empty hint instead of a bare heading when a flat Sessions list has nothing in it', () => {
+    h.data.terminals = {};
+    h.threads = [];
+    const markup = renderToStaticMarkup(
+      <MemoryRouter><ProjectSessionRail project={project} projectRow={false} /></MemoryRouter>
+    );
+    expect(markup).toContain('>Sessions<');
+    expect(markup).toContain('class="sidebar-projects-empty">No sessions yet<');
+    expect(markup).not.toContain('class="project-item"');
+    expect(markup).not.toContain('class="project-badge"');
+  });
+
   it('still renders the Project collection when this project has no nestable sessions', () => {
     h.data.terminals = {};
     h.threads = [];
@@ -300,7 +329,7 @@ describe('ProjectSessionRail', () => {
     expect(source).toContain('openThreadMenu(e, thread, setThreadMenu)');
     expect(source).toContain('openAgentCardMenu(e, session)');
     expect(source).toContain('data-testid="project-session-rail"');
-    expect(source).toContain('>Project</span>');
+    expect(source).toContain('<span>{sectionLabel}</span>');
     expect(source).toContain('isRemoteWorkspaceProject(project)');
     expect(source).toContain('className="project-remote-icon"');
     expect(source).toContain('<ProjectDot project={project} unread={hasUnread} />');

@@ -58,15 +58,21 @@ export function useProjectRailSessions(projectId: string): {
  * Bottom-of-rail tree for a focused project — same chrome as the global
  * Projects collection, minus filter / sort / add. Nested session rows match
  * the global workspace tree.
+ *
+ * With `projectRow={false}` the titlebar already names the project and owns its
+ * actions menu, so the redundant project row is dropped and the section becomes
+ * a flat "Sessions" list.
  */
 export function ProjectSessionRail({
   project,
   dragHandle,
-  onNavigate
+  onNavigate,
+  projectRow = true
 }: {
   project: Project;
   dragHandle?: HTMLAttributes<HTMLElement>;
   onNavigate?: (event: { preventDefault: () => void }) => void;
+  projectRow?: boolean;
 }) {
   const { liveList, railThreads } = useProjectRailSessions(project.id);
   const unread = useUi((s) => s.unread);
@@ -113,6 +119,7 @@ export function ProjectSessionRail({
   const displayName = composerProjectLabel(project);
   const hasUnread = liveList.some((session) => unread[session.id]);
   const activeTab = selectedTabId[project.id];
+  const sectionLabel = projectRow ? 'Project' : 'Sessions';
 
   return (
     <section
@@ -130,25 +137,26 @@ export function ProjectSessionRail({
             if (event.defaultPrevented) return;
             toggleSection(SIDEBAR_PROJECT_SESSION_SECTION_KEY);
           }}
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} Project section`}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${sectionLabel} section`}
           aria-controls={SIDEBAR_PROJECT_SESSION_TREE_ID}
           aria-expanded={!collapsed}
-          title={`${collapsed ? 'Expand' : 'Collapse'} Project`}
+          title={`${collapsed ? 'Expand' : 'Collapse'} ${sectionLabel}`}
         >
-          <span>Project</span>
+          <span>{sectionLabel}</span>
           <ChevronRight
             size={14}
             aria-hidden="true"
             className={`sidebar-projects-chevron ${collapsed ? '' : 'open'}`}
           />
         </button>
+        {!projectRow && nestedCount > 0 ? <span className="project-badge">{nestedCount}</span> : null}
       </header>
       <div
         id={SIDEBAR_PROJECT_SESSION_TREE_ID}
         className="sidebar-projects-body"
         hidden={collapsed}
       >
-        <div className="project-item" onContextMenu={(event) => {
+        {projectRow ? <div className="project-item" onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
           showProjectMenu(event.clientX, event.clientY);
@@ -190,9 +198,13 @@ export function ProjectSessionRail({
           >
             <MessageCirclePlus size={14} />
           </button>
-        </div>
+        </div> : null}
         {nestedCount > 0 ? (
-          <div className="project-terminals" role="list" aria-label={`Sessions in ${displayName}`}>
+          <div
+            className={`project-terminals${projectRow ? '' : ' project-terminals--flat'}`}
+            role="list"
+            aria-label={`Sessions in ${displayName}`}
+          >
             {railThreads.map((thread) => (
               <ProjectThreadRailRow
                 key={thread.id}
@@ -225,6 +237,8 @@ export function ProjectSessionRail({
               />
             ))}
           </div>
+        ) : !projectRow ? (
+          <div className="sidebar-projects-empty">No sessions yet</div>
         ) : null}
       </div>
       {projectMenu && <FocusedProjectMenu project={project} {...projectMenu} onClose={() => setProjectMenu(null)} />}
