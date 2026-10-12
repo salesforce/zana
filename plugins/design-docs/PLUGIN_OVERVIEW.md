@@ -17,7 +17,11 @@ Every thread is told about the current project's active docs. Agents get `design
 
 ## Ask agent
 
-Each doc has an Ask agent menu. It can review the doc, fill gaps, add diagrams, check the design against the code, address open comments, or run your own prompt. It starts a thread in the doc's project and opens the doc beside it.
+Each doc has an Ask agent menu. It can review the doc, fill gaps, add diagrams, check the design against the code, address open comments, or run your own prompt. The agent runs in the doc's project and opens in the side panel next to the doc, so you watch its edits land without leaving the page. The doc's Agents tab lists its conversations, and Open as thread moves one to your Agents list.
+
+## Publish
+
+A doc with HTML pages can be published as a GitHub Pages site. Publish asks for the repository (this project's or another one), the branch and the folder, then starts an agent in the side panel that exports the site, commits it and pushes it with your git credentials. It reports the commit and the Pages URL. The target is remembered for the next publish.
 
 ## Data
 

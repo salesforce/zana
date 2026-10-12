@@ -8,6 +8,7 @@ import { agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../s
 import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
 import { normalizeDocPath } from '../shared/paths.js';
+import { buildPublishPrompt, parsePublishTarget, PublishTargetError } from '../shared/publish.js';
 import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
 import { asInput, optionalString, requiredString } from './operations.js';
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
@@ -378,14 +379,58 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
         prompt: buildAgentPrompt({ doc, action, prompt, path: optionalString(input, 'path') }),
         title,
         ...(providerId ? { providerId } : {}),
-        visibility: 'visible',
-        pluginMetadata: { designDocId: doc.id, ...(action ? { action: action.id } : {}) }
+        visibility: 'hidden',
+        pluginMetadata: { designDocId: doc.id, ...(action ? { action: action.id } : {}), panelAgent: panelAgent(doc.id) }
       });
       store.linkThread(doc.id, thread.id, title, action?.id === 'review' ? 'reviewer' : 'assistant');
       changed(doc.id);
       return { threadId: thread.id, projectId };
+    },
+
+    /** Start an agent thread that exports the doc as a site, commits and pushes it to GitHub Pages. */
+    publish: async (raw) => {
+      const input = asInput(raw);
+      const doc = store.summary(requiredString(input, 'doc'));
+      let target;
+      try {
+        target = parsePublishTarget(input);
+      } catch (error) {
+        if (error instanceof PublishTargetError) throw new DesignDocError('invalid', error.message);
+        throw error;
+      }
+      if (!store.get(doc.id).files.some((file) => file.kind === 'html')) {
+        throw new DesignDocError('invalid', 'this doc has no HTML pages to publish; add an index.html first');
+      }
+      const projectId = doc.projectId ?? (optionalString(input, 'projectId') || null);
+      if (!projectId) {
+        throw new DesignDocError('invalid', 'this doc is global; choose a project for the agent to run in');
+      }
+      if (!doc.projectId) await requireProject(projectId);
+      const title = `Publish · ${doc.title}`.slice(0, 120);
+      const thread = await deps.sdk.threads.spawn({
+        projectId,
+        prompt: buildPublishPrompt({ doc, target }),
+        title,
+        visibility: 'hidden',
+        pluginMetadata: { designDocId: doc.id, action: 'publish', panelAgent: panelAgent(doc.id) }
+      });
+      store.linkThread(doc.id, thread.id, title, 'assistant');
+      changed(doc.id);
+      return { threadId: thread.id, projectId };
     }
   };
+}
+
+/** The nav panel's path (`NAV_PATH` in the app). */
+const NAV_PANEL = 'design-docs';
+
+/**
+ * Agents run in the side panel of the doc's page, not the Agents list: the
+ * host lists these among the panel's conversations, grounds them in the doc's
+ * view, and "Open as thread" moves one to the Agents list.
+ */
+function panelAgent(docId: string) {
+  return { panel: NAV_PANEL, view: docId };
 }
 
 export function registerRpc(zcc: Pick<ZccPluginApi, 'rpc'>, deps: RpcDeps): void {

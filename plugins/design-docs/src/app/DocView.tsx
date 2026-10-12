@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, FileWarning, History, MessageSquare, Bot, PanelLeftOpen, X } from 'lucide-react';
 import type { DesignDocComment, DesignDocDetail, DesignDocRevision } from '../shared/contract.js';
 import { AgentsPane, AskAgentButton, type AskRequest } from './Agents.js';
+import { PublishButton } from './Publish.js';
 import { isMissingDoc, toast } from './api.js';
 import { CommentsPane, type PendingQuote } from './CommentsPane.js';
 import { DocHeader } from './DocHeader.js';
@@ -17,13 +18,15 @@ export type DocLayout = 'workbench' | 'compact';
 type RailTab = 'comments' | 'history' | 'agents';
 
 /**
- * Doc widths that fit the file tree (220px) and then also the rail (320px)
- * beside a readable file. Below them the tree becomes a dropdown and the
- * rail floats over the file.
+ * Doc widths that fit the full header (summary, tags, labelled buttons), then
+ * the file tree (220px), then also the rail (320px) beside a readable file.
+ * Below them the header collapses, the tree becomes a dropdown and the rail
+ * floats over the file.
  */
+const HEADER_FULL_MIN = 560;
 const TREE_INLINE_MIN = 640;
 const RAIL_INLINE_MIN = 1100;
-const DOC_BREAKPOINTS = [TREE_INLINE_MIN, RAIL_INLINE_MIN] as const;
+const DOC_BREAKPOINTS = [HEADER_FULL_MIN, TREE_INLINE_MIN, RAIL_INLINE_MIN] as const;
 
 /** The file to show: the requested one, else the entry file, else the first. */
 export function resolveActivePath(doc: Pick<DesignDocDetail, 'files' | 'entryPath'>, requested: string | null): string | null {
@@ -188,8 +191,9 @@ export function DocView({
   const compact = layout === 'compact';
   const [measureRef, tier] = useWidthTier(DOC_BREAKPOINTS);
   // Unmeasured counts as wide: keep every column until there is clearly no room.
-  const treeInline = !compact && (tier ?? DOC_BREAKPOINTS.length) >= 1;
-  const railInline = !compact && (tier ?? DOC_BREAKPOINTS.length) >= 2;
+  const narrow = !compact && (tier ?? DOC_BREAKPOINTS.length) < 1;
+  const treeInline = !compact && (tier ?? DOC_BREAKPOINTS.length) >= 2;
+  const railInline = !compact && (tier ?? DOC_BREAKPOINTS.length) >= 3;
   const [treeOpen, setTreeOpen] = usePersistentState<boolean>('tree', true);
   const treeShown = treeInline && treeOpen;
   const [mode, setMode] = usePersistentState<ViewMode>('view-mode', 'preview');
@@ -364,16 +368,18 @@ export function DocView({
   );
 
   return (
-    <div ref={measureRef} className={`dd-doc dd-doc-${layout}${railOpen ? ' dd-rail-open' : ''}${railInline ? '' : ' dd-rail-floating'}`}>
+    <div ref={measureRef} className={`dd-doc dd-doc-${layout}${narrow ? ' dd-doc-narrow' : ''}${railOpen ? ' dd-rail-open' : ''}${railInline ? '' : ' dd-rail-floating'}`}>
       <DocHeader
         doc={data}
         projects={projects.data ?? []}
         compact={compact}
+        collapsible={narrow}
         onDeleted={onDeleted}
         actions={
           <>
             {headerExtra}
-            <AskAgentButton doc={data} activePath={activePath} request={askRequest} contextProjectId={contextProjectId} compact={compact} />
+            <PublishButton doc={data} compact={compact || narrow} />
+            <AskAgentButton doc={data} activePath={activePath} request={askRequest} contextProjectId={contextProjectId} compact={compact || narrow} />
           </>
         }
       />

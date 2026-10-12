@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 
 const desktop = vi.hoisted(() => ({
   api: null as object | null
@@ -51,6 +51,7 @@ vi.mock('../../lib/app-surface.js', () => ({
 }));
 
 import { pluginPanelBrowserOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
+import { requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
 
 beforeEach(() => {
   class ResizeObserverStub {
@@ -197,5 +198,42 @@ describe('PluginPanelHostLayout', () => {
     expect(screen.getByTestId('agent-composer')).toBeTruthy();
     view.unmount();
     desktop.api = null;
+  });
+  it('shows a conversation the page asks for, focusing its tab when already open', () => {
+    desktop.api = desktopApi();
+    const view = render(
+      <PluginPanelHostLayout pluginId="design-docs" panelPath="design-docs" subPath="dd_1">
+        <div>slot:docs</div>
+      </PluginPanelHostLayout>
+    );
+    const tabLabels = () => screen.getAllByRole('button', { name: /^Close / }).map((button) => button.getAttribute('aria-label'));
+    // Another plugin's request is not this page's.
+    expect(requestPluginPanelAgent({ pluginId: 'gus', threadId: 't-1' })).toBe(false);
+    expect(screen.queryByTestId('agent-chat')).toBeNull();
+
+    let shown = false;
+    act(() => {
+      shown = requestPluginPanelAgent({ pluginId: 'design-docs', threadId: 't-1', title: 'Review · Doc' });
+    });
+    expect(shown).toBe(true);
+    expect(screen.getByTestId('agent-chat').textContent).toBe('t-1');
+    act(() => {
+      requestPluginPanelAgent({ pluginId: 'design-docs', threadId: 't-2' });
+    });
+    expect(screen.getByTestId('agent-chat').textContent).toBe('t-2');
+    act(() => {
+      requestPluginPanelAgent({ pluginId: 'design-docs', threadId: 't-1' });
+    });
+    expect(screen.getByTestId('agent-chat').textContent).toBe('t-1');
+    expect(tabLabels()).toEqual(['Close Review · Doc', 'Close Agent']);
+
+    view.unmount();
+    // Unmounted, nothing answers.
+    expect(requestPluginPanelAgent({ pluginId: 'design-docs', threadId: 't-3' })).toBe(false);
+    desktop.api = null;
+  });
+
+  it('refuses an empty thread id', () => {
+    expect(requestPluginPanelAgent({ pluginId: 'design-docs', threadId: '' })).toBe(false);
   });
 });

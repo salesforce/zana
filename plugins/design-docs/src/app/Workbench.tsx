@@ -5,7 +5,7 @@ import { Bot, CircleDot, DraftingCompass, FileText, FolderOpen, MessageSquare, P
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
-import { DOC_PANEL_ACTION } from './Agents.js';
+import { showDocAgent } from './Agents.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
@@ -324,9 +324,8 @@ export function NewDocDialog({
           toast('Doc created. Add a project to let an agent draft it.', 'error');
         } else {
           const result = await api.askAgent(doc.id, { prompt: draftingPrompt(brief), projectId: agentProject });
-          navigate.openThreadPanel({ actionId: DOC_PANEL_ACTION, title: doc.title, params: { docId: doc.id }, threadId: result.threadId });
-          navigate.toThread(result.threadId);
-          toast(`An agent is drafting “${doc.title}”. Watch it fill in beside the chat.`);
+          showDocAgent(navigate, doc, result.threadId);
+          toast(`An agent is drafting “${doc.title}”. Watch it fill in as it writes.`);
         }
       }
       onClose();
