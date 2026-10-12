@@ -47,6 +47,9 @@ export interface RenderTimelineFixtureArgs {
     threadName?: string;
   };
   verbose?: boolean;
+  /** Defaults to null (no environment). */
+  workspaceRoot?: string | null;
+  previewRoots?: readonly string[];
 }
 
 export interface RenderedTimelineFixture {
@@ -1309,7 +1312,8 @@ export function renderTimelineFixture(
     isLatestPage: true,
     threadStatus: args.projectionOptions.threadStatus ?? "idle",
     threadName: args.projectionOptions.threadName ?? "",
-    workspaceRoot: null,
+    workspaceRoot: args.workspaceRoot ?? null,
+    ...(args.previewRoots ? { previewRoots: args.previewRoots } : {}),
   };
   const timeline = buildThreadTimelineFromEvents({
     acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,

@@ -38,6 +38,7 @@ import {
 } from './thread-path-confine.js';
 import { getThreadReadSeq } from './thread-reads.js';
 import { getDurableThreadPlanView } from './conversation-plan.js';
+import { projectAttachmentDir } from '../projects/attachments.js';
 import { getThreadExecutionState } from '@zana-ai/zcc-db';
 import { isPlanExecutionMode } from './conversation-execution-mode.js';
 import { conversationNextTurnView } from './conversation-next-turn.js';
@@ -125,6 +126,11 @@ function includeProviderUnhandledOperations(ctx: ProductHttpContext): boolean {
     || process.env.NODE_ENV === 'development';
 }
 
+/** Absolute roots, besides the environment, that `readThreadHostFile` opens. */
+function timelinePreviewRoots(ctx: ProductHttpContext, thread: ConversationThreadRow): string[] {
+  return thread.projectId ? [projectAttachmentDir(ctx.dataDir, thread.projectId)] : [];
+}
+
 function requireThread(ctx: ProductHttpContext, threadId: string) {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -181,6 +187,7 @@ function projectTimeline(
         threadName: thread.title ?? '',
         turnMessageDetail: options.turnMessageDetail,
         workspaceRoot: environment?.path ?? null,
+        previewRoots: timelinePreviewRoots(ctx, thread),
         planCommand: planCommandForProvider(thread.providerId)
       }
     });
@@ -388,6 +395,7 @@ export function conversationTimelineTurnSummaryDetails(
       threadStatus: thread.status,
       threadName: thread.title ?? '',
       workspaceRoot: environment?.path ?? null,
+      previewRoots: timelinePreviewRoots(ctx, thread),
       sourceSeqStart: rows[0]?.sequence ?? sourceSeqStart,
       sourceSeqEnd: rows.at(-1)?.sequence ?? sourceSeqEnd
     }
@@ -430,6 +438,7 @@ export function conversationOutline(ctx: ProductHttpContext, threadId: string) {
         threadName: thread.title ?? '',
         turnMessageDetail: 'full',
         workspaceRoot: environment?.path ?? null,
+        previewRoots: timelinePreviewRoots(ctx, thread),
         planCommand: planCommandForProvider(thread.providerId)
       }
     });

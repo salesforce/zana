@@ -563,6 +563,120 @@ function collectPositionals(
   return positionals;
 }
 
+// ---------------------------------------------------------------------------
+// Path context carried across segments
+//
+// Segments are classified independently, but earlier segments can change what
+// a later path means: `cd DIR; head file` reads `DIR/file`, and
+// `F=/abs/file; sed -n 1,9p $F` reads `/abs/file`. Without this context the
+// timeline offered a Preview of `file` / `$F` resolved against the project
+// root — a different (usually missing) file.
+// ---------------------------------------------------------------------------
+
+interface ShellPathContext {
+  /** Directory set by the last `cd`; null while still in the launch cwd. */
+  cwd: string | null;
+  /** True after a `cd` whose target cannot be determined (`cd -`). */
+  cwdUnknown: boolean;
+  /** Literal shell variables assigned by earlier bare `NAME=value` segments. */
+  vars: Map<string, string>;
+}
+
+const SHELL_VARIABLE_PATTERN =
+  /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/gu;
+
+/** Expands `$NAME` / `${NAME}` from known literal assignments. Unknown
+ * references stay verbatim, so callers can still see the path is dynamic. */
+function expandShellVariables(
+  value: string,
+  vars: ReadonlyMap<string, string>,
+): string {
+  return value.replace(
+    SHELL_VARIABLE_PATTERN,
+    (match, braced: string | undefined, bare: string | undefined) =>
+      vars.get((braced ?? bare)!) ?? match,
+  );
+}
+
+/** Collapses `.`/`..` and duplicate slashes without touching the filesystem.
+ * Leading `..` segments of a relative path are kept. */
+function normalizeShellPath(path: string): string {
+  const absolute = path.startsWith("/");
+  const out: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === ".." && out.length > 0 && out[out.length - 1] !== "..") {
+      out.pop();
+      continue;
+    }
+    if (part === ".." && absolute) continue;
+    out.push(part);
+  }
+  const joined = out.join("/");
+  if (absolute) return `/${joined}`;
+  return joined.length > 0 ? joined : ".";
+}
+
+/** Resolves a path argument against the context, or returns null when the
+ * directory it is relative to is unknown. Paths that need no context are
+ * returned as written. */
+function resolveShellPath(
+  path: string,
+  context: ShellPathContext,
+): string | null {
+  const expanded = expandShellVariables(path, context.vars);
+  if (
+    context.cwd === null ||
+    expanded.startsWith("/") ||
+    expanded.startsWith("~")
+  ) {
+    return context.cwdUnknown && !/^[/~]/u.test(expanded) ? null : expanded;
+  }
+  return normalizeShellPath(`${context.cwd}/${expanded}`);
+}
+
+function resolveIntentPath(
+  intent: EventProjectionToolParsedIntent,
+  context: ShellPathContext,
+): EventProjectionToolParsedIntent {
+  if (intent.type === "unknown" || intent.path === null) return intent;
+  return { ...intent, path: resolveShellPath(intent.path, context) };
+}
+
+/** Applies a segment's effect on the path context: bare assignments record
+ * literal variables, `cd` moves the working directory. */
+function applySegmentPathContext(
+  tokens: readonly ShellToken[],
+  context: ShellPathContext,
+): void {
+  const commandIndex = getCommandTokenIndex(tokens);
+  const commandToken = tokens[commandIndex];
+  if (commandToken === undefined) {
+    // `NAME=value` with no command sets a shell variable for later segments.
+    for (const token of tokens) {
+      const eq = token.value.indexOf("=");
+      const name = token.value.slice(0, eq);
+      const value = expandShellVariables(token.value.slice(eq + 1), context.vars);
+      if (/[$`]/u.test(value)) context.vars.delete(name);
+      else context.vars.set(name, value);
+    }
+    return;
+  }
+  if (commandToken.value !== "cd") return;
+  const target = collectPositionals(
+    tokens.slice(commandIndex + 1),
+    NO_FLAGS_WITH_VALUE,
+  )[0];
+  if (target === "-") {
+    context.cwd = null;
+    context.cwdUnknown = true;
+    return;
+  }
+  const resolved = resolveShellPath(target ?? "~", context);
+  context.cwd = resolved;
+  context.cwdUnknown = resolved === null;
+}
+
 function classifyShellSegment(
   tokens: readonly ShellToken[],
   fullCommand: string,
@@ -670,9 +784,23 @@ export function parseShellCommandIntents(
   if (!command) return [];
 
   const segments = splitShellCommandSegments(command);
-  const classifications = segments.map((segment) =>
-    classifyShellSegment(segment, command),
-  );
+  const context: ShellPathContext = {
+    cwd: null,
+    cwdUnknown: false,
+    vars: new Map(),
+  };
+  const classifications = segments.map((segment) => {
+    const classification = classifyShellSegment(segment, command);
+    const resolved: SegmentClassification =
+      classification.kind === "intent"
+        ? {
+            kind: "intent",
+            intent: resolveIntentPath(classification.intent, context),
+          }
+        : classification;
+    applySegmentPathContext(segment, context);
+    return resolved;
+  });
 
   // Any segment that writes disqualifies the whole command from "exploring".
   if (classifications.some((c) => c.kind === "write")) return [];

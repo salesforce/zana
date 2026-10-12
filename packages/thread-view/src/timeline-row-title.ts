@@ -1270,7 +1270,8 @@ function mapQuestionTitle(row: TimelineQuestionViewWorkRow): TimelineTitle {
 }
 
 function mapFileReadTitle(row: TimelineFileReadWorkRow): TimelineTitle {
-  const action: TimelineTitleAction | null = row.path
+  const action: TimelineTitleAction | null =
+    row.path && row.previewable !== false
     ? { kind: "open-file-preview", path: row.path }
     : null;
   if (row.presentation) {
@@ -1687,7 +1688,7 @@ function mapTimelineActivityIntentTitle({
     ? [statusDecoration(failureStatus, null)]
     : [];
   const action =
-    intent.type === "read" && intent.path
+    intent.type === "read" && intent.path && intent.previewable !== false
       ? { kind: "open-file-preview" as const, path: intent.path }
       : null;
   return makeTitle({ segments, decorations, action });

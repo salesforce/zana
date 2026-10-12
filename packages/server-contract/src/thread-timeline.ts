@@ -44,6 +44,8 @@ export const timelineActivityIntentSchema = z.discriminatedUnion("type", [
     command: z.string(),
     name: z.string(),
     path: z.string().nullable(),
+    /** False when `path` is outside every root the file preview can open. */
+    previewable: z.boolean().optional(),
   }),
   z.object({
     type: z.literal("list_files"),
@@ -365,6 +367,8 @@ export const timelineFileReadWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("file-read"),
   callId: z.string(),
   path: z.string(),
+  /** False when `path` is outside every root the file preview can open. */
+  previewable: z.boolean().optional(),
   cmd: z.string().nullable(),
   completedAt: z.number().nullable(),
   ...timelineRowPresentationField,

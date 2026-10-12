@@ -111,6 +111,13 @@ interface ThreadTimelineFromEventsBaseOptions {
    * the thread has no environment (the path is then left as-is).
    */
   workspaceRoot: string | null;
+  /**
+   * Absolute roots, besides `workspaceRoot`, whose files the thread file
+   * preview can open (e.g. the project attachment directory). Read rows
+   * whose path falls outside every root are marked `previewable: false`
+   * so the timeline does not offer a Preview that can only fail.
+   */
+  previewRoots?: readonly string[];
 }
 
 export interface ThreadTimelineFromEventsOptions extends ThreadTimelineFromEventsBaseOptions {
@@ -150,6 +157,8 @@ export interface BuildThreadTimelineTurnDetailsFromEventsOptions extends ThreadT
   threadName: string;
   /** See {@link ThreadTimelineFromEventsBaseOptions.workspaceRoot}. */
   workspaceRoot: string | null;
+  /** See {@link ThreadTimelineFromEventsBaseOptions.previewRoots}. */
+  previewRoots?: readonly string[];
 }
 
 export interface BuildThreadTimelineTurnDetailsFromEventsArgs {
@@ -175,6 +184,7 @@ interface BuildTurnRowsArgs {
   rowIdPrefix: string;
   turn: EventProjectionTurn;
   workspaceRoot: string | null;
+  previewRoots: readonly string[];
 }
 
 interface TimelineMessageBounds {
@@ -202,12 +212,14 @@ interface BuildCompletedTurnSummaryRowsArgs {
   summaryItems: CompletedTurnSummaryItem[];
   turn: EventProjectionTurn;
   workspaceRoot: string | null;
+  previewRoots: readonly string[];
 }
 
 interface BuildTimelineRowsOptions {
   includeNestedRows: boolean;
   rowIdPrefix: string;
   workspaceRoot: string | null;
+  previewRoots: readonly string[];
 }
 
 interface BuildGenericOperationSystemRowArgs {
@@ -411,8 +423,53 @@ function rowPresentation(message: {
   return message.presentation ? { presentation: message.presentation } : {};
 }
 
+function resolvePreviewRoots(options: {
+  workspaceRoot: string | null;
+  previewRoots?: readonly string[];
+}): readonly string[] {
+  return [
+    ...(options.workspaceRoot ? [options.workspaceRoot] : []),
+    ...(options.previewRoots ?? []),
+  ];
+}
+
+/**
+ * Whether the thread file preview can open `path`. The preview resolves
+ * relative paths inside the thread environment and accepts absolute paths
+ * only under a known root, so anything else (shell-dynamic `$VAR`/`~` paths,
+ * `..` escapes, or absolute files elsewhere on disk such as provider
+ * tool-result spills) would only render "file not found".
+ */
+function isPreviewablePath(
+  path: string,
+  previewRoots: readonly string[],
+): boolean {
+  if (/[$`]/u.test(path) || path.startsWith("~")) return false;
+  if (!path.startsWith("/")) {
+    return !path.split("/").includes("..");
+  }
+  return previewRoots.some((root) => {
+    const normalizedRoot = root.replace(/\/+$/u, "");
+    return (
+      normalizedRoot.length > 0 &&
+      path.startsWith(`${normalizedRoot}/`) &&
+      !path.split("/").includes("..")
+    );
+  });
+}
+
+function previewableField(
+  path: string | null,
+  previewRoots: readonly string[],
+): { previewable?: false } {
+  return path !== null && !isPreviewablePath(path, previewRoots)
+    ? { previewable: false }
+    : {};
+}
+
 function convertActivityIntent(
   intent: EventProjectionToolParsedIntent,
+  previewRoots: readonly string[],
 ): TimelineActivityIntent {
   switch (intent.type) {
     case "read":
@@ -421,6 +478,7 @@ function convertActivityIntent(
         command: intent.cmd,
         name: intent.name,
         path: intent.path,
+        ...previewableField(intent.path, previewRoots),
       };
     case "list_files":
       return {
@@ -607,7 +665,9 @@ function convertMessage(
           exitCode: message.exitCode,
           completedAt: message.completedAt,
           approvalStatus: message.approvalStatus,
-          activityIntents: message.parsedIntents.map(convertActivityIntent),
+          activityIntents: message.parsedIntents.map((intent) =>
+            convertActivityIntent(intent, options.previewRoots),
+          ),
           ...rowPresentation(message),
         },
       ];
@@ -623,6 +683,7 @@ function convertMessage(
             status: message.status,
             callId: message.callId,
             path: only.path,
+            ...previewableField(only.path, options.previewRoots),
             cmd: only.cmd || null,
             completedAt: message.completedAt,
             ...rowPresentation(message),
@@ -678,7 +739,9 @@ function convertMessage(
           output: message.output,
           completedAt: message.completedAt,
           approvalStatus: message.approvalStatus,
-          activityIntents: message.parsedIntents.map(convertActivityIntent),
+          activityIntents: message.parsedIntents.map((intent) =>
+            convertActivityIntent(intent, options.previewRoots),
+          ),
           ...rowPresentation(message),
         },
       ];
@@ -768,6 +831,7 @@ function convertMessage(
           status: message.status,
           callId: message.callId,
           path: message.path,
+          ...previewableField(message.path, options.previewRoots),
           cmd: message.cmd,
           completedAt: message.completedAt,
           ...rowPresentation(message),
@@ -837,6 +901,7 @@ function convertMessage(
               includeNestedRows: true,
               rowIdPrefix: `${base.id}:child:`,
               workspaceRoot: options.workspaceRoot,
+              previewRoots: options.previewRoots,
             }),
           ),
         },
@@ -1244,6 +1309,7 @@ function buildCompletedTurnSummaryRows({
   summaryItems,
   turn,
   workspaceRoot,
+  previewRoots,
 }: BuildCompletedTurnSummaryRowsArgs): TimelineRow[] {
   const rows: TimelineRow[] = [];
   for (const item of summaryItems) {
@@ -1253,6 +1319,7 @@ function buildCompletedTurnSummaryRows({
           includeNestedRows,
           rowIdPrefix,
           workspaceRoot,
+          previewRoots,
         }),
       );
       continue;
@@ -1264,6 +1331,7 @@ function buildCompletedTurnSummaryRows({
             includeNestedRows,
             rowIdPrefix,
             workspaceRoot,
+            previewRoots,
           }),
         )
       : [];
@@ -1290,6 +1358,7 @@ function buildTurnRows({
   rowIdPrefix,
   turn,
   workspaceRoot,
+  previewRoots,
 }: BuildTurnRowsArgs): TimelineRow[] {
   const messages = turn.messages ?? [];
   const isCompletedTurn =
@@ -1301,6 +1370,7 @@ function buildTurnRows({
         includeNestedRows,
         rowIdPrefix,
         workspaceRoot,
+        previewRoots,
       }),
     );
   }
@@ -1308,10 +1378,20 @@ function buildTurnRows({
   const { summaryItems, terminalMessages, trailingMessages } =
     groupCompletedTurnMessages(turn);
   const terminalRows = terminalMessages.flatMap((message) =>
-    convertMessage(message, { includeNestedRows, rowIdPrefix, workspaceRoot }),
+    convertMessage(message, {
+      includeNestedRows,
+      rowIdPrefix,
+      workspaceRoot,
+      previewRoots,
+    }),
   );
   const trailingRows = trailingMessages.flatMap((message) =>
-    convertMessage(message, { includeNestedRows, rowIdPrefix, workspaceRoot }),
+    convertMessage(message, {
+      includeNestedRows,
+      rowIdPrefix,
+      workspaceRoot,
+      previewRoots,
+    }),
   );
   const summaryRows = buildCompletedTurnSummaryRows({
     includeNestedRows,
@@ -1319,6 +1399,7 @@ function buildTurnRows({
     summaryItems,
     turn,
     workspaceRoot,
+    previewRoots,
   });
   return [...summaryRows, ...terminalRows, ...trailingRows];
 }
@@ -1422,6 +1503,7 @@ function buildTimelineRows(
             includeNestedRows,
             rowIdPrefix: options.rowIdPrefix,
             workspaceRoot: options.workspaceRoot,
+            previewRoots: options.previewRoots,
           }),
         );
         break;
@@ -1457,6 +1539,7 @@ export function buildThreadTimelineFromEvents(
       includeNestedRows: args.options.includeNestedRows,
       rowIdPrefix: ROOT_TIMELINE_ROW_ID_PREFIX,
       workspaceRoot: args.options.workspaceRoot,
+      previewRoots: resolvePreviewRoots(args.options),
     }),
     ...buildPendingSteerRowsFromEvents(
       args.acceptedClientRequestContext,
@@ -1520,6 +1603,7 @@ export function buildThreadTimelineTurnDetailsFromEvents(
     includeNestedRows: true,
     rowIdPrefix: ROOT_TIMELINE_ROW_ID_PREFIX,
     workspaceRoot: args.options.workspaceRoot,
+    previewRoots: resolvePreviewRoots(args.options),
   });
   const matchingTurnSummary = findMatchingTurnSummaryRow(
     nestedRows,
