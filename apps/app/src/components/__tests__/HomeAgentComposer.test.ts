@@ -365,7 +365,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('filterCliComposerCommands');
     expect(source).toContain('product.threads.commands(projectId)');
     expect(source).toContain("'/plugins/contributions'");
-    expect(source).toContain('product.commands.list(projectRoot ?? undefined)');
+    expect(source).toContain('nativeCapabilities({ projectId, providerId: slashCatalog.providerId, hostId, environmentId })');
+    expect(source).not.toContain('product.commands.list(');
     expect(source).toContain('row.providerId === slashCatalog.providerId');
     expect(source).toContain('COMPOSER_COMMANDS_RELOAD_EVENT');
     expect(source).toContain('product.pluginApps.onChanged');

@@ -32,9 +32,52 @@ afterEach(async () => {
   await server?.close();
   server = null;
   for (const handle of providerHandles.splice(0)) handle.unregister();
+  vi.unstubAllEnvs();
 });
 
 describe('product HTTP', () => {
+  it('serves native catalogues from the authorized host and preserves discovery failures at the HTTP boundary', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-native-catalogue-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [{
+      id: 'native-project', name: 'Native', path: join(dataDir, 'placeholder'), hostId: 'native-host',
+      remote: { host: 'devbox', remotePath: '/srv/native-project' }, createdAt: 1, lastActiveAt: 1
+    }] }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    upsertHost(server.ctx.db, { id: 'native-host', name: 'Native host', hostKeyHash: 'n'.repeat(64), isPrimary: true });
+    vi.stubEnv('ZCC_CLAUDE_HOME', dataDir);
+    providerHandles.push(registerThreadProvider('native-fixture', {
+      id: 'native-fixture', displayName: 'Native fixture',
+      capabilities: { supportsServiceTier: false, fork: 'checkpoint', supportsThreadArchive: false,
+        supportsThreadRename: false, permissionModes: ['full'] },
+      experimental_nativeSkillRoots: { user: ['.fixture/skills'], project: ['.fixture/skills'] }
+    }));
+    const rpc = vi.fn(async () => ({ commands: [{ name: 'review', source: 'skill', origin: 'user',
+      description: 'Review', argumentHint: null, filePath: '/host/.fixture/skills/review/SKILL.md',
+      userInvocable: false }], diagnostics: ['An optional root is unavailable'] }));
+    server.ctx.hostHub.resolveHostId = (id) => id ?? 'native-host';
+    server.ctx.hostHub.ensureHostSessionReady = () => ({}) as never;
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+    const global = await fetch(`${server.url}api/v1/skills/native-capabilities?providerId=native-fixture`);
+    expect(global.status).toBe(200);
+    expect(await global.json()).toMatchObject({ skills: [{ name: 'review', userInvocable: false }],
+      commands: [], diagnostics: ['Native fixture: An optional root is unavailable'] });
+    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ hostId: 'native-host',
+      command: expect.objectContaining({ type: 'host.list_commands', providerId: 'native-fixture', cwd: null }) }));
+    const scoped = await fetch(`${server.url}api/v1/projects/native-project/native-capabilities?providerId=native-fixture&hostId=native-host`);
+    expect(scoped.status).toBe(200);
+    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ hostId: 'native-host',
+      command: expect.objectContaining({ cwd: '/srv/native-project' }) }));
+    const noScope = await fetch(`${server.url}api/v1/skills/native-capabilities?hostId=native-host&environmentId=foreign`);
+    expect(noScope.status).toBe(400);
+    const unknown = await fetch(`${server.url}api/v1/projects/missing/native-capabilities`);
+    expect(unknown.status).toBe(404);
+    const unknownEnvironment = await fetch(`${server.url}api/v1/projects/native-project/native-capabilities?environmentId=foreign`);
+    expect(unknownEnvironment.status).toBeGreaterThanOrEqual(400);
+    server.ctx.hostHub.ensureHostSessionReady = () => { throw new HostUnavailableError('Native host offline'); };
+    const offline = await fetch(`${server.url}api/v1/projects/native-project/native-capabilities`);
+    expect(offline.status).toBe(503);
+    expect(await offline.json()).toMatchObject({ code: 'host-unavailable' });
+  });
   it('bounds event HTTP reads and polls/searches without loading invisible oversized diffs', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-history-http-'));
     server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });

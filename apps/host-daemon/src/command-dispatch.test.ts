@@ -28,6 +28,21 @@ const installedClaude = {
 };
 
 describe('host command dispatch', () => {
+  it('dispatches native skill discovery with author restrictions and rejects an unconfined relative cwd', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-native-dispatch-'));
+    onTestFinished(() => rmSync(project, { recursive: true, force: true }));
+    const root = join(project, '.fixture/skills/review');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'SKILL.md'), '---\nname: review\nuser-invocable: false\ndisable-model-invocation: true\n---\nReview');
+    const runtime = createCommandRuntime({});
+    const command = { type: 'host.list_commands' as const, providerId: 'fixture', cwd: project,
+      nativeSkillRoots: { project: ['.fixture/skills'] } };
+    await expect(dispatchHostCommand(runtime, command)).resolves.toMatchObject({
+      commands: [{ name: 'review', source: 'skill', origin: 'project', userInvocable: false,
+        disableModelInvocation: true, filePath: join(root, 'SKILL.md') }], diagnostics: []
+    });
+    await expect(dispatchHostCommand(runtime, { ...command, cwd: 'relative/path' })).rejects.toThrow('cwd must be absolute');
+  });
   it('rejects a missing unmanaged path without crashing', async () => {
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude

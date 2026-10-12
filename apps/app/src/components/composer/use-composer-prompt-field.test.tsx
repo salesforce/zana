@@ -147,6 +147,35 @@ describe('useComposerPromptField', () => {
     await waitFor(() => expect(suggestionState.commands).toContainEqual({ name: '/review', description: 'Review' }));
   });
 
+  it('reports non-Error discovery failures without losing local commands', async () => {
+    native.mockRejectedValue('Native resolver unavailable');
+    const onError = vi.fn();
+    const localCommands = [COMPOSER_TERMINAL_COMMAND];
+    renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [], onError,
+      slashCatalog: { kind: 'cli', providerId: 'fixture', localCommands }, onSubmit: vi.fn()
+    }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Native resolver unavailable'));
+    expect(suggestionState.commands).toContainEqual(COMPOSER_TERMINAL_COMMAND);
+  });
+
+  it.each(['diagnostic', 'failure'])('ignores a late native %s after the composer has unmounted', async (kind) => {
+    let finish!: () => void;
+    native.mockImplementationOnce(() => new Promise((resolve, reject) => {
+      finish = () => kind === 'failure'
+        ? reject(new Error('Previous host offline'))
+        : resolve({ commands: [], skills: [], diagnostics: ['Previous host warning'] });
+    }));
+    const onError = vi.fn();
+    const { unmount } = renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [], onError,
+      slashCatalog: { kind: 'thread', providerId: 'fixture' }, onSubmit: vi.fn()
+    }));
+    unmount();
+    await act(async () => finish());
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it('rerenders consumers with updated serialized editor text', () => {
     render(<Probe />);
     expect(screen.getByTestId('text').textContent).toBe('before');

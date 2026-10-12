@@ -25,6 +25,24 @@ const threadId = randomUUID();
 const environmentId = randomUUID();
 
 describe('host-rpc contract', () => {
+  it('round-trips native catalogue discovery and author restrictions at protocol 45', () => {
+    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(45);
+    const command = { type: 'host.list_commands', providerId: 'fixture-provider', cwd: null };
+    expect(HostRpcCommandSchema.parse(command)).toEqual(command);
+    for (const patch of [{ providerId: '' }, { cwd: undefined }, { root: '/private' }]) {
+      expect(HostRpcCommandSchema.safeParse({ ...command, ...patch }).success).toBe(false);
+    }
+    const result = {
+      commands: [{ name: 'review', source: 'skill', origin: 'user', description: null,
+        argumentHint: null, filePath: '/home/skills/review/SKILL.md', linked: true,
+        userInvocable: false, disableModelInvocation: true, allowedTools: ['Read'] }],
+      diagnostics: ['One root is unavailable']
+    };
+    expect(parseHostRpcResult('host.list_commands', result)).toEqual(result);
+    expect(() => parseHostRpcResult('host.list_commands', {
+      commands: [{ ...result.commands[0], userInvocable: 'false' }]
+    })).toThrow();
+  });
   it('keeps Connect and legacy peer installation as separate strict request shapes', () => {
     const command = { type: 'peer_daemon.install', remote: { host: 'devbox' }, connect: {
       accountUrl: 'https://account.example', serverId: randomUUID(), code: 'ABCD-ABCD-ABCD-ABCD-ABCD-ABCD-ABCD-ABCD'
@@ -119,7 +137,7 @@ describe('host-rpc contract', () => {
       callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
       projectRoot: '/registered/project'
     };
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(44);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(44);
     expect(HostRpcRequestMessageSchema.parse({
       type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1', command
@@ -869,7 +887,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(44);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(44);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
@@ -928,7 +946,7 @@ describe('host.environment.replace', () => {
   const entry = { name: 'GH_TOKEN', value: 'token-value' };
 
   it('is introduced at protocol 44 and parses a bounded, strict entry list', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(44);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(44);
     const command = {
       type: 'host.environment.replace',
       entries: [
