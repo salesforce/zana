@@ -60,7 +60,7 @@ import { callPluginHostRpc, disposePluginHostWorkers } from './plugin-host-rpc.j
 import { parseRemoteEnvironmentNames } from '../services/hosts/remote-environment.js';
 import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
 import { loadPluginHostArtifactSnapshot } from './plugin-host-artifact.js';
-import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import { registerThreadProvider, trackThreadProviderStartup } from '../services/threads/thread-provider-catalog.js';
 import { discoverPluginSkillNames } from './plugin-skills.js';
 import {
   BUILTIN_PLUGINS,
@@ -1906,6 +1906,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       startBuiltinSourceWatchers();
       started = true;
       })();
+      trackThreadProviderStartup(starting);
       return starting;
     },
     stop() {

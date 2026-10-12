@@ -13,6 +13,10 @@ export interface ThreadProviderRecord extends PluginProviderDeclaration {
 }
 
 const providers = new Map<string, ThreadProviderRecord[]>();
+const registrationListeners = new Set<() => void>();
+let providerStartup: Promise<unknown> | null = null;
+
+export const THREAD_PROVIDER_STARTUP_WAIT_MS = 30_000;
 
 function currentProvider(id: string): ThreadProviderRecord | undefined {
   return providers.get(id)?.at(-1);
@@ -78,6 +82,7 @@ export function registerThreadProvider(
   const stack = providers.get(declaration.id) ?? [];
   stack.push(record);
   providers.set(declaration.id, stack);
+  for (const listener of [...registrationListeners]) listener();
   return {
     id: declaration.id,
     unregister() {
@@ -88,6 +93,38 @@ export function registerThreadProvider(
       else providers.delete(declaration.id);
     }
   };
+}
+
+/** Plugin startup registers providers as each plugin loads; thread creation waits on it. */
+export function trackThreadProviderStartup(startup: Promise<unknown>): void {
+  providerStartup = startup;
+}
+
+/**
+ * Bundled plugins load one at a time after launch, and a provider joins the
+ * catalog only once its plugin has loaded. Resolves when `providerId` registers,
+ * plugin startup settles, or `timeoutMs` passes, so a thread created right after
+ * launch does not fail with `unknown thread provider`.
+ */
+export function waitForThreadProvider(
+  providerId: string,
+  timeoutMs = THREAD_PROVIDER_STARTUP_WAIT_MS
+): Promise<void> {
+  const startup = providerStartup;
+  if (!startup || getThreadProvider(providerId)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      registrationListeners.delete(onRegister);
+      resolve();
+    };
+    const onRegister = () => {
+      if (getThreadProvider(providerId)) finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    registrationListeners.add(onRegister);
+    startup.then(finish, finish);
+  });
 }
 
 export function listThreadProviders(): ThreadProviderRecord[] {

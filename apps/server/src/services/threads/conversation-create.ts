@@ -38,7 +38,8 @@ import {
   bridgeLaunchForProvider,
   canonicalThreadProviderId,
   getThreadProvider,
-  permissionModeForLaunchProfile
+  permissionModeForLaunchProfile,
+  waitForThreadProvider
 } from './thread-provider-catalog.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
@@ -308,6 +309,7 @@ export async function createConversationFromRequest(
   if (!input.providerId) {
     throw new ThreadCreateError(400, 'invalid-provider', 'providerId is required');
   }
+  await waitForThreadProvider(input.providerId);
   input.serviceTier = authorizedServiceTier(ctx, input.providerId, input.serviceTier);
   const pluginResolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
   const textPrompt = flattenThreadInput(pluginResolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);

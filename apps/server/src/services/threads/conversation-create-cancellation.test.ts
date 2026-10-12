@@ -9,7 +9,7 @@ import {
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { createConversationFromRequest } from './conversation-create.js';
 import { sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
-import { getThreadProvider, registerThreadProvider } from './thread-provider-catalog.js';
+import { getThreadProvider, registerThreadProvider, trackThreadProviderStartup } from './thread-provider-catalog.js';
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 
 let db: ZccDatabase;
@@ -135,4 +135,23 @@ describe('initial thread cancellation', () => {
     expect(getConversationThread(db, threadId)).toMatchObject({ status: 'idle', providerThreadId: null });
   });
 
+});
+
+describe('provider plugin startup', () => {
+  it('creates the thread once a provider still loading at launch registers', async () => {
+    const declaration = getThreadProvider('test-provider')!;
+    unregister();
+    trackThreadProviderStartup(new Promise(() => {}));
+    try {
+      const creating = createConversationFromRequest(ctx, { id: threadId, projectId: 'p', providerId: 'test-provider', input: ['do work'], promptInput: [{ type: 'text', text: 'do work', mentions: [] }] });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(getConversationThread(db, threadId)).toBeFalsy();
+      expect(commands).toEqual([]);
+      unregister = registerThreadProvider('test', declaration).unregister;
+      expect(await creating).toMatchObject({ id: threadId, status: 'active' });
+      expect(commands).toContain('thread.start');
+    } finally {
+      trackThreadProviderStartup(Promise.resolve());
+    }
+  });
 });

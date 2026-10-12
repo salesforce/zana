@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flattenThreadInput, requestAutoThreadTitle, threadTitle } from './conversation-create.js';
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import {
@@ -7,7 +7,9 @@ import {
   canonicalThreadProviderId,
   getThreadProvider,
   listThreadProviders,
-  registerThreadProvider
+  registerThreadProvider,
+  trackThreadProviderStartup,
+  waitForThreadProvider
 } from './thread-provider-catalog.js';
 
 describe('flattenThreadInput', () => {
@@ -215,6 +217,89 @@ describe('thread provider catalog', () => {
       if (previous === undefined) delete process.env.ZCC_FAKE_PROVIDER;
       else process.env.ZCC_FAKE_PROVIDER = previous;
     }
+  });
+});
+
+describe('waitForThreadProvider', () => {
+  const claudeCode = {
+    id: 'claude-code',
+    displayName: 'Claude Code',
+    capabilities: {
+      supportsServiceTier: false,
+      fork: 'tip' as const,
+      supportsManualCompaction: true,
+      supportsThreadArchive: false,
+      supportsThreadRename: false,
+      permissionModes: ['accept-edits' as const]
+    },
+    composerActions: []
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+    trackThreadProviderStartup(Promise.resolve());
+  });
+
+  it('resolves at once before plugin startup is tracked', async () => {
+    vi.useFakeTimers();
+    await waitForThreadProvider('claude-code');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('resolves at once for a registered provider while startup runs', async () => {
+    vi.useFakeTimers();
+    trackThreadProviderStartup(new Promise(() => {}));
+    const handle = registerThreadProvider('provider-claude-code', claudeCode);
+    try {
+      await waitForThreadProvider('claude');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      handle.unregister();
+    }
+  });
+
+  it('resolves when the provider registers during startup, through its alias', async () => {
+    vi.useFakeTimers();
+    trackThreadProviderStartup(new Promise(() => {}));
+    let resolved = false;
+    const waiting = waitForThreadProvider('claude').then(() => { resolved = true; });
+    const other = registerThreadProvider('provider-acp', { ...claudeCode, id: 'acp-opencode' });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    const handle = registerThreadProvider('provider-claude-code', claudeCode);
+    try {
+      await waiting;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      handle.unregister();
+      other.unregister();
+    }
+  });
+
+  it.each([
+    ['resolves', () => Promise.resolve()],
+    ['rejects', () => Promise.reject(new Error('plugin startup failed'))]
+  ])('gives up once plugin startup %s without the provider', async (_label, settle) => {
+    vi.useFakeTimers();
+    const startup = Promise.withResolvers<void>();
+    trackThreadProviderStartup(startup.promise);
+    const waiting = waitForThreadProvider('claude-code');
+    settle().then(startup.resolve, startup.reject);
+    await waiting;
+    expect(getThreadProvider('claude-code')).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('gives up after the wait bound when startup never settles', async () => {
+    vi.useFakeTimers();
+    trackThreadProviderStartup(new Promise(() => {}));
+    let resolved = false;
+    const waiting = waitForThreadProvider('claude-code', 1_000).then(() => { resolved = true; });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(resolved).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await waiting;
+    expect(resolved).toBe(true);
   });
 });
 
