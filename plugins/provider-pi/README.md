@@ -16,6 +16,8 @@ By default, the bridge launches `pi` from the host's `PATH`. `ZCC_PI_BRIDGE_COMM
 
 The declaration names these variables for host environment passthrough. Names travel through the server and daemon contracts; values are read on the execution host and restored only for that bridge process. Other inherited `ZCC_*` and `BB_*` variables remain scrubbed. Explicit bridge environment values take priority.
 
+The **Trust system certificates** plugin setting (on by default) starts Pi sessions with `NODE_USE_SYSTEM_CA=1`, so Pi also trusts the OS certificate store. An app launched from the Dock never reads shell rc files, so `NODE_EXTRA_CA_CERTS` is usually missing, and providers behind a corporate TLS root fail with "Connection error.". Trusting the store adds to Node's bundled roots, so public providers are unaffected. A `NODE_USE_SYSTEM_CA` value already in the environment takes precedence. Changing the setting rebuilds a running session on its next turn. The model-catalog child always uses the default because it makes no model requests.
+
 ## Verification
 
 Run the plugin's Vitest suite and TypeScript check, then `pnpm test:e2e -- e2e/pi-extension-loading.spec.ts`. The Electron test launches the pinned Pi CLI outside the fixture's isolated home, executes a native extension tool alongside injected Zana tools, checks a complete 36 KB Unicode result through the UI, and verifies missing-CLI errors.

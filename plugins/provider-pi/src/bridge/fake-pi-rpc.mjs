@@ -103,9 +103,10 @@ const processLogPath = process.env.FAKE_PI_PROCESS_LOG;
 const commandLogPath = process.env.FAKE_PI_COMMAND_LOG;
 const promptDumpPath = process.env.FAKE_PI_PROMPT_DUMP;
 if (process.env.FAKE_PI_ENV_LOG) {
+  const loggedVar = process.env.FAKE_PI_ENV_LOG_VAR;
   appendFileSync(
     process.env.FAKE_PI_ENV_LOG,
-    `${process.env.FAKE_PI_ENV_MARKER ?? ""}\n`,
+    `${loggedVar ? (process.env[loggedVar] ?? "unset") : (process.env.FAKE_PI_ENV_MARKER ?? "")}\n`,
   );
 }
 if (sessionFile !== undefined) {

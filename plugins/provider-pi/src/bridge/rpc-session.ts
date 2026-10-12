@@ -16,6 +16,7 @@ export interface PiRpcSessionOptions {
   thinkingLevel?: string;
   additionalSkillPaths?: readonly string[];
   shellEnvOverrides?: Record<string, string>;
+  trustSystemCertificates?: boolean;
   dynamicTools?: readonly DynamicToolDefinition[];
   sessionFilePath: string;
   sessionDir: string;
@@ -242,10 +243,13 @@ export class PiRpcSession {
     const onExtensionUiRequest = this.options.onExtensionUiRequest;
     const child = new PiRpcChild({
       cwd: this.options.cwd,
-      env: buildPiChildEnv({
-        ...(this.options.shellEnvOverrides ?? {}),
-        PI_ZCC_TOOLS_FILE: toolsFilePath,
-      }),
+      env: buildPiChildEnv(
+        {
+          ...(this.options.shellEnvOverrides ?? {}),
+          PI_ZCC_TOOLS_FILE: toolsFilePath,
+        },
+        { trustSystemCertificates: this.options.trustSystemCertificates },
+      ),
       args,
       onEvent: (event) => {
         if (child === this.child) this.handleEvent(event);

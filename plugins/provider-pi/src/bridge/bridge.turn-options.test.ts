@@ -107,6 +107,48 @@ it(
 );
 
 it(
+  "rebuilds the session when the system certificate setting changes",
+  async () => {
+    const threadId = "thr_turn_options_system_ca";
+    const envLog = join(harness.workspaceDir, "system-ca.log");
+    vi.stubEnv("NODE_USE_SYSTEM_CA", undefined);
+    vi.stubEnv("FAKE_PI_ENV_LOG", envLog);
+    vi.stubEnv("FAKE_PI_ENV_LOG_VAR", "NODE_USE_SYSTEM_CA");
+    const options = (trustSystemCertificates?: boolean) => ({
+      ...MINI,
+      ...(trustSystemCertificates === undefined
+        ? {}
+        : { providerOptions: { trustSystemCertificates } }),
+    });
+    await harness.startThread(threadId, { options: options() });
+
+    expect((await turnStart(1, threadId, "first", options())).error).toBeUndefined();
+    let seen = await harness.waitForTurnBoundary(threadId, 0);
+    expect(
+      (await turnStart(2, threadId, "second", options(false))).error,
+    ).toBeUndefined();
+    seen = await harness.waitForTurnBoundary(threadId, seen);
+    expect(
+      (await turnStart(3, threadId, "third", options(false))).error,
+    ).toBeUndefined();
+    seen = await harness.waitForTurnBoundary(threadId, seen);
+    expect(
+      (await turnStart(4, threadId, "fourth", options(true))).error,
+    ).toBeUndefined();
+    await harness.waitForTurnBoundary(threadId, seen);
+
+    expect(readFileSync(envLog, "utf8").trim().split("\n")).toEqual([
+      "1",
+      "unset",
+      "1",
+    ]);
+    expect(sessionReplacements(threadId)).toHaveLength(2);
+    vi.unstubAllEnvs();
+  },
+  TURN_OPTIONS_TEST_TIMEOUT_MS,
+);
+
+it(
   "rebuilds the session on the model a later turn carries",
   async () => {
     const threadId = "thr_turn_options_model";

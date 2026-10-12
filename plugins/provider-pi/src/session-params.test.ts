@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPiSessionParams } from "./session-params.js";
+import { buildPiSessionParams, buildPiTurnOptions } from "./session-params.js";
 
 describe("buildPiSessionParams", () => {
   it("injects the bb thread id into the shell env and drops invalid keys", () => {
@@ -50,6 +50,25 @@ describe("buildPiSessionParams", () => {
     expect(params("none").thinkingLevel).toBe("off");
     expect(params("high").thinkingLevel).toBe("high");
     expect(params("ultracode")).not.toHaveProperty("thinkingLevel");
+  });
+
+  it("trusts system certificates unless the provider options opt out", () => {
+    const params = (providerOptions?: Record<string, unknown>) =>
+      buildPiSessionParams({
+        threadId: "bb-thread-1",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: { providerOptions },
+      }).trustSystemCertificates;
+
+    expect(params()).toBe(true);
+    expect(params({ trustSystemCertificates: true })).toBe(true);
+    expect(params({ trustSystemCertificates: false })).toBe(false);
+    expect(
+      buildPiTurnOptions({ providerOptions: { trustSystemCertificates: false } })
+        .trustSystemCertificates,
+    ).toBe(false);
+    expect(buildPiTurnOptions({}).trustSystemCertificates).toBe(true);
   });
 
   it("routes instructions by mode", () => {

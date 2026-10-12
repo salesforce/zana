@@ -758,6 +758,7 @@ async function buildSessionOptions(args: {
     systemPrompt: args.params.baseInstructions,
     appendSystemPrompt: args.params.appendSystemPrompt,
     shellEnvOverrides: args.params.shellEnvOverrides,
+    trustSystemCertificates: args.params.trustSystemCertificates,
     ...(args.params.additionalSkillPaths
       ? { additionalSkillPaths: [...args.params.additionalSkillPaths] }
       : {}),
@@ -1057,8 +1058,10 @@ async function reconcileTurnOptions(
       ? { ZCC_THREAD_ID: threadId, ...buildShellEnvOverrides(options.envVars) }
       : undefined;
   const environmentChanged =
-    shellEnvOverrides !== undefined &&
-    !isDeepStrictEqual(shellEnvOverrides, construction.shellEnvOverrides);
+    (shellEnvOverrides !== undefined &&
+      !isDeepStrictEqual(shellEnvOverrides, construction.shellEnvOverrides)) ||
+    turnOptions.trustSystemCertificates !==
+      construction.trustSystemCertificates;
   const changedModelRequest =
     turnOptions.model !== undefined && turnOptions.model !== construction.model
       ? turnOptions.model
@@ -1088,6 +1091,7 @@ async function reconcileTurnOptions(
   const replacement = await rebuildThreadSession(threadId, threadSession, {
     ...construction,
     ...(shellEnvOverrides === undefined ? {} : { shellEnvOverrides }),
+    trustSystemCertificates: turnOptions.trustSystemCertificates,
     ...(turnOptions.model === undefined ? {} : { model: turnOptions.model }),
     ...(turnOptions.thinkingLevel === undefined
       ? {}

@@ -91,8 +91,17 @@ export function resolvePiLaunch(env: NodeJS.ProcessEnv): {
 
 export function buildPiChildEnv(
   overrides: Record<string, string>,
+  options: { trustSystemCertificates?: boolean | undefined } = {},
 ): NodeJS.ProcessEnv {
   return {
+    // A Dock-launched app never reads shell rc files, so NODE_EXTRA_CA_CERTS
+    // is usually missing and providers behind a corporate root (Pi reports
+    // "Connection error.") fail TLS. Trusting the OS store is additive to the
+    // bundled roots; an inherited or overridden value still wins, and the
+    // plugin's "Trust system certificates" setting can turn the default off.
+    ...(options.trustSystemCertificates === false
+      ? {}
+      : { NODE_USE_SYSTEM_CA: "1" }),
     ...withoutBridgeRuntimeEnv(
       sanitizeInheritedChildProcessEnv({ env: process.env }),
     ),

@@ -31,6 +31,12 @@ interface PiSessionOptions {
   reasoningLevel?: ReasoningLevel | undefined;
   instructions?: string | undefined;
   envVars?: Record<string, string> | undefined;
+  providerOptions?: Record<string, unknown> | undefined;
+}
+
+// The plugin setting defaults on; only an explicit opt-out turns it off.
+function trustsSystemCertificates(options: PiSessionOptions): boolean {
+  return options.providerOptions?.trustSystemCertificates !== false;
 }
 
 interface BuildPiSessionParamsArgs {
@@ -51,17 +57,20 @@ export interface PiSessionParams {
   model?: string;
   shellEnvOverrides: Record<string, string>;
   thinkingLevel?: PiReasoningLevel;
+  trustSystemCertificates: boolean;
 }
 
 export interface PiTurnOptions {
   model: string | undefined;
   thinkingLevel: PiReasoningLevel | undefined;
+  trustSystemCertificates: boolean;
 }
 
 export function buildPiTurnOptions(options: PiSessionOptions): PiTurnOptions {
   return {
     model: options.model ? options.model : undefined,
     thinkingLevel: toPiThinkingLevel(options.reasoningLevel),
+    trustSystemCertificates: trustsSystemCertificates(options),
   };
 }
 
@@ -76,6 +85,7 @@ export function buildPiSessionParams(
       ZCC_THREAD_ID: args.threadId,
       ...buildShellEnvOverrides(args.options.envVars),
     },
+    trustSystemCertificates: trustsSystemCertificates(args.options),
     ...(instructions
       ? args.instructionMode === "replace"
         ? { baseInstructions: instructions }
