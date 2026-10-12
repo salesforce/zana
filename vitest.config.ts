@@ -75,8 +75,8 @@ export default defineConfig({
       'salesforce-only/**',
       'marketplace/**',
       'packages/agent-runtime/src/integration*.test.ts',
+      // Runs in CI through vitest.release-coverage.config.ts.
       'packages/host-daemon-contract/test/**',
-      'packages/server-contract/test/**',
       // bundled-bin asserts against packages/cli/dist (the built zcc bin) and
       // does not build it — the root `pnpm test` deliberately never runs a
       // build. It runs via packages/cli's own `test` script (`build && vitest`),

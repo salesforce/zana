@@ -160,6 +160,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "Project and project-source PATCH requests omit fields that should be left unchanged.",
     fields: [
       "updateProjectRequestSchema.name",
+      "updateProjectRequestSchema.remotePath",
       "updateProjectSourceRequestSchema.isDefault",
       "updateProjectSourceRequestSchema.path",
     ],
@@ -201,11 +202,12 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "System provider lookups may target a host indirectly or directly and may omit provider id to use the host default.",
+      "System provider lookups may target a host indirectly or directly, may omit provider id to use the host default, and may omit refresh to use cached execution options.",
     fields: [
       "systemExecutionOptionsQuerySchema.environmentId",
       "systemExecutionOptionsQuerySchema.hostId",
       "systemExecutionOptionsQuerySchema.providerId",
+      "systemExecutionOptionsQuerySchema.refresh",
       "systemProvidersQuerySchema.environmentId",
       "systemProvidersQuerySchema.hostId",
     ],
@@ -238,7 +240,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "Timeline queries may omit pagination and rendering flags to request the latest full timeline page with server defaults.",
+      "Timeline and turn-summary detail queries may omit pagination and rendering flags to request the latest page with server defaults.",
     fields: [
       "threadTimelineQuerySchema.includeNestedRows",
       "threadTimelineQuerySchema.segmentLimit",
@@ -246,6 +248,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "threadTimelineQuerySchema.beforeAnchorId",
       "threadTimelineQuerySchema.summaryOnly",
       "threadTimelineQuerySchema.afterSequence",
+      "timelineTurnSummaryDetailsQuerySchema.beforeCursor",
     ],
   },
   {

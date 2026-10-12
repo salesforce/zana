@@ -30,7 +30,7 @@ describe("thread notification contract", () => {
     expect(client.threads[":id"]["notification-level"].$url({ param }).pathname).toBe(
       "/api/v1/threads/thr_123/notification-level",
     );
-    expect(client.threads[":id"]["notification-verdict"].$url({ param }).pathname).toBe(
+    expect(client.threads[":id"]["notification-verdict"].$url({ param, query: { kind: "turn-finished" } }).pathname).toBe(
       "/api/v1/threads/thr_123/notification-verdict",
     );
   });
