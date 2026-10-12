@@ -7,6 +7,8 @@ type JsonRpcId = number | string;
 interface ActiveTurn {
   timer: NodeJS.Timeout | null;
   turnId: string;
+  /** Set while a `stream_refresh` run ticks; a `stream_refresh:finish` steer calls it. */
+  finishRefreshStream?: () => void;
 }
 
 interface PendingToolCall {
@@ -335,12 +337,19 @@ function scheduleTurnCompletion(
   }, delayMs);
 }
 
+/**
+ * Ticks stay inside the renderer's 100 ms trailing debounce, so a refresh that
+ * only fires once events stop shows no progress. Each tick adds a timeline item.
+ */
+const REFRESH_TICK_MS = 50;
+
 /** Completed nested work forces immediate host delivery during the refresh regression. */
 function scheduleRefreshStream(threadId: string, durationMs: number): void {
   const thread = getThreadState(threadId)!;
   const turn = thread.activeTurn!;
-  const ticks = Math.max(1, Math.min(400, Math.ceil(durationMs / 25)));
+  const ticks = Math.max(1, Math.min(1200, Math.ceil(durationMs / REFRESH_TICK_MS)));
   let tick = 0;
+  let finishing = false;
   const progress = () => {
     const childTurnId = `${turn.turnId}-refresh-${++tick}`;
     sendDeltas(threadId, [
@@ -352,13 +361,16 @@ function scheduleRefreshStream(threadId: string, durationMs: number): void {
         status: 'completed', providerTurnId: turn.turnId,
       },
     ]);
-    if (tick === ticks) {
+    if (tick === ticks || finishing) {
       completeTurn(threadId, 'completed', 'Refresh stream complete');
     } else {
-      turn.timer = setTimeout(progress, 25);
+      turn.timer = setTimeout(progress, REFRESH_TICK_MS);
     }
   };
-  turn.timer = setTimeout(progress, 25);
+  // Ends the stream on its next tick, so a test can finish once its checks
+  // pass instead of racing a fixed duration on a slow runner.
+  turn.finishRefreshStream = () => { finishing = true; };
+  turn.timer = setTimeout(progress, REFRESH_TICK_MS);
 }
 
 function requestUserQuestion(
@@ -771,6 +783,9 @@ function handleMessage(message: JsonRecord): void {
     }
     if (thread?.activeTurn) {
       emitUserMessage(threadId, thread.activeTurn.turnId, params.input);
+      if (/(?:^|\s)stream_refresh:finish(?:\s|$)/.test(parseInputText(params.input))) {
+        thread.activeTurn.finishRefreshStream?.();
+      }
     }
     send({
       jsonrpc: "2.0",

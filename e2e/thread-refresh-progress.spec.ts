@@ -4,7 +4,7 @@ import { waitForThreadProvider } from './fixtures/thread-providers.js';
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
 
 test('thread timeline refreshes throughout continuous provider events and renders the final update', async ({ app }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   const { window } = app;
   await waitForThreadProvider(window, 'codex');
   const id = await window.evaluate(async () => {
@@ -23,10 +23,12 @@ test('thread timeline refreshes throughout continuous provider events and render
   window.on('request', request => {
     if (new URL(request.url()).pathname === `/api/v1/threads/${id}/timeline`) reads++;
   });
-  await detail.getByTestId('thread-command-input').fill('stream_refresh:10000');
+  // The stream ticks every 50 ms until this test steers `stream_refresh:finish`
+  // (or 60 s pass), so a slow runner can't end it before the checkpoints.
+  await detail.getByTestId('thread-command-input').fill('stream_refresh:60000');
   await detail.getByTestId('thread-command-send').click();
   // A trailing-only 100ms debounce shows no progress while these events continue.
-  await expect(timeline).toContainText('Refresh progress', { timeout: 4000 });
+  await expect(timeline).toContainText('Refresh progress', { timeout: 10_000 });
   const progress = () => timeline.evaluate(node => Math.max(0,
     ...Array.from((node.textContent ?? '').matchAll(/Refresh progress (\d+)/g), match => Number(match[1]))
   ));
@@ -34,12 +36,17 @@ test('thread timeline refreshes throughout continuous provider events and render
   // depends on the runner's response and rendering speed.
   let previous = await progress();
   for (let checkpoint = 0; checkpoint < 3; checkpoint++) {
-    await expect.poll(progress, { timeout: 3000 }).toBeGreaterThan(previous);
+    await expect.poll(progress, { timeout: 10_000 }).toBeGreaterThan(previous);
     previous = await progress();
     expect(await window.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, id)).toBe('active');
   }
   const duringStream = reads;
   expect(await window.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, id)).toBe('active');
+  await window.evaluate(async id => {
+    const response = await fetch(`/api/v1/threads/${id}/send`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'stream_refresh:finish', mode: 'steer' }) });
+    if (!response.ok) throw new Error(await response.text());
+  }, id);
   await expect(timeline).toContainText('Refresh stream complete', { timeout: 15_000 });
   await expect.poll(() => window.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, id)).toBe('idle');
   // The timer is a maximum wait, not a fixed polling rate. Require further
