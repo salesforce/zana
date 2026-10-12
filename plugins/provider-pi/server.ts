@@ -1,3 +1,4 @@
+import { PI_NATIVE_ROOTS_DECLARATION } from "./src/native-roots-declaration.js";
 import type { ZccPluginApi } from "@zana-ai/zcc-plugin-sdk";
 import { PI_BRIDGE_ENV } from "./src/bridge-env.js";
 
@@ -13,8 +14,8 @@ function booleanSetting(
  * plans/agent-provider-plugin-surface.md). The
  * declaration is the only source of this provider: with the core catalog seed
  * deleted, disabling this plugin removes the provider. The bridge itself is
- * daemon-bundled (`zcc-pi-bridge.mjs`); this plugin does not ship a `zcc.host`
- * artifact.
+ * daemon-bundled (`zcc-pi-bridge.mjs`); the host artifact also resolves native
+ * skill locations using the execution host's configuration.
  */
 export default function plugin(zcc: ZccPluginApi) {
   zcc.settings.define({
@@ -27,6 +28,7 @@ export default function plugin(zcc: ZccPluginApi) {
     },
   });
   zcc.agents.experimental_registerProvider({
+    ...PI_NATIVE_ROOTS_DECLARATION,
     id: "pi",
     displayName: "Pi",
     icon: "./icons/pi.svg",

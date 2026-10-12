@@ -4985,6 +4985,13 @@ export interface SlashCommand {
 }
 
 export interface SkillEntry {
+  kind?: 'skill' | 'command' | 'rule';
+  revealable?: boolean;
+  linked?: boolean;
+  userInvocable?: boolean;
+  disableModelInvocation?: boolean;
+  providerId?: string;
+  hostId?: string;
   /**
    * Stable handle. For Claude Code skills this is the historical 2-part
    * `${source}:${qualifiedName}` (e.g. `plugin:zana/team-status`) — kept

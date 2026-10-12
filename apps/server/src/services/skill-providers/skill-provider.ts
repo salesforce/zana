@@ -1,3 +1,8 @@
+import { experimental_resolveClaudePluginRoots, experimental_nativeRootsHostContract } from '@zana-ai/zcc-plugin-sdk/host';
+import { resolveDeclaredScanRoots } from '@zana-ai/zcc-host-daemon/native-root-scan';
+import { discoverProviderCommands } from '@zana-ai/zcc-host-daemon/command-discovery';
+import { normalizeProviderNativeRoots } from '@zana-ai/zcc-domain/thread-runtime';
+import { dirname } from 'node:path';
 /**
  * Skill-provider descriptors — the per-agent-tool knowledge of WHERE skills
  * live on disk, HOW their manifests parse, and WHETHER (and how) they toggle.
@@ -25,6 +30,9 @@ import type { SkillSource, SkillTool, SkillToggleState } from '@zana-ai/zcc-doma
 /** Parsed manifest fields, tool-agnostic. */
 export interface ParsedSkill {
   name?: string;
+  argumentHint?: string;
+  userInvocable?: boolean;
+  disableModelInvocation?: boolean;
   description?: string;
   allowedTools?: string[];
   /**
@@ -40,6 +48,8 @@ export interface ParsedSkill {
 export interface DiscoveredUnit {
   /** Directory (dir layout) or file (file layout) holding the skill. */
   path: string;
+  kind?: 'skill' | 'command' | 'rule';
+  linked?: boolean;
   /** Short name — the manifest `name`, else the dir/file basename. */
   shortName: string;
   /** Qualified name used in the entry id (e.g. `zana/team-status`). */
@@ -91,10 +101,6 @@ export interface SkillProvider {
    */
   toggleState(unit: DiscoveredUnit, disabledShortNames: ReadonlySet<string>): SkillToggleState;
 }
-
-const CLAUDE_DIR = join(homedir(), '.claude');
-const USER_SKILLS_DIR = join(CLAUDE_DIR, 'skills');
-const PLUGINS_DIR = join(CLAUDE_DIR, 'plugins');
 
 // ---------------------------------------------------------------------------
 // Shared parsing helpers (tool-agnostic frontmatter reader).
@@ -221,83 +227,32 @@ async function discoverSkillMdDirectories(
 // Claude Code provider — the historical behaviour, now behind the descriptor.
 // ---------------------------------------------------------------------------
 
-async function discoverClaudeUser(): Promise<DiscoveredUnit[]> {
-  return discoverSkillMdDirectories(USER_SKILLS_DIR, 'user');
-}
-
-/**
- * Walk `~/.claude/plugins/` and discover plugin skills. Plugin layout in the
- * wild varies, so we probe a couple of patterns:
- *  - `~/.claude/plugins/<plugin>/skills/<skill>/SKILL.md`
- *  - `~/.claude/plugins/marketplaces/<mp>/plugins/<plugin>/skills/<skill>/SKILL.md`
- *  - `~/.claude/plugins/marketplaces/<mp>/plugins/<plugin>/skills/SKILL.md` (single-skill)
- */
-async function discoverClaudePlugins(): Promise<DiscoveredUnit[]> {
-  if (!existsSync(PLUGINS_DIR)) return [];
+/** Compatibility IPC and bundle paths use the same resolver/scanner as host listings. */
+async function discoverClaude(source: SkillSource, ctx: DiscoveryContext): Promise<DiscoveredUnit[]> {
+  const homeDir = process.env.ZCC_CLAUDE_HOME || homedir();
+  const env = process.env;
+  const cwd = ctx.projectPath ?? null;
+  const plugins = await experimental_resolveClaudePluginRoots({ homeDir, cwd, env });
+  const resolved = experimental_nativeRootsHostContract.resolveNativeRoots.output.parse({
+    skills: [{ path: join(plugins.claudeDir, 'skills'), origin: 'user', shape: 'skills', skipIfManifest: '.claude-plugin/plugin.json' }, ...plugins.skills],
+    commands: [{ path: join(plugins.claudeDir, 'commands'), origin: 'user', shape: 'commands' }, ...plugins.commands]
+  });
+  const roots = await resolveDeclaredScanRoots({ cwd, homeDir, providerId: 'claude-code', nativeRoots: {
+    skills: normalizeProviderNativeRoots({ project: [{ path: '.claude/skills', ancestors: true, skipIfManifest: '.claude-plugin/plugin.json' }] }),
+    commands: normalizeProviderNativeRoots({ project: ['.claude/commands'] }), resolved
+  } });
   const out: DiscoveredUnit[] = [];
+  for (const row of await discoverProviderCommands({ roots })) {
+    if (!row.filePath) continue;
+    const pluginName = row.namePrefix ? row.namePrefix.slice(0, -1) : undefined;
+    const scope = pluginName ? 'plugin' : row.origin;
+    if (scope !== source) continue;
+    const shortName = pluginName ? row.name.slice(row.namePrefix!.length) : row.name;
+    const qualifiedName = `${pluginName ? `${pluginName}/` : ''}${row.qualifiedName ?? shortName}`;
+    out.push({ path: row.source === 'skill' ? dirname(row.filePath) : row.filePath, shortName, qualifiedName, source, pluginName, kind: row.source, linked: row.linked, parsed: { name: shortName, description: row.description ?? undefined, argumentHint: row.argumentHint ?? undefined, allowedTools: row.allowedTools, userInvocable: row.userInvocable, disableModelInvocation: row.disableModelInvocation } });
+  }
   const seen = new Set<string>();
-
-  const visit = async (pluginDir: string, pluginName: string) => {
-    const skillsDir = join(pluginDir, 'skills');
-    if (!existsSync(skillsDir)) return;
-    let isSingleSkill = false;
-    try {
-      isSingleSkill = (await stat(join(skillsDir, 'SKILL.md'))).isFile();
-    } catch {
-      /* not a single-skill layout */
-    }
-    if (isSingleSkill) {
-      const qualifiedName = pluginName;
-      if (seen.has(qualifiedName)) return;
-      seen.add(qualifiedName);
-      const parsed = await readManifest(join(skillsDir, 'SKILL.md'));
-      out.push({
-        path: skillsDir,
-        shortName: parsed.name?.trim() || pluginName,
-        qualifiedName,
-        parsed,
-        source: 'plugin',
-        pluginName
-      });
-      return;
-    }
-    for (const skillName of await listDirs(skillsDir)) {
-      const qualifiedName = `${pluginName}/${skillName}`;
-      if (seen.has(qualifiedName)) continue;
-      seen.add(qualifiedName);
-      const dir = join(skillsDir, skillName);
-      const parsed = await readManifest(join(dir, 'SKILL.md'));
-      out.push({
-        path: dir,
-        shortName: parsed.name?.trim() || skillName,
-        qualifiedName,
-        parsed,
-        source: 'plugin',
-        pluginName
-      });
-    }
-  };
-
-  for (const name of await listDirs(PLUGINS_DIR)) {
-    if (name === 'marketplaces' || name === 'cache' || name === 'data') continue;
-    await visit(join(PLUGINS_DIR, name), name);
-  }
-
-  const marketplacesDir = join(PLUGINS_DIR, 'marketplaces');
-  if (existsSync(marketplacesDir)) {
-    for (const mp of await listDirs(marketplacesDir)) {
-      const pluginsDir = join(marketplacesDir, mp, 'plugins');
-      if (!existsSync(pluginsDir)) continue;
-      for (const p of await listDirs(pluginsDir)) {
-        await visit(join(pluginsDir, p), p);
-      }
-    }
-  }
-  return out;
-}
-
-async function discoverClaudeProject(projectPath: string): Promise<DiscoveredUnit[]> {
-  return discoverSkillMdDirectories(join(projectPath, '.claude', 'skills'), 'project');
+  return out.filter(unit => { const key = `${unit.kind}:${unit.qualifiedName}`; if (seen.has(key)) return false; seen.add(key); return true; });
 }
 
 export const claudeCodeSkillProvider: SkillProvider = {
@@ -306,14 +261,13 @@ export const claudeCodeSkillProvider: SkillProvider = {
   icon: 'Sparkles',
   toggle: { kind: 'settings-overrides' },
   async discover(source, ctx) {
-    if (source === 'user') return discoverClaudeUser();
-    if (source === 'plugin') return discoverClaudePlugins();
-    if (source === 'project' && ctx.projectPath) return discoverClaudeProject(ctx.projectPath);
-    return [];
+    if (source === 'project' && !ctx.projectPath) return [];
+    return discoverClaude(source, ctx);
   },
   toggleState(unit, disabledShortNames) {
     // Plugin skills are managed via Claude Code's `/plugin` command and can't
     // be disabled from settings.json — render them read-only.
+    if (unit.kind === 'command') return { supported: false, enabled: true, reason: 'Managed in the command file' };
     if (unit.source === 'plugin') {
       return {
         supported: false,
@@ -338,7 +292,7 @@ async function discoverCursorProject(projectPath: string): Promise<DiscoveredUni
     const path = join(dir, file);
     const parsed = await readManifest(path);
     const shortName = parsed.name?.trim() || file.replace(/\.mdc$/, '');
-    out.push({ path, shortName, qualifiedName: shortName, parsed, source: 'project' });
+    out.push({ path, kind: 'rule', shortName, qualifiedName: shortName, parsed, source: 'project' });
   }
   return out;
 }

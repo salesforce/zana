@@ -4,7 +4,7 @@ import { experimental_probeAcpAgent } from "@zana-ai/zcc-plugin-sdk/provider-bri
 import { acpHostContract } from "./contract.js";
 import { resolveAcpNativeRoots } from "./native-roots/index.js";
 
-export { experimental_acpProviderBridge as experimental_providerBridge } from "@zana-ai/zcc-plugin-sdk/provider-bridge/acp";
+export { experimental_providerBridge } from "./bridge/bridge.js";
 
 export default experimental_defineHostEntry({
   contract: acpHostContract,

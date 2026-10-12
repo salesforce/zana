@@ -29,6 +29,7 @@
       "icon": "./icons/pi.svg"
     },
     "server": "./server.ts",
+    "host": "./src/host.ts",
     "app": "./app.tsx",
     "extra": {
       "threadProvider": true

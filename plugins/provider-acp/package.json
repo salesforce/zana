@@ -37,7 +37,7 @@
     },
     "server": "./server.mjs",
     "app": "./app.tsx",
-    "host": "./src/bridge/bridge.ts",
+    "host": "./src/host.ts",
     "extra": {
       "threadProvider": true
     }

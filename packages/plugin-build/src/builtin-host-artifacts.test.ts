@@ -154,11 +154,18 @@ describe('builtin host artifacts', () => {
     expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
   }, 90_000);
 
-  it('leaves Pi on the daemon-bundled bridge instead of a plugin host artifact', async () => {
+  it('adds Pi native discovery while preserving its daemon-bundled bridge', async () => {
     const pkg = JSON.parse(
       await readFile(join(repositoryRoot, 'plugins', 'provider-pi', 'package.json'), 'utf8')
     ) as { zcc?: { host?: unknown } };
-    expect(pkg.zcc?.host).toBeUndefined();
+    expect(pkg.zcc?.host).toBe('./src/host.ts');
+    const root = await mkdtemp(join(repositoryRoot, '.builtin-host-test-'));
+    tempDirs.push(root);
+    await stagePluginForHostBuild(join(repositoryRoot, 'plugins', 'provider-pi'), root);
+    const built = await buildPluginHost(root, '0.9.0-test');
+    const imported = await import(`${pathToFileURL(built.jsPath).href}?test=${Date.now()}`);
+    expect(imported.experimental_providerBridge).toBeUndefined();
+    expect(imported.default).toBeDefined();
     const daemonBuild = await readFile(join(repositoryRoot, 'apps/host-daemon/scripts/build-join.mjs'), 'utf8');
     expect(daemonBuild).toContain("plugins/provider-pi/src/bridge/bridge.ts");
     expect(daemonBuild).not.toContain("packages/agent-runtime/src/pi/bridge/bridge.ts");

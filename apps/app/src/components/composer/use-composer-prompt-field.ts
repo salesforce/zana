@@ -1,3 +1,4 @@
+import { nativeCapabilities } from '../../lib/native-capabilities.js';
 import { promptEditorDocument } from './restore-prompt-editor.js';
 import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent } from 'react';
@@ -70,6 +71,7 @@ export interface UseComposerPromptFieldArgs {
   ariaLabel?: string;
   projectId: string;
   hostId?: string;
+  environmentId?: string;
   threadId?: string;
   projectRoot?: string | null;
   projects: readonly Project[];
@@ -88,6 +90,7 @@ export function useComposerPromptField({
   ariaLabel,
   projectId,
   hostId,
+  environmentId,
   threadId,
   projectRoot,
   projects,
@@ -193,16 +196,26 @@ export function useComposerPromptField({
     }>('/plugins/contributions')
       .then((body) => commandsFromPluginSkills(body.pluginSkills ?? []))
       .catch(() => []);
-    const fromPalette = product.commands.list(projectRoot ?? undefined).catch(() => []);
+    const fromNative = projectId && slashCatalog.providerId
+      ? nativeCapabilities({ projectId, providerId: slashCatalog.providerId, hostId, environmentId })
+        .then(body => {
+          if (!cancelled && body.diagnostics.length) onErrorRef.current?.(body.diagnostics.join(' '));
+          return body.commands;
+        })
+        .catch(error => {
+          if (!cancelled) onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+          return [];
+        })
+      : Promise.resolve([]);
 
-    void Promise.all([fromHttp, fromPlugins, fromPalette]).then(([httpRows, pluginRows, paletteRows]) => {
+    void Promise.all([fromHttp, fromPlugins, fromNative]).then(([httpRows, pluginRows, paletteRows]) => {
       if (cancelled) return;
       const threadRows = httpRows.map((row) => ({ name: row.name, description: row.description ?? '' }));
       setCommands(mergeCommandCatalogs([
         slashCatalog.kind === 'cli' ? filterCliComposerCommands(fallback) : fallback,
         pluginRows,
         slashCatalog.kind === 'cli' ? [] : threadRows,
-        paletteRows.map((row) => ({ name: row.invocation, description: row.description ?? '' }))
+        paletteRows.map((row) => ({ name: row.name, description: row.description ?? '' }))
       ]));
     });
     return () => {
@@ -210,6 +223,8 @@ export function useComposerPromptField({
     };
   }, [
     commandsEpoch,
+    hostId,
+    environmentId,
     projectId,
     projectRoot,
     slashCatalog.composerActions,

@@ -15,7 +15,23 @@ export default function plugin(zcc) {
     }
   });
   zcc.agents.experimental_registerProvider({
-    id: 'codex',
+    id: "codex",
+    ...{
+      "experimental_nativeSkillRoots": {
+        "user": [
+          ".codex/skills",
+          ".agents/skills"
+        ],
+        "project": [
+          ".codex/skills",
+          {
+            "path": ".agents/skills",
+            "ancestors": true
+          }
+        ]
+      },
+      "experimental_resolvesNativeRoots": true
+    },
     displayName: 'Codex',
     icon: './icons/codex.svg',
     capabilities: {

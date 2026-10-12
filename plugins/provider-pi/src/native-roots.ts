@@ -1,22 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { PluginProviderDeclaration } from "@zana-ai/zcc-plugin-sdk";
 import {
   experimental_filterResolvedNativeRoots,
   type ExperimentalNativeRootsResolveAnswer,
 } from "@zana-ai/zcc-plugin-sdk/host";
 import { z } from "zod";
 
-export const PI_NATIVE_ROOTS_DECLARATION: Pick<
-  PluginProviderDeclaration,
-  "experimental_nativeSkillRoots" | "experimental_resolvesNativeRoots"
-> = {
-  experimental_nativeSkillRoots: {
-    user: [".pi/agent/skills", ".agents/skills"],
-    project: [".pi/skills", ".agents/skills"],
-  },
-  experimental_resolvesNativeRoots: true,
-};
+export { PI_NATIVE_ROOTS_DECLARATION } from "./native-roots-declaration.js";
 
 const piSettingsSchema = z
   .object({ skills: z.array(z.string()).optional() })

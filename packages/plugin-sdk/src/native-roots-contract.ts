@@ -1,8 +1,7 @@
 /**
  * The host RPC a provider plugin implements when its declaration sets
  * `experimental_resolvesNativeRoots`. Core calls `resolveNativeRoots` on the
- * workspace host each time it lists a provider's commands or skills (cached
- * briefly per host and workspace) and scans the returned roots beside the
+ * execution host each time it lists a provider's commands or skills and scans the returned roots beside the
  * declared ones. The plugin answers from the host's own files — a moved
  * config directory, installed vendor plugins, config-file skill entries —
  * and decides each root's origin: a project-scoped vendor plugin is
@@ -55,6 +54,8 @@ export const experimental_nativeRootsResolveOutputSchema = z
   .object({
     skills: z.array(providerResolvedNativeRootInputSchema).optional(),
     commands: z.array(providerResolvedNativeRootInputSchema).optional(),
+    /** Provider settings on this execution host may disable a native skill by invocation name. */
+    disabledSkillNames: z.array(z.string().min(1).max(256)).max(1000).optional(),
   })
   .strict()
   .transform((value) => ({
@@ -64,9 +65,10 @@ export const experimental_nativeRootsResolveOutputSchema = z
     commands: (value.commands ?? [])
       .slice(0, PROVIDER_RESOLVED_NATIVE_ROOTS_MAX)
       .map((root) => normalizeProviderResolvedNativeRoot(root, "commands")),
+    ...(value.disabledSkillNames ? { disabledSkillNames: value.disabledSkillNames } : {}),
   }))
-  .pipe(providerResolvedNativeRootsSchema);
-export type ExperimentalNativeRootsResolveOutput = ProviderResolvedNativeRoots;
+  .pipe(providerResolvedNativeRootsSchema.extend({ disabledSkillNames: z.array(z.string()).optional() }));
+export type ExperimentalNativeRootsResolveOutput = z.output<typeof experimental_nativeRootsResolveOutputSchema>;
 /** The input form a handler writes (options optional). */
 export type ExperimentalNativeRootsResolveAnswer = z.input<
   typeof experimental_nativeRootsResolveOutputSchema

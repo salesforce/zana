@@ -115,6 +115,7 @@ describe('cursorSkillProvider', () => {
     const units = await cursorSkillProvider.discover('project', { projectPath: root });
     const byName = Object.fromEntries(units.map((u) => [u.shortName, u]));
     expect(Object.keys(byName).sort()).toEqual(['Always Rule', 'Conditional Rule']);
+    expect(units.every(unit => unit.kind === 'rule')).toBe(true);
 
     // alwaysApply:true ⇒ enabled; alwaysApply:false ⇒ not enabled. Both read-only.
     const always = cursorSkillProvider.toggleState(byName['Always Rule'], new Set());

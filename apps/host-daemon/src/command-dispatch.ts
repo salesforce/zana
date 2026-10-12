@@ -1,3 +1,4 @@
+import { listHostCommands } from "./native-root-scan.js";
 import { discoverCliOnHost } from './cli-discovery.js';
 import type { CliTerminalStartCommand } from '@zana-ai/zcc-contracts/cli-terminal';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -965,6 +966,8 @@ export async function dispatchHostCommand(
       runtime.terminals.delete(command.sessionId);
       return { sessionId: command.sessionId, stopped: true as const };
     }
+    case 'host.list_commands':
+      return listHostCommands(command);
     case 'host.list_files':
       return { files: (await Promise.all(command.roots.map(listRoot))).flat() };
     case 'host.list_dir': {

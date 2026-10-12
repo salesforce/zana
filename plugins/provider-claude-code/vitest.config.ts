@@ -8,7 +8,6 @@ export default defineWorkspaceTestConfig({
     exclude: [
       "node_modules/**",
       "dist/**",
-      "src/native-roots.test.ts",
       "src/server.test.ts",
       "src/bridge/bridge.recorded-conformance.test.ts",
       "src/bridge/bridge.conformance.test.ts",

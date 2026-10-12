@@ -1,3 +1,4 @@
+import { CLAUDE_NATIVE_ROOTS_DECLARATION } from "./src/native-roots.js";
 import type { ZccPluginApi } from "@zana-ai/zcc-plugin-sdk";
 
 function booleanSetting(
@@ -47,6 +48,7 @@ export default function plugin(zcc: ZccPluginApi) {
     },
   });
   zcc.agents.experimental_registerProvider({
+    ...CLAUDE_NATIVE_ROOTS_DECLARATION,
     id: "claude-code",
     displayName: "Claude Code",
     icon: "./icons/claude-code.svg",

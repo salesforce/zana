@@ -67,7 +67,54 @@ export default function plugin(zcc) {
     }
   });
   zcc.agents.experimental_registerProvider({
-    id: 'acp-cursor',
+    id: "acp-cursor",
+    ...{
+      "experimental_nativeSkillRoots": {
+        "user": [
+          {
+            "path": ".cursor/skills",
+            "recursive": true
+          },
+          {
+            "path": ".agents/skills",
+            "recursive": true
+          },
+          {
+            "path": ".claude/skills",
+            "skipIfManifest": ".claude-plugin/plugin.json",
+            "recursive": true
+          },
+          {
+            "path": ".codex/skills",
+            "recursive": true
+          }
+        ],
+        "project": [
+          {
+            "path": ".cursor/skills",
+            "recursive": true,
+            "ancestors": true
+          },
+          {
+            "path": ".agents/skills",
+            "recursive": true,
+            "ancestors": true
+          },
+          {
+            "path": ".claude/skills",
+            "skipIfManifest": ".claude-plugin/plugin.json",
+            "recursive": true,
+            "ancestors": true
+          },
+          {
+            "path": ".codex/skills",
+            "recursive": true,
+            "ancestors": true
+          }
+        ]
+      },
+      "experimental_resolvesNativeRoots": true
+    },
     displayName: 'Cursor',
     icon: './icons/cursor.svg',
     capabilities: {
@@ -84,7 +131,34 @@ export default function plugin(zcc) {
     composerActions: []
   });
   zcc.agents.experimental_registerProvider({
-    id: 'acp-opencode',
+    id: "acp-opencode",
+    ...{
+      "experimental_nativeSkillRoots": {
+        "user": [
+          {
+            "path": ".claude/skills",
+            "skipIfManifest": ".claude-plugin/plugin.json"
+          },
+          ".agents/skills"
+        ],
+        "project": [
+          {
+            "path": ".opencode/skills",
+            "ancestors": true
+          },
+          {
+            "path": ".claude/skills",
+            "skipIfManifest": ".claude-plugin/plugin.json",
+            "ancestors": true
+          },
+          {
+            "path": ".agents/skills",
+            "ancestors": true
+          }
+        ]
+      },
+      "experimental_resolvesNativeRoots": true
+    },
     displayName: 'OpenCode',
     icon: './icons/opencode.svg',
     visibility: 'installed',
@@ -102,7 +176,55 @@ export default function plugin(zcc) {
     composerActions: []
   });
   zcc.agents.experimental_registerProvider({
-    id: 'acp-omp',
+    id: "acp-omp",
+    ...{
+      "experimental_nativeSkillRoots": {
+        "user": [
+          {
+            "path": ".agent/skills"
+          },
+          {
+            "path": ".agents/skills"
+          },
+          {
+            "path": ".claude/skills",
+            "skipIfManifest": ".claude-plugin/plugin.json"
+          }
+        ],
+        "project": [
+          {
+            "path": ".omp/skills",
+            "ancestors": true
+          },
+          {
+            "path": ".pi/skills",
+            "ancestors": true
+          },
+          {
+            "path": ".agent/skills",
+            "ancestors": true
+          },
+          {
+            "path": ".agents/skills",
+            "ancestors": true
+          },
+          {
+            "path": ".claude/skills",
+            "skipIfManifest": ".claude-plugin/plugin.json",
+            "ancestors": true
+          },
+          {
+            "path": ".codex/skills",
+            "ancestors": true
+          },
+          {
+            "path": ".opencode/skills",
+            "ancestors": true
+          }
+        ]
+      },
+      "experimental_resolvesNativeRoots": true
+    },
     displayName: 'OMP',
     icon: './icons/omp.svg',
     visibility: 'installed',
@@ -110,7 +232,30 @@ export default function plugin(zcc) {
     composerActions: []
   });
   zcc.agents.experimental_registerProvider({
-    id: 'acp-grok',
+    id: "acp-grok",
+    ...{
+      "experimental_nativeSkillRoots": {
+        "user": [
+          {
+            "path": ".agents/skills",
+            "recursive": true
+          }
+        ],
+        "project": [
+          {
+            "path": ".grok/skills",
+            "recursive": true,
+            "ancestors": true
+          },
+          {
+            "path": ".agents/skills",
+            "recursive": true,
+            "ancestors": true
+          }
+        ]
+      },
+      "experimental_resolvesNativeRoots": true
+    },
     displayName: 'Grok Build',
     icon: './icons/grok.svg',
     visibility: 'installed',
@@ -118,7 +263,24 @@ export default function plugin(zcc) {
     composerActions: []
   });
   zcc.agents.experimental_registerProvider({
-    id: 'acp-mastracode',
+    id: "acp-mastracode",
+    ...{
+      "experimental_nativeSkillRoots": {
+        "user": [
+          {
+            "path": ".agents/skills",
+            "recursive": true
+          }
+        ],
+        "project": [
+          {
+            "path": ".agents/skills",
+            "recursive": true,
+            "ancestors": true
+          }
+        ]
+      }
+    },
     displayName: 'Mastra Code',
     icon: './icons/mastracode.svg',
     visibility: 'installed',
@@ -126,7 +288,10 @@ export default function plugin(zcc) {
     composerActions: []
   });
   zcc.agents.experimental_registerProvider({
-    id: 'acp-hermes-agent',
+    id: "acp-hermes-agent",
+    ...{
+      "experimental_resolvesNativeRoots": true
+    },
     displayName: 'Hermes Agent',
     icon: './icons/hermes.svg',
     visibility: 'installed',

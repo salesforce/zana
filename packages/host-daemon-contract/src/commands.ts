@@ -24,6 +24,7 @@ import {
   jsonObjectSchema,
   jsonValueSchema,
   providerNativeSkillRootsSchema,
+  providerNativeRootSetSchema,
   BRANCH_LIST_LIMIT_MAX,
   BRANCH_LIST_QUERY_MAX_LENGTH,
   FILE_LIST_LIMIT_MAX,
@@ -802,6 +803,13 @@ export const hostProviderCommandSchema = z.object({
   origin: hostCommandOriginSchema,
   description: z.string().nullable(),
   argumentHint: z.string().nullable(),
+  filePath: z.string().optional(),
+  qualifiedName: z.string().optional(),
+  namePrefix: z.string().optional(),
+  linked: z.boolean().optional(),
+  userInvocable: z.boolean().optional(),
+  disableModelInvocation: z.boolean().optional(),
+  allowedTools: z.array(z.string()).optional(),
 });
 export type HostProviderCommand = z.infer<typeof hostProviderCommandSchema>;
 
@@ -812,12 +820,13 @@ export type HostProviderCommand = z.infer<typeof hostProviderCommandSchema>;
  * bb-managed skills are resolved by the server's canonical skill catalog and
  * never cross this discovery boundary.
  */
-const hostListCommandsCommandSchema = z
+export const hostListCommandsCommandSchema = z
   .object({
     type: z.literal("host.list_commands"),
     providerId: z.string().min(1),
     cwd: z.string().min(1).nullable(),
     nativeSkillRoots: providerNativeSkillRootsSchema.optional(),
+    nativeRoots: providerNativeRootSetSchema.optional(),
   })
   .strict();
 
@@ -1389,8 +1398,9 @@ const pluginHostDisposeResultSchema = z
 
 // No `truncated` here, unlike `pathListResultSchema`: the daemon returns the
 // full raw set across all roots and the server owns de-dup/sort/limit.
-const commandListResultSchema = z.object({
+export const commandListResultSchema = z.object({
   commands: z.array(hostProviderCommandSchema),
+  diagnostics: z.array(z.string()).optional(),
 });
 
 // Like `commandListResultSchema`: the daemon returns the full raw set across

@@ -282,7 +282,7 @@ export function LegacyAgentHomeComposer({
     projects,
     disabled: launching,
     initialText,
-    slashCatalog: { kind: 'cli' },
+    slashCatalog: { kind: 'cli', providerId: selectedProviderId },
     onSubmit: () => {
       launchRef.current();
     },

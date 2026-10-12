@@ -34,7 +34,30 @@ export default function plugin(zcc) {
     }
   });
   zcc.agents.experimental_registerProvider({
-    id: 'claude-code',
+    id: "claude-code",
+    ...{
+      "experimental_nativeSkillRoots": {
+        "user": [
+          {
+            "path": ".claude/skills",
+            "skipIfManifest": ".claude-plugin/plugin.json"
+          }
+        ],
+        "project": [
+          {
+            "path": ".claude/skills",
+            "ancestors": true,
+            "skipIfManifest": ".claude-plugin/plugin.json"
+          }
+        ]
+      },
+      "experimental_nativeCommandRoots": {
+        "project": [
+          ".claude/commands"
+        ]
+      },
+      "experimental_resolvesNativeRoots": true
+    },
     displayName: 'Claude Code',
     icon: './icons/claude-code.svg',
     capabilities: {

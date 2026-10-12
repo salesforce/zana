@@ -1,6 +1,7 @@
+import { nativeCapabilities } from '../../lib/native-capabilities.js';
 import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   BookOpen,
   FolderOpen,
@@ -59,6 +60,8 @@ export function SkillsBody({
   const catalogueFilter = useUi((s) => s.catalogueFilter);
   const setCatalogueFilter = useUi((s) => s.setCatalogueFilter);
 
+  const loadRevision = useRef(0);
+  const [discoveryNotes, setDiscoveryNotes] = useState<string[]>([]);
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [bundles, setBundles] = useState<SkillBundle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,19 +90,26 @@ export function SkillsBody({
   // Reload callback kept stable for use by applyBundle and other callers.
   // Uses useCallback so it only changes when selectedProject?.path changes.
   const reload = useCallback(async () => {
+    const revision = ++loadRevision.current;
     try {
-      const [list, bundleList] = await Promise.all([
-        product.skills.list(selectedProject?.path),
-        product.skills.bundles.list()
+      const [list, bundleList, legacyRules] = await Promise.all([
+        nativeCapabilities({ projectId: selectedProject?.id }),
+        product.skills.bundles.list().catch(() => []),
+        // Rule files remain visible through the existing local catalogue.
+        product.skills.list(selectedProject?.path).then(rows => rows.filter(row => row.kind === 'rule')).catch(() => [])
       ]);
-      setSkills(list);
+      if (revision !== loadRevision.current) return;
+      setSkills([...list.skills, ...legacyRules]);
+      setDiscoveryNotes(list.diagnostics);
       setBundles(bundleList);
-    } catch {
-      /* swallow — onChanged will retry */
+    } catch (error) {
+      if (revision !== loadRevision.current) return;
+      setSkills([]);
+      setDiscoveryNotes([error instanceof Error ? error.message : String(error)]);
     } finally {
-      setLoading(false);
+      if (revision === loadRevision.current) setLoading(false);
     }
-  }, [selectedProject?.path]);
+  }, [selectedProject?.id, selectedProject?.path]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -124,6 +134,9 @@ export function SkillsBody({
     const offSkills = product.skills.onChanged(() => {
       if (!cancelled) void reload();
     });
+    const offProviders = product.pluginApps.onChanged(() => {
+      if (!cancelled) void reload();
+    });
     const offBundles = product.skills.bundles.onChanged((next) => {
       if (!cancelled) setBundles(next);
     });
@@ -138,7 +151,9 @@ export function SkillsBody({
 
     return () => {
       cancelled = true;
+      loadRevision.current++;
       offSkills();
+      offProviders();
       offBundles();
     };
   }, [reload, catalogueFilter.skills, setCatalogueFilter]);
@@ -233,15 +248,8 @@ export function SkillsBody({
             <div className="scheduler-header-text">
               <h2>Skills</h2>
               <p className="settings-help scheduler-subtitle">
-                Discover skills across your agent tools — Claude Code
-                (<code>~/.claude/skills</code>, <code>~/.claude/plugins</code>, a
-                project's <code>.claude/skills</code>), OpenCode
-                (<code>~/.config/opencode/skills</code>, a project's{' '}
-                <code>.opencode/skills</code>), skills shipped by an installed
-                ZCC plugin, and Cursor rules (<code>.cursor/rules</code>).
-                Toggling a Claude user or project skill writes to{' '}
-                <code>skillOverrides</code> in <code>~/.claude/settings.json</code>.
-                Installed ZCC plugin skills reload with <code>zcc plugin dev</code>.
+                Skills and slash commands available to your agent providers on the project's execution host.
+                Author restrictions and installed plugin settings determine how each entry can be invoked.
               </p>
             </div>
           </div>
@@ -269,6 +277,9 @@ export function SkillsBody({
           </aside>
         )}
 
+        {discoveryNotes.length > 0 && (
+          <div role="status" className="skills-apply-note">{discoveryNotes.join(' ')}</div>
+        )}
         <div className="skills-layout">
           <section className="skills-left">
             <div className="skills-toolbar">
@@ -456,6 +467,11 @@ function SkillRow({
       <div className="skills-row-body">
         <div className="skills-row-head">
           <span className="skills-row-name">{skill.name}</span>
+          {skill.kind === 'command' && <span className="scheduler-pill">Command</span>}
+          {skill.kind === 'rule' && <span className="scheduler-pill">Rule</span>}
+          {skill.linked && <span className="scheduler-pill">Linked</span>}
+          {skill.disableModelInvocation && <span className="scheduler-pill">Manual only</span>}
+          {skill.userInvocable === false && <span className="scheduler-pill">Agent only</span>}
           {/* Tool chip — the agent tool a skill belongs to (Claude Code, Cursor,
               …). Only rendered when the catalogue actually spans more than one
               tool (`showTool`), so the common single-tool case stays uncluttered.
@@ -474,15 +490,17 @@ function SkillRow({
           <p className="skills-row-desc">{skill.description}</p>
         )}
       </div>
-      <button
-        type="button"
-        className="scheduler-icon-btn"
-        onClick={onReveal}
-        title="Reveal in Finder"
-        aria-label="Reveal in Finder"
-      >
-        <FolderOpen size={14} />
-      </button>
+      {skill.revealable !== false && (
+        <button
+          type="button"
+          className="scheduler-icon-btn"
+          onClick={onReveal}
+          title="Reveal in Finder"
+          aria-label="Reveal in Finder"
+        >
+          <FolderOpen size={14} />
+        </button>
+      )}
     </li>
   );
 }

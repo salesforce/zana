@@ -5,9 +5,11 @@ const view = readFileSync(new URL('./SkillsView.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
 describe('SkillsView catalogue', () => {
-  it('discovers OpenCode user and project skill directories', () => {
-    expect(view).toContain('~/.config/opencode/skills');
-    expect(view).toContain('.opencode/skills');
+  it('uses host discovery and explains invocation metadata', () => {
+    expect(view).toContain('nativeCapabilities({ projectId: selectedProject?.id })');
+    expect(view).toContain('Manual only');
+    expect(view).toContain('Agent only');
+    expect(view).toContain('Command');
   });
 
   it('offers a Refresh button that re-lists skills without replacing the page', () => {

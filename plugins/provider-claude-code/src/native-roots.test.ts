@@ -303,3 +303,18 @@ describe("resolveClaudeNativeRoots contract filtering", () => {
     );
   });
 });
+
+it('returns skill restrictions from the same custom configuration directory', async () => {
+ const fixture = await makeFixture();
+ const custom = path.join(fixture.homeDir, 'custom');
+ await writeJson(path.join(custom, 'settings.json'), { skillOverrides: { disabled: 'off', allowed: 'on', unknown: false } });
+ expect(await resolveClaudeNativeRoots({ homeDir: fixture.homeDir, cwd: null, env: { CLAUDE_CONFIG_DIR: custom } })).toMatchObject({ disabledSkillNames: ['disabled'] });
+ for (const value of ['null', JSON.stringify({ skillOverrides: [] })]) {
+   await writeFile(path.join(custom, 'settings.json'), value);
+   expect(await resolveClaudeNativeRoots({ homeDir: fixture.homeDir, cwd: null, env: { CLAUDE_CONFIG_DIR: custom } })).toMatchObject({ disabledSkillNames: [] });
+ }
+ await writeFile(path.join(custom, 'settings.json'), 'bad json');
+ await expect(resolveClaudeNativeRoots({ homeDir: fixture.homeDir, cwd: null, env: { CLAUDE_CONFIG_DIR: custom } })).rejects.toThrow('Could not read skill settings');
+ await writeFile(path.join(custom, 'settings.json'), ' '.repeat(256 * 1024 + 1));
+ await expect(resolveClaudeNativeRoots({ homeDir: fixture.homeDir, cwd: null, env: { CLAUDE_CONFIG_DIR: custom } })).rejects.toThrow('256 KiB');
+});

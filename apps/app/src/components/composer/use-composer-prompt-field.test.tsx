@@ -11,6 +11,9 @@ import { serializePromptEditor } from './serialize-prompt-editor.js';
 import { COMPOSER_TERMINAL_COMMAND } from './composer-terminal-command.js';
 import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 
+const native = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/native-capabilities.js', () => ({ nativeCapabilities: native }));
+
 const attachments = vi.hoisted(() => ({ desktop: false, pickFiles: vi.fn(async (): Promise<string[]> => []) }));
 const suggestionState = vi.hoisted(() => ({ commands: [] as Array<{ name: string; description: string }> }));
 const editorState = vi.hoisted(() => ({
@@ -90,6 +93,7 @@ function Probe() {
 describe('useComposerPromptField', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    native.mockReset().mockResolvedValue({ commands: [], skills: [], diagnostics: [] });
     attachments.desktop = false;
   });
   afterEach(() => {
@@ -104,6 +108,43 @@ describe('useComposerPromptField', () => {
       slashCatalog: { kind: 'thread', localCommands }, onSubmit: vi.fn()
     }));
     await waitFor(() => expect(suggestionState.commands).toContainEqual(COMPOSER_TERMINAL_COMMAND));
+  });
+
+  it('scopes native suggestions to the selected provider, host and recorded environment', async () => {
+    native.mockResolvedValue({ commands: [{ name: '/grill-me', description: 'Challenge the plan' }], skills: [], diagnostics: [] });
+    const { rerender } = renderHook(({ providerId }) => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', hostId: 'remote', environmentId: 'worktree', projects: [],
+      slashCatalog: { kind: 'thread', providerId }, onSubmit: vi.fn()
+    }), { initialProps: { providerId: 'claude-code' } });
+    await waitFor(() => expect(suggestionState.commands).toContainEqual({ name: '/grill-me', description: 'Challenge the plan' }));
+    expect(native).toHaveBeenCalledWith({ projectId: 'p1', providerId: 'claude-code', hostId: 'remote', environmentId: 'worktree' });
+    native.mockResolvedValue({ commands: [], skills: [], diagnostics: [] });
+    rerender({ providerId: 'codex' });
+    await waitFor(() => expect(suggestionState.commands).not.toContainEqual(expect.objectContaining({ name: '/grill-me' })));
+    expect(native).toHaveBeenLastCalledWith({ projectId: 'p1', providerId: 'codex', hostId: 'remote', environmentId: 'worktree' });
+  });
+
+  it('reports a native discovery failure while retaining local commands', async () => {
+    native.mockRejectedValue(new Error('Execution host offline'));
+    const onError = vi.fn();
+    const localCommands = [COMPOSER_TERMINAL_COMMAND];
+    renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [], onError,
+      slashCatalog: { kind: 'cli', providerId: 'claude-code', localCommands }, onSubmit: vi.fn()
+    }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Execution host offline'));
+    expect(suggestionState.commands).toContainEqual(COMPOSER_TERMINAL_COMMAND);
+  });
+
+  it('shows partial discovery diagnostics alongside available suggestions', async () => {
+    native.mockResolvedValue({ commands: [{ name: '/review', description: 'Review' }], skills: [], diagnostics: ['Discovery reached its limit'] });
+    const onError = vi.fn();
+    renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [], onError,
+      slashCatalog: { kind: 'thread', providerId: 'claude-code' }, onSubmit: vi.fn()
+    }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Discovery reached its limit'));
+    await waitFor(() => expect(suggestionState.commands).toContainEqual({ name: '/review', description: 'Review' }));
   });
 
   it('rerenders consumers with updated serialized editor text', () => {

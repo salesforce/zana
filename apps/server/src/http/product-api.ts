@@ -1,3 +1,4 @@
+import { listNativeCapabilities } from "../services/skills/native-capabilities.js";
 import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
 import { withoutSecretValues } from '../plugins/plugin-settings-redaction.js';
 import { handlePreviewsApi } from './previews-api.js';
@@ -2624,6 +2625,19 @@ export async function handleProductHttp(
         }
         throw error;
       }
+      return true;
+    }
+
+    const nativeCapabilities = routeParams(path, '/api/v1/projects/:id/native-capabilities');
+    if ((nativeCapabilities || path === '/api/v1/skills/native-capabilities') && method === 'GET') {
+      try {
+        sendJson(response, 200, await listNativeCapabilities(ctx, {
+          projectId: nativeCapabilities?.id,
+          providerId: requestUrl.searchParams.get('providerId') ?? undefined,
+          hostId: requestUrl.searchParams.get('hostId') ?? undefined,
+          environmentId: requestUrl.searchParams.get('environmentId') ?? undefined
+        }));
+      } catch (error) { sendHostFailure(response, error); }
       return true;
     }
 

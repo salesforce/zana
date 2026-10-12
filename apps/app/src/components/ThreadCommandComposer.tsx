@@ -377,6 +377,7 @@ export function ThreadCommandComposer({
       : 'Ask anything. @ to mention files, folders, or threads',
     testId: 'thread-command-input',
     hostId: catalogHostId,
+    environmentId: currentThread?.environmentId ?? undefined,
     projectId,
     threadId,
     projectRoot: selectedProject?.path,

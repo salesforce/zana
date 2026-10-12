@@ -1,106 +1,54 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-// Mock the plugin enumeration so we control which plugin install paths
-// contribute commands (the real listPlugins walks ~/.claude).
-const listPluginsMock = vi.fn();
-vi.mock('../extensions/plugins.js', () => ({
-  listPlugins: () => listPluginsMock()
-}));
-
+vi.mock('electron', () => ({ shell: {} }));
 import { listCommands } from './commands.js';
-
-let fakeHome: string;
-let projectPath: string;
-let pluginPath: string;
-
-async function writeMd(path: string, body: string): Promise<void> {
-  await mkdir(join(path, '..'), { recursive: true });
-  await writeFile(path, body, 'utf-8');
-}
-
-beforeEach(async () => {
-  fakeHome = await mkdtemp(join(tmpdir(), 'cc-cmd-home-'));
-  projectPath = await mkdtemp(join(tmpdir(), 'cc-cmd-proj-'));
-  pluginPath = await mkdtemp(join(tmpdir(), 'cc-cmd-plugin-'));
-  process.env.ZCC_CLAUDE_HOME = fakeHome;
-  listPluginsMock.mockReset();
-  listPluginsMock.mockResolvedValue([]);
+let home: string, project: string;
+async function file(path: string, body: string) { await mkdir(dirname(path), { recursive: true }); await writeFile(path, body); }
+beforeEach(async () => { home = await mkdtemp(join(tmpdir(), 'native-commands-')); project = join(home, 'project'); await mkdir(project); vi.stubEnv('ZCC_CLAUDE_HOME', home); vi.stubEnv('CLAUDE_CONFIG_DIR', ''); });
+afterEach(async () => { vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); });
+it('reads both skills and legacy commands with namespacing and argument hints', async () => {
+  await file(join(home, '.claude/commands/git/commit.md'), '---\ndescription: Commit the change\nargument-hint: <files>\n---\nBody');
+  await file(join(home, '.claude/skills/review/SKILL.md'), '---\nname: review-code\ndescription: Review\n---\nBody');
+  expect(await listCommands()).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'git:commit', invocation: '/git:commit', argumentHint: '<files>', scope: 'user' }), expect.objectContaining({ name: 'review-code' })]));
 });
-
-afterEach(async () => {
-  delete process.env.ZCC_CLAUDE_HOME;
-  await Promise.all([
-    rm(fakeHome, { recursive: true, force: true }),
-    rm(projectPath, { recursive: true, force: true }),
-    rm(pluginPath, { recursive: true, force: true })
-  ]);
+it('respects a custom config directory, including symlinked personal skills', async () => {
+  const config = join(home, 'custom'); vi.stubEnv('CLAUDE_CONFIG_DIR', config);
+  await file(join(config, 'commands/grill-me.md'), '---\ndescription: Ask questions\n---');
+  await file(join(home, 'shared/SKILL.md'), '---\nname: shared\n---');
+  await mkdir(join(config, 'skills')); await symlink(join(home, 'shared'), join(config, 'skills/linked'));
+  await file(join(home, '.claude/commands/old.md'), 'old');
+  expect((await listCommands()).map(row => row.name).sort()).toEqual(['grill-me', 'shared']);
 });
-
-describe('listCommands', () => {
-  it('discovers user commands and parses frontmatter description + argument-hint', async () => {
-    await writeMd(
-      join(fakeHome, '.claude', 'commands', 'review.md'),
-      '---\ndescription: Review the diff\nargument-hint: <pr-url>\n---\nBody here.'
-    );
-    const cmds = await listCommands();
-    const review = cmds.find((c) => c.id === 'user:review');
-    expect(review).toBeTruthy();
-    expect(review!.invocation).toBe('/review');
-    expect(review!.scope).toBe('user');
-    expect(review!.description).toBe('Review the diff');
-    expect(review!.argumentHint).toBe('<pr-url>');
-  });
-
-  it('falls back to the first body line when no frontmatter description', async () => {
-    await writeMd(
-      join(fakeHome, '.claude', 'commands', 'eq.md'),
-      'Run a full Experience Quality audit.\n\n## Step 1'
-    );
-    const eq = (await listCommands()).find((c) => c.id === 'user:eq');
-    expect(eq!.description).toBe('Run a full Experience Quality audit.');
-  });
-
-  it('namespaces nested command files with ":"', async () => {
-    await writeMd(join(fakeHome, '.claude', 'commands', 'git', 'commit.md'), 'commit helper');
-    const cmd = (await listCommands()).find((c) => c.name === 'git:commit');
-    expect(cmd).toBeTruthy();
-    expect(cmd!.invocation).toBe('/git:commit');
-    expect(cmd!.id).toBe('user:git:commit');
-  });
-
-  it('discovers project commands when a project path is given', async () => {
-    await writeMd(join(projectPath, '.claude', 'commands', 'deploy.md'), 'deploy it');
-    const cmds = await listCommands({ projectPath, projectId: 'proj-1' });
-    const deploy = cmds.find((c) => c.id === 'project:deploy');
-    expect(deploy).toBeTruthy();
-    expect(deploy!.scope).toBe('project');
-    expect(deploy!.projectId).toBe('proj-1');
-  });
-
-  it('discovers enabled-plugin commands from their install path, prefixed by plugin name', async () => {
-    await writeMd(join(pluginPath, 'commands', 'status.md'), 'show status');
-    listPluginsMock.mockResolvedValue([
-      { id: 'zana@mp', name: 'zana', enabled: true, path: pluginPath, source: 'marketplace', provides: { skills: [], commands: ['status'], mcpServers: [] }, manifestValid: true }
-    ]);
-    const cmd = (await listCommands()).find((c) => c.scope === 'plugin');
-    expect(cmd).toBeTruthy();
-    expect(cmd!.name).toBe('zana:status');
-    expect(cmd!.invocation).toBe('/zana:status');
-    expect(cmd!.pluginName).toBe('zana');
-  });
-
-  it('skips disabled plugins entirely', async () => {
-    await writeMd(join(pluginPath, 'commands', 'status.md'), 'show status');
-    listPluginsMock.mockResolvedValue([
-      { id: 'zana@mp', name: 'zana', enabled: false, path: pluginPath, source: 'marketplace', provides: { skills: [], commands: ['status'], mcpServers: [] }, manifestValid: true }
-    ]);
-    expect((await listCommands()).some((c) => c.scope === 'plugin')).toBe(false);
-  });
-
-  it('returns empty (no throw) when nothing is installed and no project given', async () => {
-    await expect(listCommands()).resolves.toEqual([]);
-  });
+it('honors author restrictions and disabled skill overrides', async () => {
+  for (const [name, flag] of [['hidden', 'user-invocable: false'], ['manual', 'disable-model-invocation: true'], ['off', '']]) await file(join(home, `.claude/skills/${name}/SKILL.md`), `---\nname: ${name}\n${flag}\n---`);
+  await file(join(home, '.claude/settings.json'), JSON.stringify({ skillOverrides: { off: 'off' } }));
+  expect((await listCommands()).map(row => row.name)).toEqual(['manual']);
+});
+it('uses project skills before same-named commands and user entries', async () => {
+  await file(join(home, '.claude/commands/review.md'), '---\ndescription: User\n---');
+  await file(join(project, '.claude/commands/review.md'), '---\ndescription: Project command\n---');
+  await file(join(project, '.claude/skills/review/SKILL.md'), '---\ndescription: Project skill\n---');
+  const rows = await listCommands({ projectPath: project, projectId: 'p' });
+  expect(rows).toHaveLength(1); expect(rows[0]).toMatchObject({ scope: 'project', projectId: 'p', description: 'Project skill' });
+  expect((await listCommands({ projectPath: project }))[0].scope).toBe('user');
+});
+it('reads enabled installed plugin manifests and ignores marketplace source trees and disabled plugins', async () => {
+  const plugin = join(home, 'cache/plugin/v1');
+  await file(join(plugin, '.claude-plugin/plugin.json'), JSON.stringify({ name: 'reviewer', skills: ['./custom'], commands: ['./actions'] }));
+  await file(join(plugin, 'custom/review/SKILL.md'), '---\nname: review\n---');
+  await file(join(plugin, 'actions/check.md'), '---\ndescription: Check\n---');
+  await file(join(home, '.claude/plugins/installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'reviewer@test': [{ scope: 'user', installPath: plugin }] } }));
+  await file(join(home, '.claude/plugins/marketplaces/test/plugins/uninstalled/commands/no.md'), 'no');
+  expect((await listCommands()).map(row => row.name).sort()).toEqual(['reviewer:check', 'reviewer:review']);
+  await file(join(home, '.claude/settings.json'), JSON.stringify({ enabledPlugins: { 'reviewer@test': false } }));
+  expect(await listCommands()).toEqual([]);
+});
+it('rejects missing manifests, malformed metadata and project symlink escapes', async () => {
+  await mkdir(join(project, '.claude/skills/empty'), { recursive: true });
+  await file(join(home, 'outside/SKILL.md'), '---\nname: outside\n---');
+  await symlink(join(home, 'outside'), join(project, '.claude/skills/escape'));
+  await file(join(project, '.claude/skills/bad/SKILL.md'), '---\nname: [broken\n---');
+  expect(await listCommands({ projectPath: project, projectId: 'p' })).toEqual([]);
 });

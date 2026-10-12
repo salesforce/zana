@@ -35,6 +35,8 @@ import {
 } from '@zana-ai/zcc-host-daemon-contract/local';
 import {
   HOST_ARTIFACT_MAX_BYTES,
+  hostListCommandsCommandSchema,
+  commandListResultSchema,
   desktopBrowserCommandSchemas,
   desktopBrowserResultSchemas
 } from '@zana-ai/zcc-host-daemon-contract';
@@ -88,7 +90,8 @@ import {
 // 43: thread.background.stop stops one provider background task by item id.
 // 44: host.environment.replace pushes plugin-contributed environment to a
 // non-primary machine daemon (held in daemon memory only, never persisted).
-export const HOST_RPC_PROTOCOL_VERSION = 44;
+// 45: provider-native capability discovery on the execution host.
+export const HOST_RPC_PROTOCOL_VERSION = 45;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -132,6 +135,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'terminal.input',
   'terminal.resize',
   'terminal.stop',
+  'host.list_commands',
   'host.list_files',
   'host.list_dir',
   'host.read_file',
@@ -945,6 +949,7 @@ export type HostEnvironmentReplaceResult = z.infer<typeof HostEnvironmentReplace
 export const PreviewReplaceCommandSchema = z.object({ type: z.literal('preview.replace'), epoch: z.string().uuid(), generation: z.number().int().nonnegative(), targets: z.array(z.object({ port: z.number().int().min(1024).max(65535), expiresAt: z.number().int() }).strict()).max(32) }).strict();
 
 export const HostRpcCommandSchema = z.union([
+  hostListCommandsCommandSchema,
   PreviewReplaceCommandSchema,
   z.object({ type: z.literal('host.git_history'), root: PathSchema, limit: z.number().int().min(1).max(100) }).strict(),
   PluginHostCallCommandSchema, PluginHostCancelCommandSchema, PluginHostDisposeCommandSchema,
@@ -1512,6 +1517,7 @@ export const HostRpcResultSchemaByType = {
   'terminal.input': TerminalInputResultSchema,
   'terminal.resize': TerminalResizeResultSchema,
   'terminal.stop': TerminalStopResultSchema,
+  'host.list_commands': commandListResultSchema,
   'host.list_files': HostListFilesResultSchema,
   'host.list_dir': HostListDirResultSchema,
   'host.git_file': HostGitFileResultSchema,

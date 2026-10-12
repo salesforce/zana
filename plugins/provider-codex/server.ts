@@ -1,3 +1,4 @@
+import { CODEX_NATIVE_ROOTS_DECLARATION } from "./src/native-roots.js";
 import type { ZccPluginApi } from "@zana-ai/zcc-plugin-sdk";
 
 function booleanSetting(
@@ -28,6 +29,7 @@ export default function plugin(zcc: ZccPluginApi) {
     },
   });
   zcc.agents.experimental_registerProvider({
+    ...CODEX_NATIVE_ROOTS_DECLARATION,
     id: "codex",
     displayName: "Codex",
     icon: "./icons/codex.svg",

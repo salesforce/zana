@@ -1,3 +1,9 @@
+import { KNOWN_ACP_AGENTS } from './src/known-agents.js';
+import type { PluginProviderDeclaration } from '@zana-ai/zcc-plugin-sdk';
+function nativeDiscovery(id: string): Pick<PluginProviderDeclaration, 'experimental_nativeSkillRoots' | 'experimental_resolvesNativeRoots'> {
+  const agent = KNOWN_ACP_AGENTS.find(row => row.id === id);
+  return { ...(agent?.launch.nativeSkillRoots ? { experimental_nativeSkillRoots: agent.launch.nativeSkillRoots } : {}), ...(agent?.nativeRootsResolver ? { experimental_resolvesNativeRoots: true } : {}) };
+}
 import type { PluginProviderHandle, ZccPluginApi } from "@zana-ai/zcc-plugin-sdk";
 import {
   ACP_CUSTOM_AGENTS_SETTING,
@@ -24,6 +30,7 @@ export default function plugin(zcc: ZccPluginApi) {
   const settings = zcc.settings.define(ACP_CUSTOM_AGENTS_SETTING);
   zcc.agents.experimental_registerProvider({
     id: "acp-cursor",
+    ...nativeDiscovery("acp-cursor"),
     displayName: "Cursor",
     icon: "./icons/cursor.svg",
     capabilities: {
@@ -41,6 +48,7 @@ export default function plugin(zcc: ZccPluginApi) {
   });
   zcc.agents.experimental_registerProvider({
     id: "acp-opencode",
+    ...nativeDiscovery("acp-opencode"),
     displayName: "OpenCode",
     icon: "./icons/opencode.svg",
     visibility: "installed",
@@ -59,6 +67,7 @@ export default function plugin(zcc: ZccPluginApi) {
   });
   zcc.agents.experimental_registerProvider({
     id: "acp-omp",
+    ...nativeDiscovery("acp-omp"),
     displayName: "OMP",
     icon: "./icons/omp.svg",
     visibility: "installed",
@@ -67,6 +76,7 @@ export default function plugin(zcc: ZccPluginApi) {
   });
   zcc.agents.experimental_registerProvider({
     id: "acp-grok",
+    ...nativeDiscovery("acp-grok"),
     displayName: "Grok Build",
     icon: "./icons/grok.svg",
     visibility: "installed",
@@ -75,6 +85,7 @@ export default function plugin(zcc: ZccPluginApi) {
   });
   zcc.agents.experimental_registerProvider({
     id: "acp-mastracode",
+    ...nativeDiscovery("acp-mastracode"),
     displayName: "Mastra Code",
     icon: "./icons/mastracode.svg",
     visibility: "installed",
@@ -83,6 +94,7 @@ export default function plugin(zcc: ZccPluginApi) {
   });
   zcc.agents.experimental_registerProvider({
     id: "acp-hermes-agent",
+    ...nativeDiscovery("acp-hermes-agent"),
     displayName: "Hermes Agent",
     icon: "./icons/hermes.svg",
     visibility: "installed",
