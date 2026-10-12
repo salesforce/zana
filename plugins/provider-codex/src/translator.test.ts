@@ -1449,6 +1449,41 @@ describe("codex subagent activity correlation", () => {
       ),
     ).toHaveLength(0);
   });
+
+  it("does not close a finished subagent again when a late interrupt arrives", () => {
+    const harness = createHarness();
+    harness.translate(
+      subAgentActivity({ id: "subagent-call-1", kind: "started" }),
+    );
+    harness.translate(childTurnStarted("child-turn-1"));
+    expect(harness.translate(childTurnCompleted("child-turn-1"))).toContainEqual(
+      expect.objectContaining({
+        type: "item/completed",
+        item: expect.objectContaining({ status: "completed" }),
+      }),
+    );
+
+    expect(
+      harness.translate(
+        subAgentActivity({ id: "interrupt-activity-1", kind: "interrupted" }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("settles nothing when the child exits after its subagent finished", () => {
+    const harness = createHarness();
+    harness.translate(
+      subAgentActivity({ id: "subagent-call-1", kind: "started" }),
+    );
+    harness.translate(childTurnStarted("child-turn-1"));
+    harness.translate(childTurnCompleted("child-turn-1"));
+
+    expect(
+      harness.translator.clearExitedChildThreadState({
+        providerThreadId: rootProviderThreadId,
+      }),
+    ).toEqual([]);
+  });
 });
 
 const STREAM_DISCONNECT_MESSAGE =
