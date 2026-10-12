@@ -3,7 +3,7 @@ import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBan
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
+import { PanelRight } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import { mergeTimelinePages, type ThreadContextWindowUsage, type TimelineRow } from '@zana-ai/zcc-server-contract';
 import { buildTimelineViewRows, type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
@@ -42,6 +42,7 @@ import {
 } from '../../components/thread/pending-interactions/useOpenPendingInteractions.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { useOptionalPaneContext, usePaneSecondaryPanelRegistration } from '../thread-detail/PaneContext.js';
+import { SplitPaneHeaderActions } from '../thread-detail/SplitPaneHeaderActions.js';
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
 import { ThreadPlanPanel, type DurablePlanPanelView } from '../../components/thread/secondary-panel/ThreadPlanPanel.js';
 import { planFileTabTitle, resolveThreadPlanDocument, isLivePlanFilePath } from '../../components/thread/secondary-panel/thread-plan-document.js';
@@ -880,30 +881,7 @@ export function ThreadDetail({
             />}
             <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />
             {!mobileControlsTarget && <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />}
-            {pane?.onToggleMaximize ? (
-              <button
-                type="button"
-                className="icon-btn"
-                title={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
-                aria-label={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
-                data-testid="split-pane-maximize"
-                onClick={pane.onToggleMaximize}
-              >
-                {pane.isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button>
-            ) : null}
-            {pane?.onRequestClose ? (
-              <button
-                type="button"
-                className="icon-btn"
-                title="Close pane"
-                aria-label="Close pane"
-                data-testid="split-pane-close"
-                onClick={pane.onRequestClose}
-              >
-                <X size={14} />
-              </button>
-            ) : null}
+            <SplitPaneHeaderActions />
             {!panel.state.isOpen && showSecondaryPanel ? (
               <button
                 type="button"

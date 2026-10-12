@@ -294,3 +294,54 @@ describe('buildPaletteItems', () => {
     expect(keys).toContain('plugin:pr-monitor/open');
   });
 });
+
+vi.mock('../../../lib/split-layout/paneCommands.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/split-layout/paneCommands.js')>();
+  return { ...actual, runPaneCommand: vi.fn(() => true) };
+});
+import { runPaneCommand } from '../../../lib/split-layout/paneCommands.js';
+
+describe('buildPaletteItems — split pane commands', () => {
+  it('omits pane actions unless a split workspace accepts them', () => {
+    const keys = buildPaletteItems(baseCtx()).map((i) => i.key);
+    expect(keys.some((k) => k.startsWith('action:pane.'))).toBe(false);
+  });
+
+  it('falls back to the help text for an unbound pane action', () => {
+    localStorage.setItem('zcc.keyboard-overrides', JSON.stringify([{ command: 'pane.close', shortcut: null }]));
+    try {
+      const item = buildPaletteItems(baseCtx({ splitPaneCommands: true })).find((i) => i.key === 'action:pane.close');
+      expect(item?.hint).toBe('Close the focused split pane when more than one is open.');
+    } finally {
+      localStorage.removeItem('zcc.keyboard-overrides');
+    }
+  });
+
+  it('lists named pane actions, closing the palette before running', () => {
+    const onClose = vi.fn();
+    const items = buildPaletteItems(baseCtx({ splitPaneCommands: true, onClose }));
+    const pane = items.filter((i) => i.key.startsWith('action:pane.'));
+    expect(pane.map((i) => i.key)).toEqual([
+      'action:pane.focus.left',
+      'action:pane.focus.right',
+      'action:pane.focus.up',
+      'action:pane.focus.down',
+      'action:pane.focus.previous',
+      'action:pane.focus.next',
+      'action:pane.maximize.toggle',
+      'action:pane.close'
+    ]);
+    expect(pane.every((i) => i.category === 'Actions' && i.hint)).toBe(true);
+    vi.useFakeTimers();
+    try {
+      pane.find((i) => i.key === 'action:pane.close')!.run();
+      expect(onClose).toHaveBeenCalledOnce();
+      // Deferred past the palette's unmount and focus restore.
+      expect(runPaneCommand).not.toHaveBeenCalled();
+      vi.runAllTimers();
+      expect(runPaneCommand).toHaveBeenCalledWith('pane.close');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

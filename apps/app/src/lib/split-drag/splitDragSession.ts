@@ -1,4 +1,5 @@
 import { suppressPostDragClick } from '../suppress-post-drag-click.js';
+import { guardEmbeddedFrames } from './frameGuard.js';
 import { pickZone, zoneBox, type SplitZone, type ZoneDecision } from './zones.js';
 
 /** Marks a pane's root element so the drag layer can hit-test it. */
@@ -45,6 +46,7 @@ export function beginSplitDrag(config: SplitDragConfig): () => void {
   let target: SplitDropTarget | null = null;
   let ghostEl: HTMLElement | null = null;
   let overlayEl: HTMLElement | null = null;
+  let releaseFrames: (() => void) | null = null;
 
   const preventNativeDrag = (event: DragEvent): void => {
     event.preventDefault();
@@ -61,6 +63,7 @@ export function beginSplitDrag(config: SplitDragConfig): () => void {
     ghostEl = createGhost(config.ghostLabel);
     overlayEl = createOverlay();
     document.body.append(ghostEl, overlayEl);
+    releaseFrames = guardEmbeddedFrames();
     document.body.style.cursor = 'grabbing';
     document.body.style.userSelect = 'none';
     if (config.sourceEl) config.sourceEl.style.opacity = '0.45';
@@ -128,6 +131,7 @@ export function beginSplitDrag(config: SplitDragConfig): () => void {
     if (cancelActiveDrag === handleCancel) cancelActiveDrag = null;
     ghostEl?.remove();
     overlayEl?.remove();
+    releaseFrames?.();
     document.body.style.cursor = previousCursor;
     document.body.style.userSelect = previousUserSelect;
     if (config.sourceEl) config.sourceEl.style.opacity = previousOpacity;

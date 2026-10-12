@@ -1,5 +1,6 @@
 import { Maximize2, Minimize2, X } from 'lucide-react';
 import { SplitPaneMoveMenu } from './SplitPaneMoveMenu.js';
+import { titleWithShortcut } from '../../lib/keyboard-shortcut-settings.js';
 import { useOptionalPaneContext } from './PaneContext.js';
 
 /** Close (and maximize) for split panes that already have a header row. Always
@@ -14,7 +15,7 @@ export function SplitPaneHeaderActions() {
         <button
           type="button"
           className="icon-btn"
-          title={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
+          title={titleWithShortcut(pane.isMaximized ? 'Restore pane' : 'Maximize pane', 'pane.maximize.toggle')}
           aria-label={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
           data-testid="split-pane-maximize"
           onClick={(event) => {
@@ -29,7 +30,7 @@ export function SplitPaneHeaderActions() {
         <button
           type="button"
           className="icon-btn"
-          title="Close pane (⌘⌥W)"
+          title={titleWithShortcut('Close pane', 'pane.close')}
           aria-label="Close pane"
           data-testid="split-pane-close"
           onClick={(event) => {

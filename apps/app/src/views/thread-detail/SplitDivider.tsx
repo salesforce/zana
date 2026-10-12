@@ -1,5 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { guardEmbeddedFrames } from '../../lib/split-drag/frameGuard.js';
 import { clampSplitPairFraction } from '../../lib/split-layout/ops.js';
+import { createEvenSplitSnap } from '../../lib/split-layout/resizeSnap.js';
 
 /** Live DOM preview, with one persisted resize on release. */
 export function SplitDivider({ dir, hidden, fraction, onResize }: {
@@ -43,11 +45,18 @@ export function SplitDivider({ dir, hidden, fraction, onResize }: {
     const previousUserSelect = document.body.style.userSelect;
     let pendingFraction: number | null = null;
     let finished = false;
+    const snapToEven = createEvenSplitSnap(start + span / 2 - previousSize);
+    let releaseFrames = () => {};
 
     const move = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return;
       const pointer = horizontal ? moveEvent.clientX : moveEvent.clientY;
-      pendingFraction = clampSplitPairFraction((previousSize + pointer - start) / span);
+      const snapped = snapToEven(pointer);
+      if (snapped) divider.dataset.snapped = 'true';
+      else delete divider.dataset.snapped;
+      pendingFraction = snapped
+        ? 0.5
+        : clampSplitPairFraction((previousSize + pointer - start) / span);
       previous.style.flex = `${pairTotal * pendingFraction} 1 0px`;
       next.style.flex = `${pairTotal * (1 - pendingFraction)} 1 0px`;
       divider.setAttribute('aria-valuenow', String(Math.round(pendingFraction * 100)));
@@ -57,6 +66,8 @@ export function SplitDivider({ dir, hidden, fraction, onResize }: {
       finished = true;
       cancelDrag.current = null;
       delete divider.dataset.dragging;
+      delete divider.dataset.snapped;
+      releaseFrames();
       divider.removeEventListener('pointermove', move);
       divider.removeEventListener('pointerup', up);
       divider.removeEventListener('pointercancel', cancelPointer);
@@ -86,6 +97,8 @@ export function SplitDivider({ dir, hidden, fraction, onResize }: {
       cancel();
     };
     divider.setPointerCapture(pointerId);
+    // Only once capture succeeded, so a throw cannot leave frames guarded.
+    releaseFrames = guardEmbeddedFrames();
     cancelDrag.current = cancel;
     divider.dataset.dragging = 'true';
     document.body.style.cursor = horizontal ? 'col-resize' : 'row-resize';

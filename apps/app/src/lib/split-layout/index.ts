@@ -4,3 +4,4 @@ export * from './ops.js';
 export * from './persistence.js';
 export * from './scope.js';
 export type * from './types.js';
+export * from './paneCommands.js';

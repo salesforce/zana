@@ -8,8 +8,11 @@ import { product } from '../../lib/product-client.js';
 import {
   Folder, TerminalSquare, Plus, Code2, FolderOpen, FileSearch, Sparkles, Play,
   Zap, Keyboard, History, Search, Inbox, RotateCcw, Trash2, Copy, Pin, PinOff,
-  BookOpen, Clock, LayoutGrid, RotateCw, Undo2, Puzzle, Plug, Drama, Bot, AppWindow, Settings, FolderCog
+  BookOpen, Clock, LayoutGrid, RotateCw, Undo2, Puzzle, Plug, Drama, Bot, AppWindow, Settings, FolderCog,
+  Columns2
 } from 'lucide-react';
+import { NAMED_PANE_COMMANDS, runPaneCommand } from '../../lib/split-layout/paneCommands.js';
+import { shortcutLabelForCommand } from '../../lib/keyboard-shortcut-settings.js';
 import { CursorIcon } from '../icons/CursorIcon.js';
 import { visibleTerminals, useUi } from '../../store.js';
 import { isScopedWindow } from '../../lib/windowScope.js';
@@ -84,6 +87,8 @@ export interface PaletteBuildContext {
   commandPaletteActions?: readonly PluginCommandPaletteActionRegistration[];
   threadId?: string | null;
   projectId?: string | null;
+  /** A split workspace with 2+ panes is mounted and accepts pane commands. */
+  splitPaneCommands?: boolean;
 }
 
 /**
@@ -623,6 +628,24 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
     }
   }
 
+  const paneItems: PaletteItem[] = ctx.splitPaneCommands
+    ? NAMED_PANE_COMMANDS.map(({ command, label, help }) => ({
+        key: `action:${command}`,
+        icon: <Columns2 size={14} />,
+        label,
+        hint: shortcutLabelForCommand(command) ?? help,
+        keywords: ['split', 'pane'],
+        category: 'Actions' as const,
+        source: 'core',
+        run: () => {
+          onClose();
+          // After the palette unmounts: its focus restore lands in the old
+          // pane, whose onFocus would otherwise take focus straight back.
+          setTimeout(() => runPaneCommand(command), 0);
+        }
+      }))
+    : [];
+
   // Slash commands are NOT folded into the general list — they have a dedicated
   // `/` mode in the palette (one clean row each, ↵ new tab / ⇧↵ active tab) so
   // they don't double up here with verbose " — new Claude tab" labels.
@@ -630,6 +653,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
     ...projectItems,
     ...tabItems,
     ...actions,
+    ...paneItems,
     ...openWindowItems,
     ...buildExtensionItems(ctx),
     ...buildPluginPaletteItems(

@@ -33,7 +33,7 @@ export interface ThreadMenu {
   renaming?: boolean;
 }
 
-export type ThreadMenuAction = 'open' | 'open-split' | 'stop' | 'fork' | 'archive' | 'close-followup' | 'pin' | 'unpin' | 'read' | 'unread';
+export type ThreadMenuAction = 'open' | 'open-split' | 'open-split-down' | 'stop' | 'fork' | 'archive' | 'close-followup' | 'pin' | 'unpin' | 'read' | 'unread';
 
 export interface ThreadMenuContext {
   navigate: (path: string) => void;
@@ -89,13 +89,14 @@ export async function runThreadMenuAction(
     ctx.navigate(getThreadRoutePath(thread.id, projectId));
     return;
   }
-  if (action === 'open-split') {
+  if (action === 'open-split' || action === 'open-split-down') {
     openThreadInSplit({
       navigate: ctx.navigate,
       projectId: projectId ?? null,
       threadId: thread.id,
       isCompact: isCompactViewport(),
-      currentPathname: ctx.pathname
+      currentPathname: ctx.pathname,
+      side: action === 'open-split-down' ? 'bottom' : 'right'
     });
     return;
   }
@@ -279,6 +280,9 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
       </button>
       <button type="button" disabled={busy} onClick={() => void run('open-split')}>
         Open in split
+      </button>
+      <button type="button" disabled={busy} onClick={() => void run('open-split-down')}>
+        Open in split below
       </button>
       {canStop && (
         <button

@@ -4,6 +4,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type PointerEvent as ReactPointerEvent,
   type SetStateAction
 } from 'react';
@@ -46,6 +47,17 @@ import {
   type SplitSide
 } from '../../lib/split-layout/index.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
+import {
+  getAdjacentPaneId,
+  getDirectionalPaneId,
+  PANE_FOCUS_INDEX_COMMANDS,
+  paneCommandDirection,
+  paneCommandFocusIndex,
+  registerPaneCommandHandler,
+  type PaneCommandId
+} from '../../lib/split-layout/paneCommands.js';
+import { commandForShortcutEvent } from '../../lib/keyboard-shortcut-settings.js';
+import { onThreadArchived } from '../../thread-store.js';
 import {
   focusedPaneRoute,
   paneContentForPathname,
@@ -305,12 +317,11 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
   useSplitPaneShortcuts({
     enabled: isSplitActive,
     layout: effectiveLayout,
-    panes,
-    maximizedPaneId: effectiveMaximizedPaneId,
     focusPane,
     closePane,
     toggleMaximizePane
   });
+  usePruneArchivedThreadPanes(closePane);
 
   const treeProps: SplitTreeProps = {
     node: effectiveLayout.root,
@@ -341,61 +352,125 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
   );
 }
 
-function useSplitPaneShortcuts({
-  enabled,
-  layout,
-  panes,
-  maximizedPaneId,
-  focusPane,
-  closePane,
-  toggleMaximizePane
-}: {
+const PANE_SHORTCUT_COMMANDS: readonly PaneCommandId[] = [
+  ...PANE_FOCUS_INDEX_COMMANDS,
+  'pane.focus.left',
+  'pane.focus.right',
+  'pane.focus.up',
+  'pane.focus.down',
+  'pane.focus.previous',
+  'pane.focus.next',
+  'pane.maximize.toggle',
+  'pane.close'
+];
+
+/** Code editors own their arrow chords (Monaco: ⌘⌥↑/↓ adds cursors). */
+function editorOwnsArrowChord(event: KeyboardEvent): boolean {
+  if (!event.key.startsWith('Arrow')) return false;
+  const target = event.target;
+  return target instanceof Element && target.closest('.monaco-editor') !== null;
+}
+
+/**
+ * A thread archived elsewhere (another window, CLI, agent board) leaves the
+ * split: other scopes are stripped silently, the visible split closes the
+ * pane through `closePane` so focus and route follow. A lone pane stays.
+ */
+function usePruneArchivedThreadPanes(closePane: (paneId: string) => void): void {
+  const closePaneRef = useRef(closePane);
+  closePaneRef.current = closePane;
+  useEffect(
+    () =>
+      onThreadArchived((threadId) => {
+        useSplitWorkspace.getState().closePanesForThreads([threadId], { inactiveScopesOnly: true });
+        for (;;) {
+          const current = useSplitWorkspace.getState().layout;
+          if (current === null || countPanes(current.root) < 2) return;
+          const stale = listPanes(current.root).find(
+            (pane) => pane.content.kind === 'thread' && pane.content.threadId === threadId
+          );
+          if (stale === undefined) return;
+          closePaneRef.current(stale.paneId);
+          if (useSplitWorkspace.getState().layout === current) return;
+        }
+      }),
+    []
+  );
+}
+
+function useSplitPaneShortcuts(props: {
   enabled: boolean;
   layout: SplitLayout;
-  panes: readonly PaneNode[];
-  maximizedPaneId: string | null;
   focusPane: (paneId: string) => void;
   closePane: (paneId: string) => void;
   toggleMaximizePane: (paneId: string) => void;
 }) {
+  const latest = useRef(props);
+  latest.current = props;
+  const [run] = useState(() => (command: PaneCommandId): boolean => {
+    const { enabled, layout, focusPane, closePane, toggleMaximizePane } = latest.current;
+    if (!enabled) return false;
+    // Palette runs can follow each other before a rerender; read live state.
+    const current = useSplitWorkspace.getState().layout ?? layout;
+    const panes = listPanes(current.root);
+    const index = paneCommandFocusIndex(command);
+    if (index !== null) {
+      const pane = panes[index];
+      if (!pane) return false;
+      focusPane(pane.paneId);
+      return true;
+    }
+    const direction = paneCommandDirection(command);
+    if (direction !== null) {
+      const target = getDirectionalPaneId(current.root, current.focusedPaneId, direction);
+      if (target === null) return false;
+      focusPane(target);
+      return true;
+    }
+    switch (command) {
+      case 'pane.focus.previous':
+      case 'pane.focus.next': {
+        const target = getAdjacentPaneId(panes, current.focusedPaneId, command === 'pane.focus.next' ? 1 : -1);
+        if (target === null) return false;
+        focusPane(target);
+        return true;
+      }
+      case 'pane.maximize.toggle': {
+        const maximized = useSplitWorkspace.getState().maximizedPaneId;
+        toggleMaximizePane(
+          maximized !== null && findPane(current.root, maximized) !== null ? maximized : current.focusedPaneId
+        );
+        return true;
+      }
+      case 'pane.close':
+        closePane(current.focusedPaneId);
+        return true;
+      default:
+        return false;
+    }
+  });
+  useEffect(() => (props.enabled ? registerPaneCommandHandler(run) : undefined), [props.enabled, run]);
+  // Subscribed once: re-adding the capture listener on every layout change
+  // would queue it behind the global shortcuts handler (⌘N tab switching).
   useEffect(() => {
-    if (!enabled) return;
     const onKey = (event: KeyboardEvent) => {
-      const meta = event.metaKey || event.ctrlKey;
-      if (!meta) return;
-      const digit = /^Digit([1-8])$/.exec(event.code);
-      if (digit && !event.shiftKey && !event.altKey) {
-        const pane = panes[Number(digit[1]) - 1];
-        if (!pane) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        focusPane(pane.paneId);
-        return;
-      }
-      if (event.altKey && (event.key === '[' || event.key === ']')) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const dir = event.key === ']' ? 1 : -1;
-        const index = panes.findIndex((pane) => pane.paneId === layout.focusedPaneId);
-        const next = panes[(index + dir + panes.length) % panes.length];
-        if (next) focusPane(next.paneId);
-        return;
-      }
-      if (event.shiftKey && (event.key === 'M' || event.key === 'm')) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        toggleMaximizePane(maximizedPaneId ?? layout.focusedPaneId);
-        return;
-      }
-      if (event.altKey && (event.key === 'W' || event.key === 'w')) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        closePane(layout.focusedPaneId);
-      }
+      if (!latest.current.enabled) return;
+      // Plain typing never reaches a binding; skip the binding lookup for it.
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.length === 1) return;
+      const command = commandForShortcutEvent(PANE_SHORTCUT_COMMANDS, event, undefined, {
+        acceptControlAsMod: true
+      });
+      if (command === null || editorOwnsArrowChord(event)) return;
+      // ⌘N past the last pane keeps its non-split meaning (tab switching).
+      const index = paneCommandFocusIndex(command);
+      if (index !== null && !listPanes(latest.current.layout.root)[index]) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      run(command);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [closePane, enabled, focusPane, layout.focusedPaneId, maximizedPaneId, panes, toggleMaximizePane]);
+  }, [run]);
 }
 
 interface SplitTreeProps {

@@ -42,10 +42,13 @@ describe('split drag lifecycle', () => {
     move(100);
     move(350, 250, 2);
     expect(document.querySelector('.split-drag-ghost')).toBeNull();
+    expect(document.body.classList.contains('split-frame-guard')).toBe(false);
     up(350, 250, 2);
     move();
     expect(document.querySelector('.split-drag-ghost')?.textContent).toBe('Inbox');
+    expect(document.body.classList.contains('split-frame-guard')).toBe(true);
     up();
+    expect(document.body.classList.contains('split-frame-guard')).toBe(false);
     expect(config.onDrop).toHaveBeenCalledWith({ paneId: 'pane-2', zone: 'left' });
     expect(config.onEnd).toHaveBeenCalledExactlyOnceWith({ dropped: true });
   });

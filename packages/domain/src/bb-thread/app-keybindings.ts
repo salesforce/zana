@@ -24,6 +24,13 @@ export const QUESTION_SELECT_APP_COMMAND_IDS = [
   "question.select.9",
 ] as const;
 
+export const PANE_DIRECTION_APP_COMMAND_IDS = [
+  "pane.focus.left",
+  "pane.focus.right",
+  "pane.focus.up",
+  "pane.focus.down",
+] as const;
+
 export const PANE_FOCUS_APP_COMMAND_IDS = [
   "pane.focus.1",
   "pane.focus.2",
@@ -43,6 +50,7 @@ export const APP_COMMAND_IDS = [
   "thread.previous",
   "thread.next",
   ...THREAD_JUMP_APP_COMMAND_IDS,
+  ...PANE_DIRECTION_APP_COMMAND_IDS,
   "pane.focus.previous",
   "pane.focus.next",
   ...PANE_FOCUS_APP_COMMAND_IDS,
@@ -142,11 +150,14 @@ const SHIFTED_KEY_BASES: Readonly<Record<string, string>> = {
   "?": "/",
 };
 
-// The unshifted letter or digit a physical key produces, or null for every
-// other key (arrows, punctuation, F-keys), whose `key` is already stable.
+// The unshifted letter, digit or bracket a physical key produces, or null for
+// every other key (arrows, other punctuation, F-keys), whose `key` is stable.
 function baseKeyFromCode(code: string): string | null {
   if (/^Key[A-Z]$/u.test(code)) return code.slice(3).toLowerCase();
   if (/^Digit[0-9]$/u.test(code)) return code.slice(5);
+  // Option+[ composes "“" on macOS; keep bracket chords matchable.
+  if (code === "BracketLeft") return "[";
+  if (code === "BracketRight") return "]";
   return null;
 }
 

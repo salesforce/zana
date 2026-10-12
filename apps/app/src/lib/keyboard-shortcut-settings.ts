@@ -10,6 +10,7 @@ import {
   type AppShortcut,
   type AppShortcutInput
 } from '@zana-ai/zcc-domain/thread-runtime';
+import { NAMED_PANE_COMMANDS, PANE_FOCUS_INDEX_COMMANDS } from './split-layout/paneCommands.js';
 
 const STORAGE_KEY = 'zcc.keyboard-overrides';
 
@@ -27,8 +28,24 @@ export const REMAPPABLE_COMMANDS: Array<{
   { command: 'settings.open', label: 'Settings', help: 'Open or close Settings.' },
   { command: 'browser.focusLocation', label: 'Browser address bar', help: 'Focus the in-app browser address bar.' },
   { command: 'browser.find', label: 'Find in page', help: 'Find text in the in-app browser tab.' },
-  { command: 'browser.reload', label: 'Reload browser tab', help: 'Reload the in-app browser tab.' }
+  { command: 'browser.reload', label: 'Reload browser tab', help: 'Reload the in-app browser tab.' },
+  ...NAMED_PANE_COMMANDS
 ];
+
+const SPLIT_PANE_WHEN = { all: ['splitActive' as const], none: ['modalOpen' as const] };
+
+function splitPaneBinding(
+  command: AppCommandId,
+  key: string,
+  modifiers: { alt?: boolean; shift?: boolean } = {}
+): AppDefaultKeybindings[number] {
+  return {
+    command,
+    desktopOnly: false,
+    shortcut: { key, mod: true, meta: false, control: false, alt: modifiers.alt ?? false, shift: modifiers.shift ?? false },
+    when: SPLIT_PANE_WHEN
+  };
+}
 
 export const DEFAULT_APP_KEYBINDINGS: AppDefaultKeybindings = [
   {
@@ -78,7 +95,16 @@ export const DEFAULT_APP_KEYBINDINGS: AppDefaultKeybindings = [
     desktopOnly: true,
     shortcut: { key: 'f', mod: true, meta: false, control: false, alt: false, shift: false },
     when: { all: ['mainSurface', 'browserFocus'], none: ['modalOpen'] }
-  }
+  },
+  splitPaneBinding('pane.focus.left', 'ArrowLeft', { alt: true }),
+  splitPaneBinding('pane.focus.right', 'ArrowRight', { alt: true }),
+  splitPaneBinding('pane.focus.up', 'ArrowUp', { alt: true }),
+  splitPaneBinding('pane.focus.down', 'ArrowDown', { alt: true }),
+  splitPaneBinding('pane.focus.previous', '[', { alt: true }),
+  splitPaneBinding('pane.focus.next', ']', { alt: true }),
+  ...PANE_FOCUS_INDEX_COMMANDS.map((command, index) => splitPaneBinding(command, String(index + 1))),
+  splitPaneBinding('pane.maximize.toggle', 'm', { shift: true }),
+  splitPaneBinding('pane.close', 'w', { alt: true })
 ];
 
 export function appShortcutFromInput(
@@ -163,4 +189,59 @@ export function setCommandShortcutOverride(command: AppCommandId, shortcut: AppS
 
 export function resetCommandShortcutOverride(command: AppCommandId): void {
   writeKeyboardOverrides(readKeyboardOverrides().filter((row) => row.command !== command));
+}
+
+/**
+ * The ways one key press can read: as normalized, as the composed character
+ * (German ⌥5 types "["), and as the digit key it sits on (AZERTY ⌘& is ⌘1).
+ */
+function shortcutEventReadings(event: KeyboardEvent): AppShortcutInput[] {
+  const readings: AppShortcutInput[] = [event, { ...modifiersOf(event), key: event.key, code: '' }];
+  const digit = /^Digit([0-9])$/.exec(event.code)?.[1];
+  if (digit !== undefined && event.key !== digit) readings.push({ ...modifiersOf(event), key: digit, code: '' });
+  return readings;
+}
+
+function modifiersOf(event: KeyboardEvent): Omit<AppShortcutInput, 'key' | 'code'> {
+  return { altKey: event.altKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey };
+}
+
+/**
+ * First of `commands` whose resolved binding matches `event` (one storage read).
+ * `acceptControlAsMod` also lets Ctrl stand in for ⌘ on mac `mod` bindings.
+ */
+export function commandForShortcutEvent<T extends AppCommandId>(
+  commands: readonly T[],
+  event: KeyboardEvent,
+  platform = typeof navigator === 'undefined' ? '' : navigator.platform,
+  options: { acceptControlAsMod?: boolean } = {}
+): T | null {
+  const useMetaForMod = isMacKeyboardPlatform(platform);
+  const controlAsMod = useMetaForMod && options.acceptControlAsMod === true && event.ctrlKey && !event.metaKey;
+  const bindings = resolvedKeyboardBindings();
+  const readings = shortcutEventReadings(event);
+  for (const command of commands) {
+    const binding = bindings.find((row) => row.command === command);
+    if (!binding) continue;
+    for (const input of readings) {
+      if (matchesAppShortcut(input, binding.shortcut, useMetaForMod)) return command;
+      if (controlAsMod && binding.shortcut.mod && matchesAppShortcut(input, binding.shortcut, false)) return command;
+    }
+  }
+  return null;
+}
+
+/** Display label of a command's current binding, or null when it has none. */
+export function shortcutLabelForCommand(
+  command: AppCommandId,
+  platform = typeof navigator === 'undefined' ? '' : navigator.platform
+): string | null {
+  const binding = resolvedKeyboardBindings().find((row) => row.command === command);
+  return binding ? formatAppShortcut(binding.shortcut, platform) : null;
+}
+
+/** `label (⌘⌥W)` when the command has a binding, else just `label`. */
+export function titleWithShortcut(label: string, command: AppCommandId): string {
+  const shortcut = shortcutLabelForCommand(command);
+  return shortcut === null ? label : `${label} (${shortcut})`;
 }

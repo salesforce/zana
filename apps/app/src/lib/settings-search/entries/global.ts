@@ -17,6 +17,15 @@ export const entries: readonly SettingsSearchEntry[] = [
     value: (s) => THEMES[s.config.theme as string] ?? undefined
   },
   {
+    id: 'global.dim-inactive-splits',
+    section: 'global',
+    anchor: 'appearance',
+    label: 'Fade inactive split panes',
+    help: 'With two or more panes open, panes other than the focused one are slightly dimmed. Saved on this device.',
+    keywords: ['split', 'pane', 'dim', 'focus', 'opacity'],
+    kind: 'setting'
+  },
+  {
     id: 'global.cli-skills-intro',
     section: 'global',
     anchor: 'cli-skills',

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { entries as globalEntries } from '@/lib/settings-search/entries/global';
@@ -28,6 +28,7 @@ vi.mock('@/store', () => {
 });
 
 import { GlobalView } from './GlobalView';
+import { DIM_INACTIVE_SPLITS_STORAGE_KEY, useSplitWorkspace } from '@/lib/split-layout/store';
 
 const config: AppConfig = {
   version: 1,
@@ -54,5 +55,23 @@ describe('GlobalView settings-search targets', () => {
     const expected = globalEntries.map((e) => e.id);
     expect(expected.length).toBeGreaterThan(0);
     for (const id of expected) expect(present, id).toContain(id);
+  });
+});
+
+describe('GlobalView split appearance', () => {
+  afterEach(() => {
+    useSplitWorkspace.getState().setDimInactiveSplits(true);
+    localStorage.removeItem(DIM_INACTIVE_SPLITS_STORAGE_KEY);
+  });
+
+  it('toggles fading of inactive split panes and saves it on this device', () => {
+    useSplitWorkspace.getState().setDimInactiveSplits(true);
+    render(<GlobalView config={config} onConfigDraft={vi.fn()} onUpdate={vi.fn().mockResolvedValue(undefined)} />);
+    const toggle = screen.getByRole('switch', { name: /Fade inactive split panes/ });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+    expect(useSplitWorkspace.getState().dimInactiveSplits).toBe(false);
+    expect(localStorage.getItem(DIM_INACTIVE_SPLITS_STORAGE_KEY)).toBe('0');
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
   });
 });

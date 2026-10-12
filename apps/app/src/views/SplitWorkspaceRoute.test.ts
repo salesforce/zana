@@ -66,7 +66,9 @@ describe('SplitWorkspaceRoute', () => {
     expect(area).toContain('const routeKey = paneContentRoute(routeContent)');
     expect(area).toContain('addEventListener(\'keydown\', onKey, true)');
     expect(area).toContain('stopImmediatePropagation()');
-    expect(area).toContain('/^Digit([1-8])$/');
+    expect(area).toContain('commandForShortcutEvent(');
+    expect(area).toContain('PANE_FOCUS_INDEX_COMMANDS');
+    expect(area).toContain('registerPaneCommandHandler(');
     expect(area).not.toContain('<SplitWorkspaceSecondaryPanelHost');
     expect(area).not.toContain('createPaneSecondaryPanelRegistry');
     expect(area).toContain('secondaryPanelRegistry={null}');
@@ -84,7 +86,7 @@ describe('SplitWorkspaceRoute', () => {
     expect(css).toContain('.split-workspace .scheduler-page,');
     expect(css).toContain('.split-workspace .inbox-view,');
     expect(css).not.toContain('.split-pane:hover .split-pane-header-actions');
-    expect(help).toContain("title: 'Split'");
+    expect(help).toContain("title: 'Split (remappable in Settings → Shortcuts)'");
     expect(help).toContain('Close focused pane');
     expect(help).toContain('⌘');
     expect(help).toContain('⌥');

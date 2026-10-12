@@ -143,4 +143,34 @@ describe('split workspace store', () => {
     useSplitWorkspace.getState().closePanesForThreads(['t-gone']);
     expect(useSplitWorkspace.getState().scopes[PROJECT_SCOPE]?.layout).toBeNull();
   });
+
+  it('leaves the active scope alone when asked to strip inactive scopes only', () => {
+    const active = splitPane(
+      createSinglePaneLayout(threadPaneContent('t-gone', 'p1')),
+      'pane-1',
+      'right',
+      threadPaneContent('t2', 'p1')
+    );
+    useSplitWorkspace.setState({
+      scopeKey: GLOBAL_SPLIT_SCOPE_KEY,
+      layout: active,
+      maximizedPaneId: null,
+      scopes: {
+        [PROJECT_SCOPE]: {
+          layout: createSinglePaneLayout(threadPaneContent('t-gone', 'p1')),
+          maximizedPaneId: null
+        }
+      }
+    });
+    const closed = useSplitWorkspace
+      .getState()
+      .closePanesForThreads(['t-gone'], { inactiveScopesOnly: true });
+    expect(closed).toEqual({ removedAny: true, focusedRouteContent: null });
+    expect(useSplitWorkspace.getState().layout).toBe(active);
+    expect(useSplitWorkspace.getState().scopes[PROJECT_SCOPE]?.layout).toBeNull();
+    expect(
+      useSplitWorkspace.getState().closePanesForThreads(['t-gone'], { inactiveScopesOnly: true })
+        .removedAny
+    ).toBe(false);
+  });
 });

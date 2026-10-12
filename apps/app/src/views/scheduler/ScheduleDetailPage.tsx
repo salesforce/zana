@@ -6,6 +6,7 @@ import { product } from '../../lib/product-client.js';
 import { useScheduler, useUi } from '../../store.js';
 import { getNewScheduleRoutePath, getScheduleRoutePath, getSchedulerRoutePath, getProjectModeRoutePath } from '../../lib/route-paths.js';
 import { useOptionalPaneContext } from '../thread-detail/PaneContext.js';
+import { SplitPaneMoveMenu } from '../thread-detail/SplitPaneMoveMenu.js';
 import { ScheduleEditor } from '../../components/scheduler/ScheduleEditor.js';
 import { ScheduleInfoPanel } from '../../components/scheduler/ScheduleInfoPanel.js';
 import { DeleteConfirmModal } from '../../components/scheduler/DeleteConfirmModal.js';
@@ -136,6 +137,7 @@ function ScheduleDetailView({
       <header className="schedule-detail-pane-header">
         <h1>{title}</h1>
         <div className="schedule-detail-pane-actions">
+          {pane?.onMoveToSide ? <SplitPaneMoveMenu onMoveToSide={pane.onMoveToSide} /> : null}
           {pane?.onToggleMaximize ? (
             <button
               type="button"

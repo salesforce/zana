@@ -363,7 +363,7 @@ describe('AgentSessionView', () => {
     expect(source.indexOf('thread-detail-split')).toBeLessThan(source.indexOf('thread-detail-main agent-session-main'));
     expect(source.indexOf('thread-detail-main agent-session-main')).toBeLessThan(source.indexOf('<AgentSessionHeader'));
     expect(source).toContain('thread-detail-view--modal');
-    expect(source).toContain('data-testid="split-pane-close"');
+    expect(source).toContain('<SplitPaneHeaderActions');
     expect(source).toContain('thread-detail-view--split-pane');
     expect(source).toContain('defaultOpen: !modal');
     expect(source).toContain('modal,');

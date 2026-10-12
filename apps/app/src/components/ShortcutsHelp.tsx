@@ -69,9 +69,11 @@ const SECTIONS: Section[] = [
     ]
   },
   {
-    title: 'Split',
+    title: 'Split (remappable in Settings → Shortcuts)',
     rows: [
       { keys: ['⌘', '⌥', 'W'], label: 'Close focused pane' },
+      { keys: ['⌘', '⇧', 'M'], label: 'Maximize / restore focused pane' },
+      { keys: ['⌘', '⌥', '←', '→', '↑', '↓'], label: 'Focus the pane in that direction' },
       { keys: ['⌘', '1'], label: 'Focus pane 1 (… up to ⌘8)' },
       { keys: ['⌘', '⌥', ']'], label: 'Next pane' },
       { keys: ['⌘', '⌥', '['], label: 'Previous pane' }

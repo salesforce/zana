@@ -34507,6 +34507,10 @@ textarea.thread-command-editor {
   box-shadow: inset 0 2px var(--accent);
 }
 
+.split-workspace[data-split='true'] .split-pane:not(.is-focused) .split-pane-bar-title {
+  color: var(--text-muted);
+}
+
 .split-pane-empty-hint {
   margin: 0;
   font-size: 12px;
@@ -34582,6 +34586,10 @@ textarea.thread-command-editor {
   flex: 0 0 auto;
 }
 
+.thread-detail-actions .split-pane-header-actions {
+  margin-left: 0;
+}
+
 .split-pane-empty-well {
   position: relative;
   z-index: 25;
@@ -34643,6 +34651,16 @@ textarea.thread-command-editor {
 .split-divider:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Caught on the even split while dragging. */
+.split-divider[data-snapped='true'] {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+body.split-frame-guard iframe,
+body.split-frame-guard webview {
+  pointer-events: none !important;
 }
 
 .split-divider-hit {
@@ -35193,6 +35211,11 @@ textarea.thread-command-editor {
   gap: 8px;
   min-height: 32px;
   flex: 0 0 auto;
+}
+
+/* Focused split pane: the thread header carries the pane-bar accent. */
+.split-workspace[data-split='true'] .split-pane.is-focused .thread-detail-header {
+  box-shadow: inset 0 2px var(--accent);
 }
 
 .agent-session-main > .thread-detail-header {

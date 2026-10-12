@@ -6,6 +6,13 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const viewport = vi.hoisted(() => ({ compact: false }));
+const archived = vi.hoisted(() => new Set<(threadId: string) => void>());
+vi.mock('../../thread-store.js', () => ({
+  onThreadArchived: (listener: (threadId: string) => void) => {
+    archived.add(listener);
+    return () => archived.delete(listener);
+  }
+}));
 vi.mock('../../hooks/useIsCompactViewport.js', () => ({ useIsCompactViewport: () => viewport.compact }));
 
 vi.mock('../home/HomeView.js', () => ({ HomeView: () => <div data-testid="home-view"><input aria-label="Draft" defaultValue="" /></div> }));
@@ -70,6 +77,7 @@ import { splitPane, movePane, swapPanes, removePane } from '../../lib/split-layo
 import { GLOBAL_SPLIT_SCOPE_KEY, projectSplitScopeKey } from '../../lib/split-layout/scope.js';
 import { createSinglePaneLayout, paneContentForPathname } from '../../lib/split-layout/splitThreadNavigation.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
+import { paneCommandsAvailable, runPaneCommand } from '../../lib/split-layout/paneCommands.js';
 import { SplitThreadArea } from './SplitThreadArea.js';
 
 function resetSplitWorkspace(): void {
@@ -343,7 +351,90 @@ function renderPair(side: 'right' | 'bottom' = 'right') {
 }
 
 describe('split shell interaction', () => {
-  afterEach(() => { cleanup(); resetSplitWorkspace(); });
+  afterEach(() => { cleanup(); resetSplitWorkspace(); vi.restoreAllMocks(); localStorage.removeItem('zcc.keyboard-overrides'); });
+
+  it('focuses panes by direction, yields arrow chords to code editors, and follows remapped shortcuts', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    renderPair('bottom');
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+    fireEvent.keyDown(window, { key: 'ArrowUp', metaKey: true, altKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+    fireEvent.keyDown(window, { key: 'ArrowUp', metaKey: true, altKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+    const editor = document.createElement('div');
+    editor.className = 'monaco-editor';
+    const editorInput = document.createElement('textarea');
+    editor.appendChild(editorInput);
+    document.body.appendChild(editor);
+    fireEvent.keyDown(editorInput, { key: 'ArrowDown', metaKey: true, altKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+    editor.remove();
+    fireEvent.keyDown(window, { key: 'ArrowDown', metaKey: true, altKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+    localStorage.setItem('zcc.keyboard-overrides', JSON.stringify([
+      { command: 'pane.focus.up', shortcut: { key: 'k', mod: true, meta: false, control: false, alt: true, shift: false } }
+    ]));
+    fireEvent.keyDown(window, { key: 'ArrowUp', metaKey: true, altKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+    fireEvent.keyDown(window, { key: '˚', code: 'KeyK', metaKey: true, altKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+  });
+
+  it('closes panes whose thread is archived elsewhere, keeping focus and route in step', () => {
+    const three = splitPane(
+      splitPane(createSinglePaneLayout({ kind: 'thread', projectId: null, threadId: 'a' }), 'pane-1', 'right', { kind: 'thread', projectId: null, threadId: 'b' }),
+      'pane-2',
+      'bottom',
+      { kind: 'thread', projectId: null, threadId: 'a' }
+    );
+    useSplitWorkspace.setState({
+      layout: three,
+      maximizedPaneId: null,
+      scopes: { [projectSplitScopeKey('p9')]: { layout: createSinglePaneLayout({ kind: 'thread', projectId: 'p9', threadId: 'a' }), maximizedPaneId: null } }
+    });
+    let pathname = '';
+    function Probe() { pathname = useLocation().pathname; return null; }
+    const view = render(<MemoryRouter initialEntries={['/threads/a']}><RoutedArea /><Probe /></MemoryRouter>);
+    expect(archived.size).toBe(1);
+    const fire = (threadId: string) => act(() => { for (const listener of [...archived]) listener(threadId); });
+    fire('unrelated');
+    expect(screen.getAllByTestId('thread-detail')).toHaveLength(3);
+    fire('a');
+    expect(screen.getAllByTestId('thread-detail').map((el) => el.getAttribute('data-thread'))).toEqual(['b']);
+    expect(pathname).toBe('/threads/b');
+    expect(useSplitWorkspace.getState().scopes[projectSplitScopeKey('p9')]?.layout).toBeNull();
+    // A lone pane is the normal single-thread view; it stays.
+    fire('b');
+    expect(screen.getAllByTestId('thread-detail')).toHaveLength(1);
+    view.unmount();
+    expect(archived.size).toBe(0);
+  });
+
+  it('exposes pane commands to the palette only while a split is visible', () => {
+    expect(paneCommandsAvailable()).toBe(false);
+    const view = renderPair();
+    const run = (command: Parameters<typeof runPaneCommand>[0]) => {
+      let handled = false;
+      act(() => { handled = runPaneCommand(command); });
+      return handled;
+    };
+    expect(paneCommandsAvailable()).toBe(true);
+    expect(run('pane.focus.previous')).toBe(true);
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+    expect(run('pane.focus.right')).toBe(true);
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+    expect(run('pane.focus.down')).toBe(false);
+    expect(run('pane.focus.8')).toBe(false);
+    expect(run('pane.focus.1')).toBe(true);
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+    expect(run('pane.maximize.toggle')).toBe(true);
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-1');
+    expect(run('pane.close')).toBe(true);
+    expect(screen.getByTestId('split-workspace').getAttribute('data-split')).toBe('false');
+    expect(paneCommandsAvailable()).toBe(false);
+    view.unmount();
+    expect(runPaneCommand('pane.close')).toBe(false);
+  });
 
   it('pauses hidden thread timelines on maximize and compact layouts, retaining visible siblings', () => {
     const layout = splitPane(createSinglePaneLayout({ kind: 'thread', projectId: null, threadId: 'a' }), 'pane-1', 'right', { kind: 'thread', projectId: null, threadId: 'b' });
@@ -375,6 +466,7 @@ describe('split shell interaction', () => {
   });
 
   it('tracks keyboard focus and supports focus, cycle, maximize and close shortcuts', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
     renderPair();
     const agentPane = screen.getByTestId('agents-view').closest('[data-split-pane-id]')!;
     fireEvent.focus(agentPane.querySelector('button')!);
@@ -388,7 +480,7 @@ describe('split shell interaction', () => {
     fireEvent.keyDown(window, { key: 'M', metaKey: true, shiftKey: true });
     expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-2');
     expect(screen.getByTestId('agents-view').closest('[aria-hidden]')?.getAttribute('aria-hidden')).toBe('true');
-    fireEvent.keyDown(window, { key: '1', code: 'Digit1', ctrlKey: true });
+    fireEvent.keyDown(window, { key: '1', code: 'Digit1', metaKey: true });
     expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-1');
     fireEvent.keyDown(window, { key: 'M', metaKey: true, shiftKey: true });
     expect(useSplitWorkspace.getState().maximizedPaneId).toBeNull();
@@ -397,6 +489,35 @@ describe('split shell interaction', () => {
     fireEvent.keyDown(window, { key: 'w', metaKey: true, altKey: true });
     expect(screen.queryByTestId('agents-view')).toBeNull();
     expect(screen.getByTestId('split-workspace').getAttribute('data-split')).toBe('false');
+  });
+
+  it('keeps its shortcut listener ahead of later global handlers across focus changes', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    renderPair();
+    // App installs the global ⌘N tab shortcuts after child effects have run.
+    const globalShortcuts = vi.fn();
+    window.addEventListener('keydown', globalShortcuts, true);
+    try {
+      fireEvent.keyDown(window, { key: '1', code: 'Digit1', metaKey: true });
+      expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+      fireEvent.keyDown(window, { key: '2', code: 'Digit2', metaKey: true });
+      expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+      expect(globalShortcuts).not.toHaveBeenCalled();
+      // AZERTY: ⌘ plus the 1 key reports "&".
+      fireEvent.keyDown(window, { key: '&', code: 'Digit1', metaKey: true });
+      expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+      // A remap without ⌘/Ctrl still fires; plain typing passes through.
+      localStorage.setItem('zcc.keyboard-overrides', JSON.stringify([
+        { command: 'pane.focus.next', shortcut: { key: 'F6', mod: false, meta: false, control: false, alt: false, shift: false } }
+      ]));
+      fireEvent.keyDown(window, { key: 'F6', code: 'F6' });
+      expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+      fireEvent.keyDown(window, { key: 'a', code: 'KeyA' });
+      expect(globalShortcuts).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('keydown', globalShortcuts, true);
+      localStorage.removeItem('zcc.keyboard-overrides');
+    }
   });
 
   it.each(['left', 'right', 'above', 'below'])('moves a pane %s without dragging', (side) => {

@@ -100,6 +100,19 @@ describe('runThreadMenuAction', () => {
     expect(c.navigate).toHaveBeenCalledWith(`/projects/p1/threads/${thread.id}`);
   });
 
+  it('opens another thread in a split below', async () => {
+    useSplitWorkspace.setState({
+      layout: createSinglePaneLayout(threadPaneContent('other', 'p1')),
+      maximizedPaneId: null
+    });
+    const c = ctx({ projectId: 'p1' });
+    await runThreadMenuAction('open-split-down', thread, c);
+    const layout = useSplitWorkspace.getState().layout;
+    expect(layout?.root.type === 'split' && layout.root.dir).toBe('col');
+    expect(findPaneByThread(layout!.root, 'p1', thread.id)).not.toBeNull();
+    expect(c.navigate).toHaveBeenCalledWith(`/projects/p1/threads/${thread.id}`);
+  });
+
   it('keeps the agents board beside a thread opened from /agents', async () => {
     useSplitWorkspace.setState({ layout: null, maximizedPaneId: null });
     const c = ctx();
@@ -257,6 +270,7 @@ describe('ThreadCardMenu', () => {
     expect(idle).toContain('data-testid="thread-context-menu"');
     expect(idle).toContain('Open');
     expect(idle).toContain('Open in split');
+    expect(idle).toContain('Open in split below');
     expect(idle).toContain('Fork');
     expect(idle).toContain('Close with follow-up');
     expect(idle).toContain('Pin');

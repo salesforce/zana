@@ -42,6 +42,20 @@ function isThreadListItem(value: unknown): value is ThreadListItem {
   return Boolean(value && typeof value === 'object' && 'id' in value && typeof (value as { id: unknown }).id === 'string');
 }
 
+type ThreadArchivedListener = (threadId: string) => void;
+const archivedListeners = new Set<ThreadArchivedListener>();
+
+/**
+ * Fires when a roster thread turns archived (here or from another client).
+ * Opening an already-archived thread never fires: it was not in the roster.
+ */
+export function onThreadArchived(listener: ThreadArchivedListener): () => void {
+  archivedListeners.add(listener);
+  return () => {
+    archivedListeners.delete(listener);
+  };
+}
+
 let subscribed = false;
 const pendingSequences = new Map<string, number>();
 let sequenceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -164,6 +178,9 @@ export const useThreads = create<ThreadStore>((set, get) => ({
     const current = get().threads;
     const threads = mergeThreadRoster(current, thread);
     if (threads !== current) set({ threads });
+    if (thread.archivedAt && current.some((row) => row.id === thread.id && !row.archivedAt)) {
+      for (const listener of [...archivedListeners]) listener(thread.id);
+    }
   },
   remove(id) {
     set({ threads: get().threads.filter((row) => row.id !== id) });

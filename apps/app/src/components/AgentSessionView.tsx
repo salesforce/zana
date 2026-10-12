@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
-import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
+import { PanelRight } from 'lucide-react';
 import type { AgentState, CliPlanFile, SessionStats, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { product } from '../lib/product-client.js';
 import { AgentDetailPanel } from './AgentDetailPanel.js';
@@ -32,6 +32,7 @@ import { getDesktopBrowserApi } from '../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../lib/browser-url.js';
 import { useOptionalPaneContext } from '../views/thread-detail/PaneContext.js';
 import { agentSessionPanelOwnerId, ThreadPanelOwnerProvider } from '../plugins/thread-panel-owner.js';
+import { SplitPaneHeaderActions } from '../views/thread-detail/SplitPaneHeaderActions.js';
 
 /**
  * CLI-agent inspector split: live PTY on the left, the same secondary-panel
@@ -361,30 +362,7 @@ function DesktopAgentSessionView({
       <div className="thread-detail-main agent-session-main">
         <AgentSessionHeader session={session} state={state} projectName={projectName}
           useShellTitle={mobileTitleInShell && !modal && pane?.isFocused !== false}>
-            {pane?.onToggleMaximize ? (
-              <button
-                type="button"
-                className="icon-btn"
-                title={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
-                aria-label={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
-                data-testid="split-pane-maximize"
-                onClick={pane.onToggleMaximize}
-              >
-                {pane.isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button>
-            ) : null}
-            {pane?.onRequestClose ? (
-              <button
-                type="button"
-                className="icon-btn"
-                title="Close pane"
-                aria-label="Close pane"
-                data-testid="split-pane-close"
-                onClick={pane.onRequestClose}
-              >
-                <X size={14} />
-              </button>
-            ) : null}
+            <SplitPaneHeaderActions />
             {!panelOpen ? (
               <button
                 type="button"

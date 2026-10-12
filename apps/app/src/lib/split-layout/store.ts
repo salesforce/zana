@@ -143,7 +143,14 @@ interface SplitWorkspaceStore {
   setMaximizedPaneId: (paneId: string | null) => void;
   setDimInactiveSplits: (value: boolean) => void;
   activateScope: (nextKey: string) => void;
-  closePanesForThreads: (threadIds: readonly string[]) => ClosePanesForThreadsResult;
+  /**
+   * Strip panes showing `threadIds` from every scope. `inactiveScopesOnly`
+   * leaves the active scope to the mounted split, which owns its route.
+   */
+  closePanesForThreads: (
+    threadIds: readonly string[],
+    options?: { inactiveScopesOnly?: boolean }
+  ) => ClosePanesForThreadsResult;
 }
 
 export const useSplitWorkspace = create<SplitWorkspaceStore>((set, get) => ({
@@ -186,7 +193,7 @@ export const useSplitWorkspace = create<SplitWorkspaceStore>((set, get) => ({
     persistBag(next);
     set(next);
   },
-  closePanesForThreads: (threadIds) => {
+  closePanesForThreads: (threadIds, options) => {
     if (threadIds.length === 0) {
       return { removedAny: false, focusedRouteContent: null };
     }
@@ -210,7 +217,7 @@ export const useSplitWorkspace = create<SplitWorkspaceStore>((set, get) => ({
     let maximizedPaneId = current.maximizedPaneId;
     let focusedRouteContent: SplitLayout | null = null;
 
-    if (layout !== null) {
+    if (layout !== null && options?.inactiveScopesOnly !== true) {
       const stripped = stripThreadsFromLayout(layout, targets);
       if (stripped.removedAny) {
         removedAny = true;

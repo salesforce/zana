@@ -7,7 +7,7 @@ vi.mock('./lib/product-client.js', () => ({ product: { threads: {
   onEvent: (fn: typeof harness.event) => { harness.event = fn; }, onUpdated: (fn: typeof harness.updated) => { harness.updated = fn; }, list:harness.list
 } } }));
 vi.mock('./lib/product-ws.js', () => ({ subscribeProductReconnect: (fn: typeof harness.reconnect) => { harness.reconnect = fn; } }));
-import { useThreads, pendingChildThreads, type ThreadListItem } from './thread-store.js';
+import { useThreads, onThreadArchived, pendingChildThreads, type ThreadListItem } from './thread-store.js';
 const row = (id: string, projectId = 'p1') => ({ id, projectId, hostId: 'h', environmentId: null, providerId: 'codex', status: 'idle', title: id, createdAt: 1, cwd: null, branchName: null, isWorktree: false, maxSeq: 0 } as ThreadListItem);
 beforeEach(() => { vi.useFakeTimers(); useThreads.setState({ threads: [] }); useThreads.getState().upsert(row('a')); useThreads.getState().upsert(row('b','p2')); });
 afterEach(() => { act(() => vi.runOnlyPendingTimers()); cleanup(); vi.useRealTimers(); });
@@ -57,4 +57,20 @@ it('reloads authoritative metadata on reconnect and keeps it on a failed reload'
   expect(useThreads.getState().loading).toBe(false);
   expect(useThreads.getState().threads.map(row => row.id)).toEqual(['live']);
   useThreads.getState().remove('live'); expect(useThreads.getState().threads).toHaveLength(0);
+});
+
+it('signals a roster thread turning archived, but not an unknown or already-archived one', () => {
+  const listener = vi.fn();
+  const off = onThreadArchived(listener);
+  harness.updated({ ...row('a'), title: 'renamed' });
+  expect(listener).not.toHaveBeenCalled();
+  harness.updated({ ...row('a'), archivedAt: 5 });
+  expect(listener).toHaveBeenCalledExactlyOnceWith('a');
+  expect(useThreads.getState().threads.some((thread) => thread.id === 'a')).toBe(false);
+  harness.updated({ ...row('a'), archivedAt: 6 });
+  harness.updated({ ...row('never-listed'), archivedAt: 6 });
+  expect(listener).toHaveBeenCalledTimes(1);
+  off();
+  harness.updated({ ...row('b', 'p2'), archivedAt: 7 });
+  expect(listener).toHaveBeenCalledTimes(1);
 });

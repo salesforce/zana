@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore, type PointerEvent as ReactPointerEvent }
 import { Maximize2, Minimize2, X } from 'lucide-react';
 import { listNavPanels, subscribePluginSlots } from '../../plugins/plugin-slots.js';
 import { SplitPaneMoveMenu } from './SplitPaneMoveMenu.js';
+import { titleWithShortcut } from '../../lib/keyboard-shortcut-settings.js';
 import type { PaneContent, SplitSide } from '../../lib/split-layout/types.js';
 import { paneBarTitle } from './split-pane-bar-title.js';
 
@@ -53,7 +54,7 @@ export function SplitPaneBar({
         <button
           type="button"
           className="icon-btn"
-          title={isMaximized ? 'Restore pane' : 'Maximize pane'}
+          title={titleWithShortcut(isMaximized ? 'Restore pane' : 'Maximize pane', 'pane.maximize.toggle')}
           aria-label={isMaximized ? 'Restore pane' : 'Maximize pane'}
           data-testid="split-pane-maximize"
           onClick={onToggleMaximize}
@@ -63,7 +64,7 @@ export function SplitPaneBar({
         <button
           type="button"
           className="icon-btn"
-          title="Close pane (⌘⌥W)"
+          title={titleWithShortcut('Close pane', 'pane.close')}
           aria-label="Close pane"
           data-testid="split-pane-close"
           onClick={onClose}

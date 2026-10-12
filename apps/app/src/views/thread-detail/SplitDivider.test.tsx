@@ -123,4 +123,42 @@ describe('SplitDivider', () => {
     visible.down();
     expect(visible.onResize).not.toHaveBeenCalled();
   });
+
+  it('leaves embedded frames alone when pointer capture fails', () => {
+    const { divider, down } = setup();
+    divider.setPointerCapture = () => {
+      throw new DOMException('stale pointer', 'NotFoundError');
+    };
+    try {
+      down();
+    } catch {
+      // React may rethrow the handler error; the guard state is what matters.
+    }
+    expect(document.body.classList.contains('split-frame-guard')).toBe(false);
+  });
+
+  it('catches the even split within 12px, holds it until 30px away, and guards frames', () => {
+    const { divider, before, onResize, down, up } = setup();
+    const moveTo = (clientX: number) => fireEvent.pointerMove(divider, { pointerId: 1, clientX, clientY: 300 });
+    down();
+    expect(document.body.classList.contains('split-frame-guard')).toBe(true);
+    moveTo(480);
+    expect(divider.hasAttribute('data-snapped')).toBe(false);
+    expect(before.style.flexGrow).toBe('0.6');
+    moveTo(410);
+    expect(divider.dataset.snapped).toBe('true');
+    expect(before.style.flexGrow).toBe('0.5');
+    moveTo(428);
+    expect(divider.dataset.snapped).toBe('true');
+    expect(divider.getAttribute('aria-valuenow')).toBe('50');
+    moveTo(432);
+    expect(divider.hasAttribute('data-snapped')).toBe(false);
+    moveTo(420);
+    expect(divider.hasAttribute('data-snapped')).toBe(false);
+    moveTo(390);
+    up();
+    expect(onResize).toHaveBeenCalledExactlyOnceWith(0.5);
+    expect(divider.hasAttribute('data-snapped')).toBe(false);
+    expect(document.body.classList.contains('split-frame-guard')).toBe(false);
+  });
 });

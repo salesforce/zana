@@ -352,4 +352,28 @@ describe('openPaneContentInSplit', () => {
     expect(countPanes(next.root)).toBe(MAX_PANES);
     expect(findPaneByContent(next.root, { kind: 'agents' })).not.toBeNull();
   });
+
+  it('splits below when asked, both seeding from a page and beside a focused pane', () => {
+    useSplitWorkspace.setState({ layout: null });
+    openThreadInSplit({
+      navigate: () => undefined,
+      projectId: 'p1',
+      threadId: 't1',
+      isCompact: false,
+      currentPathname: '/agents',
+      side: 'bottom'
+    });
+    const seeded = useSplitWorkspace.getState().layout;
+    expect(seeded?.root.type === 'split' && seeded.root.dir).toBe('col');
+    openThreadInSplit({
+      navigate: () => undefined,
+      projectId: 'p1',
+      threadId: 't2',
+      isCompact: false,
+      side: 'bottom'
+    });
+    const next = useSplitWorkspace.getState().layout;
+    expect(next && countPanes(next.root)).toBe(3);
+    expect(next && findPaneByThread(next.root, 'p1', 't2')).not.toBeNull();
+  });
 });

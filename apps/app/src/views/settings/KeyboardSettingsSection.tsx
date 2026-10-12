@@ -26,7 +26,7 @@ export function KeyboardSettingsSection() {
       anchorId="keyboard"
       searchId="keyboard.shortcuts-intro"
       title="Shortcuts"
-      help="Remap New Chat, the palette, Quick Open, the explorer, and Settings. Press ⌘/ to see every shortcut."
+      help="Remap New Chat, the palette, Quick Open, the explorer, Settings, and split-pane navigation. Press ⌘/ to see every shortcut."
     >
       {REMAPPABLE_COMMANDS.map((command) => {
         const binding = bindings.find((row) => row.command === command.command);

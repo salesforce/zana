@@ -7,6 +7,7 @@ import { PluginThemePicker, PluginThreadListPicker } from '@/plugins/PluginAppea
 import { DoctorSection } from '@/components/settings/DoctorSection';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { CliSkillsSettings } from './CliSkillsSettings';
+import { useSplitWorkspace } from '@/lib/split-layout/store';
 
 interface GlobalTabProps {
   config: AppConfig;
@@ -18,6 +19,7 @@ export function GlobalView({
   config,
   onUpdate
 }: GlobalTabProps) {
+  const dimInactiveSplits = useSplitWorkspace((s) => s.dimInactiveSplits);
   return (
     <>
       <Section anchorId="appearance" title="Appearance">
@@ -36,6 +38,13 @@ export function GlobalView({
         </Field>
         <PluginThemePicker />
         <PluginThreadListPicker />
+        <CheckboxField
+          searchId="global.dim-inactive-splits"
+          label="Fade inactive split panes"
+          help="With two or more panes open, panes other than the focused one are slightly dimmed. Saved on this device."
+          checked={dimInactiveSplits}
+          onChange={(v) => useSplitWorkspace.getState().setDimInactiveSplits(v)}
+        />
       </Section>
 
       <CliSkillsSettings />

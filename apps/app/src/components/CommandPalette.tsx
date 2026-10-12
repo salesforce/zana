@@ -25,6 +25,7 @@ import { CATEGORY_LABELS, MAX_SETTINGS_RESULTS, searchPaletteItems, type Palette
 import { useSettingsPaletteItems } from '../lib/settings-search/palette.js';
 import { PaletteFrame, paletteOptionProps } from './palette/PaletteFrame.js';
 import { favoritePaletteKeys } from './palette/favoriteItems.js';
+import { paneCommandsAvailable } from '../lib/split-layout/paneCommands.js';
 
 interface Props {
   onClose: () => void;
@@ -328,7 +329,8 @@ export function CommandPalette({ onClose }: Props) {
     reopenLastClosed, restoreLastDetached, pushToast,
     commandPaletteActions,
     threadId: route.threadId,
-    projectId: route.focusedProjectId
+    projectId: route.focusedProjectId,
+    splitPaneCommands: paneCommandsAvailable()
   }), [projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, modules, overviewOpen, whenCtx, onClose, addProject, setNav,
     selectProject, selectTab, setProjectView, setSettingsTab, setExtensionsTab, setOverviewOpen,
