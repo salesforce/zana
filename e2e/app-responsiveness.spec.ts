@@ -9,25 +9,18 @@ test('search edits do not execute a regex against retained renderer previews', a
   const root = join(home, 'regex-highlight-audit');
   mkdirSync(root);
   writeFileSync(join(root, 'preview.txt'), 'a'.repeat(26) + '!');
-  const id = await page.evaluate(async root => {
+  await page.evaluate(async root => {
     const result = await window.cc.projects.add(root);
     if (!result.ok) throw new Error(result.message);
-    return result.value.id;
   }, root);
-  await page.evaluate(id => {
-    history.pushState({}, '', `/projects/${id}`);
-    dispatchEvent(new PopStateEvent('popstate'));
-  }, id);
-  await expect(page.getByText('regex-highlight-audit', { exact: true }).first()).toBeVisible();
-  // Enter through the project control so keyboard actions have selected scope;
-  // a URL change alone can render the project before selection is established.
-  // Once the popstate route lands, the sidebar switches to project focus and the
-  // 'Open <project>' rail button is gone; only click it while still on the project list.
-  const projectNav = page.getByRole('navigation', { name: 'regex-highlight-audit navigation' });
+  // Enter only through the sidebar project control: it focuses AND selects the
+  // project, and Cmd+Shift+F / SearchPanelHost key off selectedProjectId. Do not
+  // also push a `/projects/:id` route — the route swaps the global rail for
+  // ProjectScopedNav as soon as projects.onChanged lands, detaching this button
+  // mid-click (CI race), and route-only focus never establishes selection.
   const openProject = page.getByRole('button', { name: 'Open regex-highlight-audit', exact: true });
-  await expect(openProject.or(projectNav).first()).toBeVisible();
-  if (await openProject.isVisible()) await openProject.click();
-  await expect(projectNav).toBeVisible();
+  await openProject.click();
+  await expect(page.getByRole('navigation', { name: 'regex-highlight-audit navigation' })).toBeVisible();
   const modifier = await page.evaluate(() => navigator.platform.toUpperCase().includes('MAC') ? 'Meta' : 'Control');
   await page.keyboard.press(`${modifier}+Shift+f`);
   const input = page.locator('.search-panel input');

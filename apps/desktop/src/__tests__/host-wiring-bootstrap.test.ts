@@ -148,7 +148,14 @@ vi.mock('@zana-ai/zcc-server/services/launch/team-lifecycle-store', async () => 
 });
 vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', async () => {
   const actual: any = await vi.importActual('@zana-ai/zcc-host-daemon/harness/harness-verify');
-  return { ...actual, verifyHarnesses: async () => [{ family: 'claude', enabled: true, installed: true }, { family: 'codex', enabled: true, installed: false }] };
+  return {
+    ...actual,
+    verifyHarnesses: async () => [{ family: 'claude', enabled: true, installed: true }, { family: 'codex', enabled: true, installed: false }],
+    // Launch preflight otherwise probes the real CLI on PATH: a framework-persona claude launch needs a
+    // verifiable version, so it was DENIED on CI runners with no `claude` binary. Pin a version above
+    // every evidence floor for claude (matching verifyHarnesses above); other families stay absent.
+    installedHarnessVersion: async (_config: unknown, adapterId: string) => (adapterId === 'claude' ? '999.0.0' : undefined)
+  };
 });
 vi.mock('../ipc/register.js', () => ({ registerIpcFamilies: (ctx: unknown) => { h.ipcCtx = ctx; } }));
 vi.mock('@zana-ai/zcc-server/services/mcp/mcp-server', () => ({
@@ -190,6 +197,8 @@ const launchAndCapture = async (req: Record<string, unknown>, opts: { settle?: b
   return { result, spawn: spawned[0] as any };
 };
 const ctx = () => h.ipcCtx as any;
+/** Assertion message carrying the launch outcome, so a CI-only DENIED shows its code and reason. */
+const describeResult = (result: unknown) => `launch result: ${JSON.stringify(result)}`;
 const sessionFixture = (over: Record<string, unknown> = {}) => ({
   id: 'sx', projectId: 'p1', profile: 'shell', title: 'T', status: 'running', cwd: h.root, startedAt: Date.now(), ...over
 });
@@ -259,7 +268,7 @@ describe('host bootstrap wiring', () => {
 
   it('launches terminals through authorize, revalidate and spawn', async () => {
     const result = await host.createInteractiveTerminal({ projectId: project.id, profile: 'shell', cols: 80, rows: 24 } as never);
-    expect(result).toMatchObject({ ok: true });
+    expect(result, describeResult(result)).toMatchObject({ ok: true });
     expect(await host.createInteractiveTerminal({ projectId: 'nope', profile: 'shell', cols: 1, rows: 1 } as never)).toMatchObject({ ok: false });
   });
 
@@ -276,7 +285,7 @@ describe('host bootstrap wiring', () => {
     }, { timeout: 10000, interval: 0 });
     expect(host.resolveFrameworkPersona(['fw'], true)).toMatchObject({ id: 'framework:fw', appendSystemPrompt: 'be careful' });
     const framework = await launchAndCapture({ profile: 'claude', frameworkIds: ['fw'], prompt: 'task' }, { settle: false });
-    expect(framework.result).toMatchObject({ ok: true, value: { profile: 'claude' } });
+    expect(framework.result, describeResult(framework.result)).toMatchObject({ ok: true, value: { profile: 'claude' } });
     // Primer comes from main's own extension entry, stamped as a host persona; user typed a task so no kickoff prompt.
     expect(framework.spawn).toMatchObject({
       profile: 'claude',
@@ -286,12 +295,12 @@ describe('host bootstrap wiring', () => {
     expect(framework.spawn.persona.initialPrompt).toBeUndefined();
     const bare = await launchAndCapture({ profile: 'claude', frameworkIds: ['unknown'] });
     // Unknown framework id resolves no preset -> bare launch with no persona/system prompt.
-    expect(bare.result).toMatchObject({ ok: true, value: { profile: 'claude' } });
+    expect(bare.result, describeResult(bare.result)).toMatchObject({ ok: true, value: { profile: 'claude' } });
     expect(bare.spawn.profile).toBe('claude');
     expect(bare.spawn.persona).toBeUndefined();
     vi.spyOn(c.personas, 'list').mockReturnValue([{ id: 'pers', name: 'Pers', baseProfile: 'claude' }]);
     const persona = await launchAndCapture({ profile: 'claude', personaId: 'pers', extraArgs: ['--model', 'x'] });
-    expect(persona.result).toMatchObject({ ok: true, value: { profile: 'claude' } });
+    expect(persona.result, describeResult(persona.result)).toMatchObject({ ok: true, value: { profile: 'claude' } });
     expect(persona.spawn).toMatchObject({ profile: 'claude', persona: { id: 'pers', name: 'Pers' }, extraArgs: ['--model', 'x'] });
     // Explicit personaId wins over frameworkIds.
     const both = await launchAndCapture({ profile: 'claude', personaId: 'pers', frameworkIds: ['fw'] });
@@ -309,7 +318,7 @@ describe('host bootstrap wiring', () => {
     spy.mockRejectedValueOnce(new Error('mint failed'));
     const failed = await launchAndCapture({ profile: 'cursor' });
     const pinned = await launchAndCapture({ profile: 'cursor', resumeSessionId: 'r1' });
-    for (const r of [ok, none, failed, pinned]) expect(r.result).toMatchObject({ ok: true, value: { profile: 'cursor' } });
+    for (const r of [ok, none, failed, pinned]) expect(r.result, describeResult(r.result)).toMatchObject({ ok: true, value: { profile: 'cursor' } });
     expect(ok.spawn.resumeSessionId).toBe('chat-1');
     expect(none.spawn.resumeSessionId).toBeUndefined();
     expect(failed.spawn.resumeSessionId).toBeUndefined();
