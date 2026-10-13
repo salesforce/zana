@@ -157,7 +157,13 @@ vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', async () => {
     installedHarnessVersion: async (_config: unknown, adapterId: string) => (adapterId === 'claude' ? '999.0.0' : undefined)
   };
 });
-vi.mock('../ipc/register.js', () => ({ registerIpcFamilies: (ctx: unknown) => { h.ipcCtx = ctx; } }));
+// The per-principal launch budget derives from machine RAM, and the mocked spawns never drain it. A small CI
+// runner exhausted it mid-file ("principal launch budget exhausted"); pin a budget no test here can reach.
+vi.mock('@zana-ai/zcc-host-daemon/capacity', async () => {
+  const actual: any = await vi.importActual('@zana-ai/zcc-host-daemon/capacity');
+  return { ...actual, resolveMaxLiveSessions: () => 64 };
+});
+vi.mock('../ipc/register.js',() => ({ registerIpcFamilies: (ctx: unknown) => { h.ipcCtx = ctx; } }));
 vi.mock('@zana-ai/zcc-server/services/mcp/mcp-server', () => ({
   startMcpServer: async (deps: unknown) => { h.mcpDeps = deps; return { port: 1, close: async () => {} }; }
 }));
