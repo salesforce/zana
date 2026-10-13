@@ -745,6 +745,7 @@ function AppShell() {
       data-platform={shellChrome.platform}
       data-fullscreen={shellChrome.isFullScreen}
       data-traffic-lights={shellChrome.reserveMacosTrafficLights}
+      data-windows-caption={shellChrome.reserveWindowsCaptionButtons}
     >
       <div className="titlebar">
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}

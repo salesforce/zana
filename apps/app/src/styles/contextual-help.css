@@ -143,5 +143,6 @@
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
 }
 .titlebar-help:focus-visible, .mobile-nav-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.app-shell[data-windows-caption='true'] .titlebar-help { right: calc(var(--windows-caption-reserve, 138px) + 72px); }
 .mobile-nav-help-status { margin-left: auto; font-size: 12px; }
 .app-shell[data-mobile='true'] .titlebar-help { display: none; }

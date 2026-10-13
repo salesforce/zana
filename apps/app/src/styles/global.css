@@ -83,7 +83,7 @@ body,
   padding: 0;
   background: var(--bg-base);
   color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable', 'Segoe UI', 'Inter', sans-serif;
   font-size: 13px;
   overflow: hidden;
   user-select: none;
@@ -166,6 +166,14 @@ input {
   /* Overlay ends ~190px (84 + 28 trigger + 8 gap + 70 chevrons); 200px target
      edge minus the header's regular 16px leading inset. */
   --shell-leading-reserve: 184px;
+}
+
+.app-shell[data-windows-caption='true'] {
+  /* Match titlebar height with macOS, reserve room on top-right for native
+     Windows 11 caption buttons (minimize, maximize, close ~138px). */
+  --titlebar-h: 44px;
+  --windows-caption-reserve: 138px;
+  --shell-trigger-left: 12px;
 }
 
 /* Always-on status strip: add a fixed bottom row for it. Composes with the
@@ -747,6 +755,10 @@ button.statusbar-update {
   white-space: nowrap;
 }
 
+.app-shell[data-windows-caption='true'] .titlebar-title {
+  max-width: min(40vw, 360px);
+}
+
 /* Single-project views: the centered name is the project actions trigger. */
 .titlebar-project {
   -webkit-app-region: no-drag;
@@ -825,6 +837,10 @@ button.statusbar-update {
   cursor: pointer;
 }
 
+.app-shell[data-windows-caption='true'] .titlebar-bell {
+  right: calc(var(--windows-caption-reserve, 138px) + 8px);
+}
+
 .titlebar-bell:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
@@ -875,6 +891,10 @@ button.statusbar-update {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+}
+
+.app-shell[data-windows-caption='true'] .titlebar-fav {
+  right: calc(var(--windows-caption-reserve, 138px) + 40px);
 }
 
 .titlebar-fav:hover {
@@ -41564,6 +41584,10 @@ body.split-frame-guard webview {
   --titlebar-h: 44px;
 }
 
+.plugin-view-shell[data-windows-caption='true'] {
+  --titlebar-h: 44px;
+}
+
 .plugin-view-titlebar {
   position: relative;
   display: flex;
@@ -41578,6 +41602,10 @@ body.split-frame-guard webview {
 
 .plugin-view-shell[data-traffic-lights='true'] .plugin-view-titlebar {
   padding-left: 84px;
+}
+
+.plugin-view-shell[data-windows-caption='true'] .plugin-view-titlebar {
+  padding-right: 146px;
 }
 
 .plugin-view-title {

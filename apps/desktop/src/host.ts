@@ -4745,7 +4745,7 @@ export async function goalExecutionSourcePaths(
     const rel = relative(base, real);
     return rel !== '' && !(rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel));
   });
-  const matches = goal.match(/(?:^|[\s`'"(])(\/[^\s`'"),;:]+)/g) ?? [];
+  const matches = goal.match(/(?:^|[\s`'"(])([A-Za-z]:[/\\][^\s`'"),;:]+|\/[^\s`'"),;:]+)/g) ?? [];
   for (const match of matches) {
     const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
     const candidates = [raw];
@@ -6218,8 +6218,23 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     // Production leaves the default (show: true).
     /* v8 ignore next -- exercised by built-Electron E2E, not unit bootstrap */
     ...(E2E_LAUNCH && !E2E_VISIBLE ? { show: false } : {}),
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 14 },
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 14, y: 14 }
+        }
+      : process.platform === 'win32'
+      ? {
+          titleBarStyle: 'hidden' as const,
+          titleBarOverlay: {
+            color: '#181818',
+            symbolColor: '#a1a1aa',
+            height: 44
+          }
+        }
+      : {
+          titleBarStyle: 'hidden' as const
+        }),
     webPreferences: {
       // CommonJS preload (../preload/index.js) — REQUIRED because sandbox:true
       // below cannot load an ESM preload (it fails silently → window.cc

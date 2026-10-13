@@ -92,6 +92,7 @@ export function PluginViewApp({ target }: { target: PluginViewSurfaceTarget }) {
       data-tab-id={target.tabId}
       data-platform={chrome.platform}
       data-traffic-lights={chrome.reserveMacosTrafficLights}
+      data-windows-caption={chrome.reserveWindowsCaptionButtons}
     >
       <header className="plugin-view-titlebar">
         <span className="plugin-view-title" data-testid="plugin-view-title">

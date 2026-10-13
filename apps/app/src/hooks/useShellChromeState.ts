@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import {
   shellPlatform,
   shouldReserveMacosTrafficLights,
+  shouldReserveWindowsCaptionButtons,
   type ShellPlatform
 } from '../lib/shellChrome.js';
 
@@ -12,6 +13,7 @@ export interface ShellChromeState {
   isFullScreen: boolean;
   surface: AppSurface;
   reserveMacosTrafficLights: boolean;
+  reserveWindowsCaptionButtons: boolean;
 }
 
 /** Reads window state once for the whole shell; individual headers stay pure. */
@@ -36,6 +38,7 @@ export function useShellChromeState(): ShellChromeState {
     platform,
     isFullScreen,
     surface,
-    reserveMacosTrafficLights: shouldReserveMacosTrafficLights(platform, isFullScreen, surface)
+    reserveMacosTrafficLights: shouldReserveMacosTrafficLights(platform, isFullScreen, surface),
+    reserveWindowsCaptionButtons: shouldReserveWindowsCaptionButtons(platform, isFullScreen, surface)
   };
 }
