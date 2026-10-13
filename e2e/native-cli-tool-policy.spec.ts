@@ -26,8 +26,11 @@ createInterface({input:process.stdin}).on('line', line => {
   const result = spawnSync('/bin/sh', ['-c', commands[0]], {
     input:JSON.stringify(input), timeout:6000, stdio:['pipe','pipe','pipe']
   });
-  const decision = JSON.parse(result.stdout.toString()).hookSpecificOutput.permissionDecision;
-  if (decision === 'allow') writeFileSync(valid ? 'marker.txt' : 'invalid.txt', 'POLICY_ALLOWED');
+  const output = result.stdout.toString().trim();
+  // A plugin allow abstains: the native CLI's own permission flow still decides.
+  // This controlled CLI permits the write only after a successful abstention.
+  const decision = output ? JSON.parse(output).hookSpecificOutput.permissionDecision : 'no-decision';
+  if (result.status === 0 && decision === 'no-decision') writeFileSync(valid ? 'marker.txt' : 'invalid.txt', 'POLICY_ALLOWED');
   writeFileSync(valid ? 'write-result.json' : 'invalid-result.json', JSON.stringify({decision,exit:result.status}));
   console.log('POLICY_RESULT:' + decision);
 });
@@ -60,7 +63,7 @@ test(`${profile} native CLI policy reaches the registered desktop session and fa
       window.cc.terminals.write(id, command + '\r'), { id: sessionId!, command });
     await send('write');
     await expect.poll(() => existsSync(join(dir, 'write-result.json'))).toBe(true);
-    expect(JSON.parse(readFileSync(join(dir, 'write-result.json'), 'utf8'))).toEqual({ decision: 'allow', exit: 0 });
+    expect(JSON.parse(readFileSync(join(dir, 'write-result.json'), 'utf8'))).toEqual({ decision: 'no-decision', exit: 0 });
     expect(readFileSync(join(dir, 'marker.txt'), 'utf8')).toBe('POLICY_ALLOWED');
     await send('invalid');
     await expect.poll(() => existsSync(join(dir, 'invalid-result.json'))).toBe(true);
