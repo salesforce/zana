@@ -56,6 +56,15 @@ describe('copyText', () => {
     await expect(copyText('id')).resolves.toBe(true);
   });
 
+  it('copies and removes the temporary textarea when no element has focus', async () => {
+    stubClipboard();
+    const execCommand = stubExecCommand(true);
+    vi.spyOn(document, 'activeElement', 'get').mockReturnValue(null);
+    await expect(copyText('ref without focus')).resolves.toBe(true);
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(document.querySelector('textarea')).toBeNull();
+  });
+
   it('reports failure when both paths fail', async () => {
     stubClipboard(async () => {
       throw new Error('denied');

@@ -24,6 +24,19 @@ it('exposes Send now through the authorized UI-send IPC channel', async () => {
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.uiSend, 'thread/one', 'item two');
 });
 
+it('forwards skill-state batches and propagates persistence failures to the caller', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  const updates = [{ id: 'zcc:plugin/review', name: 'review', state: 'manual' }];
+  const result = { ok: true, applied: 1, rejected: 0 };
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce(result);
+  await expect(api.skills.setState(updates)).resolves.toEqual(result);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.skills.setState, updates);
+  electron.invoke.mockRejectedValueOnce(new Error('disk unavailable'));
+  await expect(api.skills.setState(updates)).rejects.toThrow('disk unavailable');
+});
+
 it('exposes timeout recovery through its dedicated execution IPC channel', async () => {
   await import('./preload.js');
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
