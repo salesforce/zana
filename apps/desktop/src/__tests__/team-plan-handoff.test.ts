@@ -22,6 +22,7 @@ import {
   type AuthoredPlanRead,
   type CoordinatorHandoffContext
 } from '../team-plan-handoff.js';
+import { createInferredPlanCorrection } from '../inferred-plan-correction.js';
 import { PlanCorrectionService } from '../plan-correction/service.js';
 import { PlanCorrectionLaunchBinding } from '../plan-correction/launch-binding.js';
 
@@ -560,5 +561,87 @@ describe('readHandoffArtifact', () => {
     fsHook.open = async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
     expect(await readHandoffArtifact(root, '.zana/boom.md')).toBeUndefined();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('.zana/boom.md'), expect.any(Error));
+  });
+});
+
+describe('TeamPlanHandoff register rejection routes through plan correction', () => {
+  const ctx: CoordinatorHandoffContext = {
+    sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-reg', slotId: 'orchestrator:lead'
+  };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+
+  function build(register: () => Promise<{ ok: boolean; message?: string }>) {
+    const begun: Array<{ executionId: string; reason: string }> = [];
+    let opened = false;
+    const correction = createInferredPlanCorrection({
+      reviewInvalid: async () => (opened ? 'wait' : undefined),
+      begin: async (executionId, reason) => { opened = true; begun.push({ executionId, reason }); }
+    });
+    const nudge = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/p.md' }),
+      reviewInvalid: (c, reason) => correction.reviewInvalid(c, reason),
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {}
+    });
+    return { handoff, begun, nudge };
+  }
+
+  it('opens the correction card with the real register rejection after the strike budget', async () => {
+    const { handoff, begun, nudge } = build(async () => ({ ok: false, message: 'cycle detected in DAG' }));
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(begun).toHaveLength(0);
+    expect(nudge).toHaveBeenCalledTimes(2);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(begun).toEqual([{ executionId: 'exec-reg', reason: expect.stringContaining('cycle detected in DAG') }]);
+    // Parked for the Inbox decision: no more nudges, no latching to the watchdog failure.
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to a generic reason when register gives no message', async () => {
+    const { handoff, begun } = build(async () => ({ ok: false }));
+    for (let i = 0; i < 3; i++) await handoff.onCoordinatorIdle(ctx);
+    expect(begun[0]?.reason).toContain('register failed');
+  });
+
+  it('registers the corrected plan an approved correction hands back after a register rejection', async () => {
+    const corrected = { status: 'ok' as const, units: [{ id: 'fixed', title: 'F', task: 'f', dependencies: [] }], realPath: '/x' };
+    const register = vi.fn()
+      .mockResolvedValueOnce({ ok: false, message: 'bad' })
+      .mockResolvedValueOnce({ ok: true });
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/p.md' }),
+      reviewInvalid: async () => corrected,
+      register,
+      nudge: vi.fn(),
+      cleanup: async () => {},
+      logError: () => {}
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenLastCalledWith(ctx, corrected.units);
+  });
+
+  it('latches done on a reject verdict after a register rejection', async () => {
+    const register = vi.fn(async () => ({ ok: false, message: 'bad' }));
+    const nudge = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/x' }),
+      reviewInvalid: async () => 'reject',
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {}
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
+    expect(nudge).not.toHaveBeenCalled();
   });
 });

@@ -127,29 +127,58 @@ interface LedgerRow {
   extra: Array<string | number>;
 }
 
+type LedgerTable = 'execution_store_record_rows' | 'execution_store_event_rows';
+
+/** Per-row change marker: position plus a digest of the stored body. */
+type RowMarkers = Map<string, { position: number; hash: string }>;
+
+interface LedgerCache {
+  /** Whole-ledger `state_hash` these markers were captured under. */
+  stateHash: string;
+  record: RowMarkers;
+  event: RowMarkers;
+}
+
+/**
+ * Last committed row markers per database handle and store. A marker set is only
+ * trusted while its `stateHash` equals the meta row read inside the current
+ * transaction, so any other writer (which must move `state_hash` through the same
+ * CAS) invalidates it and the next write falls back to reading stored bodies.
+ */
+const ledgerCaches = new WeakMap<ExecutionDatabase, Map<string, LedgerCache>>();
+
+const bodyDigest = (valueJson: string): string => createHash('sha256').update(valueJson).digest('hex');
+
 /**
  * Makes a ledger table match `rows` by touching only what changed: rows whose id
  * is gone are deleted, rows whose position or body differ are upserted, and
- * identical rows are left alone. Runs inside the caller's transaction.
+ * identical rows are left alone. Runs inside the caller's transaction. When
+ * `trusted` markers are supplied, stored bodies are not read back at all.
+ * Returns the markers describing the table after this sync.
  */
 function syncRows(
   database: ExecutionDatabase,
-  table: 'execution_store_record_rows' | 'execution_store_event_rows',
+  table: LedgerTable,
   storeId: string,
   rows: readonly LedgerRow[],
-  extraColumns: readonly string[]
-): void {
-  const existing = new Map<string, { position: number; value_json: string }>();
-  for (const row of database.sqlite.prepare(`SELECT id, position, value_json FROM ${table} WHERE store_id = ?`).all(storeId) as Array<{ id: string; position: number; value_json: string }>) {
-    existing.set(row.id, row);
+  extraColumns: readonly string[],
+  trusted?: RowMarkers
+): RowMarkers {
+  const existing: RowMarkers = trusted ?? new Map();
+  if (!trusted) {
+    for (const row of database.sqlite.prepare(`SELECT id, position, value_json FROM ${table} WHERE store_id = ?`).all(storeId) as Array<{ id: string; position: number; value_json: string }>) {
+      existing.set(row.id, { position: row.position, hash: bodyDigest(row.value_json) });
+    }
   }
-  const next = new Set(rows.map((row) => row.id));
+  const nextMarkers: RowMarkers = new Map();
+  const hashes = rows.map((row) => bodyDigest(row.valueJson));
+  rows.forEach((row, index) => nextMarkers.set(row.id, { position: row.position, hash: hashes[index]! }));
   const remove = database.sqlite.prepare(`DELETE FROM ${table} WHERE store_id = ? AND id = ?`);
-  for (const id of existing.keys()) if (!next.has(id)) remove.run(storeId, id);
+  for (const id of existing.keys()) if (!nextMarkers.has(id)) remove.run(storeId, id);
 
-  const changed = rows.filter((row) => {
+  const changed = rows.filter((row, index) => {
     const prior = existing.get(row.id);
-    return !prior || prior.position !== row.position || prior.value_json !== row.valueJson;
+    return !prior || prior.position !== row.position || prior.hash !== hashes[index];
   });
   // Park rows that moved in negative position space first so a shift (for
   // example after pruning the oldest record) can't trip UNIQUE(store_id, position).
@@ -165,6 +194,7 @@ function syncRows(
        ${[...extraColumns, 'value_json'].map((column) => `${column} = excluded.${column}`).join(', ')}`
   );
   for (const row of changed) upsert.run(storeId, row.position, row.id, ...row.extra, row.valueJson);
+  return nextMarkers;
 }
 
 /** Atomically syncs ledger rows only when prior full-ledger snapshot matches. */
@@ -178,20 +208,34 @@ export function writeExecutionStoreSqliteState<T extends ExecutionStoreState>(
   if (valueJson === undefined) throw new TypeError('execution state must be JSON serializable');
   const hash = createHash('sha256').update(valueJson).digest('hex');
   migrateLegacyExecutionStore(database, storeId);
-  database.transaction(() => {
-    const current = database.sqlite.prepare('SELECT state_hash FROM execution_store_meta WHERE store_id = ?').get(storeId) as Pick<ExecutionStoreMetaRow, 'state_hash'> | undefined;
-    if ((current?.state_hash ?? null) !== expectedHash) throw new Error('stale execution SQLite state');
-    syncRows(database, 'execution_store_record_rows', storeId,
-      value.records.map((record, position) => ({ id: record.id, position, valueJson: JSON.stringify(record), extra: [] })),
-      []);
-    syncRows(database, 'execution_store_event_rows', storeId,
-      value.events.map((event, position) => ({
-        id: event.id, position, valueJson: JSON.stringify(event), extra: [event.executionId, event.sequence]
-      })),
-      ['execution_id', 'sequence']);
-    database.sqlite.prepare(
-      `INSERT INTO execution_store_meta (store_id, revision, state_hash) VALUES (?, ?, ?)
-       ON CONFLICT (store_id) DO UPDATE SET revision = excluded.revision, state_hash = excluded.state_hash`
-    ).run(storeId, value.revision, hash);
-  });
+  const caches = ledgerCaches.get(database) ?? new Map<string, LedgerCache>();
+  ledgerCaches.set(database, caches);
+  let committed: LedgerCache | undefined;
+  try {
+    database.transaction(() => {
+      const current = database.sqlite.prepare('SELECT state_hash FROM execution_store_meta WHERE store_id = ?').get(storeId) as Pick<ExecutionStoreMetaRow, 'state_hash'> | undefined;
+      if ((current?.state_hash ?? null) !== expectedHash) throw new Error('stale execution SQLite state');
+      const cached = caches.get(storeId);
+      const trusted = current && cached && cached.stateHash === current.state_hash ? cached : undefined;
+      const record = syncRows(database, 'execution_store_record_rows', storeId,
+        value.records.map((record, position) => ({ id: record.id, position, valueJson: JSON.stringify(record), extra: [] })),
+        [], trusted?.record);
+      const event = syncRows(database, 'execution_store_event_rows', storeId,
+        value.events.map((event, position) => ({
+          id: event.id, position, valueJson: JSON.stringify(event), extra: [event.executionId, event.sequence]
+        })),
+        ['execution_id', 'sequence'], trusted?.event);
+      database.sqlite.prepare(
+        `INSERT INTO execution_store_meta (store_id, revision, state_hash) VALUES (?, ?, ?)
+         ON CONFLICT (store_id) DO UPDATE SET revision = excluded.revision, state_hash = excluded.state_hash`
+      ).run(storeId, value.revision, hash);
+      committed = { stateHash: hash, record, event };
+    });
+  } catch (error) {
+    // The transaction rolled back, so the old markers may still be right, but
+    // dropping them is the cheap, always-correct choice.
+    caches.delete(storeId);
+    throw error;
+  }
+  if (committed) caches.set(storeId, committed);
 }

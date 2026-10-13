@@ -152,7 +152,8 @@ import {
   initialTaskDeliveryState,
   stdinOpeningPrompt
 } from '@zana-ai/zcc-host-daemon/harness/initial-task';
-import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
+import { resolveExecutionState, resolveModelTarget, resolveRoleTarget, type AuthorizedModelTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
+import { compareCommitExecution } from './launch-execution-commit.js';
 import { listClaudeSessions } from '@zana-ai/zcc-server/services/projects/claude';
 import { ConversationHistoryService } from '@zana-ai/zcc-host-daemon/conversation-history';
 import { listDir, readFile as fsReadFile, writeFile as fsWriteFile, walkFiles, searchFiles, readDataUrl, createFile as fsCreateFile, createDir as fsCreateDir, renamePath as fsRename, deletePath as fsDelete, resolveDoc as fsResolveDoc, confine } from '@zana-ai/zcc-server/services/projects/fs';
@@ -3926,6 +3927,12 @@ export function createTerminalConfined(
     tabNamerPrompt?: string | null;
     /** Keep a main-owned retained squad worktree after this agent exits. */
     retainWorktree?: boolean;
+    /**
+     * MAIN-only: the digest-bound model id the launch preflight resolved for a
+     * portable model level. Spawn uses it verbatim (local, SSH remote, and the
+     * runtime-host lane all receive it in the assembled argv); never from `req`.
+     */
+    authorizedModel?: AuthorizedModelTarget;
   }
 ): Result<TerminalSession> {
   // Cheap PATH repair so Electron CLI Agent spawns resolve `claude` /
@@ -4069,6 +4076,7 @@ export function createTerminalConfined(
       extraArgs: extraArgsOrUndef,
       openingPrompt,
       harnessRouting: req.harnessRouting,
+      authorizedModel: opts?.authorizedModel,
       title: req.title,
       remote: useRemoteTools ? undefined : stampedProjectRemote(project, launchConfig.remoteDefaultPath),
       remoteToolProxy: useRemoteTools || undefined,
@@ -4371,7 +4379,9 @@ async function launchAuthorizedTerminal(
           personas: authorizedPlan.resolved.personas,
           frameworkPersona: authorizedPlan.resolved.frameworkPersona
         },
-        effectiveLaunch: authorizedPlan.resolved.effectiveLaunch
+        effectiveLaunch: authorizedPlan.resolved.effectiveLaunch,
+        // Bound into finalPlan.digest; never re-mapped at spawn.
+        authorizedModel: finalPlan.executionAuthorization.modelPin
       });
       if (!result.ok) throw new LaunchSpawnError(result.code, result.message);
       spawnLifecycle?.onSessionCreated?.(result.value);
@@ -4468,19 +4478,7 @@ async function launchAuthorizedTerminal(
       discovery: hostDiscovery?.discovery
     });
     if (currentExecution.decision === 'blocked') return { ok: false, reason: currentExecution.reason };
-    const currentBinding = {
-      scope: currentExecution.scope,
-      evidenceDigest: currentExecution.evidenceDigest,
-      consentReservation: currentExecution.consentReservation
-    };
-    const expectedBinding = {
-      scope: authorizedPlan.binding.scope,
-      evidenceDigest: authorizedPlan.binding.evidenceDigest,
-      consentReservation: authorizedPlan.binding.consentReservation
-    };
-    return launchDigest(currentBinding) === launchDigest(expectedBinding)
-      ? { ok: true }
-      : { ok: false, reason: 'execution evidence or consent changed after preflight' };
+    return compareCommitExecution(currentExecution, authorizedPlan.binding, authorizedPlan.executionAuthorization);
   }
 }
 
@@ -4647,17 +4645,7 @@ async function launchBackgroundTerminal(
         installedVersion
       });
       if (currentExecution.decision === 'blocked') return { ok: false as const, reason: currentExecution.reason };
-      return launchDigest({
-        scope: currentExecution.scope,
-        evidenceDigest: currentExecution.evidenceDigest,
-        consentReservation: currentExecution.consentReservation
-      }) === launchDigest({
-        scope: authorizedPlan.binding.scope,
-        evidenceDigest: authorizedPlan.binding.evidenceDigest,
-        consentReservation: authorizedPlan.binding.consentReservation
-      })
-        ? { ok: true as const }
-        : { ok: false as const, reason: 'execution evidence or consent changed after preflight' };
+      return compareCommitExecution(currentExecution, authorizedPlan.binding, finalPlan.executionAuthorization);
     },
     spawn: async (authorizedPlan) => {
       const spawnLaunch = materializeEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch);
@@ -4672,7 +4660,9 @@ async function launchBackgroundTerminal(
         ...request,
         cwd: spawnLaunch.cwd,
         projectSettings: authorizedPlan.resolved.projectSettings,
-        preallocatedSessionId: authorizedPlan.sessionId
+        preallocatedSessionId: authorizedPlan.sessionId,
+        // Always the digest-bound preflight value — overrides any caller field.
+        authorizedModel: finalPlan.executionAuthorization.modelPin
       });
       return ptys.waitForReady(session.id);
     },

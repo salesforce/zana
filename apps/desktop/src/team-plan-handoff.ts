@@ -361,32 +361,41 @@ export class TeamPlanHandoff {
           await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
           return;
         }
-        this.maybeNudge(entry, maxNudges, ctx, `the host rejected your plan (${registered.message ?? 'register failed'})`);
+        // A plan that parses but cannot register is still an invalid plan: spend the
+        // same strike budget and, once spent, raise the Inbox correction with the
+        // host's real rejection reason instead of silently failing the run.
+        const rejection = registered.message ?? 'register failed';
+        await this.handleInvalid(entry, maxNudges, ctx, `host rejected plan: ${rejection}`, `the host rejected your plan (${rejection})`);
         return;
       }
       const reason = read.status === 'invalid' ? read.reason : `no plan file found at \`${authoredPlanRelPath(ctx.executionId)}\``;
-      const invalidVerdict = await this.deps.reviewInvalid?.(ctx, reason);
-      if (invalidVerdict === 'wait') return;
-      if (invalidVerdict === 'reject') {
-        entry.done = true;
-        return;
-      }
-      if (typeof invalidVerdict === 'object') {
-        const registered = await this.deps.register(ctx, invalidVerdict.units);
-        if (registered.ok) {
-          entry.done = true;
-          await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
-          return;
-        }
-        this.maybeNudge(entry, maxNudges, ctx, `the host rejected your corrected plan (${registered.message ?? 'register failed'})`);
-        return;
-      }
-      this.maybeNudge(entry, maxNudges, ctx, reason);
+      await this.handleInvalid(entry, maxNudges, ctx, reason, reason);
     } catch (error) {
       this.deps.logError(`team plan handoff ${ctx.sessionId}`, error);
     } finally {
       entry.inFlight = false;
     }
+  }
+
+  /** Shared invalid-plan path: correction review first, then bounded nudges. */
+  private async handleInvalid(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string, nudgeReason: string): Promise<void> {
+    const verdict = await this.deps.reviewInvalid?.(ctx, reason);
+    if (verdict === 'wait') return;
+    if (verdict === 'reject') {
+      entry.done = true;
+      return;
+    }
+    if (typeof verdict === 'object') {
+      const registered = await this.deps.register(ctx, verdict.units);
+      if (registered.ok) {
+        entry.done = true;
+        await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
+        return;
+      }
+      this.maybeNudge(entry, maxNudges, ctx, `the host rejected your corrected plan (${registered.message ?? 'register failed'})`);
+      return;
+    }
+    this.maybeNudge(entry, maxNudges, ctx, nudgeReason);
   }
 
   private maybeNudge(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string): void {

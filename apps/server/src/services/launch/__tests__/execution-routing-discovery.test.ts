@@ -1,35 +1,50 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AppConfig, Persona } from '@zana-ai/zcc-domain/product';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppConfig, Persona, ProjectRemote } from '@zana-ai/zcc-domain/product';
+
+const spawns: Array<{ command: string; args: string[] }> = [];
+
+vi.mock('node-pty', () => ({
+  spawn: (command: string, args: string[]) => {
+    spawns.push({ command, args });
+    return { pid: 4000, write() {}, onData() {}, onExit() {}, resize() {}, kill() {} };
+  }
+}));
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
+  ensureMcpConfigForProjectSync: () => '/tmp/proj1/.mcp.json',
+  alwaysOnPluginMcpAllowlist: () => []
+}));
+vi.mock('@zana-ai/zcc-host-daemon/tmux', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  isTmuxAvailable: () => false
+}));
+
 import { OpenCodeProvider } from '@zana-ai/zcc-host-daemon/harness/opencode/provider';
-import {
-  clearLiveModelTargets,
-  launchScopedProvider,
-  liveModelTargetsFor,
-  recordLiveModelTargets
-} from '@zana-ai/zcc-host-daemon/harness/launch-provider';
-import { resolveModelTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
+import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { preflightTerminalExecution } from '../execution-routing.js';
+import { finalizeLaunchPreflight, preflightLaunch, type ExecutionPreflightDecision } from '../preflight.js';
 
 /**
- * OC1 regression: the OpenCode provider is a process-wide singleton. Live model
- * inventories used to be applied onto it (and cleared) around awaits, so
- * interleaved launches for different projects — or one whose probe failed —
- * resolved portable levels through another project's inventory, and the spawn
- * re-mapped from whatever the singleton held last. These launches interleave on
- * ONE shared provider instance and assert each project resolves (and spawns)
- * through its own inventory only.
+ * OC1 regression: the OpenCode provider is a process-wide singleton, and squad
+ * slots share ONE worktree cwd (and two enrolled machines can share a checkout
+ * path). Each launch's preflight resolves its portable level to a concrete id
+ * through its OWN probe; that id rides in the decision (`modelPin`), is bound
+ * into the authorized digest, and the spawn uses it verbatim — no keyed record a
+ * sibling launch could overwrite, no re-mapping, no re-probe at spawn.
  */
 
 const CONFIG = { version: 1, theme: 'dark', harnessOpenCodeEnabled: true } as AppConfig;
 const LOW: Persona = { id: 'low', name: 'Low', modelLevel: 'low' };
 const SNAPSHOT_LOW = 'llmgw/gpt-6-luna';
 const A_INVENTORY = ['llmgw/gpt-7-luna', 'llmgw/gpt-7-terra', 'llmgw/gpt-7-sol'];
+const B_INVENTORY = ['llmgw/gpt-8-luna', 'llmgw/gpt-8-sol'];
+const SHARED_CWD = '/zcc-worktrees/squad-1';
+
+const pin = (targetId: string) => ({ adapterId: 'opencode', level: 'low', targetId });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -49,49 +64,88 @@ function launch(provider: OpenCodeProvider, projectId: string, projectPath: stri
   }, deps(provider));
 }
 
-/** The model a spawn in `cwd` resolves — exactly what PtyManager.create() does. */
-function spawnModel(provider: OpenCodeProvider, cwd: string, persona: Persona = LOW) {
-  return resolveModelTarget(launchScopedProvider(provider, cwd), {
-    config: CONFIG, persona, profile: 'opencode', extraArgs: [], scope: 'local'
-  }).targetId;
+function allowed(decision: ExecutionPreflightDecision) {
+  if (decision.decision !== 'allowed') throw new Error(`blocked: ${decision.reason}`);
+  return decision;
 }
 
-describe('execution routing live-model discovery is launch-scoped (OC1)', () => {
-  afterEach(() => clearLiveModelTargets());
+/** Spawn exactly as host.ts does: the authorized plan's pin, verbatim. */
+function spawnArgs(decision: ExecutionPreflightDecision, cwd = SHARED_CWD, remote?: ProjectRemote): string {
+  new PtyManager().create({
+    projectId: 'p', profile: 'opencode', persona: LOW, cwd, cols: 80, rows: 24, config: CONFIG,
+    authorizedModel: allowed(decision).modelPin,
+    ...(remote ? { remote } : {})
+  });
+  return spawns.at(-1)!.args.join(' ');
+}
 
-  it('interleaved launches across two projects with one failing probe never cross-contaminate', async () => {
+describe('execution routing pins the resolved model id per launch (OC1)', () => {
+  beforeEach(() => { spawns.length = 0; });
+
+  it('two slots sharing one cwd with different probe results never cross-contaminate', async () => {
     const shared = new OpenCodeProvider();
     const snapshot = shared.adapter;
-    const probeA = deferred<readonly string[] | undefined>();
-    const probeB = deferred<readonly string[] | undefined>();
-    shared.discoverModelTargets = vi.fn(({ cwd }: { cwd: string }) => (cwd === '/proj/a' ? probeA.promise : probeB.promise));
+    const probes = [deferred<readonly string[] | undefined>(), deferred<readonly string[] | undefined>()];
+    let call = 0;
+    shared.discoverModelTargets = vi.fn(() => probes[call++].promise);
 
-    // A starts and parks on its probe; B starts, its probe FAILS (unavailable),
-    // and B completes while A is still in flight; then A's probe lands.
-    const a = launch(shared, 'a', '/proj/a');
-    const b = launch(shared, 'b', '/proj/b');
+    // Slot A parks on its probe; slot B (same cwd) probes a different gateway
+    // inventory and completes first; then A's probe lands.
+    const a = launch(shared, 'squad', SHARED_CWD);
+    const b = launch(shared, 'squad', SHARED_CWD);
     await flush();
-    probeB.resolve(undefined);
-    await expect(b).resolves.toEqual({ decision: 'allowed', scope: 'local' });
-    expect(shared.adapter).toBe(snapshot);
-    probeA.resolve(A_INVENTORY);
-    // A was validated against ITS inventory: had it re-mapped through the
-    // snapshot (B's fallback), `gpt-6-luna` would be absent from A's live set.
-    await expect(a).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+    probes[1].resolve(B_INVENTORY);
+    const bDecision = await b;
+    probes[0].resolve(A_INVENTORY);
+    const aDecision = await a;
 
+    expect(aDecision).toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('llmgw/gpt-7-luna') });
+    expect(bDecision).toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('llmgw/gpt-8-luna') });
     expect(shared.adapter).toBe(snapshot);
+
+    // Each spawn's argv carries ITS OWN resolved id, in either spawn order.
+    expect(spawnArgs(bDecision)).toContain('--model llmgw/gpt-8-luna');
+    expect(spawnArgs(aDecision)).toContain('--model llmgw/gpt-7-luna');
+    expect(spawnArgs(aDecision)).not.toContain('gpt-8');
+    // Spawns never probe.
     expect(shared.discoverModelTargets).toHaveBeenCalledTimes(2);
-    expect(spawnModel(shared, '/proj/a')).toBe('llmgw/gpt-7-luna');
-    expect(spawnModel(shared, '/proj/b')).toBe(SNAPSHOT_LOW);
-
-    // A later launch of B whose probe fails again leaves A's record untouched.
-    shared.discoverModelTargets = vi.fn(async ({ cwd }: { cwd: string }) => (cwd === '/proj/a' ? A_INVENTORY : undefined));
-    await expect(launch(shared, 'b', '/proj/b')).resolves.toEqual({ decision: 'allowed', scope: 'local' });
-    expect(spawnModel(shared, '/proj/a')).toBe('llmgw/gpt-7-luna');
-    expect(liveModelTargetsFor('opencode', '/proj/b')).toBeUndefined();
   });
 
-  it('a project whose inventory lacks the tier is blocked without affecting a concurrent project', async () => {
+  it('a sibling slot whose probe fails cannot change the id an earlier slot authorized', async () => {
+    const shared = new OpenCodeProvider();
+    shared.discoverModelTargets = vi.fn(async () => A_INVENTORY);
+    const aDecision = await launch(shared, 'squad', SHARED_CWD);
+    // B: same cwd, probe unavailable ⇒ snapshot mapping for B only.
+    shared.discoverModelTargets = vi.fn(async () => undefined);
+    const bDecision = await launch(shared, 'squad', SHARED_CWD);
+    expect(allowed(bDecision).modelPin).toEqual(pin(SNAPSHOT_LOW));
+    // A spawns after B's failed probe: still A's live-resolved id (the old
+    // per-cwd record was deleted here and A re-mapped to the snapshot id).
+    expect(spawnArgs(aDecision)).toContain('--model llmgw/gpt-7-luna');
+    expect(spawnArgs(bDecision)).toContain(`--model ${SNAPSHOT_LOW}`);
+  });
+
+  it('binds the pin into the authorized launch digest', async () => {
+    const shared = new OpenCodeProvider();
+    shared.discoverModelTargets = vi.fn(async () => A_INVENTORY);
+    const plan = preflightLaunch({ projectId: 'p' }, {
+      principal: () => ({ kind: 'interactive-user', id: 'interactive:local' }),
+      sessionId: () => 'session-1',
+      idempotencyKey: () => 'idem-1',
+      resolve: () => ({ project: { id: 'p' }, storeRevision: 'rev' }),
+      now: () => 1
+    });
+    const decision = allowed(await launch(shared, 'p', SHARED_CWD));
+    const authorized = finalizeLaunchPreflight(plan, decision);
+    const swapped = finalizeLaunchPreflight(plan, { ...decision, modelPin: pin('llmgw/gpt-8-luna') });
+    const unpinned = finalizeLaunchPreflight(plan, { decision: 'allowed', scope: 'local' });
+    expect(authorized.digest).not.toBe(swapped.digest);
+    expect(authorized.digest).not.toBe(unpinned.digest);
+    expect(authorized.executionAuthorization.modelPin).toEqual(pin('llmgw/gpt-7-luna'));
+    expect(Object.isFrozen(authorized.executionAuthorization.modelPin)).toBe(true);
+  });
+
+  it('a project whose inventory lacks the tier is blocked without affecting a concurrent launch', async () => {
     const shared = new OpenCodeProvider();
     const probeA = deferred<readonly string[] | undefined>();
     shared.discoverModelTargets = vi.fn(({ cwd }: { cwd: string }) => (
@@ -102,19 +156,10 @@ describe('execution routing live-model discovery is launch-scoped (OC1)', () => 
       decision: 'blocked', reason: 'OpenCode does not support low model level.'
     });
     probeA.resolve(A_INVENTORY);
-    await expect(a).resolves.toEqual({ decision: 'allowed', scope: 'local' });
-    expect(spawnModel(shared, '/proj/a')).toBe('llmgw/gpt-7-luna');
+    expect(spawnArgs(await a, '/proj/a')).toContain('--model llmgw/gpt-7-luna');
   });
 
-  it('a stale record from an earlier launch is replaced, not merged, when the probe becomes unavailable', async () => {
-    const shared = new OpenCodeProvider();
-    recordLiveModelTargets('opencode', '/proj/a', A_INVENTORY);
-    shared.discoverModelTargets = vi.fn(async () => undefined);
-    await expect(launch(shared, 'a', '/proj/a')).resolves.toEqual({ decision: 'allowed', scope: 'local' });
-    expect(spawnModel(shared, '/proj/a')).toBe(SNAPSHOT_LOW);
-  });
-
-  it('a rejected probe blocks only its own launch and records nothing for it', async () => {
+  it('a rejected probe blocks only its own launch', async () => {
     const shared = new OpenCodeProvider();
     const probeA = deferred<readonly string[] | undefined>();
     shared.discoverModelTargets = vi.fn(({ cwd }: { cwd: string }) => (
@@ -123,43 +168,50 @@ describe('execution routing live-model discovery is launch-scoped (OC1)', () => 
     const a = launch(shared, 'a', '/proj/a');
     await expect(launch(shared, 'b', '/proj/b')).resolves.toEqual({ decision: 'blocked', reason: 'gateway offline' });
     probeA.resolve(A_INVENTORY);
-    await expect(a).resolves.toEqual({ decision: 'allowed', scope: 'local' });
-    expect(liveModelTargetsFor('opencode', '/proj/b')).toBeUndefined();
-    expect(spawnModel(shared, '/proj/a')).toBe('llmgw/gpt-7-luna');
+    await expect(a).resolves.toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('llmgw/gpt-7-luna') });
   });
 
-  it('probes once per launch and records machine-supplied discovery for the spawn', async () => {
+  it('remote/host-discovery launches pin the id from the machine that owns the checkout', async () => {
     const shared = new OpenCodeProvider();
     shared.discoverModelTargets = vi.fn(async () => { throw new Error('wrong machine'); });
-    const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => A_INVENTORY) };
-    await expect(preflightTerminalExecution({
-      config: CONFIG, profile: 'opencode', persona: LOW, projectId: 'r', projectPath: '/proj/remote',
-      scope: 'remote', mode: 'interactive', idempotencyKey: 'remote-level'
-    }, { ...deps(shared), discovery })).resolves.toEqual({ decision: 'allowed', scope: 'remote' });
-    // Level resolution and model validation share one probe.
-    expect(discovery.models).toHaveBeenCalledTimes(1);
+    const hostA = { roles: vi.fn(async () => []), models: vi.fn(async () => A_INVENTORY) };
+    const hostB = { roles: vi.fn(async () => []), models: vi.fn(async () => B_INVENTORY) };
+    const remoteLaunch = (discovery: typeof hostA) => preflightTerminalExecution({
+      config: CONFIG, profile: 'opencode', persona: LOW, projectId: 'r', projectPath: '/same/checkout',
+      scope: 'remote', mode: 'interactive', idempotencyKey: `remote-${Math.random()}`
+    }, { ...deps(shared), discovery });
+    // Two machines, same checkout path: each launch carries its own machine's id.
+    const onA = await remoteLaunch(hostA);
+    const onB = await remoteLaunch(hostB);
+    expect(onA).toEqual({ decision: 'allowed', scope: 'remote', modelPin: pin('llmgw/gpt-7-luna') });
+    expect(onB).toEqual({ decision: 'allowed', scope: 'remote', modelPin: pin('llmgw/gpt-8-luna') });
+    // Level resolution and model validation share one probe per launch.
+    expect(hostA.models).toHaveBeenCalledTimes(1);
     expect(shared.discoverModelTargets).not.toHaveBeenCalled();
-    expect(liveModelTargetsFor('opencode', '/proj/remote')).toEqual(A_INVENTORY);
+    // The SSH argv carries the pinned id verbatim.
+    const remote = { host: 'box', remotePath: '/same/checkout' } as ProjectRemote;
+    expect(spawnArgs(onA, '/same/checkout', remote)).toContain('llmgw/gpt-7-luna');
+    expect(spawnArgs(onB, '/same/checkout', remote)).toContain('llmgw/gpt-8-luna');
   });
 
-  it('an explicit model id validates through the same single probe', async () => {
+  it('an explicit model id needs no pin and validates through the same single probe', async () => {
     const shared = new OpenCodeProvider();
     shared.discoverModelTargets = vi.fn(async () => A_INVENTORY);
-    const pinned = { schemaVersion: 1 as const, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-7-sol' } } };
+    const explicit = { schemaVersion: 1 as const, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-7-sol' } } };
     await expect(preflightTerminalExecution({
       config: CONFIG, profile: 'opencode', projectId: 'a', projectPath: '/proj/a', scope: 'local',
-      mode: 'interactive', idempotencyKey: 'pinned', harnessRouting: pinned
+      mode: 'interactive', idempotencyKey: 'explicit', harnessRouting: explicit
     }, deps(shared))).resolves.toEqual({ decision: 'allowed', scope: 'local' });
     expect(shared.discoverModelTargets).toHaveBeenCalledTimes(1);
   });
 
-  it('launches without a project path never probe', async () => {
+  it('launches without a project path never probe and pin the snapshot mapping', async () => {
     const shared = new OpenCodeProvider();
     shared.discoverModelTargets = vi.fn(async () => A_INVENTORY);
     await expect(preflightTerminalExecution({
       config: CONFIG, profile: 'opencode', persona: LOW, projectId: 'a', scope: 'local',
       mode: 'interactive', idempotencyKey: 'no-path'
-    }, deps(shared))).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+    }, deps(shared))).resolves.toEqual({ decision: 'allowed', scope: 'local', modelPin: pin(SNAPSHOT_LOW) });
     expect(shared.discoverModelTargets).not.toHaveBeenCalled();
   });
 });

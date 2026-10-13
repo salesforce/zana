@@ -829,6 +829,61 @@ describe('deferred reload cadence (SC2)', () => {
     ]));
     expect(manager.get(task.id).status.nextRunAt).toBe(new Date(Date.now() + 5 * 60_000).toISOString());
   });
+
+  it('never writes the stale in-memory definition over an owner edit while a reload is deferred', async () => {
+    vi.useFakeTimers();
+    const { manager, input, deps, persistence, records } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    let state = 'RUNNING';
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, persistence, launchSquad, getSquadExecution: vi.fn(async () => ({ state, finalSummary: 'squad done' })) });
+    const task = await manager.create({ ...input, enabled: true, kind: 'team', teamId: 'squad', prompt: 'launched objective' });
+    await manager.runNow(task.id);
+    const owner = { prompt: 'owner edit', kind: 'agent' as const, teamId: undefined, schedule: { every: '1h' } };
+    Object.assign(records.get(task.id)!, owner);
+
+    // Skipped-run record: a runtime persist while the reload is deferred.
+    await (manager as any).fire(task.id, { manual: false });
+
+    const saved = persistence.save.mock.calls.at(-1)![0] as ScheduledTask;
+    expect(saved).toMatchObject({ prompt: 'owner edit', kind: 'agent', schedule: { every: '1h' } });
+    expect(saved.teamId).toBeUndefined();
+    expect(saved.status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ result: 'skipped', message: 'previous squad run still active' })
+    ]));
+    expect(records.get(task.id)).toMatchObject({ prompt: 'owner edit', kind: 'agent', schedule: { every: '1h' } });
+    // The live definition stays the launched one until the deferred reload applies.
+    expect(manager.get(task.id)).toMatchObject({ prompt: 'launched objective', kind: 'team', teamId: 'squad', schedule: { every: '5m' } });
+    expect(manager.get(task.id).status.nextRunAt).toBe(new Date(Date.now() + 5 * 60_000).toISOString());
+    expect((manager as any).deferredReloads.has(task.id)).toBe(true);
+
+    // Run completion (recordRun via observation) is also a runtime persist.
+    state = 'COMPLETED';
+    await (manager as any).observeSquadExecutions();
+    expect(records.get(task.id)).toMatchObject({ prompt: 'owner edit', kind: 'agent', schedule: { every: '1h' } });
+    expect(records.get(task.id)!.status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ executionId: 'execution-1', result: 'success', finishedAt: expect.any(String) })
+    ]));
+
+    // Once the run settles the deferred reload (watcher refresh) adopts the owner's definition.
+    await manager.loadAll([project]);
+    expect(manager.get(task.id)).toMatchObject({ prompt: 'owner edit', kind: 'agent', schedule: { every: '1h' } });
+  });
+
+  it('merges an explicit update patch onto the owner record while a reload is deferred', async () => {
+    const { manager, input, deps, persistence, records } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    manager.setDeps({ ...deps, persistence, launchSquad: vi.fn(async () => ({ executionId: 'execution-1' })), getSquadExecution: vi.fn(async () => ({ state: 'RUNNING' })) });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad', prompt: 'launched objective' });
+    await manager.runNow(task.id);
+    records.get(task.id)!.prompt = 'owner edit';
+    await manager.reload(task.id);
+
+    await manager.update(task.id, { name: 'Renamed' });
+
+    expect(records.get(task.id)).toMatchObject({ name: 'Renamed', prompt: 'owner edit', kind: 'team', teamId: 'squad' });
+    expect(manager.get(task.id)).toMatchObject({ name: 'Renamed' });
+  });
 });
 
 describe('schedule prompt compare-and-swap (PC1)', () => {

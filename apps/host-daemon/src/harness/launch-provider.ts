@@ -38,7 +38,7 @@ import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
 import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
-import type { ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
+import type { AuthorizedModelTarget, ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
 
 /**
  * Inner-agent liveness verdict for a tmux-backed remote worker:
@@ -109,11 +109,11 @@ export interface RemoteCommandInput {
   harnessRouting?: HarnessModelRoutingV1;
   remote: ProjectRemote;
   /**
-   * Main-resolved launch cwd (the same path preflight probed). Keys the
-   * launch-scoped live model inventory ({@link launchScopedProvider}); absent ⇒
-   * the static catalog snapshot.
+   * MAIN-only: the concrete model id main's launch preflight resolved for a
+   * portable level (digest-bound). Remote builders pass it to model resolution
+   * so the remote argv carries that id verbatim, never a re-mapped one.
    */
-  cwd?: string;
+  authorizedModel?: AuthorizedModelTarget;
   persona?: Persona;
   /** Registration-rendered native lifecycle contribution for remote argv/env. */
   lifecycle?: {
@@ -605,61 +605,4 @@ export function withLiveModelTargets<P extends LaunchProvider>(provider: P, targ
   return Object.create(provider, {
     adapter: { value: adapter, enumerable: true, configurable: true }
   }) as P;
-}
-
-const LIVE_MODEL_INVENTORY_TTL_MS = 5 * 60_000;
-const LIVE_MODEL_INVENTORY_MAX_ENTRIES = 64;
-const liveModelInventory = new Map<string, { targets: readonly string[]; expiresAt: number }>();
-const liveModelInventoryKey = (adapterId: string, cwd: string) => JSON.stringify([adapterId, cwd]);
-
-/**
- * Record the outcome of the live model probe main authorized for a launch in
- * `cwd`, so the spawn of that same launch resolves model levels from the same
- * inventory instead of re-reading shared provider state. Keyed per (adapter,
- * project cwd): one project's probe can never change another project's mapping,
- * and an unavailable probe (`undefined`/empty) discards only its own key, so the
- * spawn degrades to the static snapshot exactly like its preflight did. Bounded
- * (oldest evicted) and short-lived.
- */
-export function recordLiveModelTargets(adapterId: string, cwd: string, targets: readonly string[] | undefined): void {
-  const key = liveModelInventoryKey(adapterId, cwd);
-  liveModelInventory.delete(key);
-  if (!targets?.length) return;
-  liveModelInventory.set(key, { targets: [...targets], expiresAt: Date.now() + LIVE_MODEL_INVENTORY_TTL_MS });
-  while (liveModelInventory.size > LIVE_MODEL_INVENTORY_MAX_ENTRIES) {
-    liveModelInventory.delete(liveModelInventory.keys().next().value!);
-  }
-}
-
-/** The unexpired live model inventory main recorded for (adapter, cwd), if any. */
-export function liveModelTargetsFor(adapterId: string, cwd: string): readonly string[] | undefined {
-  const key = liveModelInventoryKey(adapterId, cwd);
-  const entry = liveModelInventory.get(key);
-  if (!entry) return undefined;
-  if (entry.expiresAt <= Date.now()) {
-    liveModelInventory.delete(key);
-    // The launch's preflight inventory aged out before its spawn: model levels
-    // fall back to the static snapshot mapping. Main re-probes in the pre-commit
-    // revalidation so this is rare; say so loudly rather than drift silently.
-    console.warn(`[launch] live model inventory for ${adapterId} in ${cwd} expired before spawn; falling back to the static model mapping`);
-    return undefined;
-  }
-  return entry.targets;
-}
-
-/** Drop recorded inventories (one adapter, or all) — e.g. after a model-catalog invalidation. */
-export function clearLiveModelTargets(adapterId?: string): void {
-  if (adapterId === undefined) {
-    liveModelInventory.clear();
-    return;
-  }
-  for (const key of [...liveModelInventory.keys()]) {
-    if ((JSON.parse(key) as [string, string])[0] === adapterId) liveModelInventory.delete(key);
-  }
-}
-
-/** The launch-scoped provider for a spawn in `cwd` (see {@link withLiveModelTargets}). */
-export function launchScopedProvider<P extends LaunchProvider>(provider: P, cwd: string | undefined): P {
-  if (!cwd || !provider.liveModelAdapter) return provider;
-  return withLiveModelTargets(provider, liveModelTargetsFor(provider.adapter.descriptor.id, cwd));
 }

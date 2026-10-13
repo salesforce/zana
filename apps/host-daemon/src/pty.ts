@@ -22,10 +22,9 @@ import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
-import { launchScopedProvider } from './harness/launch-provider.js';
 import { probeAgentLiveness as probeAgentLivenessImpl } from './harness/agent-liveness.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from './harness-auth.js';
-import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from './harness/target-resolution.js';
+import { resolveExecutionState, resolveModelTarget, resolveRoleTarget, type AuthorizedModelTarget } from './harness/target-resolution.js';
 import {
   environmentFor,
   type ExecEnvId,
@@ -821,6 +820,13 @@ export class PtyManager extends EventEmitter {
     projectSettings?: ProjectSettings;
     extraArgs?: string[];
     harnessRouting?: import('@zana-ai/zcc-domain/product').HarnessModelRoutingV1;
+    /**
+     * MAIN-only: the concrete model id the launch preflight resolved for a
+     * portable model level, bound into the authorized launch digest. Used
+     * verbatim for that level; the spawn never re-maps or re-probes. Absent ⇒
+     * the provider's own level mapping (no preflight pin).
+     */
+    authorizedModel?: AuthorizedModelTarget;
     title?: string;
     remote?: ProjectRemote;
     /**
@@ -1030,17 +1036,18 @@ export class PtyManager extends EventEmitter {
       harnessRouting,
       extraArgs: preCleanedExtra
     });
-    // Model levels map through the live inventory main's preflight recorded for
-    // THIS launch's cwd (launch-scoped view), never through shared provider state
-    // another project's concurrent launch may have changed.
-    const modelTarget = resolveModelTarget(launchScopedProvider(provider, opts.cwd), {
+    // A portable model level uses the id main's preflight resolved for THIS
+    // launch (digest-bound `authorizedModel`), never a re-mapping through
+    // provider metadata another launch's probe could have shaped.
+    const modelTarget = resolveModelTarget(provider, {
       config: opts.config,
       persona: spawnPersona,
       projectSettings: opts.projectSettings,
       perTabRouting: harnessRouting,
       profile: effectiveProfile,
       extraArgs: preCleanedExtra,
-      scope: 'local'
+      scope: 'local',
+      authorizedModel: opts.authorizedModel
     });
     const roleTarget = resolveRoleTarget(provider, {
       config: opts.config,
@@ -2234,6 +2241,8 @@ export class PtyManager extends EventEmitter {
     config: AppConfig;
     projectSettings?: ProjectSettings;
     harnessRouting?: HarnessModelRoutingV1;
+    /** See {@link create}'s `authorizedModel` — reaches the remote argv verbatim. */
+    authorizedModel?: AuthorizedModelTarget;
     extraArgs?: string[];
     /**
      * Provider-native EXACT-session resume target. Threaded into remote
@@ -2332,9 +2341,18 @@ export class PtyManager extends EventEmitter {
             opts.harnessRouting
           ) ?? opts.harnessRouting
         : opts.harnessRouting;
-    const remoteMetadataProvider = launchScopedProvider(remoteProvider, opts.cwd);
     const remoteExtra = cleanExtraArgs(opts.extraArgs);
-    const remoteModelTarget = resolveModelTarget(remoteMetadataProvider, {
+    const remoteModelTarget = resolveModelTarget(remoteProvider, {
+      config: opts.config,
+      persona: remotePersona,
+      projectSettings: opts.projectSettings,
+      perTabRouting: remoteHarnessRouting,
+      profile: remoteEffectiveProfile,
+      extraArgs: remoteExtra,
+      scope: 'remote',
+      authorizedModel: opts.authorizedModel
+    });
+    const remoteRoleTarget = resolveRoleTarget(remoteProvider, {
       config: opts.config,
       persona: remotePersona,
       projectSettings: opts.projectSettings,
@@ -2343,7 +2361,7 @@ export class PtyManager extends EventEmitter {
       extraArgs: remoteExtra,
       scope: 'remote'
     });
-    const remoteRoleTarget = resolveRoleTarget(remoteMetadataProvider, {
+    const remoteExecution = resolveExecutionState(remoteProvider, {
       config: opts.config,
       persona: remotePersona,
       projectSettings: opts.projectSettings,
@@ -2352,16 +2370,7 @@ export class PtyManager extends EventEmitter {
       extraArgs: remoteExtra,
       scope: 'remote'
     });
-    const remoteExecution = resolveExecutionState(remoteMetadataProvider, {
-      config: opts.config,
-      persona: remotePersona,
-      projectSettings: opts.projectSettings,
-      perTabRouting: remoteHarnessRouting,
-      profile: remoteEffectiveProfile,
-      extraArgs: remoteExtra,
-      scope: 'remote'
-    });
-    const resolvedMetadata = remoteMetadataProvider.launchMetadata({
+    const resolvedMetadata = remoteProvider.launchMetadata({
       model: remoteModelTarget,
       role: remoteRoleTarget,
       execution: remoteExecution,

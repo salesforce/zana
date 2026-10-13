@@ -104,7 +104,7 @@ export interface ProvidedPlanGateDeps {
  */
 export async function gateInvalidProvidedPlan(
   deps: ProvidedPlanGateDeps,
-  args: { planError: string | undefined; unattended: boolean; projectId: string; projectName: string; launchRequestId: string }
+  args: { planError: string | undefined; unattended: boolean; viaTrigger?: boolean; projectId: string; projectName: string; launchRequestId: string }
 ): Promise<TeamJobLaunchResponse | undefined> {
   if (!args.planError) return undefined;
   if (args.unattended) {
@@ -112,7 +112,9 @@ export async function gateInvalidProvidedPlan(
       projectId: args.projectId,
       projectLabel: args.projectName,
       subject: 'Squad plan needed correction',
-      comments: 'Provided Squad plan is invalid. Update plan, then run trigger again.',
+      comments: args.viaTrigger
+        ? `Provided Squad plan is invalid: ${args.planError}. Update plan, then run trigger again.`
+        : `Provided Squad plan is invalid: ${args.planError}. Put a complete plan in the goal and launch again, or launch with the infer (freeform) mode to let the coordinator plan.`,
       notify: 'loud'
     });
     return { ok: false, code: 'INVALID_PLAN', message: 'provided structured plan is invalid' } as TeamJobLaunchResponse;

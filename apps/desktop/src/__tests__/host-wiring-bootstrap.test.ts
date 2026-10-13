@@ -178,6 +178,17 @@ const { mkdirSync, symlinkSync } = await import('node:fs');
 
 
 const settle = () => new Promise<void>((r) => setImmediate(r));
+/** Lets post-launch store writes from the previous launch land so the next preflight fence sees a quiet store. */
+const quiesce = () => new Promise<void>((r) => setTimeout(r, 300));
+/** Launch and return the result plus the single option bag that reached PtyManager.create (undefined when no spawn happened). */
+const launchAndCapture = async (req: Record<string, unknown>, opts: { settle?: boolean } = {}) => {
+  if (opts.settle !== false) await quiesce();
+  const before = h.ptys.createCalls.length;
+  const result = await host.createInteractiveTerminal({ projectId: project.id, cols: 80, rows: 24, ...req } as never);
+  const spawned = h.ptys.createCalls.slice(before);
+  expect(spawned.length).toBe(result.ok ? 1 : 0);
+  return { result, spawn: spawned[0] as any };
+};
 const ctx = () => h.ipcCtx as any;
 const sessionFixture = (over: Record<string, unknown> = {}) => ({
   id: 'sx', projectId: 'p1', profile: 'shell', title: 'T', status: 'running', cwd: h.root, startedAt: Date.now(), ...over
@@ -191,9 +202,11 @@ describe('host bootstrap wiring', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     h.ready!();
     await vi.waitFor(() => expect(h.mcpDeps).toBeDefined(), { timeout: 20000 });
-    expect(h.ipcCtx).toBeDefined();
-    expect(h.goalDeps).toBeDefined();
-    expect(h.followupDeps).toBeDefined();
+    expect(h.ipcCtx.createInteractiveTerminal).toBe(host.createInteractiveTerminal);
+    expect(h.ipcCtx.launchAuthorizedTerminal).toBeTypeOf('function');
+    expect(h.goalDeps.runEvaluator).toBeTypeOf('function');
+    expect(h.followupDeps.getSession).toBeTypeOf('function');
+    expect(h.followupDeps.resolveResume).toBeTypeOf('function');
     const dir = `${h.root}/proj`;
     mkdirSync(dir, { recursive: true });
     project = await h.mcpDeps.registerProject(dir);
@@ -207,7 +220,7 @@ describe('host bootstrap wiring', () => {
     await expect(h.mcpDeps.registerProject('/etc')).rejects.toThrow(/outside HOME/);
   });
 
-  it('exposes every IPC ctx getter and setter', () => {
+  it('exposes every IPC ctx getter and setter', async () => {
     const c = ctx();
     for (const key of Object.keys(c)) {
       expect(() => c[key]).not.toThrow();
@@ -221,8 +234,14 @@ describe('host bootstrap wiring', () => {
     expect(c.isTeamWorkerRestore({ cohort: { role: 'worker' } })).toBe(true);
     expect(c.restorePrincipal({ id: 'c', request: { cohort: { role: 'worker' } } })).toEqual({ kind: 'team', id: 'restore:c' });
     expect(c.restorePrincipal({ id: 'c', request: {} })).toEqual({ kind: 'automation', id: 'restore:c' });
-    expect(c.exactNativeRecoveryAvailability).toBeDefined();
-    expect(c.squadWorktreeAction).toBeDefined();
+    // Real wiring: no matching project/team/snapshots -> nothing restorable.
+    expect(c.exactNativeRecoveryAvailability({ projectId: 'no-such-project', teamId: 'no-such-team', nativeRecoverySnapshots: [{ slotId: 's' }] }))
+      .toEqual({ available: false, restorableSlots: 0 });
+    expect(c.exactNativeRecoveryAvailability({ projectId: project.id, teamId: 't1' }))
+      .toEqual({ available: false, restorableSlots: 0 });
+    // Real wiring: unknown execution fences as CONFLICT before any worktree action runs.
+    expect(await c.squadWorktreeAction(project.id, 'no-such-exec', 1, 'leave'))
+      .toMatchObject({ ok: false, code: 'CONFLICT', message: expect.stringContaining('Squad run changed') });
     expect(c.restoreSquadWorktreeFollowUpClaim).toBeTypeOf('function');
   });
 
@@ -246,20 +265,37 @@ describe('host bootstrap wiring', () => {
 
   it('resolves framework personas and explicit personas during launch preflight and revalidation', async () => {
     const c = ctx();
-    c.extensionEntries = [{ id: 'fw', manifest: { title: 'FW', agentPreset: { systemPrompt: 'be careful', label: 'Careful' } } }];
-    const framework = await host.createInteractiveTerminal({
-      projectId: project.id, profile: 'claude', frameworkIds: ['fw'], prompt: 'task', cols: 80, rows: 24
-    } as never);
-    expect(typeof framework.ok).toBe('boolean');
-    const bare = await host.createInteractiveTerminal({
-      projectId: project.id, profile: 'claude', frameworkIds: ['unknown'], cols: 80, rows: 24
-    } as never);
-    expect(typeof bare.ok).toBe('boolean');
+    // Boot-time extension discovery assigns extensionEntries asynchronously and would clobber the fixture
+    // mid-launch (flipping the preflight store fence to STALE_PREFLIGHT, or dropping the framework persona).
+    // Install the fixture until it survives a quiet window, then launch with no further wait.
+    const fixture = [{ id: 'fw', manifest: { title: 'FW', agentPreset: { systemPrompt: 'be careful', label: 'Careful' } } }];
+    await vi.waitFor(async () => {
+      c.extensionEntries = fixture;
+      await quiesce();
+      expect(c.extensionEntries).toBe(fixture);
+    }, { timeout: 10000, interval: 0 });
+    expect(host.resolveFrameworkPersona(['fw'], true)).toMatchObject({ id: 'framework:fw', appendSystemPrompt: 'be careful' });
+    const framework = await launchAndCapture({ profile: 'claude', frameworkIds: ['fw'], prompt: 'task' }, { settle: false });
+    expect(framework.result).toMatchObject({ ok: true, value: { profile: 'claude' } });
+    // Primer comes from main's own extension entry, stamped as a host persona; user typed a task so no kickoff prompt.
+    expect(framework.spawn).toMatchObject({
+      profile: 'claude',
+      extraArgs: ['task'],
+      persona: { id: 'framework:fw', name: 'Careful', baseProfile: 'claude', appendSystemPrompt: 'be careful', source: { extensionId: 'fw' } }
+    });
+    expect(framework.spawn.persona.initialPrompt).toBeUndefined();
+    const bare = await launchAndCapture({ profile: 'claude', frameworkIds: ['unknown'] });
+    // Unknown framework id resolves no preset -> bare launch with no persona/system prompt.
+    expect(bare.result).toMatchObject({ ok: true, value: { profile: 'claude' } });
+    expect(bare.spawn.profile).toBe('claude');
+    expect(bare.spawn.persona).toBeUndefined();
     vi.spyOn(c.personas, 'list').mockReturnValue([{ id: 'pers', name: 'Pers', baseProfile: 'claude' }]);
-    const persona = await host.createInteractiveTerminal({
-      projectId: project.id, profile: 'claude', personaId: 'pers', extraArgs: ['--model', 'x'], cols: 80, rows: 24
-    } as never);
-    expect(typeof persona.ok).toBe('boolean');
+    const persona = await launchAndCapture({ profile: 'claude', personaId: 'pers', extraArgs: ['--model', 'x'] });
+    expect(persona.result).toMatchObject({ ok: true, value: { profile: 'claude' } });
+    expect(persona.spawn).toMatchObject({ profile: 'claude', persona: { id: 'pers', name: 'Pers' }, extraArgs: ['--model', 'x'] });
+    // Explicit personaId wins over frameworkIds.
+    const both = await launchAndCapture({ profile: 'claude', personaId: 'pers', frameworkIds: ['fw'] });
+    expect(both.spawn.persona).toMatchObject({ id: 'pers' });
     vi.mocked(c.personas.list).mockRestore();
   });
 
@@ -267,14 +303,19 @@ describe('host bootstrap wiring', () => {
     const cursor = registry.registrationFor('cursor' as never) as any;
     const spy = vi.spyOn(cursor, 'prepareNativeSession');
     spy.mockResolvedValueOnce({ id: 'chat-1' });
-    const ok = await host.createInteractiveTerminal({ projectId: project.id, profile: 'cursor', cols: 80, rows: 24 } as never);
+    const ok = await launchAndCapture({ profile: 'cursor' });
     spy.mockResolvedValueOnce(undefined);
-    const none = await host.createInteractiveTerminal({ projectId: project.id, profile: 'cursor', cols: 80, rows: 24 } as never);
+    const none = await launchAndCapture({ profile: 'cursor' });
     spy.mockRejectedValueOnce(new Error('mint failed'));
-    const failed = await host.createInteractiveTerminal({ projectId: project.id, profile: 'cursor', cols: 80, rows: 24 } as never);
-    const pinned = await host.createInteractiveTerminal({ projectId: project.id, profile: 'cursor', resumeSessionId: 'r1', cols: 80, rows: 24 } as never);
-    expect([ok, none, failed, pinned].map((r) => typeof r.ok)).toEqual(['boolean', 'boolean', 'boolean', 'boolean']);
+    const failed = await launchAndCapture({ profile: 'cursor' });
+    const pinned = await launchAndCapture({ profile: 'cursor', resumeSessionId: 'r1' });
+    for (const r of [ok, none, failed, pinned]) expect(r.result).toMatchObject({ ok: true, value: { profile: 'cursor' } });
+    expect(ok.spawn.resumeSessionId).toBe('chat-1');
+    expect(none.spawn.resumeSessionId).toBeUndefined();
+    expect(failed.spawn.resumeSessionId).toBeUndefined();
+    expect(pinned.spawn.resumeSessionId).toBe('r1');
     expect(spy).toHaveBeenCalledTimes(3);
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ profile: 'cursor', cwd: project.path }));
     spy.mockRestore();
   });
 

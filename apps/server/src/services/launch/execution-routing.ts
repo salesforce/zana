@@ -5,7 +5,7 @@ import { executionEvidenceFor, executionTargetFor } from '@zana-ai/zcc-host-daem
 import type { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import type { ExecutionConsentScope, createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { LaunchProvider } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
-import { recordLiveModelTargets, withLiveModelTargets } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
+import { withLiveModelTargets } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
 import { providerFor, registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { harnessEnabledFromProbe } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import {
@@ -13,7 +13,8 @@ import {
   allowsLiveListedModelTarget,
   resolveExecutionState,
   resolveModelTarget,
-  resolveRoleTarget
+  resolveRoleTarget,
+  type AuthorizedModelTarget
 } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { evaluateFacetEvidence, evaluateTargetEvidence } from '@zana-ai/zcc-host-daemon/harness/routing-evidence';
 import type { ExecutionAuthorizationInput, ExecutionPreflightDecision } from './preflight.js';
@@ -61,10 +62,12 @@ export async function preflightTerminalExecution(
   const sharedProvider = deps.provider ?? providerFor(effectiveProfile);
   const adapterId = harnessFamilyOf(effectiveProfile) || sharedProvider.adapter.descriptor.id;
   // Providers are process-wide singletons. A live inventory belongs to THIS
-  // launch only: it is probed at most once, resolved through a launch-scoped
-  // view, and recorded under this launch's (adapter, cwd) for its spawn — never
-  // written onto the shared provider, where an interleaved launch for another
-  // project (or one whose probe failed) would pick it up.
+  // launch only: it is probed at most once and resolved through a launch-scoped
+  // view — never written onto the shared provider or into any keyed store, where
+  // an interleaved launch (another project, a sibling slot sharing this cwd, or
+  // one whose probe failed) would pick it up. The concrete model id a portable
+  // level resolves to travels in the decision (`modelPin`), is bound into the
+  // authorized launch digest, and is used verbatim by the spawn.
   const liveModels = liveModelProbe(sharedProvider, input, deps.discovery);
   let provider: LaunchProvider = sharedProvider;
   let resolved: ReturnType<typeof resolveExecutionState>;
@@ -92,6 +95,9 @@ export async function preflightTerminalExecution(
       executionTargetId: preflight.execution.targetId
     });
   if (combinationError) return { decision: 'blocked', reason: combinationError };
+  const modelPin = authorizedModelPin(effectiveProfile, preflight.model);
+  const pinned = (decision: ExecutionPreflightDecision): ExecutionPreflightDecision =>
+    decision.decision === 'allowed' && modelPin ? { ...decision, modelPin } : decision;
   let installedVersion: string | undefined;
   if (preflight.requested) {
     installedVersion = await deps.installedVersion(adapterId);
@@ -103,7 +109,7 @@ export async function preflightTerminalExecution(
     // to 'explicit-native' but carries no target to validate — treat it the same
     // as the native-default fallback rather than falling through to the
     // target-required authorization path below.
-    return { decision: 'allowed', scope: input.scope };
+    return pinned({ decision: 'allowed', scope: input.scope });
   }
   if (resolved.origin === 'legacy-compatibility') {
     const selection = resolved.targetId && resolved.nativePolicy
@@ -116,13 +122,13 @@ export async function preflightTerminalExecution(
     const reason = selection
       ? provider.adapter.legacyRouting?.auditExecution?.(selection) ?? 'unaudited legacy compatibility target'
       : 'unaudited legacy compatibility target';
-    return reason ? { decision: 'blocked', reason } : { decision: 'allowed', scope: input.scope };
+    return reason ? { decision: 'blocked', reason } : pinned({ decision: 'allowed', scope: input.scope });
   }
   const target = resolved.targetId ? executionTargetFor(provider, resolved.targetId) : undefined;
   const consentScopes: readonly ExecutionConsentScope[] = input.mode === 'interactive'
     ? ['one-launch', 'project']
     : ['project'];
-  return preflightExecutionAuthorization({
+  return pinned(await preflightExecutionAuthorization({
     adapterId,
     provenance: resolved.origin,
     target,
@@ -137,7 +143,21 @@ export async function preflightTerminalExecution(
   }, {
     reserve: deps.consentStore.reserve,
     request: deps.consentService?.request.bind(deps.consentService)
-  });
+  }));
+}
+
+/**
+ * The launch's level → concrete model id, when a portable level selected the
+ * model. Explicit ids need no pin: the spawn already uses them verbatim.
+ */
+function authorizedModelPin(
+  profile: LaunchProfileId,
+  model: { level?: AuthorizedModelTarget['level']; targetId?: string }
+): AuthorizedModelTarget | undefined {
+  const adapterId = harnessFamilyOf(profile);
+  return adapterId && model.level && model.targetId
+    ? { adapterId, level: model.level, targetId: model.targetId }
+    : undefined;
 }
 
 async function preflightStructuredRouting(
@@ -216,7 +236,7 @@ async function preflightStructuredRouting(
 interface LiveModelProbe {
   /** The provider can probe a live inventory for this launch's cwd. */
   readonly available: boolean;
-  /** Call only when `available`. At most one probe per launch; the outcome is recorded for this launch's spawn. */
+  /** Call only when `available`. At most one probe per launch; the outcome never outlives it. */
   read(): Promise<readonly string[] | undefined>;
 }
 
@@ -231,14 +251,9 @@ function liveModelProbe(
   return {
     available,
     read() {
-      pending ??= (discovery
+      pending ??= discovery
         ? discovery.models()
-        : provider.discoverModelTargets!({ cwd: projectPath!, config: input.config })
-      ).then((targets) => {
-        // An unavailable/empty probe discards this cwd's record only.
-        recordLiveModelTargets(provider.adapter.descriptor.id, projectPath!, targets);
-        return targets;
-      });
+        : provider.discoverModelTargets!({ cwd: projectPath!, config: input.config });
       return pending;
     }
   };

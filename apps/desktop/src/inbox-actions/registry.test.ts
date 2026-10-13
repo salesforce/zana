@@ -193,8 +193,11 @@ describe('inbox action registry', () => {
     const running = registry.run(entry(), { optionId: 'A' });
     await new Promise((resolve) => setTimeout(resolve, 0));
     registry.markUnavailable('test', 'private-ref', 'Superseded.');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     finish();
     await expect(running).resolves.toEqual({ ok: false, status: 'failed' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('handler succeeded but the action was marked unavailable'));
+    warn.mockRestore();
     expect(registry.list([entry()])).toEqual([{ entryId: 'entry-1', kind: 'test', status: 'failed', unavailable: true, message: 'Superseded.' }]);
     await expect(registry.run(entry(), { optionId: 'A' })).resolves.toEqual({ ok: false, status: 'missing' });
   });

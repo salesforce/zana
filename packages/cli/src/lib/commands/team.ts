@@ -121,7 +121,9 @@ export async function runTeamCommand(
     const teamId = flagValue(rest, '--team');
     const projectId = flagValue(rest, '--project');
     const goalRaw = flagValue(rest, '--goal');
-    const modeRaw = flagValue(rest, '--mode') ?? 'structured';
+    // Default is freeform (coordinator infers the plan): a prose goal such as
+    // "ship it" is not a plan, and `structured` rejects it as INVALID_PLAN.
+    const modeRaw = flagValue(rest, '--mode') ?? 'freeform';
     const title = flagValue(rest, '--title');
     const summary = flagValue(rest, '--summary');
     const wait = hasFlag(rest, '--wait');

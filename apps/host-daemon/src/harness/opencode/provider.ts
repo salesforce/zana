@@ -56,7 +56,6 @@ import type {
   RemoteCommandResult,
   ResolvedLaunch
 } from '../launch-provider.js';
-import { clearLiveModelTargets } from '../launch-provider.js';
 import { BaseLaunchProvider } from '../base-provider.js';
 import type {
   HarnessRoleTarget,
@@ -486,11 +485,7 @@ export function parseOpenCodeModelIds(output: string): string[] {
 }
 
 const modelDiscoveryCache = new ModelDiscoveryCache<string>();
-export const invalidateOpenCodeModels = () => {
-  modelDiscoveryCache.clear();
-  // Launch-recorded inventories describe the same (now stale) catalog.
-  clearLiveModelTargets(OPENCODE_ADAPTER.descriptor.id);
-};
+export const invalidateOpenCodeModels = () => modelDiscoveryCache.clear();
 
 function runOpenCodeModelDiscovery(command: string, cwd: string): Promise<readonly string[]> {
   return runOpenCodeCaptured(command, ['models'], cwd).then(parseOpenCodeModelIds);
@@ -902,7 +897,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
       perTabRouting: input.harnessRouting,
       profile: effectiveProfile,
       extraArgs: remoteExtra,
-      scope: 'remote'
+      scope: 'remote',
+      authorizedModel: input.authorizedModel
     });
     const roleTarget = resolveRoleTarget(this, {
       config: input.config,

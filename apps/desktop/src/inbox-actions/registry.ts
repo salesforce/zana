@@ -198,7 +198,11 @@ export function createInboxActionRegistry(database?: ExecutionDatabase): InboxAc
         delete claimed.unavailable;
         const { lost } = settle(claimedJson, claimed);
         // markUnavailable raced the handler: the superseded state wins.
-        if (lost?.unavailable) return { ok: false, status: 'failed' };
+        if (lost?.unavailable) {
+          // The handler's side effect already happened; only the ledger row lost the race.
+          console.warn(`[InboxActionRegistry] ${claimed.kind} handler succeeded but the action was marked unavailable mid-run; reporting failed`);
+          return { ok: false, status: 'failed' };
+        }
         return { ok: true, status: claimed.status };
       } catch (error) {
         // Handler failures can be transient (for example, Git contention). Keep

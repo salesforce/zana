@@ -13,7 +13,7 @@ import {
   openCodeModelLevelMapping,
   parseOpenCodeModelIds
 } from '../opencode/provider.js';
-import { launchScopedProvider, liveModelTargetsFor, recordLiveModelTargets, withLiveModelTargets } from '../launch-provider.js';
+import { withLiveModelTargets } from '../launch-provider.js';
 import { resolveModelTarget } from '../target-resolution.js';
 import type { AppConfig, ProjectRemote } from '@zana-ai/zcc-domain/product';
 import { shellQuote, shellQuoteArgv } from '../shell-quote.js';
@@ -942,20 +942,23 @@ describe('OpenCode launch-scoped live model view (OC1)', () => {
     expect(shared.liveModelAdapter([])).toBe(shared.adapter);
   });
 
-  it('renders a remote command through the inventory recorded for that launch cwd only', () => {
+  it('renders a remote command with the authorized model pin verbatim, never a re-mapped level', () => {
     const remote = { host: 'box', remotePath: '/srv/p' } as ProjectRemote;
     const persona = { id: 'p', name: 'P', modelLevel: 'low' as const };
-    recordLiveModelTargets('opencode', '/local/remote-a', ['llmgw/gpt-7-luna']);
     const render = registrationFor('opencode')!.renderRemoteCommand;
-    const a = render({ profile: 'opencode', config: CONFIG, remote, persona, cwd: '/local/remote-a' });
-    const b = render({ profile: 'opencode', config: CONFIG, remote, persona, cwd: '/local/remote-b' });
+    const a = render({ profile: 'opencode', config: CONFIG, remote, persona,
+      authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'llmgw/gpt-7-luna' } });
+    const b = render({ profile: 'opencode', config: CONFIG, remote, persona,
+      authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'llmgw/gpt-8-luna' } });
     const none = render({ profile: 'opencode', config: CONFIG, remote, persona });
     expect(a.cmd).toContain('llmgw/gpt-7-luna');
-    expect(b.cmd).toContain('llmgw/gpt-6-luna');
+    expect(b.cmd).toContain('llmgw/gpt-8-luna');
+    expect(b.cmd).not.toContain('gpt-7-luna');
     expect(none.cmd).toContain('llmgw/gpt-6-luna');
+    // Invalidating the probe cache cannot change an already-authorized pin.
     invalidateOpenCodeModels();
-    expect(liveModelTargetsFor('opencode', '/local/remote-a')).toBeUndefined();
-    expect(launchScopedProvider(providerFor('opencode'), '/local/remote-a')).toBe(providerFor('opencode'));
+    expect(render({ profile: 'opencode', config: CONFIG, remote, persona,
+      authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'llmgw/gpt-7-luna' } }).cmd).toContain('llmgw/gpt-7-luna');
   });
 });
 

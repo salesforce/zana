@@ -91,6 +91,20 @@ describe('gateInvalidProvidedPlan', () => {
     await expect(gateInvalidProvidedPlan(d, { ...args, unattended: true })).resolves.toMatchObject({ ok: false, code: 'INVALID_PLAN' });
     expect(d.inboxStore.append).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p', projectLabel: 'P', notify: 'loud' }));
   });
+  it('direct unattended launch copy does not tell the user to run a trigger', async () => {
+    const d = mk();
+    await gateInvalidProvidedPlan(d, { ...args, unattended: true });
+    const comments = (d.inboxStore.append.mock.calls[0] as unknown as [{ comments: string }])[0].comments;
+    expect(comments).not.toContain('trigger');
+    expect(comments).toContain('bad');
+    expect(comments).toContain('freeform');
+  });
+  it('trigger-driven unattended launch keeps the run-trigger-again copy', async () => {
+    const d = mk();
+    await gateInvalidProvidedPlan(d, { ...args, unattended: true, viaTrigger: true });
+    const comments = (d.inboxStore.append.mock.calls[0] as unknown as [{ comments: string }])[0].comments;
+    expect(comments).toContain('run trigger again');
+  });
   it('attended parks via binding', async () => {
     const d = mk();
     await expect(gateInvalidProvidedPlan(d, args)).resolves.toBeUndefined();

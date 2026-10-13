@@ -32,7 +32,40 @@ interface RestoreCapabilityFile {
 
 export function createRestoreCapabilityStore(opts: { filePath: string; maxEntries?: number }) {
   const maxEntries = opts.maxEntries ?? 200;
+  // Entries carrying a follow-up claim or a live session may exceed the soft cap
+  // up to this bound; past it the oldest protected entries are dropped as a last resort.
+  const hardMaxEntries = maxEntries * 2;
   const reservations = new Map<string, string>();
+
+  const isProtected = (entry: RestoreCapability): boolean =>
+    !!entry.followUpExecutionId || (!!entry.sessionId && entry.exitedAt == null);
+
+  /** Oldest-first eviction that prefers exited, then unprotected, entries; order is preserved. */
+  function evict(entries: RestoreCapability[]): RestoreCapability[] {
+    let excess = entries.length - maxEntries;
+    if (excess <= 0) return entries;
+    const dropped = new Set<RestoreCapability>();
+    const take = (predicate: (entry: RestoreCapability) => boolean, limit: number) => {
+      for (const entry of entries) {
+        if (limit <= 0) return;
+        if (dropped.has(entry) || !predicate(entry)) continue;
+        dropped.add(entry);
+        limit -= 1;
+        excess -= 1;
+      }
+    };
+    take((entry) => !isProtected(entry) && entry.exitedAt != null, excess);
+    take((entry) => !isProtected(entry), excess);
+    // Everything left is protected: tolerate overflow up to the hard bound.
+    const overflow = entries.length - dropped.size - hardMaxEntries;
+    if (overflow > 0) {
+      take(() => true, overflow);
+      console.warn(`[RestoreCapabilityStore] dropped ${overflow} protected restore capabilities beyond hard bound ${hardMaxEntries}`);
+    } else if (entries.length - dropped.size > maxEntries) {
+      console.warn(`[RestoreCapabilityStore] retaining ${entries.length - dropped.size} restore capabilities (cap ${maxEntries}); remaining entries hold live sessions or follow-up claims`);
+    }
+    return entries.filter((entry) => !dropped.has(entry));
+  }
 
   function read(): RestoreCapabilityFile {
     const bytes = readRawFile(opts.filePath);
@@ -48,7 +81,7 @@ export function createRestoreCapabilityStore(opts: { filePath: string; maxEntrie
 
   function write(state: RestoreCapabilityFile): void {
     mkdirSync(dirname(opts.filePath), { recursive: true });
-    state.entries = state.entries.slice(-maxEntries);
+    state.entries = evict(state.entries);
     atomicDurableWrite(opts.filePath, Buffer.from(JSON.stringify(state)));
   }
 

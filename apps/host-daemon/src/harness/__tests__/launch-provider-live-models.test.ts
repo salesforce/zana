@@ -1,91 +1,56 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  clearLiveModelTargets,
-  launchScopedProvider,
-  liveModelTargetsFor,
-  recordLiveModelTargets,
-  withLiveModelTargets,
-  type LaunchProvider
-} from '../launch-provider.js';
+import { describe, expect, it } from 'vitest';
+import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import * as launchProvider from '../launch-provider.js';
+import { withLiveModelTargets, type LaunchProvider } from '../launch-provider.js';
 import { OpenCodeProvider } from '../opencode/provider.js';
 import { providerFor } from '../registry.js';
+import { resolveModelTarget } from '../target-resolution.js';
+
+const CONFIG = { version: 1, theme: 'dark' } as AppConfig;
 
 describe('launch-scoped live model inventory', () => {
-  afterEach(() => {
-    clearLiveModelTargets();
-    vi.useRealTimers();
-  });
-
-  it('keys records per (adapter, cwd) and copies the recorded ids', () => {
-    const ids = ['x/one'];
-    recordLiveModelTargets('opencode', '/a', ids);
-    recordLiveModelTargets('codex', '/a', ['y/two']);
-    ids.push('x/mutated');
-    expect(liveModelTargetsFor('opencode', '/a')).toEqual(['x/one']);
-    expect(liveModelTargetsFor('codex', '/a')).toEqual(['y/two']);
-    expect(liveModelTargetsFor('opencode', '/b')).toBeUndefined();
-  });
-
-  it('an unavailable or empty probe discards only its own key', () => {
-    recordLiveModelTargets('opencode', '/a', ['x/one']);
-    recordLiveModelTargets('opencode', '/b', ['x/two']);
-    recordLiveModelTargets('opencode', '/a', undefined);
-    expect(liveModelTargetsFor('opencode', '/a')).toBeUndefined();
-    recordLiveModelTargets('opencode', '/b', []);
-    expect(liveModelTargetsFor('opencode', '/b')).toBeUndefined();
-  });
-
-  it('expires records after the TTL', () => {
-    vi.useFakeTimers();
-    recordLiveModelTargets('opencode', '/a', ['x/one']);
-    vi.advanceTimersByTime(5 * 60_000 - 1);
-    expect(liveModelTargetsFor('opencode', '/a')).toEqual(['x/one']);
-    vi.advanceTimersByTime(1);
-    expect(liveModelTargetsFor('opencode', '/a')).toBeUndefined();
-  });
-
-  it('warns loudly when a recorded inventory expires before its spawn, not when none was recorded', () => {
-    vi.useFakeTimers();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      expect(liveModelTargetsFor('opencode', '/never')).toBeUndefined();
-      expect(warn).not.toHaveBeenCalled();
-      recordLiveModelTargets('opencode', '/a', ['x/one']);
-      vi.advanceTimersByTime(5 * 60_000);
-      expect(liveModelTargetsFor('opencode', '/a')).toBeUndefined();
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(String(warn.mock.calls[0][0])).toContain('expired before spawn');
-    } finally {
-      warn.mockRestore();
+  it('keeps no keyed inventory store: a spawn can only see the pin its own preflight authorized', () => {
+    // The per-(adapter, cwd) TTL record was removed — sibling slots sharing one
+    // worktree cwd (or two machines with the same checkout path) overwrote each
+    // other's preflighted inventory. Nothing keyed may come back.
+    expect(Object.keys(launchProvider)).not.toEqual(expect.arrayContaining(['recordLiveModelTargets']));
+    for (const removed of ['recordLiveModelTargets', 'liveModelTargetsFor', 'clearLiveModelTargets', 'launchScopedProvider']) {
+      expect(launchProvider).not.toHaveProperty(removed);
     }
   });
 
-  it('is bounded: the oldest record is evicted past 64 entries', () => {
-    for (let index = 0; index <= 64; index += 1) recordLiveModelTargets('opencode', `/p${index}`, ['x/one']);
-    expect(liveModelTargetsFor('opencode', '/p0')).toBeUndefined();
-    expect(liveModelTargetsFor('opencode', '/p1')).toEqual(['x/one']);
-    expect(liveModelTargetsFor('opencode', '/p64')).toEqual(['x/one']);
-  });
-
-  it('clears one adapter or all adapters', () => {
-    recordLiveModelTargets('opencode', '/a', ['x/one']);
-    recordLiveModelTargets('codex', '/a', ['y/two']);
-    clearLiveModelTargets('opencode');
-    expect(liveModelTargetsFor('opencode', '/a')).toBeUndefined();
-    expect(liveModelTargetsFor('codex', '/a')).toEqual(['y/two']);
-    clearLiveModelTargets();
-    expect(liveModelTargetsFor('codex', '/a')).toBeUndefined();
-  });
-
-  it('launchScopedProvider returns the shared provider without a cwd, a record, or live-model support', () => {
+  it('withLiveModelTargets is a pure per-call view that never touches the shared provider', () => {
     const shared = new OpenCodeProvider();
-    recordLiveModelTargets('opencode', '/a', ['llmgw/gpt-7-luna']);
-    expect(launchScopedProvider(shared, undefined)).toBe(shared);
-    expect(launchScopedProvider(shared, '/b')).toBe(shared);
-    expect(launchScopedProvider(shared, '/a').adapter.descriptor.targets?.modelLevelMapping.low).toBe('llmgw/gpt-7-luna');
+    const snapshot = shared.adapter;
+    const view = withLiveModelTargets(shared, ['llmgw/gpt-7-luna']);
+    expect(view.adapter.descriptor.targets?.modelLevelMapping.low).toBe('llmgw/gpt-7-luna');
+    expect(shared.adapter).toBe(snapshot);
     const plain = providerFor('claude');
-    recordLiveModelTargets(plain.adapter.descriptor.id, '/a', ['x/one']);
-    expect(launchScopedProvider(plain, '/a')).toBe(plain);
     expect(withLiveModelTargets(plain as LaunchProvider, ['x/one'])).toBe(plain);
+  });
+
+  it('an authorized model pin is used verbatim for its adapter + level only', () => {
+    const shared = new OpenCodeProvider();
+    const input = {
+      config: CONFIG,
+      persona: { id: 'p', name: 'P', modelLevel: 'low' as const },
+      profile: 'opencode' as const,
+      extraArgs: [],
+      scope: 'local' as const
+    };
+    const pin = { adapterId: 'opencode', level: 'low' as const, targetId: 'llmgw/gpt-7-luna' };
+    expect(resolveModelTarget(shared, { ...input, authorizedModel: pin })).toMatchObject({
+      targetId: 'llmgw/gpt-7-luna', level: 'low', contribution: { args: ['--model', 'llmgw/gpt-7-luna'] }
+    });
+    // A pin for another level or adapter never re-routes this launch.
+    expect(resolveModelTarget(shared, { ...input, authorizedModel: { ...pin, level: 'high' } }).targetId).toBe('llmgw/gpt-6-luna');
+    expect(resolveModelTarget(shared, { ...input, authorizedModel: { ...pin, adapterId: 'codex' } }).targetId).toBe('llmgw/gpt-6-luna');
+    // Explicit ids stay verbatim regardless of a pin.
+    expect(resolveModelTarget(shared, {
+      ...input,
+      persona: undefined,
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/grok-4.6' } } },
+      authorizedModel: pin
+    }).targetId).toBe('llmgw/grok-4.6');
   });
 });

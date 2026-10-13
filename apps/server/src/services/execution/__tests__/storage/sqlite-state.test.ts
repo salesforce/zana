@@ -43,6 +43,10 @@ function save(state: State): void {
   writeExecutionStoreSqliteState(database, 'execution-store', state, current?.hash ?? null);
 }
 
+function readExecutionStoreSqliteStateHash(): string {
+  return readExecutionStoreSqliteState<State>(database, 'execution-store')!.hash;
+}
+
 afterEach(() => {
   database.close();
   rmSync(directory, { recursive: true, force: true });
@@ -135,6 +139,61 @@ describe('writeExecutionStoreSqliteState row sync', () => {
     const broken = { ...duplicate, events: [{ id: 'x', executionId: null as unknown as string, sequence: 1 }] };
     expect(() => writeExecutionStoreSqliteState(database, 'execution-store', broken, hash)).toThrow();
     expect(readExecutionStoreSqliteState<State>(database, 'execution-store')?.value.records.map((r) => r.id)).toEqual(['a']);
+  });
+
+  it('does not read stored bodies back on a warm write', () => {
+    open();
+    save(base());
+    writes();
+    const prepared: string[] = [];
+    const realPrepare = database.sqlite.prepare.bind(database.sqlite);
+    database.sqlite.prepare = ((sql: string) => { prepared.push(sql); return realPrepare(sql); }) as typeof database.sqlite.prepare;
+    const next = base();
+    next.revision = 2;
+    next.records[0] = { id: 'a', note: 'x' };
+    writeExecutionStoreSqliteState(database, 'execution-store', next, readExecutionStoreSqliteStateHash());
+    expect(prepared.some((sql) => /SELECT id, position, value_json/.test(sql))).toBe(false);
+    expect(writes()).toEqual([{ tbl: 'execution_store_record_rows', id: 'a', op: 'update' }]);
+    expect(readExecutionStoreSqliteState<State>(database, 'execution-store')?.value).toEqual(next);
+  });
+
+  it('falls back to a cold diff after another handle moves the ledger', () => {
+    open();
+    save(base());
+    const other = openExecutionDatabase(join(directory, 'execution.sqlite'));
+    try {
+      const hash = readExecutionStoreSqliteState<State>(other, 'execution-store')!.hash;
+      const moved = base();
+      moved.revision = 2;
+      moved.records = [{ id: 'a', note: 'other' }, { id: 'z' }];
+      writeExecutionStoreSqliteState(other, 'execution-store', moved, hash);
+      const back = base();
+      back.revision = 3;
+      back.records[0] = { id: 'a', note: 'other' };
+      save(back);
+      expect(readExecutionStoreSqliteState<State>(database, 'execution-store')?.value).toEqual(back);
+    } finally {
+      other.close();
+    }
+  });
+
+  it('keeps diffs correct after a rolled-back write and across a reopened handle', () => {
+    open();
+    save(base());
+    const hash = readExecutionStoreSqliteStateHash();
+    const broken = { ...base(), revision: 2, records: [{ id: 'a', note: 'lost' }], events: [{ id: 'x', executionId: null as unknown as string, sequence: 1 }] };
+    expect(() => writeExecutionStoreSqliteState(database, 'execution-store', broken, hash)).toThrow();
+    const next = base();
+    next.revision = 2;
+    next.records[2] = { id: 'c', note: 'kept' };
+    save(next);
+    expect(readExecutionStoreSqliteState<State>(database, 'execution-store')?.value).toEqual(next);
+
+    database.close();
+    database = openExecutionDatabase(join(directory, 'execution.sqlite'));
+    const again = { ...next, revision: 3, records: next.records.slice(1) };
+    save(again);
+    expect(readExecutionStoreSqliteState<State>(database, 'execution-store')?.value).toEqual(again);
   });
 
   it('rejects non-serializable state', () => {

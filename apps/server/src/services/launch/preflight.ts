@@ -11,6 +11,7 @@ import type {
   ExecutionConsentScope
 } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { ExecutionConsentCeremonyInput } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
+import type { AuthorizedModelTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import type { WorkUnitRoutingV1 } from '../execution/routing-policy.js';
 import type { WorkUnitRequirementsV1 } from '../execution/store.js';
 import type { WorkOutputDeclarationV1 } from '../execution/contracts.js';
@@ -543,6 +544,13 @@ export type ExecutionPreflightDecision =
       targetDigest?: string;
       evidenceDigest?: string;
       consentReservation?: { id: string; scope: ExecutionConsentScope };
+      /**
+       * The concrete model id this preflight resolved for a portable model level
+       * (through the launch's own live inventory when the provider can probe
+       * one). Bound into the final launch digest and handed to the spawn, which
+       * uses it verbatim — the spawn never re-maps the level or re-probes.
+       */
+      modelPin?: AuthorizedModelTarget;
     }
   | { decision: 'blocked'; reason: string };
 
@@ -698,11 +706,15 @@ export function finalizeLaunchPreflight<TRequest, TResolved>(
   plan: LaunchPreflight<TRequest, TResolved>,
   executionAuthorization: Extract<ExecutionPreflightDecision, { decision: 'allowed' }>
 ): LaunchPreflight<TRequest, TResolved> & { executionAuthorization: typeof executionAuthorization } {
+  // Frozen: the spawn reads `modelPin` from this exact value after the digest
+  // below was authorized, so nothing may swap it in between.
+  executionAuthorization = immutableSnapshot(executionAuthorization);
   const execution = {
     scope: executionAuthorization.scope,
     targetDigest: executionAuthorization.targetDigest,
     evidenceDigest: executionAuthorization.evidenceDigest,
-    consentScope: executionAuthorization.consentReservation?.scope
+    consentScope: executionAuthorization.consentReservation?.scope,
+    modelPin: executionAuthorization.modelPin
   };
   const binding = immutableSnapshot({
     ...plan.binding,

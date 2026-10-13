@@ -932,17 +932,24 @@ export class SchedulerManager extends EventEmitter {
     // Delay the watcher until the write is settled; its event stays queued.
     this.suppressWatchUntil = Date.now() + 1_000;
     const epoch = this.epoch;
+    let record = task;
     if (definitionPatch.id !== task.id) {
       const current = await this.readCurrent(task);
       // Re-check at the write boundary: this is the record the save merges onto.
       guard?.(current);
-      // A deferred reload means the disk definition must not be adopted until
-      // the unresolved run settles; the save below still merges onto disk.
-      const adopted = this.deferredReloads.has(task.id) ? task : current;
-      Object.assign(task, { ...adopted, ...definitionPatch, status: task.status });
+      if (this.deferredReloads.has(task.id)) {
+        // The disk definition must not be adopted in memory until the
+        // unresolved run settles, but the written record is always the
+        // owner's: only the patch and runtime status are layered onto it, so
+        // a full-record save never restores the stale live definition.
+        Object.assign(task, { ...definitionPatch, status: task.status });
+        record = { ...current, ...definitionPatch, status: task.status };
+      } else {
+        Object.assign(task, { ...current, ...definitionPatch, status: task.status });
+      }
     }
-    if (this.deps.persistence) await this.deps.persistence.save(task, definitionPatch);
-    else saveSchedule(task, this.deps.store.listProjects(), definitionPatch);
+    if (this.deps.persistence) await this.deps.persistence.save(record, definitionPatch);
+    else saveSchedule(record, this.deps.store.listProjects(), definitionPatch);
     if (epoch !== this.epoch) throw new Error('Scheduler stopped');
   }
 

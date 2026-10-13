@@ -49,7 +49,6 @@ vi.mock('@zana-ai/zcc-llm', async (importOriginal) => {
 });
 
 import { PtyManager } from '../pty.js';
-import { clearLiveModelTargets, recordLiveModelTargets } from '../harness/launch-provider.js';
 
 const CONFIG: AppConfig = {
   version: 1,
@@ -158,25 +157,31 @@ describe('structured providers final local argv', () => {
     });
   });
 
-  it('maps an OpenCode portable level through the inventory recorded for THIS launch cwd only', () => {
-    // OC1: preflight records each launch's live inventory per (adapter, cwd);
-    // the spawn must map from its own project's record, never another's.
-    recordLiveModelTargets('opencode', '/tmp/work-a', ['llmgw/gpt-7-luna', 'llmgw/gpt-7-sol']);
-    try {
-      const create = (cwd: string) => {
-        new PtyManager().create({
-          projectId: 'proj1', profile: 'opencode', cwd, cols: 80, rows: 24, config: CONFIG,
-          harnessRouting: routing('opencode', { modelLevel: 'low' })
-        });
-        return spawns.at(-1)!.args;
-      };
-      expect(create('/tmp/work-a')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-7-luna']));
-      // A project with no (or a failed) probe falls back to the reviewed snapshot.
-      expect(create('/tmp/work-b')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-6-luna']));
-      expect(create('/tmp/work-a')).not.toContain('llmgw/gpt-6-luna');
-    } finally {
-      clearLiveModelTargets();
-    }
+  it('maps an OpenCode portable level to the authorized pin of THIS launch only', () => {
+    // Two slots sharing ONE worktree cwd, each authorized with its own resolved
+    // id: each spawn uses its own pin verbatim; no keyed state links them.
+    const create = (targetId?: string) => {
+      new PtyManager().create({
+        projectId: 'proj1', profile: 'opencode', cwd: '/tmp/shared-worktree', cols: 80, rows: 24, config: CONFIG,
+        harnessRouting: routing('opencode', { modelLevel: 'low' }),
+        ...(targetId ? { authorizedModel: { adapterId: 'opencode', level: 'low' as const, targetId } } : {})
+      });
+      return spawns.at(-1)!.args;
+    };
+    expect(create('llmgw/gpt-7-luna')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-7-luna']));
+    expect(create('llmgw/gpt-8-luna')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-8-luna']));
+    expect(create('llmgw/gpt-7-luna')).not.toContain('llmgw/gpt-8-luna');
+    // No preflight pin: the reviewed snapshot mapping, exactly as before.
+    expect(create()).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-6-luna']));
+  });
+
+  it('a native role still suppresses an authorized model pin', () => {
+    new PtyManager().create({
+      projectId: 'proj1', profile: 'opencode', cwd: '/tmp/shared-worktree', cols: 80, rows: 24, config: CONFIG,
+      harnessRouting: routing('opencode', { modelLevel: 'low', roleTargetId: 'reviewer' }),
+      authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'llmgw/gpt-7-luna' }
+    });
+    expect(spawns.at(-1)!.args).not.toContain('--model');
   });
 
   it('emits OpenCode auto-approve only for autonomous', () => {

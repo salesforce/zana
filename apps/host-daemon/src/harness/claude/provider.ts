@@ -467,7 +467,8 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
     const remoteExtra = cleanExtraArgs(input.extraArgs);
     const modelTarget = resolveModelTarget(this, {
       config: input.config, persona: input.persona, projectSettings: input.projectSettings,
-      perTabRouting: input.harnessRouting, profile: effectiveProfile, extraArgs: remoteExtra, scope: 'remote'
+      perTabRouting: input.harnessRouting, profile: effectiveProfile, extraArgs: remoteExtra, scope: 'remote',
+      authorizedModel: input.authorizedModel
     });
     const autoModeActive = this.computeAutoModeActive({
       profile: effectiveProfile,
