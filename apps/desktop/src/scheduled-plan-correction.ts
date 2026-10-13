@@ -2,6 +2,7 @@ import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portab
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { normalizeExecutionPlan } from '@zana-ai/zcc-server/services/launch/preflight';
+import { InboxActionOperatorError } from './inbox-actions/registry.js';
 import type { CoordinatorHandoffContext } from './team-plan-handoff.js';
 
 /** Minimal schedule shape needed to decide whether a correction may rewrite it. */
@@ -51,24 +52,24 @@ export async function updateScheduledPromptFromCorrection(
   approvedUnits: readonly ExecutionWorkUnitInput[]
 ): Promise<void> {
   const execution = await deps.getExecution(ctx.projectId, ctx.executionId);
-  if (!execution) throw new Error('execution not found; cannot update the scheduled Squad');
+  if (!execution) throw new InboxActionOperatorError('execution not found; cannot update the scheduled Squad');
   const scheduleId = parseScheduledLaunchRequestId(execution.launchRequestId);
   if (!scheduleId) return;
   const schedule = deps.getSchedule(scheduleId);
-  if (schedule.projectId !== ctx.projectId || schedule.kind !== 'team') throw new Error('scheduled Squad no longer matches this correction');
+  if (schedule.projectId !== ctx.projectId || schedule.kind !== 'team') throw new InboxActionOperatorError('scheduled Squad no longer matches this correction');
   // The run was launched with the (trimmed) schedule prompt as its objective. A
   // different prompt now means the user edited the schedule during review; do
   // not overwrite their edit.
   const launched = execution.request?.objective?.trim();
   if (!launched || schedule.prompt?.trim() !== launched) {
-    throw new Error('the schedule prompt was edited since this run launched; review the schedule before approving the correction');
+    throw new InboxActionOperatorError('the schedule prompt was edited since this run launched; review the schedule before approving the correction');
   }
   const prompt = await deps.readCorrectedPlanText(ctx.projectRoot, ctx.executionId);
-  if (!prompt?.trim()) throw new Error('corrected plan artifact is unavailable');
+  if (!prompt?.trim()) throw new InboxActionOperatorError('corrected plan artifact is unavailable');
   // The service verified the digest of the units the operator approved; the
   // text persisted here must parse to exactly those units.
   if (digestOfPlanText(prompt) !== launchDigest(approvedUnits as ExecutionWorkUnitInput[])) {
-    throw new Error('corrected plan changed after approval; renewed approval is required');
+    throw new InboxActionOperatorError('corrected plan changed after approval; renewed approval is required');
   }
   await deps.updateSchedule(scheduleId, { prompt });
 }

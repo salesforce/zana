@@ -10,6 +10,7 @@ import {
   updateScheduledPromptFromCorrection,
   type ScheduledPromptDeps
 } from './scheduled-plan-correction.js';
+import { InboxActionOperatorError } from './inbox-actions/registry.js';
 import { PlanCorrectionLaunchBinding } from './plan-correction/launch-binding.js';
 import { PLAN_CORRECTION_MAX_RETRIES, PlanCorrectionService, runPlanCorrectionHostAction } from './plan-correction/service.js';
 import type { PlanCorrectionRecord } from './plan-correction/store.js';
@@ -282,6 +283,32 @@ describe('PlanCorrectionService + updateScheduledPrompt closure', () => {
     expect(await t.service.hasApproval('exec-1')).toBe(false);
     // The offer stays pending, so the operator can retry after fixing the schedule.
     expect(t.records.get('exec-1')?.status).toBe('pending');
+    rmSync(t.root, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['schedule prompt edited during review', { getSchedule: () => ({ projectId: 'p1', kind: 'team', prompt: 'user edit' }) }, 'edited since this run launched'],
+    ['artifact edited after the digest check', { reread: async () => VALID_PLAN.replace('Create output.', 'Create output and more.') }, 'changed after approval'],
+    ['schedule moved project', { getSchedule: () => ({ projectId: 'other', kind: 'team', prompt: OBJECTIVE }) }, 'no longer matches'],
+    ['artifact unreadable', { reread: async () => undefined }, 'unavailable']
+  ])('the %s cause is shown to the operator, not hidden behind the generic message', async (_name, opts, text) => {
+    const t = build(opts);
+    const ref = await t.offer();
+    const error = await runPlanCorrectionHostAction(t.service, ref, 'approve').then(() => undefined, (e: unknown) => e);
+    // The Inbox registry only shows InboxActionOperatorError text; anything else
+    // becomes "Could not complete this decision. Try again."
+    expect(error).toBeInstanceOf(InboxActionOperatorError);
+    expect((error as Error).message).toContain(text);
+    rmSync(t.root, { recursive: true, force: true });
+  });
+
+  it('an incidental failure (disk full) stays hidden behind the generic message', async () => {
+    const t = build({ updateSchedule: async () => { throw new Error('ENOSPC: /Users/x/secret/path'); } });
+    const ref = await t.offer();
+    const error = await runPlanCorrectionHostAction(t.service, ref, 'approve').then(() => undefined, (e: unknown) => e);
+    expect(error).toBeInstanceOf(InboxActionOperatorError);
+    expect((error as Error).message).not.toContain('ENOSPC');
+    expect((error as Error).message).not.toContain('/Users/x');
     rmSync(t.root, { recursive: true, force: true });
   });
 

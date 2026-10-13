@@ -1,5 +1,6 @@
 import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 import { randomUUID } from 'node:crypto';
+import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 import { hasPortablePlanStep } from '@zana-ai/zcc-server/services/execution/portable-plan';
@@ -63,7 +64,7 @@ export async function runPlanCorrectionHostAction(
   if (!action) throw new Error('invalid plan correction action');
   if (await service.respond(action.executionId, input, action) === 'reject') {
     const why = service.takeRejectionReason(action.executionId);
-    throw new Error(why ? `plan correction action was rejected or superseded: ${why}` : 'plan correction action was rejected or superseded');
+    throw new InboxActionOperatorError(why ? `plan correction action was rejected or superseded: ${why}` : 'plan correction action was rejected or superseded');
   }
 }
 
@@ -311,7 +312,8 @@ export class PlanCorrectionService {
       try {
         await this.deps.updateScheduledPrompt?.(pending.ctx, pending.approvedUnits);
       } catch (error) {
-        this.rejectionReasons.set(executionId, error instanceof Error ? error.message : String(error));
+        // Only deliberate operator-facing causes are shown; incidental failures (I/O, paths) stay generic.
+        if (error instanceof InboxActionOperatorError) this.rejectionReasons.set(executionId, error.message);
         // Schedule persistence is part of scheduled-run approval. Do not allow a
         // one-off correction to resume when future occurrences would remain bad.
         pending.status = 'pending';
