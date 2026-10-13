@@ -9,14 +9,18 @@ export function RunErrorDialog({ title, when, message, onClose }: {
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // Latest handler via ref: parents (1s tick) pass inline closures, and re-running
+  // the effect would re-focus the dialog on every render.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
     node.addEventListener('keydown', onKey);
     node.focus();
     return () => node.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

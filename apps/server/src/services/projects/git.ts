@@ -601,9 +601,11 @@ function resolveWorktreeGitPath(worktreePath: string, gitPath: string): string {
 
 /**
  * Install squad-worktree-local push guardrails. `extensions.worktreeConfig` is
- * needed before Git permits `--worktree`; push.default and hooksPath then live
- * only in the linked checkout's config.worktree, leaving the main checkout's
- * effective settings untouched. Every executable existing hook gets a proxy so
+ * needed before Git permits `--worktree`; it is written to the shared repo
+ * config (and persists in the user's repo, even after the worktree is removed)
+ * unless already set. push.default and hooksPath then live only in the linked
+ * checkout's config.worktree, leaving the main checkout's effective settings
+ * untouched. Every executable existing hook gets a proxy so
  * changing hooksPath cannot bypass commit, security, or other policy hooks.
  */
 async function configureWorktreeProtection(toplevel: string, worktreePath: string): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -628,9 +630,17 @@ async function configureWorktreeProtection(toplevel: string, worktreePath: strin
     : defaultHookPath;
   const zanaPrePush = join(zanaHooksPath, 'pre-push');
   try {
-    const previousHooksDir = realpathSync(dirname(previousHook));
     const preservedHooks = new Map<string, string>();
-    for (const hook of readdirSync(previousHooksDir)) {
+    let previousHooksDir = '';
+    let hookNames: string[] = [];
+    try {
+      previousHooksDir = realpathSync(dirname(previousHook));
+      hookNames = readdirSync(previousHooksDir);
+    } catch (error) {
+      // A repo without a hooks directory has nothing to preserve.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    for (const hook of hookNames) {
       if (hook.endsWith('.sample')) continue;
       const existing = join(previousHooksDir, hook);
       if (!existsSync(existing)) continue;
@@ -665,8 +675,11 @@ async function configureWorktreeProtection(toplevel: string, worktreePath: strin
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
-  const enable = await runGitOutput(toplevel, ['config', 'extensions.worktreeConfig', 'true']);
-  if (!enable.ok) return { ok: false, reason: enable.output || 'could not enable worktree config' };
+  const enabled = await runGitOutput(toplevel, ['config', '--type=bool', '--get', 'extensions.worktreeConfig']);
+  if (!enabled.ok || enabled.output !== 'true') {
+    const enable = await runGitOutput(toplevel, ['config', 'extensions.worktreeConfig', 'true']);
+    if (!enable.ok) return { ok: false, reason: enable.output || 'could not enable worktree config' };
+  }
   const pushDefault = await runGitOutput(worktreePath, ['config', '--worktree', 'push.default', 'nothing']);
   if (!pushDefault.ok) return { ok: false, reason: pushDefault.output || 'could not configure worktree push default' };
   const hooksPath = await runGitOutput(worktreePath, ['config', '--worktree', 'core.hooksPath', zanaHooksPath]);

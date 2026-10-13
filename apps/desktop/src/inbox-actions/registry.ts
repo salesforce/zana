@@ -120,6 +120,15 @@ export function createInboxActionRegistry(database?: ExecutionDatabase): InboxAc
     return row ? parseRow(row.value_json) : null;
   };
   const write = (row: ActionRow) => update.run(JSON.stringify(row), Date.now(), recordId(row.entryId));
+  /**
+   * Post-handler settle, compare-and-swap against the claimed JSON so a concurrent
+   * markUnavailable (or remove) is never overwritten. Returns the winning row when
+   * the swap lost and the record still exists, or null when it won / the row is gone.
+   */
+  const settle = (claimedJson: string, next: ActionRow): { lost: ActionRow | null } => {
+    const swapped = Number(claim.run(JSON.stringify(next), Date.now(), recordId(next.entryId), claimedJson).changes) === 1;
+    return { lost: swapped ? null : read(next.entryId) };
+  };
 
   return {
     enabled: true,
@@ -156,6 +165,7 @@ export function createInboxActionRegistry(database?: ExecutionDatabase): InboxAc
         || !inboxQuestions(entry).some((question) => question.options.some((option) => option.id === input.optionId))) {
         return { ok: false, status: 'missing' };
       }
+      let claimedJson = '';
       const claimed = database.transaction(() => {
         const row = read(entry.id);
         if (!row || row.contentHash !== contentHash(entry, row)) return null;
@@ -166,7 +176,8 @@ export function createInboxActionRegistry(database?: ExecutionDatabase): InboxAc
         if (row.status !== 'pending') return null;
         const previous = JSON.stringify(row);
         row.status = 'claimed';
-        return Number(claim.run(JSON.stringify(row), Date.now(), recordId(row.entryId), previous).changes) === 1
+        claimedJson = JSON.stringify(row);
+        return Number(claim.run(claimedJson, Date.now(), recordId(row.entryId), previous).changes) === 1
           ? row
           : null;
       });
@@ -176,7 +187,7 @@ export function createInboxActionRegistry(database?: ExecutionDatabase): InboxAc
       if (!handler) {
         claimed.status = 'failed';
         claimed.error = 'handler unavailable';
-        write(claimed);
+        settle(claimedJson, claimed);
         return { ok: false, status: 'failed' };
       }
       try {
@@ -185,17 +196,20 @@ export function createInboxActionRegistry(database?: ExecutionDatabase): InboxAc
         delete claimed.error;
         delete claimed.visibleError;
         delete claimed.unavailable;
-        write(claimed);
+        const { lost } = settle(claimedJson, claimed);
+        // markUnavailable raced the handler: the superseded state wins.
+        if (lost?.unavailable) return { ok: false, status: 'failed' };
         return { ok: true, status: claimed.status };
       } catch (error) {
         // Handler failures can be transient (for example, Git contention). Keep
         // action pending so operator can retry same authorized choice.
-        claimed.status = 'pending';
         claimed.error = error instanceof Error ? error.message.slice(0, 500) : 'handler failed';
         claimed.visibleError = error instanceof InboxActionOperatorError;
         claimed.unavailable = error instanceof InboxActionOperatorError && error.unavailable;
+        // A superseded (unavailable) action must stay terminal; otherwise retry stays possible.
+        claimed.status = claimed.unavailable ? 'failed' : 'pending';
         if (!claimed.visibleError) console.error(`[InboxActionRegistry] ${claimed.kind} handler failed`, error);
-        write(claimed);
+        settle(claimedJson, claimed);
         return { ok: false, status: 'failed' };
       }
     },

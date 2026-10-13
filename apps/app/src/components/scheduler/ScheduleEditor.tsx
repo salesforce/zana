@@ -75,6 +75,7 @@ export function ScheduleEditor({
     task?.planSource ?? seededTask?.planSource ?? 'infer'
   );
   const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsError, setTeamsError] = useState(false);
   const seedCron = task?.schedule.cron ?? seededTask?.schedule.cron;
   const [cadenceMode, setCadenceMode] = useState<'interval' | 'cron'>(
     seedCron ? 'cron' : 'interval'
@@ -130,9 +131,9 @@ export function ScheduleEditor({
   React.useEffect(() => {
     let active = true;
     void product.teams.list().then((nextTeams) => {
-      if (active) setTeams(nextTeams);
+      if (active) { setTeams(nextTeams); setTeamsError(false); }
     }).catch(() => {
-      if (active) setTeams([]);
+      if (active) { setTeams([]); setTeamsError(true); }
     });
     return () => { active = false; };
   }, []);
@@ -340,6 +341,11 @@ export function ScheduleEditor({
             options={teams.map((team) => ({ value: team.id, label: team.name }))}
           />
           <p className="modal-hint">Runs this schedule as a durable squad job.</p>
+          {teamsError ? (
+            <p className="modal-error" role="alert">Could not load squads. Close and reopen this form to retry.</p>
+          ) : teams.length === 0 ? (
+            <p className="modal-hint">No squads available. Create one in Squads first.</p>
+          ) : null}
         </div>
       ) : null}
       {runAs === 'team' ? (

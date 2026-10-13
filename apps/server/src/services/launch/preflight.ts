@@ -226,7 +226,12 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
     slotRoutes: input.slotRoutes?.map(({ observedAt: _observedAt, ...slot }) => ({ ...slot, capabilities: slot.capabilities?.slice().sort(), modalities: slot.modalities?.slice().sort() }))
       .sort((a, b) => a.slotId.localeCompare(b.slotId))
   };
-  const availabilityUnknown = [...failedSources].filter((source): source is 'skills' | 'mcpServers' => source === 'skills' || source === 'mcpServers');
+  // A failed read only matters when a requirement depends on that source (its
+  // check stayed UNKNOWN). Unrelated or model/provider failures never mask real
+  // admission errors as an availability problem.
+  const availabilityUnknown = ([['skills', 'SKILL_AVAILABLE'], ['mcpServers', 'MCP_AVAILABLE']] as const)
+    .filter(([source, code]) => failedSources.has(source) && checks.some((check) => check.code === code && check.required && check.status === 'UNKNOWN'))
+    .map(([source]) => source);
   return {
     version: 1, ready, digest: launchDigest({ version: 1, identity, estimate, checks }), estimate, checks,
     ...(availabilityUnknown.length ? { availabilityUnknown: { failedSources: availabilityUnknown } } : {})

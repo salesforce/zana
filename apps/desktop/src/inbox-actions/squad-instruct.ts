@@ -1,4 +1,4 @@
-import { relative, sep } from 'node:path';
+import { isAbsolute, relative, sep } from 'node:path';
 
 export interface RetainedSquadWorktree {
   path: string;
@@ -18,12 +18,13 @@ export function isTerminalSquadExecution(state: string): boolean {
 /** Terminal inbox actions are capabilities for one immutable terminal generation. */
 export function isCurrentRetainedSquadWorktreeAction(
   action: RetainedSquadWorktreeAction,
-  record: { id: string; state: string; stateVersion: number; squadWorktree?: RetainedSquadWorktree; dismissedAt?: number }
+  record: { id: string; state: string; stateVersion: number; squadWorktree?: RetainedSquadWorktree; squadWorktreeDisposition?: 'left'; dismissedAt?: number }
 ): boolean {
   return record.id === action.executionId
     && record.stateVersion === action.stateVersion
     && record.dismissedAt === undefined
     && record.squadWorktree !== undefined
+    && record.squadWorktreeDisposition === undefined
     && isTerminalSquadExecution(record.state);
 }
 
@@ -33,6 +34,7 @@ export async function currentRetainedSquadWorktreeAction<T extends {
   state: string;
   stateVersion: number;
   squadWorktree?: RetainedSquadWorktree;
+  squadWorktreeDisposition?: 'left';
   dismissedAt?: number;
 }>(action: RetainedSquadWorktreeAction, get: () => Promise<T | undefined>): Promise<T> {
   const record = await get();
@@ -45,7 +47,7 @@ export async function currentRetainedSquadWorktreeAction<T extends {
 export function isWithinRetainedSquadWorktreeBase(path: string, projectRoot: string): boolean {
   const worktreeBase = `${projectRoot}${sep}.worktrees`;
   const fromBase = relative(worktreeBase, path);
-  return fromBase !== '' && !fromBase.startsWith(`..${sep}`) && fromBase !== '..';
+  return fromBase !== '' && !fromBase.startsWith(`..${sep}`) && fromBase !== '..' && !isAbsolute(fromBase);
 }
 
 export function squadFollowUpPrompt(input: {

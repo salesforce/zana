@@ -11,8 +11,9 @@ export class PlanCorrectionLaunchBinding {
   async bindExecution(launchRequestId: string, executionId: string, correction: PlanCorrectionService): Promise<boolean> {
     const reason = this.reasons.get(launchRequestId);
     if (reason === undefined) return false;
-    this.reasons.delete(launchRequestId);
+    // Keep the reason until the durable record exists, so a failed begin can be retried.
     await correction.begin(executionId, reason, false);
+    this.reasons.delete(launchRequestId);
     return true;
   }
 

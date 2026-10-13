@@ -64,6 +64,8 @@ describe('retained squad instruct host action', () => {
       mkdirSync(worktree, { recursive: true });
       expect(isWithinRetainedSquadWorktreeBase(realpathSync(worktree), realpathSync(root))).toBe(true);
       expect(isWithinRetainedSquadWorktreeBase(realpathSync(root), realpathSync(root))).toBe(false);
+      expect(isWithinRetainedSquadWorktreeBase(join(root, '.worktrees'), root)).toBe(false);
+      expect(isWithinRetainedSquadWorktreeBase(join(root, 'elsewhere'), root)).toBe(false);
       expect(isTerminalSquadExecution('COMPLETED')).toBe(true);
       expect(isTerminalSquadExecution('FAILED')).toBe(true);
       expect(isTerminalSquadExecution('STOPPED')).toBe(true);
@@ -81,6 +83,10 @@ describe('retained squad instruct host action', () => {
     expect(isCurrentRetainedSquadWorktreeAction(action, { ...terminal, state: 'RUNNING', stateVersion: 5 })).toBe(false);
     expect(isCurrentRetainedSquadWorktreeAction(action, { ...terminal, stateVersion: 5 })).toBe(false);
     expect(isCurrentRetainedSquadWorktreeAction(action, { ...terminal, dismissedAt: 1 })).toBe(false);
+    // Leave disposition makes stale Delete/Force-delete capabilities unusable.
+    expect(isCurrentRetainedSquadWorktreeAction(action, { ...terminal, squadWorktreeDisposition: 'left' })).toBe(false);
+    expect(isCurrentRetainedSquadWorktreeAction(action, { ...terminal, squadWorktree: undefined })).toBe(false);
+    expect(isCurrentRetainedSquadWorktreeAction({ ...action, executionId: 'other' }, terminal)).toBe(false);
   });
 
   it('rejects a delete or spawn action when resume wins between async checks', async () => {
@@ -131,10 +137,12 @@ describe('retained squad instruct host action', () => {
   it('persists follow-up ownership and restores it under lifecycle lock before recovery', () => {
     expect(host).toContain('followUpExecutionId,');
     expect(host).toContain('}, record.id);');
-    expect(readFileSync(new URL('../ipc/terminals.ts', import.meta.url), 'utf8')
-      .match(/capability\.followUpExecutionId/g)).toHaveLength(4);
+    const restoreLaunch = readFileSync(new URL('../terminal-restore-launch.ts', import.meta.url), 'utf8');
+    expect(restoreLaunch.match(/followUpExecutionId: capability\.followUpExecutionId/g)).toHaveLength(2);
+    expect(restoreLaunch.match(/retainWorktree: Boolean\(capability\.followUpExecutionId\)/g)).toHaveLength(2);
     const terminals = readFileSync(new URL('../ipc/terminals.ts', import.meta.url), 'utf8');
-    expect(terminals.match(/retainWorktree: Boolean\(capability\.followUpExecutionId\)/g)).toHaveLength(2);
+    expect(terminals).toContain('restoreCapabilityLaunch(');
+    expect(terminals).toContain('reconnectCapabilityLaunch(');
     expect(host).toContain('await withSquadWorktreeLifecycleLock(capability.followUpExecutionId');
     expect(host.indexOf('await restoreSurvivingSquadWorktreeFollowUpClaims();')).toBeLessThan(
       host.indexOf('await squadExecutionService.restoreDeadlines();')

@@ -701,6 +701,18 @@ function SquadWorkers({
   );
 }
 
+async function runWorktreeAction(execution: ExecutionBoardProjection, action: 'leave' | 'delete'): Promise<void> {
+  try {
+    const result = await window.cc.executionBoard.worktreeAction(
+      execution.projectId, execution.executionId, execution.stateVersion!, action
+    );
+    if (!result.ok) useUi.getState().pushToast(`Squad worktree action failed: ${result.message ?? result.code}`, 'error');
+  } catch (err) {
+    console.error(`[AgentBoard] ${execution.executionId} worktree ${action} failed`, err);
+    useUi.getState().pushToast(`Squad worktree action failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+  }
+}
+
 interface AgentBoardLanesProps {
   cards: FleetItem[];
   /** Which session or thread id is the active tab (highlighted). */
@@ -1366,19 +1378,13 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
             <button onClick={async () => {
               const { execution } = executionMenu;
               setExecutionMenu(null);
-              const result = await window.cc.executionBoard.worktreeAction(
-                execution.projectId, execution.executionId, execution.stateVersion!, 'leave'
-              );
-              if (!result.ok) useUi.getState().pushToast(`Squad worktree action failed: ${result.message ?? result.code}`, 'error');
+              await runWorktreeAction(execution, 'leave');
             }}>Leave worktree</button>
             <button className="tab-context-danger" onClick={async () => {
               const { execution } = executionMenu;
               if (!window.confirm(`Delete retained worktree?\n\n${execution.retainedWorktree!.path}\n\nThis cannot be undone.`)) return;
               setExecutionMenu(null);
-              const result = await window.cc.executionBoard.worktreeAction(
-                execution.projectId, execution.executionId, execution.stateVersion!, 'delete'
-              );
-              if (!result.ok) useUi.getState().pushToast(`Squad worktree action failed: ${result.message ?? result.code}`, 'error');
+              await runWorktreeAction(execution, 'delete');
             }}>Delete worktree</button>
           </>}
           {!['COMPLETED', 'FAILED', 'STOPPED'].includes(executionMenu.execution.state) && (

@@ -22,6 +22,7 @@ import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
+import { launchScopedProvider } from './harness/launch-provider.js';
 import { probeAgentLiveness as probeAgentLivenessImpl } from './harness/agent-liveness.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from './harness-auth.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from './harness/target-resolution.js';
@@ -1029,7 +1030,10 @@ export class PtyManager extends EventEmitter {
       harnessRouting,
       extraArgs: preCleanedExtra
     });
-    const modelTarget = resolveModelTarget(provider, {
+    // Model levels map through the live inventory main's preflight recorded for
+    // THIS launch's cwd (launch-scoped view), never through shared provider state
+    // another project's concurrent launch may have changed.
+    const modelTarget = resolveModelTarget(launchScopedProvider(provider, opts.cwd), {
       config: opts.config,
       persona: spawnPersona,
       projectSettings: opts.projectSettings,
@@ -2328,7 +2332,7 @@ export class PtyManager extends EventEmitter {
             opts.harnessRouting
           ) ?? opts.harnessRouting
         : opts.harnessRouting;
-    const remoteMetadataProvider = remoteProvider;
+    const remoteMetadataProvider = launchScopedProvider(remoteProvider, opts.cwd);
     const remoteExtra = cleanExtraArgs(opts.extraArgs);
     const remoteModelTarget = resolveModelTarget(remoteMetadataProvider, {
       config: opts.config,

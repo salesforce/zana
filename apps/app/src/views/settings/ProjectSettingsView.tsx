@@ -339,6 +339,8 @@ export function ProjectWorktreeSettings({
   const pushToast = useUi((s) => s.pushToast);
   const [value, setValue] = useState<boolean | undefined>(undefined);
   const [gitRepo, setGitRepo] = useState<boolean | null>(() => project.remote || project.quickAgent ? false : null);
+  const [probeError, setProbeError] = useState(false);
+  const [probeAttempt, setProbeAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -350,19 +352,13 @@ export function ProjectWorktreeSettings({
     currentProjectId.current = project.id;
     setLoaded(false);
     setError(null);
+    setProbeError(false);
     if (project.remote || project.quickAgent) {
       setGitRepo(false);
       setLoaded(true);
       return () => { cancelled = true; };
     }
     setGitRepo(null);
-    product.git.isRepo(project.path)
-      .then((isRepo) => {
-        if (!cancelled) setGitRepo(isRepo);
-      })
-      .catch(() => {
-        if (!cancelled) setGitRepo(false);
-      });
     product.projectSettings.get(project.id)
       .then((settings) => {
         if (!cancelled) {
@@ -378,6 +374,23 @@ export function ProjectWorktreeSettings({
       });
     return () => { cancelled = true; };
   }, [project.id]);
+
+  // The Git probe is separate so a transient IPC failure shows a retryable
+  // probe-error state instead of being misreported as "not a Git project".
+  useEffect(() => {
+    if (project.remote || project.quickAgent) return;
+    let cancelled = false;
+    setGitRepo(null);
+    setProbeError(false);
+    product.git.isRepo(project.path)
+      .then((isRepo) => {
+        if (!cancelled) setGitRepo(isRepo);
+      })
+      .catch(() => {
+        if (!cancelled) setProbeError(true);
+      });
+    return () => { cancelled = true; };
+  }, [project.id, project.path, project.remote, project.quickAgent, probeAttempt]);
 
   useEffect(() => product.projectSettings.onChanged((projectId) => {
     if (gitRepo !== true) return;
@@ -422,7 +435,18 @@ export function ProjectWorktreeSettings({
       title="Git worktrees"
       help="Choose whether new agents for this project use separate branches and checkouts. This project setting overrides the global Agents default."
     >
-      {gitRepo === false ? (
+      {probeError ? (
+        <>
+          <ProjectWorktreeIsolationField
+            value={value}
+            disabled
+            unavailableLabel="Git status could not be checked"
+            onChange={() => {}}
+          />
+          <p className="modal-error" role="alert">Could not check whether this project is a Git repository.</p>
+          <button type="button" className="settings-btn" onClick={() => setProbeAttempt((n) => n + 1)}>Retry</button>
+        </>
+      ) : gitRepo === false ? (
         <>
           <ProjectWorktreeIsolationField
             value={value}

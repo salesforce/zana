@@ -5,6 +5,7 @@ import { executionEvidenceFor, executionTargetFor } from '@zana-ai/zcc-host-daem
 import type { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import type { ExecutionConsentScope, createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { LaunchProvider } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
+import { recordLiveModelTargets, withLiveModelTargets } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
 import { providerFor, registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { harnessEnabledFromProbe } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import {
@@ -57,42 +58,26 @@ export async function preflightTerminalExecution(
   }
 ): Promise<ExecutionPreflightDecision> {
   const effectiveProfile = input.persona?.baseProfile ?? input.profile;
-  const provider = deps.provider ?? providerFor(effectiveProfile);
-  const adapterId = harnessFamilyOf(effectiveProfile) || provider.adapter.descriptor.id;
+  const sharedProvider = deps.provider ?? providerFor(effectiveProfile);
+  const adapterId = harnessFamilyOf(effectiveProfile) || sharedProvider.adapter.descriptor.id;
+  // Providers are process-wide singletons. A live inventory belongs to THIS
+  // launch only: it is probed at most once, resolved through a launch-scoped
+  // view, and recorded under this launch's (adapter, cwd) for its spawn — never
+  // written onto the shared provider, where an interleaved launch for another
+  // project (or one whose probe failed) would pick it up.
+  const liveModels = liveModelProbe(sharedProvider, input, deps.discovery);
+  let provider: LaunchProvider = sharedProvider;
   let resolved: ReturnType<typeof resolveExecutionState>;
   let preflight: ReturnType<typeof resolveStructuredRouting>;
   try {
-    // Discovery results are launch-scoped: never resolve a new request through a
-    // prior project's cached live inventory if its own probe is unavailable.
-    provider.clearDiscoveredModelTargets?.();
-    resolved = resolveExecutionState(provider, {
-      config: input.config,
-      persona: input.persona,
-      projectSettings: input.projectSettings,
-      perTabRouting: input.harnessRouting,
-      profile: effectiveProfile,
-      extraArgs: input.extraArgs ?? [],
-      scope: input.scope
-    });
+    resolved = resolveExecutionState(provider, executionResolutionInput(input, effectiveProfile));
     preflight = resolveStructuredRouting(provider, input);
     // A portable level must follow the currently installed gateway catalog. Probe
     // after the initial resolution tells us a level was selected, then resolve
-    // again against the provider's live overlay before authorization or spawn.
-    if (preflight.model.level && provider.discoverModelTargets && input.projectPath) {
-      const liveModels = await (deps.discovery
-        ? deps.discovery.models()
-        : provider.discoverModelTargets({ cwd: input.projectPath, config: input.config }));
-      if (liveModels) provider.applyDiscoveredModelTargets?.(liveModels);
-      else provider.clearDiscoveredModelTargets?.();
-      resolved = resolveExecutionState(provider, {
-        config: input.config,
-        persona: input.persona,
-        projectSettings: input.projectSettings,
-        perTabRouting: input.harnessRouting,
-        profile: effectiveProfile,
-        extraArgs: input.extraArgs ?? [],
-        scope: input.scope
-      });
+    // again against this launch's live view before authorization or spawn.
+    if (preflight.model.level && liveModels.available) {
+      provider = withLiveModelTargets(sharedProvider, await liveModels.read());
+      resolved = resolveExecutionState(provider, executionResolutionInput(input, effectiveProfile));
       preflight = resolveStructuredRouting(provider, input);
     }
   } catch (error) {
@@ -110,7 +95,7 @@ export async function preflightTerminalExecution(
   let installedVersion: string | undefined;
   if (preflight.requested) {
     installedVersion = await deps.installedVersion(adapterId);
-    const unavailable = await preflightStructuredRouting(provider, input, installedVersion, preflight, deps.discovery);
+    const unavailable = await preflightStructuredRouting(provider, input, installedVersion, preflight, deps.discovery, liveModels);
     if (unavailable) return { decision: 'blocked', reason: unavailable };
   }
   if (resolved.origin === 'inherited-native-default' || (resolved.origin === 'explicit-native' && !resolved.targetId)) {
@@ -160,7 +145,8 @@ async function preflightStructuredRouting(
   input: TerminalExecutionPreflightInput,
   installedVersion: string | undefined,
   resolved: ReturnType<typeof resolveStructuredRouting>,
-  discovery?: TerminalExecutionDiscovery
+  discovery: TerminalExecutionDiscovery | undefined,
+  liveModels: LiveModelProbe
 ): Promise<string | undefined> {
   if (!installedVersion) return 'selected harness is unavailable or has no verifiable version';
   const registration = registrationFor(provider.adapter.descriptor.defaultProfileId ?? input.profile);
@@ -211,13 +197,9 @@ async function preflightStructuredRouting(
     // cases, catching a drifted-away id before the spawn. Only when no probe is
     // possible (no projectPath, or the provider can't list) do we fall back to the
     // snapshot rule (evidence for a snapshot id; live-listed allowance otherwise).
-    const liveModels = provider.discoverModelTargets && input.projectPath
-      ? await (discovery ? discovery.models() : provider.discoverModelTargets({ cwd: input.projectPath, config: input.config }))
-      : undefined;
-    if (liveModels) provider.applyDiscoveredModelTargets?.(liveModels);
-    else provider.clearDiscoveredModelTargets?.();
-    if (liveModels) {
-      if (!liveModels.includes(model.targetId)) return 'model target unavailable';
+    const live = liveModels.available ? await liveModels.read() : undefined;
+    if (live) {
+      if (!live.includes(model.targetId)) return 'model target unavailable';
     } else if (snapshotTarget) {
       const evaluated = evaluateTargetEvidence(provider, snapshotTarget, input.scope, installedVersion);
       if (evaluated.classification === 'unavailable') return `model target: ${evaluated.reason}`;
@@ -229,6 +211,49 @@ async function preflightStructuredRouting(
     }
   }
   return undefined;
+}
+
+interface LiveModelProbe {
+  /** The provider can probe a live inventory for this launch's cwd. */
+  readonly available: boolean;
+  /** Call only when `available`. At most one probe per launch; the outcome is recorded for this launch's spawn. */
+  read(): Promise<readonly string[] | undefined>;
+}
+
+function liveModelProbe(
+  provider: LaunchProvider,
+  input: TerminalExecutionPreflightInput,
+  discovery: TerminalExecutionDiscovery | undefined
+): LiveModelProbe {
+  const projectPath = input.projectPath;
+  const available = !!(provider.discoverModelTargets && projectPath);
+  let pending: Promise<readonly string[] | undefined> | undefined;
+  return {
+    available,
+    read() {
+      pending ??= (discovery
+        ? discovery.models()
+        : provider.discoverModelTargets!({ cwd: projectPath!, config: input.config })
+      ).then((targets) => {
+        // An unavailable/empty probe discards this cwd's record only.
+        recordLiveModelTargets(provider.adapter.descriptor.id, projectPath!, targets);
+        return targets;
+      });
+      return pending;
+    }
+  };
+}
+
+function executionResolutionInput(input: TerminalExecutionPreflightInput, profile: LaunchProfileId) {
+  return {
+    config: input.config,
+    persona: input.persona,
+    projectSettings: input.projectSettings,
+    perTabRouting: input.harnessRouting,
+    profile,
+    extraArgs: input.extraArgs ?? [],
+    scope: input.scope
+  };
 }
 
 function resolveStructuredRouting(provider: LaunchProvider, input: TerminalExecutionPreflightInput) {

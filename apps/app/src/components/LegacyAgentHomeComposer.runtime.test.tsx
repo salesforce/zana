@@ -32,7 +32,7 @@ const h = vi.hoisted(() => ({
   remember: vi.fn(), loadProjects: vi.fn(), worktreeIsolationDefault: false,
   projectWorktreeIsolation: undefined as boolean | undefined, projectSettingsListeners: new Set<(projectId: string) => void>(),
   projectSettingsGet: vi.fn(async () => ({ worktreeIsolation: h.projectWorktreeIsolation })),
-  environmentProps: null as null | { value: { kind: string } },
+  environmentProps: null as null | { value: { kind: string }; onChange: (next: { kind: string }) => void },
   modelProps: null as null | { onSelectedProviderChange: (id: string) => void; onReloadModels?: () => void;
     selectedProviderId: string; modelLockedLabel?: string; modelIsLoading: boolean; providerOptions: Array<{ value: string }> }
 }));
@@ -46,6 +46,7 @@ vi.mock('../store.js', () => ({
 }));
 vi.mock('../lib/product-client.js', () => ({ product: {
   harness: { descriptors: async () => h.descriptors, effectiveDefault: h.effectiveDefault },
+  projects: { ensureQuickAgent: async () => ({ ok: false as const }) },
   projectSettings: {
     get: (...args: [string]) => h.projectSettingsGet(...args),
     onChanged: (listener: (projectId: string) => void) => {
@@ -242,5 +243,67 @@ describe('CLI Agent project-owned discovery', () => {
 
     view.unmount();
     expect(h.projectSettingsListeners).toHaveLength(0);
+  });
+
+  it('keeps a user-picked workspace when project settings finish loading afterwards', async () => {
+    const settings = deferred<{ worktreeIsolation: boolean }>();
+    h.projectSettingsGet.mockImplementation(() => settings.promise);
+    render(composer(h.projects[0]));
+    await waitFor(() => expect(h.environmentProps).not.toBeNull());
+    expect(screen.getByTestId('workspace-kind').textContent).toBe('unmanaged');
+
+    act(() => h.environmentProps!.onChange({ kind: 'branch' }));
+    expect(screen.getByTestId('workspace-kind').textContent).toBe('branch');
+    await act(async () => { settings.resolve({ worktreeIsolation: true }); });
+    expect(screen.getByTestId('workspace-kind').textContent).toBe('branch');
+  });
+
+  it('resets to the default workspace when switching to a project the user has not picked for', async () => {
+    const second = { id: 'second', name: 'Second', path: '/tmp/second' } as Project;
+    const view = render(composer(h.projects[0]));
+    await waitFor(() => expect(h.environmentProps).not.toBeNull());
+    act(() => h.environmentProps!.onChange({ kind: 'branch' }));
+    expect(screen.getByTestId('workspace-kind').textContent).toBe('branch');
+    view.rerender(composer(second));
+    await waitFor(() => expect(screen.getByTestId('workspace-kind').textContent).toBe('unmanaged'));
+  });
+
+  it('forces the personal workspace for remote projects regardless of an earlier pick', async () => {
+    const view = render(composer(h.projects[0]));
+    await waitFor(() => expect(h.environmentProps).not.toBeNull());
+    act(() => h.environmentProps!.onChange({ kind: 'branch' }));
+    view.rerender(composer(h.projects[1]));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch agent' }).hasAttribute('disabled')).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Launch agent' }));
+    await waitFor(() => expect(h.createTerminal).toHaveBeenCalledWith('remote', 'codex', 80, 24,
+      expect.objectContaining({ workspace: { kind: 'personal' } })));
+  });
+
+  it('clears the project worktree override and hides the workspace picker when no project resolves', async () => {
+    h.projects = [];
+    render(<MemoryRouter><LegacyAgentHomeComposer onLaunched={() => undefined} /></MemoryRouter>);
+    await waitFor(() => expect(h.descriptors.length).toBeGreaterThan(0));
+    expect(screen.queryByTestId('workspace-kind')).toBeNull();
+    expect(h.projectSettingsGet).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the global default when the project settings read fails and ignores other-project changes', async () => {
+    h.worktreeIsolationDefault = true;
+    h.projectSettingsGet.mockRejectedValue(new Error('read failed'));
+    render(composer(h.projects[0]));
+    await waitFor(() => expect(h.projectSettingsGet).toHaveBeenCalledWith('local'));
+    await waitFor(() => expect(screen.getByTestId('workspace-kind').textContent).toBe('worktree'));
+    const calls = h.projectSettingsGet.mock.calls.length;
+    act(() => { for (const listener of h.projectSettingsListeners) listener('someone-else'); });
+    expect(h.projectSettingsGet.mock.calls.length).toBe(calls);
+  });
+
+  it('ignores a rejected settings read that settles after unmount', async () => {
+    let reject!: (e: Error) => void;
+    h.projectSettingsGet.mockImplementation(() => new Promise((_res, rej) => { reject = rej; }));
+    const view = render(composer(h.projects[0]));
+    await waitFor(() => expect(h.projectSettingsGet).toHaveBeenCalled());
+    view.unmount();
+    await act(async () => { reject(new Error('late')); });
   });
 });

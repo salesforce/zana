@@ -8,6 +8,8 @@ import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/sto
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
 import { onOrchestratorIdle, type OrchestratorIdleSession } from '../coordinator-idle.js';
 import { PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction } from '../plan-correction/service.js';
+import { INFERRED_PLAN_NUDGE_BUDGET, createInferredPlanCorrection } from '../inferred-plan-correction.js';
+import { resolveSquadPlan } from '../team-trigger-semantics.js';
 import { PlanCorrectionLaunchBinding } from '../plan-correction/launch-binding.js';
 import type { PlanCorrectionRecord } from '../plan-correction/store.js';
 import {
@@ -50,6 +52,7 @@ const VALID_PLAN = [
 type Script = 'valid' | 'nothing' | 'invalid';
 
 function setup(script: Script) {
+  // Infer mode: coordinator-authored plan, no provided plan, so no launch binding.
   const root = mkdtempSync(join(tmpdir(), 'zcc-plan-correction-flow-'));
   const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plan-correction-flow-data-'));
   const inbox: InboxEntry[] = [];
@@ -139,11 +142,16 @@ function setup(script: Script) {
     stopExecution: async (executionId) => { await squad.stopForPlanCorrection(executionId); }
   });
 
+  const inferred = createInferredPlanCorrection({
+    reviewInvalid: (ctx, reason) => correction.reviewInvalid(ctx, reason),
+    begin: (executionId, reason, unattended) => correction.begin(executionId, reason, unattended)
+  });
   const handoff: TeamPlanHandoff = new TeamPlanHandoff({
     isPlanless: async (projectId, executionId) => ((await store.getInProject(projectId, executionId))?.workUnits?.length ?? 0) === 0,
     readAuthoredPlan: async (projectRoot, executionId) => await correction.approvedPlan(executionId) ?? readAuthoredPlan(projectRoot, executionId),
     review: (ctx, read) => correction.review(ctx, read),
-    reviewInvalid: (ctx, reason) => correction.reviewInvalid(ctx, reason),
+    reviewInvalid: (ctx, reason) => inferred.reviewInvalid(ctx, reason),
+    maxNudges: INFERRED_PLAN_NUDGE_BUDGET,
     register: async (ctx, units) => {
       const result = await squad.registerPlan(
         { role: 'orchestrator', slotId: ctx.slotId, executionId: ctx.executionId, projectId: ctx.projectId, principalId: ctx.sessionId },
@@ -172,11 +180,21 @@ function setup(script: Script) {
   };
 
   /** Launch a structured Squad whose supplied plan is defective (host: beginLaunch then start). */
-  const launchParked = async () => {
-    launchBinding.beginLaunch('launch-request-1', 'mutating work unit requires file scope');
+  const launchParked = async (reason = 'mutating work unit requires file scope', objective = DEFECTIVE_PLAN) => {
+    launchBinding.beginLaunch('launch-request-1', reason);
     const started = await squad.start('owner', PROJECT_ID, {
-      version: 1, teamId: 'team-1', launchRequestId: 'launch-request-1', summary: 'MT-6', objective: DEFECTIVE_PLAN,
+      version: 1, teamId: 'team-1', launchRequestId: 'launch-request-1', summary: 'MT-6', objective,
       coordinationMode: 'structured', slots: [{ initialTask: 'hold' }]
+    } as never);
+    if (!started.ok) throw new Error(started.message);
+    writeArtifact(authoredPlanRelPath(EXECUTION_ID), objective);
+    return started.value;
+  };
+  /** Launch a freeform (infer) Squad whose coordinator then authors an invalid plan. */
+  const launchInferred = async () => {
+    const started = await squad.start('owner', PROJECT_ID, {
+      version: 1, teamId: 'team-1', launchRequestId: 'launch-request-1', summary: 'infer', objective: 'Ship the fix.',
+      coordinationMode: 'freeform', slots: [{ initialTask: 'plan' }]
     } as never);
     if (!started.ok) throw new Error(started.message);
     writeArtifact(authoredPlanRelPath(EXECUTION_ID), DEFECTIVE_PLAN);
@@ -191,7 +209,7 @@ function setup(script: Script) {
 
   return {
     root, dataDir, inbox, bound, coordinatorTexts, errors, nudges, records, launches, launchTeam, replyToSession, stopForPlanCorrection,
-    updateScheduledPrompt, correction, squad, store, idleEdge, launchParked, respond, optionIds, workUnits,
+    updateScheduledPrompt, correction, squad, store, idleEdge, launchParked, launchInferred, respond, optionIds, workUnits,
     setState: (state: 'idle' | 'working') => { coordinatorState = state; }
   };
 }
@@ -288,6 +306,50 @@ describe('Squad plan-correction flow (real service, wake queue, handoff and exec
       expect(await ctx.workUnits()).toHaveLength(0);
       expect(ctx.inbox).toHaveLength(1);
       expect(ctx.coordinatorTexts).toHaveLength(0);
+      expectNoFallbackLaunch();
+    });
+  });
+
+  describe('interactive provided plan that is prose', () => {
+    beforeEach(() => { ctx = setup('valid'); });
+
+    it('resolves to a planError, parks with no work, and raises the correction card', async () => {
+      const prose = 'Please tidy up the logging module and add tests.';
+      const resolved = resolveSquadPlan('provided', [prose]);
+      expect(resolved.workUnits).toBeUndefined();
+      expect(resolved.planError).toBe('no executable steps found');
+      // Host: begin the launch binding with the resolver's error, then start the structured Squad.
+      await ctx.launchParked(resolved.planError, prose);
+      expect(await ctx.workUnits()).toHaveLength(0);
+
+      await ctx.idleEdge();
+      expect(ctx.inbox).toHaveLength(1);
+      expect(ctx.optionIds(0)).toEqual(['changes', 'cancel']);
+      expect(ctx.inbox[0]!.decisionGuidance).toMatchObject({ kind: 'plan-correction', diagnostic: 'no executable steps found' });
+      expectNoFallbackLaunch();
+    });
+  });
+
+  describe('infer: coordinator-authored plan stays invalid', () => {
+    beforeEach(() => { ctx = setup('valid'); });
+
+    it('nudges within budget, then parks into the same Inbox correction flow instead of failing', async () => {
+      await ctx.launchInferred();
+      for (let edge = 0; edge < INFERRED_PLAN_NUDGE_BUDGET; edge += 1) await ctx.idleEdge();
+      expect(ctx.inbox).toHaveLength(0);
+      expect(ctx.nudges).toHaveLength(INFERRED_PLAN_NUDGE_BUDGET);
+
+      await ctx.idleEdge();
+      expect(ctx.inbox).toHaveLength(1);
+      expect(ctx.optionIds(0)).toEqual(['changes', 'cancel']);
+      expect(await ctx.workUnits()).toHaveLength(0);
+
+      // Request changes -> coordinator writes a valid plan -> Approve registers it.
+      await ctx.respond(0, 'changes');
+      await ctx.idleEdge();
+      expect(ctx.optionIds(1)).toEqual(['approve', 'changes', 'cancel']);
+      await ctx.respond(1, 'approve');
+      expect((await ctx.workUnits()).map((unit) => unit.id)).toEqual(['write']);
       expectNoFallbackLaunch();
     });
   });

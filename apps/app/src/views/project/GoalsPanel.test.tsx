@@ -2,16 +2,17 @@
  * @vitest-environment happy-dom
  */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const create = vi.fn();
 const update = vi.fn();
 const storeGoals: unknown[] = [];
+const teamsList = vi.hoisted(() => vi.fn());
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
     goals: { create: (...args: unknown[]) => create(...args), update: (...args: unknown[]) => update(...args) },
-    teams: { list: vi.fn(async () => [{ id: 'team-1', name: 'Release squad', slots: [] }]) }
+    teams: { list: (...args: unknown[]) => teamsList(...args) }
   }
 }));
 
@@ -48,6 +49,11 @@ vi.mock('@/components/ui/PopoverPicklist', () => ({
 import { GoalsPanel } from './GoalsPanel.js';
 
 describe('GoalsPanel squad assignment', () => {
+  beforeEach(() => {
+    teamsList.mockReset();
+    teamsList.mockResolvedValue([{ id: 'team-1', name: 'Release squad', slots: [] }]);
+  });
+
   afterEach(() => {
     cleanup();
     create.mockReset();
@@ -64,6 +70,23 @@ describe('GoalsPanel squad assignment', () => {
     await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
     fireEvent.click(screen.getByLabelText('Squad'));
   };
+
+  it('shows a load-error hint when the squad list fails', async () => {
+    teamsList.mockRejectedValue(new Error('offline'));
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getAllByRole('button', { name: /New goal/ })[0]!);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not load squads'));
+  });
+
+  it('shows an empty hint when no squads exist', async () => {
+    teamsList.mockResolvedValue([]);
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getAllByRole('button', { name: /New goal/ })[0]!);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByText(/No squads available/)).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
 
   it('hides success criteria, relabels objective, shows planning chip for Squad', async () => {
     render(<GoalsPanel />);
@@ -168,5 +191,60 @@ describe('GoalsPanel squad assignment', () => {
     fireEvent.click(screen.getByLabelText('Run as'));
     await vi.waitFor(() => expect(screen.getByLabelText('Launch profile')).toBeTruthy());
     expect(screen.queryByLabelText('Squad')).toBeNull();
+  });
+
+  const iterGoal = (iterations: unknown[]) => ({
+    id: 'goal-it', projectId: 'p1', title: 'Iter', statement: 'S', successCriteria: [],
+    assignment: { kind: 'profile', profile: 'claude' },
+    status: 'active', maxIterations: 10, noProgressLimit: 2, source: 'p1', createdAt: 1, updatedAt: 1,
+    history: { retain: 20, iterations }
+  });
+
+  it('offers a report button for report-only and error+report iterations, none for bare ones', () => {
+    storeGoals.push(iterGoal([
+      { id: 'a', at: '2026-01-01T00:00:00.000Z', verdict: 'pass', report: '# Finished' },
+      { id: 'b', at: '2026-01-01T00:00:01.000Z', verdict: 'fail', error: 'boom', report: 'partial notes' },
+      { id: 'c', at: '2026-01-01T00:00:02.000Z', verdict: 'unknown' }
+    ]));
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getByLabelText('Toggle details'));
+    expect(screen.getAllByRole('button', { name: 'View iteration report' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'View iteration error details' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'View iteration report' }));
+    expect(within(screen.getByRole('dialog')).getByText('Finished')).toBeTruthy();
+  });
+
+  it('shows both the error and the report body when an iteration has both', () => {
+    storeGoals.push(iterGoal([{ id: 'b', at: '2026-01-01T00:00:01.000Z', verdict: 'fail', error: 'boom', report: 'partial notes' }]));
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getByLabelText('Toggle details'));
+    fireEvent.click(screen.getByRole('button', { name: 'View iteration error details' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('boom')).toBeTruthy();
+    expect(dialog.getByText('partial notes')).toBeTruthy();
+  });
+
+  it('error-only iteration hides the placeholder report body', () => {
+    storeGoals.push(iterGoal([{ id: 'b', at: '2026-01-01T00:00:01.000Z', verdict: 'fail', error: 'boom' }]));
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getByLabelText('Toggle details'));
+    fireEvent.click(screen.getByRole('button', { name: 'View iteration error details' }));
+    expect(within(screen.getByRole('dialog')).queryByText(/No report filed/)).toBeNull();
+  });
+
+  it('updates an Agent goal with a profile assignment, criteria and no planSource', async () => {
+    update.mockResolvedValue({ ok: true, value: { id: 'goal-it' } });
+    storeGoals.push(iterGoal([]));
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getByLabelText('Toggle details'));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[0]!);
+    fireEvent.click(screen.getByLabelText('Launch profile'));
+    fireEvent.change(document.querySelector('#goal-criteria') as HTMLTextAreaElement, { target: { value: 'x\ny' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await vi.waitFor(() => expect(update).toHaveBeenCalled());
+    const input = update.mock.calls[0]![1] as Record<string, unknown>;
+    expect(input.successCriteria).toEqual(['x', 'y']);
+    expect(input.assignment).toMatchObject({ kind: 'profile' });
+    expect('planSource' in input).toBe(false);
   });
 });

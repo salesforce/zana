@@ -70,7 +70,7 @@ describe('Retry Squad run eligibility', () => {
   ])('is hidden for %s', async (_name, mutate) => {
     load(mutate);
     await waitFor(() => expect(window.cc.executionBoard.snapshot).toHaveBeenCalled());
-    await screen.findByText(/Squad run|Status/i, undefined, { timeout: 2000 }).catch(() => undefined);
+    await screen.findByRole('button', { name: 'Close details' });
     expect(screen.queryByRole('button', { name: 'Retry Squad run' })).toBeNull();
   });
 });

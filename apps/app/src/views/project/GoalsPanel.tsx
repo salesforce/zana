@@ -539,6 +539,7 @@ function GoalModal({
   const [runAs, setRunAs] = useState<'agent' | 'team'>(goal?.assignment.kind === 'team' ? 'team' : 'agent');
   const [teamId, setTeamId] = useState(goal?.assignment.kind === 'team' ? goal.assignment.teamId ?? '' : '');
   const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsError, setTeamsError] = useState(false);
   const [planSource, setPlanSource] = useState<'provided' | 'infer'>(goal?.planSource ?? 'infer');
   const [maxIterations, setMaxIterations] = useState<number>(goal?.maxIterations ?? 10);
   const [noProgressLimit, setNoProgressLimit] = useState<number>(goal?.noProgressLimit ?? 2);
@@ -563,9 +564,9 @@ function GoalModal({
   useEffect(() => {
     let active = true;
     void product.teams.list().then((nextTeams) => {
-      if (active) setTeams(nextTeams);
+      if (active) { setTeams(nextTeams); setTeamsError(false); }
     }).catch(() => {
-      if (active) setTeams([]);
+      if (active) { setTeams([]); setTeamsError(true); }
     });
     return () => { active = false; };
   }, []);
@@ -747,6 +748,11 @@ function GoalModal({
                 options={teams.map((team) => ({ value: team.id, label: team.name }))}
               />
               <p className="modal-hint">Each iteration runs as a durable squad job.</p>
+              {teamsError ? (
+                <p className="modal-error" role="alert">Could not load squads. Close and reopen this form to retry.</p>
+              ) : teams.length === 0 ? (
+                <p className="modal-hint">No squads available. Create one in Squads first.</p>
+              ) : null}
             </div>
           ) : null}
           {isSquad ? (

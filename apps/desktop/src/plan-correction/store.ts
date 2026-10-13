@@ -52,7 +52,20 @@ function validRecord(value: unknown): value is PlanCorrectionRecord {
 }
 
 /** Durable, execution-keyed consent ledger. Unknown/corrupt state is never treated as approval. */
-export function createPlanCorrectionStore(options: { filePath: string; database?: ExecutionDatabase; maxRecords?: number }) {
+export interface PlanCorrectionStoreOptions {
+  filePath: string;
+  database?: ExecutionDatabase;
+  maxRecords?: number;
+  /**
+   * True only when the execution is terminal, not resumable, and so can never
+   * consult its correction record again. Consulted only at capacity. Without it
+   * (or when it throws or returns false) a record is retained: a missing record
+   * authorizes registration, so only provably retired records may be pruned.
+   */
+  isExecutionRetired?(executionId: string): Promise<boolean>;
+}
+
+export function createPlanCorrectionStore(options: PlanCorrectionStoreOptions) {
   const maxRecords = options.maxRecords ?? MAX_RECORDS;
   function read(): { state: StateFile; hash: string | null } {
     const sqlite = readExecutionSqliteState<StateFile>(options.database, 'plan-correction-store');
@@ -66,6 +79,18 @@ export function createPlanCorrectionStore(options: { filePath: string; database?
     } catch (error) {
       throw new Error(`corrupt plan correction store: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+  /** Drop records whose execution can never resume; keep everything else. */
+  async function pruneRetired(state: StateFile): Promise<void> {
+    const isRetired = options.isExecutionRetired;
+    if (!isRetired) return;
+    const kept: PlanCorrectionRecord[] = [];
+    for (const candidate of state.records) {
+      let retired = false;
+      try { retired = await isRetired(candidate.executionId); } catch { retired = false; }
+      if (!retired) kept.push(candidate);
+    }
+    state.records = kept;
   }
   async function persist(state: StateFile, expectedHash: string | null): Promise<void> {
     state.revision += 1;
@@ -99,6 +124,7 @@ export function createPlanCorrectionStore(options: { filePath: string; database?
         else {
           // All correction records gate execution authorization. Eviction would
           // turn a missing record into an authorization bypass, so reject safely.
+          if (snapshot.state.records.length >= maxRecords) await pruneRetired(snapshot.state);
           if (snapshot.state.records.length >= maxRecords) throw new Error('plan correction store is at capacity');
           snapshot.state.records.push(clone(record));
         }

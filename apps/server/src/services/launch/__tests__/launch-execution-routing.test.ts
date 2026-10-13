@@ -4,6 +4,7 @@ import { preflightTerminalExecution } from '../execution-routing.js';
 import { CursorProvider } from '@zana-ai/zcc-host-daemon/harness/cursor/provider';
 import { CodexProvider } from '@zana-ai/zcc-host-daemon/harness/codex/provider';
 import { OpenCodeProvider } from '@zana-ai/zcc-host-daemon/harness/opencode/provider';
+import { launchScopedProvider } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
 
 const config = (executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous'): AppConfig => ({
   version: 1,
@@ -42,7 +43,10 @@ describe('production execution routing preflight', () => {
       mode: 'interactive', idempotencyKey: 'live-level', persona: { id: 'p', name: 'P', modelLevel: 'low' }
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
     expect(discovery.models).toHaveBeenCalled();
-    expect(provider.adapter.descriptor.targets?.modelLevelMapping?.low).toBe('llmgw/gpt-7-luna');
+    // The shared provider keeps its snapshot; the live mapping is launch-scoped
+    // and recorded for this launch's cwd so its spawn maps the same way.
+    expect(provider.adapter.descriptor.targets?.modelLevelMapping?.low).toBe('llmgw/gpt-6-luna');
+    expect(launchScopedProvider(provider, '/selected/source').adapter.descriptor.targets?.modelLevelMapping?.low).toBe('llmgw/gpt-7-luna');
   });
   const deps = () => ({
     consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },

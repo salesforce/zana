@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue, hashBytes, readRawFile } from '../harness-routing/storage.js';
 import type { ExecutionDatabase } from '@zana-ai/zcc-db';
 import { readExecutionSqliteState, writeExecutionSqliteState } from './storage/sqlite-state.js';
-import { executionStorageBackendForId, type ExecutionStorageBackend } from './storage/backend-policy.js';
+import { assertSideStoreStorage, executionStorageBackendForId, type ExecutionSideStoreStorage, type ExecutionStorageBackend } from './storage/backend-policy.js';
 
 export const EXECUTION_HANDOFF_OPERATION = 'execution.control' as const;
 export const EXECUTION_RESUME_MONITOR_OPERATION = 'execution.resume-monitor' as const;
@@ -50,12 +50,13 @@ function validGrant(value: unknown): value is ExecutionHandoffGrant {
     && (grant.usedAt === undefined || typeof grant.usedAt === 'number');
 }
 
-export function createExecutionHandoffStore(options: { filePath: string; executionFilePath?: string; database?: ExecutionDatabase; now?: () => number; id?: () => string; token?: () => string }) {
+export function createExecutionHandoffStore(options: ExecutionSideStoreStorage & { filePath: string; now?: () => number; id?: () => string; token?: () => string }) {
+  assertSideStoreStorage(options, 'execution handoff store');
   const now = options.now ?? Date.now;
   const id = options.id ?? randomUUID;
   const token = options.token ?? randomUUID;
   function owner(executionId: string): ExecutionStorageBackend {
-    return executionStorageBackendForId({ filePath: options.executionFilePath ?? options.filePath.replace(/(?:\.handoffs|-handoffs)(\.json)?$/, '$1'), database: options.database, executionId });
+    return executionStorageBackendForId({ filePath: options.executionFilePath ?? options.filePath, database: options.database, executionId });
   }
   function read(backend: ExecutionStorageBackend): { state: StateFile; hash: string | null } {
     const sqlite = backend === 'sqlite' ? readExecutionSqliteState<StateFile>(options.database, 'execution-handoff-store') : null;

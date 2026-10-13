@@ -105,19 +105,35 @@ describe('squad worktree lifecycle', () => {
 
   it.each(['teardown guard disable', 'delete removal', 'instruct spawn'] as const)(
     'rejects stale %s after resume advances ownership before locked side effect',
-    async (_sideEffect) => {
+    async (sideEffect) => {
+      const ran: string[] = [];
       let stateVersion = 4;
       let release!: () => void;
       const resume = withSquadWorktreeLifecycleLock('execution-1', async () => {
         await new Promise<void>((resolve) => { release = resolve; });
         stateVersion = 5;
       });
-      const stale = withSquadWorktreeLifecycleLock('execution-1', async () => stateVersion === 4);
+      // Each queued side effect captured version 4 and must re-check it under the lock.
+      const stale = withSquadWorktreeLifecycleLock('execution-1', async () => {
+        if (stateVersion !== 4) return false;
+        ran.push(sideEffect);
+        return true;
+      });
 
       await Promise.resolve();
+      expect(ran).toEqual([]);
       release();
       await resume;
       await expect(stale).resolves.toBe(false);
+      expect(ran).toEqual([]);
+
+      // Once ownership is stable, the same side effect runs under its own label.
+      stateVersion = 4;
+      await expect(withSquadWorktreeLifecycleLock('execution-1', async () => {
+        ran.push(sideEffect);
+        return true;
+      })).resolves.toBe(true);
+      expect(ran).toEqual([sideEffect]);
     }
   );
 

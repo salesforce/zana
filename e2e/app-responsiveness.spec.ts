@@ -21,7 +21,13 @@ test('search edits do not execute a regex against retained renderer previews', a
   await expect(page.getByText('regex-highlight-audit', { exact: true }).first()).toBeVisible();
   // Enter through the project control so keyboard actions have selected scope;
   // a URL change alone can render the project before selection is established.
-  await page.getByRole('button', { name: 'Open regex-highlight-audit', exact: true }).click();
+  // Once the popstate route lands, the sidebar switches to project focus and the
+  // 'Open <project>' rail button is gone; only click it while still on the project list.
+  const projectNav = page.getByRole('navigation', { name: 'regex-highlight-audit navigation' });
+  const openProject = page.getByRole('button', { name: 'Open regex-highlight-audit', exact: true });
+  await expect(openProject.or(projectNav).first()).toBeVisible();
+  if (await openProject.isVisible()) await openProject.click();
+  await expect(projectNav).toBeVisible();
   const modifier = await page.evaluate(() => navigator.platform.toUpperCase().includes('MAC') ? 'Meta' : 'Control');
   await page.keyboard.press(`${modifier}+Shift+f`);
   const input = page.locator('.search-panel input');
@@ -61,7 +67,7 @@ test('search edits do not execute a regex against retained renderer previews', a
 
 test('large documents stay bounded and recursive deletion yields at the Electron boundary', async ({ home }) => {
   test.setTimeout(120_000);
-  const { closeApp, launchApp } = await import('./fixtures/app.js');
+  const { launchApp } = await import('./fixtures/app.js');
   const { writeFile } = await import('node:fs/promises');
   const root = join(home, 'large-preview-project'); mkdirSync(join(root, 'delete-me'), { recursive: true });
   const large = '# Large document\n```javascript\n' + 'const value = 1;\n'.repeat(60_000) + '```';
@@ -89,7 +95,7 @@ test('large documents stay bounded and recursive deletion yields at the Electron
 
 test('plugin service returns survive worker transport and a blocking callback cannot freeze product requests', async ({ home }) => {
   test.setTimeout(90_000);
-  const { closeApp, launchApp } = await import('./fixtures/app.js');
+  const { launchApp } = await import('./fixtures/app.js');
   const root = join(home, 'plugin-worker-regression'); mkdirSync(root, { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'plugin-worker-regression', version: '1.0.0', engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' }, zcc: { name: 'Busy worker regression', description: 'Isolated fixture', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
   writeFileSync(join(root, 'server.mjs'), `export default async api => {
@@ -116,7 +122,8 @@ test('plugin service returns survive worker transport and a blocking callback ca
   const app = await launchApp(home, { e2e: true, env: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
   try {
     const page = app.window;
-    await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'plugin-worker-regression')?.statusDetail ?? 'running')).toBe('running');
+    // list() reports status 'degraded' (null detail) while the worker is still loading, so wait for a live handle on both fixtures.
+    await expect.poll(() => page.evaluate(async () => { const apps = await window.cc.pluginApps.list(); return ['plugin-worker-regression', 'plugin-service-consumer'].map(id => apps.find(p => p.id === id)?.status); }), { timeout: 30_000 }).toEqual(['running', 'running']);
     const ready = await page.evaluate(async () => { const response = await fetch('/api/v1/plugin-apps/plugin-worker-regression/rpc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'ready', args: {} }) }); return response.json(); });
     expect(ready).toEqual({ value: { row: { value: 'native worker' }, stored: true } });
     const semantics = await page.evaluate(async () => {
@@ -135,7 +142,7 @@ test('plugin service returns survive worker transport and a blocking callback ca
 
 test('history searches and marker lock retries keep product HTTP responsive in Electron', async ({ home }) => {
   test.setTimeout(120_000);
-  const { closeApp, launchApp } = await import('./fixtures/app.js');
+  const { launchApp } = await import('./fixtures/app.js');
   const { openDatabase, createSqliteDatabase, upsertHost, createEnvironment, createConversationThread, appendConversationThreadEvent } = await import('../packages/db/src/index.js');
   const root = join(home, 'history-project'); mkdirSync(root, { recursive: true }); mkdirSync(join(home, '.zcc'), { recursive: true });
   writeFileSync(join(home, '.zcc/projects.json'), JSON.stringify({ version: 1, projects: [{ id: 'history', name: 'History project', path: root, createdAt: Date.now(), lastActiveAt: Date.now() }] }));

@@ -49,6 +49,7 @@ vi.mock('@zana-ai/zcc-llm', async (importOriginal) => {
 });
 
 import { PtyManager } from '../pty.js';
+import { clearLiveModelTargets, recordLiveModelTargets } from '../harness/launch-provider.js';
 
 const CONFIG: AppConfig = {
   version: 1,
@@ -155,6 +156,27 @@ describe('structured providers final local argv', () => {
       command: 'opencode',
       args: ['--model', 'llmgw/gpt-6.1-sol']
     });
+  });
+
+  it('maps an OpenCode portable level through the inventory recorded for THIS launch cwd only', () => {
+    // OC1: preflight records each launch's live inventory per (adapter, cwd);
+    // the spawn must map from its own project's record, never another's.
+    recordLiveModelTargets('opencode', '/tmp/work-a', ['llmgw/gpt-7-luna', 'llmgw/gpt-7-sol']);
+    try {
+      const create = (cwd: string) => {
+        new PtyManager().create({
+          projectId: 'proj1', profile: 'opencode', cwd, cols: 80, rows: 24, config: CONFIG,
+          harnessRouting: routing('opencode', { modelLevel: 'low' })
+        });
+        return spawns.at(-1)!.args;
+      };
+      expect(create('/tmp/work-a')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-7-luna']));
+      // A project with no (or a failed) probe falls back to the reviewed snapshot.
+      expect(create('/tmp/work-b')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-6-luna']));
+      expect(create('/tmp/work-a')).not.toContain('llmgw/gpt-6-luna');
+    } finally {
+      clearLiveModelTargets();
+    }
   });
 
   it('emits OpenCode auto-approve only for autonomous', () => {

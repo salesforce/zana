@@ -192,3 +192,24 @@ describe('TeamComposer requirement guidance panel', () => {
     expect((await screen.findByTestId('team-command-error')).textContent).toBe('Squad launch failed: ipc down');
   });
 });
+
+describe('TeamComposer availability-unknown panel', () => {
+  beforeEach(() => { startJob.mockReset(); });
+  afterEach(() => { cleanup(); });
+
+  it('Cancel dismisses the availability-unknown panel when there is no onClose', async () => {
+    startJob.mockResolvedValueOnce({
+      ok: false,
+      code: 'CAPABILITY_AVAILABILITY_UNKNOWN',
+      message: 'unverified',
+      availabilityUnknown: { failedSources: ['skills', 'mcp'] }
+    });
+    render(<TeamComposer />);
+    launch();
+    const panel = await screen.findByRole('alert');
+    expect(panel.textContent).toContain('Project capabilities could not be verified');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(startJob).toHaveBeenCalledOnce();
+  });
+});

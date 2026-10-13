@@ -39,8 +39,11 @@ for (const {
   planningLabel,
   coordinationMode
 } of [
-  { planningLabel: 'Infer plan from goal', coordinationMode: 'freeform' },
-  { planningLabel: 'Plan provided in goal', coordinationMode: 'structured' }
+  // "Plan provided in goal" with prose and no plan steps now parks for Inbox plan
+  // correction instead of letting the coordinator derive a DAG; that case is in
+  // job-team-plan-correction.spec.ts and a valid provided plan is seeded by the
+  // dedicated test below.
+  { planningLabel: 'Infer plan from goal', coordinationMode: 'freeform' }
 ] as const) {
 test(`launching a ${coordinationMode} Team with ${profile} through the real UI completes durable work`, async ({ app }) => {
   const { window } = app;

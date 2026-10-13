@@ -2,45 +2,62 @@ import { normalizeExecutionPlan } from '@zana-ai/zcc-server/services/launch/pref
 import { hasPortablePlanStep, parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 
-function seedProvidedPlanWorkUnits(objective: string): ExecutionWorkUnitInput[] | undefined {
-  const parsed = parsePortablePlan(objective);
-  if (!parsed.ok || parsed.units.length === 0) return undefined;
-  try {
-    return normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
-  } catch {
-    return undefined;
-  }
-}
+export const NO_PLAN_STEPS_REASON = 'no portable plan steps found';
 
-function providedPlanFailure(objective: string): string | undefined {
-  if (!hasPortablePlanStep(objective)) return undefined;
-  const parsed = parsePortablePlan(objective);
-  if (!parsed.ok) return parsed.reason;
-  try {
-    normalizeExecutionPlan(parsed.units, true);
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-  return undefined;
-}
-
-/**
- * Inferred objectives start a coordinator-led freeform run. A supplied plan earns
- * structured dispatch only after host validation produces a complete durable DAG.
- */
-export function resolveTriggeredSquadPlan(planSource: 'provided' | 'infer', objective: string): {
+export interface ResolvedSquadPlan {
   coordinationMode: 'freeform' | 'structured';
   workUnits?: ExecutionWorkUnitInput[];
   planError?: string;
-} {
-  const workUnits = planSource === 'provided' ? seedProvidedPlanWorkUnits(objective) : undefined;
+}
+
+type CandidateCheck = { units: ExecutionWorkUnitInput[] } | { reason: string };
+
+function checkCandidatePlan(text: string): CandidateCheck {
+  const parsed = parsePortablePlan(text);
+  if (!parsed.ok) return { reason: parsed.reason };
+  try {
+    return { units: normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[] };
+  } catch (error) {
+    return { reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * The single plan-source resolver shared by interactive and triggered Squad launches.
+ *
+ * - `infer`: a coordinator-led freeform run; nothing is parsed here. An invalid
+ *   coordinator-authored plan is reviewed at hand-off time (see
+ *   `inferred-plan-correction.ts`).
+ * - `provided`: the first candidate text (snapshotted sources, then the inline
+ *   goal) that is a complete durable DAG seeds structured work units. When none
+ *   is, the launch carries a `planError` — unparseable, incomplete DAG, or prose
+ *   with no plan steps — which parks the Squad in the host plan-correction flow.
+ *   A provided plan never silently falls through to coordinator repair.
+ */
+export function resolveSquadPlan(
+  planSource: 'provided' | 'infer',
+  candidateTexts: readonly (string | undefined)[]
+): ResolvedSquadPlan {
+  if (planSource !== 'provided') return { coordinationMode: 'freeform' };
+  let stepFailure: string | undefined;
+  let anyFailure: string | undefined;
+  for (const text of candidateTexts) {
+    if (typeof text !== 'string' || !text.trim()) continue;
+    const checked = checkCandidatePlan(text);
+    if ('units' in checked) return { coordinationMode: 'structured', workUnits: checked.units };
+    anyFailure ??= checked.reason;
+    // Prefer the reason from a candidate that really contains plan steps.
+    if (stepFailure === undefined && hasPortablePlanStep(text)) stepFailure = checked.reason;
+  }
   return {
-    coordinationMode: workUnits ? 'structured' : 'freeform',
-    ...(workUnits ? { workUnits } : {}),
-    ...(!workUnits && planSource === 'provided'
-      ? { planError: providedPlanFailure(objective) }
-      : {})
+    coordinationMode: 'freeform',
+    planError: stepFailure ?? anyFailure ?? NO_PLAN_STEPS_REASON
   };
+}
+
+/** Triggered (schedule / goal) launches resolve their single objective text. */
+export function resolveTriggeredSquadPlan(planSource: 'provided' | 'infer', objective: string): ResolvedSquadPlan {
+  return resolveSquadPlan(planSource, [objective]);
 }
 
 /** Initial task for an invalid supplied plan must not expose it as executable work. */

@@ -8,8 +8,8 @@ import {
   readRawFile
 } from '../harness-routing/storage.js';
 import type { ExecutionDatabase } from '@zana-ai/zcc-db';
-import { readExecutionSqliteState, writeExecutionSqliteState } from './storage/sqlite-state.js';
-import { executionStorageBackendForId, type ExecutionStorageBackend } from './storage/backend-policy.js';
+import { readExecutionSqliteState } from './storage/sqlite-state.js';
+import { assertSideStoreStorage, executionStorageBackendForId, type ExecutionSideStoreStorage, type ExecutionStorageBackend } from './storage/backend-policy.js';
 
 export interface ExecutionArtifactRecord {
   id: string;
@@ -45,16 +45,13 @@ interface SqliteArtifactRow {
   created_at: number;
 }
 
-export interface ArtifactStoreOptions {
+export type ArtifactStoreOptions = ExecutionSideStoreStorage & {
   filePath: string;
-  /** Composite execution ledger JSON path used only for backend ownership lookup. */
-  executionFilePath?: string;
-  database?: ExecutionDatabase;
   now?: () => number;
   id?: () => string;
   maxRecords?: number;
   maxRecordsPerExecution?: number;
-}
+};
 
 const MAX_RECORDS = 5_000;
 const MAX_RECORDS_PER_EXECUTION = 100;
@@ -103,6 +100,7 @@ export function contentDigest(content: string): string {
 }
 
 export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
+  assertSideStoreStorage(options, 'execution artifact store');
   if (options.maxRecords !== undefined && (!Number.isInteger(options.maxRecords) || options.maxRecords < 1)) {
     throw new Error('invalid execution artifact max records');
   }
@@ -115,7 +113,7 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
   const maxRecordsPerExecution = Math.min(options.maxRecordsPerExecution ?? MAX_RECORDS_PER_EXECUTION, MAX_RECORDS_PER_EXECUTION);
 
   function owner(executionId: string): ExecutionStorageBackend {
-    return executionStorageBackendForId({ filePath: options.executionFilePath ?? options.filePath.replace(/(?:\.artifacts|-artifacts)(\.json)?$/, '$1'), database: options.database, executionId });
+    return executionStorageBackendForId({ filePath: options.executionFilePath ?? options.filePath, database: options.database, executionId });
   }
 
   // Pre-v2 SQLite stored every artifact body in one aggregate JSON row. Move it
@@ -158,23 +156,21 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
     ).run(maxRecordsPerExecution, maxRecords);
   }
 
-  function read(backend: ExecutionStorageBackend): { state: ArtifactStateFile; hash: string | null } {
-    const sqlite = backend === 'sqlite' ? readExecutionSqliteState<ArtifactStateFile>(options.database, 'execution-artifact-store') : null;
-    if (backend === 'sqlite' && !sqlite) return { state: { version: 1, revision: 0, records: [] }, hash: null };
-    const bytes = backend === 'json' ? readRawFile(options.filePath) : null;
-    if (!sqlite && !bytes) return { state: { version: 1, revision: 0, records: [] }, hash: null };
+  function readJson(): { state: ArtifactStateFile; hash: string | null } {
+    const bytes = readRawFile(options.filePath);
+    if (!bytes) return { state: { version: 1, revision: 0, records: [] }, hash: null };
     try {
-      const parsed = (sqlite?.value ?? JSON.parse(bytes!.toString('utf8'))) as Partial<ArtifactStateFile>;
+      const parsed = JSON.parse(bytes.toString('utf8')) as Partial<ArtifactStateFile>;
       if (parsed.version !== 1 || !Number.isInteger(parsed.revision) || !Array.isArray(parsed.records) || !parsed.records.every(validRecord)) {
         throw new Error('invalid shape');
       }
-      return { state: parsed as ArtifactStateFile, hash: sqlite?.hash ?? hashBytes(bytes!) };
+      return { state: parsed as ArtifactStateFile, hash: hashBytes(bytes) };
     } catch (error) {
       throw new Error(`corrupt execution artifact store: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  async function persist(state: ArtifactStateFile, expectedHash: string | null, backend: ExecutionStorageBackend): Promise<void> {
+  async function persistJson(state: ArtifactStateFile, expectedHash: string | null): Promise<void> {
     const byExecution = new Map<string, ExecutionArtifactRecord[]>();
     for (const record of state.records) {
       const group = byExecution.get(record.executionId) ?? [];
@@ -186,11 +182,8 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
       .sort((left, right) => left.createdAt - right.createdAt)
       .slice(-maxRecords);
     state.revision += 1;
-    if (backend === 'sqlite') writeExecutionSqliteState(options.database!, 'execution-artifact-store', state, expectedHash);
-    else {
-      await mkdir(dirname(options.filePath), { recursive: true });
-      atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
-    }
+    await mkdir(dirname(options.filePath), { recursive: true });
+    atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
   }
 
   async function put(input: Omit<ExecutionArtifactRecord, 'id' | 'contentDigest' | 'createdAt'>) {
@@ -239,7 +232,7 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
           return { outcome: 'stored' as const, record: clone(record) };
         });
       }
-      const snapshot = read('json');
+      const snapshot = readJson();
       const existing = snapshot.state.records.find((record) => record.executionId === executionId && record.name === name);
       if (existing) {
         if (existing.contentDigest === digest && existing.attempt === input.attempt && existing.projectId === projectId && existing.mediaType === mediaType) {
@@ -254,7 +247,7 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
         ...(input.producerSlotId ? { producerSlotId: string(input.producerSlotId, 'producer slot id') } : {})
       };
       snapshot.state.records.push(record);
-      await persist(snapshot.state, snapshot.hash, 'json');
+      await persistJson(snapshot.state, snapshot.hash);
       return { outcome: 'stored' as const, record: clone(record) };
     });
   }
@@ -274,7 +267,7 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
       ).all(boundedExecutionId, boundedProjectId) as SqliteArtifactRow[];
       return clone(rows.map(fromSqliteRow));
     }));
-    return queue.run(async () => clone(read('json').state.records.filter((record) =>
+    return queue.run(async () => clone(readJson().state.records.filter((record) =>
       record.executionId === boundedExecutionId && record.projectId === boundedProjectId)));
   }
 
@@ -290,7 +283,7 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
       return row ? clone(fromSqliteRow(row)) : undefined;
     }));
     return queue.run(async () => {
-      const record = read('json').state.records.find((candidate) => candidate.executionId === string(executionId, 'execution id')
+      const record = readJson().state.records.find((candidate) => candidate.executionId === string(executionId, 'execution id')
         && candidate.projectId === string(projectId, 'project id') && candidate.name === string(name, 'name'));
       return record ? clone(record) : undefined;
     });

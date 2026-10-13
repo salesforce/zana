@@ -53,6 +53,39 @@ describe('bounded inbox pages and bytes', () => {
       expect(await store.get('0')).toMatchObject({ id: '0', projectId: 'p' });
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+  it('get returns null for empty id, missing file, and unknown id; skips torn lines', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-inbox-get-edge-'));
+    const file = join(dir, 'entries.jsonl');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const store = createInboxStore({ filePath: file });
+      expect(await store.get('')).toBeNull();
+      expect(await store.get('anything')).toBeNull(); // ENOENT
+      await writeFile(file, [JSON.stringify({ id: 'a', ts: 1, projectId: 'p' }), '{torn', '', JSON.stringify({ id: 'b', ts: 2, projectId: 'p' })].join('\n') + '\n');
+      expect(await store.get('a')).toMatchObject({ id: 'a' });
+      expect(await store.get('nope')).toBeNull();
+      expect(warn).toHaveBeenCalled();
+    } finally { warn.mockRestore(); await rm(dir, { recursive: true, force: true }); }
+  });
+  it('get rethrows non-ENOENT read errors', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-inbox-get-err-'));
+    try {
+      // A directory path makes read fail with EISDIR, not ENOENT.
+      await expect(createInboxStore({ filePath: dir }).get('x')).rejects.toThrow();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('memory get finds by id and returns null otherwise; host-stamped fields round-trip', async () => {
+    const store = createMemoryInboxStore();
+    const entry = await store.append({ projectId: 'p', comments: 'c', squadNotice: 'worktree-lifecycle', hostActionRequired: true });
+    expect(await store.get(entry.id)).toMatchObject({ squadNotice: 'worktree-lifecycle', hostActionRequired: true });
+    expect(await store.get('missing')).toBeNull();
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-inbox-stamp-'));
+    try {
+      const disk = createInboxStore({ filePath: join(dir, 'e.jsonl') });
+      const saved = await disk.append({ projectId: 'p', comments: 'c', squadNotice: 'worktree-lifecycle', hostActionRequired: true });
+      expect(await disk.get(saved.id)).toMatchObject({ squadNotice: 'worktree-lifecycle', hostActionRequired: true });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
   it('rejects oversized admissions and legacy lines without rewriting preserved data', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zcc-inbox-size-'));
     const file = join(dir, 'entries.jsonl');

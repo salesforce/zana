@@ -58,6 +58,7 @@ import { jobCoordinatorPrompt } from './team-coordinator-prompt.js';
 import { compatibleNativeRecoverySnapshots, nativeRecoveryLaunchSlot } from './team-native-recovery.js';
 import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, cleanupHandoffFiles, correctedPlanRelPath, readAuthoredPlan, readCorrectedPlan, readHandoffArtifact, writeSourceMirror } from './team-plan-handoff.js';
 import { PLAN_CORRECTION_ACTION, PlanCorrectionService, runPlanCorrectionHostAction } from './plan-correction/service.js';
+import { createExecutionRetiredCheck, createPlanCorrectionWarningLogger } from './plan-correction/wiring.js';
 import { PlanCorrectionLaunchBinding } from './plan-correction/launch-binding.js';
 import { onOrchestratorIdle } from './coordinator-idle.js';
 import { createPlanCorrectionStore } from './plan-correction/store.js';
@@ -94,9 +95,9 @@ import { projectIdentityDigest, projectsForStoreRevision, revalidateLaunchCommit
 import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/authorization';
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
-import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, normalizeExecutionPlan, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
-import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portable-plan';
-import { invalidProvidedPlanHold, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
+import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
+import { invalidProvidedPlanHold, resolveSquadPlan, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
+import { INFERRED_PLAN_NUDGE_BUDGET, createInferredPlanCorrection } from './inferred-plan-correction.js';
 import { startTriggeredSquadExecution, triggeredSquadSlotTasks, updateScheduledPromptFromCorrection } from './scheduled-plan-correction.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -108,7 +109,7 @@ import { createExecutionStore, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type S
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
-import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
+import type { ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector, suppressesInteractiveBlocked } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
@@ -133,6 +134,7 @@ import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-st
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { liveScopedProviderFor } from './team-model-routing.js';
 import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import { createExecutionConsentManagement } from '@zana-ai/zcc-host-daemon/harness/execution-consent-management';
@@ -1311,8 +1313,10 @@ const planCorrection = new PlanCorrectionService({
   readCorrectedPlan,
   store: createPlanCorrectionStore({
     filePath: join(app.getPath('userData'), 'plan-corrections.json'),
-    database: executionDatabase
+    database: executionDatabase,
+    isExecutionRetired: createExecutionRetiredCheck((executionId) => executionStore.get(executionId))
   }),
+  logWarning: createPlanCorrectionWarningLogger(logMainError),
   updateScheduledPrompt: (ctx, units) => updateScheduledPromptFromCorrection({
     getExecution: (projectId, executionId) => executionStore.getInProject(projectId, executionId),
     getSchedule: (scheduleId) => scheduler.get(scheduleId),
@@ -5017,13 +5021,10 @@ async function resolveTeamModelSnapshots(
     const persona = personaSnapshot.find((candidate) => candidate.id === slot.personaId);
     if (!persona) throw new Error(`unknown persona: ${slot.personaId}`);
     const profile = resolvedTeamProfile(project, personaSnapshot, persona);
-    const provider = providerFor(profile);
+    const sharedProvider = providerFor(profile);
     const input = { config, persona, projectSettings, profile, extraArgs: [], scope: launchExecutionScope(project, {}, config) };
-    const liveModels = provider.discoverModelTargets
-      ? await provider.discoverModelTargets({ cwd: project.path, config })
-      : undefined;
-    if (liveModels) provider.applyDiscoveredModelTargets?.(liveModels);
-    else provider.clearDiscoveredModelTargets?.();
+    // Slots resolve concurrently: each gets its own live-inventory view.
+    const provider = await liveScopedProviderFor(sharedProvider, { cwd: project.path, config });
     const model = resolveModelTarget(provider, input);
     const role = resolveRoleTarget(provider, input);
     const roleOwnedModel = !!role.targetId && provider.nativeRolePinsModel;
@@ -6505,6 +6506,12 @@ const squadExecutionService = new SquadExecutionService({
  * coordinator-idle and registers it host-side through the SAME pipeline the
  * pre-launch seed uses. Subscribe-once (Rule 3) — one instance for the app.
  */
+// An inferred plan that stays invalid after the hand-off's nudges opens the same
+// Inbox plan-correction decision a provided plan gets (no new state or UI).
+const inferredPlanCorrection = createInferredPlanCorrection({
+  reviewInvalid: (ctx, reason) => planCorrection.reviewInvalid(ctx, reason),
+  begin: (executionId, reason, unattended) => planCorrection.begin(executionId, reason, unattended)
+});
 let teamPlanHandoff: TeamPlanHandoff;
 teamPlanHandoff = new TeamPlanHandoff({
   isPlanless: async (projectId, executionId) => {
@@ -6514,7 +6521,8 @@ teamPlanHandoff = new TeamPlanHandoff({
   readAuthoredPlan: async (projectRoot, executionId) => await planCorrection.approvedPlan(executionId)
     ?? readAuthoredPlan(projectRoot, executionId),
   review: (ctx, read) => planCorrection.review(ctx, read),
-  reviewInvalid: (ctx, reason) => planCorrection.reviewInvalid(ctx, reason),
+  reviewInvalid: (ctx, reason) => inferredPlanCorrection.reviewInvalid(ctx, reason),
+  maxNudges: INFERRED_PLAN_NUDGE_BUDGET,
   register: async (ctx, units) => {
     const result = await squadExecutionService.registerPlan(
       { role: 'orchestrator', slotId: ctx.slotId, executionId: ctx.executionId, projectId: ctx.projectId, principalId: ctx.sessionId },
@@ -6552,60 +6560,6 @@ export async function reportTeamTask(
 function teamExecutionEnabled(): boolean {
   const config = store.getConfig();
   return config.teamJobLaunchEnabled !== false || config.composerShowAutonomousTeam !== false;
-}
-
-/**
- * "Plan provided in goal" fast path: parse the first deterministically-valid
- * portable-executable plan (a snapshotted goal source, then the inline goal) into
- * work units so the launch can seed them pre-RUNNING and the coordinator hits its
- * "plan already valid → dispatch" branch with zero model cost. A plan that is
- * unparseable or not a complete durable DAG returns undefined and the coordinator
- * repairs it at runtime (same lane as infer). Only structured launches parse.
- */
-function seedProvidedPlanWorkUnits(
-  coordinationMode: string,
-  sourceTexts: readonly (string | undefined)[],
-  inlineGoal: string
-): ExecutionWorkUnitInput[] | undefined {
-  if (coordinationMode !== 'structured') return undefined;
-  const candidatePlans = [
-    ...sourceTexts.filter((text): text is string => typeof text === 'string' && text.length > 0),
-    inlineGoal
-  ];
-  for (const text of candidatePlans) {
-    const parsed = parsePortablePlan(text);
-    if (!parsed.ok || parsed.units.length === 0) continue;
-    try {
-      return normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
-    } catch (error) {
-      // Parsed but not a complete durable DAG — defer to the coordinator. Log the
-      // rejection reason so a mis-authored provided plan is diagnosable.
-      console.debug(
-        '[team-launch] provided plan rejected by DAG validation; deferring to coordinator:',
-        error instanceof Error ? error.message : error
-      );
-    }
-  }
-  return undefined;
-}
-
-function providedPlanFailure(
-  coordinationMode: string,
-  sourceTexts: readonly (string | undefined)[],
-  inlineGoal: string
-): string | undefined {
-  if (coordinationMode !== 'structured') return undefined;
-  for (const text of [...sourceTexts, inlineGoal]) {
-    if (!text || !PlanCorrectionService.sourcePlanPresent(text)) continue;
-    const parsed = parsePortablePlan(text);
-    if (!parsed.ok) return parsed.reason;
-    try {
-      normalizeExecutionPlan(parsed.units, true);
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
-  }
-  return undefined;
 }
 
 async function startTriggeredSquad(input: {
@@ -6722,16 +6676,15 @@ export async function startTeamJobFromUi(
   const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(originalJobTitle, capturedPathDescriptors)?.slice(0, 256) || undefined;
   const sanitizedSummary = redactCapturedExecutionSourcePaths(originalSummary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
-  const plannedWorkUnits = seedProvidedPlanWorkUnits(
-    coordinationMode,
-    (sourceBundle?.sources ?? []).map((source) => source.extractedText),
-    originalGoal
+  // One resolver for interactive and triggered launches: "Plan provided in goal"
+  // (structured) must yield a complete durable DAG or park for plan correction;
+  // "Infer plan from goal" (freeform) leaves planning to the coordinator.
+  const resolvedPlan = resolveSquadPlan(
+    coordinationMode === 'structured' ? 'provided' : 'infer',
+    [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), originalGoal]
   );
-  const providedPlanError = plannedWorkUnits ? undefined : providedPlanFailure(
-    coordinationMode,
-    (sourceBundle?.sources ?? []).map((source) => source.extractedText),
-    originalGoal
-  );
+  const plannedWorkUnits = resolvedPlan.workUnits;
+  const providedPlanError = resolvedPlan.planError;
   if (providedPlanError) {
     const unattended = !sourceContext;
     if (unattended) {
@@ -7267,6 +7220,7 @@ function wireBridgeListeners() {
     if (exitedSession?.cohort?.role === 'orchestrator' && exitedSession.cohort.executionId) {
       const executionId = exitedSession.cohort.executionId;
       teamPlanHandoff.forget(executionId);
+      inferredPlanCorrection.forget(executionId);
       void executionStore.getInProject(exitedSession.projectId, executionId).then((execution) => {
         const handoffRoot = execution?.squadWorktree?.path
           ?? store.listProjects().find((candidate) => candidate.id === exitedSession.projectId)?.path;

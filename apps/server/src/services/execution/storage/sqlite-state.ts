@@ -93,6 +93,14 @@ function migrateLegacyExecutionStore(database: ExecutionDatabase, storeId: strin
   });
 }
 
+/** Indexed point lookup: does the row-backed ledger hold this record id? Reads no record bodies. */
+export function executionStoreHasRecord(database: ExecutionDatabase, storeId: string, recordId: string): boolean {
+  migrateLegacyExecutionStore(database, storeId);
+  return database.sqlite.prepare(
+    'SELECT 1 FROM execution_store_record_rows WHERE store_id = ? AND id = ?'
+  ).get(storeId, recordId) !== undefined;
+}
+
 /** Reads a row-backed execution ledger while retaining whole-ledger CAS semantics. */
 export function readExecutionStoreSqliteState<T extends ExecutionStoreState>(
   database: ExecutionDatabase | undefined,
@@ -111,7 +119,55 @@ export function readExecutionStoreSqliteState<T extends ExecutionStoreState>(
   return { value: { version: 1, revision: meta.revision, records, events } as T, hash: meta.state_hash };
 }
 
-/** Atomically replaces ledger rows only when prior full-ledger snapshot matches. */
+interface LedgerRow {
+  id: string;
+  position: number;
+  valueJson: string;
+  /** Values for the table's extra columns, in `extraColumns` order. */
+  extra: Array<string | number>;
+}
+
+/**
+ * Makes a ledger table match `rows` by touching only what changed: rows whose id
+ * is gone are deleted, rows whose position or body differ are upserted, and
+ * identical rows are left alone. Runs inside the caller's transaction.
+ */
+function syncRows(
+  database: ExecutionDatabase,
+  table: 'execution_store_record_rows' | 'execution_store_event_rows',
+  storeId: string,
+  rows: readonly LedgerRow[],
+  extraColumns: readonly string[]
+): void {
+  const existing = new Map<string, { position: number; value_json: string }>();
+  for (const row of database.sqlite.prepare(`SELECT id, position, value_json FROM ${table} WHERE store_id = ?`).all(storeId) as Array<{ id: string; position: number; value_json: string }>) {
+    existing.set(row.id, row);
+  }
+  const next = new Set(rows.map((row) => row.id));
+  const remove = database.sqlite.prepare(`DELETE FROM ${table} WHERE store_id = ? AND id = ?`);
+  for (const id of existing.keys()) if (!next.has(id)) remove.run(storeId, id);
+
+  const changed = rows.filter((row) => {
+    const prior = existing.get(row.id);
+    return !prior || prior.position !== row.position || prior.value_json !== row.valueJson;
+  });
+  // Park rows that moved in negative position space first so a shift (for
+  // example after pruning the oldest record) can't trip UNIQUE(store_id, position).
+  const park = database.sqlite.prepare(`UPDATE ${table} SET position = ? WHERE store_id = ? AND id = ?`);
+  for (const row of changed) {
+    const prior = existing.get(row.id);
+    if (prior && prior.position !== row.position) park.run(-prior.position - 1, storeId, row.id);
+  }
+  const columns = ['store_id', 'position', 'id', ...extraColumns, 'value_json'];
+  const upsert = database.sqlite.prepare(
+    `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})
+     ON CONFLICT (store_id, id) DO UPDATE SET position = excluded.position,
+       ${[...extraColumns, 'value_json'].map((column) => `${column} = excluded.${column}`).join(', ')}`
+  );
+  for (const row of changed) upsert.run(storeId, row.position, row.id, ...row.extra, row.valueJson);
+}
+
+/** Atomically syncs ledger rows only when prior full-ledger snapshot matches. */
 export function writeExecutionStoreSqliteState<T extends ExecutionStoreState>(
   database: ExecutionDatabase,
   storeId: string,
@@ -125,16 +181,14 @@ export function writeExecutionStoreSqliteState<T extends ExecutionStoreState>(
   database.transaction(() => {
     const current = database.sqlite.prepare('SELECT state_hash FROM execution_store_meta WHERE store_id = ?').get(storeId) as Pick<ExecutionStoreMetaRow, 'state_hash'> | undefined;
     if ((current?.state_hash ?? null) !== expectedHash) throw new Error('stale execution SQLite state');
-    database.sqlite.prepare('DELETE FROM execution_store_record_rows WHERE store_id = ?').run(storeId);
-    database.sqlite.prepare('DELETE FROM execution_store_event_rows WHERE store_id = ?').run(storeId);
-    const insertRecord = database.sqlite.prepare(
-      'INSERT INTO execution_store_record_rows (store_id, position, id, value_json) VALUES (?, ?, ?, ?)'
-    );
-    const insertEvent = database.sqlite.prepare(
-      'INSERT INTO execution_store_event_rows (store_id, position, id, execution_id, sequence, value_json) VALUES (?, ?, ?, ?, ?, ?)'
-    );
-    for (const [position, record] of value.records.entries()) insertRecord.run(storeId, position, record.id, JSON.stringify(record));
-    for (const [position, event] of value.events.entries()) insertEvent.run(storeId, position, event.id, event.executionId, event.sequence, JSON.stringify(event));
+    syncRows(database, 'execution_store_record_rows', storeId,
+      value.records.map((record, position) => ({ id: record.id, position, valueJson: JSON.stringify(record), extra: [] })),
+      []);
+    syncRows(database, 'execution_store_event_rows', storeId,
+      value.events.map((event, position) => ({
+        id: event.id, position, valueJson: JSON.stringify(event), extra: [event.executionId, event.sequence]
+      })),
+      ['execution_id', 'sequence']);
     database.sqlite.prepare(
       `INSERT INTO execution_store_meta (store_id, revision, state_hash) VALUES (?, ?, ?)
        ON CONFLICT (store_id) DO UPDATE SET revision = excluded.revision, state_hash = excluded.state_hash`

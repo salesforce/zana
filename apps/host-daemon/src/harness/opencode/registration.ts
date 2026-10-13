@@ -1,5 +1,6 @@
 import { createOpenCodeHistory } from './history.js';
 import type { HarnessRegistration } from '../registration.js';
+import { launchScopedProvider } from '../launch-provider.js';
 import { OpenCodeProvider, invalidateOpenCodeModels } from './provider.js';
 import { OpenCodeTranscriptAdapter } from './session.js';
 
@@ -18,7 +19,9 @@ export const openCodeHarness: HarnessRegistration = {
   ],
   defaultProfileId: 'opencode',
   implementation,
-  renderRemoteCommand: (input) => implementation.buildRemoteCommand(input),
+  // Resolve portable levels through the inventory main probed for THIS launch's
+  // cwd, never through state shared with other projects' launches.
+  renderRemoteCommand: (input) => launchScopedProvider(implementation, input.cwd).buildRemoteCommand(input),
   discoverAgentDescriptors: ({ cwd, config, refresh }) =>
     implementation.discoverAgentDescriptors({ cwd, config }, { bypassCache: refresh }),
   nativeConversationResume: (nativeConversationId) =>

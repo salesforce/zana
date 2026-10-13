@@ -13,7 +13,7 @@ import { test, expect } from './fixtures/app.js';
 import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 
 test.use({ e2e: true, initialConfig: { teamJobLaunchEnabled: true, composerShowAutonomousTeam: true, autoRenameTabs: false } });

@@ -15,7 +15,6 @@ import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResul
 import { evaluateSlotEligibility } from './routing-policy.js';
 import { transitionCircuit, type CircuitState } from './retry-policy.js';
 import { usageCursorIdentity, usageRollup, validateStructuredJson, validateStructuredResult, type ExecutionUsageObservationV1, type UsageSampleKind } from './contracts.js';
-import { classifyStuckRecovery } from './recovery-classifier.js';
 
 /** Wall-clock ceiling for a single bounded snapshot read. */
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -521,6 +520,8 @@ export function availabilityUnknownFromAdmission(admission: TeamAdmissionResultV
   return admission.availabilityUnknown ? { failedSources: [...admission.availabilityUnknown.failedSources] } : undefined;
 }
 
+const MAX_PLAN_CORRECTION_STOP_ATTEMPTS = 5;
+
 export class ExecutionService {
   private readonly starting = new Map<string, number>();
   private readonly bindingTails = new Map<string, Promise<void>>();
@@ -603,7 +604,12 @@ export class ExecutionService {
     }
     if (!admission.ready) {
       const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
-      const availabilityUnknown = availabilityUnknownFromAdmission(admission);
+      // Only skill/MCP read failures are availability problems; any other blocking
+      // check (slot capacity, DAG, budgets, routing) is the real admission error.
+      const onlyCapabilityBlockers = admission.checks
+        .filter((check) => check.required && check.status !== 'PASS')
+        .every((check) => check.code === 'SKILL_AVAILABLE' || check.code === 'MCP_AVAILABLE');
+      const availabilityUnknown = onlyCapabilityBlockers ? availabilityUnknownFromAdmission(admission) : undefined;
       const requirementFailure = requirementFailureFromAdmission(request.workUnits, admission);
       return availabilityUnknown
         ? { ok: false, code: 'CAPABILITY_AVAILABILITY_UNKNOWN', message: 'Project capability availability could not be verified', availabilityUnknown }
@@ -1998,7 +2004,11 @@ export class ExecutionService {
     return result;
   }
 
-  async retry(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, retainedRecovery?: {
+  async retry(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number) {
+    return this.launchRetry(callerPrincipalId, projectId, executionId, expectedStateVersion);
+  }
+
+  private async launchRetry(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, retainedRecovery?: {
     mode: RetainedRecoveryMode;
     snapshots?: NonNullable<ExecutionRecord['nativeRecoverySnapshots']>;
   }) {
@@ -2120,7 +2130,13 @@ export class ExecutionService {
         return { ok: false as const, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed', value: failed };
       }
       if (retainedRecovery?.mode === 'fresh-plan') {
-        current = await this.deps.store.clearPriorNativeRecoverySnapshots(current.id);
+        // The Team is already live: a failed bookkeeping clear must not revoke
+        // authorizations, fail the launch, or tear down the worktree.
+        try {
+          current = await this.deps.store.clearPriorNativeRecoverySnapshots(current.id);
+        } catch (error) {
+          this.deps.logError?.(`Prior native recovery snapshot clear failed for ${current.id}`, error);
+        }
       }
       if (!await this.launchMayProceed(current)) {
         return { ok: false as const, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team retry launch', value: await this.deps.store.get(current.id) };
@@ -2145,9 +2161,6 @@ export class ExecutionService {
     if (record.state !== 'FAILED' && record.state !== 'STOPPED') {
       return { ok: false as const, code: 'RECOVERY_NOT_ALLOWED', message: 'execution recovery requires a retained failed or stopped run' };
     }
-    // Classify production recovery inputs before any relaunch.
-    const recovery = classifyStuckRecovery({ now: (this.deps.now ?? Date.now)(), stateObservedAt: record.updatedAt, progressObservedAt: record.updatedAt, heartbeatObservedAt: record.updatedAt, maxSilenceMs: Number.MAX_SAFE_INTEGER });
-    if (recovery.action === 'ESCALATE') return { ok: false as const, code: 'RECOVERY_NOT_ALLOWED', message: recovery.evidence[0] ?? 'execution recovery is not allowed' };
     const snapshots = mode === 'exact-native'
       ? this.deps.resolveExactNativeRecoverySnapshots?.(record) ?? []
       : undefined;
@@ -2160,7 +2173,7 @@ export class ExecutionService {
     this.beginStarting(record.id);
     try {
       const resumed = await this.beginRetainedRecoveryWithLifecycleLock(record.id, expectedStateVersion);
-      return await this.retry(callerPrincipalId, projectId, executionId, resumed.stateVersion, { mode, ...(snapshots ? { snapshots } : {}) });
+      return await this.launchRetry(callerPrincipalId, projectId, executionId, resumed.stateVersion, { mode, ...(snapshots ? { snapshots } : {}) });
     } catch (error) {
       return { ok: false as const, code: error instanceof Error && error.message === 'stale execution state' ? 'CONFLICT' : 'RECOVERY_NOT_ALLOWED', message: error instanceof Error ? error.message : String(error) };
     } finally {
@@ -2409,21 +2422,23 @@ export class ExecutionService {
 
   /** Trusted host path for a rejected plan before any work may be registered. */
   async stopForPlanCorrection(executionId: string): Promise<ExecutionRecord | undefined> {
-    let record = await this.deps.store.get(executionId);
-    if (!record) return undefined;
-    if (record.state === 'COMPLETED') return record;
-    if (!(record.state === 'STOPPED' && record.timeoutReason === 'plan-correction-cancelled')) {
+    let record: ExecutionRecord | undefined;
+    // Bounded re-read loop: each stale write means another actor advanced the record.
+    for (let attempt = 0; ; attempt += 1) {
+      record = await this.deps.store.get(executionId);
+      if (!record) return undefined;
+      if (record.state === 'COMPLETED') return record;
+      if (record.state === 'STOPPED' && record.timeoutReason === 'plan-correction-cancelled') break;
       try {
         record = await this.deps.store.stopForPlanCorrection(record.id);
+        break;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
-        record = await this.deps.store.get(executionId);
-        if (!record) return record;
-        if (record.state === 'STOPPED' && record.timeoutReason === 'plan-correction-cancelled') {
-          return this.stopForPlanCorrection(executionId);
-        }
-        if (isResumeGrantTerminal(record.state)) return record;
-        return this.stopForPlanCorrection(executionId);
+        if (attempt + 1 >= MAX_PLAN_CORRECTION_STOP_ATTEMPTS) throw error;
+        const current = await this.deps.store.get(executionId);
+        if (!current) return current;
+        const cancelled = current.state === 'STOPPED' && current.timeoutReason === 'plan-correction-cancelled';
+        if (!cancelled && isResumeGrantTerminal(current.state)) return current;
       }
     }
     // The ledger's cancelled state fences plan registration and resume, but must

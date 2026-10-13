@@ -5,7 +5,7 @@ import { atomicDurableWrite, createSerializedTransactionQueue, hashBytes, readRa
 import type { ExecutionDatabase } from '@zana-ai/zcc-db';
 import type { ExecutionState } from './store.js';
 import { readExecutionSqliteState, writeExecutionSqliteState } from './storage/sqlite-state.js';
-import { executionStorageBackendForId, type ExecutionStorageBackend } from './storage/backend-policy.js';
+import { assertSideStoreStorage, executionStorageBackendForId, type ExecutionSideStoreStorage, type ExecutionStorageBackend } from './storage/backend-policy.js';
 
 export interface ResumeGrantV1 {
   version: 1;
@@ -69,11 +69,12 @@ function validGeneration(value: unknown): value is GenerationRecord {
     && Number.isInteger(entry.generation) && (entry.generation ?? -1) >= 0;
 }
 
-export function createResumeGrantStore(options: { filePath: string; executionFilePath?: string; database?: ExecutionDatabase; now?: () => number; token?: () => string }) {
+export function createResumeGrantStore(options: ExecutionSideStoreStorage & { filePath: string; now?: () => number; token?: () => string }) {
+  assertSideStoreStorage(options, 'execution resume grant store');
   const now = options.now ?? Date.now;
   const token = options.token ?? randomUUID;
   function owner(executionId: string): ExecutionStorageBackend {
-    return executionStorageBackendForId({ filePath: options.executionFilePath ?? options.filePath.replace(/(?:\.resume-grants|-resume-grants)(\.json)?$/, '$1'), database: options.database, executionId });
+    return executionStorageBackendForId({ filePath: options.executionFilePath ?? options.filePath, database: options.database, executionId });
   }
 
   function read(backend: ExecutionStorageBackend): { state: StateFile; hash: string | null } {

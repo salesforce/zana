@@ -175,4 +175,64 @@ describe('inbox action registry', () => {
     await expect(registry.run(instruct, { optionId: 'instruct', text: 'Check the changes' })).resolves.toEqual({ ok: true, status: 'done' });
     expect(handler).toHaveBeenCalledWith({ ref: 'private-ref', input: { optionId: 'instruct', text: 'Check the changes' } });
   });
+
+  it('keeps an operator-unavailable failure terminal (failed, not pending)', async () => {
+    const registry = createInboxActionRegistry(open());
+    registry.register('test', vi.fn().mockRejectedValue(new InboxActionOperatorError('gone', true)));
+    registry.bind(entry(), { kind: 'test', ref: 'private-ref' });
+    await expect(registry.run(entry(), { optionId: 'A' })).resolves.toEqual({ ok: false, status: 'failed' });
+    expect(registry.list([entry()])).toEqual([{ entryId: 'entry-1', kind: 'test', status: 'failed', unavailable: true, message: 'gone' }]);
+    await expect(registry.run(entry(), { optionId: 'A' })).resolves.toEqual({ ok: false, status: 'missing' });
+  });
+
+  it('does not overwrite markUnavailable that lands while a handler is running (success)', async () => {
+    const registry = createInboxActionRegistry(open());
+    let finish!: () => void;
+    registry.register('test', () => new Promise<void>((resolve) => { finish = resolve; }));
+    registry.bind(entry(), { kind: 'test', ref: 'private-ref' });
+    const running = registry.run(entry(), { optionId: 'A' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    registry.markUnavailable('test', 'private-ref', 'Superseded.');
+    finish();
+    await expect(running).resolves.toEqual({ ok: false, status: 'failed' });
+    expect(registry.list([entry()])).toEqual([{ entryId: 'entry-1', kind: 'test', status: 'failed', unavailable: true, message: 'Superseded.' }]);
+    await expect(registry.run(entry(), { optionId: 'A' })).resolves.toEqual({ ok: false, status: 'missing' });
+  });
+
+  it('does not overwrite markUnavailable that lands while a handler is running (failure)', async () => {
+    const registry = createInboxActionRegistry(open());
+    let fail!: (error: Error) => void;
+    registry.register('test', () => new Promise<void>((_, reject) => { fail = reject; }));
+    registry.bind(entry(), { kind: 'test', ref: 'private-ref' });
+    const running = registry.run(entry(), { optionId: 'A' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    registry.markUnavailable('test', 'private-ref', 'Superseded.');
+    fail(new Error('boom'));
+    await expect(running).resolves.toEqual({ ok: false, status: 'failed' });
+    expect(registry.list([entry()])).toEqual([{ entryId: 'entry-1', kind: 'test', status: 'failed', unavailable: true, message: 'Superseded.' }]);
+  });
+
+  it('tolerates the row being removed mid-handler and reports handler-unavailable', async () => {
+    const registry = createInboxActionRegistry(open());
+    let finish!: () => void;
+    const off = registry.register('test', () => new Promise<void>((resolve) => { finish = resolve; }));
+    registry.bind(entry(), { kind: 'test', ref: 'private-ref' });
+    const running = registry.run(entry(), { optionId: 'A' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    registry.remove(['entry-1']);
+    finish();
+    await expect(running).resolves.toEqual({ ok: true, status: 'done' });
+    expect(registry.list([entry()])).toEqual([]);
+    off();
+    expect(registry.bound('entry-1')).toBeNull();
+  });
+
+  it('reports handler unavailable when the kind is unregistered between list and run', async () => {
+    const registry = createInboxActionRegistry(open());
+    const off = registry.register('test', vi.fn());
+    registry.bind(entry(), { kind: 'test', ref: 'private-ref' });
+    off();
+    await expect(registry.run(entry(), { optionId: 'A' })).resolves.toEqual({ ok: false, status: 'failed' });
+    expect(registry.bound('entry-1')).toEqual({ kind: 'test', ref: 'private-ref' });
+  });
 });

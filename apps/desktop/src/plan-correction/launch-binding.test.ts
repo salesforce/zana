@@ -55,4 +55,15 @@ describe('PlanCorrectionLaunchBinding', () => {
     expect(begin).toHaveBeenCalledWith('exec-b', 'reason b', false);
     await expect(binding.bindExecution('a', 'exec-a', service)).resolves.toBe(true);
   });
+
+  it('keeps the reason when the durable begin fails so the launch can bind on retry', async () => {
+    const binding = new PlanCorrectionLaunchBinding();
+    const { begin, service } = correction();
+    begin.mockRejectedValueOnce(new Error('store at capacity'));
+    binding.beginLaunch('launch-1', 'bad');
+
+    await expect(binding.bindExecution('launch-1', 'exec-1', service)).rejects.toThrow('store at capacity');
+    await expect(binding.bindExecution('launch-1', 'exec-1', service)).resolves.toBe(true);
+    expect(begin).toHaveBeenCalledTimes(2);
+  });
 });

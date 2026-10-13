@@ -1,40 +1,84 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+// @vitest-environment happy-dom
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 
-describe('Inbox host action routing', () => {
-  const detail = readFileSync(new URL('../InboxDetail.tsx', import.meta.url), 'utf8');
-  const question = readFileSync(new URL('../InboxQuestionBlock.tsx', import.meta.url), 'utf8');
-  const live = readFileSync(new URL('../../stores/live.ts', import.meta.url), 'utf8');
-  const terminal = readFileSync(new URL('../AgentTerminalModal.tsx', import.meta.url), 'utf8');
+const api = vi.hoisted(() => ({
+  hostActions: { get: vi.fn(), run: vi.fn() } as { get?: ReturnType<typeof vi.fn>; run: ReturnType<typeof vi.fn> }
+}));
+vi.mock('../../lib/product-client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/product-client.js')>();
+  return { ...actual, product: new Proxy(actual.product, {
+    get: (target, prop, receiver) => prop === 'inbox'
+      ? { ...(target as { inbox: object }).inbox, hostActions: api.hostActions }
+      : Reflect.get(target, prop, receiver)
+  }) };
+});
+import { resolveInboxHostAction, runInboxHostAction, useInboxHostActions } from '../../stores/live.js';
 
-  it('routes only main-listed entry ids to host IPC before existing reply paths', () => {
-    expect(detail).toContain('useInboxHostActions((s) => s.byEntryId[entry.id])');
-    expect(detail).toContain('(structuredQuestions || hostAction) ? inboxQuestions(entry) : []');
-    expect(detail).toContain('(input: { optionId: string; text?: string }) => runInboxHostAction(entry.id, input)');
-    expect(question).toContain('if (onHostAction) {');
-    expect(question).toContain("} else if (entry.executionId && entry.blockerId) {");
-    expect(live).toContain('if (!useInboxHostActions.getState().byEntryId[entryId]) return false;');
-    expect(live).toContain('product.inbox.hostActions?.run(entryId, input)');
-    expect(question).toContain('ok = await onHostAction({');
-    expect(question).toContain("optionId === hostActionTextOptionId ? { text: hostActionText.trim() } : {}");
-    expect(question).toContain('hostActionMessage && <p className="inbox-question-host-status" role="alert">{hostActionMessage}</p>');
-    expect(question).toContain('disabled={busy || !canSend || hostActionUnavailable}');
-    expect(question).toContain('return selected.length === 1 ? selected[0] : undefined;');
-    expect(question).toContain('hostOwned\n    && selectedHostOptionId !== undefined');
+const entry = (over: Partial<InboxEntry> = {}) => ({ id: 'e1', ts: 1, ...over }) as InboxEntry;
+const action = { entryId: 'e1', kind: 'worktree', status: 'pending' } as const;
+const resolution = () => useInboxHostActions.getState().resolutionByEntryId['e1'];
+
+describe('Inbox host action store routing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.hostActions = { get: vi.fn(), run: vi.fn() };
+    useInboxHostActions.setState({ byEntryId: {}, resolutionByEntryId: {} });
   });
 
-  it('does not derive host authority from inbox entry fields', () => {
-    expect(live).toContain('const get = product.inbox.hostActions?.get;');
-    expect(live).toContain('await get(entry.id)');
-    expect(live).not.toContain('entry.hostAction)');
-    expect(detail).toContain('void resolveInboxHostAction(entry);');
-    expect(live).toContain("if (entry.hostActionRequired) throw new Error('Host ownership lookup unavailable');");
-    expect(live).toContain("resolveEntry(entry.id, generation, { resolved: true, action: null })");
+  it('records main-listed ownership from the per-entry lookup', async () => {
+    api.hostActions.get!.mockResolvedValue({ resolved: true, action });
+    await resolveInboxHostAction(entry());
+    expect(api.hostActions.get).toHaveBeenCalledWith('e1');
+    expect(useInboxHostActions.getState().byEntryId['e1']).toEqual(action);
+    expect(resolution()).toMatchObject({ loading: false, error: false, resolved: true });
   });
 
-  it('never renders a host-owned entry as a terminal answer form', () => {
-    expect(terminal).toContain('void resolveInboxHostAction(pending);');
-    expect(terminal).toContain('if (ownership?.error || hostAction || pending.hostActionRequired)');
-    expect(terminal).toContain('Answer this host action in Inbox.');
+  it('does not derive host authority from entry fields', async () => {
+    api.hostActions.get!.mockResolvedValue({ resolved: true, action: null });
+    await resolveInboxHostAction(entry({ hostAction: { kind: 'worktree' } } as Partial<InboxEntry>));
+    expect(useInboxHostActions.getState().byEntryId['e1']).toBeUndefined();
+    expect(resolution()).toMatchObject({ resolved: true, error: false });
+  });
+
+  it('fails closed when the lookup throws or is unresolved', async () => {
+    api.hostActions.get!.mockRejectedValue(new Error('ipc down'));
+    await resolveInboxHostAction(entry());
+    expect(resolution()).toMatchObject({ loading: false, error: true, resolved: false });
+
+    api.hostActions.get!.mockResolvedValue({ resolved: false, action: null });
+    await resolveInboxHostAction(entry());
+    expect(resolution()).toMatchObject({ loading: false, error: true, resolved: false });
+  });
+
+  it('without a desktop lookup, only unmarked entries resolve as not host-owned', async () => {
+    api.hostActions = { run: vi.fn() };
+    await resolveInboxHostAction(entry());
+    expect(resolution()).toMatchObject({ resolved: true, error: false });
+
+    await resolveInboxHostAction(entry({ hostActionRequired: true }));
+    expect(resolution()).toMatchObject({ resolved: false, error: true });
+  });
+
+  it('runs only ids previously supplied by main, then re-resolves ownership', async () => {
+    expect(await runInboxHostAction('e1', { optionId: 'delete' })).toBe(false);
+    expect(api.hostActions.run).not.toHaveBeenCalled();
+
+    useInboxHostActions.getState().setActions([action]);
+    api.hostActions.run.mockResolvedValue({ ok: true });
+    api.hostActions.get!.mockResolvedValue({ resolved: true, action: null });
+    expect(await runInboxHostAction('e1', { optionId: 'delete' })).toBe(true);
+    expect(api.hostActions.run).toHaveBeenCalledWith('e1', { optionId: 'delete' });
+    expect(api.hostActions.get).toHaveBeenCalledWith('e1');
+    expect(useInboxHostActions.getState().byEntryId['e1']).toBeUndefined();
+  });
+
+  it('reports failure when the host run is rejected or throws', async () => {
+    useInboxHostActions.getState().setActions([action]);
+    api.hostActions.get!.mockResolvedValue({ resolved: true, action });
+    api.hostActions.run.mockResolvedValueOnce({ ok: false });
+    expect(await runInboxHostAction('e1')).toBe(false);
+    api.hostActions.run.mockRejectedValueOnce(new Error('boom'));
+    expect(await runInboxHostAction('e1')).toBe(false);
   });
 });

@@ -187,4 +187,19 @@ describe('ScheduleInfoPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /Resume/ }));
     await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('denied', 'error'));
   });
+
+  it('toasts the recorded cause when run-now was accepted but the launch was refused, and fired otherwise', async () => {
+    const withRun = (result: string, message?: string) => ({
+      ...baseTask,
+      status: { runCount: 1, runs: [{ id: 'r', at: new Date().toISOString(), result, message }] }
+    }) as unknown as ScheduledTask;
+    runNow.mockResolvedValueOnce({ ok: true, value: withRun('error', 'Squad requirements are unavailable') });
+    render(<ScheduleInfoPanel task={baseTask} />);
+    fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+    await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('Run failed: Squad requirements are unavailable', 'error'));
+    expect(pushToast).not.toHaveBeenCalledWith('Fired "Morning digest"', 'info');
+    runNow.mockResolvedValueOnce({ ok: true, value: withRun('success') });
+    fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+    await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('Fired "Morning digest"', 'info'));
+  });
 });

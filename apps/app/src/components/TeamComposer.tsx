@@ -242,6 +242,7 @@ export function TeamComposer({
   const cancelRequirementFailure = () => {
     // Admission rejected before execution claim, authorization, or worker spawn.
     setRequirementFailure(null);
+    setAvailabilityUnknown(null);
     onClose?.();
   };
   launchRef.current = () => {

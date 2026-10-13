@@ -56,6 +56,7 @@ import type {
   RemoteCommandResult,
   ResolvedLaunch
 } from '../launch-provider.js';
+import { clearLiveModelTargets } from '../launch-provider.js';
 import { BaseLaunchProvider } from '../base-provider.js';
 import type {
   HarnessRoleTarget,
@@ -485,7 +486,11 @@ export function parseOpenCodeModelIds(output: string): string[] {
 }
 
 const modelDiscoveryCache = new ModelDiscoveryCache<string>();
-export const invalidateOpenCodeModels = () => modelDiscoveryCache.clear();
+export const invalidateOpenCodeModels = () => {
+  modelDiscoveryCache.clear();
+  // Launch-recorded inventories describe the same (now stale) catalog.
+  clearLiveModelTargets(OPENCODE_ADAPTER.descriptor.id);
+};
 
 function runOpenCodeModelDiscovery(command: string, cwd: string): Promise<readonly string[]> {
   return runOpenCodeCaptured(command, ['models'], cwd).then(parseOpenCodeModelIds);
@@ -502,14 +507,31 @@ function openCodeProviderFor(id: string): 'openai' | 'google' | 'xai' {
   return 'openai';
 }
 
-function openCodeModelLevelMapping(models: readonly HarnessModelTarget[]) {
-  const pick = (...terms: string[]) => models.find(({ id }) =>
-    terms.some((term) => new RegExp(`(?:^|[-_/])${term}(?:[-_/]|$)`, 'i').test(id))
-  )?.id;
+const OPENCODE_LEVEL_TERMS = { low: 'luna', medium: 'terra', high: 'sol' } as const;
+const openCodeIdOrder = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
+/**
+ * Map portable levels onto a LIVE inventory, independent of gateway list order.
+ * Per tier: the curated snapshot id wins whenever the gateway still serves it;
+ * otherwise the tier's family term (luna/terra/sol) picks among live ids in a
+ * deterministic order (highest version first, by numeric collation, then id) so
+ * the same inventory always yields the same mapping however `opencode models`
+ * orders it. A tier with neither stays unmapped (resolution reports it).
+ */
+export function openCodeModelLevelMapping(liveIds: readonly string[]): Readonly<Record<ModelLevel, string | undefined>> {
+  const live = new Set(liveIds);
+  const ordered = [...live].sort((a, b) => openCodeIdOrder.compare(b, a) || (a < b ? 1 : a > b ? -1 : 0));
+  const curated = OPENCODE_ADAPTER.descriptor.targets!.modelLevelMapping;
+  const pick = (level: keyof typeof OPENCODE_LEVEL_TERMS) => {
+    const snapshot = curated[level];
+    if (snapshot && live.has(snapshot)) return snapshot;
+    const term = new RegExp(`(?:^|[-_/])${OPENCODE_LEVEL_TERMS[level]}(?:[-_/]|$)`, 'i');
+    return ordered.find((id) => term.test(id));
+  };
   return {
-    low: pick('luna'),
-    medium: pick('terra'),
-    high: pick('sol'),
+    low: pick('low'),
+    medium: pick('medium'),
+    high: pick('high'),
     'extra-high': undefined
   };
 }
@@ -552,12 +574,28 @@ export function classifyOpenCodePaneCommand(command: string): AgentLiveness {
 
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
-  private discoveredModels: readonly HarnessModelTarget[] = [];
 
+  /**
+   * The shared (registry singleton) adapter is ALWAYS the reviewed static
+   * snapshot. A live inventory is launch-scoped: see {@link liveModelAdapter}
+   * and `withLiveModelTargets` — it is never stored on this instance, so
+   * concurrent launches for different projects cannot see each other's
+   * inventory.
+   */
   get adapter(): TrustedHarnessAdapter {
-    if (!this.discoveredModels.length) return OPENCODE_ADAPTER;
+    return OPENCODE_ADAPTER;
+  }
+
+  liveModelAdapter(ids: readonly string[]): TrustedHarnessAdapter {
+    const discovered: HarnessModelTarget[] = [...new Set(ids)].map((id) => ({
+      id,
+      label: id,
+      provider: openCodeProviderFor(id),
+      scope: [...OPENCODE_VERIFIED_SCOPES]
+    }));
+    if (!discovered.length) return OPENCODE_ADAPTER;
     const { models, evidence } = overlayDiscoveredModels(
-      this.discoveredModels,
+      discovered,
       OPENCODE_ADAPTER.evidence,
       OPENCODE_MIN_VERSION,
       (id, scope) => openCodeEvidence(id, 'Live OpenCode model inventory and --model contribution verified.', scope)
@@ -570,11 +608,12 @@ export class OpenCodeProvider extends BaseLaunchProvider {
         targets: {
           ...OPENCODE_ADAPTER.descriptor.targets!,
           models,
-          modelLevelMapping: openCodeModelLevelMapping(models)
+          modelLevelMapping: openCodeModelLevelMapping(models.map(({ id }) => id))
         }
       }
     };
   }
+
   readonly acceptsDynamicRoleTargets = true;
   // An OpenCode `--agent <role>` pins the agent's own model; a forced catalog
   // `--model` overrides that pin and dies with ProviderModelNotFoundError (dead
@@ -667,29 +706,17 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * snapshot rather than blocking a launch on a transient probe error — an empty
    * live list would otherwise reject every model. A non-empty result is the
    * authoritative set the gateway currently exposes.
+   *
+   * Pure with respect to this (shared) provider: the result is returned, never
+   * stored here. Callers scope it to one launch via `withLiveModelTargets`.
    */
   async discoverModelTargets(context: { cwd: string; config: AppConfig }): Promise<readonly string[] | undefined> {
     try {
       const ids = await discoverOpenCodeModels(context);
-      if (!ids.length) return undefined;
-      this.applyDiscoveredModelTargets(ids);
-      return ids;
+      return ids.length ? ids : undefined;
     } catch {
       return undefined;
     }
-  }
-
-  applyDiscoveredModelTargets(ids: readonly string[]): void {
-    this.discoveredModels = ids.map((id) => ({
-      id,
-      label: id,
-      provider: openCodeProviderFor(id),
-      scope: [...OPENCODE_VERIFIED_SCOPES]
-    }));
-  }
-
-  clearDiscoveredModelTargets(): void {
-    this.discoveredModels = [];
   }
 
   /**

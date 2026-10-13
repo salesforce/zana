@@ -400,13 +400,17 @@ export function LegacyAgentHomeComposer({
     worktreeIsolationDefault
   );
 
+  // Project id the user explicitly picked a workspace for. The async settings
+  // load must not overwrite that pick with the (late-arriving) default.
+  const workspacePickedForRef = useRef<string | null>(null);
   useEffect(() => {
     if (!project) return;
-    setWorkspace(
-      project.quickAgent || project.remote
-        ? { kind: 'personal' }
-        : defaultWorkspaceChoice(worktreeIsolation)
-    );
+    if (project.quickAgent || project.remote) {
+      setWorkspace({ kind: 'personal' });
+      return;
+    }
+    if (workspacePickedForRef.current === project.id) return;
+    setWorkspace(defaultWorkspaceChoice(worktreeIsolation));
   }, [project?.id, project?.quickAgent, project?.remote, worktreeIsolation]);
 
   // Resolve a concrete model like the Modern composer instead of resting on
@@ -944,7 +948,10 @@ export function LegacyAgentHomeComposer({
               hostId={executionHostId}
               projectId={project.id}
               value={workspace}
-              onChange={setWorkspace}
+              onChange={(next) => {
+                workspacePickedForRef.current = project.id;
+                setWorkspace(next);
+              }}
               allowPersonal={Boolean(project.quickAgent)}
               disabled={launching}
             />

@@ -86,6 +86,8 @@ export interface PlanCorrectionDeps {
   resume(ctx: CoordinatorHandoffContext): Promise<void>;
   stopExecution(executionId: string): Promise<void>;
   logRecoveryError?(executionId: string, error: unknown): void;
+  /** Diagnostics for failures the service deliberately absorbs (write-back, source-plan read). */
+  logWarning?(executionId: string, message: string, error: unknown): void;
 }
 
 export interface PlanCorrectionRecoveryFailure {
@@ -203,6 +205,7 @@ export class PlanCorrectionService {
     if (current.retries >= PLAN_CORRECTION_MAX_RETRIES) return 'reject';
     current.retries += 1;
     current.status = 'pending';
+    if (current.offeredActionId) this.publishedOfferIds.delete(current.offeredActionId);
     current.offeredActionId = randomUUID();
     // Persist complete offer before appendInbox exposes its approval action.
     if (!await this.persistActive(current)) return this.rejectCancelled(current);
@@ -253,6 +256,8 @@ export class PlanCorrectionService {
 
   async respond(executionId: string, input: string | undefined, offer: PlanCorrectionActionRef | undefined): Promise<'approve' | 'cancelled' | 'wait' | 'reject'> {
     const result = await this.serialize(executionId, () => this.respondSerialized(executionId, input, offer));
+    // A consumed offer can never be republished; a rejected response leaves it live.
+    if (offer && result !== 'reject') this.publishedOfferIds.delete(offer.offerId);
     if (result !== 'approve' || !offer) return result;
 
     // Release the approval transaction before re-entering the coordinator's idle
@@ -310,8 +315,11 @@ export class PlanCorrectionService {
       try {
         await this.deps.updateScheduledPrompt?.(pending.ctx, pending.approvedUnits);
       } catch (error) {
+        this.deps.logWarning?.(executionId, 'scheduled plan write-back failed; approval rejected', error);
         // Only deliberate operator-facing causes are shown; incidental failures (I/O, paths) stay generic.
+        // A definition edit conflict is deliberate even when it arrives unwrapped.
         if (error instanceof InboxActionOperatorError) this.rejectionReasons.set(executionId, error.message);
+        else if (isDefinitionConflict(error)) this.rejectionReasons.set(executionId, error instanceof Error ? error.message : 'the schedule or goal was edited since this run launched');
         // Schedule persistence is part of scheduled-run approval. Do not allow a
         // one-off correction to resume when future occurrences would remain bad.
         pending.status = 'pending';
@@ -328,9 +336,12 @@ export class PlanCorrectionService {
       await this.deps.stopExecution(executionId);
       return 'cancelled';
     }
-    await this.nudgeCoordinator(pending, await this.correctionInstruction(pending));
+    // Persist first: a nudge for a request that was not durably recorded (or that
+    // lost to a concurrent cancellation) would wake the coordinator for nothing.
+    const instruction = await this.correctionInstruction(pending);
     pending.status = 'correction-required';
     if (!await this.persistActive(pending)) return this.rejectCancelled(pending);
+    await this.nudgeCoordinator(pending, instruction);
     return 'wait';
   }
 
@@ -340,7 +351,12 @@ export class PlanCorrectionService {
    */
   private async correctionInstruction(record: PlanCorrectionRecord, lead?: string): Promise<string> {
     let source: string | undefined;
-    try { source = await this.deps.readSourcePlan?.(record.executionId); } catch { source = undefined; }
+    try {
+      source = await this.deps.readSourcePlan?.(record.executionId);
+    } catch (error) {
+      source = undefined;
+      this.deps.logWarning?.(record.executionId, 'could not read the supplied plan for the correction request', error);
+    }
     const excerpt = source && source.length > SOURCE_PLAN_PROMPT_CAP ? `${source.slice(0, SOURCE_PLAN_PROMPT_CAP)}\n[truncated]` : source;
     return [
       lead,
@@ -459,6 +475,11 @@ export class PlanCorrectionService {
     return { status: 'ok', units: cloneUnits(record.approvedUnits), realPath: correctedPlanRelPath(record.executionId) };
   }
 
+}
+
+/** ScheduleConflictError / GoalConflictError, matched structurally across the package seam. */
+function isDefinitionConflict(error: unknown): boolean {
+  return !!error && typeof error === 'object' && (error as { code?: unknown }).code === 'DEFINITION_CONFLICT';
 }
 
 function planDigest(units: readonly ExecutionWorkUnitInput[]): string {

@@ -2,11 +2,12 @@
  * @vitest-environment happy-dom
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const create = vi.fn();
 const update = vi.fn();
 const upsertSchedulerTask = vi.hoisted(() => vi.fn());
+const teamsList = vi.hoisted(() => vi.fn());
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
@@ -15,7 +16,7 @@ vi.mock('../../lib/product-client.js', () => ({
       update: (...args: unknown[]) => update(...args)
     },
     teams: {
-      list: vi.fn(async () => [{ id: 'team-1', name: 'Release squad', slots: [] }])
+      list: (...args: unknown[]) => teamsList(...args)
     }
   }
 }));
@@ -67,6 +68,11 @@ vi.mock('../ui/PopoverPicklist.js', () => ({
 import { ScheduleEditor } from './ScheduleEditor.js';
 
 describe('ScheduleEditor', () => {
+  beforeEach(() => {
+    teamsList.mockReset();
+    teamsList.mockResolvedValue([{ id: 'team-1', name: 'Release squad', slots: [] }]);
+  });
+
   afterEach(() => {
     cleanup();
     create.mockReset();
@@ -122,6 +128,27 @@ describe('ScheduleEditor', () => {
       planSource: 'provided'
     }));
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty('personaId');
+  });
+
+  it('shows a load-error hint when the squad list fails', async () => {
+    teamsList.mockRejectedValue(new Error('offline'));
+    render(<ScheduleEditor task={null} />);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not load squads'));
+  });
+
+  it('shows an empty hint when no squads exist, none when squads load', async () => {
+    teamsList.mockResolvedValue([]);
+    const first = render(<ScheduleEditor task={null} />);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByText(/No squads available/)).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
+    first.unmount();
+    teamsList.mockResolvedValue([{ id: 'team-1', name: 'Release squad', slots: [] }]);
+    render(<ScheduleEditor task={null} />);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.queryByText(/No squads available/)).toBeNull());
   });
 
   it('restores launch profile after changing a Squad schedule back to Agent', async () => {

@@ -3612,6 +3612,81 @@ describe('SquadExecutionService', () => {
     expect(getTeamLaunch).toHaveBeenLastCalledWith('owner', 'execution-1:attempt:2');
   }));
 
+  it('keeps a live Team RUNNING when clearing prior native snapshots fails after launch', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const revokeTeamAuthorizations = vi.fn();
+    const onTerminal = vi.fn();
+    const logError = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, { store, revokeTeamAuthorizations, onTerminal, logError }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error(started.message);
+    const failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    vi.spyOn(store, 'clearPriorNativeRecoverySnapshots').mockRejectedValueOnce(new Error('disk full'));
+    revokeTeamAuthorizations.mockClear();
+    onTerminal.mockClear();
+
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'fresh-plan'))
+      .resolves.toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2 } });
+    expect(revokeTeamAuthorizations).not.toHaveBeenCalled();
+    expect(onTerminal).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('execution-1'), expect.any(Error));
+    await expect(store.get(failed.id)).resolves.toMatchObject({ state: 'RUNNING' });
+  }));
+
+  it('does not mask real admission errors as availability unknown when a capability source failed', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, {
+      launchTeam,
+      admissionInput: () => ({
+        workUnits: [{ id: 'build', title: 'Build', task: 'Build', dependencies: [], files: ['a.ts'], verification: ['t'], requires: { skills: ['review'] } }],
+        requireCompletePlan: true, slotCount: 3, maxSlots: 1, initialTasks: ['work'], now: 10,
+        inventory: { version: 1 as const, observedAt: 10, maxAgeMs: 100, skills: [], mcpServers: [], models: [], providers: [], sourceStatuses: [{ source: 'skills' as const, status: 'failed' as const }] }
+      })
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toMatchObject({ ok: false, code: 'ADMISSION_FAILED', message: '3 slots exceed capacity 1' });
+    expect(launchTeam).not.toHaveBeenCalled();
+  }));
+
+  it('keeps retry public surface at four parameters', () => {
+    expect(ExecutionService.prototype.retry.length).toBe(4);
+  });
+
+  it('bounds stopForPlanCorrection stale retries and handles vanished and terminal records', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    if (!started.ok) throw new Error(started.message);
+
+    // Persistently stale writes terminate instead of recursing forever.
+    const stale = vi.spyOn(store, 'stopForPlanCorrection').mockRejectedValue(new Error('stale execution state'));
+    await expect(service.stopForPlanCorrection(started.value.id)).rejects.toThrow('stale execution state');
+    expect(stale).toHaveBeenCalledTimes(5);
+
+    // Non-stale errors surface immediately.
+    stale.mockReset().mockRejectedValueOnce(new Error('boom'));
+    await expect(service.stopForPlanCorrection(started.value.id)).rejects.toThrow('boom');
+
+    // Record vanishes between the stale write and the re-read.
+    const get = vi.spyOn(store, 'get');
+    stale.mockReset().mockRejectedValueOnce(new Error('stale execution state'));
+    get.mockResolvedValueOnce(await store.get(started.value.id)).mockResolvedValueOnce(undefined);
+    await expect(service.stopForPlanCorrection(started.value.id)).resolves.toBeUndefined();
+
+    // A concurrent terminal transition wins: returned as-is without cancellation.
+    const cancelTeamLaunch = vi.fn();
+    const terminalService = new SquadExecutionService(deps(filePath, { store, cancelTeamLaunch }));
+    stale.mockReset().mockRejectedValueOnce(new Error('stale execution state'));
+    const current = await store.get(started.value.id);
+    get.mockReset();
+    get.mockResolvedValueOnce(current).mockResolvedValueOnce({ ...current!, state: 'FAILED' });
+    await expect(terminalService.stopForPlanCorrection(started.value.id)).resolves.toMatchObject({ state: 'FAILED' });
+    expect(cancelTeamLaunch).not.toHaveBeenCalled();
+    get.mockReset();
+    await expect(terminalService.stopForPlanCorrection('missing')).resolves.toBeUndefined();
+    get.mockResolvedValueOnce({ ...current!, state: 'COMPLETED' });
+    await expect(terminalService.stopForPlanCorrection(started.value.id)).resolves.toMatchObject({ state: 'COMPLETED' });
+  }));
+
   it('uses immutable audit owner for retries requested by an effective owner', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let tokenNumber = 0;

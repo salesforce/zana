@@ -53,5 +53,6 @@ describe('execution database', () => {
     expect(deleteExecutionRecord(database, 'execution-1')).toBe(true);
     expect(deleteExecutionRecord(database, 'execution-1')).toBe(false);
     expect(getExecutionRecord(database, 'execution-1')).toBeNull();
+    expect(() => putExecutionRecord(database!, 'execution-2', undefined as never)).toThrow('execution record value must be JSON serializable');
   });
 });

@@ -80,6 +80,23 @@ function digestOfPlanText(text: string): string | undefined {
 }
 
 /**
+ * True when the stored definition text already is the approved corrected plan.
+ * A previous approval can write back and then fail to persist its own approval;
+ * the re-approval must succeed instead of tripping the edit fence on its own write.
+ */
+async function alreadyApplied(
+  deps: Pick<ScheduledPromptDeps, 'readCorrectedPlanText'>,
+  ctx: CoordinatorHandoffContext,
+  approvedUnits: readonly ExecutionWorkUnitInput[],
+  current: string | undefined
+): Promise<boolean> {
+  const stored = current?.trim();
+  if (!stored) return false;
+  const corrected = (await deps.readCorrectedPlanText(ctx.projectRoot, ctx.executionId))?.trim();
+  return corrected === stored && digestOfPlanText(corrected) === launchDigest(approvedUnits as ExecutionWorkUnitInput[]);
+}
+
+/**
  * Persist an approved corrected plan back into the recurring schedule. No-op for
  * non-scheduled executions; throws (so approval is rejected) when the execution
  * is gone, the schedule cannot safely take the correction, the schedule prompt
@@ -103,6 +120,7 @@ export async function updateScheduledPromptFromCorrection(
   // not overwrite their edit.
   const launched = execution.request?.objective?.trim();
   if (!launched || schedule.prompt?.trim() !== launched) {
+    if (await alreadyApplied(deps, ctx, approvedUnits, schedule.prompt)) return;
     throw new InboxActionOperatorError(SCHEDULE_EDITED);
   }
   const prompt = await deps.readCorrectedPlanText(ctx.projectRoot, ctx.executionId);
@@ -133,6 +151,7 @@ async function updateGoalStatementFromCorrection(
   // different statement now means the user edited the goal during review.
   const launched = execution.request?.objective?.trim();
   if (!launched || goal.statement?.trim() !== launched) {
+    if (await alreadyApplied(deps, ctx, approvedUnits, goal.statement)) return;
     throw new InboxActionOperatorError(GOAL_EDITED);
   }
   const plan = await deps.readCorrectedPlanText(ctx.projectRoot, ctx.executionId);

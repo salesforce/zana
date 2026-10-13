@@ -15,7 +15,7 @@ function create() {
   const readCorrectedPlan = vi.fn(async () => source);
   const records = new Map();
   const store = {
-    get: vi.fn(async (executionId: string) => records.get(executionId)),
+    get: vi.fn(async (executionId: string) => { const found = records.get(executionId); return found ? structuredClone(found) : undefined; }),
     listCancelled: vi.fn(async () => [...records.values()].filter((record) => record.status === 'cancelled')),
     put: vi.fn(async (record) => {
       const existing = records.get(record.executionId);
@@ -55,6 +55,118 @@ it('does not resume when scheduled prompt persistence fails', async () => {
   await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('reject');
 
   expect(resume).not.toHaveBeenCalled();
+});
+
+it('re-approves after the approved-state persist throws once (write-back already applied)', async () => {
+  const { service, bindInboxAction, store, updateScheduledPrompt, resume } = create();
+  await service.begin(ctx.executionId, 'invalid source plan', false);
+  await service.review(ctx, source);
+  store.put.mockRejectedValueOnce(new Error('disk full'));
+
+  await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).rejects.toThrow('disk full');
+  expect(resume).not.toHaveBeenCalled();
+
+  await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('approve');
+  expect(updateScheduledPrompt).toHaveBeenCalledTimes(2);
+  expect(resume).toHaveBeenCalledOnce();
+});
+
+it('surfaces a definition edit conflict as a user-visible rejection reason and logs the write-back failure', async () => {
+  const { service, bindInboxAction, updateScheduledPrompt, resume } = create();
+  const logWarning = vi.fn();
+  (service as unknown as { deps: { logWarning: typeof logWarning } }).deps.logWarning = logWarning;
+  const conflict = Object.assign(new Error('schedule s-1 prompt was edited since this run launched'), { code: 'DEFINITION_CONFLICT' });
+  updateScheduledPrompt.mockRejectedValueOnce(conflict);
+  await service.begin(ctx.executionId, 'invalid source plan', false);
+  await service.review(ctx, source);
+  const offer = latestOffer(bindInboxAction);
+
+  await expect(runPlanCorrectionHostAction(service, JSON.stringify(offer), 'approve'))
+    .rejects.toThrow('rejected or superseded: schedule s-1 prompt was edited since this run launched');
+  expect(logWarning).toHaveBeenCalledWith(ctx.executionId, expect.stringContaining('write-back failed'), conflict);
+  expect(resume).not.toHaveBeenCalled();
+});
+
+it('uses a generic message for a conflict-shaped value that is not an Error', async () => {
+  const { service, bindInboxAction, updateScheduledPrompt } = create();
+  updateScheduledPrompt.mockRejectedValueOnce({ code: 'DEFINITION_CONFLICT' });
+  await service.begin(ctx.executionId, 'invalid source plan', false);
+  await service.review(ctx, source);
+  await expect(runPlanCorrectionHostAction(service, JSON.stringify(latestOffer(bindInboxAction)), 'approve'))
+    .rejects.toThrow('edited since this run launched');
+});
+
+it('keeps incidental write-back failures generic', async () => {
+  const { service, bindInboxAction, updateScheduledPrompt } = create();
+  updateScheduledPrompt.mockRejectedValueOnce(new Error('EACCES /secret/path'));
+  await service.begin(ctx.executionId, 'invalid source plan', false);
+  await service.review(ctx, source);
+  await expect(runPlanCorrectionHostAction(service, JSON.stringify(latestOffer(bindInboxAction)), 'approve'))
+    .rejects.toThrow(/^plan correction action was rejected or superseded$/);
+});
+
+it('persists the request-changes state before nudging the coordinator', async () => {
+  const { service, bindInboxAction, store, wakeCoordinator } = create();
+  await service.begin(ctx.executionId, 'bad plan', false);
+  await service.review(ctx, source);
+  const order: string[] = [];
+  const put = store.put.getMockImplementation()!;
+  store.put.mockImplementation(async (record) => { order.push('put'); return put(record); });
+  wakeCoordinator.mockImplementation(async () => { order.push('nudge'); });
+
+  await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+
+  expect(order).toEqual(['put', 'nudge']);
+});
+
+it('does not nudge when the request-changes persist loses to a cancellation', async () => {
+  const { service, bindInboxAction, store, wakeCoordinator, stopExecution } = create();
+  await service.begin(ctx.executionId, 'bad plan', false);
+  await service.review(ctx, source);
+  store.put.mockResolvedValueOnce({ status: 'cancelled' } as never);
+
+  await expect(service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction))).resolves.toBe('reject');
+  expect(wakeCoordinator).not.toHaveBeenCalled();
+  expect(stopExecution).toHaveBeenCalled();
+});
+
+it('logs an unreadable source plan and still instructs the coordinator', async () => {
+  const { service, bindInboxAction, readSourcePlan, wakeCoordinator } = create();
+  const logWarning = vi.fn();
+  (service as unknown as { deps: { logWarning: typeof logWarning } }).deps.logWarning = logWarning;
+  const failure = new Error('ENOENT');
+  readSourcePlan.mockRejectedValueOnce(failure);
+  await service.begin(ctx.executionId, 'bad plan', false);
+  await service.review(ctx, source);
+
+  await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+
+  expect(logWarning).toHaveBeenCalledWith(ctx.executionId, expect.stringContaining('supplied plan'), failure);
+  expect(wakeCoordinator).toHaveBeenCalled();
+});
+
+it('forgets published offer ids once the offer is consumed or superseded', async () => {
+  const { service, bindInboxAction, readCorrectedPlan } = create();
+  const published = () => (service as unknown as { publishedOfferIds: Set<string> }).publishedOfferIds;
+  await service.begin(ctx.executionId, 'bad plan', false);
+  await service.review(ctx, source);
+  const first = latestOffer(bindInboxAction);
+  expect(published().has(first.offerId)).toBe(true);
+
+  // A rejected response leaves the live offer published.
+  await expect(service.respond(ctx.executionId, 'approve', { ...first, digest: 'stale' })).resolves.toBe('reject');
+  expect(published().has(first.offerId)).toBe(true);
+
+  await service.respond(ctx.executionId, 'changes', first);
+  expect(published().size).toBe(0);
+
+  // A new request supersedes the previous offer id.
+  readCorrectedPlan.mockResolvedValue({ ...source, units: [{ ...source.units[0], task: 'v2' }] });
+  await service.review(ctx, source);
+  const second = latestOffer(bindInboxAction);
+  expect(published()).toEqual(new Set([second.offerId]));
+  await service.respond(ctx.executionId, 'cancel', second);
+  expect(published().size).toBe(0);
 });
 
 function latestOffer(bindInboxAction: ReturnType<typeof vi.fn>) {

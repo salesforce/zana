@@ -217,24 +217,24 @@ describe('execution SQLite store routing', () => {
 
   it('persists artifact records across SQLite reopen', async () => {
     const { filePath, databasePath } = setup();
-    const store = createExecutionArtifactStore({ filePath, database: reopen(databasePath), id: () => 'artifact-1', now: () => 1 });
+    const store = createExecutionArtifactStore({ filePath, executionFilePath: filePath, database: reopen(databasePath), id: () => 'artifact-1', now: () => 1 });
     await store.put({ executionId: 'execution-1', attempt: 1, projectId: 'project-1', name: 'result.json', mediaType: 'application/json', content: '{"ok":true}' });
 
-    const restarted = createExecutionArtifactStore({ filePath, database: reopen(databasePath) });
+    const restarted = createExecutionArtifactStore({ filePath, executionFilePath: filePath, database: reopen(databasePath) });
     await expect(restarted.get('execution-1', 'project-1', 'result.json')).resolves.toMatchObject({ id: 'artifact-1', content: '{"ok":true}' });
   });
 
   it('persists supported aggregate artifact capacity without a single-row SQLite limit', async () => {
     const { filePath, databasePath } = setup();
     let id = 0;
-    const store = createExecutionArtifactStore({ filePath, database: reopen(databasePath), id: () => `artifact-${++id}`, now: () => id });
+    const store = createExecutionArtifactStore({ filePath, executionFilePath: filePath, database: reopen(databasePath), id: () => `artifact-${++id}`, now: () => id });
     const content = 'x'.repeat(64 * 1024);
     for (let index = 0; index < 65; index += 1) {
       await expect(store.put({ executionId: 'execution-1', attempt: 1, projectId: 'project-1', name: `artifact-${index}.txt`, mediaType: 'text/plain', content }))
         .resolves.toMatchObject({ outcome: 'stored' });
     }
 
-    const restarted = createExecutionArtifactStore({ filePath, database: reopen(databasePath) });
+    const restarted = createExecutionArtifactStore({ filePath, executionFilePath: filePath, database: reopen(databasePath) });
     await expect(restarted.list('execution-1', 'project-1')).resolves.toHaveLength(65);
     await expect(restarted.get('execution-1', 'project-1', 'artifact-64.txt')).resolves.toMatchObject({ content });
   });
@@ -248,7 +248,7 @@ describe('execution SQLite store routing', () => {
       statements.push(sql);
       return prepare(sql);
     };
-    const store = createExecutionArtifactStore({ filePath, database: sqlite, id: (() => `artifact-${statements.length}`), now: () => 1 });
+    const store = createExecutionArtifactStore({ filePath, executionFilePath: filePath, database: sqlite, id: (() => `artifact-${statements.length}`), now: () => 1 });
     await store.put({ executionId: 'execution-1', attempt: 1, projectId: 'project-1', name: 'one.txt', mediaType: 'text/plain', content: 'one' });
     await store.put({ executionId: 'execution-2', attempt: 1, projectId: 'project-1', name: 'two.txt', mediaType: 'text/plain', content: 'two' });
     await store.put({ executionId: 'execution-1', attempt: 1, projectId: 'project-2', name: 'three.txt', mediaType: 'text/plain', content: 'three' });
@@ -271,6 +271,7 @@ describe('execution SQLite store routing', () => {
     let id = 0;
     const store = createExecutionArtifactStore({
       filePath,
+      executionFilePath: filePath,
       database: sqlite,
       id: () => `artifact-${++id}`,
       now: () => id,
@@ -301,17 +302,17 @@ describe('execution SQLite store routing', () => {
       }]
     });
 
-    const store = createExecutionArtifactStore({ filePath, database: sqlite });
+    const store = createExecutionArtifactStore({ filePath, executionFilePath: filePath, database: sqlite });
     await expect(store.get('execution-1', 'project-1', 'legacy.txt')).resolves.toMatchObject({ id: 'legacy-artifact', content: 'legacy' });
     expect(sqlite.sqlite.prepare('SELECT id FROM execution_records WHERE id = ?').get('execution-artifact-store')).toBeUndefined();
   });
 
   it('persists handoff grants across SQLite reopen and consumes them once', async () => {
     const { filePath, databasePath } = setup();
-    const store = createExecutionHandoffStore({ filePath, database: reopen(databasePath), now: () => 10, id: () => 'handoff-1', token: () => 'handoff-token' });
+    const store = createExecutionHandoffStore({ filePath, executionFilePath: filePath, database: reopen(databasePath), now: () => 10, id: () => 'handoff-1', token: () => 'handoff-token' });
     await store.mint({ sourceOwnerSessionId: 'source', targetSessionId: 'target', projectId: 'project-1', executionId: 'execution-1', operations: [EXECUTION_HANDOFF_OPERATION], expiresAt: 20 });
 
-    const restarted = createExecutionHandoffStore({ filePath, database: reopen(databasePath), now: () => 10 });
+    const restarted = createExecutionHandoffStore({ filePath, executionFilePath: filePath, database: reopen(databasePath), now: () => 10 });
     await expect(restarted.consume({ token: 'handoff-token', targetSessionId: 'target', projectId: 'project-1', executionId: 'execution-1', operation: EXECUTION_HANDOFF_OPERATION }))
       .resolves.toMatchObject({ id: 'handoff-1', sourceOwnerSessionId: 'source' });
     await expect(restarted.consume({ token: 'handoff-token', targetSessionId: 'target', projectId: 'project-1', executionId: 'execution-1', operation: EXECUTION_HANDOFF_OPERATION }))
@@ -320,13 +321,22 @@ describe('execution SQLite store routing', () => {
 
   it('persists resume grants across SQLite reopen without storing raw tokens', async () => {
     const { filePath, databasePath } = setup();
-    const store = createResumeGrantStore({ filePath, database: reopen(databasePath), now: () => 10, token: () => 'resume-token' });
+    const store = createResumeGrantStore({ filePath, executionFilePath: filePath, database: reopen(databasePath), now: () => 10, token: () => 'resume-token' });
     await store.mint({ executionId: 'execution-1', projectId: 'project-1', callerPrincipalId: 'owner', expiresAt: 20 });
 
     const state = readExecutionSqliteState<{ grants: Array<{ tokenDigest: string }> }>(database!, 'execution-resume-grant-store')!;
     expect(JSON.stringify(state.value)).not.toContain('resume-token');
-    const restarted = createResumeGrantStore({ filePath, database: reopen(databasePath), now: () => 10 });
+    const restarted = createResumeGrantStore({ filePath, executionFilePath: filePath, database: reopen(databasePath), now: () => 10 });
     await expect(restarted.consume({ token: 'resume-token', executionId: 'execution-1', projectId: 'project-1', effectiveOwnerPrincipalId: 'replacement' }))
       .resolves.toMatchObject({ outcome: 'consumed', grant: { boundOwnerPrincipalId: 'replacement' } });
+  });
+
+  it('rejects SQLite-backed side stores that omit the execution ledger path', () => {
+    const { filePath, databasePath } = setup();
+    const sqlite = reopen(databasePath);
+    const bad = { filePath, database: sqlite } as never;
+    expect(() => createExecutionArtifactStore(bad)).toThrow('requires executionFilePath');
+    expect(() => createExecutionHandoffStore(bad)).toThrow('requires executionFilePath');
+    expect(() => createResumeGrantStore(bad)).toThrow('requires executionFilePath');
   });
 });

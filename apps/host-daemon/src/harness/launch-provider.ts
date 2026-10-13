@@ -108,6 +108,12 @@ export interface RemoteCommandInput {
   extraArgs?: string[];
   harnessRouting?: HarnessModelRoutingV1;
   remote: ProjectRemote;
+  /**
+   * Main-resolved launch cwd (the same path preflight probed). Keys the
+   * launch-scoped live model inventory ({@link launchScopedProvider}); absent ⇒
+   * the static catalog snapshot.
+   */
+  cwd?: string;
   persona?: Persona;
   /** Registration-rendered native lifecycle contribution for remote argv/env. */
   lifecycle?: {
@@ -273,11 +279,12 @@ export interface LaunchProvider {
    */
   discoverModelTargets?(context: { cwd: string; config: AppConfig }): Promise<readonly string[] | undefined>;
 
-  /** Apply a main-authorized live inventory so portable model levels map to its current ids. */
-  applyDiscoveredModelTargets?(targets: readonly string[]): void;
-
-  /** Discard a prior live inventory when the current launch cannot refresh it. */
-  clearDiscoveredModelTargets?(): void;
+  /**
+   * Pure: the adapter metadata a launch sees when `targets` is the live model
+   * inventory of ITS project. Never mutates the (process-wide, shared) provider —
+   * callers obtain a launch-scoped view through {@link withLiveModelTargets}.
+   */
+  liveModelAdapter?(targets: readonly string[]): TrustedHarnessAdapter;
 
   /** Dynamic role catalogs are revalidated in main before launch. */
   acceptsDynamicRoleTargets?: boolean;
@@ -580,4 +587,79 @@ export interface LaunchProvider {
    * finalize time. The returned string is surfaced verbatim in the terminal pane.
    */
   explainUnexpectedExit?(profile: LaunchProfileId, exitCode: number, recentText: string): string | undefined;
+}
+
+/**
+ * A launch-scoped VIEW of a shared provider whose adapter metadata reflects the
+ * live model inventory of ONE launch's project. Providers are process-wide
+ * singletons (see `registry.ts`), so a live inventory must never be written onto
+ * them: concurrent launches for different projects (or one whose probe failed)
+ * would otherwise resolve portable levels through another project's inventory.
+ * The view inherits every method from the shared instance (prototype chain) and
+ * overrides only `adapter`. No inventory, an empty one, or a provider without
+ * live-model support returns the shared provider unchanged.
+ */
+export function withLiveModelTargets<P extends LaunchProvider>(provider: P, targets: readonly string[] | undefined): P {
+  if (!targets?.length || !provider.liveModelAdapter) return provider;
+  const adapter = provider.liveModelAdapter(targets);
+  return Object.create(provider, {
+    adapter: { value: adapter, enumerable: true, configurable: true }
+  }) as P;
+}
+
+const LIVE_MODEL_INVENTORY_TTL_MS = 5 * 60_000;
+const LIVE_MODEL_INVENTORY_MAX_ENTRIES = 64;
+const liveModelInventory = new Map<string, { targets: readonly string[]; expiresAt: number }>();
+const liveModelInventoryKey = (adapterId: string, cwd: string) => JSON.stringify([adapterId, cwd]);
+
+/**
+ * Record the outcome of the live model probe main authorized for a launch in
+ * `cwd`, so the spawn of that same launch resolves model levels from the same
+ * inventory instead of re-reading shared provider state. Keyed per (adapter,
+ * project cwd): one project's probe can never change another project's mapping,
+ * and an unavailable probe (`undefined`/empty) discards only its own key, so the
+ * spawn degrades to the static snapshot exactly like its preflight did. Bounded
+ * (oldest evicted) and short-lived.
+ */
+export function recordLiveModelTargets(adapterId: string, cwd: string, targets: readonly string[] | undefined): void {
+  const key = liveModelInventoryKey(adapterId, cwd);
+  liveModelInventory.delete(key);
+  if (!targets?.length) return;
+  liveModelInventory.set(key, { targets: [...targets], expiresAt: Date.now() + LIVE_MODEL_INVENTORY_TTL_MS });
+  while (liveModelInventory.size > LIVE_MODEL_INVENTORY_MAX_ENTRIES) {
+    liveModelInventory.delete(liveModelInventory.keys().next().value!);
+  }
+}
+
+/** The unexpired live model inventory main recorded for (adapter, cwd), if any. */
+export function liveModelTargetsFor(adapterId: string, cwd: string): readonly string[] | undefined {
+  const key = liveModelInventoryKey(adapterId, cwd);
+  const entry = liveModelInventory.get(key);
+  if (!entry) return undefined;
+  if (entry.expiresAt <= Date.now()) {
+    liveModelInventory.delete(key);
+    // The launch's preflight inventory aged out before its spawn: model levels
+    // fall back to the static snapshot mapping. Main re-probes in the pre-commit
+    // revalidation so this is rare; say so loudly rather than drift silently.
+    console.warn(`[launch] live model inventory for ${adapterId} in ${cwd} expired before spawn; falling back to the static model mapping`);
+    return undefined;
+  }
+  return entry.targets;
+}
+
+/** Drop recorded inventories (one adapter, or all) — e.g. after a model-catalog invalidation. */
+export function clearLiveModelTargets(adapterId?: string): void {
+  if (adapterId === undefined) {
+    liveModelInventory.clear();
+    return;
+  }
+  for (const key of [...liveModelInventory.keys()]) {
+    if ((JSON.parse(key) as [string, string])[0] === adapterId) liveModelInventory.delete(key);
+  }
+}
+
+/** The launch-scoped provider for a spawn in `cwd` (see {@link withLiveModelTargets}). */
+export function launchScopedProvider<P extends LaunchProvider>(provider: P, cwd: string | undefined): P {
+  if (!cwd || !provider.liveModelAdapter) return provider;
+  return withLiveModelTargets(provider, liveModelTargetsFor(provider.adapter.descriptor.id, cwd));
 }

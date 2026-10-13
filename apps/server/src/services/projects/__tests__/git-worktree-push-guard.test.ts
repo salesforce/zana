@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -23,10 +23,17 @@ import {
 const execFileP = promisify(execFile);
 const BLOCKED = 'Zana blocked push from managed squad worktree';
 
+const savedGitEnv: Record<string, string | undefined> = {};
 beforeAll(() => {
   for (const key of Object.keys(process.env)) {
-    if (key.startsWith('GIT_')) delete process.env[key];
+    if (key.startsWith('GIT_')) {
+      savedGitEnv[key] = process.env[key];
+      delete process.env[key];
+    }
   }
+});
+afterAll(() => {
+  for (const [key, value] of Object.entries(savedGitEnv)) process.env[key] = value;
 });
 
 function cleanGitEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -122,7 +129,7 @@ describe('squad worktree push guard against a real git remote', () => {
     expect(stored).not.toContain(token);
   });
 
-  it('rejects a forged or replayed token value that was never issued', async () => {
+  it('accepts any non-empty env value at the shell guard; in-process consume rejects unissued tokens (accident guard, not a security boundary)', async () => {
     const wt = await guardedWorktree();
     expect(consumeInstructWorktreePushAuthorization('not-issued')).toBeUndefined();
     // The shell guard is only a safety rail: any non-empty env value passes it.

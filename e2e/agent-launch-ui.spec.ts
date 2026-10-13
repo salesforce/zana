@@ -174,6 +174,13 @@ async function probeHarness(window: Page, family: string, statusTitle: RegExp) {
   await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
   const settings = window.locator(`#settings-anchor-harness-${family}`);
   await expect(settings).not.toHaveClass(/opener-row--off/);
+  // The renderer store probes harnesses once at boot and the tab reuses that result
+  // (#322), so it can predate the fake-binary config.set above and show the host's
+  // real CLI. Check status is the explicit re-probe against the configured binaries.
+  const check = window.getByRole('button', { name: /^(Check status|Checking…)$/ });
+  await expect(check).toBeEnabled({ timeout: 20_000 });
+  await check.click();
+  await expect(check).toHaveText('Check status', { timeout: 30_000 });
   // Status rows render either a fake CLI version or a provider capability marker.
   // Target the first healthy status rather than a login chip.
   const ok = settings.locator('.opener-row-status--ok').first();

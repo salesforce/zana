@@ -367,6 +367,24 @@ describe('Team admission', () => {
     expect(result.checks.filter((check) => check.subject === 'build').flatMap((check) => check.unavailable ?? [])).toEqual([]);
   });
 
+  it('reports availability unknown only for failed sources a requirement depends on', () => {
+    const base = { slotCount: 1, maxSlots: 1, initialTasks: ['work'], now: 10 };
+    const inventory = (failed: ('skills' | 'mcpServers' | 'models' | 'providers')[]) => ({
+      version: 1 as const, observedAt: 10, maxAgeMs: 100, skills: [], mcpServers: [], models: [], providers: [],
+      sourceStatuses: failed.map((source) => ({ source, status: 'failed' as const }))
+    });
+    // No requirement depends on a failed source: not an availability problem.
+    expect(evaluateTeamAdmission({ ...base, inventory: inventory(['skills', 'mcpServers']) }).availabilityUnknown).toBeUndefined();
+    // Failed model/provider reads never map to skill/MCP availability.
+    expect(evaluateTeamAdmission({ ...base, requiredSkills: ['review'], inventory: { ...inventory(['models', 'providers']), skills: [{ name: 'review', available: true }] } }).availabilityUnknown).toBeUndefined();
+    // Only the depended-on source is reported.
+    expect(evaluateTeamAdmission({ ...base, requiredSkills: ['review'], inventory: inventory(['skills', 'mcpServers']) }).availabilityUnknown)
+      .toEqual({ failedSources: ['skills'] });
+    expect(evaluateTeamAdmission({
+      ...base, workUnits: [{ ...validPlan[0], requires: { mcpServers: ['repo'] } }], requireCompletePlan: true, inventory: inventory(['skills', 'mcpServers'])
+    }).availabilityUnknown).toEqual({ failedSources: ['mcpServers'] });
+  });
+
   it('keeps source failure fallback when diagnostics throw', async () => {
     await expect(collectTeamAdmissionInventory({ requiredSkills: ['skill'] }, {
       listSkills: async () => { throw new Error('offline'); },

@@ -12,6 +12,9 @@
  * The coordinator is the deterministic fake from `makeJobTeamCoordinatorBinary`
  * (`plan-correction` / `plan-correction-silent`); no model is called.
  *
+ * "Plan provided in goal" with prose that contains no plan steps at all takes the
+ * same parked path (never a silent coordinator repair).
+ *
  * Not covered here on purpose: "a valid provided plan bypasses correction" is
  * already asserted by job-team-launch-ui.spec.ts (provided portable plan seeds
  * four units and completes with no correction card).
@@ -76,15 +79,16 @@ async function setup(window: Page, scenario: 'plan-correction' | 'plan-correctio
   return { projectId, projectDir, projectName: basename(projectDir), agent };
 }
 
-async function launchProvidedPlan(window: Page, s: Setup): Promise<string> {
+/** `goal` defaults to a path to the defective plan file; pass prose to exercise the no-plan-steps case. */
+async function launchProvidedPlan(window: Page, s: Setup, goal = `implement ${join(s.projectDir, 'plan.md')}`): Promise<string> {
   await window.getByTestId('nav-agents').click();
   await window.getByTestId('agents-board-new-thread').first().click();
   const modal = window.getByTestId('launch-modal');
   await expect(modal).toBeVisible();
   await modal.locator('.launch-segmented').getByRole('button', { name: 'Squad', exact: true }).click();
-  const goal = modal.getByTestId('team-command-input');
-  await goal.click();
-  await goal.fill(`implement ${join(s.projectDir, 'plan.md')}`);
+  const goalInput = modal.getByTestId('team-command-input');
+  await goalInput.click();
+  await goalInput.fill(goal);
   const teamPicker = modal.getByLabel('Squad', { exact: true });
   await teamPicker.click();
   await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'E2E Job Team' }).click();
@@ -206,6 +210,35 @@ test('coordinator that never writes the corrected plan stalls, and Cancel stops 
     await expect.poll(() => readExecution(window, s!.projectId, executionId), { timeout: 60_000, intervals: [1_000] })
       .toMatchObject({ state: 'STOPPED', timeoutReason: 'plan-correction-cancelled' });
     expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${s ? coordinatorLog(s.projectDir) : ''}`);
+  } finally {
+    await teardown(window, s);
+  }
+});
+
+test('provided goal that is prose with no plan steps parks for correction, is corrected, approved, and completes', async ({ app }) => {
+  const { window } = app;
+  let s: Setup | null = null;
+  try {
+    s = await setup(window, 'plan-correction');
+    const executionId = await launchProvidedPlan(window, s, 'Write the output file for this project.');
+
+    // Parked: no coordinator-driven repair, nothing registered or dispatched.
+    await openCorrectionCard(window, 'No valid revised plan is ready to review');
+    expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
+    expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
+    expect(coordinatorLog(s.projectDir)).not.toContain('wrote corrected plan');
+
+    await choose(window, 'Request changes');
+    await openCorrectionCard(window, 'Review the proposed corrected plan');
+    expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
+    await choose(window, 'Approve');
+
+    await expect.poll(async () => (await readExecution(window, s!.projectId, executionId))?.state, {
+      timeout: 60_000, intervals: [1_000]
+    }).toBe('COMPLETED');
+    expect(readFileSync(join(s.projectDir, 'output.txt'), 'utf8')).toContain('output ready');
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n${s ? coordinatorLog(s.projectDir) : ''}`);
   } finally {

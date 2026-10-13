@@ -115,6 +115,21 @@ describe('updateScheduledPromptFromCorrection (stubbed deps)', () => {
     expect(d.updateSchedule).not.toHaveBeenCalled();
   });
 
+  it('is an idempotent no-op when the schedule already holds the approved corrected plan (retry after a lost approval persist)', async () => {
+    const d = deps({ getSchedule: vi.fn(() => ({ projectId: 'p1', kind: 'team', prompt: `${VALID_PLAN}\n` })) });
+    await updateScheduledPromptFromCorrection(d, ctx, APPROVED);
+    expect(d.updateSchedule).not.toHaveBeenCalled();
+  });
+
+  it('does not treat an edited prompt as applied when the corrected artifact is unavailable or differs', async () => {
+    const edited = { getSchedule: vi.fn(() => ({ projectId: 'p1', kind: 'team', prompt: VALID_PLAN })) };
+    const missing = deps({ ...edited, readCorrectedPlanText: vi.fn(async () => undefined) });
+    await expect(updateScheduledPromptFromCorrection(missing, ctx, APPROVED)).rejects.toThrow('edited since this run launched');
+    const differs = deps({ ...edited, readCorrectedPlanText: vi.fn(async () => VALID_PLAN.replace('Create output.', 'Create more.')) });
+    await expect(updateScheduledPromptFromCorrection(differs, ctx, APPROVED)).rejects.toThrow('edited since this run launched');
+    expect(differs.updateSchedule).not.toHaveBeenCalled();
+  });
+
   it('fence compares trimmed text (launch objective is trimmed)', async () => {
     const d = deps({ getSchedule: vi.fn(() => ({ projectId: 'p1', kind: 'team', prompt: `  ${OBJECTIVE}\n` })) });
     await updateScheduledPromptFromCorrection(d, ctx, APPROVED);
@@ -232,6 +247,12 @@ describe('updateScheduledPromptFromCorrection for goal Squads', () => {
     const err = await updateScheduledPromptFromCorrection(d, ctx, APPROVED).catch((e) => e);
     expect(err).toBeInstanceOf(InboxActionOperatorError);
     expect(err.message).toContain('edited since this run launched');
+    expect(d.updateGoal).not.toHaveBeenCalled();
+  });
+
+  it('is an idempotent no-op when the goal already holds the approved corrected plan', async () => {
+    const d = deps({ getGoal: vi.fn(() => ({ projectId: 'p1', assignment: { kind: 'team' }, planSource: 'provided', statement: VALID_PLAN })) });
+    await updateScheduledPromptFromCorrection(d, ctx, APPROVED);
     expect(d.updateGoal).not.toHaveBeenCalled();
   });
 
