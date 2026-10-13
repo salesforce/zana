@@ -110,7 +110,11 @@ it('falls back to every pushed object when a conservative selection omits oids',
   expect(verify).toHaveBeenCalledWith(expect.objectContaining({ oid: second }));
 });
 
-it('runs fast verification through snapshot with exact changed and guard commands', () => {
+it.each([
+  ['plugins/slack-bridge-2ff2/src/index.ts'],
+  ['package.json'],
+  ['apps/server/src/service.ts']
+])('prepares runtime assets for change-aware tests selected by %s', (path) => {
   const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-'));
   const snapshots: string[] = [];
   const run = vi.fn((command, args) => {
@@ -119,7 +123,7 @@ it('runs fast verification through snapshot with exact changed and guard command
     return { status: 0 };
   });
   try {
-    runFastVerification({ oid: OID, base: BASE, paths: ['plugins/slack-bridge-2ff2/src/index.ts'], root, run, log: vi.fn() });
+    runFastVerification({ oid: OID, base: BASE, paths: [path], root, run, log: vi.fn() });
     expect(run.mock.calls.map(([command, args]) => [command, args])).toEqual([
       ['git', ['clone', '--no-local', '--no-checkout', root, snapshots[0]]],
       ['git', ['fetch', '--no-tags', root, OID]],
@@ -136,9 +140,10 @@ it('runs fast verification through snapshot with exact changed and guard command
 
 it.each([
   ['install', 4, 'snapshot dependency install failed'],
-  ['typecheck', 5, 'verification failed: pnpm run typecheck'],
-  ['changed vitest', 6, 'verification failed: vitest --changed'],
-  ['guard discovery', 7, 'could not list source-text guard tests'],
+  ['runtime assets', 5, 'snapshot Slack runtime asset preparation failed'],
+  ['typecheck', 6, 'verification failed: pnpm run typecheck'],
+  ['changed vitest', 7, 'verification failed: vitest --changed'],
+  ['guard discovery', 8, 'could not list source-text guard tests'],
 ])('fast verification fails when %s fails', (_stage, failedCall, message) => {
   const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-failure-'));
   let calls = 0;

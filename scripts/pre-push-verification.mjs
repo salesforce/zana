@@ -191,11 +191,11 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
     log('pre-push: fast (est. install)');
     const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
     if (install.status !== 0) throw new Error('snapshot dependency install failed');
-    if (paths.some((path) => path.startsWith('plugins/slack-bridge-2ff2/'))) {
-      log('pre-push: fast (est. Slack runtime assets)');
-      const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
-      if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
-    }
+    // Root dependency/config changes can select Slack tests indirectly. Every
+    // isolated snapshot needs their generated assets before change-aware tests.
+    log('pre-push: fast (est. Slack runtime assets)');
+    const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
+    if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
     log('pre-push: fast (est. typecheck)');
     const typecheck = run('pnpm', ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' });
     if (typecheck.status !== 0) throw new Error('verification failed: pnpm run typecheck');
