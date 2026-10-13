@@ -15768,6 +15768,10 @@ body.resizing-col .explorer-resizer::after {
   gap: 8px;
 }
 
+.inbox-reply > .inbox-reply-open-details {
+  align-self: flex-start;
+}
+
 .inbox-reply-input {
   width: 100%;
   resize: vertical;

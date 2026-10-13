@@ -131,6 +131,41 @@ function parseRequires(
   return { ok: true, requires: requires.skills || requires.mcpServers ? requires : undefined };
 }
 
+const KNOWN_LABELS = [
+  'depends on', 'execution class', 'mode', 'read scope', 'write scope', 'excludes', 'work',
+  'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires'
+] as const;
+
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * The known label a near-miss spelling was probably meant to be. A misspelled
+ * gating label ("Require", "Depend on", "Write scopes") would otherwise be
+ * ignored and silently drop the requirement, dependency or scope it carried.
+ * Only close spellings match, so unrelated labels ("Purpose / why", "Notes")
+ * stay free-form. Short labels match only singular/plural variants.
+ */
+function nearMissLabel(key: string): string | undefined {
+  const normalized = key.replace(/\s+/g, ' ').trim();
+  if ((KNOWN_LABELS as readonly string[]).includes(normalized)) return undefined;
+  const compact = normalized.replace(/\s/g, '');
+  return KNOWN_LABELS.find((known) => {
+    const knownCompact = known.replace(/\s/g, '');
+    if (known.length <= 5) return compact === `${knownCompact}s` || `${compact}s` === knownCompact;
+    return editDistance(compact, knownCompact) <= (known.length > 8 ? 2 : 1);
+  });
+}
+
 interface PlanStepBlock {
   heading: string;
   body: string[];
@@ -194,6 +229,10 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
   if (!title) return { ok: false, reason: `step ${id} missing title` };
 
   const labels = parseStepLabels(block.body);
+  for (const key of labels.keys()) {
+    const intended = nearMissLabel(key);
+    if (intended) return { ok: false, reason: `step ${id} has unrecognised label "${key}" (did you mean "${intended}"?)` };
+  }
 
   const task = labels.get('work');
   if (!task) return { ok: false, reason: `step ${id} missing Work` };

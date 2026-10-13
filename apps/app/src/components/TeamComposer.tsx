@@ -270,8 +270,8 @@ export function TeamComposer({
               <h3>{unit.title}</h3>
               {unit.missingSkills.length ? <><h4>Missing Skills</h4><ul>{unit.missingSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul></> : null}
               {unit.missingMcpServers.length ? <><h4>Missing MCP servers</h4><ul>{unit.missingMcpServers.map((server) => <li key={server}>{server}</li>)}</ul></> : null}
-              <p>Configure this project or edit this plan to meet requirements.</p>
-              <p>Choose another project with project selector below, or ask a normal agent: <code>Complete this work without these Skills or MCP servers.</code></p>
+              <p>Configure this project or edit this plan to meet requirements. A listed Skill or MCP server may be missing or installed but disabled.</p>
+              <p>Choose another project with project selector below, or ask a normal agent: “Complete this work without these Skills or MCP servers.”</p>
             </article>
           ))}
           <div className="team-requirement-failure-actions">

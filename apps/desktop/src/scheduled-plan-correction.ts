@@ -15,7 +15,13 @@ export interface ScheduledPromptDeps {
   /** Confined read of the corrected-plan artifact for this execution. */
   readCorrectedPlanText(projectRoot: string, executionId: string): Promise<string | undefined>;
   updateSchedule(scheduleId: string, patch: { prompt: string }): Promise<unknown>;
+  /** Goal-triggered Squads; throws when the goal no longer exists. */
+  getGoal?(goalId: string): GoalRef;
+  updateGoal?(goalId: string, patch: { statement: string }): Promise<unknown>;
 }
+
+/** Minimal goal shape needed to decide whether a correction may rewrite it. */
+interface GoalRef { projectId: string; assignment?: { kind?: string }; planSource?: string; statement?: string }
 
 /**
  * Scheduler launch ids are `schedule:<schedule-id>:<run-id>`. Returns the
@@ -28,6 +34,18 @@ export function parseScheduledLaunchRequestId(requestId: string | undefined): st
   const scheduleId = requestId.slice('schedule:'.length, separator);
   if (!scheduleId || separator === 'schedule:'.length) throw new Error('invalid scheduled Squad launch request');
   return scheduleId;
+}
+
+/**
+ * Goal launch ids are `goal:<goal-id>:<iteration-id>`. Returns the goal id,
+ * undefined for non-goal launches, and throws for a malformed goal id.
+ */
+export function parseGoalLaunchRequestId(requestId: string | undefined): string | undefined {
+  if (!requestId?.startsWith('goal:')) return undefined;
+  const separator = requestId.lastIndexOf(':');
+  const goalId = requestId.slice('goal:'.length, separator);
+  if (!goalId || separator === 'goal:'.length) throw new Error('invalid goal Squad launch request');
+  return goalId;
 }
 
 function digestOfPlanText(text: string): string | undefined {
@@ -53,6 +71,8 @@ export async function updateScheduledPromptFromCorrection(
 ): Promise<void> {
   const execution = await deps.getExecution(ctx.projectId, ctx.executionId);
   if (!execution) throw new InboxActionOperatorError('execution not found; cannot update the scheduled Squad');
+  const goalId = parseGoalLaunchRequestId(execution.launchRequestId);
+  if (goalId) return updateGoalStatementFromCorrection(deps, ctx, approvedUnits, execution, goalId);
   const scheduleId = parseScheduledLaunchRequestId(execution.launchRequestId);
   if (!scheduleId) return;
   const schedule = deps.getSchedule(scheduleId);
@@ -74,13 +94,39 @@ export async function updateScheduledPromptFromCorrection(
   await deps.updateSchedule(scheduleId, { prompt });
 }
 
+async function updateGoalStatementFromCorrection(
+  deps: ScheduledPromptDeps,
+  ctx: CoordinatorHandoffContext,
+  approvedUnits: readonly ExecutionWorkUnitInput[],
+  execution: { request?: { objective?: string } },
+  goalId: string
+): Promise<void> {
+  if (!deps.getGoal || !deps.updateGoal) throw new InboxActionOperatorError('goal updates are unavailable; cannot update the goal Squad');
+  const goal = deps.getGoal(goalId);
+  if (goal.projectId !== ctx.projectId || goal.assignment?.kind !== 'team' || goal.planSource !== 'provided') {
+    throw new InboxActionOperatorError('goal Squad no longer matches this correction');
+  }
+  // A provided-plan goal launches with its raw statement as the objective; a
+  // different statement now means the user edited the goal during review.
+  const launched = execution.request?.objective?.trim();
+  if (!launched || goal.statement?.trim() !== launched) {
+    throw new InboxActionOperatorError('the goal plan was edited since this run launched; review the goal before approving the correction');
+  }
+  const plan = await deps.readCorrectedPlanText(ctx.projectRoot, ctx.executionId);
+  if (!plan?.trim()) throw new InboxActionOperatorError('corrected plan artifact is unavailable');
+  if (digestOfPlanText(plan) !== launchDigest(approvedUnits as ExecutionWorkUnitInput[])) {
+    throw new InboxActionOperatorError('corrected plan changed after approval; renewed approval is required');
+  }
+  await deps.updateGoal(goalId, { statement: plan });
+}
+
 /**
  * Start a triggered Squad execution; on any failure forget the plan-correction
  * launch binding begun for it so it cannot leak or bind a later execution.
  */
 export async function startTriggeredSquadExecution(
   launchRequestId: string,
-  start: () => Promise<{ ok: true; value: { id: string } } | { ok: false; message: string }>,
+  start: () => Promise<{ ok: true; value: { id: string } } | { ok: false; message: string; code?: string }>,
   binding: { forgetLaunch(launchRequestId: string): void }
 ): Promise<{ executionId: string }> {
   let result: Awaited<ReturnType<typeof start>>;
@@ -92,7 +138,10 @@ export async function startTriggeredSquadExecution(
   }
   if (!result.ok) {
     binding.forgetLaunch(launchRequestId);
-    throw new Error(result.message);
+    // Shown verbatim in the schedule run list and the goal escalation.
+    throw new Error(result.code === 'REQUIREMENT_UNAVAILABLE'
+      ? `Squad requirements are unavailable, so no workers started: ${result.message}. Configure the project or edit the plan, then run again.`
+      : result.message);
   }
   return { executionId: result.value.id };
 }

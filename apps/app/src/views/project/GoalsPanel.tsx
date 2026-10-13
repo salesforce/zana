@@ -13,6 +13,7 @@ import {
   X,
   ChevronDown,
   History,
+  MoreHorizontal,
   CheckCircle2,
   XCircle,
   CircleSlash,
@@ -490,14 +491,14 @@ function GoalRow({
                       <button
                         type="button"
                         className="scheduler-run-report-btn"
-                        title={it.error ? 'View error' : 'View report'}
-                        aria-label="View iteration report"
+                        title={it.error ? 'View error details' : 'View report'}
+                        aria-label={it.error ? 'View iteration error details' : 'View iteration report'}
                         onClick={(e) => {
                           e.stopPropagation();
                           onShowReport(it);
                         }}
                       >
-                        <History size={13} strokeWidth={1.75} />
+                        {it.error && !it.report ? <MoreHorizontal size={13} strokeWidth={1.75} /> : <History size={13} strokeWidth={1.75} />}
                       </button>
                     )}
                   </li>
@@ -538,6 +539,7 @@ function GoalModal({
   const [runAs, setRunAs] = useState<'agent' | 'team'>(goal?.assignment.kind === 'team' ? 'team' : 'agent');
   const [teamId, setTeamId] = useState(goal?.assignment.kind === 'team' ? goal.assignment.teamId ?? '' : '');
   const [teams, setTeams] = useState<Team[]>([]);
+  const [planSource, setPlanSource] = useState<'provided' | 'infer'>(goal?.planSource ?? 'infer');
   const [maxIterations, setMaxIterations] = useState<number>(goal?.maxIterations ?? 10);
   const [noProgressLimit, setNoProgressLimit] = useState<number>(goal?.noProgressLimit ?? 2);
   const [scope, setScope] = useState<'global' | 'project'>(
@@ -555,6 +557,7 @@ function GoalModal({
         .filter(Boolean),
     [criteriaText]
   );
+  const isSquad = runAs === 'team';
   const canSave = title.trim().length > 0 && statement.trim().length > 0 && Boolean(projectId) && (runAs === 'agent' || Boolean(teamId));
 
   useEffect(() => {
@@ -577,8 +580,9 @@ function GoalModal({
           projectId,
           title: title.trim(),
           statement: statement.trim(),
-          successCriteria: criteria,
+          successCriteria: isSquad ? [] : criteria,
           assignment: runAs === 'team' ? { kind: 'team', teamId } : { kind: 'profile', profile },
+          ...(isSquad ? { planSource } : {}),
           maxIterations,
           noProgressLimit,
           scope: scope === 'project' ? { projectId } : 'global',
@@ -594,8 +598,9 @@ function GoalModal({
         const result = await product.goals.update(goal!.id, {
           title: title.trim(),
           statement: statement.trim(),
-          successCriteria: criteria,
+          successCriteria: isSquad ? [] : criteria,
           assignment: runAs === 'team' ? { kind: 'team', teamId } : { kind: 'profile', profile },
+          ...(isSquad ? { planSource } : {}),
           maxIterations,
           noProgressLimit
         });
@@ -659,7 +664,21 @@ function GoalModal({
             />
           </div>
           <div className="scheduler-form-field">
-            <label htmlFor="goal-statement">Objective</label>
+            <label htmlFor="goal-run-as">Run as</label>
+            <PopoverPicklist
+              id="goal-run-as"
+              ariaLabel="Run as"
+              value={runAs}
+              searchable={false}
+              onChange={(nextRunAs) => setRunAs(nextRunAs as 'agent' | 'team')}
+              options={[
+                { value: 'agent', label: 'Agent' },
+                { value: 'team', label: 'Squad' }
+              ]}
+            />
+          </div>
+          <div className="scheduler-form-field">
+            <label htmlFor="goal-statement">{isSquad ? 'Plan or prompt' : 'Objective'}</label>
             <textarea
               id="goal-statement"
               value={statement}
@@ -669,6 +688,7 @@ function GoalModal({
             />
             <ImprovePromptButton value={statement} onChange={setStatement} />
           </div>
+          {!isSquad ? (
           <div className="scheduler-form-field">
             <label htmlFor="goal-criteria">
               Success criteria <span className="scheduler-form-optional">(one per line)</span>
@@ -685,6 +705,7 @@ function GoalModal({
               clearer these are, the more reliable the “achieved” verdict.
             </p>
           </div>
+          ) : null}
           <div className="scheduler-form-row">
             <div className="scheduler-form-field">
               <label htmlFor="goal-project">Project</label>
@@ -713,20 +734,6 @@ function GoalModal({
               </div>
             ) : null}
           </div>
-          <div className="scheduler-form-field">
-            <label htmlFor="goal-run-as">Run as</label>
-            <PopoverPicklist
-              id="goal-run-as"
-              ariaLabel="Run as"
-              value={runAs}
-              searchable={false}
-              onChange={(nextRunAs) => setRunAs(nextRunAs as 'agent' | 'team')}
-              options={[
-                { value: 'agent', label: 'Agent' },
-                { value: 'team', label: 'Squad' }
-              ]}
-            />
-          </div>
           {runAs === 'team' ? (
             <div className="scheduler-form-field">
               <label htmlFor="goal-team">Squad</label>
@@ -740,6 +747,22 @@ function GoalModal({
                 options={teams.map((team) => ({ value: team.id, label: team.name }))}
               />
               <p className="modal-hint">Each iteration runs as a durable squad job.</p>
+            </div>
+          ) : null}
+          {isSquad ? (
+            <div className="scheduler-form-field">
+              <label htmlFor="goal-plan-source">Squad planning</label>
+              <PopoverPicklist
+                id="goal-plan-source"
+                ariaLabel="Squad planning"
+                value={planSource}
+                searchable={false}
+                onChange={(value) => setPlanSource(value as typeof planSource)}
+                options={[
+                  { value: 'infer', label: 'Infer plan from goal' },
+                  { value: 'provided', label: 'Plan provided in goal' }
+                ]}
+              />
             </div>
           ) : null}
           <div className="scheduler-form-row">
@@ -944,16 +967,18 @@ function ReportModal({
         </div>
         <div className="modal-body scheduler-report-body">
           {iteration.error && <div className="modal-error">{iteration.error}</div>}
-          <div className="inbox-md">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: (props) => <a {...props} target="_blank" rel="noreferrer" />
-              }}
-            >
-              {iteration.report ?? '_No report filed for this iteration._'}
-            </ReactMarkdown>
-          </div>
+          {iteration.report || !iteration.error ? (
+            <div className="inbox-md">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  a: (props) => <a {...props} target="_blank" rel="noreferrer" />
+                }}
+              >
+                {iteration.report ?? '_No report filed for this iteration._'}
+              </ReactMarkdown>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

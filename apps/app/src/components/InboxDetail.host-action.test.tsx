@@ -101,6 +101,15 @@ describe('InboxDetail host-owned actions', () => {
     expect(screen.queryByRole('button', { name: 'Continue', exact: true })).toBeNull();
   });
 
+  it('names the Squad run on a retained-worktree card with no live session', async () => {
+    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1', sessionId: undefined, origin: { title: 'Write Output File' } };
+    state.action = { ...state.action!, kind: 'squad-worktree-lifecycle' };
+    render(view());
+    expect(await screen.findByTitle('Squad run')).toBeTruthy();
+    expect(screen.getByTitle('Squad run').textContent).toBe('Write Output File');
+    expect(screen.getByRole('button', { name: 'Open Squad details' }).className).toContain('inbox-reply-open-details');
+  });
+
   it('keeps the Squad-details link when project and legacy host binding are gone', async () => {
     state.projects = [];
     state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1' };

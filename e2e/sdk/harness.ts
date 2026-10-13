@@ -568,9 +568,11 @@ async function planCorrectionOrchestrator() {
           '# Corrected Plan',
           '',
           '### write: Write output <!-- executable-step -->',
+          // Realistic model prose: sentence-style values with trailing periods.
+          '- Depends on: None.',
           '- **Mode:** Mutating',
           '- **Work:** Create output.',
-          '- **Write scope:** ' + BT + 'output.txt' + BT,
+          '- Write scope: ' + BT + 'output.txt' + BT + '.',
           '- **Verification:** Read output.',
           ''
         ].join('\n'));

@@ -284,6 +284,21 @@ export function ScheduleEditor({
           disabled={disabled}
         />
       </div>
+      <div className="scheduler-form-field">
+        <label htmlFor="sched-run-as">Run as</label>
+        <PopoverPicklist
+          id="sched-run-as"
+          ariaLabel="Run as"
+          value={runAs}
+          searchable={false}
+          disabled={disabled}
+          onChange={(nextRunAs) => setRunAs(nextRunAs as 'agent' | 'team')}
+          options={[
+            { value: 'agent', label: 'Agent' },
+            { value: 'team', label: 'Squad' }
+          ]}
+        />
+      </div>
       <div className="scheduler-form-row">
         <div className="scheduler-form-field">
           <label htmlFor="sched-project">Project</label>
@@ -310,21 +325,6 @@ export function ScheduleEditor({
             />
           </div>
         ) : null}
-      </div>
-      <div className="scheduler-form-field">
-        <label htmlFor="sched-run-as">Run as</label>
-        <PopoverPicklist
-          id="sched-run-as"
-          ariaLabel="Run as"
-          value={runAs}
-          searchable={false}
-          disabled={disabled}
-          onChange={(nextRunAs) => setRunAs(nextRunAs as 'agent' | 'team')}
-          options={[
-            { value: 'agent', label: 'Agent' },
-            { value: 'team', label: 'Squad' }
-          ]}
-        />
       </div>
       {runAs === 'team' ? (
         <div className="scheduler-form-field">

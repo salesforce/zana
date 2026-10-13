@@ -40,6 +40,15 @@ scheduled Squad: Approve also persists the corrected plan into the schedule
 prompt. Approve is rejected if the schedule was edited during review, or if the
 corrected plan no longer matches the approved digest.
 
+`e2e/job-team-plan-correction-goal.spec.ts` does the same for a Squad goal
+(`assignment: {kind:'team'}`, `planSource: 'provided'`, `successCriteria: []`,
+created via `goals.create` like GoalsPanel): activating it parks on a defective
+statement, and Approve rewrites the goal statement to the corrected plan and
+completes the same execution. A second case edits the goal statement during
+review and expects Approve to fail with "the goal plan was edited". The fake
+coordinator writes realistic corrected plans (`Depends on: None.`, write scope
+with a trailing period) to cover portable-plan trailing-period parsing.
+
 Check the approval arguments against an installed Codex without a model call:
 
 ```bash

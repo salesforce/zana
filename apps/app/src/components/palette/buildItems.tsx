@@ -1,3 +1,4 @@
+import { failedRunMessage } from '../../lib/schedule-run-outcome';
 import { product } from '../../lib/product-client.js';
 // Pure builder for the command palette's item list. Extracted from
 // CommandPalette.tsx so the (large) item-construction logic is testable in
@@ -601,6 +602,10 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
           onClose();
           product.scheduler.runNow(id).then((r) => {
             if (!r.ok) pushToast(r.message ?? `Failed to run ${name}`, 'error');
+            else {
+              const failure = failedRunMessage(r.value);
+              if (failure) pushToast(`Run failed: ${failure}`, 'error');
+            }
           }).catch(() => {});
         }
       });

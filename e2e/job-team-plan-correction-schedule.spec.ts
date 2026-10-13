@@ -183,7 +183,7 @@ test('scheduled defective plan parks, is corrected, approved, completes, and the
     // The schedule's stored prompt is now the corrected plan.
     await expect.poll(() => storedPrompt(s!), { timeout: 15_000, intervals: [500] }).not.toBe(DEFECTIVE_PLAN);
     expect(storedPrompt(s)).toContain('### write: Write output <!-- executable-step -->');
-    expect(storedPrompt(s)).toContain('**Write scope:** `output.txt`');
+    expect(storedPrompt(s)).toContain('Write scope: `output.txt`.');
 
     // Second Run now: valid plan, no correction card, completes.
     const second = await runNow(window, s);

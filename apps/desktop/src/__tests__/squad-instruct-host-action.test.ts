@@ -9,6 +9,7 @@ describe('retained squad instruct host action', () => {
 
   it('reports retained terminal worktree status without rendering lifecycle actions as Inbox questions', () => {
     expect(host).toContain("subject: 'Squad worktree retained'");
+    expect(host).toContain('origin: { title: record.jobTitle }');
     expect(host).toContain('Open Squad details to inspect recovery options and manage the retained worktree.');
     const terminalNotice = host.slice(host.indexOf('async function handleSquadWorktreeTerminal'), host.indexOf('async function replayUndisposedSquadWorktreeTerminalEffects'));
     expect(terminalNotice).not.toContain("questions: [{ prompt: 'Choose worktree disposition'");

@@ -525,7 +525,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
       <p>{entry.decisionGuidance?.kind === 'plan-correction'
         ? 'This Squad plan needs correction. Open Squad details to retain the run context while reviewing it.'
         : 'This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.'}</p>
-      <button type="button" className="btn" onClick={() => {
+      <button type="button" className="btn inbox-reply-open-details" onClick={() => {
         setPendingSquadDetailsTarget({ projectId: entry.projectId, executionId: entry.executionId! });
         setNav('agents');
       }}>Open Squad details</button>
@@ -752,7 +752,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
       </div>
 
       <div className="inbox-detail-title">{inboxPrimaryTitle(entry)}</div>
-      {(compact || !projectAlive || aliveSession || sessionTombstoned || originatingThread) && (
+      {(compact || !projectAlive || aliveSession || sessionTombstoned || originatingThread || (entry.executionId && entry.origin?.title)) && (
         <div className="inbox-detail-meta">
           {compact && <time className="inbox-mobile-time" dateTime={new Date(entry.ts).toISOString()} title={formatAbsolute(entry.ts)}>{formatRelative(entry.ts)}</time>}
           {originatingThread && projectAlive ? (
@@ -767,6 +767,11 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
           {aliveSession && aliveSession.title !== inboxPrimaryTitle(entry) && (
             <span className="inbox-detail-session-chip" title="Originating terminal">
               {aliveSession.title}
+            </span>
+          )}
+          {!aliveSession && entry.executionId && entry.origin?.title && entry.origin.title !== inboxPrimaryTitle(entry) && (
+            <span className="inbox-detail-session-chip" title="Squad run">
+              {entry.origin.title}
             </span>
           )}
         </div>
@@ -786,7 +791,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
            <p>{entry.decisionGuidance?.kind === 'plan-correction'
              ? 'Keep this Squad run context while reviewing the correction.'
              : 'Recovery and worktree actions are available from Squad details.'}</p>
-           <button type="button" className="btn" onClick={() => {
+           <button type="button" className="btn inbox-reply-open-details" onClick={() => {
              setPendingSquadDetailsTarget({ projectId: entry.projectId, executionId: entry.executionId! });
              setNav('agents');
            }}>Open Squad details</button>

@@ -124,6 +124,7 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
     title: r.title.trim(),
     statement: r.statement,
     successCriteria: toStringArray(r.successCriteria),
+    ...(r.planSource === 'provided' || r.planSource === 'infer' ? { planSource: r.planSource } : {}),
     driver,
     assignment: sanitizeAssignment(r.assignment),
     cadence: sanitizeCadence(r.cadence),

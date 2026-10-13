@@ -4679,8 +4679,13 @@ export interface Goal {
   title: string;
   /** The objective in prose — handed to the worker as its opening prompt. */
   statement: string;
-  /** Falsifiable checks the evaluator scores each iteration against. */
+  /** Falsifiable checks the evaluator scores each iteration against. Unused for Squad goals (the plan's completion is the criterion). */
   successCriteria: string[];
+  /**
+   * Squad goals only: whether `statement` is a provided executable plan or an
+   * objective the coordinator infers a plan from. Defaults to `infer`.
+   */
+  planSource?: 'provided' | 'infer';
   /** Execution engine. Defaults to `native`. */
   driver: GoalDriver;
   assignment: GoalAssignment;
@@ -4730,6 +4735,8 @@ export interface GoalCreateInput {
   title: string;
   statement: string;
   successCriteria: string[];
+  /** Squad goals only. Defaults to `infer`. */
+  planSource?: 'provided' | 'infer';
   /** Defaults to `native`. */
   driver?: GoalDriver;
   /** Defaults to `{ kind: 'profile', profile: 'claude-yolo' }`. */
@@ -4751,6 +4758,7 @@ export interface GoalUpdateInput {
   title?: string;
   statement?: string;
   successCriteria?: string[];
+  planSource?: 'provided' | 'infer';
   assignment?: GoalAssignment;
   cadence?: Goal['cadence'];
   maxIterations?: number;

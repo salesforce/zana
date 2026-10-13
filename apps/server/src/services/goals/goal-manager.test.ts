@@ -321,6 +321,30 @@ describe('GoalManager — create / spawn', () => {
     expect(squadGoal.statement).toContain('coverage remains below target');
   });
 
+  it('launches a provided-plan squad goal with the raw statement as objective', async () => {
+    const { manager } = makeManager();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    const internals = manager as unknown as { deps: Record<string, unknown> };
+    manager.setDeps({ ...internals.deps, launchSquad });
+    const plan = '### a: A <!-- executable-step -->\n- Work: do';
+    const goal = await manager.create({
+      projectId: 'proj-1', title: 'T', statement: plan, successCriteria: [], planSource: 'provided',
+      assignment: { kind: 'team', teamId: 'release-squad' }
+    });
+    expect(goal.planSource).toBe('provided');
+    await manager.runNow(goal.id);
+    const squadGoal = launchSquad.mock.calls[0]![0].goal as Goal;
+    expect(squadGoal.statement).toBe(plan);
+  });
+
+  it('update changes planSource; omitted planSource stays unset', async () => {
+    const { manager } = makeManager();
+    const goal = await manager.create({ projectId: 'proj-1', title: 'T', statement: 'x', successCriteria: [] });
+    expect(goal.planSource).toBeUndefined();
+    const updated = await manager.update(goal.id, { planSource: 'provided' });
+    expect(updated.planSource).toBe('provided');
+  });
+
   it('runNow forces one iteration on a draft goal', async () => {
     const { manager, ptys } = makeManager();
     const g = await manager.create({

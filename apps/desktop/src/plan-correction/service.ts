@@ -146,7 +146,6 @@ export class PlanCorrectionService {
   }
 
   private async reviewCorrected(current: PlanCorrectionRecord, corrected: AuthoredPlanRead): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject'> {
-    console.info('[mt6-diag] reviewCorrected', { executionId: current.executionId, status: current.status, retries: current.retries, corrected: corrected.status });
     if (current.status === 'cancelled') return this.rejectCancelled(current);
     if (current.status === 'approved') {
       // Approval authorizes one captured plan. A later file edit starts another review.
@@ -275,7 +274,6 @@ export class PlanCorrectionService {
     const pending = await this.deps.store.get(executionId);
     if (!pending) throw new Error('plan correction is no longer pending');
     const choice = input?.trim().toLowerCase();
-    console.info('[mt6-diag] respond', { executionId, choice, status: pending.status, retries: pending.retries, offerMatches: offer?.offerId === pending.offeredActionId, digestMatches: offer?.digest === (pending.offeredDigest ?? ''), hasWake: Boolean(this.deps.wakeCoordinator) });
     if (pending.status === 'cancelled') {
       await this.retryCancelledCleanup(pending);
       return choice === 'cancel' ? 'cancelled' : 'reject';

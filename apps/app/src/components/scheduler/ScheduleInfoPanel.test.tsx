@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 
@@ -53,6 +53,18 @@ describe('ScheduleInfoPanel', () => {
     expect(screen.getByTestId('pending-worker-recovery')).toBeTruthy();
     expect((screen.getByRole('button', { name: /Run now/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: /Resume/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it('lists the cause of a failed run and hides messages on successful runs', () => {
+    render(<ScheduleInfoPanel task={{ ...baseTask, status: { runCount: 2, runs: [
+      { id: 'r2', at: new Date().toISOString(), result: 'error', message: 'Squad requirements are unavailable' },
+      { id: 'r1', at: new Date().toISOString(), result: 'success', message: 'all good' }
+    ] } }} />);
+    expect(screen.queryByText('Squad requirements are unavailable')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'View run details' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'View run details' }));
+    expect(within(screen.getByRole('dialog')).getByText('Squad requirements are unavailable')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
   afterEach(() => {
     cleanup();

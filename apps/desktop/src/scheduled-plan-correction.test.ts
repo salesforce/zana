@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 import {
+  parseGoalLaunchRequestId,
   parseScheduledLaunchRequestId,
   startTriggeredSquadExecution,
   triggeredSquadSlotTasks,
@@ -82,7 +83,7 @@ describe('updateScheduledPromptFromCorrection (stubbed deps)', () => {
     expect(d.updateSchedule).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN });
   });
 
-  it.each(['ui:abc', 'goal:g1:iter', undefined])('does nothing for non-scheduled launch %s', async (launchRequestId) => {
+  it.each(['ui:abc', undefined])('does nothing for non-scheduled launch %s', async (launchRequestId) => {
     const d = deps({ getExecution: vi.fn(async () => ({ launchRequestId })) });
     await updateScheduledPromptFromCorrection(d, ctx, APPROVED);
     expect(d.getSchedule).not.toHaveBeenCalled();
@@ -159,6 +160,87 @@ describe('updateScheduledPromptFromCorrection (stubbed deps)', () => {
 
   it('propagates a schedule update failure', async () => {
     const d = deps({ updateSchedule: vi.fn(async () => { throw new Error('disk full'); }) });
+    await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toThrow('disk full');
+  });
+});
+
+describe('parseGoalLaunchRequestId', () => {
+  it('extracts the goal id from goal:<goal-id>:<iteration-id>', () => {
+    expect(parseGoalLaunchRequestId('goal:g1:iter-9')).toBe('g1');
+  });
+  it.each([undefined, '', 'ui:abc', 'schedule:a:b'])('is a no-op for non-goal id %s', (id) => {
+    expect(parseGoalLaunchRequestId(id)).toBeUndefined();
+  });
+  it.each(['goal:', 'goal:iter-only', 'goal::iter'])('rejects malformed goal id %s', (id) => {
+    expect(() => parseGoalLaunchRequestId(id)).toThrow('invalid goal Squad launch request');
+  });
+});
+
+describe('updateScheduledPromptFromCorrection for goal Squads', () => {
+  const ctx = ctxFor('/proj');
+  function deps(over: Partial<ScheduledPromptDeps> = {}) {
+    return {
+      getExecution: vi.fn(async () => ({ launchRequestId: 'goal:g1:iter-1', request: { objective: OBJECTIVE } })),
+      getSchedule: vi.fn(() => { throw new Error('schedule must not be read'); }),
+      readCorrectedPlanText: vi.fn(async () => VALID_PLAN),
+      updateSchedule: vi.fn(async () => ({})),
+      getGoal: vi.fn(() => ({ projectId: 'p1', assignment: { kind: 'team' }, planSource: 'provided', statement: OBJECTIVE })),
+      updateGoal: vi.fn(async () => ({})),
+      ...over
+    } satisfies ScheduledPromptDeps;
+  }
+
+  it('writes the corrected plan back to the goal statement', async () => {
+    const d = deps();
+    await updateScheduledPromptFromCorrection(d, ctx, APPROVED);
+    expect(d.getGoal).toHaveBeenCalledWith('g1');
+    expect(d.updateGoal).toHaveBeenCalledWith('g1', { statement: VALID_PLAN });
+    expect(d.updateSchedule).not.toHaveBeenCalled();
+  });
+
+  it('refuses when goal hooks are not wired', async () => {
+    const d = deps({ getGoal: undefined, updateGoal: undefined });
+    await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toBeInstanceOf(InboxActionOperatorError);
+  });
+
+  it('propagates a deleted goal', async () => {
+    const d = deps({ getGoal: vi.fn(() => { throw new Error('goal not found: g1'); }) });
+    await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toThrow('goal not found');
+    expect(d.updateGoal).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['another project', { projectId: 'other', assignment: { kind: 'team' }, planSource: 'provided', statement: OBJECTIVE }],
+    ['no longer a team goal', { projectId: 'p1', assignment: { kind: 'profile' }, planSource: 'provided', statement: OBJECTIVE }],
+    ['inferred plan source', { projectId: 'p1', assignment: { kind: 'team' }, planSource: 'infer', statement: OBJECTIVE }]
+  ])('refuses a goal that is %s', async (_name, goal) => {
+    const d = deps({ getGoal: vi.fn(() => goal) });
+    await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toThrow('no longer matches');
+    expect(d.updateGoal).not.toHaveBeenCalled();
+  });
+
+  it('throws when the goal plan was edited since launch (concurrent edit fence)', async () => {
+    const d = deps({ getGoal: vi.fn(() => ({ projectId: 'p1', assignment: { kind: 'team' }, planSource: 'provided', statement: 'edited' })) });
+    const err = await updateScheduledPromptFromCorrection(d, ctx, APPROVED).catch((e) => e);
+    expect(err).toBeInstanceOf(InboxActionOperatorError);
+    expect(err.message).toContain('edited since this run launched');
+    expect(d.updateGoal).not.toHaveBeenCalled();
+  });
+
+  it('throws when the launch objective is unknown', async () => {
+    const d = deps({ getExecution: vi.fn(async () => ({ launchRequestId: 'goal:g1:iter-1' })) });
+    await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toThrow('edited since this run launched');
+  });
+
+  it('throws when the artifact is missing or changed after approval', async () => {
+    await expect(updateScheduledPromptFromCorrection(deps({ readCorrectedPlanText: vi.fn(async () => undefined) }), ctx, APPROVED)).rejects.toThrow('unavailable');
+    const d = deps({ readCorrectedPlanText: vi.fn(async () => DEFECTIVE_PLAN) });
+    await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toThrow('renewed approval');
+    expect(d.updateGoal).not.toHaveBeenCalled();
+  });
+
+  it('propagates a goal update failure', async () => {
+    const d = deps({ updateGoal: vi.fn(async () => { throw new Error('disk full'); }) });
     await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toThrow('disk full');
   });
 });
@@ -371,6 +453,13 @@ describe('startTriggeredSquadExecution', () => {
     await expect(startTriggeredSquadExecution('l1', async () => ({ ok: true, value: { id: 'e1' } }), { forgetLaunch })).resolves.toEqual({ executionId: 'e1' });
     expect(forgetLaunch).not.toHaveBeenCalled();
   });
+  it('explains requirement failures with the cause and a next step', async () => {
+    const binding = { forgetLaunch: vi.fn() };
+    await expect(startTriggeredSquadExecution('l1', async () => ({ ok: false, code: 'REQUIREMENT_UNAVAILABLE', message: 'work unit write requirement unavailable: skills: x' }), binding))
+      .rejects.toThrow(/no workers started: work unit write requirement unavailable: skills: x\. Configure the project or edit the plan/);
+    expect(binding.forgetLaunch).toHaveBeenCalledWith('l1');
+  });
+
   it('forgets the launch binding and throws when start returns not ok', async () => {
     const forgetLaunch = vi.fn();
     await expect(startTriggeredSquadExecution('l1', async () => ({ ok: false, message: 'nope' }), { forgetLaunch })).rejects.toThrow('nope');

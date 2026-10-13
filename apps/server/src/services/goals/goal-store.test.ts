@@ -69,6 +69,12 @@ describe('validateGoalFile', () => {
     });
   });
 
+  it.each([['provided', 'provided'], ['infer', 'infer'], ['bogus', undefined]])('planSource %s loads as %s', (input, expected) => {
+    const r = validateGoalFile({ ...baseGoal, planSource: input });
+    if ('error' in r) throw new Error('unexpected error');
+    expect(r.planSource).toBe(expected);
+  });
+
   it('trims and drops blank success criteria', () => {
     const r = validateGoalFile({ ...baseGoal });
     if ('error' in r) throw new Error('unexpected error');

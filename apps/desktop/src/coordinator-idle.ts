@@ -34,7 +34,6 @@ export function onOrchestratorIdle(
     const handoffRoot = execution?.squadWorktree?.path ?? deps.projectPath(session.projectId);
     const executionId = session.cohort?.executionId;
     const slotId = session.cohort?.slotId;
-    console.info('[mt6-diag] coordinator idle handoff', { sessionId, executionId, slotId, handoffRoot, hasExecution: Boolean(execution) });
     if (!(handoffRoot && executionId && slotId)) return;
     return deps.onCoordinatorIdle({
       sessionId,

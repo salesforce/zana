@@ -1316,7 +1316,13 @@ const planCorrection = new PlanCorrectionService({
     getExecution: (projectId, executionId) => executionStore.getInProject(projectId, executionId),
     getSchedule: (scheduleId) => scheduler.get(scheduleId),
     readCorrectedPlanText: (projectRoot, executionId) => readHandoffArtifact(projectRoot, correctedPlanRelPath(executionId)),
-    updateSchedule: (scheduleId, patch) => scheduler.update(scheduleId, patch)
+    updateSchedule: (scheduleId, patch) => scheduler.update(scheduleId, patch),
+    getGoal: (goalId) => {
+      const goal = goals.list().find(candidate => candidate.id === goalId);
+      if (!goal) throw new Error(`goal not found: ${goalId}`);
+      return goal;
+    },
+    updateGoal: (goalId, patch) => goals.update(goalId, patch)
   }, ctx, units),
   resume: async (ctx) => teamPlanHandoff.onCoordinatorIdle(ctx),
   stopExecution: async (executionId) => { await squadExecutionService.stopForPlanCorrection(executionId); }
@@ -6098,6 +6104,7 @@ async function handleSquadWorktreeTerminal(record: ExecutionRecord): Promise<voi
       projectLabel: project?.name,
       executionId: record.id,
       subject: 'Squad worktree retained',
+      origin: { title: record.jobTitle },
       comments: `Execution ${record.state.toLowerCase()}. The shared worktree remains at \`${worktree.path}\`. Open Squad details to inspect recovery options and manage the retained worktree.`,
       dedupeKey: `squad-worktree-retained:${record.id}:${record.stateVersion}`
     });
@@ -8292,7 +8299,7 @@ async function bootstrapNormal() {
     },
     launchSquad: ({ goal, project, iterationId }) => startTriggeredSquad({
       projectId: project.id, callerPrincipalId: `goal:${project.id}`, teamId: goal.assignment.teamId!, launchRequestId: `goal:${goal.id}:${iterationId}`,
-      objective: goal.statement, title: `Goal: ${goal.title}`, planSource: 'infer', origin: 'goal'
+      objective: goal.statement, title: `Goal: ${goal.title}`, planSource: goal.planSource ?? 'infer', origin: 'goal'
     }),
     getSquadExecution: async (projectId, executionId) => {
       const record = await executionStore.getInProject(projectId, executionId);

@@ -318,6 +318,7 @@ export class GoalManager extends EventEmitter {
       successCriteria: (input.successCriteria ?? [])
         .map((s) => s.trim())
         .filter(Boolean),
+      ...(input.planSource ? { planSource: input.planSource } : {}),
       driver: input.driver ?? 'native',
       assignment: input.assignment ?? { kind: 'profile', profile: 'claude-yolo' },
       cadence: input.cadence ?? { mode: 'continuous' },
@@ -352,6 +353,7 @@ export class GoalManager extends EventEmitter {
     if (patch.successCriteria !== undefined) {
       next.successCriteria = patch.successCriteria.map((s) => s.trim()).filter(Boolean);
     }
+    if (patch.planSource !== undefined) next.planSource = patch.planSource;
     if (patch.assignment !== undefined) {
       if (patch.assignment.kind === 'team' && !patch.assignment.teamId?.trim()) throw new Error('teamId is required for team goals');
       if (patch.assignment.kind !== live.goal.assignment.kind && this.hasUnresolvedIteration(live)) {
@@ -929,7 +931,8 @@ export class GoalManager extends EventEmitter {
     // Squads receive their objective through the execution service rather than a
     // terminal seed prompt. Reuse the bounded worker context so both paths act
     // on the same criteria and latest evaluator feedback.
-    const squadGoal = { ...goal, statement: buildIterationPrompt(goal, lastScored) };
+    // A provided plan is the execution objective verbatim: wrapping it would break plan parsing and the correction write-back fence.
+    const squadGoal = goal.planSource === 'provided' ? goal : { ...goal, statement: buildIterationPrompt(goal, lastScored) };
     await this.recordIteration(goal.id, { id: iterId, at, launchRequestId, launchState: 'pending' }, 'paused');
     this.pendingLaunches++;
     let launched: { executionId: string };

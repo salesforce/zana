@@ -3034,18 +3034,6 @@ export class PtyManager extends EventEmitter {
       this.sendKeysRemote(live.reattach, body);
       return true;
     }
-    // [mt6-diag] temporary: capture what the TUI does with the injected text.
-    if (text.length > 500) {
-      const proc = live.proc;
-      let seen = '';
-      const sub = proc.onData((d: string) => { if (seen.length < 4000) seen += d; });
-      console.info('[mt6-diag] pty.reply write', { id, pid: live.session.pid, chars: text.length, bracketed, bracketedPasteEnabled: live.bracketedPasteEnabled });
-      setTimeout(() => {
-        try { sub?.dispose(); } catch { /* best-effort */ }
-        const plain = seen.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+/g, ' ');
-        console.info('[mt6-diag] pty.reply 3s after', { id, stillLive: this.live.get(id)?.proc === proc, bytesSeen: seen.length, tail: plain.slice(-500) });
-      }, 3000);
-    }
     live.proc.write(body);
     setTimeout(() => {
       // Re-resolve: the session may have exited during the delay.
