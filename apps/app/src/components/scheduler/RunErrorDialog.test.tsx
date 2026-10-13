@@ -5,6 +5,23 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RunErrorDialog } from './RunErrorDialog.js';
 
+// When true, the first useRef per render (the dialog node ref) is inert: it never
+// receives the DOM node, simulating a node that is not attached when the effect runs.
+const inertNodeRef = vi.hoisted(() => ({ on: false }));
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>();
+  return {
+    ...actual,
+    useRef: ((initial: unknown) => {
+      const real = actual.useRef(initial);
+      if (inertNodeRef.on && initial === null) {
+        return { get current() { return null; }, set current(_v: unknown) { /* drop node */ } };
+      }
+      return real;
+    }) as typeof actual.useRef,
+  };
+});
+
 afterEach(cleanup);
 
 describe('RunErrorDialog', () => {
@@ -42,5 +59,21 @@ describe('RunErrorDialog', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledOnce();
+  });
+
+  it('is a safe no-op when the dialog node is unavailable: no focus, no Escape handler, no crash', () => {
+    inertNodeRef.on = true;
+    try {
+      const onClose = vi.fn();
+      render(<RunErrorDialog title="t" when="w" message="m" onClose={onClose} />);
+      const dialog = screen.getByRole('dialog');
+      expect(document.activeElement).not.toBe(dialog);
+      fireEvent.keyDown(dialog, { key: 'Escape' });
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      inertNodeRef.on = false;
+    }
   });
 });
