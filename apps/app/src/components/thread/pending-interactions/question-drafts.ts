@@ -71,7 +71,16 @@ export function saveQuestionDraft(key: string, draft: QuestionDraft) {
 }
 
 export function clearQuestionDraft(key: string, submitted: QuestionDraft) {
-  if (JSON.stringify(readStore().get(key)) !== JSON.stringify(submitted)) return;
+  const saved = readStore().get(key);
+  // Loading normalizes property order and strips component-local fields. Compare
+  // answer values so a restored draft clears, while a newer edit still survives.
+  if (!saved || saved.signature !== submitted.signature || saved.index !== submitted.index ||
+      !saved.answers || Object.keys(saved.answers).length !== Object.keys(submitted.answers).length ||
+      Object.entries(submitted.answers).some(([id, answer]) => {
+        const retained = saved.answers[id];
+        return !retained || retained.freeText !== answer.freeText || retained.otherSelected !== answer.otherSelected ||
+          JSON.stringify(retained.selected) !== JSON.stringify(answer.selected);
+      })) return;
   memory.delete(key);
   persist();
 }

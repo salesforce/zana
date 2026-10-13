@@ -24,6 +24,15 @@ V1 slots: `navPanel`, `settingsSection`, `homepageSection`, `projectTab`,
 `experimental_projectMenuAction` (Organize / row overflow). Open **Plugin Guide**
 for the full surface map.
 
+Question plugins should use the host's shared question UI instead of custom form controls.
+Register `pendingInteraction({ id, questionForm })`, where `questionForm(interaction)`
+returns `{ questions, toResponse }`. Each question has `id`, `prompt`, `multiSelect`,
+`allowFreeText`, optional `shortLabel`, and `options: [{ value, label, description? }]`.
+`toResponse(answers)` maps the answers keyed by question ID (`{ selected, freeText? }`)
+to the plugin's JSON response. The host handles styling, question steps, keyboard
+shortcuts, retained drafts, submission, and cancellation. Supply either `questionForm`
+or a custom `component`, never both.
+
 Plugins can assign a saved project icon after creating or connecting a project:
 
 ```ts

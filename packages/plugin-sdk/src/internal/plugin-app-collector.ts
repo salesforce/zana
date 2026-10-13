@@ -597,10 +597,14 @@ export function collectPluginAppRegistrations(
         const kind = "slots.pendingInteraction";
         const id = requireSlotId(kind, registration?.id);
         requireUniqueId(kind, seenIds.pendingInteraction, id);
-        collected.pendingInteractions.push({
-          id,
-          component: requireComponent(kind, registration.component),
-        });
+        if (registration.questionForm !== undefined) {
+          if (registration.component !== undefined || typeof registration.questionForm !== "function") {
+            throw new Error(`${kind}: provide either a component or a questionForm function`);
+          }
+          collected.pendingInteractions.push({ id, questionForm: registration.questionForm });
+        } else {
+          collected.pendingInteractions.push({ id, component: requireComponent(kind, registration.component) });
+        }
       },
       sidebarFooterAction(registration) {
         const kind = "slots.sidebarFooterAction";

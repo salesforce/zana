@@ -204,8 +204,28 @@ export interface PluginPendingInteractionProps {
   cancel(): Promise<void>;
 }
 
+/** Host-rendered questions share the native harness question UI and retained drafts. */
+export interface PluginInteractionQuestion {
+  id: string;
+  prompt: string;
+  shortLabel?: string;
+  multiSelect: boolean;
+  allowFreeText: boolean;
+  options?: Array<{ value: string; label: string; description?: string }>;
+}
+
+export type PluginInteractionAnswers = Record<string, { selected: string[]; freeText?: string }>;
+
+export interface PluginQuestionForm {
+  questions: PluginInteractionQuestion[];
+  /** Convert the host's answers to this plugin's existing response contract. */
+  toResponse(answers: PluginInteractionAnswers): JsonValue;
+}
+
 export interface PluginPendingInteractionRegistration extends PluginSlotBase {
-  component: ComponentType<PluginPendingInteractionProps>;
+  /** Provide exactly one of component or questionForm. */
+  component?: ComponentType<PluginPendingInteractionProps>;
+  questionForm?: (interaction: PluginPendingInteractionView) => PluginQuestionForm;
 }
 
 export const PLUGIN_THREAD_PANEL_SCOPES = ['thread', 'agent-session'] as const;
@@ -1267,12 +1287,14 @@ export function collectPluginApp(
         const kind = 'slots.pendingInteraction';
         const id = requireSlotId(kind, registration.id);
         requireUniqueId(kind, seen.pendingInteraction, id);
-        set.pendingInteractions.push(
-          stamp({
-            id,
-            component: requireComponent(kind, 'component', registration.component)
-          })
-        );
+        if (registration.questionForm !== undefined) {
+          if (registration.component !== undefined || typeof registration.questionForm !== 'function') {
+            throw new Error(`${kind}: provide either a component or a questionForm function`);
+          }
+          set.pendingInteractions.push(stamp({ id, questionForm: registration.questionForm }));
+        } else {
+          set.pendingInteractions.push(stamp({ id, component: requireComponent(kind, 'component', registration.component) }));
+        }
       },
       threadPanelAction: (registration) => {
         const kind = 'slots.threadPanelAction';

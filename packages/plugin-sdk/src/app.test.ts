@@ -5,6 +5,7 @@ import {
   PLUGIN_COMPOSER_SCOPE_KINDS,
   threadPanelActionMatchesScope
 } from './app-contract.js';
+import { collectPluginAppRegistrations } from './internal/plugin-app-collector.js';
 import { shimLegacyExtensionManifest } from './legacy-shim.js';
 
 describe('definePluginApp', () => {
@@ -491,4 +492,25 @@ describe('panel action categories', () => {
       }))).toThrow('"category" must be a string');
     });
   }
+});
+
+
+describe.each([
+  ['host', (definition: ReturnType<typeof definePluginApp>) => collectPluginApp('test', 1, definition)],
+  ['test harness', collectPluginAppRegistrations]
+] as const)('%s question form registration', (_name, collect) => {
+  it('retains the form adapter without requiring a custom component', () => {
+    const questionForm = () => ({ questions: [], toResponse: () => null });
+    const result = collect(definePluginApp(app => app.slots.pendingInteraction({ id: 'questions', questionForm })));
+    expect(result.pendingInteractions[0]).toMatchObject({ id: 'questions', questionForm });
+    expect(result.pendingInteractions[0]?.component).toBeUndefined();
+  });
+
+  it.each([
+    { component: () => null, questionForm: () => ({ questions: [], toResponse: () => null }) },
+    { questionForm: true },
+    {}
+  ])('rejects ambiguous or missing renderers: %s', registration => {
+    expect(() => collect(definePluginApp(app => app.slots.pendingInteraction({ id: 'questions', ...registration } as never)))).toThrow();
+  });
 });

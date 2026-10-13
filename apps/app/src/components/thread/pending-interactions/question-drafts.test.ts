@@ -25,6 +25,15 @@ describe('question drafts', () => {
     mod.clearQuestionDraft('key', newer);
     expect(mod.loadQuestionDraft('key', questions)).toEqual(old);
   });
+  it('clears a restored draft even when normalization changes property order', async () => {
+    const mod = await import('./question-drafts.js');
+    const draft = { ...mod.loadQuestionDraft('key', questions), identity: 'component-local',
+      answers: { q: { selected: ['a'], freeText: 'typed', otherSelected: true } } };
+    mod.saveQuestionDraft('key', draft);
+    const restored = mod.loadQuestionDraft('key', questions);
+    mod.clearQuestionDraft('key', restored);
+    expect(mod.loadQuestionDraft('key', questions).answers.q.selected).toEqual([]);
+  });
   it('survives blocked storage and does not resurrect a cleared draft', async () => {
     const mod = await import('./question-drafts.js');
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });

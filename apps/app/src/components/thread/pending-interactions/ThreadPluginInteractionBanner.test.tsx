@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
 import type { JsonValue, PluginExtensionPendingInteraction, PluginPendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import piApp from '../../../../../../plugins/provider-pi/app.tsx';
+import askApp from '../../../../../../plugins/ask-user-question/app.js';
 import { interpretPluginApp, clearPluginSlots } from '../../../plugins/plugin-slots.js';
 import { product } from '../../../lib/product-client.js';
 import { ThreadPendingInteractionBanner } from './ThreadPendingInteractionBanner.js';
@@ -136,5 +137,110 @@ describe('plugin request banners', () => {
     fireEvent.click(screen.getByText('Cancel'));
     await waitFor(() => expect(product.threads.interactions.cancel).toHaveBeenCalledWith('thr-1', 'plugin-1'));
     expect(product.threads.interactions.resolve).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('host-rendered plugin questions', () => {
+  function request(id: string): PluginPendingInteraction {
+    return {
+      id, threadId: 'thr-1', turnId: null, origin: { kind: 'plugin', pluginId: 'other-plugin', rendererId: 'ask-user-question' },
+      status: 'pending', payload: { kind: 'plugin', title: 'Question', data: { questions: [
+        { header: 'Color', question: 'Pick colors', multiSelect: true, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] },
+        { question: 'Pick a size', options: [{ label: 'S' }, { label: 'M' }, { label: 'L' }] }
+      ] } }, resolution: null, statusReason: null, createdAt: 1, resolvedAt: null
+    };
+  }
+  function mount(id: string) {
+    interpretPluginApp('other-plugin', askApp);
+    return show(request(id));
+  }
+  function answer() {
+    fireEvent.click(screen.getByRole('button', { name: 'Red warm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Blue cool' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: 'M', exact: true }));
+  }
+
+  it('uses one native shell with steps, descriptions and multi-select, preserving the tool result', async () => {
+    const { container } = mount('styled');
+    expect(container.querySelectorAll('.thread-pending-question-banner')).toHaveLength(1);
+    expect(screen.getAllByTestId('thread-pending-banner')).toHaveLength(1);
+    expect(screen.getByText('Waiting for answers to 2 questions')).toBeTruthy();
+    expect(screen.getByText('Color')).toBeTruthy();
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    answer();
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByRole('button', { name: 'Red warm' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Blue cool' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(product.threads.interactions.respond).toHaveBeenCalledWith('thr-1', 'styled', { answers: [
+      { question: 'Pick colors', selected: ['Red', 'Blue'], freeText: '' },
+      { question: 'Pick a size', selected: ['M'], freeText: '' }
+    ] }));
+    expect(product.threads.interactions.resolve).not.toHaveBeenCalled();
+  });
+
+  it('retains answers and the active step after navigation and failed submissions; clears on success', async () => {
+    vi.mocked(product.threads.interactions.respond).mockRejectedValueOnce(new Error('Host offline'));
+    let view = mount('draft');
+    answer();
+    fireEvent.click(screen.getByRole('button', { name: 'Other…' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Custom size' } });
+    view.unmount();
+    view = show(request('draft'));
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Custom size');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await screen.findByText('Host offline');
+    view.unmount();
+    view = show(request('draft'));
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Custom size');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(product.threads.interactions.respond).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    view.unmount();
+    show(request('draft'));
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Red warm' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('retains drafts after failed cancellation and clears them only on successful cancellation', async () => {
+    vi.mocked(product.threads.interactions.cancel).mockRejectedValueOnce('offline');
+    let view = mount('cancel-draft');
+    answer();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText('Could not cancel question');
+    view.unmount();
+    view = show(request('cancel-draft'));
+    expect(screen.getByRole('button', { name: 'M', exact: true }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(product.threads.interactions.cancel).toHaveBeenCalledTimes(2));
+    expect(product.threads.interactions.cancel).toHaveBeenLastCalledWith('thr-1', 'cancel-draft');
+    await act(async () => {});
+    view.unmount();
+    show(request('cancel-draft'));
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Red warm' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('respects host resolving status and routes provider-origin question responses', async () => {
+    interpretPluginApp('other-plugin', askApp);
+    const providerRequest = { ...interaction(), payload: { kind: 'other-plugin/ask-user-question' as const, title: 'Question', data: request('provider').payload.data } };
+    const view = show({ ...providerRequest, status: 'resolving' });
+    expect((screen.getByRole('button', { name: 'Red warm' }) as HTMLButtonElement).disabled).toBe(true);
+    view.unmount();
+    show(providerRequest);
+    answer();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(product.threads.interactions.resolve).toHaveBeenCalledWith('thr-1', 'pint_1', {
+      kind: 'request_answer', value: { answers: [
+        { question: 'Pick colors', selected: ['Red', 'Blue'], freeText: '' },
+        { question: 'Pick a size', selected: ['M'], freeText: '' }
+      ] }
+    }));
   });
 });

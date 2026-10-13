@@ -10,6 +10,7 @@ import {
 import { product } from '../../../lib/product-client.js';
 import { listPendingInteractionSlots, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import { PendingInteractionShell } from './PendingInteractionShell.js';
+import { QuestionInteractionBanner } from './QuestionInteractionBanner.js';
 
 export function ThreadPluginInteractionBanner({ interaction, threadId, sourceThread }: {
   interaction: PluginPendingInteraction | PluginExtensionPendingInteraction;
@@ -32,6 +33,10 @@ export function ThreadPluginInteractionBanner({ interaction, threadId, sourceThr
       await product.threads.interactions.resolve(threadId, interaction.id, { kind: 'request_answer', value });
     }
   };
+  const cancelRequest = async () => {
+    if (pluginRequest) await product.threads.interactions.cancel(threadId, interaction.id);
+    else await resolve(null);
+  };
   const run = async (action: () => Promise<void>) => {
     setError(null);
     try {
@@ -45,10 +50,7 @@ export function ThreadPluginInteractionBanner({ interaction, threadId, sourceThr
     if (busy) return;
     setBusy(true);
     try {
-      await run(async () => {
-        if (pluginRequest) await product.threads.interactions.cancel(threadId, interaction.id);
-        else await resolve(null);
-      });
+      await run(cancelRequest);
     } catch {
       // Plugin forms commonly fire cancel without awaiting it; show the error here.
     } finally {
@@ -56,20 +58,36 @@ export function ThreadPluginInteractionBanner({ interaction, threadId, sourceThr
     }
   };
 
+  const view = {
+    id: interaction.id,
+    threadId: interaction.threadId,
+    title: interaction.payload.title,
+    payload: interaction.payload.data,
+    createdAt: interaction.createdAt,
+    expiresAt: interaction.expiresAt ?? null
+  };
+  if (slot?.questionForm) {
+    const form = slot.questionForm(view);
+    return (
+      <QuestionInteractionBanner
+        key={`${interaction.id}:${slot.generation}`}
+        interactionId={interaction.id}
+        questions={form.questions}
+        threadId={threadId}
+        sourceThread={sourceThread}
+        resolving={interaction.status === 'resolving'}
+        onSubmit={(answers) => resolve(form.toResponse(answers))}
+        onCancel={cancelRequest}
+      />
+    );
+  }
   const Component = slot?.component;
   return (
     <PendingInteractionShell title={interaction.payload.title} sourceThread={sourceThread} errorMessage={error}>
       {Component ? (
         <Component
           key={`${interaction.id}:${slot.generation}`}
-          interaction={{
-            id: interaction.id,
-            threadId: interaction.threadId,
-            title: interaction.payload.title,
-            payload: interaction.payload.data,
-            createdAt: interaction.createdAt,
-            expiresAt: interaction.expiresAt ?? null
-          }}
+          interaction={view}
           submit={(value) => run(() => resolve(value))}
           cancel={cancel}
         />

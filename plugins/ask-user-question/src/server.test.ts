@@ -108,13 +108,78 @@ describe('ask-user-question timeout setting', () => {
     await expect(call).resolves.toEqual({ outcome: 'submitted', value: { answers: ['A'] } });
   });
 
-  it('opens an empty question card when the tool input is not an object', async () => {
+  it('publishes a questions schema so providers send the shape the card renders', async () => {
+    const { host } = await createHost();
+    const schema = host.harness.agentTools.find((tool) => tool.name === 'ask_user_question')!.inputSchema as {
+      required: string[];
+      properties: { questions: { type: string[]; items: { required: string[] } } };
+    };
+    expect(schema.required).toEqual(['questions']);
+    expect(schema.properties.questions.type).toEqual(['array', 'string']);
+    expect(schema.properties.questions.items.required).toEqual(['question', 'options']);
+  });
+
+  it.each([
+    ['questions as a JSON string with bare-string options (Pi)', {
+      questions: '[{"question":"Which option should I pick?","options":["A","B","C"]}]'
+    }],
+    ['the whole input as a JSON string', '{"questions":[{"question":"Which option should I pick?","options":["A","B","C"]}]}'],
+    ['a single question object', { question: 'Which option should I pick?', options: ['A', 'B', 'C'] }],
+    ['options as a JSON string', { questions: [{ question: 'Which option should I pick?', options: '["A","B","C"]' }] }]
+  ])('normalizes %s into a renderable card', async (_name, input) => {
     const test = await createHost();
-    const call = test.host.harness.callAgentTool('ask_user_question', 'which one?');
+    const call = test.host.harness.callAgentTool('ask_user_question', input);
     await vi.waitFor(() => expect(test.requestInput).toHaveBeenCalledTimes(1));
-    expect(test.requestInput.mock.calls[0]![0].payload).toEqual({ questions: [] });
+    expect(test.requestInput.mock.calls[0]![0].payload).toEqual({
+      questions: [{ question: 'Which option should I pick?', options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }] }]
+    });
     test.host.harness.cancelInteraction();
     await call;
+  });
+
+  it('keeps headers, descriptions and multiSelect, falls back to prompt, and drops unusable entries', async () => {
+    const test = await createHost();
+    const call = test.host.harness.callAgentTool('ask_user_question', {
+      questions: [
+        {
+          prompt: '  Which ones?  ',
+          header: ' Pick ',
+          multiSelect: true,
+          options: [{ label: 'A', description: ' first ' }, { label: '  ' }, '', 'B', null, 7]
+        },
+        { question: 'No options', options: [] },
+        { question: '', options: ['X'] },
+        null
+      ]
+    });
+    await vi.waitFor(() => expect(test.requestInput).toHaveBeenCalledTimes(1));
+    expect(test.requestInput.mock.calls[0]![0].payload).toEqual({
+      questions: [
+        {
+          question: 'Which ones?',
+          header: 'Pick',
+          multiSelect: true,
+          options: [{ label: 'A', description: 'first' }, { label: 'B' }]
+        }
+      ]
+    });
+    test.host.harness.cancelInteraction();
+    await call;
+  });
+
+  it.each([
+    ['free text', 'which one?'],
+    ['an empty object', {}],
+    ['an empty questions array', { questions: [] }],
+    ['unparseable questions', { questions: '[{"question":' }],
+    ['questions without options', { questions: [{ question: 'Which one?' }] }],
+    ['null', null]
+  ])('rejects %s instead of opening an empty card', async (_name, input) => {
+    const test = await createHost();
+    await expect(test.host.harness.callAgentTool('ask_user_question', input)).rejects.toThrow(
+      /ask_user_question needs/
+    );
+    expect(test.requestInput).not.toHaveBeenCalled();
   });
 
   it('ties the card to the tool call so a torn-down call closes it', async () => {
