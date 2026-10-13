@@ -1693,6 +1693,49 @@ describe('SquadExecutionService', () => {
     expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
   }));
 
+  it('queues and delivers a plan-correction wake to the parked coordinator, then acks it', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+
+    await service.wakeCoordinatorForPlanCorrection('execution-1', 'write the corrected plan');
+
+    expect(replyToSession).toHaveBeenCalledWith('coordinator', 'write the corrected plan');
+    expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
+  }));
+
+  it('keeps a plan-correction wake queued while the coordinator is mid-turn', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession, getAgentState: () => 'working',
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+
+    await service.wakeCoordinatorForPlanCorrection('execution-1', 'write the corrected plan');
+
+    expect(replyToSession).not.toHaveBeenCalled();
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toBe('write the corrected plan');
+  }));
+
+  it('rejects a plan-correction wake for an unknown execution', async () => fixture(async (filePath) => {
+    const service = new SquadExecutionService(deps(filePath, { store: createExecutionStore({ filePath, id: () => 'execution-1' }) }));
+    await expect(service.wakeCoordinatorForPlanCorrection('missing', 'x')).rejects.toThrow('execution not found');
+  }));
+
   it('attempts immediate wake delivery without optional idle-state wiring', async () => fixture(async (filePath) => {
     const replyToSession = vi.fn(() => true);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });

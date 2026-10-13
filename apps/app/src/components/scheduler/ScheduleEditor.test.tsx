@@ -124,6 +124,15 @@ describe('ScheduleEditor', () => {
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty('personaId');
   });
 
+  it('restores launch profile after changing a Squad schedule back to Agent', async () => {
+    render(<ScheduleEditor task={null} />);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByLabelText('Launch profile')).toBeTruthy());
+    expect(screen.queryByLabelText('Squad')).toBeNull();
+  });
+
   it('saves edits and re-enables the submit button', async () => {
     update.mockResolvedValue({ ok: true, value: { id: 'sched-1' } });
     const onSaved = vi.fn();

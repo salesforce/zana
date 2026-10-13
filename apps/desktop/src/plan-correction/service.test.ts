@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLAN_CORRECTION_MAX_RETRIES, PlanCorrectionService, runPlanCorrectionHostAction } from './service.js';
+import { PLAN_CORRECTION_MAX_RETRIES, PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction } from './service.js';
 
 const ctx = { sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'e-1', slotId: 'lead' };
 const source = { status: 'ok' as const, units: [{ id: 'source', title: 'Source', task: 'source', dependencies: [] }], realPath: '/root/.zana/source.md' };
@@ -11,6 +11,7 @@ function create() {
   const appendInbox = vi.fn(async (input) => ({ ...input, id: 'i-1', ts: 1 }));
   const bindInboxAction = vi.fn(() => true);
   const nudge = vi.fn();
+  const wakeCoordinator = vi.fn(async () => {});
   const readCorrectedPlan = vi.fn(async () => source);
   const records = new Map();
   const store = {
@@ -25,11 +26,36 @@ function create() {
   };
   const resume = vi.fn(async () => {});
   const stopExecution = vi.fn(async () => {});
+  const updateScheduledPrompt = vi.fn(async () => {});
+  const readSourcePlan = vi.fn(async (): Promise<string | undefined> => '### write: Write output <!-- executable-step -->');
   return {
-    service: new PlanCorrectionService({ appendInbox, bindInboxAction, nudge, readCorrectedPlan, store, resume, stopExecution }),
-    appendInbox, bindInboxAction, nudge, readCorrectedPlan, resume, stopExecution, records, store
+    service: new PlanCorrectionService({ appendInbox, bindInboxAction, nudge, wakeCoordinator, readSourcePlan, readCorrectedPlan, store, updateScheduledPrompt, resume, stopExecution }),
+    appendInbox, bindInboxAction, nudge, wakeCoordinator, readSourcePlan, readCorrectedPlan, updateScheduledPrompt, resume, stopExecution, records, store
   };
 }
+
+it('updates a scheduled prompt before resuming its approved corrected plan', async () => {
+  const { service, bindInboxAction, updateScheduledPrompt, resume } = create();
+  const scheduled = { ...ctx, executionId: 'e-scheduled' };
+  await service.begin(scheduled.executionId, 'invalid source plan', false);
+  await service.review(scheduled, source);
+
+  await expect(service.respond(scheduled.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('approve');
+
+  expect(updateScheduledPrompt).toHaveBeenCalledWith(scheduled, source.units);
+  expect(resume).toHaveBeenCalledWith(scheduled);
+});
+
+it('does not resume when scheduled prompt persistence fails', async () => {
+  const { service, bindInboxAction, updateScheduledPrompt, resume } = create();
+  updateScheduledPrompt.mockRejectedValueOnce(new Error('schedule disappeared'));
+  await service.begin(ctx.executionId, 'invalid source plan', false);
+  await service.review(ctx, source);
+
+  await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('reject');
+
+  expect(resume).not.toHaveBeenCalled();
+});
 
 function latestOffer(bindInboxAction: ReturnType<typeof vi.fn>) {
   return JSON.parse(bindInboxAction.mock.calls.at(-1)![1].ref);
@@ -123,37 +149,154 @@ describe('PlanCorrectionService', () => {
   });
 
   it('requests revision without changing the source plan', async () => {
-    const { service, bindInboxAction, nudge } = create();
+    const { service, bindInboxAction, nudge, wakeCoordinator } = create();
     await service.begin(ctx.executionId, 'bad plan', false);
     await service.review(ctx, source);
     await expect(service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction))).resolves.toBe('wait');
-    expect(nudge.mock.calls[0][1]).toContain('Keep the provided source plan unchanged');
+    expect(nudge).not.toHaveBeenCalled();
+    expect(wakeCoordinator).toHaveBeenCalledWith(ctx.executionId, expect.stringContaining('Keep the supplied plan unchanged'));
   });
 
-  it('allows changes and cancellation for an offer without a corrected digest', async () => {
-    const { service, appendInbox, bindInboxAction, records, nudge, readCorrectedPlan } = create();
+  it('gives a held coordinator the rejection reason, source plan, grammar and permission to fill gaps', async () => {
+    const { service, bindInboxAction, wakeCoordinator } = create();
+    await service.begin(ctx.executionId, 'mutating work unit requires file scope', false);
+    await service.review(ctx, source);
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+
+    const text = wakeCoordinator.mock.calls[0]![1] as string;
+    expect(text).toContain('mutating work unit requires file scope');
+    expect(text).toContain('### write: Write output <!-- executable-step -->');
+    expect(text).toContain('execution-plan-corrected-');
+    expect(text).toContain('Write scope');
+    expect(text).toContain('Do not stop to ask the operator');
+  });
+
+  it('still instructs the coordinator when the source plan cannot be read', async () => {
+    const { service, bindInboxAction, wakeCoordinator, readSourcePlan } = create();
+    readSourcePlan.mockRejectedValueOnce(new Error('store unavailable'));
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+
+    const text = wakeCoordinator.mock.calls[0]![1] as string;
+    expect(text).toContain('bad plan');
+    expect(text).not.toContain('Supplied plan:');
+  });
+
+  it('truncates an oversized source plan in the coordinator request', async () => {
+    const { service, bindInboxAction, wakeCoordinator, readSourcePlan } = create();
+    readSourcePlan.mockResolvedValueOnce('x'.repeat(20_000));
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+
+    const text = wakeCoordinator.mock.calls[0]![1] as string;
+    expect(text).toContain('[truncated]');
+    expect(text.length).toBeLessThan(10_000);
+  });
+
+  // Reproduces the live MT-6 failure: wake delivered, coordinator idles repeatedly
+  // and never writes the corrected plan. The operator must get a card, not silence.
+  it('surfaces a stalled-coordinator card instead of waiting forever for a missing corrected plan', async () => {
+    const { service, appendInbox, bindInboxAction, readCorrectedPlan } = create();
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
+    const invalid = { status: 'invalid' as const, reason: 'missing Write scope' };
+    await service.begin(ctx.executionId, 'mutating work unit requires file scope', false);
+    await service.review(ctx, invalid);
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+    expect(appendInbox).toHaveBeenCalledOnce();
+
+    for (let edge = 1; edge < PLAN_CORRECTION_STALL_IDLE_EDGES; edge += 1) {
+      await expect(service.reviewInvalid(ctx, 'mutating work unit requires file scope')).resolves.toBe('wait');
+      expect(appendInbox).toHaveBeenCalledOnce();
+    }
+    await expect(service.reviewInvalid(ctx, 'mutating work unit requires file scope')).resolves.toBe('wait');
+
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    expect(appendInbox.mock.calls[1]![0].comments).toContain('without writing a corrected plan');
+    expect(latestOffer(bindInboxAction).digest).toBe('');
+  });
+
+  it('does not report a stall once the coordinator writes a corrected plan', async () => {
+    const { service, appendInbox, bindInboxAction, readCorrectedPlan } = create();
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, { status: 'invalid', reason: 'bad' });
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+    await service.reviewInvalid(ctx, 'bad plan');
+
+    readCorrectedPlan.mockResolvedValue(source);
+    await service.reviewInvalid(ctx, 'bad plan');
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    expect(appendInbox.mock.calls[1]![0].comments).not.toContain('without writing');
+    expect(latestOffer(bindInboxAction).digest).not.toBe('');
+  });
+
+  it('restarts the stall count after a fresh Request changes', async () => {
+    const { service, appendInbox, bindInboxAction, readCorrectedPlan } = create();
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, { status: 'invalid', reason: 'bad' });
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+    await service.reviewInvalid(ctx, 'bad plan');
+    readCorrectedPlan.mockResolvedValue(source);
+    await service.reviewInvalid(ctx, 'bad plan');
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
+    const before = appendInbox.mock.calls.length;
+
+    await service.reviewInvalid(ctx, 'bad plan');
+    expect(appendInbox).toHaveBeenCalledTimes(before);
+  });
+
+  it('uses the initial Inbox card to request correction without repeating it while waiting', async () => {
+    const { service, appendInbox, bindInboxAction, records, nudge, wakeCoordinator, readCorrectedPlan } = create();
     const invalid = { status: 'invalid' as const, reason: 'missing steps' };
-    readCorrectedPlan.mockResolvedValue(invalid);
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
     await service.begin(ctx.executionId, 'bad plan', false);
     await service.review(ctx, invalid);
-    const entry = appendInbox.mock.calls[0]![0];
-    expect(entry.comments).toContain('No valid revised plan is ready to review.');
-    expect(entry.decisionGuidance).toEqual({ kind: 'plan-correction', diagnostic: 'bad plan' });
-    expect(entry.questions[0]?.options).toEqual([
-      { id: 'changes', label: 'Request changes' },
-      { id: 'cancel', label: 'Cancel' }
-    ]);
-    expect(entry.dedupeKey).toMatch(/^plan-correction:e-1:[0-9a-f-]+$/);
+    expect(appendInbox).toHaveBeenCalledOnce();
+    expect(nudge).not.toHaveBeenCalled();
     const firstOffer = latestOffer(bindInboxAction);
     expect(firstOffer.digest).toBe('');
-
     await expect(service.respond(ctx.executionId, 'changes', firstOffer)).resolves.toBe('wait');
-    expect(records.get(ctx.executionId)).toMatchObject({ status: 'correction-required' });
-    expect(nudge).toHaveBeenCalledOnce();
+    expect(nudge).not.toHaveBeenCalled();
+    expect(wakeCoordinator).toHaveBeenCalledOnce();
 
+    readCorrectedPlan.mockResolvedValue(source);
+    await service.review(ctx, source);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    await expect(service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction))).resolves.toBe('wait');
+    expect(records.get(ctx.executionId)).toMatchObject({ status: 'correction-required' });
+
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
     await service.review(ctx, invalid);
-    await expect(service.respond(ctx.executionId, 'cancel', latestOffer(bindInboxAction))).resolves.toBe('cancelled');
-    expect(records.get(ctx.executionId)).toMatchObject({ status: 'cancelled' });
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+
+    readCorrectedPlan.mockResolvedValue(source);
+    await service.review(ctx, source);
+    expect(appendInbox).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not nudge the coordinator until the operator requests correction', async () => {
+    const { service, nudge, appendInbox, readCorrectedPlan } = create();
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
+    await service.begin(ctx.executionId, 'bad plan', false);
+
+    await expect(service.reviewInvalid(ctx, 'bad plan')).resolves.toBe('wait');
+    expect(nudge).not.toHaveBeenCalled();
+    expect(appendInbox).toHaveBeenCalledOnce();
+  });
+
+  it('shows an initial operator decision for a first invalid corrected-plan artifact', async () => {
+    const { service, nudge, appendInbox, readCorrectedPlan } = create();
+    readCorrectedPlan.mockResolvedValue({ status: 'invalid', reason: 'missing Write scope' });
+    await service.begin(ctx.executionId, 'bad plan', false);
+
+    await expect(service.reviewInvalid(ctx, 'bad plan')).resolves.toBe('wait');
+
+    expect(nudge).not.toHaveBeenCalled();
+    expect(appendInbox).toHaveBeenCalledOnce();
   });
 
   it('coalesces a retried pending offer under its durable offer id', async () => {
@@ -169,14 +312,15 @@ describe('PlanCorrectionService', () => {
     expect(bindInboxAction).toHaveBeenCalledOnce();
   });
 
-  it('never approves an offer without an immutable corrected digest', async () => {
+  it('does not expose approval on the initial correction request', async () => {
     const { service, bindInboxAction, readCorrectedPlan, resume } = create();
     const invalid = { status: 'invalid' as const, reason: 'missing steps' };
     readCorrectedPlan.mockResolvedValue(invalid);
     await service.begin(ctx.executionId, 'bad plan', false);
     await service.review(ctx, invalid);
 
-    await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('reject');
+    const offer = latestOffer(bindInboxAction);
+    expect(offer.digest).toBe('');
     expect(resume).not.toHaveBeenCalled();
   });
 

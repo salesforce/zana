@@ -42,3 +42,10 @@ export function resolveTriggeredSquadPlan(planSource: 'provided' | 'infer', obje
       : {})
   };
 }
+
+/** Initial task for an invalid supplied plan must not expose it as executable work. */
+export function invalidProvidedPlanHold(role: 'orchestrator' | 'worker'): string {
+  return role === 'orchestrator'
+    ? 'The supplied execution plan is invalid and awaiting host-managed correction. Do not begin, assign, or perform work from it. End your turn now; the host will send the exact corrected-plan artifact path.'
+    : 'The supplied execution plan is invalid and awaiting host-managed correction. Do not begin, assign, or perform work from it. Wait for the coordinator after host approval.';
+}

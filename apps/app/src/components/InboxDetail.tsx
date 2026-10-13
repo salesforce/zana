@@ -231,7 +231,10 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
 
   const hasDocs = (entry.docs?.length ?? 0) > 0;
   const hasComments = (entry.comments ?? '').trim().length > 0;
-  const squadWorktreeNotice = !!entry.executionId && /(?:squad|shared) worktree/i.test(`${entry.subject ?? ''}\n${entry.comments ?? ''}`);
+  const squadDetailsNotice = !!entry.executionId && (
+    /(?:squad|shared) worktree/i.test(`${entry.subject ?? ''}\n${entry.comments ?? ''}`)
+    || entry.decisionGuidance?.kind === 'plan-correction'
+  );
   const decisionGuidance = entry.decisionGuidance;
   // One-or-many questions, normalized to a flat list (see inboxQuestions).
   // The interactive lettered-option form is an experimental display choice; when
@@ -517,9 +520,11 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // Unknown ownership is fail-closed until main confirms this exact entry is non-host.
   const ownershipLoading = ownership?.loading ?? true;
   const ownershipError = ownership?.error === true;
-  const hostActionSurface = squadWorktreeNotice ? (
+  const hostActionSurface = squadDetailsNotice && (!hostAction || hostAction.kind === 'squad-worktree-lifecycle') ? (
     <div className="inbox-reply" role="status">
-      <p>This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.</p>
+      <p>{entry.decisionGuidance?.kind === 'plan-correction'
+        ? 'This Squad plan needs correction. Open Squad details to retain the run context while reviewing it.'
+        : 'This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.'}</p>
       <button type="button" className="btn" onClick={() => {
         setPendingSquadDetailsTarget({ projectId: entry.projectId, executionId: entry.executionId! });
         setNav('agents');
@@ -547,7 +552,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // resumed terminal could escape the host-controlled worktree and authority.
   const ownershipPending = ownershipLoading || ownershipError;
   const canOpenHostOrigin = !!originatingThread || !!originalSession;
-  const canOpen = !squadWorktreeNotice && projectAlive && !ownershipPending && (!hostAction || canOpenHostOrigin);
+  const canOpen = !squadDetailsNotice && projectAlive && !ownershipPending && (!hostAction || canOpenHostOrigin);
 
   const answerSurface = hostActionSurface ?? (
     <>
@@ -776,6 +781,18 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
 
        {(ownershipLoading || ownershipError || hostAction || questionFirst) ? answerSurface : null}
 
+       {entry.decisionGuidance?.kind === 'plan-correction' && hostAction && (
+         <div className="inbox-reply" role="status">
+           <p>{entry.decisionGuidance?.kind === 'plan-correction'
+             ? 'Keep this Squad run context while reviewing the correction.'
+             : 'Recovery and worktree actions are available from Squad details.'}</p>
+           <button type="button" className="btn" onClick={() => {
+             setPendingSquadDetailsTarget({ projectId: entry.projectId, executionId: entry.executionId! });
+             setNav('agents');
+           }}>Open Squad details</button>
+         </div>
+       )}
+
        {decisionGuidance?.kind === 'plan-correction' && (
         <PlanCorrectionDetails entryId={entry.id} guidance={decisionGuidance} />
        )}
@@ -822,7 +839,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
               {openLabel}
               {compact ? ' agent' : null}
             </button>
-          ) : !squadWorktreeNotice && (
+          ) : !squadDetailsNotice && (
             <div className="inbox-detail-unavailable">
               Project no longer exists — nowhere to open.
             </div>

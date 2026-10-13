@@ -90,29 +90,45 @@ function stripBackticks(value: string): string {
   return value.replace(/`/g, '').trim();
 }
 
+/** A trailing sentence period ("None.", "`a`.") is prose, not part of the value. */
+function stripSentencePeriod(value: string): string {
+  return stripBackticks(value).replace(/\.$/, '').trim();
+}
+
 /** `None` (case-insensitive, possibly back-ticked) → empty; else comma-split + de-ticked. */
 function parseList(value: string): string[] {
   const cleaned = stripBackticks(value);
-  if (!cleaned || cleaned.toLowerCase() === 'none') return [];
-  return cleaned
+  if (!cleaned || stripSentencePeriod(cleaned).toLowerCase() === 'none') return [];
+  return stripSentencePeriod(cleaned)
     .split(',')
-    .map((item) => item.trim())
+    .map((item) => stripSentencePeriod(item))
     .filter((item) => item && item.toLowerCase() !== 'none');
 }
 
 /** Parse `Skills: alpha, beta; MCP servers: repo` portable requirement syntax. */
-function parseRequires(value: string): ExecutionWorkUnitInput['requires'] | undefined {
-  if (!value.trim() || /^none$/i.test(stripBackticks(value))) return undefined;
+function parseRequires(
+  value: string,
+  unitId: string
+): { ok: true; requires: ExecutionWorkUnitInput['requires'] | undefined } | { ok: false; reason: string } {
+  const flat = value.replace(/\s*\n\s*/g, ' ');
+  if (!flat.trim() || /^none$/i.test(stripBackticks(flat))) return { ok: true, requires: undefined };
   const requires: NonNullable<ExecutionWorkUnitInput['requires']> = {};
-  for (const entry of value.split(';')) {
-    const match = /^\s*(skills|mcp\s*servers)\s*:\s*(.*)$/i.exec(entry);
-    if (!match) continue;
+  for (const entry of flat.split(';')) {
+    const text = entry.trim();
+    if (!text || /^none$/i.test(stripBackticks(text))) continue;
+    const match = /^(skills|mcp\s*servers)\s*:\s*(.*)$/i.exec(text);
+    if (!match) {
+      return {
+        ok: false,
+        reason: `step ${unitId} has malformed Requires entry "${text}" (expected "Skills: a, b; MCP servers: c" or "None")`
+      };
+    }
     const names = parseList(match[2]);
     if (!names.length) continue;
     if (/^skills$/i.test(match[1])) requires.skills = names;
     else requires.mcpServers = names;
   }
-  return requires.skills || requires.mcpServers ? requires : undefined;
+  return { ok: true, requires: requires.skills || requires.mcpServers ? requires : undefined };
 }
 
 interface PlanStepBlock {
@@ -188,7 +204,9 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
   const readOnly = /read[-\s]?only/i.test(labels.get('mode') ?? '');
   const executionClass = stripBackticks(labels.get('execution class') ?? '').toLowerCase();
   const minimumLevel = EXECUTION_CLASS_LEVEL[executionClass];
-  const requires = parseRequires(labels.get('requires') ?? '');
+  const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
+  if (!parsedRequires.ok) return parsedRequires;
+  const requires = parsedRequires.requires;
 
   return {
     ok: true,

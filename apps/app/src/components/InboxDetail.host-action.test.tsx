@@ -111,6 +111,22 @@ describe('InboxDetail host-owned actions', () => {
     expect(screen.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
   });
 
+  it('opens a scheduled Squad correction in details instead of creating an Agent', async () => {
+    state.entry = {
+      ...state.entry,
+      subject: 'Plan correction required',
+      executionId: 'execution-1',
+      sessionId: undefined,
+      decisionGuidance: { kind: 'plan-correction', diagnostic: 'unknown dependency' }
+    };
+    state.action = undefined;
+    render(view());
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Squad details' }));
+    expect(state.create).not.toHaveBeenCalled();
+    expect(state.restore).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
+  });
+
   it.each(['pending', 'failed'] as const)('keeps %s host form actionable despite ordinary answered marker', async (status) => {
     state.answered = true;
     state.action = { ...state.action!, status, message: 'Try again after checking the worktree.' };

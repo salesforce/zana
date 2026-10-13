@@ -21,11 +21,14 @@ vi.mock('../store.js', () => ({
   useInboxKeep: (pick: (s: unknown) => unknown) => pick({ keptIds: state.kept ? { one: true } : {} }),
   useSavedMark: (pick: (s: unknown) => unknown) => pick({ savedEntryIds: state.saved ? { one: true } : {} }),
   useInboxAnswered: (pick: (s: unknown) => unknown) => pick({ answeredIds: {} }),
+  useInboxHostActions: (pick: (s: unknown) => unknown) => pick({ byEntryId: {}, resolutionByEntryId: {} }),
   useSuggestions: (pick: (s: unknown) => unknown) => pick({ entries: [] }),
   deleteInboxEntry: (id: string) => state.remove(id),
   toggleInboxKeep: (id: string) => state.keep(id),
   saveInboxEntry: (...args: unknown[]) => state.save(...args),
-  replyToInboxEntry: vi.fn()
+  replyToInboxEntry: vi.fn(),
+  resolveInboxHostAction: vi.fn(async () => {}),
+  runInboxHostAction: vi.fn(async () => {})
 }));
 vi.mock('../lib/product-client.js', () => ({ product: {
   fs: { readFile: (...args: unknown[]) => state.readFile(...args), readDataUrl: (...args: unknown[]) => state.readDataUrl(...args), resolveDoc: (...args: unknown[]) => state.resolveDoc(...args) },

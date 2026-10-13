@@ -2312,6 +2312,7 @@ export class ExecutionService {
     }
     try {
       const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(current.callerPrincipalId, current.teamLaunchRequestId));
+      console.info('[mt6-diag] wakeCoordinator queued', { executionId: record.id, queued: current.coordinatorWakes?.length, teamLaunchRequestId: current.teamLaunchRequestId, orchestratorSessionId: lifecycle?.orchestratorSessionId });
       if (lifecycle?.orchestratorSessionId) {
         await this.drainCoordinatorWake(record.projectId, record.id, lifecycle.orchestratorSessionId);
         this.deps.triggerDeliveryDrain?.(lifecycle.orchestratorSessionId);
@@ -2341,6 +2342,7 @@ export class ExecutionService {
         const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
         if (lifecycle?.orchestratorSessionId !== sessionId) return;
         const state = this.deps.getAgentState?.(sessionId);
+        console.info('[mt6-diag] drainCoordinatorWake', { executionId, sessionId, state, wakeId: wake.id, ageMs: (this.deps.now ?? Date.now)() - wake.createdAt });
         if (state !== undefined && !isRestfulAgentState(state)) {
           // Non-restful. `unknown` is ambiguous — an untracked remote/opencode
           // coordinator (no mesh dot) sits here permanently, so a hard block would
@@ -2351,12 +2353,25 @@ export class ExecutionService {
           if (state !== 'unknown') return;
           if ((this.deps.now ?? Date.now)() - wake.createdAt < COORDINATOR_WAKE_UNKNOWN_STALE_MS) return;
         }
-        if (!this.deps.replyToSession(sessionId, wake.message)) return;
+        const delivered_ = this.deps.replyToSession(sessionId, wake.message);
+        console.info('[mt6-diag] wake reply', { executionId, sessionId, wakeId: wake.id, delivered: delivered_ });
+        if (!delivered_) return;
         await this.deps.store.acknowledgeCoordinatorWake(record.id, wake.id);
       }
     } catch (error) {
       (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution coordinator wake drain failed for ${executionId}`, error);
     }
+  }
+
+  /** Queue a durable operator correction for a parked coordinator. */
+  async wakeCoordinatorForPlanCorrection(executionId: string, message: string): Promise<void> {
+    const record = await this.deps.store.get(executionId);
+    if (!record) throw new Error('execution not found');
+    await this.wakeCoordinator(record, {
+      cause: 'HUMAN_BLOCKER',
+      message,
+      stateOrClaimGeneration: record.state
+    });
   }
 
   /**

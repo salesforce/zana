@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
+import { invalidProvidedPlanHold, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
 
 const validPlan = [
   '### write: Write output <!-- executable-step -->',
@@ -41,5 +41,11 @@ describe('resolveTriggeredSquadPlan', () => {
       coordinationMode: 'freeform',
       planError: expect.any(String)
     });
+  });
+
+  it('does not expose an invalid supplied plan as an executable initial task', () => {
+    expect(invalidProvidedPlanHold('orchestrator')).toContain('Do not begin, assign, or perform work');
+    expect(invalidProvidedPlanHold('orchestrator')).toContain('End your turn now');
+    expect(invalidProvidedPlanHold('worker')).toContain('Wait for the coordinator');
   });
 });

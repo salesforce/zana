@@ -570,7 +570,7 @@ export function ScheduleEditor({
           <span>
             Auto-close when finished
             <span className="scheduler-form-optional">
-              {' '}— close the terminal once Claude finishes responding
+              {' '}— close the terminal once Agent finishes responding
               (via a Stop hook). Otherwise the tab stays open.
             </span>
           </span>

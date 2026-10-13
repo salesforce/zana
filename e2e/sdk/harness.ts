@@ -265,7 +265,7 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff';
+export type JobTeamScenario = 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent';
 
 /** The behavior gates the generated coordinator script keys its behavior off. */
 interface JobTeamScenarioFlags {
@@ -274,6 +274,8 @@ interface JobTeamScenarioFlags {
   streaming: boolean;
   churn: boolean;
   handoff: boolean;
+  planCorrection: boolean;
+  planCorrectionSilent: boolean;
 }
 
 /** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
@@ -283,7 +285,9 @@ function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags 
     stalled: scenario === 'stalled-worker',
     streaming: scenario === 'streaming-worker',
     churn: scenario === 'kickoff-churn',
-    handoff: scenario === 'peer-handoff'
+    handoff: scenario === 'peer-handoff',
+    planCorrection: scenario === 'plan-correction',
+    planCorrectionSilent: scenario === 'plan-correction-silent'
   };
 }
 
@@ -371,6 +375,14 @@ const CHURN = ${JSON.stringify(flags.churn)};
 // claimGeneration. The peer (gen >= 2) COMPLETES it — proving live squad work
 // rotates off a stopped worker onto its peer, not merely that a claim reclaims.
 const HANDOFF = ${JSON.stringify(flags.handoff)};
+// Plan-correction repro: the launch carries a defective provided plan, so the
+// host parks the run and the coordinator is told to wait. It registers NOTHING and
+// just rests idle. When the operator picks Request changes the host wakes it with
+// the rejection + the corrected-plan path; PLAN_CORRECTION writes a valid plan
+// there and goes idle again, while PLAN_CORRECTION_SILENT ends turns WITHOUT
+// writing it (stalled-card path).
+const PLAN_CORRECTION = ${JSON.stringify(flags.planCorrection)};
+const PLAN_CORRECTION_SILENT = ${JSON.stringify(flags.planCorrectionSilent)};
 
 const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : 'UNKN';
 // Progress goes to stderr (Playwright captures it on failure) and a per-process
@@ -531,6 +543,56 @@ async function orchestrator() {
   await hold();
 }
 
+// Parked coordinator for the plan-correction scenarios (see PLAN_CORRECTION).
+async function planCorrectionOrchestrator() {
+  log('plan-correction orchestrator parked', EXECUTION_ID);
+  const WAKE_RE = new RegExp('corrected portable plan to ' + BT + '([^' + BT + ']+)' + BT);
+  let buf = '';
+  let handling = false;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function (chunk) {
+    buf += String(chunk);
+    const m = buf.match(WAKE_RE);
+    if (!m || handling) return;
+    handling = true;
+    buf = '';
+    const rel = m[1];
+    log('plan-correction wake received', rel, 'rejected-reason-seen=' + /was rejected:/.test(String(chunk)));
+    (async function () {
+      setWorking();
+      await sleep(600);
+      if (PLAN_CORRECTION) {
+        const target = path.join(CWD, rel);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, [
+          '# Corrected Plan',
+          '',
+          '### write: Write output <!-- executable-step -->',
+          '- **Mode:** Mutating',
+          '- **Work:** Create output.',
+          '- **Write scope:** ' + BT + 'output.txt' + BT,
+          '- **Verification:** Read output.',
+          ''
+        ].join('\n'));
+        log('plan-correction wrote corrected plan', rel);
+        setIdle();
+      } else {
+        // Silent: end several turns without writing, so the host sees idle edges.
+        for (let i = 0; i < 4; i++) {
+          setIdle(); await sleep(1500);
+          setWorking(); await sleep(600);
+        }
+        setIdle();
+        log('plan-correction silent: ended turns without writing');
+      }
+      handling = false;
+    })();
+  });
+  process.stdin.resume();
+  setIdle(); // rest so the host sees an idle edge and reviews the rejected plan
+  await new Promise(function () {});
+}
+
 async function handleNavigationLabel(outcomeFence) {
   const blockerId = 'blk-navigation-label';
   const r = await tryMcp('execution.work.block', {
@@ -602,6 +664,9 @@ async function doUnit(unitId) {
     } else if (unitId === 'about') {
       fs.writeFileSync(path.join(CWD, 'about.txt'), 'ABOUT: ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'about', result: 'ABOUT: ready', ...outcomeFence });
+    } else if (unitId === 'write') {
+      fs.writeFileSync(path.join(CWD, 'output.txt'), 'output ready\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'output ready', ...outcomeFence });
     } else if (unitId === 'navigation-label') {
       const chosenLabel = await handleNavigationLabel(outcomeFence);
       // Complete with the chosen label as the unit result. The engine inherits
@@ -857,7 +922,7 @@ async function worker() {
   if (!MCP_URL || (!EXECUTION_ID && !IS_OWNER)) { log('missing MCP_URL/EXECUTION_ID', MCP_URL, EXECUTION_ID); await hold(); return; }
   try {
     if (IS_OWNER) await owner();
-    else if (IS_ORCHESTRATOR) await orchestrator();
+    else if (IS_ORCHESTRATOR) await (PLAN_CORRECTION || PLAN_CORRECTION_SILENT ? planCorrectionOrchestrator() : orchestrator());
     else if (IS_WORKER) await worker();
     else { log('unknown role; prompt head:', PROMPT.slice(0, 200)); await hold(); }
   } catch (e) { log('fatal', String((e && e.stack) || e)); await hold(); }

@@ -16,6 +16,9 @@ import { type PlanCorrectionRecord } from './store.js';
 
 export const PLAN_CORRECTION_ACTION = 'plan-correction';
 export const PLAN_CORRECTION_MAX_RETRIES = 3;
+/** Coordinator idle edges after a correction request with no artifact before the operator is told it stalled. */
+export const PLAN_CORRECTION_STALL_IDLE_EDGES = 2;
+const SOURCE_PLAN_PROMPT_CAP = 8_000;
 
 const correctionArtifactPaths = (executionId: string) => new Set([
   authoredPlanRelPath(executionId),
@@ -59,7 +62,8 @@ export async function runPlanCorrectionHostAction(
   const action = parsePlanCorrectionActionRef(ref);
   if (!action) throw new Error('invalid plan correction action');
   if (await service.respond(action.executionId, input, action) === 'reject') {
-    throw new Error('plan correction action was rejected or superseded');
+    const why = service.takeRejectionReason(action.executionId);
+    throw new Error(why ? `plan correction action was rejected or superseded: ${why}` : 'plan correction action was rejected or superseded');
   }
 }
 
@@ -67,12 +71,17 @@ export interface PlanCorrectionDeps {
   appendInbox(input: Omit<InboxEntry, 'id' | 'ts'>): Promise<InboxEntry>;
   bindInboxAction(entry: InboxEntry, action: { kind: string; ref: string }): boolean;
   nudge(sessionId: string, text: string): void;
+  wakeCoordinator?(executionId: string, text: string): Promise<void>;
+  /** Original supplied plan text, so a held coordinator can author a correction from it. */
+  readSourcePlan?(executionId: string): Promise<string | undefined>;
   readCorrectedPlan(projectRoot: string, executionId: string): Promise<AuthoredPlanRead>;
   store: {
     get(executionId: string): Promise<PlanCorrectionRecord | undefined>;
     listCancelled?(): Promise<PlanCorrectionRecord[]>;
     put(record: PlanCorrectionRecord): Promise<PlanCorrectionRecord>;
   };
+  /** Persist an approved corrected plan back to its recurring schedule before resume. */
+  updateScheduledPrompt?(ctx: CoordinatorHandoffContext, units: ExecutionWorkUnitInput[]): Promise<void>;
   resume(ctx: CoordinatorHandoffContext): Promise<void>;
   stopExecution(executionId: string): Promise<void>;
   logRecoveryError?(executionId: string, error: unknown): void;
@@ -84,9 +93,20 @@ export interface PlanCorrectionRecoveryFailure {
 }
 
 export class PlanCorrectionService {
+  /** Latest approve-rejection cause per execution, surfaced once to the Inbox action error. */
+  private readonly rejectionReasons = new Map<string, string>();
+
+  takeRejectionReason(executionId: string): string | undefined {
+    const reason = this.rejectionReasons.get(executionId);
+    this.rejectionReasons.delete(executionId);
+    return reason;
+  }
+
   private readonly responseTails = new Map<string, Promise<void>>();
   /** Bound offers need no duplicate Inbox entry until process state is lost. */
   private readonly publishedOfferIds = new Set<string>();
+  /** Coordinator idle edges seen since the last correction request without a usable artifact. */
+  private readonly missingArtifactIdles = new Map<string, number>();
 
   constructor(private readonly deps: PlanCorrectionDeps) {}
 
@@ -125,6 +145,7 @@ export class PlanCorrectionService {
   }
 
   private async reviewCorrected(current: PlanCorrectionRecord, corrected: AuthoredPlanRead): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject'> {
+    console.info('[mt6-diag] reviewCorrected', { executionId: current.executionId, status: current.status, retries: current.retries, corrected: corrected.status });
     if (current.status === 'cancelled') return this.rejectCancelled(current);
     if (current.status === 'approved') {
       // Approval authorizes one captured plan. A later file edit starts another review.
@@ -139,13 +160,27 @@ export class PlanCorrectionService {
       this.clearApproval(current);
       // A source-plan parse failure does not invalidate an already presented
       // corrected-plan offer or spend another human-review attempt.
-      if (current.status === 'pending' && current.offeredDigest) {
+      if (current.status === 'pending') {
         if (!await this.persistActive(current)) return this.rejectCancelled(current);
         return 'wait';
+      }
+      // Initial decision asks whether to request a correction. After that request
+      // consumes the card, wait for the artifact rather than duplicating the card.
+      if (current.status === 'correction-required' && current.retries > 0) {
+        const idles = (this.missingArtifactIdles.get(current.executionId) ?? 0) + 1;
+        if (idles < PLAN_CORRECTION_STALL_IDLE_EDGES) {
+          this.missingArtifactIdles.set(current.executionId, idles);
+          return 'wait';
+        }
+        // The coordinator ended its turn(s) without writing a plan. Surface that
+        // to the operator instead of waiting silently forever.
+        this.missingArtifactIdles.delete(current.executionId);
+        return this.request(current, true);
       }
       if (current.retries >= PLAN_CORRECTION_MAX_RETRIES) return 'reject';
       return this.request(current);
     }
+    this.missingArtifactIdles.delete(current.executionId);
     const digest = planDigest(corrected.units);
     if (current.offeredDigest !== digest) {
       this.clearApproval(current);
@@ -164,24 +199,25 @@ export class PlanCorrectionService {
     return this.request(current);
   }
 
-  private async request(current: PlanCorrectionRecord): Promise<'wait' | 'reject'> {
+  private async request(current: PlanCorrectionRecord, stalled = false): Promise<'wait' | 'reject'> {
     if (current.retries >= PLAN_CORRECTION_MAX_RETRIES) return 'reject';
     current.retries += 1;
     current.status = 'pending';
     current.offeredActionId = randomUUID();
     // Persist complete offer before appendInbox exposes its approval action.
     if (!await this.persistActive(current)) return this.rejectCancelled(current);
-    return this.publishPendingOffer(current);
+    return this.publishPendingOffer(current, stalled);
   }
 
   /** Re-publish a durable offer after an inbox append/bind failure or restart. */
-  private async publishPendingOffer(current: PlanCorrectionRecord): Promise<'wait' | 'reject'> {
+  private async publishPendingOffer(current: PlanCorrectionRecord, stalled = false): Promise<'wait' | 'reject'> {
     const ctx = current.ctx;
     const reviewReady = !!current.offeredDigest;
     const entry = await this.deps.appendInbox({
       projectId: ctx.projectId,
       projectLabel: undefined,
       sessionId: ctx.sessionId,
+      executionId: ctx.executionId,
       hostActionRequired: true,
       // Coordinator idle and process recovery may retry this exact offer. Keep
       // one actionable inbox card until the operator chooses an option.
@@ -189,7 +225,7 @@ export class PlanCorrectionService {
       subject: 'Plan correction required',
       comments: reviewReady
         ? `${planReviewSummary(current.reason, current.offeredUnits ?? [])}\n\nReview the proposed corrected plan below before work can continue. Approve starts work using this exact revision. Request changes sends it back for revision. Cancel stops this run.`
-        : 'No valid revised plan is ready to review. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.',
+        : `${stalled ? 'The coordinator finished its turn without writing a corrected plan. ' : ''}No valid revised plan is ready to review. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.`,
       decisionGuidance: {
         kind: 'plan-correction',
         diagnostic: current.reason,
@@ -238,6 +274,7 @@ export class PlanCorrectionService {
     const pending = await this.deps.store.get(executionId);
     if (!pending) throw new Error('plan correction is no longer pending');
     const choice = input?.trim().toLowerCase();
+    console.info('[mt6-diag] respond', { executionId, choice, status: pending.status, retries: pending.retries, offerMatches: offer?.offerId === pending.offeredActionId, digestMatches: offer?.digest === (pending.offeredDigest ?? ''), hasWake: Boolean(this.deps.wakeCoordinator) });
     if (pending.status === 'cancelled') {
       await this.retryCancelledCleanup(pending);
       return choice === 'cancel' ? 'cancelled' : 'reject';
@@ -265,12 +302,23 @@ export class PlanCorrectionService {
         pending.offeredDigest = undefined;
         pending.offeredUnits = undefined;
         if (!await this.persistActive(pending)) return this.rejectCancelled(pending);
-        this.deps.nudge(pending.ctx.sessionId, `Corrected plan is not valid. Write a complete portable plan to \`${correctedPlanRelPath(executionId)}\`, then end your turn.`);
+        await this.nudgeCoordinator(pending, await this.correctionInstruction(pending, 'The corrected plan on disk is missing or changed since it was offered.'));
         return 'wait';
       }
       pending.status = 'approved';
       pending.approvedDigest = pending.offeredDigest;
       pending.approvedUnits = cloneUnits(pending.offeredUnits!);
+      try {
+        await this.deps.updateScheduledPrompt?.(pending.ctx, pending.approvedUnits);
+      } catch (error) {
+        this.rejectionReasons.set(executionId, error instanceof Error ? error.message : String(error));
+        // Schedule persistence is part of scheduled-run approval. Do not allow a
+        // one-off correction to resume when future occurrences would remain bad.
+        pending.status = 'pending';
+        pending.approvedDigest = undefined;
+        pending.approvedUnits = undefined;
+        return 'reject';
+      }
       if (!await this.persistActive(pending)) return this.rejectCancelled(pending);
       return 'approve';
     }
@@ -280,13 +328,33 @@ export class PlanCorrectionService {
       await this.deps.stopExecution(executionId);
       return 'cancelled';
     }
-    this.deps.nudge(
-      pending.ctx.sessionId,
-      `Revise the correction prose at \`${correctionProseRelPath(executionId)}\` and write the complete corrected portable plan to \`${correctedPlanRelPath(executionId)}\`. Keep the provided source plan unchanged.`
-    );
+    await this.nudgeCoordinator(pending, await this.correctionInstruction(pending));
     pending.status = 'correction-required';
     if (!await this.persistActive(pending)) return this.rejectCancelled(pending);
     return 'wait';
+  }
+
+  /**
+   * A parked coordinator never saw the supplied plan, so the request carries the
+   * validation error, the source, the grammar and permission to resolve gaps.
+   */
+  private async correctionInstruction(record: PlanCorrectionRecord, lead?: string): Promise<string> {
+    let source: string | undefined;
+    try { source = await this.deps.readSourcePlan?.(record.executionId); } catch { source = undefined; }
+    const excerpt = source && source.length > SOURCE_PLAN_PROMPT_CAP ? `${source.slice(0, SOURCE_PLAN_PROMPT_CAP)}\n[truncated]` : source;
+    return [
+      lead,
+      `The supplied execution plan was rejected: ${record.reason}`,
+      excerpt ? `Supplied plan:\n\`\`\`md\n${excerpt}\n\`\`\`` : undefined,
+      `Write the complete corrected portable plan to \`${correctedPlanRelPath(record.executionId)}\` using your file-write tool (H3 \`id: Title <!-- executable-step -->\` headings, each with the fixed label bullets Mode, Work and Verification; every Mutating step must list its Write scope). ` +
+        `Keep the supplied plan unchanged. If a required detail such as a file path or write scope is missing, choose the most conservative reasonable value, record that assumption in \`${correctionProseRelPath(record.executionId)}\`, and still write the plan; the operator reviews it before any work starts. Do not stop to ask the operator. Then end your turn.`
+    ].filter(Boolean).join('\n\n');
+  }
+
+  private async nudgeCoordinator(record: PlanCorrectionRecord, text: string): Promise<void> {
+    this.missingArtifactIdles.delete(record.executionId);
+    if (this.deps.wakeCoordinator) await this.deps.wakeCoordinator(record.executionId, text);
+    else this.deps.nudge(record.ctx.sessionId, text);
   }
 
   private async serialize<T>(executionId: string, operation: () => Promise<T>): Promise<T> {

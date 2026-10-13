@@ -56,9 +56,10 @@ import { createRuntimeRecovery } from './runtime/runtime-recovery.js';
 import { createTeamProductOps } from './team-product-ops.js';
 import { jobCoordinatorPrompt } from './team-coordinator-prompt.js';
 import { compatibleNativeRecoverySnapshots, nativeRecoveryLaunchSlot } from './team-native-recovery.js';
-import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, cleanupHandoffFiles, readAuthoredPlan, readCorrectedPlan, writeSourceMirror } from './team-plan-handoff.js';
+import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, cleanupHandoffFiles, correctedPlanRelPath, readAuthoredPlan, readCorrectedPlan, readHandoffArtifact, writeSourceMirror } from './team-plan-handoff.js';
 import { PLAN_CORRECTION_ACTION, PlanCorrectionService, runPlanCorrectionHostAction } from './plan-correction/service.js';
 import { PlanCorrectionLaunchBinding } from './plan-correction/launch-binding.js';
+import { onOrchestratorIdle } from './coordinator-idle.js';
 import { createPlanCorrectionStore } from './plan-correction/store.js';
 import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
@@ -95,7 +96,8 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, normalizeExecutionPlan, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
 import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portable-plan';
-import { resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
+import { invalidProvidedPlanHold, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
+import { startTriggeredSquadExecution, triggeredSquadSlotTasks, updateScheduledPromptFromCorrection } from './scheduled-plan-correction.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
@@ -1303,11 +1305,19 @@ const planCorrection = new PlanCorrectionService({
   appendInbox: (input) => inboxStore.appendOnce(input),
   bindInboxAction: (entry, action) => inboxActionRegistry.bind(entry, action),
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
+  wakeCoordinator: (executionId, text) => squadExecutionService.wakeCoordinatorForPlanCorrection(executionId, text),
+  readSourcePlan: async (executionId) => (await executionStore.get(executionId))?.request?.objective,
   readCorrectedPlan,
   store: createPlanCorrectionStore({
     filePath: join(app.getPath('userData'), 'plan-corrections.json'),
     database: executionDatabase
   }),
+  updateScheduledPrompt: (ctx, units) => updateScheduledPromptFromCorrection({
+    getExecution: (projectId, executionId) => executionStore.getInProject(projectId, executionId),
+    getSchedule: (scheduleId) => scheduler.get(scheduleId),
+    readCorrectedPlanText: (projectRoot, executionId) => readHandoffArtifact(projectRoot, correctedPlanRelPath(executionId)),
+    updateSchedule: (scheduleId, patch) => scheduler.update(scheduleId, patch)
+  }, ctx, units),
   resume: async (ctx) => teamPlanHandoff.onCoordinatorIdle(ctx),
   stopExecution: async (executionId) => { await squadExecutionService.stopForPlanCorrection(executionId); }
 });
@@ -6627,27 +6637,18 @@ async function startTriggeredSquad(input: {
   const slots = expandTeamSlots(team);
   if (!slots.length || slots.length > 32) throw new Error('team has no launchable slots');
   const { coordinationMode, workUnits, planError } = resolveTriggeredSquadPlan(input.planSource, input.objective);
-  if (planError) {
-    await inboxStore.append({
-      projectId: project.id,
-      projectLabel: project.name,
-      subject: 'Squad plan needed correction',
-      comments: 'Provided Squad plan is invalid. Update plan, then run trigger again.',
-      notify: 'loud'
-    });
-    throw new Error('provided structured plan is invalid');
-  }
-  const result = await squadExecutionService.start(input.callerPrincipalId, project.id, {
+  // An invalid supplied plan follows the same parked-Squad correction path as an
+  // interactive provided plan (binding begun in triggeredSquadSlotTasks): the
+  // durable execution gives Inbox a real run to open; no Claude fallback agent
+  // is created and workers wait for the corrected plan.
+  // A failed start forgets the launch binding begun by triggeredSquadSlotTasks.
+  return startTriggeredSquadExecution(input.launchRequestId, () => squadExecutionService.start(input.callerPrincipalId, project.id, {
     version: 1, teamId: team.id, launchRequestId: input.launchRequestId, coordinationMode, origin: input.origin,
     jobTitle: input.title, objective: input.objective,
-    slots: slots.map(slot => ({ initialTask: slot.role === 'orchestrator'
-      ? `${input.objective}\n\nCoordinate workers and report durable execution completion.`
-      : `${input.objective}\n\nFollow orchestrator assignments and report progress.` })),
+    slots: triggeredSquadSlotTasks(input, slots, planError, invalidProvidedPlanHold, planCorrectionLaunchBinding),
     ...(workUnits ? { workUnits } : {}),
     ...(input.maxDurationMinutes && input.maxDurationMinutes > 0 ? { policy: { deadlineMs: input.maxDurationMinutes * 60 * 1000 } } : {})
-  });
-  if (!result.ok) throw new Error(result.message);
-  return { executionId: result.value.id };
+  }), planCorrectionLaunchBinding);
 }
 
 export async function startTeamJobFromUi(
@@ -7426,27 +7427,14 @@ function wireBridgeListeners() {
     workerInjector.onState(sessionId, state);
     const session = ptys.getSession(sessionId);
     if (session) captureNativeRecoverySnapshot(session);
-    if (state === 'idle' && session?.cohort?.executionId && session.cohort.role === 'orchestrator') {
-      void squadExecutionService.drainCoordinatorWake(session.projectId, session.cohort.executionId, sessionId).catch((error) =>
-        logMainError(`execution coordinator wake ${sessionId}`, error)
-      );
-      // Flow B/C file handoff: read the coordinator-authored `.zana/` plan file
-      // and register it host-side (no execution.* MCP). No-op for a Flow A
-      // coordinator (its plan is already registered → isPlanless is false).
-      void executionStore.getInProject(session.projectId, session.cohort.executionId).then((execution) => {
-        const handoffRoot = execution?.squadWorktree?.path
-          ?? store.listProjects().find((candidate) => candidate.id === session.projectId)?.path;
-        const executionId = session.cohort?.executionId;
-        const slotId = session.cohort?.slotId;
-        if (!(handoffRoot && executionId && slotId)) return;
-        return teamPlanHandoff.onCoordinatorIdle({
-          sessionId,
-          projectId: session.projectId,
-          projectRoot: handoffRoot,
-          executionId,
-          slotId
-        });
-      }).catch((error) => logMainError(`team plan handoff ${sessionId}`, error));
+    if (state === 'idle' && session) {
+      onOrchestratorIdle({
+        drainCoordinatorWake: (projectId, executionId, id) => squadExecutionService.drainCoordinatorWake(projectId, executionId, id),
+        getExecution: (projectId, executionId) => executionStore.getInProject(projectId, executionId),
+        projectPath: (projectId) => store.listProjects().find((candidate) => candidate.id === projectId)?.path,
+        onCoordinatorIdle: (ctx) => teamPlanHandoff.onCoordinatorIdle(ctx),
+        logError: logMainError
+      }, sessionId, session);
     }
     if (session) void transcriptSource.observe(transcriptRefForSession(session));
     if (session?.cohort?.executionId && (state === 'idle' || state === 'blocked')) {
