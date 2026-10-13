@@ -74,5 +74,8 @@ export const DESIGN_DOC_MIGRATIONS: readonly string[] = [
   CREATE INDEX doc_threads_by_thread ON doc_threads (thread_id);`,
   // Replies: a comment with a parent_id belongs to that root comment's thread.
   `ALTER TABLE doc_comments ADD COLUMN parent_id TEXT;
-  CREATE INDEX doc_comments_by_parent ON doc_comments (doc_id, parent_id);`
+  CREATE INDEX doc_comments_by_parent ON doc_comments (doc_id, parent_id);`,
+  // Doc list navigation: pinned docs sort first; an alternative nests under the doc it competes with.
+  `ALTER TABLE docs ADD COLUMN pinned_at INTEGER;
+  ALTER TABLE docs ADD COLUMN alternative_to TEXT;`
 ];

@@ -469,3 +469,132 @@ describe('doc header', () => {
     expect(screen.getByTitle('Edit title')).toBeTruthy();
   });
 });
+
+describe('doc list sections', () => {
+  const row = (title: string) => screen.getByText(title, { selector: '.dd-doc-row-title' }).closest('button')!;
+  const rightClick = (title: string) => fireEvent.contextMenu(row(title), { clientX: 40, clientY: 60 });
+  const sectionNames = () => screen.queryAllByRole('region').map((region) => region.getAttribute('aria-label'));
+  const titlesIn = (label: string) =>
+    within(screen.getByRole('region', { name: label }))
+      .queryAllByText(/./, { selector: '.dd-doc-row-title' })
+      .map((title) => title.textContent);
+
+  it('groups the nav panel by project, collapses sections, and switches to one timeline', async () => {
+    const harness = createHarness();
+    seed(harness.store, { title: 'Glossary', projectId: null });
+    seed(harness.store, { title: 'Payments API', projectId: 'p1' });
+    seed(harness.store, { title: 'Landing page', projectId: 'p2' });
+    seed(harness.store, { title: 'Checkout', projectId: 'p1' });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+
+    // Same-millisecond seeds have no reliable recency order; buildSections' tests cover it.
+    await waitFor(() => expect(sectionNames().sort()).toEqual(['App', 'Global', 'Site']));
+    expect(titlesIn('App').sort()).toEqual(['Checkout', 'Payments API']);
+    // Rows inside a project section drop the project name.
+    expect(within(row('Checkout')).queryByText('App')).toBeNull();
+
+    const head = (label: string) => within(screen.getByRole('region', { name: label })).getByRole('button', { name: new RegExp(label) });
+    const appHead = head('App');
+    expect(appHead.getAttribute('aria-expanded')).toBe('true');
+    expect(appHead.textContent).toContain('2');
+    fireEvent.click(appHead);
+    expect(appHead.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Checkout')).toBeNull();
+    expect(JSON.parse(JSON.parse(localStorage.getItem('zcc.design-docs.list-collapsed')!))).toEqual(['project:p1']);
+    // A search shows matches inside collapsed sections.
+    fireEvent.change(screen.getByLabelText('Search design docs'), { target: { value: 'Checkout' } });
+    expect(await screen.findByText('Checkout')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Search design docs'), { target: { value: '' } });
+    // A new query remounts the list, so wait for it and look the header up again.
+    await waitFor(() => expect(sectionNames().sort()).toEqual(['App', 'Global', 'Site']));
+    expect(screen.queryByText('Checkout')).toBeNull();
+    fireEvent.click(head('App'));
+    expect(await screen.findByText('Checkout')).toBeTruthy();
+
+    // Flat: the original single list with project names, no section headers.
+    fireEvent.click(screen.getByRole('button', { name: 'Group by project' }));
+    expect(localStorage.getItem('zcc.design-docs.list-grouped')).toBe('false');
+    await waitFor(() => expect(sectionNames()).toEqual([]));
+    expect(within(row('Checkout')).getByText('App')).toBeTruthy();
+
+    // Filtering to one project hides the grouping toggle.
+    pick('project', /^Site/);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Group by project' })).toBeNull());
+  });
+
+  it('pins docs, surfaces docs with open comments, and nests alternatives', async () => {
+    const harness = createHarness();
+    const trace = seed(harness.store, { title: 'Trace API', projectId: 'p1' });
+    const unlocked = seed(harness.store, { title: 'Unlocked package', projectId: 'p1' });
+    const review = seed(harness.store, { title: 'Onboarding', projectId: 'p1' });
+    seed(harness.store, { title: 'Glossary', projectId: null });
+    await harness.asAgent((store) => store.addComment(review.id, { body: 'Numbers?' }, AGENT));
+    await harness.asAgent((store) => store.update(unlocked.id, { alternativeTo: trace.id }, AGENT));
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+
+    // The project tab never groups by project, but keeps the smart sections.
+    await waitFor(() => expect(sectionNames()).toEqual(['Needs me', 'Recent']));
+    expect(screen.queryByRole('button', { name: 'Group by project' })).toBeNull();
+    expect(titlesIn('Needs me')).toEqual(['Onboarding']);
+    const recent = titlesIn('Recent');
+    expect([...recent].sort()).toEqual(['Glossary', 'Trace API', 'Unlocked package']);
+    // An alternative follows the doc it is an alternative to.
+    expect(recent[recent.indexOf('Trace API') + 1]).toBe('Unlocked package');
+    expect(row('Unlocked package').classList.contains('dd-doc-row-alt')).toBe(true);
+    expect(within(row('Unlocked package')).getByText('Alt')).toBeTruthy();
+
+    rightClick('Trace API');
+    fireEvent.click(menuItem('Pin to top'));
+    await waitFor(() => expect(sectionNames()).toEqual(['Pinned', 'Needs me', 'Recent']));
+    expect(titlesIn('Pinned')).toEqual(['Trace API', 'Unlocked package']);
+    expect(harness.store.summary(trace.id).revision).toBe(trace.revision);
+
+    rightClick('Trace API');
+    fireEvent.click(menuItem('Unpin'));
+    await waitFor(() => expect(sectionNames()).toEqual(['Needs me', 'Recent']));
+
+    harness.fail('pin', 'database locked');
+    rightClick('Glossary');
+    fireEvent.click(menuItem('Pin to top'));
+    await waitFor(() => expect(harness.toasts.at(-1)).toEqual({ message: 'Could not pin the doc: database locked', kind: 'error' }));
+  });
+
+  it('marks a doc as an alternative from its menu, and detaches it', async () => {
+    const harness = createHarness();
+    const trace = seed(harness.store, { title: 'Trace API', projectId: 'p1' });
+    const unlocked = seed(harness.store, { title: 'Unlocked package', projectId: 'p1' });
+    seed(harness.store, { title: 'Elsewhere', projectId: 'p2' });
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    await screen.findByText('Unlocked package');
+
+    rightClick('Unlocked package');
+    fireEvent.click(menuItem('Alternative to…'));
+    let dialog = screen.getByRole('dialog', { name: 'Alternative to…' });
+    const select = (await within(dialog).findByRole('combobox')) as HTMLSelectElement;
+    // Its project's docs and global ones only, never itself.
+    expect([...select.options].map((option) => option.textContent)).toEqual(['Nothing: a doc of its own', 'Trace API']);
+    const save = within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(select, { target: { value: trace.id } });
+    fireEvent.click(save);
+    await waitFor(() => expect(harness.store.summary(unlocked.id).alternativeTo).toBe(trace.id));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(row('Unlocked package').classList.contains('dd-doc-row-alt')).toBe(true));
+
+    // A doc with alternatives cannot become one itself.
+    rightClick('Trace API');
+    fireEvent.click(menuItem('Alternative to…'));
+    dialog = screen.getByRole('dialog', { name: 'Alternative to…' });
+    expect(await within(dialog).findByText(/has 1 alternative of its own/)).toBeTruthy();
+    expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    rightClick('Unlocked package');
+    expect(within(menuItem(/Alternative to/)).getByText('Linked')).toBeTruthy();
+    fireEvent.click(menuItem(/Alternative to/));
+    dialog = screen.getByRole('dialog', { name: 'Alternative to…' });
+    fireEvent.change(await within(dialog).findByRole('combobox'), { target: { value: '' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(harness.store.summary(unlocked.id).alternativeTo).toBeNull());
+  });
+});

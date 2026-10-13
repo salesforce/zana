@@ -492,3 +492,44 @@ describe('pure helpers', () => {
     expect(formatBytes(3 * 1024 * 1024)).toBe('3 MiB');
   });
 });
+
+describe('DesignDocStore — pins and alternatives', () => {
+  it('pins and unpins without counting as an edit', () => {
+    const store = makeStore();
+    const doc = store.create({ title: 'Sync', template: 'blank' }, user);
+    const pinned = store.setPinned(doc.slug, true);
+    expect(pinned.pinnedAt).toEqual(expect.any(Number));
+    expect(pinned).toMatchObject({ revision: doc.revision, updatedAt: doc.updatedAt });
+    // Pinning again keeps the original pin time.
+    expect(store.setPinned(doc.id, true).pinnedAt).toBe(pinned.pinnedAt);
+    expect(store.setPinned(doc.id, false).pinnedAt).toBeNull();
+    expectError(() => store.setPinned('missing', true), 'not_found');
+  });
+
+  it('links an alternative one level deep and detaches it', () => {
+    const store = makeStore();
+    const original = store.create({ title: 'Trace API', template: 'blank' }, user);
+    const alternative = store.create({ title: 'Unlocked package', template: 'blank' }, user);
+    const third = store.create({ title: 'Integration user', template: 'blank' }, user);
+
+    const linked = store.update(alternative.id, { alternativeTo: original.slug }, agent);
+    expect(linked.alternativeTo).toBe(original.id);
+    expect(linked.revision).toBe(alternative.revision + 1);
+
+    expectError(() => store.update(original.id, { alternativeTo: original.id }, user), 'invalid', /itself/);
+    expectError(() => store.update(third.id, { alternativeTo: alternative.id }, user), 'invalid', /is itself an alternative/);
+    expectError(() => store.update(original.id, { alternativeTo: third.id }, user), 'invalid', /has its own alternatives/);
+    expectError(() => store.update(third.id, { alternativeTo: 'missing' }, user), 'not_found');
+
+    expect(store.update(alternative.id, { alternativeTo: null }, user).alternativeTo).toBeNull();
+  });
+
+  it('detaches alternatives when the doc they point at is deleted', () => {
+    const store = makeStore();
+    const original = store.create({ title: 'Trace API', template: 'blank' }, user);
+    const alternative = store.create({ title: 'Unlocked package', template: 'blank' }, user);
+    store.update(alternative.id, { alternativeTo: original.id }, user);
+    store.remove(original.id);
+    expect(store.summary(alternative.id).alternativeTo).toBeNull();
+  });
+});

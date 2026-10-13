@@ -40,6 +40,10 @@ export interface DesignDocSummary {
   entryPath: string;
   fileCount: number;
   openComments: number;
+  /** When the user pinned it to the top of the doc list; null when not pinned. */
+  pinnedAt: number | null;
+  /** Id of the doc this one is an alternative proposal to; it nests under it in the list. */
+  alternativeTo: string | null;
   revision: number;
   createdAt: number;
   updatedAt: number;

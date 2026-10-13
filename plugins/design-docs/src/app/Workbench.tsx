@@ -1,7 +1,23 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
-import { Bot, CircleDot, DraftingCompass, FileText, FolderOpen, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Sparkles, X } from 'lucide-react';
+import {
+  Bot,
+  ChevronDown,
+  CircleDot,
+  DraftingCompass,
+  FileText,
+  FolderOpen,
+  ListTree,
+  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pin,
+  Plus,
+  Search,
+  Sparkles,
+  X
+} from 'lucide-react';
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
@@ -9,6 +25,7 @@ import { showDocAgent } from './Agents.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
+import { buildSections, parseCollapsed, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
 import { ContextMenu, contextMenuPoint, Dialog, IconButton, Spinner, StatusPill, TimeAgo } from './ui.js';
@@ -69,6 +86,7 @@ function useDebounced<T>(value: T, delayMs: number): T {
 function DocRow({
   doc,
   active,
+  alternative = false,
   projectName,
   now,
   menuOpen,
@@ -77,6 +95,8 @@ function DocRow({
 }: {
   doc: DesignDocSummary;
   active: boolean;
+  /** Nested under the doc it is an alternative to. */
+  alternative?: boolean;
   projectName: string | null;
   now: number;
   menuOpen: boolean;
@@ -86,7 +106,7 @@ function DocRow({
   return (
     <button
       type="button"
-      className={`dd-doc-row${active ? ' on' : ''}${menuOpen ? ' dd-doc-row-menu' : ''}`}
+      className={`dd-doc-row${active ? ' on' : ''}${alternative ? ' dd-doc-row-alt' : ''}${menuOpen ? ' dd-doc-row-menu' : ''}`}
       onClick={onSelect}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -97,6 +117,11 @@ function DocRow({
     >
       <span className="dd-doc-row-top">
         <span className="dd-doc-row-title">{doc.title}</span>
+        {alternative ? (
+          <span className="dd-doc-row-badge" title="An alternative to the doc above">
+            Alt
+          </span>
+        ) : null}
         <StatusPill status={doc.status} compact />
       </span>
       {doc.summary ? <span className="dd-doc-row-summary">{doc.summary}</span> : null}
@@ -126,6 +151,22 @@ function DocRow({
   );
 }
 
+const SECTION_ICONS = { pinned: Pin, 'needs-me': MessageSquare } as const;
+
+function SectionHead({ section, open, onToggle }: { section: ListSection; open: boolean; onToggle(): void }) {
+  const Glyph = section.kind === 'pinned' || section.kind === 'needs-me' ? SECTION_ICONS[section.kind] : null;
+  return (
+    <button type="button" className={`dd-list-section dd-list-section-${section.kind}`} aria-expanded={open} onClick={onToggle}>
+      <ChevronDown size={12} aria-hidden className="dd-list-section-caret" />
+      {Glyph ? <Glyph size={11} aria-hidden /> : null}
+      <span className="dd-list-section-label" title={section.label}>
+        {section.label}
+      </span>
+      <span className="dd-list-section-count">{section.count}</span>
+    </button>
+  );
+}
+
 function DocList({
   projectId,
   showProjects,
@@ -150,6 +191,8 @@ function DocList({
   const [query, setQuery] = useState('');
   const [status, setStatus] = usePersistentState<StatusFilter>('list-status', 'active');
   const [projectFilter, setProjectFilter] = usePersistentState<string>('list-project', '');
+  const [grouped, setGrouped] = usePersistentState<boolean>('list-grouped', true);
+  const [collapsedRaw, setCollapsedRaw] = usePersistentState<string>('list-collapsed', '[]');
   const [menu, setMenu] = useState<{ doc: DesignDocSummary; at: { x: number; y: number } } | null>(null);
   const docActions = useDocActions(projects);
   const debounced = useDebounced(query.trim(), 200);
@@ -162,6 +205,33 @@ function DocList({
     return all.filter((doc) => (projectFilter === GLOBAL_ONLY ? doc.projectId === null : doc.projectId === projectFilter));
   }, [docs.data, showProjects, projectFilter]);
   const filtered = status !== 'active' || (showProjects && !!projectFilter);
+  const byProject = showProjects && !projectFilter && grouped;
+  const sections = useMemo(
+    () => buildSections(visible, { byProject, projectName: (id) => names.get(id) ?? 'Unknown project' }),
+    [visible, byProject, names]
+  );
+  // A lone timeline needs no header: the list then looks as it always did.
+  const headed = !(sections.length === 1 && sections[0]?.kind === 'recent');
+  // Searching shows every match, even inside collapsed sections.
+  const collapsed = useMemo(() => (debounced ? new Set<string>() : parseCollapsed(collapsedRaw)), [debounced, collapsedRaw]);
+  const projectLabel = (doc: DesignDocSummary, section: ListSection) => {
+    if (section.kind === 'project') return null;
+    if (showProjects) return doc.projectId ? names.get(doc.projectId) ?? 'Unknown project' : 'Global';
+    return doc.projectId ? null : 'Global';
+  };
+  const row = (doc: DesignDocSummary, section: ListSection, alternative: boolean) => (
+    <DocRow
+      key={doc.id}
+      doc={doc}
+      active={doc.id === activeId}
+      alternative={alternative}
+      projectName={alternative ? null : projectLabel(doc, section)}
+      now={now}
+      menuOpen={menu?.doc.id === doc.id}
+      onSelect={() => onSelect(doc.id)}
+      onMenu={(at) => setMenu({ doc, at })}
+    />
+  );
   const projectChoices = useMemo(
     () => (showProjects ? projectOptions(docs.data ?? [], projects, projectFilter) : []),
     [showProjects, docs.data, projects, projectFilter]
@@ -217,6 +287,12 @@ function DocList({
             triggerIcon={<FolderOpen size={12} aria-hidden />}
           />
         ) : null}
+        {showProjects && !projectFilter ? (
+          <>
+            <span className="dd-spacer" />
+            <IconButton icon={ListTree} label="Group by project" active={grouped} size={13} onClick={() => setGrouped(!grouped)} />
+          </>
+        ) : null}
       </div>
       <div className="dd-list-scroll">
         {docs.error ? <div className="dd-banner dd-banner-error">{docs.error}</div> : null}
@@ -228,18 +304,20 @@ function DocList({
         {docs.data && !visible.length ? (
           <div className="dd-list-empty dd-muted">{debounced || filtered ? 'No docs match.' : 'No design docs yet.'}</div>
         ) : null}
-        {visible.map((doc) => (
-          <DocRow
-            key={doc.id}
-            doc={doc}
-            active={doc.id === activeId}
-            projectName={showProjects ? (doc.projectId ? names.get(doc.projectId) ?? 'Unknown project' : 'Global') : doc.projectId ? null : 'Global'}
-            now={now}
-            menuOpen={menu?.doc.id === doc.id}
-            onSelect={() => onSelect(doc.id)}
-            onMenu={(at) => setMenu({ doc, at })}
-          />
-        ))}
+        {sections.map((section) => {
+          const open = !collapsed.has(section.key);
+          const rows = section.entries.flatMap((entry) => [
+            row(entry.doc, section, false),
+            ...entry.alternatives.map((alternative) => row(alternative, section, true))
+          ]);
+          if (!headed) return rows;
+          return (
+            <section key={section.key} className="dd-list-group" aria-label={section.label}>
+              <SectionHead section={section} open={open} onToggle={() => setCollapsedRaw(toggleCollapsed(collapsedRaw, section.key))} />
+              {open ? rows : null}
+            </section>
+          );
+        })}
       </div>
       {menu ? (
         <ContextMenu key={`${menu.doc.id}@${menu.at.x},${menu.at.y}`} at={menu.at} label={`Actions for ${menu.doc.title}`} onClose={() => setMenu(null)}>

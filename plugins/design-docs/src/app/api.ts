@@ -60,6 +60,8 @@ export interface UpdateArgs {
   tags?: string[];
   entryPath?: string;
   projectId?: string | null;
+  /** Doc id this doc is an alternative to; null detaches it. */
+  alternativeTo?: string | null;
 }
 
 export interface DesignDocsApi {
@@ -69,6 +71,7 @@ export interface DesignDocsApi {
   get(doc: string): Promise<DesignDocDetail>;
   create(args: CreateArgs): Promise<DesignDocDetail>;
   update(doc: string, patch: UpdateArgs): Promise<DesignDocSummary>;
+  pin(doc: string, pinned: boolean): Promise<DesignDocSummary>;
   remove(doc: string): Promise<void>;
   readFile(doc: string, path: string): Promise<DesignDocFile>;
   /** An HTML page bundled for the preview frame; `draft` renders unsaved HTML in place of the file. */
@@ -117,6 +120,7 @@ export function createApi(call: Call): DesignDocsApi {
     get: (doc) => typed('get', { doc }),
     create: (args) => typed('create', args),
     update: (doc, patch) => typed('update', { doc, ...patch }),
+    pin: (doc, pinned) => typed('pin', { doc, pinned }),
     remove: (doc) => done(typed('remove', { doc })),
     readFile: (doc, path) => typed('readFile', { doc, path }),
     renderPage: (doc, args) => typed('renderPage', { doc, ...args }),

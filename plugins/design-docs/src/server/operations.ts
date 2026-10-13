@@ -294,6 +294,7 @@ function writtenPageNotes(ctx: OperationContext, docId: string, path: string): s
 export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor): string {
   const input = asInput(raw);
   const ref = docRef(ctx, requiredString(input, 'doc'));
+  const alternativeTo = optionalString(input, 'alternativeTo');
   const summary = ctx.store.update(
     ref,
     {
@@ -301,12 +302,14 @@ export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
       summary: optionalString(input, 'summary'),
       status: optionalStatus(input, 'status'),
       tags: optionalStringArray(input, 'tags'),
-      entryPath: optionalString(input, 'entryPath')
+      entryPath: optionalString(input, 'entryPath'),
+      alternativeTo: alternativeTo === undefined ? undefined : alternativeTo.trim() ? docRef(ctx, alternativeTo) : null
     },
     actor
   );
   ctx.changed(summary.id);
-  return `Updated ${summary.id}: "${summary.title}" · ${summary.status} · tags: ${summary.tags.join(', ') || 'none'} · entry: ${summary.entryPath}`;
+  const alternative = summary.alternativeTo ? ` · alternative to ${summary.alternativeTo}` : '';
+  return `Updated ${summary.id}: "${summary.title}" · ${summary.status} · tags: ${summary.tags.join(', ') || 'none'} · entry: ${summary.entryPath}${alternative}`;
 }
 
 /**

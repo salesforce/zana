@@ -132,6 +132,8 @@ describe('zcc design-docs', () => {
     const { run, store } = setup();
     const doc = store.create({ title: 'Doc', template: 'blank' }, { kind: 'user', label: 'You', threadId: null });
     expect((await run(['update', doc.id, '--status', 'review', '--tags', 'a,b', '--entry', 'README.md'])).stdout).toContain('· review ·');
+    const original = store.create({ title: 'Original', template: 'blank' }, { kind: 'user', label: 'You', threadId: null });
+    expect((await run(['update', doc.id, '--alternative-to', original.slug])).stdout).toContain(`alternative to ${original.id}`);
     expect((await run(['comment', doc.id, 'Is', 'this', 'ready?', '--path', 'README.md'])).stdout).toMatch(/^Added comment/);
     expect((await run(['comment', doc.id, '--body', 'Flag form'])).exitCode).toBe(0);
     const id = store.get(doc.id).comments[0]!.id;

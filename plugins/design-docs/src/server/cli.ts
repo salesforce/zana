@@ -53,7 +53,7 @@ export const CLI_COMMANDS = [
   {
     name: 'update',
     summary: 'Change title, summary, status, tags or entry file',
-    usage: 'update <doc> [--title <t>] [--summary <s>] [--status <status>] [--tags a,b] [--entry <path>]'
+    usage: 'update <doc> [--title <t>] [--summary <s>] [--status <status>] [--tags a,b] [--entry <path>] [--alternative-to <doc>]'
   },
   { name: 'comment', summary: 'Add a review comment', usage: 'comment <doc> <body> [--path <file>] [--quote <text>]' },
   { name: 'reply', summary: 'Reply to a comment', usage: 'reply <doc> <comment-id> <body>' },
@@ -313,7 +313,8 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
           summary: stringFlag(flags, 'summary'),
           status: stringFlag(flags, 'status'),
           tags: stringFlag(flags, 'tags'),
-          entryPath: stringFlag(flags, 'entry')
+          entryPath: stringFlag(flags, 'entry'),
+          alternativeTo: stringFlag(flags, 'alternative-to')
         },
         caller.actor
       );

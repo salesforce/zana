@@ -2,7 +2,7 @@ Write design documents with your agents: specs, RFCs, ADRs, product briefs and A
 
 ## What you get
 
-- A Design Docs workbench. It has a doc list with search and status filters, a file tree for each doc, and a reading view with preview, edit and side-by-side modes.
+- A Design Docs workbench. It has a doc list with search and status filters, a file tree for each doc, and a reading view with preview, edit and side-by-side modes. The list groups docs by project, keeps pinned docs and docs with open comments on top, and nests alternative proposals under the doc they compete with.
 - Multi-file docs. Markdown with tables, task lists, math and Mermaid. Standalone `.mmd` diagrams. Self-contained HTML mockups, with desktop, tablet and phone widths. SVG, images and highlighted code.
 - Templates for technical designs, product specs, ADRs and API designs, or a blank doc.
 - Review comments. Select any passage to comment on it or ask an agent about it. Comments are anchored to the quoted text and highlighted in the page.

@@ -28,6 +28,7 @@ export function summaryLine(doc: DesignDocSummary, now = Date.now()): string {
     STATUS_LABELS[doc.status],
     `${doc.fileCount} file${doc.fileCount === 1 ? '' : 's'}`,
     doc.openComments ? `${doc.openComments} open comment${doc.openComments === 1 ? '' : 's'}` : null,
+    doc.alternativeTo ? `alternative to ${doc.alternativeTo}` : null,
     `updated ${relativeTime(doc.updatedAt, now)}`
   ].filter(Boolean);
   const summary = doc.summary ? ` — ${truncate(doc.summary, 140)}` : '';
@@ -73,6 +74,7 @@ export function formatManifest(doc: DesignDocDetail, options: ManifestOptions = 
   ];
   if (doc.summary) lines.push(`summary: ${doc.summary}`);
   if (doc.tags.length) lines.push(`tags: ${doc.tags.join(', ')}`);
+  if (doc.alternativeTo) lines.push(`alternative to: ${doc.alternativeTo}`);
   lines.push('', `## Files (${doc.files.length})`, ...doc.files.map((file) => fileLine(file, doc.entryPath, now)));
   const open = doc.comments.filter((comment) => comment.status === 'open');
   if (open.length) {

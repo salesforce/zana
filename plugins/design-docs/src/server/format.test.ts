@@ -68,6 +68,7 @@ describe('format', () => {
     const line = summaryLine({ ...doc, fileCount: 1, openComments: 2, summary: 'A  long\nsummary' }, 0);
     expect(line).toBe('- dd_1 "Doc" (Draft · 1 file · 2 open comments · updated just now) — A long summary');
     expect(summaryLine({ ...doc, openComments: 1 }, 0)).toContain('1 open comment ·');
+    expect(summaryLine({ ...doc, alternativeTo: 'dd_0' }, 0)).toContain('· alternative to dd_0 ·');
   });
 
   it('prints comment threads with their replies', () => {
@@ -99,6 +100,7 @@ describe('format', () => {
     expect(formatManifest(detail, { now: 0 })).toContain('project: global (all projects)');
     expect(formatManifest({ ...detail, projectId: 'p1' }, { now: 0 })).toContain('project: p1 ·');
     expect(formatManifest({ ...detail, projectId: 'p1' }, { now: 0, projectName: 'App' })).toContain('project: App ·');
+    expect(formatManifest({ ...detail, alternativeTo: 'dd_0' }, { now: 0 })).toContain('\nalternative to: dd_0\n');
   });
 
   it('bundles the entry file first and lists what did not fit', () => {

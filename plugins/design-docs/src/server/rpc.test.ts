@@ -53,6 +53,24 @@ describe('Design Docs RPC', () => {
     expect(call('list', {})).toHaveLength(1);
   });
 
+  it('pins docs and links alternatives', async () => {
+    const { call, changed } = setup();
+    const original = await call('create', { title: 'Trace API', template: 'blank' });
+    const doc = await call('create', { title: 'Unlocked package', template: 'blank' });
+
+    const pinned = call('pin', { doc: doc.id, pinned: true });
+    expect(pinned.pinnedAt).toEqual(expect.any(Number));
+    expect(changed).toHaveBeenLastCalledWith(doc.id);
+    expect(call('pin', { doc: doc.id, pinned: false }).pinnedAt).toBeNull();
+    expect(() => call('pin', { doc: doc.id, pinned: 'yes' })).toThrow(/boolean/);
+
+    expect((await call('update', { doc: doc.id, alternativeTo: original.id })).alternativeTo).toBe(original.id);
+    expect((await call('update', { doc: doc.id, alternativeTo: '' })).alternativeTo).toBeNull();
+    expect((await call('update', { doc: doc.id, alternativeTo: original.id })).alternativeTo).toBe(original.id);
+    expect((await call('update', { doc: doc.id, alternativeTo: null })).alternativeTo).toBeNull();
+    await expect(call('update', { doc: doc.id, alternativeTo: 7 })).rejects.toThrow(/string or null/);
+  });
+
   it('edits files with optimistic concurrency and restores history', async () => {
     const { call } = setup();
     const doc = await call('create', { title: 'Doc', template: 'blank' });
@@ -258,6 +276,6 @@ describe('Design Docs RPC', () => {
     const { store } = setup();
     registerRpc({ rpc: { method } } as never, { store, changed: () => {}, sdk: {} as never });
     expect(method.mock.calls.map(([name]) => name)).toContain('askAgent');
-    expect(method).toHaveBeenCalledTimes(28);
+    expect(method).toHaveBeenCalledTimes(29);
   });
 });

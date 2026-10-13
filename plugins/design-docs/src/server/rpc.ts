@@ -129,6 +129,10 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
         throw new DesignDocError('invalid', 'projectId must be a string or null');
       }
       await requireProject(projectId);
+      const alternativeTo = input.alternativeTo;
+      if (alternativeTo !== undefined && alternativeTo !== null && typeof alternativeTo !== 'string') {
+        throw new DesignDocError('invalid', 'alternativeTo must be a string or null');
+      }
       const summary = store.update(
         requiredString(input, 'doc'),
         {
@@ -137,10 +141,19 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           status,
           tags: optionalStrings(input, 'tags'),
           entryPath: optionalString(input, 'entryPath'),
-          projectId: projectId === undefined ? undefined : projectId || null
+          projectId: projectId === undefined ? undefined : projectId || null,
+          alternativeTo: alternativeTo === undefined ? undefined : alternativeTo || null
         },
         UI_USER
       );
+      changed(summary.id);
+      return summary;
+    },
+
+    pin: (raw) => {
+      const input = asInput(raw);
+      if (typeof input.pinned !== 'boolean') throw new DesignDocError('invalid', 'pinned must be a boolean');
+      const summary = store.setPinned(requiredString(input, 'doc'), input.pinned);
       changed(summary.id);
       return summary;
     },

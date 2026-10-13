@@ -98,6 +98,8 @@ export interface UpdateDocInput {
   tags?: string[];
   entryPath?: string;
   projectId?: string | null;
+  /** Doc id or slug this doc is an alternative to; null clears it. */
+  alternativeTo?: string | null;
 }
 
 export interface WriteFileInput {
@@ -127,6 +129,8 @@ interface DocRow {
   updated_at: number;
   created_by: string;
   updated_by: string;
+  pinned_at: number | null;
+  alternative_to: string | null;
   file_count?: number;
   open_comments?: number;
 }
@@ -396,6 +400,10 @@ export class DesignDocStore {
       sets.push('project_id = ?');
       params.push(patch.projectId);
     }
+    if (patch.alternativeTo !== undefined) {
+      sets.push('alternative_to = ?');
+      params.push(patch.alternativeTo === null ? null : this.alternativeTarget(row, patch.alternativeTo));
+    }
     if (sets.length === 0) return toSummary(this.requireRow(row.id));
     this.db.transaction(() => {
       this.db.prepare(`UPDATE docs SET ${sets.join(', ')} WHERE id = ?`).run(...params, row.id);
@@ -404,9 +412,19 @@ export class DesignDocStore {
     return toSummary(this.requireRow(row.id));
   }
 
+  /** Pin a doc to the top of the list, or unpin it. Not an edit: revision and "updated" stay put. */
+  setPinned(ref: unknown, pinned: boolean): DesignDocSummary {
+    const row = this.requireRow(ref);
+    if (pinned !== (row.pinned_at !== null)) {
+      this.db.prepare('UPDATE docs SET pinned_at = ? WHERE id = ?').run(pinned ? this.now() : null, row.id);
+    }
+    return toSummary(this.requireRow(row.id));
+  }
+
   remove(ref: unknown): void {
     const row = this.requireRow(ref);
     this.db.transaction(() => {
+      this.db.prepare('UPDATE docs SET alternative_to = NULL WHERE alternative_to = ?').run(row.id);
       for (const table of ['doc_files', 'doc_revisions', 'doc_comments', 'doc_threads']) {
         this.db.prepare(`DELETE FROM ${table} WHERE doc_id = ?`).run(row.id);
       }
@@ -755,6 +773,20 @@ export class DesignDocStore {
         value.toLowerCase()
       ) as DocRow | undefined) ?? null
     );
+  }
+
+  /** Resolve an `alternativeTo` ref for `row`. Alternatives nest one level deep. */
+  private alternativeTarget(row: DocRow, ref: string): string {
+    const target = this.requireRow(ref);
+    if (target.id === row.id) throw new DesignDocError('invalid', 'a doc cannot be an alternative to itself');
+    if (target.alternative_to !== null) {
+      throw new DesignDocError('invalid', `${target.slug} is itself an alternative; point at the doc it is an alternative to (${target.alternative_to})`);
+    }
+    const own = this.db.prepare('SELECT COUNT(*) AS n FROM docs WHERE alternative_to = ?').get(row.id) as { n: number };
+    if (own.n > 0) {
+      throw new DesignDocError('invalid', `${row.slug} has its own alternatives; detach them before making it an alternative`);
+    }
+    return target.id;
   }
 
   private requireRow(ref: unknown): DocRow {
@@ -1212,6 +1244,8 @@ function toSummary(row: DocRow): DesignDocSummary {
     entryPath: row.entry_path,
     fileCount: Number(row.file_count ?? 0),
     openComments: Number(row.open_comments ?? 0),
+    pinnedAt: row.pinned_at ?? null,
+    alternativeTo: row.alternative_to ?? null,
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

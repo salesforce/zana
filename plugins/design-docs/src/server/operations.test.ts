@@ -134,6 +134,16 @@ describe('agent operations', () => {
     expect(updateDoc(ctx, { doc: doc.id, tags: [] }, agent)).toContain('tags: none');
   });
 
+  it('marks a doc as an alternative to another by id or slug, and detaches it', () => {
+    const { ctx, store } = setup();
+    const original = store.create({ title: 'Trace API', template: 'blank' }, agent);
+    const doc = store.create({ title: 'Unlocked package', template: 'blank' }, agent);
+    expect(updateDoc(ctx, { doc: doc.id, alternativeTo: original.slug }, agent)).toContain(`· alternative to ${original.id}`);
+    expect(store.summary(doc.id).alternativeTo).toBe(original.id);
+    expect(updateDoc(ctx, { doc: doc.id, alternativeTo: '' }, agent)).not.toContain('alternative to');
+    expect(store.summary(doc.id).alternativeTo).toBeNull();
+  });
+
   it('comments, resolves with a reply in the thread, and reopens', () => {
     const { ctx, store, changes } = setup();
     const doc = store.create({ title: 'Doc', template: 'blank' }, agent);

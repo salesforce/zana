@@ -211,7 +211,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
   zcc.agents.registerTool({
     name: 'design_doc_update',
     description:
-      'Update design doc metadata: title, summary, status (draft → review → approved → implemented, or archived), tags, or the entry file.',
+      'Update design doc metadata: title, summary, status (draft → review → approved → implemented, or archived), tags, the entry file, ' +
+      'or alternativeTo (the doc this one is a competing proposal to, so it nests under it in the doc list).',
     parameters: {
       type: 'object',
       properties: {
@@ -220,7 +221,11 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
         summary: { type: 'string' },
         status: { type: 'string', enum: [...DOC_STATUSES] },
         tags: { type: 'array', items: { type: 'string' }, description: 'Replaces the tag list.' },
-        entryPath: { type: 'string', description: 'File shown first when the doc opens.' }
+        entryPath: { type: 'string', description: 'File shown first when the doc opens.' },
+        alternativeTo: {
+          type: 'string',
+          description: 'Id or slug of the doc this one is an alternative to. Empty string detaches it. One level deep: point at the original doc, not another alternative.'
+        }
       },
       required: ['doc'],
       additionalProperties: false

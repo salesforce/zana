@@ -47,7 +47,7 @@ there, and do not create a doc or offer to write one.
 | `design_doc_read` | Without `path`: manifest, open comments and the entry file. With `path`: one file and its revision. `includeAll: true` returns every text file. For HTML pages it adds the page check and what the panel saw when it last ran the page. |
 | `design_doc_create` | New doc from `files` or a `template`: `technical`, `product`, `adr`, `api` or `blank` for written docs, `report` or `html-design` for a site. `entryPath` picks the file it opens on. |
 | `design_doc_write` | Change one file: `edits` (preferred), `content` (whole file, creates it), `delete`, or `renameTo`. Writing an HTML page returns its page check. |
-| `design_doc_update` | Title, summary, status, tags, entry file. |
+| `design_doc_update` | Title, summary, status, tags, entry file, `alternativeTo` (the doc this one is a competing proposal to; `""` detaches it). |
 | `design_doc_comment` | Add a comment, reply in one's thread (`replyTo`), or `resolve` / `reopen` one by id (`body` becomes a reply). |
 
 The same operations exist on the CLI for shells and scripts. Run

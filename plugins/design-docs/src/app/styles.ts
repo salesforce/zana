@@ -351,6 +351,36 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-row-meta > span { display: inline-flex; align-items: center; gap: 3px; }
 .dd-doc-row-meta > span.dd-doc-row-project { display: block; flex: 0 1 auto; min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
 .dd-doc-row-comments { color: var(--accent-gold); }
+.dd-doc-row-alt { position: relative; width: calc(100% - 14px); margin-left: 14px; padding-top: 7px; padding-bottom: 7px; }
+.dd-doc-row-alt::before { content: ''; position: absolute; left: -8px; top: 0; height: 50%; width: 6px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.dd-doc-row-badge { flex: 0 0 auto; margin-top: 1px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent-gold) 14%, transparent); color: var(--accent-gold); font-size: 10.5px; font-weight: 600; line-height: 16px; }
+.dd-list-group + .dd-list-group { margin-top: 4px; }
+.dd-list-section {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 6px 6px 4px;
+  border: 0;
+  background: var(--bg-base);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+.dd-list-section:hover { color: var(--text-primary); }
+.dd-list-section-caret { flex: 0 0 auto; transition: transform 120ms ease; }
+.dd-list-section[aria-expanded='false'] .dd-list-section-caret { transform: rotate(-90deg); }
+.dd-list-section-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-list-section-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.dd-list-section-pinned { color: var(--accent-blue); }
+.dd-list-section-needs-me { color: var(--accent-gold); }
 .dd-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
 
 /* ── Landing ────────────────────────────────────────────────────────── */
