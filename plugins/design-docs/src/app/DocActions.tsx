@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Archive, ArchiveRestore, Copy, Download, FolderInput, FolderOpen, Hash, Trash2 } from 'lucide-react';
 import { designDocDirective, type DesignDocSummary } from '../shared/contract.js';
+import { copyText } from './clipboard.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
 import { saveBytes, siteZip } from './download.js';
 import { ConfirmDialog, Dialog, MenuItem, type ConfirmRequest } from './ui.js';
@@ -54,12 +55,8 @@ function MoveDialog({
 }
 
 async function copy(text: string, what: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast(`Copied ${what}`);
-  } catch {
-    toast(`Could not copy ${what}`, 'error');
-  }
+  if (await copyText(text)) toast(`Copied ${what}`);
+  else toast(`Could not copy ${what}`, 'error');
 }
 
 /**
