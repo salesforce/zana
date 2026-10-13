@@ -49,6 +49,17 @@ review and expects Approve to fail with "the goal plan was edited". The fake
 coordinator writes realistic corrected plans (`Depends on: None.`, write scope
 with a trailing period) to cover portable-plan trailing-period parsing.
 
+`e2e/squad-execution-store-ownership.spec.ts` (manual test MT-8) reuses one
+isolated HOME across five built-app launches (`ZCC_EXECUTION_STORE=json`, none,
+none, `json`, none). Every run is a real `teams.startJob` Squad (provided
+`write-note` -> `review-note` plan, fake coordinator) driven to `COMPLETED`; no
+record is seeded. After each quit it reads `squad-executions.json` and, via
+`createSqliteDatabase` read-only, `squad-executions.sqlite` to prove each run
+stays in its creating store, `executionBoard.dismiss` lands only in the owning
+store, and a `json` relaunch neither imports nor alters SQLite-owned runs.
+Limitation: the `json` relaunch is only a stand-in for a JSON-only reader; this
+spec does not run a genuinely older build.
+
 Check the approval arguments against an installed Codex without a model call:
 
 ```bash

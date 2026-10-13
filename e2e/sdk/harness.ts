@@ -669,6 +669,12 @@ async function doUnit(unitId) {
     } else if (unitId === 'write') {
       fs.writeFileSync(path.join(CWD, 'output.txt'), 'output ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'output ready', ...outcomeFence });
+    } else if (unitId === 'write-note') {
+      fs.writeFileSync(path.join(CWD, 'note.txt'), 'note ready\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'note ready', ...outcomeFence });
+    } else if (unitId === 'review-note') {
+      const note = fs.readFileSync(path.join(CWD, 'note.txt'), 'utf8').trim();
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'reviewed: ' + note, ...outcomeFence });
     } else if (unitId === 'navigation-label') {
       const chosenLabel = await handleNavigationLabel(outcomeFence);
       // Complete with the chosen label as the unit result. The engine inherits
