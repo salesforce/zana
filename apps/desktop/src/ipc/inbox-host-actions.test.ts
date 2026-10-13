@@ -22,6 +22,9 @@ describe('inbox host action IPC', () => {
   const run = vi.fn(async () => ({ ok: true, status: 'done' as const }));
   const bound = vi.fn();
   const readArtifact = vi.fn();
+  const remove = vi.fn();
+  const onRemoved = vi.fn();
+  const onPruned = vi.fn();
 
   beforeEach(() => {
     handlers = new Map();
@@ -29,7 +32,7 @@ describe('inbox host action IPC', () => {
     scopedProjectId = 'project-2';
     run.mockClear();
     bound.mockReset();
-    readArtifact.mockReset();
+    readArtifact.mockReset(); remove.mockReset(); onRemoved.mockReset(); onPruned.mockReset();
     getEntry.mockReset().mockImplementation(async (id: string) => id === entry.id ? entry : null);
     list.mockReset().mockImplementation((entries) => entries);
     const safeHandleFromWindow: IpcCtx['safeHandleFromWindow'] = ((channel: string, handler: Handler, fallback: Fallback) => {
@@ -40,8 +43,8 @@ describe('inbox host action IPC', () => {
       safeHandle: vi.fn(),
       safeHandleFromWindow,
       windows: { get: () => ({ projectId: scopedProjectId }) },
-      inboxStore: { read: async () => ({ entries: [entry] }), get: getEntry, onAppended: vi.fn(), onRemoved: vi.fn(), onUpdated: vi.fn(), onPruned: vi.fn() },
-      inboxActionRegistry: { list, run, bound, remove: vi.fn() },
+      inboxStore: { read: async () => ({ entries: [entry] }), get: getEntry, onAppended: vi.fn(), onRemoved, onUpdated: vi.fn(), onPruned },
+      inboxActionRegistry: { list, run, bound, remove },
       planCorrection: { readArtifact },
       inboxReadStore: {},
       inboxSummary: {},
@@ -116,5 +119,61 @@ describe('inbox host action IPC', () => {
         message: 'This host action is unavailable. Ordinary reply delivery is disabled.'
       }
     });
+  });
+
+  it('lists only entries in the sender project scope and falls back to empty', async () => {
+    scopedProjectId = 'project-1';
+    const listHandler = handlers.get(IPC.inbox.hostActions.list)!;
+    await expect(listHandler(window)).resolves.toEqual([entry]);
+    expect(fallbacks.get(IPC.inbox.hostActions.list)!()).toEqual([]);
+  });
+
+  it('get rejects invalid ids and returns null action for unknown entries or non-host entries', async () => {
+    scopedProjectId = 'project-1';
+    const get = handlers.get(IPC.inbox.hostActions.get)!;
+    await expect(get(window, '')).resolves.toEqual({ resolved: true, action: null });
+    await expect(get(window, 5)).resolves.toEqual({ resolved: true, action: null });
+    await expect(get(window, 'missing')).resolves.toEqual({ resolved: true, action: null });
+    list.mockReturnValue([]);
+    await expect(get(window, 'entry-1')).resolves.toEqual({ resolved: true, action: null });
+  });
+
+  it('run rejects malformed input before touching the store', async () => {
+    scopedProjectId = 'project-1';
+    const action = handlers.get(IPC.inbox.hostActions.run)!;
+    for (const args of [[5, { optionId: 'a' }], ['', { optionId: 'a' }], ['entry-1'], ['entry-1', { optionId: 3 }], ['entry-1', { optionId: 'a', text: 4 }]]) {
+      await expect(action(window, ...args)).resolves.toEqual({ ok: false, status: 'missing' });
+    }
+    await expect(action(window, 'unknown', { optionId: 'a' })).resolves.toEqual({ ok: false, status: 'missing' });
+    expect(run).not.toHaveBeenCalled();
+    await action(window, 'entry-1', { optionId: 'a', text: 'why' });
+    expect(run).toHaveBeenCalledWith(entry, { optionId: 'a', text: 'why' });
+    expect(fallbacks.get(IPC.inbox.hostActions.run)!()).toEqual({ ok: false, status: 'missing' });
+  });
+
+  it('decision artifact read denies invalid, out-of-scope, unbound and non-plan-correction entries', async () => {
+    const read = handlers.get(IPC.inbox.hostActions.readDecisionArtifact)!;
+    const notFound = { ok: false, code: 'NOT_FOUND', message: 'Decision details unavailable' };
+    await expect(read(window, 5, 'p')).resolves.toMatchObject({ code: 'INVALID' });
+    await expect(read(window, 'entry-1', 5)).resolves.toMatchObject({ code: 'INVALID' });
+    await expect(read(window, 'entry-1', 'p')).resolves.toEqual(notFound); // cross-project
+    scopedProjectId = 'project-1';
+    await expect(read(window, 'missing', 'p')).resolves.toEqual(notFound);
+    bound.mockReturnValue(undefined);
+    await expect(read(window, 'entry-1', 'p')).resolves.toEqual(notFound);
+    bound.mockReturnValue({ kind: 'other', ref: 'r' });
+    await expect(read(window, 'entry-1', 'p')).resolves.toEqual(notFound);
+    bound.mockReturnValue({ kind: 'plan-correction', ref: 'r' });
+    readArtifact.mockResolvedValue(undefined);
+    await expect(read(window, 'entry-1', 'p')).resolves.toEqual(notFound);
+    expect(readArtifact).toHaveBeenCalledTimes(1);
+    expect(fallbacks.get(IPC.inbox.hostActions.readDecisionArtifact)!()).toMatchObject({ code: 'UNAVAILABLE' });
+  });
+
+  it('removes registry bindings when entries are removed or pruned', () => {
+    onRemoved.mock.calls[0]![0]('entry-1');
+    expect(remove).toHaveBeenCalledWith(['entry-1']);
+    onPruned.mock.calls[0]![0](['a', 'b']);
+    expect(remove).toHaveBeenCalledWith(['a', 'b']);
   });
 });

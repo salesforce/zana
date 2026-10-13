@@ -6,55 +6,60 @@ import { currentRetainedSquadWorktreeAction, isCurrentRetainedSquadWorktreeActio
 
 describe('retained squad instruct host action', () => {
   const host = readFileSync(new URL('../host.ts', import.meta.url), 'utf8');
+  // The retained-worktree lifecycle lives in extracted modules; host.ts only wires them.
+  const runtime = readFileSync(new URL('../squad-worktree-runtime.ts', import.meta.url), 'utf8');
+  const sessionLifecycle = readFileSync(new URL('../squad-session-lifecycle.ts', import.meta.url), 'utf8');
+  const support = readFileSync(new URL('../team-launch-support.ts', import.meta.url), 'utf8');
 
   it('reports retained terminal worktree status without rendering lifecycle actions as Inbox questions', () => {
-    expect(host).toContain('inboxStore.appendOnce(squadWorktreeRetainedNotice({');
-    const terminalNotice = host.slice(host.indexOf('async function handleSquadWorktreeTerminal'), host.indexOf('async function replayUndisposedSquadWorktreeTerminalEffects'));
+    expect(runtime).toContain('inboxStore.appendOnce(squadWorktreeRetainedNotice({');
+    const terminalNotice = runtime.slice(runtime.indexOf('async function handleSquadWorktreeTerminal'), runtime.indexOf('async function replayUndisposedTerminalEffects'));
     expect(terminalNotice).not.toContain("questions: [{ prompt: 'Choose worktree disposition'");
   });
 
   it('keeps squad push guard and terminal actions fenced until cohort teardown confirms', () => {
-    expect(host).toContain('const teardown = await cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);');
-    expect(host).toContain('if (!mayReleaseSquadWorktreeGuard(teardown)) return;');
-    expect(host.indexOf('if (!mayReleaseSquadWorktreeGuard(teardown)) return;')).toBeLessThan(
-      host.indexOf('setWorktreePushProtection(project.path, worktree.path, false)')
+    expect(runtime).toContain('const teardown = await deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);');
+    expect(runtime).toContain('if (!mayReleaseSquadWorktreeGuard(teardown)) return;');
+    expect(runtime.indexOf('if (!mayReleaseSquadWorktreeGuard(teardown)) return;')).toBeLessThan(
+      runtime.indexOf('git.setWorktreePushProtection(project.path, worktree.path, false)')
     );
-    expect(host.indexOf('if (!mayReleaseSquadWorktreeGuard(teardown)) return;')).toBeLessThan(
-      host.indexOf('inboxStore.appendOnce(squadWorktreeRetainedNotice({')
+    expect(runtime.indexOf('if (!mayReleaseSquadWorktreeGuard(teardown)) return;')).toBeLessThan(
+      runtime.indexOf('inboxStore.appendOnce(squadWorktreeRetainedNotice({')
     );
   });
 
   it('replays terminal worktree effects at boot after restoring follow-up claims', () => {
-    expect(host.indexOf('await restoreSurvivingSquadWorktreeFollowUpClaims();')).toBeLessThan(
-      host.indexOf('await replayUndisposedSquadWorktreeTerminalEffects();')
+    expect(host).toContain('await recoverSquadStateAtBoot({');
+    expect(support.indexOf('await deps.squadFollowUpClaims.restoreSurvivingClaims();')).toBeLessThan(
+      support.indexOf('await deps.squadWorktreeRuntime.replayUndisposedTerminalEffects();')
     );
-    expect(host).toContain('await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);');
-    expect(host).toContain('if (!shouldReplaySquadWorktreeTerminalEffects(record)) continue;');
-    expect(host).toContain('if (!existsSync(worktree.path)) {');
+    expect(runtime).toContain('await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);');
+    expect(runtime).toContain('if (!shouldReplaySquadWorktreeTerminalEffects(record)) continue;');
+    expect(runtime).toContain('if (!fs.existsSync(worktree.path)) {');
   });
 
   it('reconfines retained worktree from execution state before normal agent launch', () => {
-    expect(host).toContain("throw new Error('retained squad worktree is unavailable')");
-    expect(host).toContain('realpathSync(record.squadWorktree.path)');
-    expect(host).toContain('isWithinRetainedSquadWorktreeBase(path, project.path)');
-    expect(host).toContain('getGitStatus(path)');
-    expect(host).toContain('launchAuthorizedTerminal({');
-    expect(host).toContain('worktreeInfo: worktree');
+    expect(runtime).toContain("throw new Error('retained squad worktree is unavailable')");
+    expect(runtime).toContain('fs.realpathSync(record.squadWorktree.path)');
+    expect(runtime).toContain('isWithinRetainedSquadWorktreeBase(path, project.path)');
+    expect(runtime).toContain('git.getGitStatus(path)');
+    expect(runtime).toContain('worktreeInfo: worktree');
+    expect(host).toContain('launchAuthorizedTerminal(');
     expect(host).toContain("{ retainWorktree: true }");
   });
 
   it('fails retained recovery when isolation settings change instead of falling back to project root', () => {
-    const retainedRecovery = host.slice(
-      host.indexOf('const retainedWorktree = record.squadWorktree;'),
-      host.indexOf("if (preparation === 'project-root') return record;", host.indexOf('const retainedWorktree = record.squadWorktree;'))
+    const retainedRecovery = runtime.slice(
+      runtime.indexOf('async function prepareSquadWorktree'),
+      runtime.indexOf('async function create(')
     );
 
     expect(retainedRecovery).toContain("if (!project || !retainedWorktree) throw new Error('WORKTREE_UNAVAILABLE');");
-    expect(retainedRecovery).toContain('isWithinSquadWorktreeBase(path, project.path)');
+    expect(retainedRecovery).toContain('withinBase(path, project.path)');
     expect(retainedRecovery).toContain('status.branch !== retainedWorktree.branch');
     expect(retainedRecovery).toContain("throw new Error('WORKTREE_UNAVAILABLE');");
     expect(retainedRecovery).toContain('retained: retainedWorktree !== undefined');
-    expect(retainedRecovery).toContain("if (preparation === 'reattach') {");
+    expect(retainedRecovery).toContain("if (preparation === 'reattach') return reattach(");
   });
 
   it('rejects stale, escaped, and non-terminal worktree state', () => {
@@ -100,54 +105,59 @@ describe('retained squad instruct host action', () => {
   });
 
   it('rechecks terminal generation and retained path at final spawn/delete boundary', () => {
-    expect(host).toContain('stateVersion: record.stateVersion');
-    expect(host).toContain('squad-worktree-lifecycle:${record.id}:${record.stateVersion}:${phase}');
-    expect(host).toContain('currentRetainedSquadWorktreeAction(\n        fencedAction');
-    expect(host).toContain('maySpawn: async () =>');
-    expect(host).toContain('await retainedSquadWorktreeForInstruct(await currentRecord())');
-    expect(host).toContain('const current = await currentRecord();');
-    expect(host).toContain('retained = await retainedSquadWorktreeForInstruct(current);');
+    expect(runtime).toContain('stateVersion: record.stateVersion');
+    expect(runtime).toContain('squad-worktree-lifecycle:${record.id}:${record.stateVersion}:${phase}');
+    expect(runtime).toMatch(/currentRetainedSquadWorktreeAction\(\s*fencedAction/);
+    expect(runtime).toContain('maySpawn: async () =>');
+    expect(runtime).toContain('await retainedSquadWorktreeForInstruct(await currentRecord())');
+    expect(runtime).toContain('const current = await currentRecord();');
+    expect(runtime).toContain('retained = await retainedSquadWorktreeForInstruct(current);');
   });
 
   it('projects stale, missing-resource, and active-follow-up safety rejections into Inbox status', () => {
-    expect(host).toContain("new InboxActionOperatorError('This action is unavailable because the Squad run resumed or changed state.', true)");
-    expect(host).toContain("new InboxActionOperatorError('Retained Squad worktree or branch is unavailable.', true)");
-    expect(host).toContain("new InboxActionOperatorError('Worktree is in use by an active follow-up agent. Wait for it to exit, then try again.')");
-    expect(host).toContain("new InboxActionOperatorError('This confirmation is unavailable because the retained Squad worktree or branch no longer exists.', true)");
+    expect(runtime).toContain("new InboxActionOperatorError('This action is unavailable because the Squad run resumed or changed state.', true)");
+    expect(runtime).toContain('new InboxActionOperatorError(RETAINED_UNAVAILABLE_MESSAGE, true)');
+    expect(runtime).toContain("const RETAINED_UNAVAILABLE_MESSAGE = 'Retained Squad worktree or branch is unavailable.';");
+    expect(runtime).toContain('new InboxActionOperatorError(ACTIVE_FOLLOW_UP_MESSAGE)');
+    expect(runtime).toContain("'Worktree is in use by an active follow-up agent. Wait for it to exit, then try again.'");
+    expect(runtime).toContain('new InboxActionOperatorError(CONFIRMATION_UNAVAILABLE_MESSAGE, true)');
+    expect(runtime).toContain("'This confirmation is unavailable because the retained Squad worktree or branch no longer exists.'");
   });
 
   it('creates a fresh delete confirmation and revokes sibling confirmations after deletion', () => {
-    expect(host).toContain("phase === 'confirm'\n    ? await inboxStore.append(notice)");
-    expect(host).toContain('return { keepPending: true };');
-    expect(host).toContain('inboxActionRegistry.markUnavailable(SQUAD_WORKTREE_ACTION');
-    expect(host).toContain('retained Squad worktree was deleted');
+    expect(runtime).toMatch(/phase === 'confirm'\s*\? await inboxStore\.append\(notice\)/);
+    expect(runtime).toContain('return { keepPending: true };');
+    expect(runtime).toContain('inboxActionRegistry.markUnavailable(SQUAD_WORKTREE_ACTION');
+    expect(runtime).toContain('retained Squad worktree was deleted');
   });
 
   it('uses one execution-scoped lifecycle lock across resume, teardown, deletion, and final instruct spawn', () => {
     expect(host).toContain('withExecutionLifecycleLock: withSquadWorktreeLifecycleLock');
-    expect(host).toContain('withSquadWorktreeLifecycleLock(record.id, async () => {');
-    expect(host).toContain('const latest = await executionStore.get(record.id);');
-    expect(host).toContain('const beforeCreate = await executionStore.get(record.id);');
-    expect(host).toContain('withSpawnLock: async (spawn) => withSquadWorktreeLifecycleLock(record.id');
-    expect(host).toContain('const latest = await currentRecord();');
-    expect(host).toContain('await retainedSquadWorktreeForInstruct(latest);');
-    expect(host).toContain('return spawnLifecycle?.withSpawnLock ? spawnLifecycle.withSpawnLock(spawn) : spawn();');
+    expect(runtime).toContain('withSquadWorktreeLifecycleLock(record.id, async () => {');
+    expect(runtime).toContain('const latest = await executionStore.get(record.id);');
+    expect(runtime).toContain('const beforeCreate = await executionStore.get(record.id);');
+    expect(runtime).toContain('withSpawnLock: async (spawn) => withSquadWorktreeLifecycleLock(record.id');
+    expect(runtime).toContain('const latest = await currentRecord();');
+    expect(runtime).toContain('await retainedSquadWorktreeForInstruct(latest);');
+    expect(support).toContain('lifecycle?.withSpawnLock ? lifecycle.withSpawnLock(spawn) : spawn()');
+    expect(host).toContain('runSpawnLifecycle(spawnLifecycle, spawn)');
   });
 
   it('persists follow-up ownership and restores it under lifecycle lock before recovery', () => {
     expect(host).toContain('followUpExecutionId,');
-    expect(host).toContain('}, record.id);');
+    expect(runtime).toContain('}, record.id);');
     const restoreLaunch = readFileSync(new URL('../terminal-restore-launch.ts', import.meta.url), 'utf8');
     expect(restoreLaunch.match(/followUpExecutionId: capability\.followUpExecutionId/g)).toHaveLength(2);
     expect(restoreLaunch.match(/retainWorktree: Boolean\(capability\.followUpExecutionId\)/g)).toHaveLength(2);
     const terminals = readFileSync(new URL('../ipc/terminals.ts', import.meta.url), 'utf8');
     expect(terminals).toContain('restoreCapabilityLaunch(');
     expect(terminals).toContain('reconnectCapabilityLaunch(');
-    expect(host).toContain('await withSquadWorktreeLifecycleLock(capability.followUpExecutionId');
-    expect(host.indexOf('await restoreSurvivingSquadWorktreeFollowUpClaims();')).toBeLessThan(
-      host.indexOf('await squadExecutionService.restoreDeadlines();')
+    expect(sessionLifecycle).toContain('await withSquadWorktreeLifecycleLock(followUpExecutionId');
+    expect(support.indexOf('await deps.squadFollowUpClaims.restoreSurvivingClaims();')).toBeLessThan(
+      support.indexOf('await deps.squadExecutionService.restoreDeadlines();')
     );
-    expect(host).toContain('clearSquadWorktreeFollowUpClaim(sessionId);');
+    expect(sessionLifecycle).toContain('clearClaim(sessionId);');
+    expect(host).toContain('squadFollowUpClaims.releaseOnExit(sessionId)');
   });
 
   it('provides source execution, squad, and branch context without restoring squad guard', () => {

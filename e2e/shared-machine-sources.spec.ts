@@ -62,8 +62,8 @@ test('one built Zana shares a project across two real daemon processes and two c
   const fixture = join(home, 'machine-plugin'); mkdirSync(fixture);
   writeFileSync(join(fixture, 'package.json'), JSON.stringify({ name: '@zcc-ext/machine-proof', version: '1.0.0', type: 'module',
     engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' }, zcc: { name: 'Machine proof', description: 'Multi-machine fixture', branding: { icon: 'Cpu' }, server: './server.mjs', host: './host.mjs' } }));
-  writeFileSync(join(fixture, 'server.mjs'), `export default function(zcc) {
-    const host = zcc.host.experimental_client();
+  writeFileSync(join(fixture, 'server.mjs'), `export default async function(zcc) {
+    const host = await zcc.host.experimental_client();
     zcc.rpc.method('probe', async args => {
       const result = await host.call('probe', args, { hostId: args.hostId });
       const count = (await zcc.storage.kv.get('count') ?? 0) + 1;
@@ -366,8 +366,12 @@ test('one built Zana shares a project across two real daemon processes and two c
     expect(JSON.parse(readFileSync(schedulePath, 'utf8')).status.runs[0]).toMatchObject({ result: 'error', launchState: 'failed', message: expect.stringContaining('secondary machines') });
     expect(await app.window.evaluate(id => window.cc.terminals.list(id), foreignId)).toEqual(beforeScheduledRun);
     writeFileSync(schedulePath, JSON.stringify({ ...JSON.parse(readFileSync(schedulePath, 'utf8')), name: 'Schedule owner edit' }));
-    expect((await request(browser, '/shared-product', { method: 'scheduler.update', args: [scheduleId, { name: 'Stale overwrite' }] })).body.value).toMatchObject({ ok: false, code: 'UPDATE_FAILED' });
-    expect(JSON.parse(readFileSync(schedulePath, 'utf8')).name).toBe('Schedule owner edit');
+    // The scheduler re-reads the owner's record at the write boundary and merges
+    // the patch onto it (stale in-memory snapshots are not adopted); only an
+    // explicit `expectedPrompt` CAS rejects. A name patch therefore wins, on the
+    // owner's file only, while owner-edited fields it does not touch survive.
+    expect((await request(browser, '/shared-product', { method: 'scheduler.update', args: [scheduleId, { name: 'Merged edit' }] })).body.value).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(schedulePath, 'utf8'))).toMatchObject({ name: 'Merged edit', id: scheduleId, projectId: foreignId });
     expect(existsSync(join(rootA, '.zcc/schedules', `${scheduleId}.json`))).toBe(false);
     const createdGoal = await request(browser, '/shared-product', { method: 'goals.create', args: [{ title: 'Foreign goal', statement: 'Keep metadata on owner', successCriteria: ['owned'], noProgressLimit: 1, projectId: foreignId, scope: { projectId: foreignId } }] });
     expect(createdGoal.body.value, JSON.stringify(createdGoal.body)).toMatchObject({ ok: true });

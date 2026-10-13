@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, lstat, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+const fsHook = vi.hoisted(() => ({ open: undefined as undefined | ((...args: unknown[]) => Promise<unknown>) }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: (...args: Parameters<typeof actual.open>) => fsHook.open ? fsHook.open(...args) : actual.open(...args) };
+});
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 import {
   MAX_HANDOFF_FILE_BYTES,
@@ -11,6 +16,7 @@ import {
   cleanupHandoffFiles,
   readAuthoredPlan,
   readCorrectedPlan,
+  readHandoffArtifact,
   sourceMirrorRelPath,
   writeSourceMirror,
   type AuthoredPlanRead,
@@ -456,5 +462,103 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     handoff.forget(ctx.executionId);
     await handoff.onCoordinatorIdle(ctx);
     expect(register).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('TeamPlanHandoff review verdicts', () => {
+  const ctx: CoordinatorHandoffContext = {
+    sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-1', slotId: 'orchestrator:lead'
+  };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+  const build = (over: Record<string, unknown>, registerResult: { ok: boolean; message?: string } = { ok: true }) => {
+    const nudge = vi.fn(), register = vi.fn(async () => registerResult), cleanup = vi.fn(async () => {});
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/r' }),
+      register, nudge, cleanup, logError: () => {}, ...over
+    } as never);
+    return { handoff, nudge, register, cleanup };
+  };
+
+  it('latches done without registering when review rejects the plan', async () => {
+    const { handoff, register } = build({ review: async () => 'reject' });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('nudges when the host rejects a reviewed plan, falling back to a generic message', async () => {
+    const { handoff, nudge } = build({}, { ok: false });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge.mock.calls[0][1]).toContain('register failed');
+  });
+
+  it('latches done when invalid-plan review rejects', async () => {
+    const { handoff, nudge, register } = build({ readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad' }), reviewInvalid: async () => 'reject' });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).not.toHaveBeenCalled(); expect(nudge).not.toHaveBeenCalled();
+  });
+
+  it('registers a corrected plan supplied by invalid-plan review and cleans up', async () => {
+    const { handoff, register, cleanup } = build({
+      readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad' }),
+      reviewInvalid: async () => ({ status: 'ok', units, realPath: '/r' })
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledWith(ctx, units);
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('nudges when the host rejects a corrected plan, with and without a message', async () => {
+    const reviewInvalid = async () => ({ status: 'ok' as const, units, realPath: '/r' });
+    const withMsg = build({ readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad' }), reviewInvalid }, { ok: false, message: 'nope' });
+    await withMsg.handoff.onCoordinatorIdle(ctx);
+    expect(withMsg.nudge.mock.calls[0][1]).toContain('nope');
+    const without = build({ readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad' }), reviewInvalid }, { ok: false });
+    await without.handoff.onCoordinatorIdle(ctx);
+    expect(without.nudge.mock.calls[0][1]).toContain('register failed');
+  });
+});
+
+describe('readHandoffArtifact', () => {
+  let root: string;
+  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'zana-artifact-')); await mkdir(join(root, '.zana'), { recursive: true }); });
+  afterEach(async () => { vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
+
+  it('reads a file at the cap and rejects oversize, directories and missing files without warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await writeFile(join(root, '.zana/ok.md'), 'x'.repeat(MAX_HANDOFF_FILE_BYTES), 'utf8');
+    await writeFile(join(root, '.zana/big.md'), 'x'.repeat(MAX_HANDOFF_FILE_BYTES + 1), 'utf8');
+    await writeFile(join(root, '.zana/empty.md'), '', 'utf8');
+    await mkdir(join(root, '.zana/dir.md'));
+    expect(await readHandoffArtifact(root, '.zana/ok.md')).toHaveLength(MAX_HANDOFF_FILE_BYTES);
+    expect(await readHandoffArtifact(root, '.zana/empty.md')).toBe('');
+    expect(await readHandoffArtifact(root, '.zana/big.md')).toBeUndefined();
+    expect(await readHandoffArtifact(root, '.zana/dir.md')).toBeUndefined();
+    expect(await readHandoffArtifact(root, '.zana/missing.md')).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  afterEach(() => { fsHook.open = undefined; });
+
+  it('returns undefined when the file grows past its stat size before the read', async () => {
+    const fsp = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    await writeFile(join(root, '.zana/grow.md'), 'abc', 'utf8');
+    fsHook.open = async (...args: unknown[]) => {
+      const handle = await (fsp.open as (...a: unknown[]) => Promise<import('node:fs/promises').FileHandle>)(...args);
+      const stat = handle.stat.bind(handle);
+      handle.stat = (async (...a: never[]) => ({ ...(await stat(...a)), isFile: () => true, size: 1 })) as never;
+      return handle;
+    };
+    expect(await readHandoffArtifact(root, '.zana/grow.md')).toBeUndefined();
+  });
+
+  it('warns with the relative path on unexpected read errors and still returns undefined', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await writeFile(join(root, '.zana/boom.md'), 'abc', 'utf8');
+    fsHook.open = async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+    expect(await readHandoffArtifact(root, '.zana/boom.md')).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('.zana/boom.md'), expect.any(Error));
   });
 });

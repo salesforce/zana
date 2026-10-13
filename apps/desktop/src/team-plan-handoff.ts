@@ -194,10 +194,15 @@ export async function readHandoffArtifact(projectRoot: string, rel: string): Pro
     handle = await open(real, fsConstants.O_RDONLY | O_NOFOLLOW);
     const info = await handle.stat();
     if (!info.isFile() || info.size > MAX_HANDOFF_FILE_BYTES) return undefined;
-    const buffer = Buffer.allocUnsafe(MAX_HANDOFF_FILE_BYTES + 1);
+    // One spare byte detects a file that grew past its stat size before the read.
+    const buffer = Buffer.allocUnsafe(info.size + 1);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return bytesRead > MAX_HANDOFF_FILE_BYTES ? undefined : buffer.subarray(0, bytesRead).toString('utf8');
-  } catch {
+    return bytesRead > info.size ? undefined : buffer.subarray(0, bytesRead).toString('utf8');
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== 'ENOENT' && code !== 'ELOOP' && code !== 'ENOTDIR') {
+      console.warn(`team plan handoff: unable to read ${rel}`, error);
+    }
     return undefined;
   } finally {
     await handle?.close().catch(() => {});

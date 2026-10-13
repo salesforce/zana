@@ -96,3 +96,18 @@ describe('nativeRecoveryProjection', () => {
     })).toEqual([snapshots[2]]);
   });
 });
+
+describe('nativeRecovery fallbacks', () => {
+  it('returns no projection without exact-native recovery and an unmodified launch slot', () => {
+    expect(nativeRecoveryProjection({ slotId: 's', role: 'worker', personaId: 'p', profile: 'claude' })).toBeUndefined();
+    expect(nativeRecoveryLaunchSlot({ slotId: 's', role: 'worker', personaId: 'p', profile: 'claude' }))
+      .toEqual({ configuredProfile: 'claude', profile: 'claude', recoveryResume: false });
+  });
+
+  it('emits extraArgs without a resumeSessionId for a claude resume slot', () => {
+    expect(nativeRecoveryLaunchSlot({
+      recovery: { mode: 'exact-native', slots: [{ slotId: 'w', role: 'worker', personaId: 'p', profileId: 'claude', nativeConversationId: 'n1' }] },
+      slotId: 'w', role: 'worker', personaId: 'p', profile: 'claude'
+    })).toEqual({ configuredProfile: 'claude', profile: 'claude', extraArgs: ['--resume', 'n1'], recoveryResume: true });
+  });
+});

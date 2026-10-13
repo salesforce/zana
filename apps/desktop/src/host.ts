@@ -55,13 +55,20 @@ import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtim
 import { createRuntimeRecovery } from './runtime/runtime-recovery.js';
 import { createTeamProductOps } from './team-product-ops.js';
 import { jobCoordinatorPrompt } from './team-coordinator-prompt.js';
-import { compatibleNativeRecoverySnapshots, nativeRecoveryLaunchSlot } from './team-native-recovery.js';
-import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, cleanupHandoffFiles, correctedPlanRelPath, readAuthoredPlan, readCorrectedPlan, readHandoffArtifact, writeSourceMirror } from './team-plan-handoff.js';
-import { PLAN_CORRECTION_ACTION, PlanCorrectionService, runPlanCorrectionHostAction } from './plan-correction/service.js';
-import { createExecutionRetiredCheck, createPlanCorrectionWarningLogger } from './plan-correction/wiring.js';
-import { PlanCorrectionLaunchBinding } from './plan-correction/launch-binding.js';
+import {
+  createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
+  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse
+} from './team-launch-support.js';
+import { openExecutionStorage } from './execution-storage.js';
+import { createPlanCorrectionHandoff, createPlanCorrectionHost } from './plan-correction/host.js';
+import {
+  cleanupOrchestratorOnExit, createFollowUpClaims, createNativeRecoveryCapture, teardownTerminalExecutionOnExit
+} from './squad-session-lifecycle.js';
+import { createSquadWorktreeRuntime, trustedSquadWorktreeRoot, isWithinSquadWorktreeBase, SQUAD_WORKTREE_ACTION } from './squad-worktree-runtime.js';
+import { createTriggeredSquadLauncher, goalSquadTrigger, scheduledSquadTrigger } from './triggered-squad.js';
+import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, cleanupHandoffFiles, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
+import { PlanCorrectionService } from './plan-correction/service.js';
 import { onOrchestratorIdle } from './coordinator-idle.js';
-import { createPlanCorrectionStore } from './plan-correction/store.js';
 import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
@@ -96,9 +103,7 @@ import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
-import { invalidProvidedPlanHold, resolveSquadPlan, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
-import { INFERRED_PLAN_NUDGE_BUDGET, createInferredPlanCorrection } from './inferred-plan-correction.js';
-import { startTriggeredSquadExecution, triggeredSquadSlotTasks, updateScheduledPromptFromCorrection } from './scheduled-plan-correction.js';
+import { resolveSquadPlan } from './team-trigger-semantics.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
@@ -117,13 +122,8 @@ import { createExecutionSourceRegistry, ExecutionSourceError, type ExecutionSour
 import { createExecutionHandoffStore } from '@zana-ai/zcc-server/services/execution/handoff-store';
 import { createResumeGrantStore } from '@zana-ai/zcc-server/services/execution/resume-grant-store';
 import { createResumeTokenStore } from '@zana-ai/zcc-server/services/execution/resume-token-store';
-import { openExecutionDatabase } from '@zana-ai/zcc-db';
-import { readExecutionStoreSqliteState } from '@zana-ai/zcc-server/services/execution/storage/sqlite-state';
-import { executionStoreCreationBackend, sqliteExecutionStoreWarning } from '@zana-ai/zcc-server/services/execution/storage/backend-policy';
-import { createInboxActionRegistry, InboxActionOperatorError } from './inbox-actions/registry.js';
-import { currentRetainedSquadWorktreeAction, isTerminalSquadExecution, isWithinRetainedSquadWorktreeBase, squadFollowUpPrompt, type RetainedSquadWorktreeAction } from './inbox-actions/squad-instruct.js';
-import { squadWorktreeRetainedNotice, squadWorktreeUnavailableNotice } from './squad-worktree-notice.js';
-import { claimSquadWorktreeFollowUp, ineligibleSquadWorktreeFallback, mayReleaseSquadWorktreeGuard, releaseSquadWorktreeFollowUp, resolveSquadWorktreeDisposition, resolveSquadWorktreePreparation, restoreSquadWorktreeFollowUp, shouldReplaySquadWorktreeTerminalEffects, squadWorktreeFollowUpExecution, squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock } from './squad-worktree-lifecycle.js';
+import { createInboxActionRegistry } from './inbox-actions/registry.js';
+import { squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock } from './squad-worktree-lifecycle.js';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
 import { preflightWorkflowProfile } from '@zana-ai/zcc-server/services/agents/squad-bundle';
 import { expandTeamSlots } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
@@ -973,30 +973,19 @@ const remoteReapBySession = new Map<string, RemoteReapEntry>();
 const teamLifecycle = createTeamLifecycleStore({
   filePath: join(app.getPath('userData'), 'team-lifecycle.json')
 });
-const executionStoreBackend = executionStoreCreationBackend(process.env.ZCC_EXECUTION_STORE);
-const executionDatabase = openExecutionDatabase(join(app.getPath('userData'), 'squad-executions.sqlite'));
-let executionDatabaseClosed = false;
-function closeExecutionDatabase(): void {
-  if (!executionDatabase || executionDatabaseClosed) return;
-  executionDatabaseClosed = true;
-  executionDatabase.close();
-}
+const executionStorage = openExecutionStorage({
+  userDataDir: app.getPath('userData'),
+  backendEnv: process.env.ZCC_EXECUTION_STORE,
+  warn: (message) => console.warn(message)
+});
+const executionDatabase = executionStorage.database;
 const executionStore = createExecutionStore({
   filePath: join(app.getPath('userData'), 'squad-executions.json'),
   database: executionDatabase,
-  createInJson: executionStoreBackend === 'json',
+  createInJson: executionStorage.createInJson,
   workClaimLeaseMs: e2eTimingOverrideMs('ZCC_WORK_CLAIM_LEASE_MS')
 });
-const executionStoreWarning = sqliteExecutionStoreWarning(
-  executionStoreBackend === 'json',
-  readExecutionStoreSqliteState<{
-    version: 1;
-    revision: number;
-    records: Array<{ id: string; state: string; timeoutReason?: string }>;
-    events: Array<{ id: string; executionId: string; sequence: number }>;
-  }>(executionDatabase, 'execution-store')?.value.records ?? []
-);
-if (executionStoreWarning) console.warn(`[main] ${executionStoreWarning}`);
+executionStorage.warnIfSqliteSuperseded();
 // A cohort worker renews its claim lease from observed PTY output activity (see the
 // `ptys.on('data')` hook below → `squadExecutionService.renewWorkerLease`). Throttle the
 // renew attempts to a fraction of the lease so a live, streaming worker always refreshes
@@ -1013,28 +1002,11 @@ const NON_WORKER_LEASE_CACHE_TTL_MS = 3_600_000;
 /** Per-session next-allowed renew time (or a far-future sentinel for a non-worker session,
  * so a hot non-cohort stream short-circuits without a repeat `getSession` lookup). */
 const workerLeaseRenewAt = new Map<string, number>();
-function captureNativeRecoverySnapshot(session: TerminalSession): void {
-  const cohort = session.cohort;
-  if (!cohort?.executionId || !cohort.slotId || (cohort.role !== 'worker' && cohort.role !== 'orchestrator')) return;
-  const nativeConversationId = registrationFor(session.profile)?.nativeConversationId?.(session);
-  if (!nativeConversationId || !session.personaId) return;
-  const snapshotInput = {
-    slotId: cohort.slotId,
-    role: cohort.role === 'worker' ? 'worker' as const : 'orchestrator' as const,
-    personaId: session.personaId,
-    profileId: cohort.configuredProfile ?? session.profile,
-    nativeConversationId
-  };
-  void executionStore.getInProject(session.projectId, cohort.executionId).then((record) => {
-    if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return;
-    const existing = record.nativeRecoverySnapshots?.find((snapshot) => snapshot.slotId === snapshotInput.slotId);
-    if (existing?.attempt === record.attempt && existing.nativeConversationId === nativeConversationId
-      && existing.personaId === snapshotInput.personaId && existing.profileId === snapshotInput.profileId) return;
-    return executionStore.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
-      attempt: record.attempt, ...snapshotInput
-    });
-  }).catch((error) => logMainError(`execution native recovery snapshot ${session.id}`, error));
-}
+const captureNativeRecoverySnapshot = createNativeRecoveryCapture({
+  executionStore,
+  nativeConversationIdFor: (session) => registrationFor(session.profile)?.nativeConversationId?.(session),
+  logError: logMainError
+});
 function maybeRenewWorkerLease(sessionId: string): void {
   const nowMs = Date.now();
   const next = workerLeaseRenewAt.get(sessionId);
@@ -1107,25 +1079,7 @@ function refreshRestoreCapability(session: TerminalSession): void {
   });
 }
 
-async function restoreSquadWorktreeFollowUpClaim(capability: RestoreCapability): Promise<void> {
-  if (!capability.followUpExecutionId || !capability.sessionId) return;
-  await withSquadWorktreeLifecycleLock(capability.followUpExecutionId, async () => {
-    restoreSquadWorktreeFollowUp(capability.followUpExecutionId!, capability.sessionId!);
-  });
-}
-
-async function restoreSurvivingSquadWorktreeFollowUpClaims(): Promise<void> {
-  const liveSessionIds = new Set(await listLocalTmuxSessionIds());
-  await Promise.all(restoreCapabilities.list()
-    .filter((capability) => capability.sessionId && liveSessionIds.has(capability.sessionId))
-    .map((capability) => restoreSquadWorktreeFollowUpClaim(capability)));
-}
-
-function clearSquadWorktreeFollowUpClaim(sessionId: string): void {
-  const capability = restoreCapabilities.findSession(sessionId);
-  if (!capability?.followUpExecutionId) return;
-  restoreCapabilities.put({ ...capability, followUpExecutionId: undefined });
-}
+const squadFollowUpClaims = createFollowUpClaims({ restoreCapabilities, listLiveSessionIds: listLocalTmuxSessionIds });
 
 function isTeamWorkerRestore(request: CreateTerminalRequest): boolean {
   return request.cohort?.role === 'worker';
@@ -1301,39 +1255,20 @@ const inboxStore: IInboxStore = createInboxStore();
 // Host actions are deliberately inert without the configured execution SQLite
 // store. No renderer-provided action payload can create or alter a durable row.
 const inboxActionRegistry = createInboxActionRegistry(executionDatabase);
-const SQUAD_WORKTREE_ACTION = 'squad-worktree-lifecycle';
-const planCorrection = new PlanCorrectionService({
-  // One durable correction offer maps to one Inbox decision, including after
-  // a transient bind failure or process recovery.
-  appendInbox: (input) => inboxStore.appendOnce(input),
-  bindInboxAction: (entry, action) => inboxActionRegistry.bind(entry, action),
+const { planCorrection, launchBinding: planCorrectionLaunchBinding } = createPlanCorrectionHost({
+  userDataDir: app.getPath('userData'),
+  database: executionDatabase,
+  inboxStore,
+  inboxActionRegistry,
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
   wakeCoordinator: (executionId, text) => squadExecutionService.wakeCoordinatorForPlanCorrection(executionId, text),
-  readSourcePlan: async (executionId) => (await executionStore.get(executionId))?.request?.objective,
-  readCorrectedPlan,
-  store: createPlanCorrectionStore({
-    filePath: join(app.getPath('userData'), 'plan-corrections.json'),
-    database: executionDatabase,
-    isExecutionRetired: createExecutionRetiredCheck((executionId) => executionStore.get(executionId))
-  }),
-  logWarning: createPlanCorrectionWarningLogger(logMainError),
-  updateScheduledPrompt: (ctx, units) => updateScheduledPromptFromCorrection({
-    getExecution: (projectId, executionId) => executionStore.getInProject(projectId, executionId),
-    getSchedule: (scheduleId) => scheduler.get(scheduleId),
-    readCorrectedPlanText: (projectRoot, executionId) => readHandoffArtifact(projectRoot, correctedPlanRelPath(executionId)),
-    updateSchedule: (scheduleId, patch) => scheduler.update(scheduleId, patch),
-    getGoal: (goalId) => {
-      const goal = goals.list().find(candidate => candidate.id === goalId);
-      if (!goal) throw new Error(`goal not found: ${goalId}`);
-      return goal;
-    },
-    updateGoal: (goalId, patch) => goals.update(goalId, patch)
-  }, ctx, units),
+  stopExecution: async (executionId) => { await squadExecutionService.stopForPlanCorrection(executionId); },
   resume: async (ctx) => teamPlanHandoff.onCoordinatorIdle(ctx),
-  stopExecution: async (executionId) => { await squadExecutionService.stopForPlanCorrection(executionId); }
+  executionStore,
+  get scheduler() { return scheduler; },
+  get goals() { return goals; },
+  logError: logMainError
 });
-const planCorrectionLaunchBinding = new PlanCorrectionLaunchBinding();
-inboxActionRegistry.register(PLAN_CORRECTION_ACTION, ({ ref, input }) => runPlanCorrectionHostAction(planCorrection, ref, input?.optionId));
 const inboxReadStore: IInboxReadStore = createInboxReadStore({
   filePath: defaultInboxReadStateFile(defaultInboxFile()),
   inbox: inboxStore
@@ -3942,14 +3877,7 @@ export function revalidateEffectiveLaunch(
         return null;
       }
     }).find((root) => root && isWithin(effective.cwd, root))
-      ?? (() => {
-        try {
-          const squadRoot = realpathSync(join(effective.projectRoot, '.worktrees'));
-          return isWithin(effective.cwd, squadRoot) ? squadRoot : null;
-        } catch {
-          return null;
-        }
-      })()
+      ?? trustedSquadWorktreeRoot(effective.cwd, effective.projectRoot)
     : effective.projectRoot;
   if (!trustedRoot) {
     return { ok: false, reason: 'effective launch path changed after preflight' };
@@ -4460,7 +4388,7 @@ async function launchAuthorizedTerminal(
         throw error;
       }
       };
-      return spawnLifecycle?.withSpawnLock ? spawnLifecycle.withSpawnLock(spawn) : spawn();
+      return runSpawnLifecycle(spawnLifecycle, spawn);
     },
     onCommitted: ({ authorizationId, sessionId }) => onCommitted?.({ authorizationId, sessionId }),
     beforeSpawn: spawnLifecycle?.maySpawn,
@@ -4979,26 +4907,14 @@ function resolvedTeamProfile(project: Project, personaSnapshot: readonly Persona
   return selected.ok ? selected.profile : 'claude';
 }
 
-/** Trusted desktop-only recovery facts. Native ids never enter this result. */
-function desktopExactNativeRecoveryAvailability(record: ExecutionRecord): { available: boolean; restorableSlots: number } {
-  const snapshots = desktopCompatibleNativeRecoverySnapshots(record);
-  return { available: snapshots.length > 0, restorableSlots: snapshots.length };
-}
-
-/** Trusted desktop-only exact-native snapshots. Never exposed outside main/service. */
-function desktopCompatibleNativeRecoverySnapshots(record: ExecutionRecord): NonNullable<ExecutionRecord['nativeRecoverySnapshots']> {
-  const project = store.listProjects().find((candidate) => candidate.id === record.projectId);
-  const team = teams.list().find((candidate) => candidate.id === record.teamId);
-  const snapshots = record.nativeRecoverySnapshots ?? [];
-  if (!project || !team || snapshots.length === 0) return [];
-  const personaSnapshot = personas.list();
-  const personasById = new Map(personaSnapshot.map((persona) => [persona.id, persona]));
-  const slots = expandTeamSlots(team).flatMap((slot) => {
-    const persona = personasById.get(slot.personaId);
-    return persona ? [{ ...slot, profile: resolvedTeamProfile(project, personaSnapshot, persona) }] : [];
-  });
-  return compatibleNativeRecoverySnapshots({ snapshots, slots });
-}
+/** Trusted desktop-only exact-native recovery facts. Native ids never leave main. */
+const desktopNativeRecovery = createDesktopNativeRecovery({
+  projects: store,
+  teams,
+  personas,
+  expandTeamSlots,
+  resolveTeamProfile: resolvedTeamProfile
+});
 
 /** Resolve Team slot route facts in main before durable execution is claimed. */
 async function resolveTeamModelSnapshots(
@@ -5129,8 +5045,8 @@ export function authorizeTeamLaunch(
   for (const [index, expected] of expectedSlots.entries()) {
     const persona = known.get(expected.personaId)!;
     const requestedRecovery = nativeRecovery?.find((snapshot) => snapshot.slotId === expected.slotId);
-    const projection = nativeRecoveryLaunchSlot({
-      recovery: requestedRecovery ? { mode: 'exact-native', slots: [{ ...requestedRecovery }] } : undefined,
+    const projection = slotRecoveryLaunch({
+      nativeRecovery: requestedRecovery,
       slotId: expected.slotId,
       role: expected.slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker',
       personaId: expected.personaId,
@@ -5279,105 +5195,24 @@ async function prepareCoordinatorHandoff(args: {
   return { planFilePath };
 }
 
-function squadWorktreeSlug(teamId: string, executionId: string): string {
-  return sanitizeBranchSlug(`${teamId}-${executionId}`) ?? `squad-${executionId.replace(/[^a-zA-Z0-9]/g, '_')}`;
-}
-
-function isWithinSquadWorktreeBase(candidate: string, projectRoot: string): boolean {
-  try {
-    return isWithin(candidate, realpathSync(join(projectRoot, '.worktrees')));
-  } catch {
-    return false;
-  }
-}
-
-async function prepareSquadWorktree(record: ExecutionRecord, request: { worktree?: boolean }): Promise<ExecutionRecord> {
-  return withSquadWorktreeLifecycleLock(record.id, async () => {
-  // Lifecycle lock precedes Git's existing worktree locks, avoiding inversion.
-  const current = await executionStore.get(record.id);
-  if (!current || current.stateVersion !== record.stateVersion) return current ?? record;
-  record = current;
-  const project = store.listProjects().find((candidate) => candidate.id === record.projectId);
-  const retainedWorktree = record.squadWorktree;
-  const team = teams.list().find((candidate) => candidate.id === record.teamId);
-  const projectSettings = project ? await getAuthoritativeProjectSettings(project.id) : undefined;
-  const preparation = resolveSquadWorktreePreparation({
-    retained: retainedWorktree !== undefined,
-    launch: request.worktree,
-    project: projectSettings?.worktreeIsolation,
-    global: store.getConfig().worktreeIsolationDefault,
-    squad: team?.worktreeIsolation
-  });
-  if (preparation === 'reattach') {
-    try {
-      if (!project || !retainedWorktree) throw new Error('WORKTREE_UNAVAILABLE');
-      const path = realpathSync(retainedWorktree.path);
-      if (path !== retainedWorktree.path || !isWithinSquadWorktreeBase(path, project.path)) {
-        throw new Error('WORKTREE_UNAVAILABLE');
-      }
-      const status = await getGitStatus(path);
-      if (!status || status.branch !== retainedWorktree.branch) throw new Error('WORKTREE_UNAVAILABLE');
-      const latest = await executionStore.get(record.id);
-      if (!latest || latest.stateVersion !== record.stateVersion || !latest.squadWorktree
-        || latest.squadWorktree.path !== retainedWorktree.path || latest.squadWorktree.branch !== retainedWorktree.branch) {
-        throw new Error('WORKTREE_UNAVAILABLE');
-      }
-      const protection = await setWorktreePushProtection(project.path, path, true);
-      if (!protection.ok) throw new Error('WORKTREE_UNAVAILABLE');
-      return latest;
-    } catch {
-      // A retained execution may only resume in its recorded managed checkout.
-      throw new Error('WORKTREE_UNAVAILABLE');
-    }
-  }
-  if (!project || !team) return record;
-  if (preparation === 'project-root') return record;
-  const fallback = await ineligibleSquadWorktreeFallback(project, isGitRepo);
-  if (fallback) {
-    await inboxStore.appendOnce({
-      projectId: project.id,
-      projectLabel: project.name,
-      subject: fallback.notice.subject,
-      comments: fallback.notice.comments,
-      executionId: record.id,
-      dedupeKey: `squad-worktree-fallback:${record.id}`
-    });
-    return record;
-  }
-  const slug = squadWorktreeSlug(team.id, record.id);
-  const expectedTarget = join(project.path, '.worktrees', slug);
-  // A durable record may outlive its checkout after cleanup or a machine restart.
-  // Only restore its original managed location; a different branch checkout remains
-  // a concurrent replacement and createWorktree rejects it.
-  if (retainedWorktree && resolve(retainedWorktree.path) !== resolve(expectedTarget)) {
-    throw new Error('WORKTREE_UNAVAILABLE');
-  }
-  const target = retainedWorktree?.path ?? expectedTarget;
-  const branch = retainedWorktree?.branch ?? `zcc/${slug}`;
-  const beforeCreate = await executionStore.get(record.id);
-  if (!beforeCreate || beforeCreate.stateVersion !== record.stateVersion) return beforeCreate ?? record;
-  if (beforeCreate.squadWorktree && beforeCreate.squadWorktree.branch !== branch) return beforeCreate;
-  const created = await createWorktree(project.path, target, branch, join(project.path, '.worktrees'), true);
-  if (!created.ok) {
-    if (retainedWorktree) throw new Error('WORKTREE_UNAVAILABLE');
-    await inboxStore.appendOnce(squadWorktreeUnavailableNotice(project, record.id, created.reason));
-    return record;
-  }
-  const path = realpathSync(created.path);
-  if (!isWithinSquadWorktreeBase(path, project.path)) {
-    throw new Error('squad worktree escaped registered project worktree base');
-  }
-  const baseBranch = retainedWorktree?.baseBranch ?? (await getGitStatus(project.path))?.branch;
-  if (!baseBranch) throw new Error('squad worktree base branch is unavailable');
-  const latest = await executionStore.get(record.id);
-  if (!latest || latest.stateVersion !== record.stateVersion || latest.squadWorktree) return latest ?? record;
-  return executionStore.setSquadWorktree(record.id, record.stateVersion, {
-    path,
-    branch: created.branch,
-    baseBranch
-  } satisfies SquadWorktreeRecord);
-  });
-}
+const squadWorktreeRuntime = createSquadWorktreeRuntime({
+  executionStore,
+  inboxStore,
+  inboxActionRegistry,
+  projects: store,
+  teams,
+  personas,
+  config: store,
+  getProjectSettings: getAuthoritativeProjectSettings,
+  resolveTeamProfile: resolvedTeamProfile,
+  cancelTeamLaunch,
+  launchFollowUpTerminal: (request, lifecycle, executionId) => launchAuthorizedTerminal(
+    request, { kind: 'interactive-user', id: `squad-follow-up:${executionId}` }, { retainWorktree: true },
+    undefined, undefined, undefined, undefined, undefined, false, lifecycle, executionId
+  ),
+  git: { getGitStatus, setWorktreePushProtection, createWorktree, mergeWorktree, removeWorktree, worktreeState, isGitRepo, sanitizeBranchSlug }
+});
+inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, squadWorktreeRuntime.handleInboxAction);
 
 /**
  * Flow A seeded-plan kickoff: dispatch the pre-registered ready units host-side so
@@ -5539,13 +5374,11 @@ export async function launchTeam(
     const persona = personaSnapshot.find((candidate) => candidate.id === personaId);
     return persona ? resolvedTeamProfile(project, personaSnapshot, persona) : 'claude';
   };
-  const recoveryFor = (slotId: string, role: 'worker' | 'orchestrator', personaId: string) => {
-    const nativeRecovery = structured?.slots.find((slot) => slot.slotId === slotId)?.nativeRecovery;
-    return nativeRecoveryLaunchSlot({
-      recovery: nativeRecovery ? { mode: 'exact-native', slots: [{ slotId, ...nativeRecovery }] } : undefined,
+  const recoveryFor = (slotId: string, role: 'worker' | 'orchestrator', personaId: string) =>
+    slotRecoveryLaunch({
+      nativeRecovery: structured?.slots.find((slot) => slot.slotId === slotId)?.nativeRecovery,
       slotId, role, personaId, profile: profileFor(personaId)
     });
-  };
   const taskBindingFailure = (personaId: string): string | undefined => {
     if (!structured) return undefined;
     const provider = providerFor(profileFor(personaId));
@@ -5558,11 +5391,7 @@ export async function launchTeam(
     return { ok: false, code: 'INVALID', message: 'invalid initial task' };
   }
   const authorizationBindings = expectedSlots.map(({ slotId, personaId, role }) => {
-    const nativeRecovery = structured?.slots.find((slot) => slot.slotId === slotId)?.nativeRecovery;
-    const projection = nativeRecoveryLaunchSlot({
-      recovery: nativeRecovery ? { mode: 'exact-native', slots: [{ slotId, ...nativeRecovery }] } : undefined,
-      slotId, role, personaId, profile: profileFor(personaId)
-    });
+    const projection = recoveryFor(slotId, role, personaId);
     return {
       slotId,
       authorizationBinding: launchDigest({
@@ -5615,9 +5444,8 @@ export async function launchTeam(
       const requested = structured.slots[index];
       const authorization = launchAuthorization.get(requested.authorizationId!);
       if (!authorization) return { ok: false, code: 'DENIED', message: 'unknown authorization' };
-      const recovery = requested.nativeRecovery;
-      const projection = nativeRecoveryLaunchSlot({
-        recovery: recovery ? { mode: 'exact-native', slots: [{ slotId: expected.slotId, ...recovery }] } : undefined,
+      const projection = slotRecoveryLaunch({
+        nativeRecovery: requested.nativeRecovery,
         slotId: expected.slotId, role: expected.role, personaId: expected.personaId, profile: profileFor(expected.personaId)
       });
       const expectedProfile = projection.profile;
@@ -6000,294 +5828,6 @@ export async function getTeamLaunch(callerPrincipalId: string, launchRequestId: 
   return result.ok ? { ok: true, value: result.record } : { ok: false, code: result.code, message: 'team launch request not found for caller' };
 }
 
-async function appendSquadWorktreeNotice(
-  record: ExecutionRecord,
-  comments: string,
-  options: Array<{ id: string; label: string }>,
-  phase: 'choose' | 'confirm' = 'choose'
-): Promise<void> {
-  const project = store.listProjects().find((candidate) => candidate.id === record.projectId);
-  if (!project || !record.squadWorktree) return;
-  const notice = {
-    projectId: project.id,
-    projectLabel: project.name,
-    executionId: record.id,
-    hostActionRequired: true as const,
-    subject: 'Squad worktree ready',
-    comments,
-    // Same execution may become terminal again after resume. A new terminal
-    // generation needs a new entry; prior generation entries stay fenced.
-    questions: [{ prompt: 'Choose worktree disposition', options }]
-  };
-  // Every Delete request gets an independent confirmation. This prevents a stale
-  // confirmation from becoming implicit authority over a later user request.
-  const entry = phase === 'confirm'
-    ? await inboxStore.append(notice)
-    : await inboxStore.appendOnce({ ...notice, dedupeKey: `squad-worktree-lifecycle:${record.id}:${record.stateVersion}:${phase}` });
-  inboxActionRegistry.bind(entry, {
-    kind: SQUAD_WORKTREE_ACTION,
-    // Resume advances stateVersion, invalidating every terminal action issued for
-    // the prior attempt before it can delete or launch inside that worktree.
-    ref: JSON.stringify({ executionId: record.id, phase, stateVersion: record.stateVersion }),
-    ...(phase === 'choose' ? { textOptionId: 'instruct' } : {})
-  });
-}
-
-async function handleSquadWorktreeTerminal(record: ExecutionRecord): Promise<void> {
-  await withSquadWorktreeLifecycleLock(record.id, async () => {
-    const currentTerminal = async () => {
-      const current = await executionStore.get(record.id);
-      if (!current || current.stateVersion !== record.stateVersion || !current.squadWorktree || !isTerminalSquadExecution(current.state)) return undefined;
-      return current;
-    };
-    const initial = await currentTerminal();
-    if (!initial) return;
-    if (!shouldReplaySquadWorktreeTerminalEffects(initial)) return;
-    record = initial;
-    if (squadWorktreeHasActiveFollowUp(record.id)) return;
-    const teardown = await cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
-    if (!mayReleaseSquadWorktreeGuard(teardown)) return;
-    const latest = await currentTerminal();
-    if (!latest) return;
-    record = latest;
-    const worktree = latest.squadWorktree;
-    if (!worktree) return;
-    const project = store.listProjects().find((candidate) => candidate.id === record.projectId);
-    // A crash can land after Git removes the checkout but before the durable
-    // completion marker. Missing recorded checkout is the idempotent delete
-    // result, never a reason to retry another terminal policy action.
-    if (!existsSync(worktree.path)) {
-      await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);
-      return;
-    }
-    if (project) {
-      const protection = await setWorktreePushProtection(project.path, worktree.path, false);
-      if (!protection.ok) throw new Error(`could not disable squad worktree push guard: ${protection.reason}`);
-    }
-    const requested = record.request.onComplete ?? 'leave';
-    if (record.state === 'COMPLETED' && requested === 'merge') {
-      const base = worktree.baseBranch;
-      const beforeMerge = await currentTerminal();
-      if (project && base && beforeMerge) {
-        if (squadWorktreeHasActiveFollowUp(record.id)) return;
-        const merged = await mergeWorktree(project.path, beforeMerge.squadWorktree!.path, base);
-        if (merged.ok) {
-          const beforeRemove = await currentTerminal();
-          if (!beforeRemove) return;
-          const removed = await removeWorktree(project.path, beforeRemove.squadWorktree!.path, false);
-          if (removed.ok) {
-            await executionStore.markSquadWorktreeTerminalEffects(beforeRemove.id, beforeRemove.stateVersion);
-            return;
-          }
-        }
-      }
-    }
-    // Inbox records the terminal outcome only. Recovery and retained-worktree
-    // lifecycle controls belong to Squad details, where their run state is visible.
-    await inboxStore.appendOnce(squadWorktreeRetainedNotice({
-      projectId: record.projectId,
-      projectLabel: project?.name,
-      executionId: record.id,
-      stateVersion: record.stateVersion,
-      jobTitle: record.jobTitle,
-      state: record.state,
-      worktreePath: worktree.path
-    }));
-    await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);
-  });
-}
-
-async function replayUndisposedSquadWorktreeTerminalEffects(): Promise<void> {
-  const retained = await executionStore.listUndisposedSquadWorktrees();
-  for (const record of retained) {
-    if (!shouldReplaySquadWorktreeTerminalEffects(record)) continue;
-    await handleSquadWorktreeTerminal(record);
-  }
-}
-
-async function retainedSquadWorktreeForInstruct(record: ExecutionRecord): Promise<{ project: Project; worktree: SquadWorktreeRecord }> {
-  if (!record.squadWorktree || !isTerminalSquadExecution(record.state)) {
-    throw new Error('retained squad worktree is unavailable');
-  }
-  const project = store.listProjects().find((candidate) => candidate.id === record.projectId);
-  if (!project || project.remote || project.quickAgent) throw new Error('retained squad worktree is unavailable');
-  let path: string;
-  try {
-    if (realpathSync(project.path) !== project.path) throw new Error('project path changed');
-    path = realpathSync(record.squadWorktree.path);
-  } catch {
-    throw new Error('retained squad worktree is unavailable');
-  }
-  if (path !== record.squadWorktree.path || !isWithinRetainedSquadWorktreeBase(path, project.path)) {
-    throw new Error('retained squad worktree is unavailable');
-  }
-  const status = await getGitStatus(path);
-  if (!status || status.branch !== record.squadWorktree.branch) {
-    throw new Error('retained squad worktree is unavailable');
-  }
-  return { project, worktree: { ...record.squadWorktree, path } };
-}
-
-async function runSquadWorktreeAction(fencedAction: RetainedSquadWorktreeAction, input?: { optionId?: string; text?: string }): Promise<void | { keepPending: true }> {
-  const currentRecord = async (): Promise<ExecutionRecord & { squadWorktree: SquadWorktreeRecord }> => {
-    try {
-      return (await currentRetainedSquadWorktreeAction(
-        fencedAction,
-        () => executionStore.get(fencedAction.executionId)
-      )) as ExecutionRecord & { squadWorktree: SquadWorktreeRecord };
-    } catch {
-      throw new InboxActionOperatorError('This action is unavailable because the Squad run resumed or changed state.', true);
-    }
-  };
-  const record = await currentRecord();
-  const disposition = resolveSquadWorktreeDisposition(fencedAction.phase, input?.optionId);
-  if (disposition === 'leave') {
-    await executionStore.disposeSquadWorktree(record.id, record.stateVersion, 'left');
-    return;
-  }
-  if (disposition === 'instruct') {
-    if (squadWorktreeHasActiveFollowUp(record.id)) {
-      throw new InboxActionOperatorError('Worktree is in use by an active follow-up agent. Wait for it to exit, then try again.');
-    }
-    const instruction = input?.text?.trim();
-    if (!instruction) throw new Error('agent instruction is required');
-    let project: Project;
-    let worktree: SquadWorktreeRecord;
-    try {
-      ({ project, worktree } = await retainedSquadWorktreeForInstruct(record));
-    } catch {
-      throw new InboxActionOperatorError('Retained Squad worktree or branch is unavailable.', true);
-    }
-    const team = teams.list().find((candidate) => candidate.id === record.teamId);
-    const persona = team?.orchestratorPersonaId
-      ? personas.list().find((candidate) => candidate.id === team.orchestratorPersonaId)
-      : undefined;
-    const profile = persona ? resolvedTeamProfile(project, personas.list(), persona) : 'claude';
-    const launched = await launchAuthorizedTerminal({
-      projectId: project.id,
-      profile,
-      ...(persona ? { personaId: persona.id } : {}),
-      cols: 80,
-      rows: 24,
-      prompt: squadFollowUpPrompt({ instruction, executionId: record.id, teamId: record.teamId, branch: worktree.branch }),
-      title: `Follow-up: ${record.jobTitle}`,
-      worktreeInfo: worktree
-    }, { kind: 'interactive-user', id: `squad-follow-up:${record.id}` }, { retainWorktree: true }, undefined, undefined, undefined, undefined, undefined, false, {
-      // launchAuthorizedTerminal rechecks this directly before spawning, after all
-      // async preflight. Resume or disposition during that interval cancels spawn.
-      maySpawn: async () => {
-        try {
-          await currentRecord();
-          await retainedSquadWorktreeForInstruct(await currentRecord());
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      claimRunning: async () => {
-        try {
-          await currentRecord();
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      // Final ownership check and terminal creation share lifecycle lock.
-      withSpawnLock: async (spawn) => withSquadWorktreeLifecycleLock(record.id, async () => {
-        const latest = await currentRecord();
-        if (squadWorktreeHasActiveFollowUp(latest.id)) {
-          throw new InboxActionOperatorError('Worktree is in use by an active follow-up agent. Wait for it to exit, then try again.');
-        }
-        try {
-          await retainedSquadWorktreeForInstruct(latest);
-        } catch {
-          throw new InboxActionOperatorError('Retained Squad worktree or branch is unavailable.', true);
-        }
-        return spawn();
-      }),
-      onSessionCreated: (session) => claimSquadWorktreeFollowUp(record.id, session.id),
-    }, record.id);
-    if (!launched.ok) throw new Error(launched.message);
-    return;
-  }
-  const project = store.listProjects().find((candidate) => candidate.id === record.projectId);
-  if (!project) throw new Error('project is unavailable');
-  if (disposition === 'confirm') {
-    if (squadWorktreeHasActiveFollowUp(record.id)) {
-      throw new InboxActionOperatorError('Worktree is in use by an active follow-up agent. Wait for it to exit, then try again.');
-    }
-    await appendSquadWorktreeNotice(
-      record,
-      `Confirm deletion of \`${record.squadWorktree.path}\`. Unmerged commits require Force delete; dirty worktrees are never deleted.`,
-      [
-        { id: 'confirm-delete', label: 'Delete permanently' },
-        { id: 'force-delete', label: 'Force delete unmerged work' },
-        { id: 'leave', label: 'Leave' }
-      ],
-      'confirm'
-    );
-    return { keepPending: true };
-  }
-  if (disposition !== 'delete' && disposition !== 'force') throw new Error('unknown squad worktree action');
-  await withSquadWorktreeLifecycleLock(record.id, async () => {
-    const current = await currentRecord();
-    if (squadWorktreeHasActiveFollowUp(current.id)) {
-      throw new InboxActionOperatorError('Worktree is in use by an active follow-up agent. Wait for it to exit, then try again.');
-    }
-    let retained: { project: Project; worktree: SquadWorktreeRecord };
-    try {
-      retained = await retainedSquadWorktreeForInstruct(current);
-    } catch {
-      throw new InboxActionOperatorError('This confirmation is unavailable because the retained Squad worktree or branch no longer exists.', true);
-    }
-    const state = await worktreeState(retained.worktree.path);
-    if (state.dirty && disposition !== 'force') {
-      throw new InboxActionOperatorError('Worktree has uncommitted changes. Clean or commit them, then try again.');
-    }
-    if (state.commits > 0 && disposition !== 'force') {
-      throw new InboxActionOperatorError('Worktree has unmerged commits. Choose Force delete unmerged work to continue.');
-    }
-    let latest: { project: Project; worktree: SquadWorktreeRecord };
-    try {
-      latest = await retainedSquadWorktreeForInstruct(await currentRecord());
-    } catch {
-      throw new InboxActionOperatorError('This confirmation is unavailable because the retained Squad worktree or branch no longer exists.', true);
-    }
-    const removed = await removeWorktree(latest.project.path, latest.worktree.path, disposition === 'force');
-    if (!removed.ok) throw new Error(removed.message ?? 'could not delete squad worktree');
-    await executionStore.disposeSquadWorktree(current.id, current.stateVersion, 'deleted');
-    const unavailable = 'This confirmation is unavailable because the retained Squad worktree was deleted.';
-    inboxActionRegistry.markUnavailable(SQUAD_WORKTREE_ACTION, JSON.stringify({ executionId: current.id, phase: 'confirm', stateVersion: current.stateVersion }), unavailable);
-    inboxActionRegistry.markUnavailable(SQUAD_WORKTREE_ACTION, JSON.stringify({ executionId: current.id, phase: 'choose', stateVersion: current.stateVersion }), unavailable);
-  });
-}
-
-inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, async ({ ref, input }) => {
-  let action: Partial<RetainedSquadWorktreeAction>;
-  try { action = JSON.parse(ref) as Partial<RetainedSquadWorktreeAction>; } catch { throw new Error('invalid squad worktree action'); }
-  if (!action.executionId || !action.phase || !Number.isInteger(action.stateVersion)) throw new Error('invalid squad worktree action');
-  return runSquadWorktreeAction(action as RetainedSquadWorktreeAction, input);
-});
-
-async function squadWorktreeAction(
-  projectId: string,
-  executionId: string,
-  stateVersion: number,
-  action: 'leave' | 'instruct' | 'delete' | 'force-delete',
-  instruction?: string
-): Promise<Result<true>> {
-  const phase = action === 'instruct' ? 'choose' : 'confirm';
-  const optionId = action === 'delete' ? 'confirm-delete' : action === 'force-delete' ? 'force-delete' : action;
-  try {
-    const record = await executionStore.getInProject(projectId, executionId);
-    if (!record || record.stateVersion !== stateVersion) return { ok: false, code: 'CONFLICT', message: 'Squad run changed. Refresh details and try again.' };
-    await runSquadWorktreeAction({ executionId, phase, stateVersion }, { optionId, ...(instruction === undefined ? {} : { text: instruction }) });
-    return { ok: true, value: true };
-  } catch (error) {
-    return { ok: false, code: error instanceof InboxActionOperatorError ? 'CONFLICT' : 'UNAVAILABLE', message: error instanceof Error ? error.message : 'squad worktree action failed' };
-  }
-}
-
 // Idle-gated assignment delivery for the engine cascade — see
 // `IdleGatedInjector`. The cascade pushes a newly-ready unit the instant a
 // worker COMPLETES its previous one, when the worker is still mid-turn; a raw
@@ -6362,15 +5902,15 @@ const squadExecutionService = new SquadExecutionService({
   isRegisteredProject: (projectId) => store.listProjects().some((project) => project.id === projectId),
   withExecutionLifecycleLock: withSquadWorktreeLifecycleLock,
   mayResumeRetainedWorktree: (executionId) => !squadWorktreeHasActiveFollowUp(executionId),
-  prepareSquadWorktree,
-  onTerminal: handleSquadWorktreeTerminal,
+  prepareSquadWorktree: squadWorktreeRuntime.prepareSquadWorktree,
+  onTerminal: squadWorktreeRuntime.handleSquadWorktreeTerminal,
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
   preflightWorkflow: (teamId, workflow) => {
     const team = teams.list().find((candidate) => candidate.id === teamId);
     return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
   }
-  , resolveExactNativeRecoverySnapshots: desktopCompatibleNativeRecoverySnapshots
+  , resolveExactNativeRecoverySnapshots: desktopNativeRecovery.compatibleSnapshots
   , resolveTeamModelSnapshots
   // E2E-ONLY transient dispatch fault: forces the FIRST assignment batch per
   // execution to release undelivered, reproducing the 0-CLAIMED wedge so the
@@ -6434,12 +5974,7 @@ const squadExecutionService = new SquadExecutionService({
         ? [{ id: model.targetId, provider: provider.adapter.descriptor.id }]
         : [];
     }).sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
-    const requiredSkills = [...new Set(request.workUnits?.flatMap((unit) => unit.requires?.skills ?? []) ?? [])].sort();
-    const personaMcpServers = [...new Set(slotPersonas.flatMap((persona) => persona.mcpServers ?? []))].sort();
-    const inventoryMcpServers = [...new Set([
-      ...slotPersonas.flatMap((persona) => persona.mcpServers ?? []),
-      ...(request.workUnits?.flatMap((unit) => unit.requires?.mcpServers ?? []) ?? [])
-    ])].sort();
+    const { requiredSkills, personaMcpServers, inventoryMcpServers } = teamAdmissionRequirements(slotPersonas, request.workUnits);
     const inventory = await collectTeamAdmissionInventory({ requiredSkills, requiredMcpServers: inventoryMcpServers, requiredModels, requiredProviders }, {
       listSkills: () => project ? listSkills({ projectPath: project.path, projectId }) : Promise.resolve([]),
       listMcpServers: () => project ? listMcpServers(project.path) : Promise.resolve([]),
@@ -6508,21 +6043,14 @@ const squadExecutionService = new SquadExecutionService({
  */
 // An inferred plan that stays invalid after the hand-off's nudges opens the same
 // Inbox plan-correction decision a provided plan gets (no new state or UI).
-const inferredPlanCorrection = createInferredPlanCorrection({
-  reviewInvalid: (ctx, reason) => planCorrection.reviewInvalid(ctx, reason),
-  begin: (executionId, reason, unattended) => planCorrection.begin(executionId, reason, unattended)
-});
+const { inferredPlanCorrection, hooks: planCorrectionHandoffHooks } = createPlanCorrectionHandoff(planCorrection);
 let teamPlanHandoff: TeamPlanHandoff;
 teamPlanHandoff = new TeamPlanHandoff({
   isPlanless: async (projectId, executionId) => {
     const record = await executionStore.getInProject(projectId, executionId);
     return (record?.workUnits?.length ?? 0) === 0;
   },
-  readAuthoredPlan: async (projectRoot, executionId) => await planCorrection.approvedPlan(executionId)
-    ?? readAuthoredPlan(projectRoot, executionId),
-  review: (ctx, read) => planCorrection.review(ctx, read),
-  reviewInvalid: (ctx, reason) => inferredPlanCorrection.reviewInvalid(ctx, reason),
-  maxNudges: INFERRED_PLAN_NUDGE_BUDGET,
+  ...planCorrectionHandoffHooks,
   register: async (ctx, units) => {
     const result = await squadExecutionService.registerPlan(
       { role: 'orchestrator', slotId: ctx.slotId, executionId: ctx.executionId, projectId: ctx.projectId, principalId: ctx.sessionId },
@@ -6534,6 +6062,15 @@ teamPlanHandoff = new TeamPlanHandoff({
   cleanup: (projectRoot, executionId) => cleanupHandoffFiles(projectRoot, executionId),
   logError: (message, error) => logMainError(message, error)
 });
+const squadSessionExit = {
+  executionStore,
+  handleSquadWorktreeTerminal: squadWorktreeRuntime.handleSquadWorktreeTerminal,
+  teamPlanHandoff,
+  inferredPlanCorrection,
+  projects: store,
+  cleanupHandoffFiles,
+  logError: logMainError
+};
 
 export async function reportTeamTask(
   callerPrincipalId: string,
@@ -6562,39 +6099,15 @@ function teamExecutionEnabled(): boolean {
   return config.teamJobLaunchEnabled !== false || config.composerShowAutonomousTeam !== false;
 }
 
-async function startTriggeredSquad(input: {
-  projectId: string;
-  callerPrincipalId: string;
-  teamId: string;
-  launchRequestId: string;
-  objective: string;
-  title: string;
-  planSource: 'provided' | 'infer';
-  origin: 'scheduled' | 'goal';
-  maxDurationMinutes?: number;
-}): Promise<{ executionId: string }> {
-  const project = store.listProjects().find(candidate => candidate.id === input.projectId);
-  const team = teams.list().find(candidate => candidate.id === input.teamId);
-  if (!project) throw new Error('project not found');
-  if (!team) throw new Error('team not found');
-  if (teamHostProblem(project, runtimeSupervisor?.hostId)) throw new Error('team host is unavailable');
-  if (!team.orchestratorPersonaId || !personas.list().some(persona => persona.id === team.orchestratorPersonaId)) throw new Error('team requires an available orchestrator');
-  const slots = expandTeamSlots(team);
-  if (!slots.length || slots.length > 32) throw new Error('team has no launchable slots');
-  const { coordinationMode, workUnits, planError } = resolveTriggeredSquadPlan(input.planSource, input.objective);
-  // An invalid supplied plan follows the same parked-Squad correction path as an
-  // interactive provided plan (binding begun in triggeredSquadSlotTasks): the
-  // durable execution gives Inbox a real run to open; no Claude fallback agent
-  // is created and workers wait for the corrected plan.
-  // A failed start forgets the launch binding begun by triggeredSquadSlotTasks.
-  return startTriggeredSquadExecution(input.launchRequestId, () => squadExecutionService.start(input.callerPrincipalId, project.id, {
-    version: 1, teamId: team.id, launchRequestId: input.launchRequestId, coordinationMode, origin: input.origin,
-    jobTitle: input.title, objective: input.objective,
-    slots: triggeredSquadSlotTasks(input, slots, planError, invalidProvidedPlanHold, planCorrectionLaunchBinding),
-    ...(workUnits ? { workUnits } : {}),
-    ...(input.maxDurationMinutes && input.maxDurationMinutes > 0 ? { policy: { deadlineMs: input.maxDurationMinutes * 60 * 1000 } } : {})
-  }), planCorrectionLaunchBinding);
-}
+const startTriggeredSquad = createTriggeredSquadLauncher({
+  projects: store,
+  teams,
+  personas,
+  teamHostProblem: (project) => teamHostProblem(project, runtimeSupervisor?.hostId),
+  expandTeamSlots,
+  squadExecutionService,
+  planCorrectionLaunchBinding
+});
 
 export async function startTeamJobFromUi(
   input: TeamJobLaunchInput,
@@ -6685,20 +6198,11 @@ export async function startTeamJobFromUi(
   );
   const plannedWorkUnits = resolvedPlan.workUnits;
   const providedPlanError = resolvedPlan.planError;
-  if (providedPlanError) {
-    const unattended = !sourceContext;
-    if (unattended) {
-      await inboxStore.append({
-        projectId,
-        projectLabel: project.name,
-        subject: 'Squad plan needed correction',
-        comments: 'Provided Squad plan is invalid. Update plan, then run trigger again.',
-        notify: 'loud'
-      });
-      return { ok: false, code: 'INVALID_PLAN', message: 'provided structured plan is invalid' };
-    }
-    planCorrectionLaunchBinding.beginLaunch(launchRequestId, providedPlanError);
-  }
+  const planRefusal = await gateInvalidProvidedPlan(
+    { inboxStore, planCorrectionLaunchBinding },
+    { planError: providedPlanError, unattended: !sourceContext, projectId, projectName: project.name, launchRequestId }
+  );
+  if (planRefusal) return planRefusal;
   const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,
@@ -6730,13 +6234,9 @@ export async function startTeamJobFromUi(
     }
   });
   if (!result.ok && sourceBundle) await executionSources.removeSnapshot(sourceBundle.contentRef);
-  if (!result.ok) planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
   if (!result.ok) {
-    return result.availabilityUnknown
-      ? { ok: false, code: 'CAPABILITY_AVAILABILITY_UNKNOWN', message: result.message, availabilityUnknown: result.availabilityUnknown }
-      : result.requirementFailure
-      ? { ok: false, code: 'REQUIREMENT_UNAVAILABLE', message: result.message, requirementFailure: result.requirementFailure }
-      : { ok: false, code: result.code, message: result.message };
+    planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
+    return teamJobFailureResponse(result);
   }
   return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
 }
@@ -7127,13 +6627,7 @@ function wireBridgeListeners() {
     // bounded tombstone preserves the cohort stamp needed to recover a stopped
     // worker's fresh durable claim.
     const exitedSession = ptys.getRememberedSession(sessionId);
-    const followUpExecutionId = squadWorktreeFollowUpExecution(sessionId);
-    if (followUpExecutionId) {
-      void withSquadWorktreeLifecycleLock(followUpExecutionId, async () => {
-        releaseSquadWorktreeFollowUp(followUpExecutionId, sessionId);
-        clearSquadWorktreeFollowUpClaim(sessionId);
-      });
-    }
+    void squadFollowUpClaims.releaseOnExit(sessionId);
     // Capture final counters before lifecycle reconciliation can make execution
     // terminal. Then forward exit detail so FAILED settlement includes provider cause.
     void (async () => {
@@ -7147,15 +6641,7 @@ function wireBridgeListeners() {
         signal: typeof signal === 'number' ? signal : undefined,
         reason: typeof reason === 'string' && reason.length > 0 ? reason : undefined
       }).catch((error) => logMainError(`team lifecycle exit ${sessionId}`, error));
-      const exitedExecutionId = exitedSession?.cohort?.executionId;
-      if (exitedExecutionId) {
-        const record = await executionStore.get(exitedExecutionId);
-        if (record?.squadWorktree && isTerminalSquadExecution(record.state)) {
-          await handleSquadWorktreeTerminal(record).catch((error) =>
-            logMainError(`execution terminal teardown ${exitedExecutionId}`, error)
-          );
-        }
-      }
+      await teardownTerminalExecutionOnExit(squadSessionExit, exitedSession);
       if (exitedSession?.cohort?.executionId && exitedSession.cohort.role === 'worker' && exitedSession.cohort.slotId) {
         // Target this terminal worker directly. A generic sweep may already be in
         // flight and skip, stranding a fresh claim until its next timer tick.
@@ -7217,16 +6703,7 @@ function wireBridgeListeners() {
     keepAwake.remove(sessionId);
     // Release Flow B/C plan-handoff state and remove the transient `.zana/`
     // handoff files when the coordinator exits (Rule 3 / Rule 5).
-    if (exitedSession?.cohort?.role === 'orchestrator' && exitedSession.cohort.executionId) {
-      const executionId = exitedSession.cohort.executionId;
-      teamPlanHandoff.forget(executionId);
-      inferredPlanCorrection.forget(executionId);
-      void executionStore.getInProject(exitedSession.projectId, executionId).then((execution) => {
-        const handoffRoot = execution?.squadWorktree?.path
-          ?? store.listProjects().find((candidate) => candidate.id === exitedSession.projectId)?.path;
-        if (handoffRoot) return cleanupHandoffFiles(handoffRoot, executionId);
-      }).catch(() => {});
-    }
+    void cleanupOrchestratorOnExit(squadSessionExit, exitedSession);
     // Orchestrator exit = goal reached; worker exit just disarms its nudge.
     // run.summary stays undefined in v1 — close_session_with_summary already
     // pushes the orchestrator's own summary to the inbox as its own entry.
@@ -7658,7 +7135,7 @@ function registerIpc() {
     get executionArtifacts() { return executionArtifacts; },
     get executionConsentManagement() { return executionConsentManagement; },
     get executionDeliveryDrain() { return executionDeliveryDrain; },
-    get exactNativeRecoveryAvailability() { return desktopExactNativeRecoveryAvailability; },
+    get exactNativeRecoveryAvailability() { return desktopNativeRecovery.availability; },
     get executionHandoffs() { return executionHandoffs; },
     get executionResumeGrants() { return executionResumeGrants; },
     get executionResumeTokens() { return executionResumeTokens; },
@@ -7722,7 +7199,7 @@ function registerIpc() {
     get resolveWorktreeForRequest() { return resolveWorktreeForRequest; },
     get resolvedAppVersion() { return resolvedAppVersion; },
     get restoreCapabilities() { return restoreCapabilities; },
-    get restoreSquadWorktreeFollowUpClaim() { return restoreSquadWorktreeFollowUpClaim; },
+    get restoreSquadWorktreeFollowUpClaim() { return squadFollowUpClaims.restoreClaim; },
     get restorePrincipal() { return restorePrincipal; },
     get runDiskSync() { return runDiskSync; },
     get runtimeSupervisor() { return runtimeSupervisor; },
@@ -7738,7 +7215,7 @@ function registerIpc() {
     get showMainWindow() { return showMainWindow; },
     get skillBundles() { return skillBundles; },
     get squadExecutionService() { return squadExecutionService; },
-    get squadWorktreeAction() { return squadWorktreeAction; },
+    get squadWorktreeAction() { return squadWorktreeRuntime.squadWorktreeAction; },
     get sshHostProviderRegistry() { return sshHostProviderRegistry; },
     get stampFeedEvent() { return stampFeedEvent; },
     get startTeamJobFromUi() { return startTeamJobFromUi; },
@@ -8034,15 +7511,7 @@ async function bootstrapNormal() {
           : killLocalTmuxSession(sessionId)
       });
     } finally {
-        // Rebuild retained follow-up ownership before recovery can resume, merge, or
-        // delete worktrees. Renderer reattach repeats this under the same lock.
-        await restoreSurvivingSquadWorktreeFollowUpClaims();
-        await replayUndisposedSquadWorktreeTerminalEffects();
-        await squadExecutionService.restoreDeadlines();
-       const failures = await planCorrection.recoverCancelledExecutions();
-       for (const { executionId, error } of failures) {
-         logMainError(`planCorrection.recoverCancelledExecutions:${executionId}`, error);
-       }
+      await recoverSquadStateAtBoot({ squadFollowUpClaims, squadWorktreeRuntime, squadExecutionService, planCorrection, logError: logMainError });
     }
   } catch (error) {
     // A corrupt recovery record must surface the repair flow, not permanently
@@ -8169,22 +7638,7 @@ async function bootstrapNormal() {
     logger: logMainError,
     getPendingSubagentCount: (sessionId) => agentStatus.subagents(sessionId),
     resolvePersona: (id) => personas.list().find((p) => p.id === id),
-    launchSquad: ({ schedule, project, runId, objective }) => startTriggeredSquad({
-      projectId: project.id, callerPrincipalId: `schedule:${project.id}`, teamId: schedule.teamId!, launchRequestId: `schedule:${schedule.id}:${runId}`,
-      objective,
-      title: `Scheduled: ${schedule.name}`, planSource: schedule.planSource ?? 'infer',
-      origin: 'scheduled',
-      maxDurationMinutes: schedule.maxDurationMinutes
-    }),
-    getSquadExecution: async (projectId, executionId) => {
-      const record = await executionStore.getInProject(projectId, executionId);
-      return record ? { state: record.state, finalSummary: record.finalSummary } : undefined;
-    },
-    findSquadExecution: async (projectId, launchRequestId) => {
-      const records = await executionStore.list(`schedule:${projectId}`, projectId);
-      const record = records.find(candidate => candidate.launchRequestId === launchRequestId);
-      return record ? { executionId: record.id, state: record.state, finalSummary: record.finalSummary } : undefined;
-    }
+    ...scheduledSquadTrigger(startTriggeredSquad, executionStore)
   });
   await scheduler.loadAll(store.listProjects());
   // Watch schedule dirs so a skill- or hand-authored schedule file goes live
@@ -8235,19 +7689,7 @@ async function bootstrapNormal() {
         `goal-eval:${dedupeKey}`
       );
     },
-    launchSquad: ({ goal, project, iterationId }) => startTriggeredSquad({
-      projectId: project.id, callerPrincipalId: `goal:${project.id}`, teamId: goal.assignment.teamId!, launchRequestId: `goal:${goal.id}:${iterationId}`,
-      objective: goal.statement, title: `Goal: ${goal.title}`, planSource: goal.planSource ?? 'infer', origin: 'goal'
-    }),
-    getSquadExecution: async (projectId, executionId) => {
-      const record = await executionStore.getInProject(projectId, executionId);
-      return record ? { state: record.state, finalSummary: record.finalSummary } : undefined;
-    },
-    findSquadExecution: async (projectId, launchRequestId) => {
-      const records = await executionStore.list(`goal:${projectId}`, projectId);
-      const record = records.find(candidate => candidate.launchRequestId === launchRequestId);
-      return record ? { executionId: record.id, state: record.state, finalSummary: record.finalSummary } : undefined;
-    }
+    ...goalSquadTrigger(startTriggeredSquad, executionStore)
   });
   await goals.loadAll(store.listProjects());
   goals.startWatching();
@@ -9275,21 +8717,7 @@ async function bootstrapNormal() {
       }
       await teamLifecycleIntegration.reconcileStartup([...recovered]);
       await squadExecutionService.reconcileActive();
-      // Cleanup only worktrees no live/resumable execution owns. The helper also
-      // requires Zana's local hook marker plus clean/no-unique-commit state and
-      // never invokes Git's force removal path.
-      try {
-        const retainedWorktrees = await executionStore.listUndisposedSquadWorktrees();
-        for (const project of store.listProjects()) {
-          if (project.remote) continue;
-          const retained = retainedWorktrees
-            .filter((record) => record.projectId === project.id)
-            .flatMap((record) => record.squadWorktree ? [record.squadWorktree.path] : []);
-          await sweepManagedWorktrees(project.path, join(project.path, '.worktrees'), retained);
-        }
-      } catch (err) {
-        logMainError('squadWorktree.bootSweep', err);
-      }
+      await sweepUnretainedSquadWorktrees({ executionStore, projects: store, sweepManagedWorktrees, logError: logMainError });
       /* v8 ignore next -- boot callback runs in built Electron; helper is unit-tested */
       const flushBlockerNotices = await flushBlockerNoticesAtBoot(squadExecutionService, logMainError);
       await squadExecutionService.redispatchStalled();
@@ -9643,7 +9071,7 @@ app.on('before-quit', (event) => {
   goals.stopAll();
   followups.stopWatching();
   squadExecutionService.dispose();
-  closeExecutionDatabase();
+  executionStorage.close();
   if (executionClaimReconcileTimer) {
     clearInterval(executionClaimReconcileTimer);
     executionClaimReconcileTimer = null;
