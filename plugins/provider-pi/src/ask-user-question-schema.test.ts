@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { validateToolArguments } from '@earendil-works/pi-ai';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
-import { invokePluginAgentTool, toDynamicTool } from '@zana-ai/zcc-server/plugins/plugin-agent-tools';
+import { invokePluginAgentTool, toDynamicTool } from '../../../apps/server/src/plugins/plugin-agent-tools.js';
 import plugin from '../../ask-user-question/server.mjs';
 
 describe('ask_user_question through Pi argument validation', () => {
