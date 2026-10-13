@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ControlError } from '../src/errors.js';
@@ -12,33 +12,10 @@ import {
   writeAllowRouting
 } from './cli-agent-helpers.js';
 
+import { waitForArtifact } from './artifact-wait.js';
+
 const enabled = liveEnabled();
 const SCENARIO_TIMEOUT_MS = 180_000;
-
-function findMarkerFile(root: string, marker: string, preferred: string): string | undefined {
-  if (existsSync(preferred)) {
-    try {
-      if (readFileSync(preferred, 'utf8').includes(marker)) return preferred;
-    } catch {
-      /* fall through */
-    }
-  }
-  let names: string[] = [];
-  try {
-    names = readdirSync(root, { recursive: true, encoding: 'utf8' }) as string[];
-  } catch {
-    return undefined;
-  }
-  for (const name of names.slice(0, 200)) {
-    const path = join(root, String(name));
-    try {
-      if (readFileSync(path, 'utf8').includes(marker)) return path;
-    } catch {
-      /* directory or unreadable */
-    }
-  }
-  return undefined;
-}
 
 async function waitUntilGone(
   refresh: () => Promise<{ status: string }>,
@@ -69,9 +46,9 @@ describe.skipIf(!enabled)('live CLI Agent scenarios', () => {
         harnessRouting: harnessRoutingFor(profile),
         prompt: 'Reply with exactly PONG1 then stop. Do not use tools. Do not ask questions.'
       });
-      await agent.wait({ until: 'idle', timeoutMs: 120_000 });
+      expect((await agent.wait({ until: 'idle', timeoutMs: 120_000 })).status).not.toBe('exited');
       await agent.reply('Reply with exactly PONG2 then stop. Do not use tools. Do not ask questions.');
-      await agent.wait({ until: 'idle', timeoutMs: 120_000 });
+      expect((await agent.wait({ until: 'idle', timeoutMs: 120_000 })).status).not.toBe('exited');
       await agent.stop().catch(() => undefined);
     });
   }, SCENARIO_TIMEOUT_MS);
@@ -103,47 +80,20 @@ describe.skipIf(!enabled)('live CLI Agent scenarios', () => {
           harnessRouting: writeAllowRouting(profile),
           prompt
         });
-        const sawWorking = await agent.wait({ until: 'working', timeoutMs: 15_000 }).catch(() => null);
-        if (!sawWorking || sawWorking.status !== 'working') {
-          await agent.reply(prompt);
-        }
-        const deadline = zcc.http.nowMs() + 120_000;
-        while (zcc.http.nowMs() < deadline) {
-          try {
-            const row = await agent.refresh();
-            if (row.status === 'exited') break;
-            if (row.status === 'idle' || row.status === 'done') break;
-          } catch (error) {
-            if (error instanceof ControlError && error.code === 'NOT_FOUND') break;
-            throw error;
-          }
-          await zcc.http.sleep(250);
-        }
-        if (!findMarkerFile(project.path, marker, absolute)) {
-          await agent.reply(prompt).catch(() => undefined);
-          const retryUntil = zcc.http.nowMs() + 120_000;
-          while (zcc.http.nowMs() < retryUntil) {
-            try {
-              const row = await agent.refresh();
-              if (row.status === 'exited' || row.status === 'idle' || row.status === 'done') break;
-            } catch (error) {
-              if (error instanceof ControlError && error.code === 'NOT_FOUND') break;
-              throw error;
-            }
-            await zcc.http.sleep(250);
-          }
-        }
+        await waitForArtifact({
+          exists: () => {
+            try { return readFileSync(absolute, 'utf8').includes(marker); } catch { return false; }
+          },
+          refresh: () => agent.refresh(),
+          sleep: ms => zcc.http.sleep(ms),
+          nowMs: () => zcc.http.nowMs(),
+          timeoutMs: 120_000
+        });
         await agent.stop().catch(() => undefined);
-        const found = findMarkerFile(project.path, marker, absolute);
-        expect(found, `${absolute} was not created`).toBeTruthy();
-        expect(readFileSync(found!, 'utf8')).toContain(marker);
+        expect(readFileSync(absolute, 'utf8')).toContain(marker);
       } finally {
         for (const path of [absolute]) {
           try { unlinkSync(path); } catch { /* leftover from a failed write */ }
-        }
-        const leftover = findMarkerFile(project.path, marker, absolute);
-        if (leftover) {
-          try { unlinkSync(leftover); } catch { /* ignore */ }
         }
       }
     });

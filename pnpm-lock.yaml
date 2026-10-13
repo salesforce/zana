@@ -718,6 +718,9 @@ importers:
       '@types/node':
         specifier: ^26.2.0
         version: 26.6.1
+      '@zana-ai/zcc-contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@zana-ai/zcc-tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -16721,7 +16724,7 @@ snapshots:
       obug: 2.2.1
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.20.3)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.5)(jsdom@26.1.0(supports-color@8.1.1))(vite@8.3.0(@types/node@22.20.3)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@26.6.1)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.5)(jsdom@26.1.0(supports-color@8.1.1))(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.1))
 
   '@vitest/expect@4.1.11':
     dependencies:

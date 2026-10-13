@@ -56,6 +56,7 @@ function createCatalog(
 ) {
   const listeners = new Set<() => void>();
   const loads = new Map<string, Promise<void>>();
+  const reloads = new Map<string, Promise<void>>();
   let prefetchInflight: Promise<void> | null = null;
   let prefetchDirty = false;
   let offeredSignature = offeredKey((seed?.providers ?? []).map((provider) => provider.id));
@@ -208,7 +209,7 @@ function createCatalog(
     };
   }
 
-  function loadProvider(providerId: string): Promise<void> {
+  function loadProvider(providerId: string, refresh = forceProviderLoads): Promise<void> {
     const existing = loads.get(providerId);
     if (existing) return existing;
     const epoch = catalogEpoch;
@@ -216,7 +217,7 @@ function createCatalog(
       inflight = new Set(inflight).add(providerId);
       emit();
       try {
-        const body = await fetchBounded(optionsQuery(providerId, forceProviderLoads));
+        const body = await fetchBounded(optionsQuery(providerId, refresh));
         if (epoch !== catalogEpoch) return;
         inherited.delete(providerId);
         applyRoster(mapProviders(body.providers));
@@ -322,6 +323,7 @@ function createCatalog(
     initialized = false;
     forceProviderLoads = forceServer;
     loads.clear();
+    reloads.clear();
     inherited.clear();
     // Keep usable rows and project-local roles visible until their replacements
     // arrive. Mark every cached provider for discovery, including prior errors.
@@ -357,14 +359,24 @@ function createCatalog(
     return loadProvider(providerId);
   }
 
-  /** Settings Reload: always refetch this provider; share an in-flight load. */
+  /** A user reload must force discovery even when it arrives during prefetch. */
   function reloadThreadProviderModels(providerId: string): Promise<void> {
+    const reloading = reloads.get(providerId);
+    if (reloading) return reloading;
+    const epoch = catalogEpoch;
+    const reload = () => {
+      if (epoch !== catalogEpoch) return;
+      attempts.delete(providerId);
+      retries.delete(providerId);
+      return loadProvider(providerId, true);
+    };
     const existing = loads.get(providerId);
-    if (existing) return existing;
-    attempts.delete(providerId);
-    retries.delete(providerId);
-    forceProviderLoads = true;
-    return loadProvider(providerId).finally(() => { forceProviderLoads = false; });
+    const pending = existing ? existing.then(reload) : Promise.resolve(reload());
+    reloads.set(providerId, pending);
+    void pending.finally(() => {
+      if (reloads.get(providerId) === pending) reloads.delete(providerId);
+    });
+    return pending;
   }
 
 

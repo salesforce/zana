@@ -53,7 +53,7 @@ describe('npm pack @zana-ai/zcc-plugin-sdk', () => {
       // Compile against the published declarations, outside the monorepo's source aliases.
       const consumer = join(packDir, 'project-icons.mts');
       await writeFile(consumer, `/// <reference path="./package/bundled-types/zcc-plugin-sdk.d.ts" />
-import { PROJECT_ICONS, type ProjectIcon } from '@zana-ai/zcc-plugin-sdk';
+import { PROJECT_ICONS, defineRpcContract, type ProjectIcon, type PluginProviderDeclaration, type PluginProviderReasoningLevel } from '@zana-ai/zcc-plugin-sdk';
 import { PROJECT_ICONS as SERVER_ICONS, type ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { definePluginApp, type PluginAgentsViewProps, type PluginFleetMember } from '@zana-ai/zcc-plugin-sdk/app';
@@ -61,6 +61,26 @@ const member: PluginFleetMember = { key: 'thread:1', kind: 'thread', title: 'Rev
 definePluginApp((app) => app.slots.experimental_agentsView({ id: 'world', title: 'World', component: (props: PluginAgentsViewProps) => { props.onInspect(member.key); return null; } }));
 // @ts-expect-error A plan is not a live member.
 const badMember: PluginFleetMember = { ...member, kind: 'schedule' };
+const level: PluginProviderReasoningLevel = 'medium';
+const provider: PluginProviderDeclaration = {
+  id: 'test-provider', displayName: 'Test',
+  capabilities: { supportsServiceTier: true, fork: 'none', supportsThreadArchive: false, supportsThreadRename: false, permissionModes: ['full'], reasoningLevels: [level] },
+  experimental_nativeSkillRoots: { user: ['~/.skills'], project: [{ path: '.skills', recursive: true }] },
+  deriveProviderOptions: context => ({ model: context.model, option: context.settings.option })
+};
+const host = createFakePluginHost();
+host.zcc.agents.experimental_registerProvider(provider).unregister();
+const registered: PluginProviderDeclaration[] = host.harness.providers;
+const descriptorLabel: string = host.harness.settings.option!.label;
+const mounted = (await import('@zana-ai/zcc-plugin-sdk/testing/app')).collectTestPluginApp({});
+const providerId: string = mounted.providerIcons[0]!.providerId;
+const schema = { '~standard': { version: 1 as const, vendor: 'test', validate: (value: unknown) => ({ value: String(value) }), types: undefined as unknown as { input: string; output: string } } };
+const contract = defineRpcContract({ echo: { input: schema, output: schema } });
+const typed: string = contract.echo.input['~standard'].types.input;
+// @ts-expect-error Reasoning levels are constrained by the public contract.
+const invalidLevel: PluginProviderReasoningLevel = 'made-up';
+// @ts-expect-error Native roots must have a path.
+const invalidRoots: PluginProviderDeclaration['experimental_nativeSkillRoots'] = { user: [{ recursive: true }] };
 const icon: ProjectIcon = PROJECT_ICONS[1];
 declare const zcc: ZccPluginApi;
 await zcc.sdk.projects.setIcon({ projectId: 'crm', icon });

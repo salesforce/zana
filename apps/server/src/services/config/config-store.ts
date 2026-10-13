@@ -183,14 +183,17 @@ export function createConfigStore(
     setConfig(patch: Partial<AppConfig>): AppConfig {
       const disk = readJsonRaw<Partial<AppConfig>>({});
       const current = hydrate(disk.value);
-      const normalizedPatch = deps.normalizeConfig(patch);
+      // Project only the patch: canonical entries win inside it, while a
+      // flat compatibility update must not be overwritten by the old snapshot.
+      const normalizedPatch = deps.projectConfigCompatibility(deps.normalizeConfig(patch) as AppConfig);
       const next = applyOptionalResets(
         ensureComposerLaunchSurfaces({ ...current, ...normalizedPatch, version: 1 as const }),
         patch,
         normalizedPatch
       );
-      writeConfig(deps.canonicalConfigForWrite(next), disk.hash);
-      return next;
+      const committed = deps.canonicalConfigForWrite(next);
+      writeConfig(committed, disk.hash);
+      return hydrate(committed);
     }
   };
 }

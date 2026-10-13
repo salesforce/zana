@@ -45,10 +45,11 @@ export class CliAgentHandle {
     return this.record.status;
   }
 
-  async refresh(): Promise<CliAgentRecord> {
+  async refresh(options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<CliAgentRecord> {
     const shown = await this.http.request<{ session?: CliAgentRecord; agent?: CliAgentRecord }>(
       'GET',
-      `/api/v1/cli-agents/${encodeURIComponent(this.id)}`
+      `/api/v1/cli-agents/${encodeURIComponent(this.id)}`,
+      options
     );
     this.record = shown.session ?? shown.agent ?? this.record;
     return this.record;
@@ -56,19 +57,37 @@ export class CliAgentHandle {
 
   async wait(opts: { until?: CliAgentWaitUntil; timeoutMs?: number } = {}): Promise<CliAgentRecord> {
     const until = opts.until ?? 'idle';
-    const deadline = this.http.nowMs() + (opts.timeoutMs ?? 120_000);
-    while (this.http.nowMs() < deadline) {
-      const row = await this.refresh();
-      const status = row.status;
-      if (until === 'working' && status === 'working') return row;
-      if (until === 'idle' && (status === 'idle' || status === 'done' || status === 'exited')) return row;
-      if (until === 'done' && (status === 'done' || status === 'exited')) return row;
-      if (until === 'exited' && status === 'exited') return row;
-      await this.http.sleep(250);
-    }
-    throw new ControlError('TIMEOUT', `timed out waiting for CLI agent ${this.id}`, {
+    const timeoutMs = opts.timeoutMs ?? 120_000;
+    const deadline = this.http.nowMs() + timeoutMs;
+    const controller = new AbortController();
+    const timeout = () => new ControlError('TIMEOUT', `timed out waiting for CLI agent ${this.id}`, {
       details: this.record
     });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { reject(timeout()); controller.abort(); }, Math.max(0, timeoutMs));
+    });
+    const poll = async (): Promise<CliAgentRecord> => {
+      while (this.http.nowMs() < deadline && !controller.signal.aborted) {
+        const row = await this.refresh({ signal: controller.signal, timeoutMs: Math.max(0, deadline - this.http.nowMs()) });
+        const status = row.status;
+        if (until === 'working' && status === 'working') return row;
+        if (until === 'idle' && (status === 'idle' || status === 'done' || status === 'exited')) return row;
+        if (until === 'done' && (status === 'done' || status === 'exited')) return row;
+        if (until === 'exited' && status === 'exited') return row;
+        await this.http.sleep(Math.min(250, Math.max(0, deadline - this.http.nowMs())));
+      }
+      throw timeout();
+    };
+    try {
+      return await Promise.race([poll(), expired]);
+    } catch (error) {
+      if (error instanceof ControlError && error.code === 'TIMEOUT') throw timeout();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
   }
 
   async reply(text: string): Promise<void> {

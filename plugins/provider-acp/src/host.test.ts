@@ -33,7 +33,7 @@ it('resolves native roots with the selected agent, project and execution-host en
 it('keeps agent probes in the host-owned temporary directory and propagates failures', async () => {
   const input = { command: 'probe-cli', args: ['--acp'], env: { NATIVE_PROBE: 'on' } };
   probeAgent.mockResolvedValue({ reachable: true, fork: false });
-  const harness = experimental_createHostEntryHarness(entry, { experimental_paths: { tempDir: '/isolated/plugin-temp' } });
+  const harness = experimental_createHostEntryHarness(entry, { experimental_paths: { dataDir: '/isolated/plugin-data', tempDir: '/isolated/plugin-temp' } });
   try {
     expect(await harness.experimental_call('probeAgent', input)).toEqual({ reachable: true, fork: false });
     expect(probeAgent).toHaveBeenCalledWith({ ...input, cwd: '/isolated/plugin-temp' });

@@ -3,6 +3,7 @@ import { productHandle, safeProductHandle } from './shared-product-registration.
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { harnessVerifyState } from './shared.js';
+import { reconcileHarnessConfig } from './config-harness-refresh.js';
 import { presentAppConfig } from '@zana-ai/zcc-server/http/public-app-url';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import type { AppConfig, OverseerAuditEntry, ProjectSettings } from '@zana-ai/zcc-domain/product';
@@ -15,7 +16,7 @@ export function registerConfigIpc(): void {
   // harness projection, and atomic write transaction move together. A raw JSON
   // server reader would silently change persisted compatibility semantics.
   safeProductHandle(IPC.config.get, () => presentAppConfig(store.getConfig()), () => presentAppConfig(store.getConfig()));
-  safeProductHandle<[Partial<AppConfig>], AppConfig>(
+  productHandle<[Partial<AppConfig>], AppConfig>(
     IPC.config.set,
     (patch) => {
       // Window state is main-owned. Renderer config writes cannot alter shared
@@ -27,31 +28,12 @@ export function registerConfigIpc(): void {
         pluginViewWindowBounds: _pluginViewWindowBounds,
         ...safePatch
       } = patch;
+      const previous = store.getConfig();
       const next = presentAppConfig(store.setConfig(safePatch));
-      if (
-        patch.harnessCursorEnabled !== undefined ||
-        patch.harnessCodexEnabled !== undefined ||
-        patch.harnessPiEnabled !== undefined ||
-        patch.harnessOpenCodeEnabled !== undefined ||
-        patch.harnessGrokEnabled !== undefined ||
-        patch.harnessMastracodeEnabled !== undefined ||
-        patch.harnessAfcodeEnabled !== undefined ||
-        patch.claudeBinary !== undefined ||
-        patch.cursorBinary !== undefined ||
-        patch.codexBinary !== undefined ||
-        patch.piBinary !== undefined ||
-        patch.opencodeBinary !== undefined ||
-        patch.grokBinary !== undefined ||
-        patch.mastracodeBinary !== undefined ||
-        patch.afcodeBinary !== undefined
-      ) {
-        harnessVerifyState.cache = undefined;
-      }
-      // Keep the claude-cli LLM provider pointed at the configured binary so a
-      // binary change takes effect without a restart.
-      if (patch.claudeBinary !== undefined) {
-        ctx.rebuildProviders(next);
-      }
+      reconcileHarnessConfig(previous, next, {
+        invalidate: () => { harnessVerifyState.cache = undefined; },
+        rebuildProviders: (config) => ctx.rebuildProviders(config)
+      });
       // Apply a keep-awake toggle immediately: turning it OFF releases a held
       // block at once (don't wait for the grace timer / next status edge);
       // turning it ON re-acquires if any agent is currently working.
@@ -91,8 +73,7 @@ export function registerConfigIpc(): void {
       // rendering its tab/nav entry in the others until they reload.
       ctx.safeSend(IPC.config.onChanged, next);
       return next;
-    },
-    () => presentAppConfig(store.getConfig())
+    }
   );
 
   // Recent Overseer decisions for the dry-run review pane. Read-only; bounded by

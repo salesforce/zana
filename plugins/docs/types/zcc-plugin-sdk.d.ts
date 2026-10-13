@@ -5,8 +5,92 @@
  */
 
 declare module '@zana-ai/zcc-plugin-sdk' {
+  export type { ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
+
   export type { PluginSdk, PluginSdkInbox, PluginSdkInboxEntry, PluginSdkInboxSearchArgs, PluginSdkInboxSearchResult, PluginSdkInboxReport, PluginSdkAssistant } from '@zana-ai/zcc-plugin-sdk/server';
   export type { PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
+
+/** A JSON-safe path segment reported by a Standard Schema validation issue. */
+export type PluginRpcIssuePathSegment = string | number;
+
+/** Validator-neutral validation detail carried by an RPC error envelope. */
+export interface PluginRpcValidationIssue {
+  message: string;
+  path?: PluginRpcIssuePathSegment[];
+}
+
+/** Stable wire error categories for plugin RPC. */
+export type PluginRpcErrorCode =
+  | "invalid_json"
+  | "invalid_input"
+  | "handler_error"
+  | "invalid_output"
+  | "non_json_result"
+  | "unknown_method";
+
+/** Structured RPC failure returned as `{ ok: false, error }`. */
+export interface PluginRpcError {
+  code: PluginRpcErrorCode;
+  message: string;
+  issues?: PluginRpcValidationIssue[];
+}
+
+/**
+ * The validator-neutral subset of Standard Schema v1 used by plugin contracts.
+ * Zod 4 schemas implement this interface directly; other validators can do
+ * the same without becoming part of ZCC's public protocol.
+ */
+export interface StandardSchemaV1<Input = unknown, Output = Input> {
+  readonly "~standard": {
+    readonly version: 1;
+    readonly vendor: string;
+    readonly validate: (
+      value: unknown,
+    ) =>
+      | StandardSchemaV1Result<Output>
+      | Promise<StandardSchemaV1Result<Output>>;
+    readonly types?: {
+      readonly input: Input;
+      readonly output: Output;
+    };
+  };
+}
+
+export type StandardSchemaV1Result<Output> =
+  | { readonly value: Output; readonly issues?: undefined }
+  | { readonly issues: readonly StandardSchemaV1Issue[] };
+
+export interface StandardSchemaV1Issue {
+  readonly message: string;
+  readonly path?:
+    | PropertyKey
+    | readonly (PropertyKey | { readonly key: PropertyKey })[];
+}
+
+export type StandardSchemaV1InferInput<Schema extends StandardSchemaV1> =
+  NonNullable<Schema["~standard"]["types"]>["input"];
+
+export type StandardSchemaV1InferOutput<Schema extends StandardSchemaV1> =
+  NonNullable<Schema["~standard"]["types"]>["output"];
+
+export interface PluginRpcMethodContract<
+  InputSchema extends StandardSchemaV1 = StandardSchemaV1,
+  OutputSchema extends StandardSchemaV1 = StandardSchemaV1,
+> {
+  readonly input: InputSchema;
+  readonly output: OutputSchema;
+}
+
+export type PluginRpcContract = Readonly<
+  Record<string, PluginRpcMethodContract>
+>;
+
+/** Define a shared RPC contract while preserving exact method/schema types. */
+export function defineRpcContract<const Contract extends PluginRpcContract>(
+  contract: Contract,
+): Contract;
+
+
   export const PROJECT_ICONS: readonly ['Circle', 'Cloud', 'Folder', 'Code', 'Database', 'Globe', 'Package', 'Rocket', 'Briefcase', 'Terminal', 'Layers', 'Wrench'];
   export type ProjectIcon = (typeof PROJECT_ICONS)[number];
   export const PLUGIN_SDK_VERSION: string;
@@ -19,6 +103,130 @@ declare module '@zana-ai/zcc-plugin-sdk' {
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/server' {
+
+  import type { StandardSchemaV1 } from '@zana-ai/zcc-plugin-sdk';
+  type ProviderFork = 'none' | 'tip' | 'checkpoint';
+  type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+  export type PluginSettingValue = string | number | boolean;
+  export type PluginProviderNativeRootEntry = string | { path: string; recursive?: boolean; ancestors?: boolean; namePrefix?: string; skipIfManifest?: string };
+  export interface PluginProviderNativeRoots { readonly user?: readonly PluginProviderNativeRootEntry[]; readonly project?: readonly PluginProviderNativeRootEntry[]; }
+export type PluginProviderReasoningLevel =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "ultracode"
+  | "max"
+  | "ultra";
+export interface PluginProviderStrings {
+  /** How to sign in on the host ("Run `claude` on the machine to sign in."). */
+  signInHint: string;
+  /** Shown when a session's credentials expired. */
+  expiredHint: string;
+  /** Where to install the agent. */
+  installUrl: string;
+  /** Brand prefix stripped from model display names ("Claude "). */
+  brandPrefix?: string;
+  /** Plan-mode banner copy for providers that declare the `plan` action. */
+  planModeCopy?: string;
+  /** Per-theme tint for the provider icon. */
+  iconTint?: { light: string; dark: string };
+}
+export interface PluginProviderOptionDescriptor {
+  id: string;
+  label: string;
+  description?: string;
+}
+export interface PluginProviderExtensionKindDeclaration {
+  item?: StandardSchemaV1;
+  state?: StandardSchemaV1;
+}
+export type PluginProviderModelCatalogScope = "host" | "workspace";
+export interface PluginProviderFallbackModel {
+  id: string;
+  /** Picker display name ("Opus 5 (1M)"). */
+  displayName: string;
+  description: string;
+  /** Reasoning levels this model supports, lowest to highest. Non-empty. */
+  supportedReasoningEfforts: readonly {
+    reasoningEffort: PluginProviderReasoningLevel;
+    description: string;
+  }[];
+  /** Must be one of `supportedReasoningEfforts`. */
+  defaultReasoningEffort: PluginProviderReasoningLevel;
+  /** Exactly one entry in the list is the default. */
+  isDefault: boolean;
+}
+export interface PluginProviderMaintenance {
+  /** `provider/health`: host-local readiness, never a network health check. */
+  health?: boolean;
+  /** `provider/usage`: subscription usage windows. False means usage settings
+   * omit the provider. A shared bridge that declares true may still report
+   * usage unavailable for one provider id or return no windows. */
+  usage?: boolean;
+  /** `provider/installation/status` and `provider/installation/run`:
+   * host-local installation management. */
+  installation?: boolean;
+}
+export interface PluginProviderCapabilities {
+  supportsServiceTier: boolean;
+  supportsNativeUserQuestion?: boolean;
+  fork: ProviderFork;
+  supportsManualCompaction?: boolean;
+  supportsThreadArchive: boolean;
+  supportsThreadRename: boolean;
+  supportsWorkflows?: boolean;
+  permissionModes: string[];
+  reasoningLevels?: string[];
+}
+
+export type PluginProviderVisibility = 'always' | 'installed';
+
+export interface PluginProviderOptionsContext {
+  threadId: string;
+  projectId: string;
+  model?: string;
+  permissionMode: string;
+  promptMode?: 'plan';
+  settings: Readonly<Record<string, PluginSettingValue | undefined>>;
+}
+
+export interface PluginProviderDeclaration {
+  id: string;
+  displayName: string;
+  family?: string;
+  icon?: string;
+  capabilities: PluginProviderCapabilities;
+  composerActions?: string[];
+  /** Hide from the picker until CLI health reports the binary is installed. */
+  visibility?: PluginProviderVisibility;
+  experimental_visibility?: PluginProviderVisibility;
+  experimental_bridgeOptions?: Readonly<Record<string, JsonValue>>;
+  maintenance?: PluginProviderMaintenance;
+  strings?: PluginProviderStrings;
+  serviceTiers?: readonly PluginProviderOptionDescriptor[];
+  reasoningLevels?: readonly PluginProviderOptionDescriptor[];
+  extensionKinds?: Readonly<Record<string, PluginProviderExtensionKindDeclaration>>;
+  models?: {
+    fallback?: readonly PluginProviderFallbackModel[];
+    scope?: PluginProviderModelCatalogScope;
+  };
+  env?: { passthrough: readonly string[] };
+  experimental_nativeSkillRoots?: PluginProviderNativeRoots;
+  experimental_nativeCommandRoots?: PluginProviderNativeRoots;
+  experimental_resolvesNativeRoots?: boolean;
+  deriveProviderOptions?: (
+    context: PluginProviderOptionsContext
+  ) => Record<string, unknown> | void;
+}
+
+export interface PluginProviderHandle {
+  id: string;
+  unregister(): void;
+}
+
+
 export interface PluginSdkInboxSearchArgs {
   projectIds: string[];
   query?: string;
@@ -179,22 +387,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         instructions?: string;
         execute(input: unknown, ctx: { threadId: string; projectId: string; signal: AbortSignal }): unknown | Promise<unknown>;
       }): void;
-      experimental_registerProvider(declaration: {
-        id: string;
-        displayName: string;
-        icon?: string;
-        visibility?: 'always' | 'installed';
-        capabilities: Record<string, unknown>;
-        composerActions?: string[];
-        deriveProviderOptions?: (context: {
-          threadId: string;
-          projectId: string;
-          model?: string;
-          permissionMode: string;
-          promptMode?: 'plan';
-          settings: Record<string, string | boolean | undefined>;
-        }) => Record<string, unknown> | void;
-      }): { id: string; unregister(): void };
+      experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
       experimental_registerPtyHarness(declaration: {
         id: string;
         displayName: string;
@@ -456,6 +649,8 @@ declare module '@zana-ai/zcc-plugin-sdk/testing' {
         stderr: string;
       }>;
       setSettings(values: Record<string, string | boolean | undefined>): void;
+      providers: import('@zana-ai/zcc-plugin-sdk/server').PluginProviderDeclaration[];
+      settings: Record<string, { type: string; label: string; description?: string; default?: string | number | boolean }>;
       extraInstructions: string[];
       cli: { name: string; run: (...args: never[]) => unknown } | null;
       agentTools: Array<{ name: string }>;
@@ -472,6 +667,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
   ): {
     pluginId: string;
     generation: number;
+    providerIcons: Array<{ pluginId: string; generation: number; providerId: string; icon: unknown }>;
     navPanels: Array<{ id: string; title: string; component: unknown }>;
     settingsSections: Array<{ id: string; title?: string }>;
     pendingInteractions: Array<{ id: string }>;

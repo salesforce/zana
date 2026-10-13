@@ -528,11 +528,14 @@ export async function decideNativeToolPolicy(sessionId: string, body: string): P
     const validId = (value: unknown): value is string =>
       typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)
-      || !validId(raw.turn_id) || !validId(raw.tool_use_id)
+      || (raw.turn_id !== undefined && !validId(raw.turn_id))
+      || (raw.prompt_id !== undefined && !validId(raw.prompt_id)) || !validId(raw.tool_use_id)
       || typeof raw.tool_name !== 'string' || !raw.tool_name) return null;
+    // Hook formats may supply a turn_id, a prompt_id, or neither. The
+    // session-bound tool_use_id identifies a call in every supported format.
     // Hash provider identities to keep input out of the wire key and bound its size.
     const invocationId = createHash('sha256')
-      .update(JSON.stringify([sessionId, raw.turn_id, raw.tool_use_id]))
+      .update(JSON.stringify([sessionId, raw.turn_id ?? raw.prompt_id ?? null, raw.tool_use_id]))
       .digest('hex');
     const input = raw.tool_input && typeof raw.tool_input === 'object' && !Array.isArray(raw.tool_input)
       ? raw.tool_input as Record<string, unknown> : {};

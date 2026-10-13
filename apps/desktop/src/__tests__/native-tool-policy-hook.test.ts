@@ -44,11 +44,24 @@ describe('native tool policy callback', () => {
     expect(new Set(ids).size).toBe(4);
   });
 
-  it.each([{ tool_use_id: undefined }, { tool_use_id: '' }, { tool_use_id: 'x'.repeat(513) }, { turn_id: 12 }, { tool_use_id: 'bad\nline' }])('rejects missing or malformed provider identity: %j', async (change) => {
+  it.each([{ tool_use_id: undefined }, { tool_use_id: '' }, { tool_use_id: 'x'.repeat(513) }, { turn_id: 12 }, { turn_id: '' }, { prompt_id: 12 }, { prompt_id: '' }, { tool_use_id: 'bad\nline' }])('rejects missing or malformed provider identity: %j', async (change) => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     expect(await decideNativeToolPolicy('session-a', JSON.stringify({ ...event, ...change }))).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'prompt-1'])('accepts Claude hook identity without a turn_id (prompt_id=%s)', async promptId => {
+    const fetchMock = vi.fn(async () => Response.json({ action: 'allow' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const payload = { ...event, turn_id: undefined, prompt_id: promptId, session_id: 'untrusted-provider-session' };
+    for (const sessionId of ['owned-session', 'owned-session', 'other-session']) {
+      expect(await decideNativeToolPolicy(sessionId, JSON.stringify(payload))).toEqual({ decision: 'allow', reason: 'allowed' });
+    }
+    const ids = fetchMock.mock.calls.map(call => JSON.parse((call[1] as RequestInit).body as string).invocationId);
+    expect(ids[0]).toBe(createHash('sha256').update(JSON.stringify(['owned-session', promptId ?? null, event.tool_use_id])).digest('hex'));
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[0]);
   });
 
   it.each([null, [], {}, { action: 'ALLOW' }, { action: true }, { action: 'wait' }])('fails closed on malformed policy: %j', async (policy) => {

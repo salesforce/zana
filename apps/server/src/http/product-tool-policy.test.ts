@@ -61,3 +61,26 @@ it('fails closed before dispatch and binds native tool policy to registered term
   await post('terminal-1', { invocationId: 'invoke-4', toolName: 'Read', input: { long: 'x'.repeat(17_000) } });
   expect(decideToolPolicy).toHaveBeenLastCalledWith(expect.objectContaining({ input: { long: '[REDACTED]' } }));
 });
+
+it('routes a native CLI hook through the desktop session owner and preserves plugin vetoes', async () => {
+  directory = mkdtempSync(join(tmpdir(), 'zcc-native-tool-policy-'));
+  server = await startProductServer({ dataDir: directory, origins: { serverPort: 0, devAppPort: 5173 } });
+  const session = { id: 'native-cli', projectId: 'trusted-project', profile: 'codex', status: 'running' };
+  const get = vi.fn(async () => ({ ok: true, value: session }));
+  server.ctx.cliAgentOps = { get } as never;
+  const decideToolPolicy = vi.fn(async () => ({ action: 'allow', reason: 'approved by plugin' }));
+  server.ctx.plugins = { decideToolPolicy } as never;
+  const post = () => fetch(`${server!.url}api/v1/terminals/native-cli/tool-policy`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ invocationId: 'call', toolName: 'Write', input: {}, projectId: 'forged', providerId: 'forged' })
+  });
+  expect(server.ctx.terminalSessions.has(session.id)).toBe(false);
+  await expect((await post()).json()).resolves.toEqual({ action: 'allow', reason: 'approved by plugin' });
+  expect(decideToolPolicy).toHaveBeenCalledWith({ invocationId: 'call', toolName: 'Write', input: {},
+    threadId: session.id, projectId: session.projectId, providerId: 'codex' });
+  decideToolPolicy.mockResolvedValueOnce({ action: 'deny', reason: 'blocked by plugin' });
+  await expect((await post()).json()).resolves.toEqual({ action: 'deny', reason: 'blocked by plugin' });
+  session.status = 'exited';
+  expect((await post()).status).toBe(404);
+  expect(decideToolPolicy).toHaveBeenCalledTimes(2);
+});

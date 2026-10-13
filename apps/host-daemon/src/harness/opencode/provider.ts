@@ -75,12 +75,12 @@ import { cleanExtraArgs } from '../argv-utils.js';
 import { isLiveListedModelTargetId, resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const OPENCODE_MIN_VERSION = '1.18.0';
-const OPENCODE_REVIEWED_AT = '2026-09-02';
+const OPENCODE_REVIEWED_AT = '2026-10-13';
 const OPENCODE_VERIFIED_SCOPES = ['local', 'remote'] as const;
 const OPENCODE_MODEL_IDS = [
-  'llmgw/gpt-5.6-luna-1M',
+  'llmgw/gpt-6-luna',
   'llmgw/gpt-5.6-terra-1M',
-  'llmgw/gpt-5.6-sol-1M',
+  'llmgw/gpt-6.1-sol',
   'llmgw/gemini-3.1-pro-preview',
   'llmgw/gemini-3.5-flash',
   'llmgw/grok-4.6'
@@ -129,20 +129,19 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-6.1-sol', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
-      // Single-family monotonic ladder (matches claude haiku/sonnet/opus, codex
-      // openai): the gpt-5.6 family is the only family spanning all three tiers.
+      // Reviewed gateway ladder: Luna / Terra / Sol span the three tiers.
       // gemini + grok stay catalog-selectable but off the default ladder.
       modelLevelMapping: {
-        low: 'llmgw/gpt-5.6-luna-1M',
+        low: 'llmgw/gpt-6-luna',
         medium: 'llmgw/gpt-5.6-terra-1M',
-        high: 'llmgw/gpt-5.6-sol-1M',
+        high: 'llmgw/gpt-6.1-sol',
         'extra-high': undefined
       },
       executionStateMapping: {

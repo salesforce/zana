@@ -85,6 +85,8 @@ export const KNOWN_ACP_AGENTS: readonly AcpAgentDefinition[] = [
   },
   {
     id: "acp-opencode",
+    // Native modes and models can come from the selected project's config.
+    modelCatalogScope: "workspace",
     displayName: "opencode",
     icon: declaredIcon("opencode"),
     iconTint: { light: "#2563EB", dark: "#2563EB" },

@@ -279,6 +279,29 @@ describe('harness compatibility projection persistence', () => {
     }
   });
 
+  it('commits canonical patches and returns the same effective values as the next read', () => {
+    store.setConfig({ claudeBinary: '/old/claude', cursorBinary: '/keep/cursor' });
+    const updated = store.setConfig({ harnesses: { byId: { claude: { binary: '/new/claude' } } } });
+    expect(updated.claudeBinary).toBe('/new/claude');
+    expect(updated.harnesses?.byId?.claude?.binary).toBe('/new/claude');
+    expect(updated.cursorBinary).toBe('/keep/cursor');
+    expect(store.getConfig()).toEqual(updated);
+    const legacy = store.setConfig({ claudeBinary: '/legacy/claude' });
+    expect(legacy.claudeBinary).toBe('/legacy/claude');
+    expect(legacy.harnesses?.byId?.claude?.binary).toBe('/legacy/claude');
+    expect(store.getConfig()).toEqual(legacy);
+  });
+
+  it('projects canonical enable/model patches before persisting compatibility fields', () => {
+    store.setConfig({ harnessCursorEnabled: false, defaultModel: 'haiku' });
+    const updated = store.setConfig({ harnesses: { byId: {
+      claude: { compatibility: { model: 'opus' } }, cursor: { enabled: true }
+    } } });
+    expect(updated.defaultModel).toBe('opus');
+    expect(updated.harnessCursorEnabled).toBe(true);
+    expect(store.getConfig()).toEqual(updated);
+  });
+
   it('writes intentional legacy-shaped config updates into canonical containers', () => {
     store.setConfig({ claudeBinary: '/opt/claude', defaultModel: 'opus', autoModeEnabled: false });
     store.setConfig({ defaultModel: 'haiku' });

@@ -70,6 +70,8 @@ export default defineConfig({
       'e2e-web/**',
       '.claude/worktrees/**',
       '.worktrees/**',
+      // pnpm may cache complete checkouts, including tests from other branches.
+      '**/.pnpm-store/**',
       '.zcc/**',
       '.builtin-host-test-*/**',
       'salesforce-only/**',

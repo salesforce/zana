@@ -26,6 +26,11 @@ beforeEach(() => {
 });
 
 describe('config.set window state', () => {
+  it('rejects persistence failures so neither IPC nor HTTP acknowledges an unapplied config', () => {
+    h.setConfig.mockImplementationOnce(() => { throw new Error('disk unavailable'); });
+    expect(() => h.handlers.get(IPC.config.set)!({ theme: 'light' })).toThrow('disk unavailable');
+    expect(h.safeSend).not.toHaveBeenCalled();
+  });
   it('drops main-owned window geometry from renderer writes', () => {
     const next = h.handlers.get(IPC.config.set)!({
       theme: 'light',

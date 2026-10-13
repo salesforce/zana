@@ -218,6 +218,8 @@ describe("acpProviderDeclaration", () => {
     expect(byId.get("acp-grok")?.capabilities.fork).toBe("none");
     expect(byId.get("acp-mastracode")?.capabilities.fork).toBe("none");
     expect(byId.get("acp-opencode")?.capabilities.fork).toBe("tip");
+    expect(byId.get("acp-opencode")?.models?.scope).toBe("workspace");
+    expect(byId.get("acp-cursor")?.models?.scope).toBe("host");
     expect(byId.get("acp-cursor")?.experimental_bridgeOptions).toMatchObject({
       acpDialect: "cursor",
       parameterizedModelPicker: true,
@@ -293,6 +295,15 @@ describe("acpProviderDeclaration", () => {
     expect(cursor.experimental_visibility).toBeUndefined();
     expect(cursor.maintenance?.usage).toBe(true);
     expect(cursor.maintenance?.installation).toBe(true);
+  });
+
+  it("preserves project discovery when overriding a shipped agent command", () => {
+    const shipped = KNOWN_ACP_AGENTS.find(agent => agent.id === "acp-opencode");
+    const configured = customAcpAgentDefinition({
+      id: "opencode", displayName: "OpenCode", command: "/custom/opencode",
+      args: ["acp"], env: {}, supportsManualCompaction: false,
+    }, shipped);
+    expect(acpProviderDeclaration(configured).models?.scope).toBe("workspace");
   });
 
   it("gives a configured agent honest copy when it names no sign-in command", () => {

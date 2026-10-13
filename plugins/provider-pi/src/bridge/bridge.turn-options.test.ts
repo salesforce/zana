@@ -73,6 +73,17 @@ function turnStart(
   });
 }
 
+it("starts and continues with the host default placeholder", async () => {
+  const threadId = "thr_default_placeholder";
+  const options = { ...FULL_PERMISSION_OPTIONS, model: "default" };
+  expect((await harness.startThread(threadId, { options })).error).toBeUndefined();
+  expect((await turnStart(1, threadId, "first", options)).error).toBeUndefined();
+  const seen = await harness.waitForTurnBoundary(threadId);
+  expect((await turnStart(2, threadId, "second", options)).error).toBeUndefined();
+  await harness.waitForTurnBoundary(threadId, seen);
+  expect(sessionReplacements(threadId)).toEqual([]);
+}, TURN_OPTIONS_TEST_TIMEOUT_MS);
+
 it(
   "rebuilds the session with environment from a later turn",
   async () => {

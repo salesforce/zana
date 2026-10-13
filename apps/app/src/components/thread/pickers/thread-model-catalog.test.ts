@@ -500,6 +500,34 @@ describe('thread model catalog', () => {
     expect(catalog.getSnapshot().inflight.size).toBe(0);
   });
 
+  it('forces one discovery after an in-flight cached request when reload is clicked twice', async () => {
+    let release!: (body: OptionsBody) => void;
+    const gate = new Promise<OptionsBody>(resolve => { release = resolve; });
+    const fetcher = vi.fn(async (query?: Parameters<ThreadExecutionOptionsFetcher>[0]) => query?.refresh ? optionsBody(['codex'], 'fresh') : gate);
+    resetThreadModelCatalog(fetcher);
+    const catalog = threadModelCatalogForHost('local', 'project');
+    const background = catalog.ensureProvider('codex');
+    const refresh = catalog.reloadProvider('codex');
+    expect(catalog.reloadProvider('codex')).toBe(refresh);
+    expect(fetcher).toHaveBeenCalledOnce();
+    release(optionsBody(['codex'], 'stale'));
+    await Promise.all([background, refresh]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1][0]).toMatchObject({ providerId: 'codex', projectId: 'project', refresh: true });
+    expect(catalog.getSnapshot().byProvider.codex.models[0].model).toBe('fresh-model');
+  });
+
+  it('discards a queued reload when its catalog is invalidated', async () => {
+    const fetcher = vi.fn(async () => new Promise<OptionsBody>(() => {}));
+    resetThreadModelCatalog(fetcher);
+    const catalog = threadModelCatalogForHost('local');
+    const background = catalog.ensureProvider('codex');
+    const refresh = catalog.reloadProvider('codex');
+    catalog.invalidate();
+    await Promise.all([background, refresh]);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it('ends a hung provider load at the deadline and allows an explicit retry', async () => {
     vi.useFakeTimers();
     let stalled = true;

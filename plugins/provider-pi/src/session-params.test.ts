@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { buildPiSessionParams, buildPiTurnOptions } from "./session-params.js";
 
 describe("buildPiSessionParams", () => {
+  it.each([undefined, "", "default"])("leaves Pi's native model default unpinned: %s", (model) => {
+    expect(buildPiSessionParams({ threadId: "thread", cwd: "/work", instructionMode: "append", options: { model } }))
+      .not.toHaveProperty("model");
+    expect(buildPiTurnOptions({ model }).model).toBeUndefined();
+  });
+
+  it.each(["provider/default", "provider/model", "named-model"])("preserves explicit model IDs: %s", (model) => {
+    expect(buildPiSessionParams({ threadId: "thread", cwd: "/work", instructionMode: "append", options: { model } }).model).toBe(model);
+    expect(buildPiTurnOptions({ model }).model).toBe(model);
+  });
   it("injects the bb thread id into the shell env and drops invalid keys", () => {
     expect(
       buildPiSessionParams({

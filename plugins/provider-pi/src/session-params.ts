@@ -68,7 +68,7 @@ export interface PiTurnOptions {
 
 export function buildPiTurnOptions(options: PiSessionOptions): PiTurnOptions {
   return {
-    model: options.model ? options.model : undefined,
+    model: options.model && options.model !== "default" ? options.model : undefined,
     thinkingLevel: toPiThinkingLevel(options.reasoningLevel),
     trustSystemCertificates: trustsSystemCertificates(options),
   };
@@ -79,6 +79,7 @@ export function buildPiSessionParams(
 ): PiSessionParams {
   const instructions = args.options.instructions?.trim();
   const thinkingLevel = toPiThinkingLevel(args.options.reasoningLevel);
+  const model = buildPiTurnOptions(args.options).model;
   return {
     cwd: args.cwd,
     shellEnvOverrides: {
@@ -91,7 +92,7 @@ export function buildPiSessionParams(
         ? { baseInstructions: instructions }
         : { appendSystemPrompt: instructions }
       : {}),
-    ...(args.options.model ? { model: args.options.model } : {}),
+    ...(model ? { model } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(args.dynamicTools && args.dynamicTools.length > 0
       ? { dynamicTools: args.dynamicTools }

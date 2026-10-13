@@ -144,7 +144,8 @@ describe('EPIC A / A.1 — providers are built ONLY inside rebuildProviders()', 
     );
     expect(callLines.length, `Expected post-migration bootstrap call in host.ts, found line(s) ${callLines.join(', ') || '(none)'}`).toBe(1);
     const configIpc = readFileSync(join(REPO_ROOT, 'apps/desktop/src/ipc/config.ts'), 'utf8');
-    expect(configIpc).toMatch(/IPC\.config\.set,[\s\S]*rebuildProviders\(next\)/);
+    expect(configIpc).toMatch(/IPC\.config\.set,[\s\S]*reconcileHarnessConfig\(previous, next/);
+    expect(configIpc).toMatch(/rebuildProviders:\s*\(config\) => ctx\.rebuildProviders\(config\)/);
     expect(code).toMatch(/function bootstrapNormal\(\)[\s\S]*rebuildProviders\(store\.getConfig\(\)\)/);
   });
 });

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
-test('host CLI health checks resolve the isolated Claude on PATH', async ({ app }) => {
+test('host CLI health checks suppress real provider probes in an isolated home', async ({ app }) => {
   const status = await app.window.evaluate(async () => {
     const response = await fetch('/api/v1/hosts');
     const body = await response.json();
@@ -14,10 +14,9 @@ test('host CLI health checks resolve the isolated Claude on PATH', async ({ app 
     if (!host) throw new Error('Isolated host was not enrolled');
     const checked = await fetch(`/api/v1/hosts/${host.id}/provider-clis/status`);
     if (!checked.ok) throw new Error(await checked.text());
-    return (await checked.json()).claudeCode;
+    return await checked.json();
   });
-  expect(status.executablePath).toBe(DISABLED_CLAUDE_BINARY);
-  expect(status.currentVersion).toBeNull();
+  expect(status).toEqual({});
 });
 
 test('background naming cannot invoke real Claude from an isolated test home', async ({ app }) => {
@@ -41,7 +40,7 @@ test('server thread naming uses the canonical binary after desktop config migrat
     // stale legacy value must not override it in the server utility process.
     await fetch('/api/v1/config', {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ claudeBinary: disabled }),
+      body: JSON.stringify({ claudeBinary: disabled, harnesses: { byId: { claude: { binary } } } }),
     });
   }, { binary, disabled: DISABLED_CLAUDE_BINARY });
   const threadId = await app.window.evaluate(async (path) => {

@@ -35,6 +35,7 @@
     "@types/node": "^26.2.0",
     "@zana-ai/zcc-tsconfig": "workspace:*",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "@zana-ai/zcc-contracts": "workspace:*"
   }
 }

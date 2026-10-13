@@ -5,7 +5,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "noEmit": true,
     "skipLibCheck": true,
     "paths": {
@@ -16,7 +19,15 @@
         "../../packages/plugin-sdk/bundled-types/zcc-plugin-sdk-app.d.ts"
       ]
     },
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "allowImportingTsExtensions": true
   },
-  "include": ["server.ts", "app.tsx", "src", "vitest.config.ts"]
+  "include": [
+    "server.ts",
+    "app.tsx",
+    "src",
+    "vitest.config.ts"
+  ]
 }

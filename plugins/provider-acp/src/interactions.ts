@@ -91,7 +91,7 @@ export function isAcpFileChangePermission(toolCall: AcpPermissionToolCall): bool
 export function buildAcpPermissionInteractionPayload(args: {
   toolCall: AcpPermissionToolCall | undefined;
   options: readonly { kind: AcpPermissionOptionKind }[];
-}): PendingInteractionPayload {
+}): Extract<PendingInteractionPayload, { kind: "approval" }> {
   const toolCall = args.toolCall;
   const availableDecisions = buildAcpApprovalDecisions(args.options);
   if (toolCall && isAcpFileChangePermission(toolCall)) {

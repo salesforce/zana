@@ -20,6 +20,7 @@ export interface AcpAgentDefinition {
   dialect?: string;
   parameterizedModelPicker?: boolean;
   primaryModels?: readonly string[];
+  modelCatalogScope?: "host" | "workspace";
   reasoningProbePriorityModelIds?: readonly string[];
   visibility?: "always" | "installed";
   signInCommand?: string;
@@ -91,6 +92,7 @@ export function customAcpAgentDefinition(
     ...(shipped?.nativeRootsResolver === undefined
       ? {}
       : { nativeRootsResolver: shipped.nativeRootsResolver }),
+    ...(shipped?.modelCatalogScope === undefined ? {} : { modelCatalogScope: shipped.modelCatalogScope }),
     visibility: "always",
     fork: "none",
     supportsManualCompaction: agent.supportsManualCompaction,
