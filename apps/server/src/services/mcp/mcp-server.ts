@@ -83,6 +83,7 @@ import { registerLibraryTools, type LibraryAgentApi } from '../library/library-m
 import { registerGoalTools, type GoalAgentApi } from '../goals/goal-mcp-tools.js';
 import { registerFollowUpTools, type FollowUpAgentApi } from '../followups/followup-mcp-tools.js';
 import { verifySessionControlCredential } from '@zana-ai/zcc-host-daemon/control-credential';
+import { NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, normalizeNativeToolPolicyReason } from '@zana-ai/zcc-contracts/runtime';
 import { readHookBody } from './read-hook-body.js';
 
 interface ProjectLookup {
@@ -195,8 +196,9 @@ export interface McpServerOptions {
    * Upper bound (ms) on the whole Native Tool Policy exchange, after which we
    * fail CLOSED (deny) regardless of whether `onNativeToolPolicyHook` has
    * returned — the inverse of {@link overseerDecisionTimeoutMs}'s fail-open
-   * guard. Defaults to 8_000, kept just under the hook's own `curl -m 10`.
-   * Injectable for tests.
+   * guard. Defaults to 8_000. The relays' own `curl -m 5` is the tighter
+   * bound: a decision slower than that already reaches the agent as the
+   * relay's "native tool policy unreachable" deny. Injectable for tests.
    */
   nativeToolPolicyDecisionTimeoutMs?: number | (() => number);
   /**
@@ -1576,11 +1578,22 @@ async function handleRequest(
     const chunks: Buffer[] = [];
     let total = 0;
     let done = false;
+    let oversized = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    const CAP = 256 * 1024; // tool inputs (e.g. a big Write) can be sizeable
-    // Answer with a DENY decision — the universal fail-closed. Clears the
-    // guard timer on every exit path so a fired-and-forgotten timer can't
-    // linger after we've replied.
+    // Bounds the whole provider event, not the tool input: the handler enforces
+    // the 256 KiB `tool_input` limit on the parsed input, in JSON characters
+    // like the runtime contract. This leaves room for a limit-sized input at
+    // 3 UTF-8 bytes per character plus the provider's own fields.
+    const CAP = NATIVE_TOOL_POLICY_EVENT_MAX_BYTES;
+    // Past CAP the rest of the body is drained, never buffered, so the agent
+    // still gets an explicit deny instead of a reset socket (which its relay
+    // can only report as "unreachable"). Past this ceiling we destroy it.
+    const NATIVE_TOOL_DRAIN_MAX = 16 * 1024 * 1024;
+    // Answer with a DENY decision — the universal fail-closed, and the single
+    // exit for every deny either relay receives. The reason is normalised so
+    // a blank or ill-formed plugin reason still reads as a deny in every CLI.
+    // Clears the guard timer on every exit path so a fired-and-forgotten
+    // timer can't linger after we've replied.
     const answerDenied = (reason: string) => {
       if (done) return;
       done = true;
@@ -1592,7 +1605,7 @@ async function handleRequest(
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
             permissionDecision: 'deny',
-            permissionDecisionReason: reason
+            permissionDecisionReason: normalizeNativeToolPolicyReason(reason, 'denied by native tool policy')
           }
         })
       );
@@ -1638,16 +1651,29 @@ async function handleRequest(
       }
     };
     req.on('data', (c: Buffer) => {
-      if (done) return;
       total += c.length;
+      // Checked before the `done` early return, so an exchange that already
+      // answered (e.g. on the timeout guard) cannot keep draining unbounded.
+      if (total > NATIVE_TOOL_DRAIN_MAX) {
+        req.destroy();
+        answerDenied('native tool policy request body too large');
+        return;
+      }
+      if (done || oversized) return;
       if (total <= CAP) {
         chunks.push(c);
       } else {
-        req.destroy();
-        answerDenied('native tool policy request body too large');
+        oversized = true;
+        chunks.length = 0;
       }
     });
-    req.on('end', () => void finish(Buffer.concat(chunks).toString('utf8')));
+    req.on('end', () => {
+      if (oversized) {
+        answerDenied('tool call is larger than the 1 MiB native tool policy request limit');
+        return;
+      }
+      void finish(Buffer.concat(chunks).toString('utf8'));
+    });
     req.on('error', () => answerDenied('native tool policy request errored'));
     return;
   }

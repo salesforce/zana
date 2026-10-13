@@ -36,6 +36,10 @@ describe('runtime supervisor', () => {
     // No packaged server-runtime child here ⇒ the ACP thread-liveness probe
     // safe-defaults false (never rejects), so no loopback launch can pass on it.
     await expect(runtime.isThreadLive('thread-1', 'project-1')).resolves.toBe(false);
+    // Without the plugin host there is no tool policy decision; main's hook route then denies.
+    await expect(runtime.decideToolPolicy({
+      invocationId: 'a'.repeat(64), threadId: 'thread-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash', input: {}
+    })).rejects.toThrow('plugin host is unavailable');
     await expect(fetch(runtime.rendererUrl).then((response) => response.text())).resolves.toContain('runtime');
     await expect(fetch(`${runtime.hostUrl}/health`).then((response) => response.json())).resolves.toEqual({ ok: true });
   });

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 vi.mock('@/modules', () => ({ useMergedModules: () => [] }));
@@ -37,7 +37,9 @@ it('reveals the ?setting row when the plugin page opens on #plugin-configure', a
   open('/extensions/plugins/test?setting=relay#plugin-configure');
   await screen.findByLabelText('Relay');
   const row = document.querySelector('[data-plugin-setting-key="relay"]')!;
-  expect(row.classList.contains('settings-search-flash')).toBe(true);
+  // The reveal runs in an effect after the row renders, so the label can be
+  // found a beat before the flash is applied (seen on a loaded CI runner).
+  await waitFor(() => expect(row.classList.contains('settings-search-flash')).toBe(true));
   expect(document.querySelector('[data-plugin-setting-key="mode"]')!.classList.contains('settings-search-flash')).toBe(false);
 });
 

@@ -266,6 +266,13 @@ export interface PluginToolPolicyRequest {
   input: Record<string, unknown>;
 }
 
+/**
+ * A tool policy's answer for one native tool call. `allow` means "no plugin
+ * objects", never approval: the provider's own permission flow still decides.
+ * `deny` blocks the call before it runs and its `reason` is shown to the
+ * agent; a blank or ill-formed reason is replaced and reasons are capped at
+ * 1024 characters.
+ */
 export type PluginToolPolicyDecision =
   | { action: 'allow' }
   | { action: 'deny'; reason: string };

@@ -596,6 +596,9 @@ describe('PluginService', () => {
     await service.decideToolPolicy(request);
     await service.decideToolPolicy(request);
     await expect(service.callRpc('counter', 'callCount', {})).resolves.toBe(1);
+    // The same id on another thread is a different call, never a replay.
+    await service.decideToolPolicy({ ...request, threadId: 't2' });
+    await expect(service.callRpc('counter', 'callCount', {})).resolves.toBe(2);
   });
 
   it.each([

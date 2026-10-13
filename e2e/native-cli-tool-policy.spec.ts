@@ -5,7 +5,8 @@ import { test, expect } from './fixtures/app.js';
 test.use({ e2e: true, initialConfig: { sponsorPromptDismissed: true } });
 
 // Run each actual CLI-injected hook through the PTY, main's loopback hook
-// listener, product HTTP, desktop control identity lookup, and plugin policy.
+// listener, authoritative main-owned identity, runtime policy transport, and
+// plugin policy. The retired product terminal policy route remains unavailable.
 const stub = String.raw`
 const {spawnSync} = require('node:child_process');
 const {writeFileSync} = require('node:fs');
@@ -73,6 +74,7 @@ test(`${profile} native CLI policy reaches the registered desktop session and fa
       return response.status;
     }, id);
     expect(await policy('unknown-session')).toBe(404);
+    expect(await policy(sessionId)).toBe(404);
     await window.evaluate(id => window.cc.terminals.close(id), sessionId);
     expect(await policy(sessionId)).toBe(404);
     sessionId = undefined;

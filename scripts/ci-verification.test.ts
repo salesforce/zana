@@ -42,6 +42,14 @@ it('handles added, replaced, and deletion-only hunks', () => {
   expect(boundarySpecs(['apps/host-daemon/src/harness/opencode/provider.ts'])).toEqual(expect.arrayContaining([
     'e2e/opencode-launch-boundary.spec.ts', 'e2e/job-team-launch-ui.spec.ts', 'e2e/cli-agent-job-team-run.spec.ts', 'e2e/modern-owner-job-team-run.spec.ts'
   ]));
+  // The native tool policy seams always rerun the main-owned PTY regression and the probe fixture spec.
+  for (const path of [
+    'apps/desktop/src/runtime/native-tool-policy.ts', 'apps/server/src/plugins/native-tool-policy.ts', 'apps/host-daemon/src/harness/native-tool-relay.ts',
+    'apps/host-daemon/src/harness/claude/hooks.ts', 'apps/host-daemon/src/harness/codex/provider.ts', 'apps/server/src/services/mcp/mcp-server.ts',
+    'apps/server/src/utility-entry.ts', 'apps/desktop/src/runtime/runtime-supervisor.ts', 'e2e/fixtures/plugins/platform-hooks-probe/server.ts'
+  ]) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/native-tool-policy-pty.spec.ts', 'e2e/platform-hooks-probe-fixture.spec.ts']));
+  }
 });
 
 it('checks only changed executable statements and branch arms with an 80% floor', () => {

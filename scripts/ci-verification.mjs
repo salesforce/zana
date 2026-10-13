@@ -26,6 +26,9 @@ export function boundarySpecs(paths) {
     if (/job-team|execution-routing|execution-service/.test(path)) add('job-team-launch-ui', 'cli-agent-job-team-run', 'modern-owner-job-team-run');
     if (/harness\/|(?:^|\/)pty\.ts$/.test(path)) add('job-team-launch-ui', 'cli-agent-job-team-run', 'modern-owner-job-team-run');
     if (/control-plane|control-client/.test(path)) add('plugin-authoring-live', 'job-team-launch-ui', 'cli-agent-job-team-run', 'modern-owner-job-team-run');
+    // OBL-004: the native tool policy relay, hook route and runtime channel. 2.3.4 shipped
+    // denying every Claude PTY tool call because no spec drove this path.
+    if (/native-tool|harness\/(claude\/hooks|codex\/provider)|services\/mcp\/mcp-server|utility-entry|runtime-supervisor|fixtures\/plugins\/platform-hooks-probe/.test(path)) add('native-tool-policy-pty', 'platform-hooks-probe-fixture');
     if (/build-plugin-(app|server)\.ts/.test(path)) add('plugin-authoring-live');
     if (/opencode/.test(path)) add('opencode-launch-boundary');
     if (/desktop-browser/.test(path)) add('desktop-browser-broker');

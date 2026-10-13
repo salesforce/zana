@@ -34,6 +34,7 @@ import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
 import { getConversationThread } from '@zana-ai/zcc-db';
 import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
+import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
 import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
 import {
   bundledPluginsRootFromDataDir,
@@ -534,6 +535,16 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     }
     if (message.operation === 'plugins-cli-contributions') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: plugins?.cliContributions() ?? [] });
+    }
+    if (message.operation === 'plugins-tool-policy') {
+      // `ctx.plugins` (not `plugins`): set when the service is created and
+      // cleared by its wrapped stop(), so a call before either side denies.
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await decideMainOwnedToolPolicy(productContext?.plugins, message.request)
+      });
     }
     if (message.operation === 'plugins-cli-run') {
       if (!plugins) {

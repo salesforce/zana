@@ -2002,7 +2002,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
     },
     async decideToolPolicy(request) {
-      const cached = toolPolicyDecisions.get(request.invocationId);
+      // Scoped by thread: callers on different surfaces choose their own
+      // invocation ids, and one must never replay a decision into another's thread.
+      const key = JSON.stringify([request.threadId, request.invocationId]);
+      const cached = toolPolicyDecisions.get(key);
       if (cached) return cached;
       const decision = (async () => {
         for (const current of live.values()) {
@@ -2030,11 +2033,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (toolPolicyDecisions.size >= TOOL_POLICY_DECISIONS_MAX) {
         toolPolicyDecisions.delete(toolPolicyDecisions.keys().next().value!);
       }
-      toolPolicyDecisions.set(request.invocationId, decision);
+      toolPolicyDecisions.set(key, decision);
       try {
         return await decision;
       } catch (error) {
-        toolPolicyDecisions.delete(request.invocationId);
+        toolPolicyDecisions.delete(key);
         throw error;
       }
     },

@@ -469,8 +469,9 @@ describe('CodexProvider — the three -c bridges (exact argv + TOML escaping)', 
         });
         const deny = '"permissionDecision":"deny"';
 
+        // A plugin allow is "no objection": codex rejects a bare allow, so the relay stays silent.
         body = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'safe' } });
-        expect(await invoke()).toBe(body);
+        expect(await invoke()).toBe('');
         await expect(access(marker)).rejects.toThrow();
 
         const safeOverride = p.hookArgs('codex', { nativeTool: `http://127.0.0.1:${address.port}/hook/nativetool/p/s` }).find((arg) => arg.startsWith('hooks.PreToolUse='))!;
@@ -484,7 +485,7 @@ describe('CodexProvider — the three -c bridges (exact argv + TOML escaping)', 
           child.on('close', (code) => code === 0 ? resolve(stdout) : reject(new Error(`hook exited ${code}`)));
           child.stdin.end('{}');
         });
-        expect(await invokeSafe()).toBe(body);
+        expect(await invokeSafe()).toBe('');
         expect(received).toBe('/hook/nativetool/p/s');
 
         status = 503;

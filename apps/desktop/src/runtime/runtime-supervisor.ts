@@ -26,6 +26,7 @@ import {
   MenubarThreadsListResultSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
+  type NativeToolPolicyRequest,
   type ProjectMutationPatchSchema,
   type ProjectRecordSchema,
   type RuntimeOutbound
@@ -125,6 +126,12 @@ export interface RuntimeSupervisor {
   callPluginRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
   getPluginSettings(pluginId: string): Promise<unknown>;
   setPluginSettings(pluginId: string, values: Record<string, string | number | boolean | null>): Promise<unknown>;
+  /**
+   * Ask the plugin policy about one native tool call from a PTY main owns
+   * (OBL-004). Main asserts the session identity in `request`; the caller
+   * validates the reply, and this never authorizes anything by itself.
+   */
+  decideToolPolicy(request: NativeToolPolicyRequest): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -275,6 +282,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     callPluginRpc: async () => { throw new Error('plugin host is unavailable'); },
     getPluginSettings: async () => ({ descriptors: {}, values: {} }),
     setPluginSettings: async () => { throw new Error('plugin host is unavailable'); },
+    decideToolPolicy: async () => { throw new Error('plugin host is unavailable'); },
     async close(): Promise<void> {
       if (hostConnectionRenewal) clearInterval(hostConnectionRenewal);
       await Promise.allSettled([renderer.close(), host.close()]);
@@ -333,6 +341,7 @@ interface UtilityRuntime {
   request(operation: 'plugins-settings-set', pluginId: string, values: Record<string, string | number | boolean | null>): Promise<unknown>;
   request(operation: 'plugins-cli-contributions'): Promise<unknown>;
   request(operation: 'plugins-cli-run', pluginId: string, argv: string[], context?: { projectId?: string; threadId?: string; cwd?: string }): Promise<unknown>;
+  request(operation: 'plugins-tool-policy', request: NativeToolPolicyRequest): Promise<unknown>;
   request(operation: 'marketplace-list'): Promise<unknown>;
   request(operation: 'marketplace-add', url: string): Promise<unknown>;
   request(operation: 'marketplace-refresh', url: string): Promise<unknown>;
@@ -651,6 +660,8 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     callPluginRpc: (pluginId, method, args) => server.request('plugins-call-rpc', pluginId, method, args),
     getPluginSettings: (pluginId) => server.request('plugins-settings-get', pluginId),
     setPluginSettings: (pluginId, values) => server.request('plugins-settings-set', pluginId, values),
+    /* v8 ignore next -- the packaged utility child runs only at the built-Electron boundary (e2e/native-tool-policy-pty.spec.ts) */
+    decideToolPolicy: (request) => server.request('plugins-tool-policy', request),
     async relaunchEnrolledHost() {
       if (failed || closing) return { ok: false as const, message: 'Background service stopped. Restart Zana to reconnect.' };
       if (enrollRetry) {
@@ -724,8 +735,8 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-       ...args: [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
+      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'plugins-tool-policy' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+       ...args: [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
@@ -745,6 +756,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
           ...(operation === 'project-metadata' ? { request: args[0] as ProjectMetadataRequest } : {}),
           ...(operation === 'library-agent' ? { request: args[0] as LibraryAgentRequest } : {}),
           ...(operation === 'library-document' ? { request: args[0] as LibraryDocumentRequest } : {}),
+          ...(operation === 'plugins-tool-policy' ? { request: args[0] as NativeToolPolicyRequest } : {}),
           ...(operation === 'thread-live' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
           ...(operation === 'menubar-threads-list' ? { limit: args[0] as number } : {}),
           ...(operation === 'menubar-thread-open' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),

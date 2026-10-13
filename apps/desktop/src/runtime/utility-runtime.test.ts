@@ -46,3 +46,27 @@ describe('utility process lifecycle', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+describe('plugins-tool-policy requests', () => {
+  const call = { invocationId: 'c'.repeat(64), threadId: 'session-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash', input: { command: 'pwd' } };
+  it('posts the main-asserted call and resolves the reply, clearing its timer', async () => {
+    vi.useFakeTimers(); const { child, runtime } = fixture();
+    const pending = runtime.request('plugins-tool-policy', call);
+    const message = child.postMessage.mock.calls[0]![0];
+    expect(message).toEqual({
+      type: 'request', protocolVersion, id: expect.any(String), deadlineAt: expect.any(String),
+      operation: 'plugins-tool-policy', request: call
+    });
+    child.emit('message', { type: 'result', protocolVersion, id: message.id, value: { action: 'allow' } });
+    expect(await pending).toEqual({ action: 'allow' }); expect(vi.getTimerCount()).toBe(0);
+  });
+  it('rejects on an error reply, on silence and on child exit without leaving timers', async () => {
+    vi.useFakeTimers(); const { child, runtime } = fixture();
+    const failed = expect(runtime.request('plugins-tool-policy', call)).rejects.toThrow('invalid server runtime message');
+    child.emit('message', { type: 'error', protocolVersion, id: child.postMessage.mock.calls[0]![0].id, message: 'invalid server runtime message' });
+    await failed;
+    const silent = expect(runtime.request('plugins-tool-policy', call)).rejects.toThrow('server plugins-tool-policy request timed out');
+    await vi.advanceTimersByTimeAsync(20_000); await silent; expect(vi.getTimerCount()).toBe(0);
+    const orphaned = expect(runtime.request('plugins-tool-policy', call)).rejects.toThrow('server utility process exited');
+    child.emit('exit', 1); await orphaned; expect(vi.getTimerCount()).toBe(0);
+  });
+});

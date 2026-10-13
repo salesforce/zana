@@ -231,6 +231,28 @@ describe('platform-hooks-probe server', () => {
     await expect(harness.callRpc('lifecycleList', undefined)).resolves.toEqual([]);
   });
 
+  it('denies with a selectable reason, records the host identity, and validates the selection', async () => {
+    const { harness } = await loaded();
+    const request = {
+      invocationId: 'inv-1', threadId: 'thread-1', projectId: PROJECT_ID, providerId: 'claude-code', toolName: 'Bash', input: {}
+    };
+    await harness.callRpc('setToolPolicySelection', { selection: 'deny', reason: 'custom' });
+    await expect(harness.evaluateToolPolicy(request)).resolves.toEqual({ action: 'deny', reason: 'custom' });
+    await harness.callRpc('setToolPolicySelection', { selection: 'deny', reason: '   ' });
+    await expect(harness.evaluateToolPolicy(request)).resolves.toEqual({ action: 'deny', reason: '   ' });
+    await expect(harness.callRpc('setToolPolicySelection', { selection: 'deny', reason: 12 })).rejects.toThrow('invalid tool policy selection');
+    await harness.callRpc('setToolPolicySelection', { selection: 'allow' });
+    await expect(harness.evaluateToolPolicy(request)).resolves.toEqual({ action: 'allow' });
+    await harness.callRpc('setToolPolicySelection', { selection: 'deny' });
+    await expect(harness.evaluateToolPolicy(request)).resolves.toEqual({ action: 'deny', reason: 'denied by fixture tool policy' });
+    await expect(harness.callRpc('toolPolicyEventsList', undefined)).resolves.toEqual([
+      expect.objectContaining({ threadId: 'thread-1', projectId: PROJECT_ID, providerId: 'claude-code', state: 'denied' }),
+      expect.objectContaining({ state: 'denied' }),
+      expect.objectContaining({ state: 'allowed' }),
+      expect.objectContaining({ state: 'denied' })
+    ]);
+  });
+
   it('interactionUpsert creates a pending interaction scoped to the project and correlationId', async () => {
     const { harness } = await loaded();
     const row = await harness.callRpc('interactionUpsert', { projectId: PROJECT_ID, correlationId: 'c1' }) as { id: string; status: string };

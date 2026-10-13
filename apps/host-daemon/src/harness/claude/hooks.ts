@@ -2,6 +2,7 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { ProviderCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import { randomUUID } from 'node:crypto';
+import { nativeToolRelayTail } from '../native-tool-relay.js';
 
 export type NativeToolHookState = 'announced' | 'awaiting-decision' | 'allowed' | 'denied' | 'executing' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -247,19 +248,20 @@ export function buildClaudeHookSettings(opts: ClaudeHookSettings): string {
 
   if (opts.nativeTool) {
     // OBL-004: this must actually BLOCK, so unlike overseer/contentScreen (which
-    // discard the curl reply and always exit 0) we relay the policy route's
-    // `hookSpecificOutput.permissionDecision` JSON verbatim to stdout — Claude's
-    // own PreToolUse contract. FAIL CLOSED: an empty/missing reply (unset env,
-    // timeout, transport failure) synthesizes an explicit `deny` ourselves,
-    // matching the Codex-side fix (see codex/provider.ts hookArgs).
+    // discard the curl reply and always exit 0) the policy route's reply decides
+    // what Claude reads on stdout. A plugin `allow` means "no objection", never
+    // approval: Claude documents a PreToolUse `allow` as skipping the permission
+    // prompt, so an allow prints NOTHING and Claude's own permission flow still
+    // decides ("staying silent doesn't approve it"). Only the route's exact deny
+    // is relayed. FAIL CLOSED: an unset env, a non-zero curl exit (refused,
+    // timeout, non-2xx via --fail, a body cut short) or any other body
+    // synthesizes an explicit `deny` — the tail is shared with the Codex relay
+    // (see native-tool-relay.ts and codex/provider.ts hookArgs).
     const nativeToolCmd =
-      'ZCC_IN=$(cat); ' +
-      'OUT=""; ' +
-      '[ -n "$ZCC_NATIVETOOL_URL" ] && ' +
-      'OUT=$(printf "%s" "$ZCC_IN" | curl -s -m 5 -X POST --data-binary @- "$ZCC_NATIVETOOL_URL" 2>/dev/null); ' +
-      'if [ -z "$OUT" ]; then ' +
-      'echo \'{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"native tool policy unreachable"}}\'; ' +
-      'else printf "%s" "$OUT"; fi; exit 0';
+      'ZCC_IN=$(cat); OUT=""; STATUS=1; ' +
+      'if [ -n "$ZCC_NATIVETOOL_URL" ]; then ' +
+      'OUT=$(printf "%s" "$ZCC_IN" | curl --fail -s -m 5 -X POST --data-binary @- "$ZCC_NATIVETOOL_URL" 2>/dev/null); STATUS=$?; ' +
+      'fi; ' + nativeToolRelayTail();
     const nativeToolHook = { matcher: '', hooks: [{ type: 'command', command: nativeToolCmd }] };
     if (Array.isArray(hooks.PreToolUse)) hooks.PreToolUse.push(nativeToolHook);
     else hooks.PreToolUse = [nativeToolHook];

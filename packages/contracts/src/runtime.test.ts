@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   MenubarAgentSchema,
+  NATIVE_TOOL_POLICY_EVENT_MAX_BYTES,
+  NATIVE_TOOL_POLICY_INPUT_MAX_CHARS,
+  nativeToolPolicyInputFits,
+  NATIVE_TOOL_POLICY_REASON_MAX_CHARS,
+  NativeToolPolicyDecisionSchema,
   PRODUCT_EVENT_ARGS_MAX_CHARS,
   PRODUCT_EVENT_ARGS_MAX_COUNT,
   MenubarThreadsChangedMessageSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
-  ServerRuntimeInboundSchema
+  ServerRuntimeInboundSchema,
+  normalizeNativeToolPolicyReason
 } from './runtime.js';
 
 const request = {
@@ -153,5 +159,93 @@ describe('menubar runtime contracts', () => {
     expect(MenubarThreadsChangedMessageSchema.safeParse({
       type: 'menubar-threads-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION
     }).success).toBe(true);
+  });
+});
+
+describe('native tool policy deny reasons', () => {
+  const normalize = (raw: unknown) => normalizeNativeToolPolicyReason(raw, 'fb');
+  // `isWellFormed` is ES2024; a UTF-8 round trip replaces any lone surrogate.
+  const wellFormed = (value: string) => Buffer.from(value, 'utf8').toString('utf8') === value;
+
+  it.each([undefined, 12, null, '', '   ', '\n\t ', '\u0085', ' \u0085 ', '\ufeff', '\u0000\u007f\u009f'])(
+    'falls back when nothing usable is left of %j',
+    (raw) => expect(normalize(raw)).toBe('fb')
+  );
+
+  it.each([
+    ['a\u0000b\u001bc', 'a b c'],
+    ['x\ud83d', 'x\ufffd'],
+    ['\ude00y', '\ufffdy'],
+    ['ok 😀', 'ok 😀'],
+    ['  blocked by plugin policy\n', 'blocked by plugin policy']
+  ])('repairs %j into a reason every CLI accepts', (raw, expected) => {
+    const reason = normalize(raw);
+    expect(reason).toBe(expected);
+    expect(wellFormed(reason)).toBe(true);
+  });
+
+  it('caps the reason and repairs a surrogate pair the cap split', () => {
+    const split = normalize('a'.repeat(NATIVE_TOOL_POLICY_REASON_MAX_CHARS - 1) + '😀');
+    expect(split).toHaveLength(NATIVE_TOOL_POLICY_REASON_MAX_CHARS);
+    expect(split.endsWith('\ufffd')).toBe(true);
+    expect(wellFormed(split)).toBe(true);
+    const huge = normalize('z'.repeat(10 * 1024 * 1024));
+    expect(huge).toBe('z'.repeat(NATIVE_TOOL_POLICY_REASON_MAX_CHARS));
+  });
+});
+
+describe('native tool policy runtime contract', () => {
+  const call = {
+    invocationId: 'a'.repeat(64),
+    threadId: '00000000-0000-4000-8000-000000000002',
+    projectId: 'project-1',
+    profile: 'codex-yolo',
+    toolName: 'Bash',
+    input: { command: 'pwd' }
+  };
+  const parse = (patch: Record<string, unknown>, envelope: Record<string, unknown> = {}) =>
+    ServerRuntimeInboundSchema.safeParse({ ...request, ...envelope, operation: 'plugins-tool-policy', request: { ...call, ...patch } }).success;
+  const empty = '{"content":""}'.length;
+
+  it('accepts a main-asserted tool call, up to the input limit', () => {
+    expect(parse({})).toBe(true);
+    expect(parse({ input: {} })).toBe(true);
+    expect(parse({ input: { content: 'x'.repeat(NATIVE_TOOL_POLICY_INPUT_MAX_CHARS - empty) } })).toBe(true);
+  });
+
+  it.each<Record<string, unknown>>([
+    { invocationId: 'A'.repeat(64) }, { invocationId: 'a'.repeat(63) },
+    { toolName: '' }, { toolName: 'x'.repeat(513) }, { toolName: 'a\nb' },
+    { profile: 'Claude' }, { profile: '' }, { profile: 'a b' },
+    { threadId: '' }, { threadId: 'x'.repeat(257) }, { projectId: '' }, { projectId: 'x'.repeat(257) },
+    { input: ['pwd'] }, { input: 'pwd' }, { input: { content: 'x'.repeat(NATIVE_TOOL_POLICY_INPUT_MAX_CHARS - empty + 1) } },
+    { providerId: 'forged' }
+  ])('rejects %j', (patch) => expect(parse(patch)).toBe(false));
+
+  it('rejects the previous protocol version', () => {
+    expect(parse({}, { protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION - 1 })).toBe(false);
+  });
+
+  it('leaves the hook route room for a limit-sized input in any UTF-8', () => {
+    expect(nativeToolPolicyInputFits({ content: 'x'.repeat(NATIVE_TOOL_POLICY_INPUT_MAX_CHARS - empty) })).toBe(true);
+    expect(nativeToolPolicyInputFits({ content: 'x'.repeat(NATIVE_TOOL_POLICY_INPUT_MAX_CHARS - empty + 1) })).toBe(false);
+    expect(nativeToolPolicyInputFits({ count: 1n })).toBe(false);
+    expect(NATIVE_TOOL_POLICY_EVENT_MAX_BYTES - 3 * NATIVE_TOOL_POLICY_INPUT_MAX_CHARS).toBeGreaterThanOrEqual(256 * 1024);
+  });
+
+  it('rejects input it cannot measure instead of throwing', () => {
+    expect(() => parse({ input: { count: 1n } })).not.toThrow();
+    expect(parse({ input: { count: 1n } })).toBe(false);
+  });
+
+  it('accepts exactly the allow and deny decision shapes', () => {
+    for (const value of [{ action: 'allow' }, { action: 'deny', reason: 'x' }, { action: 'deny', reason: 'r'.repeat(NATIVE_TOOL_POLICY_REASON_MAX_CHARS) }]) {
+      expect(NativeToolPolicyDecisionSchema.safeParse(value).success).toBe(true);
+    }
+    for (const value of [
+      { action: 'ALLOW' }, { action: 'deny' }, { action: 'deny', reason: '' },
+      { action: 'deny', reason: 'r'.repeat(NATIVE_TOOL_POLICY_REASON_MAX_CHARS + 1) },
+      { action: 'allow', reason: 'x' }, [], null
+    ]) expect(NativeToolPolicyDecisionSchema.safeParse(value).success).toBe(false);
   });
 });

@@ -270,10 +270,25 @@ announced -> awaiting-decision -> allowed|denied -> executing -> succeeded|faile
 ```
 
 A `denied` decision blocks the tool's side effect before it starts; a
-transport failure or decision timeout fails closed (denied), never open. Each
-`invocationId` is unique per provider turn/tool call and deduplicated at the
-server boundary, so a retried request with the same id replays the same
-decision rather than re-deciding.
+transport failure or decision timeout fails closed (denied), never open.
+
+`allow` means no plugin objected; it is never an approval. The provider's own
+permission flow still decides: both PTY hooks stay silent on `allow` instead
+of auto-approving (Claude reads a hook `allow` as "skip the permission
+prompt", and Codex rejects a bare hook `allow` as invalid output).
+
+A `deny` reason is shown to the agent. A blank or ill-formed reason (empty
+after trimming, control characters, unpaired surrogates) is replaced, and
+reasons are capped at 1024 characters.
+
+Each `invocationId` is deduplicated at the server boundary, so a retried
+request with the same id replays the same decision rather than re-deciding.
+For PTY sessions the host derives it from the live session plus the
+provider's turn id (when it sends one), tool call id, tool name and input: an
+identical retry replays its decision, and different content never reuses one.
+PTY tool input over 256 KiB (counted in JSON characters of the parsed input,
+not wire bytes) is denied with an explicit reason, without calling plugins.
+The same holds in a `pnpm dev` build.
 
 | Provider | Native before/after | Delivery surface |
 | --- | --- | --- |

@@ -20,12 +20,15 @@ type ToolPolicySelection = 'allow' | 'deny';
 
 type ToolPolicyEventRow = {
   invocationId: string;
+  threadId: string;
+  projectId: string;
   providerId: string;
   toolName: string;
   state: 'allowed' | 'denied';
   at: number;
 };
 const TOOL_POLICY_EVENTS_MAX = 50;
+const DEFAULT_TOOL_POLICY_DENY_REASON = 'denied by fixture tool policy';
 
 type ToolMarkerEntry = { source: 'modern-tool' | 'mcp-tool'; invocationId: string; at: number };
 type ToolMarkerFile = { count: number; history: ToolMarkerEntry[]; mcpOffset: number };
@@ -64,6 +67,7 @@ export default function plugin(zcc: ZccPluginApi) {
   let dispatchSelection: DispatchSelection = { kind: 'proceed' };
   let dispatchEvents: Array<{ dispatchId: string; generation: number; decision: DispatchAdmissionDecision }> = [];
   let toolPolicySelection: ToolPolicySelection = 'allow';
+  let toolPolicyDenyReason = DEFAULT_TOOL_POLICY_DENY_REASON;
   let toolPolicyEvents: ToolPolicyEventRow[] = [];
 
   function markerSource(projectId: string) {
@@ -220,10 +224,16 @@ export default function plugin(zcc: ZccPluginApi) {
   });
 
   zcc.rpc.method('setToolPolicySelection', (args) => {
-    const record = args as { selection?: unknown } | undefined;
+    const record = args as { selection?: unknown; reason?: unknown } | undefined;
     const selection = record?.selection === 'deny' ? 'deny' : record?.selection === 'allow' ? 'allow' : undefined;
-    if (!selection) throw new Error('invalid tool policy selection');
+    if (!selection || (record?.reason !== undefined && typeof record.reason !== 'string')) {
+      throw new Error('invalid tool policy selection');
+    }
     toolPolicySelection = selection;
+    // Returned exactly as given, so a spec observes the host's own normalisation.
+    toolPolicyDenyReason = selection === 'deny' && typeof record?.reason === 'string'
+      ? record.reason
+      : DEFAULT_TOOL_POLICY_DENY_REASON;
     return { ok: true };
   });
   zcc.rpc.method('getToolPolicySelection', () => toolPolicySelection);
@@ -238,10 +248,18 @@ export default function plugin(zcc: ZccPluginApi) {
     const state: ToolPolicyEventRow['state'] = selection === 'allow' ? 'allowed' : 'denied';
     const decision: PluginToolPolicyDecision = selection === 'allow'
       ? { action: 'allow' }
-      : { action: 'deny', reason: 'denied by fixture tool policy' };
+      : { action: 'deny', reason: toolPolicyDenyReason };
     toolPolicyEvents = [
       ...toolPolicyEvents,
-      { invocationId: request.invocationId, providerId: request.providerId, toolName: request.toolName, state, at: Date.now() }
+      {
+        invocationId: request.invocationId,
+        threadId: request.threadId,
+        projectId: request.projectId,
+        providerId: request.providerId,
+        toolName: request.toolName,
+        state,
+        at: Date.now()
+      }
     ].slice(-TOOL_POLICY_EVENTS_MAX);
     zcc.realtime.publish('hooks-probe-tool-policy-event', { invocationId: request.invocationId, state });
     return decision;
@@ -435,6 +453,7 @@ export default function plugin(zcc: ZccPluginApi) {
     dispatchSelection = { kind: 'proceed' };
     dispatchEvents = [];
     toolPolicySelection = 'allow';
+    toolPolicyDenyReason = DEFAULT_TOOL_POLICY_DENY_REASON;
     toolPolicyEvents = [];
     return { ok: true };
   });

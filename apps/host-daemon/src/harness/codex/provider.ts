@@ -63,6 +63,7 @@ import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { codexLegacyRouting } from './legacy-routing.js';
 import { codexInteractionHook } from './interaction-hooks.js';
 import { shellQuote } from '../shell-quote.js';
+import { nativeToolRelayTail } from '../native-tool-relay.js';
 
 export const CODEX_EVIDENCE_VERSION = '0.140.0';
 const codexEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -439,22 +440,25 @@ export class CodexProvider extends BaseLaunchProvider {
       // identical contract Claude's PreToolUse hooks use
       // (`codex_core::tools::router` logs "Command blocked by PreToolUse
       // hook: <reason>" and the tool never runs). So we pipe stdin straight
-      // into `/hook/nativetool/…` (which already replies in that exact
-      // shape, see mcp-server.ts) and relay its body verbatim to stdout.
-      // FAIL CLOSED: an empty curl reply (timeout, connection refused,
-      // non-2xx) emits an explicit `deny` JSON ourselves — verified live that
-      // codex otherwise fails OPEN (empty hook stdout → tool proceeds
-      // unmodified), the opposite of OBL-004's "transport failure fails
-      // closed" requirement.
+      // into `/hook/nativetool/…` (which replies in that exact shape, see
+      // mcp-server.ts) and relay only its exact DENY. A plugin `allow` means
+      // "no objection", never approval — and codex's parser rejects an
+      // `allow` without `updatedInput` as "unsupported
+      // permissionDecision:allow" and shows a failed hook on every call
+      // (`codex-rs/hooks/src/engine/output_parser.rs`, identical at
+      // rust-v0.140.0, v0.154.0 and v0.157.0). So an allow prints nothing,
+      // which codex reads as "no decision": its own approval policy decides.
+      // FAIL CLOSED: every other outcome (a non-zero curl exit — refused,
+      // timeout, non-2xx, a body cut short — or any other body) emits an
+      // explicit `deny` JSON ourselves — verified live that codex otherwise
+      // fails OPEN (empty hook stdout → tool proceeds unmodified), the
+      // opposite of OBL-004's "transport failure fails closed" requirement.
+      // The tail is shared with the Claude relay (native-tool-relay.ts).
       preToolUseEntries.push({
         matcher: '*',
         command:
           `OUT=$(curl --fail -s -m 5 -X POST --data-binary @- ${shellQuote(urls.nativeTool)}); STATUS=$?; ` +
-          `case "$OUT" in ` +
-          `'\{"hookSpecificOutput":\{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":'*'"}}'|'\{"hookSpecificOutput":\{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":'*'"}}') VALID=1;; *) VALID=0;; esac; ` +
-          `if [ "$STATUS" -ne 0 ] || [ "$VALID" -ne 1 ]; then ` +
-          `echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"native tool policy unreachable"}}'; ` +
-          `else printf '%s' "$OUT"; fi; exit 0`
+          nativeToolRelayTail()
       });
     }
 

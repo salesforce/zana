@@ -15,12 +15,11 @@ import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-c
 import { getPrimaryHost, countConversationThreadsForQuit } from '@zana-ai/zcc-db';
 import { handleProjectSourcesApi } from './project-sources-api.js';
 import { handleNotificationsApi } from './notifications-api.js';
+import { handleNativeToolPolicyApi } from './native-tool-policy-api.js';
 import { resolveProjectHost } from './project-host.js';
 import { mutateProjectFile } from './project-file-mutations.js';
 import { invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
-import { redactToolInput } from '@zana-ai/zcc-host-daemon/harness/claude/hooks';
 import { productServerHasDesktopCredential } from './cli-agent-ops.js';
-import { nativePolicySession } from './native-policy-session.js';
 import { setProductConfig } from './product-config.js';
 import { assertPlanRevision, planImplementationMode, planImplementationPrompt } from '../services/threads/conversation-plan-implementation.js';
 import { readPluginHttpBody, PluginHttpBodyTooLarge } from './plugin-http-body.js';
@@ -115,7 +114,7 @@ import { openThreadFilePreview, previewFileDepsFromContext } from '../services/t
 import { isSqliteBusy, retrySqliteTransaction } from '@zana-ai/zcc-db';
 import { openThreadTerminal, openThreadTerminalDepsFromContext } from '../services/threads/open-thread-terminal.js';
 import { createMenubarThreadSource, MENUBAR_THREAD_LIMIT } from '../services/threads/menubar-thread-source.js';
-import { listThreadProviders, bridgeLaunchForProvider, getThreadProvider, canonicalThreadProviderId } from '../services/threads/thread-provider-catalog.js';
+import { listThreadProviders, bridgeLaunchForProvider, getThreadProvider } from '../services/threads/thread-provider-catalog.js';
 import { resolveHarnessWorkspacePath } from '../services/threads/remote-tool-proxy.js';
 import { toRemoteStartPathHost } from '../services/hosts/host-public.js';
 import {
@@ -542,6 +541,7 @@ export async function handleProductHttp(
     if (await handleSharedProductApi(request, response, ctx, path, method)) return true;
     if (await handleProjectSourcesApi(request, response, ctx, path, method)) return true;
     if (await handleNotificationsApi(request, response, ctx, path, method, requestUrl)) return true;
+    if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {
       sendJson(response, 200, { projects: ctx.projects.list() });
@@ -3584,34 +3584,6 @@ export async function handleProductHttp(
       } catch (error) {
         sendHostFailure(response, error);
       }
-      return true;
-    }
-
-    const terminalToolPolicy = routeParams(path, '/api/v1/terminals/:id/tool-policy');
-    if (terminalToolPolicy && method === 'POST') {
-      const session = await nativePolicySession(ctx, terminalToolPolicy.id);
-      if (!session) {
-        sendJson(response, 404, { ok: false, code: 'unknown-session', message: 'terminal is not registered' });
-        return true;
-      }
-      if (!ctx.plugins) {
-        sendJson(response, 200, { action: 'deny', reason: 'plugin service is unavailable' });
-        return true;
-      }
-      const body = (await readJsonBody(request, 256 * 1024)) as { invocationId?: unknown; toolName?: unknown; input?: unknown };
-      if (typeof body?.invocationId !== 'string' || !body.invocationId || typeof body?.toolName !== 'string' || !body.toolName) {
-        sendJson(response, 400, { ok: false, code: 'invalid-tool-policy-request', message: 'invocationId and toolName are required' });
-        return true;
-      }
-      const policy = await ctx.plugins.decideToolPolicy({
-        invocationId: body.invocationId,
-        threadId: session.id,
-        projectId: session.projectId,
-        providerId: canonicalThreadProviderId(session.profile),
-        toolName: body.toolName,
-        input: redactToolInput(body.input)
-      });
-      sendJson(response, 200, policy);
       return true;
     }
 
