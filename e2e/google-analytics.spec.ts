@@ -40,7 +40,7 @@ test('Google Analytics auto-installs, tracks visible use, disconnects, and respe
     await expect.poll(() => events().map(event => event.name)).toContain('app_open');
     await expect.poll(() => events().filter(event => event.name === 'page_view').length).toBeGreaterThan(0);
     const clientId = captures[0].body.client_id;
-    expect(clientId).toMatch(/^[a-f0-9-]{36}$/i);
+    expect(clientId).toMatch(/^\d+\.\d+$/);
     expect(captures[0].url).toContain('measurement_id=G-E2ETEST');
     expect(captures[0].url).toContain('api_secret=e2e-fake-secret');
 
@@ -62,7 +62,7 @@ test('Google Analytics auto-installs, tracks visible use, disconnects, and respe
     await win.clock.runFor(1100);
     await expect.poll(() => events().some(event => event.params.page_title === 'Inbox')).toBe(true);
     await win.clock.fastForward(60000);
-    await expect.poll(() => events().some(event => event.name === 'user_engagement')).toBe(true);
+    await expect.poll(() => events().some(event => event.name === 'app_engagement')).toBe(true);
     for (const event of events()) {
       expect(event.params.session_id).toEqual(expect.any(Number));
       expect(Number(event.params.engagement_time_msec)).toBeGreaterThan(0);
@@ -140,6 +140,7 @@ test('Google Analytics packaged defaults collect in built Electron without user 
     expect(captures[0].url).toContain('measurement_id=G-RELEASETEST');
     expect(captures[0].url).toContain('api_secret=fake-release-secret');
     expect(JSON.parse(captures[0].body).events.map((event: { name: string }) => event.name)).toEqual(['app_open', 'page_view']);
+    expect(JSON.parse(captures[0].body).client_id).toMatch(/^\d+\.\d+$/);
     const settings = await app.window.evaluate(async () => window.cc.pluginApps.getSettings('google-analytics'));
     expect(settings.values.enabled).toBe(true);
     expect(settings.values.measurementId).toBe('G-RELEASETEST');

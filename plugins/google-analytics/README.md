@@ -20,9 +20,10 @@ an uninstall is respected on the next app launch.
 | --- | --- | --- |
 | `app_open` | A visible app window opens, or tracking reconnects | Session id and engagement time |
 | `page_view` | Initial visible page and changes of section | Fixed page title and synthetic URL, session id, engagement time |
-| `user_engagement` | Every minute while the app document is visible | Session id and engagement time |
+| `app_engagement` | Every minute while the app document is visible | Session id and engagement time |
 
-An installation has a locally stored random UUID (`client_id`). Multiple windows
+An installation has a locally stored random UUID, converted without loss to
+GA4's numeric `<number>.<number>` `client_id` format. Multiple windows
 share an installation and a session; a session expires after 30 minutes without
 recorded activity. Heartbeats indicate a **visible app**, not proof that a person
 is actively typing. Hidden/minimized windows do not send heartbeats. Engagement
@@ -43,7 +44,7 @@ account or email, and counts installations rather than unique people.
 In GA4, use **Reports → Realtime** for recent activity and pages. The plugin
 includes `session_id` and `engagement_time_msec`, which
 [Google recommends for Realtime](https://developer.chrome.com/docs/extensions/how-to/integrate/google-analytics-4#use_recommended_parameters_session_id_and_engagement_time_msec).
-Explore `app_open`, `page_view`, and `user_engagement` to see opens and section
+Explore `app_open`, `page_view`, and `app_engagement` to see opens and section
 usage. For comparable page numbers, enable page tracking in PostHog as well;
 its existing agent lifecycle events are a different activity measure.
 

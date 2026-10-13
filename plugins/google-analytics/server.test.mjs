@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import plugin from './server.mjs';
 
 const UUID = '6d5f800e-6c45-4c5b-a01f-f7aeab1c932d';
+const CLIENT_ID = '7881158672356035675.11538213099913646893';
 const input = (kind = 'open', page = 'home', extra = {}) => ({ kind, page, viewId: UUID, engagementMs: 0, ...extra });
 
 function host(overrides = {}, saved) {
@@ -67,7 +68,7 @@ describe('Google Analytics collection', () => {
     expect(url.href).toBe('https://www.google-analytics.com/mp/collect?measurement_id=G-TEST123&api_secret=secret-value');
     expect(init).toMatchObject({ method: 'POST', redirect: 'error', signal: expect.any(AbortSignal) });
     expect(sent()).toEqual({
-      client_id: UUID, consent: { ad_user_data: 'DENIED', ad_personalization: 'DENIED' },
+      client_id: CLIENT_ID, consent: { ad_user_data: 'DENIED', ad_personalization: 'DENIED' },
       events: [
         { name: 'app_open', params: { session_id: 1800000000000, engagement_time_msec: 1 } },
         { name: 'page_view', params: { session_id: 1800000000000, engagement_time_msec: 1, page_title: 'Inbox', page_location: 'https://app.zana.ai/inbox' } }
@@ -81,8 +82,26 @@ describe('Google Analytics collection', () => {
   it('reuses a persisted client id, replacing malformed stored values', async () => {
     const saved = '04ad4935-0e30-49df-9448-8a365782bfb6';
     const h = host({}, saved); await h.track();
-    expect(sent().client_id).toBe(saved); expect(h.zcc.storage.kv.set).not.toHaveBeenCalled();
-    await host({}, 'private-title').track(); expect(sent(1).client_id).toBe(UUID);
+    expect(sent().client_id).toBe('337006039342795231.10684942081937555382');
+    expect(h.zcc.storage.kv.set).not.toHaveBeenCalled();
+    await host({}, saved).track(); expect(sent(1).client_id).toBe(sent().client_id);
+    await host({}, 'private-title').track(); expect(sent(2).client_id).toBe(CLIENT_ID);
+  });
+
+  it.each([
+    ['00000000-0000-0000-0000-000000000001', '0.1'],
+    ['FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF', '18446744073709551615.18446744073709551615']
+  ])('converts the complete installation UUID %s without rounding or changing storage', async (saved, expected) => {
+    const h = host({}, saved); await h.track();
+    expect(sent().client_id).toBe(expected);
+    expect(h.kv.get('clientId')).toBe(saved);
+    expect(h.zcc.storage.kv.set).not.toHaveBeenCalled();
+  });
+
+  it.each(['-'.repeat(36), 'a'.repeat(36), 123])('replaces malformed stored installation ids: %s', async (saved) => {
+    const h = host({}, saved); expect(await h.track()).toEqual({ ok: true });
+    expect(sent().client_id).toBe(CLIENT_ID);
+    expect(h.kv.get('clientId')).toBe(UUID);
   });
 
   it('sends page changes and presence in the same session without any page data on presence', async () => {
@@ -90,7 +109,7 @@ describe('Google Analytics collection', () => {
     await h.track(input('page', 'agents', { engagementMs: 900 }));
     await h.track(input('heartbeat', 'agents', { engagementMs: 60000 }));
     expect(sent(1).events).toEqual([{ name: 'page_view', params: { session_id: 1800000000000, engagement_time_msec: 900, page_title: 'Agents', page_location: 'https://app.zana.ai/agents' } }]);
-    expect(sent(2).events).toEqual([{ name: 'user_engagement', params: { session_id: 1800000000000, engagement_time_msec: 60000 } }]);
+    expect(sent(2).events).toEqual([{ name: 'app_engagement', params: { session_id: 1800000000000, engagement_time_msec: 60000 } }]);
   });
 
   it('measures presence with page tracking off', async () => {
@@ -98,7 +117,7 @@ describe('Google Analytics collection', () => {
     expect(sent().events.map(e => e.name)).toEqual(['app_open']);
     expect(await h.track(input('page', 'agents'))).toEqual({ ok: true, collected: false });
     expect(fetch).toHaveBeenCalledTimes(1);
-    await h.track(input('heartbeat')); expect(sent(1).events[0].name).toBe('user_engagement');
+    await h.track(input('heartbeat')); expect(sent(1).events[0].name).toBe('app_engagement');
   });
 
   it.each([

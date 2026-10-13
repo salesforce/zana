@@ -6,6 +6,13 @@ const TIMEOUT_MS = 5000;
 const MAX_VIEWS = 32;
 const MAX_IN_FLIGHT = 4;
 const GOOGLE_ENDPOINT = 'https://www.google-analytics.com/mp/collect';
+const INSTALLATION_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+
+/** GA4 requires <number>.<number>; retain every bit of the stored random UUID. */
+function googleClientId(id) {
+  const hex = id.replaceAll('-', '');
+  return `${BigInt(`0x${hex.slice(0, 16)}`)}.${BigInt(`0x${hex.slice(16)}`)}`;
+}
 
 /** A loopback collector is available only to isolated E2E, never as a UI setting. */
 function endpoint() {
@@ -57,10 +64,10 @@ export default function plugin(zcc) {
     if (!clientIdPromise) {
       clientIdPromise = (async () => {
         const saved = await zcc.storage.kv.get('clientId');
-        if (typeof saved === 'string' && /^[a-f0-9-]{36}$/i.test(saved)) return saved;
+        if (typeof saved === 'string' && INSTALLATION_ID.test(saved)) return googleClientId(saved);
         const id = crypto.randomUUID();
         await zcc.storage.kv.set('clientId', id);
-        return id;
+        return googleClientId(id);
       })();
     }
     try { return await clientIdPromise; }
@@ -106,7 +113,8 @@ export default function plugin(zcc) {
       const common = { session_id: session.id, engagement_time_msec: Math.max(1, engagementMs) };
       const events = [];
       if (kind === 'open') events.push({ name: 'app_open', params: common });
-      if (kind === 'heartbeat') events.push({ name: 'user_engagement', params: common });
+      // user_engagement is reserved by GA4 and rejected by Measurement Protocol.
+      if (kind === 'heartbeat') events.push({ name: 'app_engagement', params: common });
       if (values.trackPageViews && kind !== 'heartbeat') events.push({
         name: 'page_view', params: {
           ...common, engagement_time_msec: kind === 'open' ? 1 : common.engagement_time_msec,
