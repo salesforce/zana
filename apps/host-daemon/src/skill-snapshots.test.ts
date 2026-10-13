@@ -116,3 +116,35 @@ it('copies main-authorized builtin symlinks and still confines their descendants
   await symlink(join(source, 'SKILL.md'), join(builtin, 'escape'));
   await expect(store.capture({})).rejects.toThrow('escapes');
 });
+it('drops off skills and pins manual skills to slash-only for every harness', async () => {
+  const { dir, store } = await setup();
+  const root = join(dir, 'skills-generated');
+  for (const name of ['quiet', 'gone']) {
+    await mkdir(join(root, name), { recursive: true });
+    await writeFile(join(root, name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name} skill\n---\nbody`);
+  }
+  await writeFile(join(dir, 'skill-policy.json'), JSON.stringify({ version: 1, skills: { quiet: 'manual', gone: 'off', '__proto__': 'off', 'bad/name': 'off' } }));
+  const roots = await store.capture({});
+  const path = codexPath(roots);
+  expect((await readdir(path)).sort()).toEqual(['demo', 'quiet']);
+  expect(await readFile(join(path, 'quiet', 'SKILL.md'), 'utf8')).toBe('---\nname: quiet\ndescription: quiet skill\ndisable-model-invocation: true\n---\nbody');
+  expect(await readFile(join(path, 'quiet', 'agents', 'openai.yaml'), 'utf8')).toContain('allow_implicit_invocation: false');
+  expect(await readFile(join(path, 'demo', 'SKILL.md'), 'utf8')).not.toContain('disable-model-invocation');
+  const acp = roots.find(row => row.id === 'injected-0:acp');
+  expect(acp && 'skills' in acp ? acp.skills?.map(skill => skill.name) : []).toEqual(['demo']);
+  // Back to on: a fresh snapshot is cut, the old one stays immutable for its owner.
+  await writeFile(join(dir, 'skill-policy.json'), JSON.stringify({ version: 1, skills: {} }));
+  const next = codexPath(await store.capture({}));
+  expect(next).not.toBe(path);
+  expect((await readdir(next)).sort()).toEqual(['demo', 'gone', 'quiet']);
+  expect(await readFile(join(next, 'quiet', 'SKILL.md'), 'utf8')).not.toContain('disable-model-invocation');
+});
+it('keeps an authored Codex policy file for manual skills', async () => {
+  const { dir, source, store } = await setup();
+  await mkdir(join(source, 'agents'));
+  await writeFile(join(source, 'agents', 'openai.yaml'), 'interface:\n  display_name: Demo\n');
+  await writeFile(join(dir, 'skill-policy.json'), JSON.stringify({ version: 1, skills: { demo: 'manual' } }));
+  const path = codexPath(await store.capture({}));
+  expect(await readFile(join(path, 'demo', 'agents', 'openai.yaml'), 'utf8')).toBe('interface:\n  display_name: Demo\n');
+  expect(await readFile(join(path, 'demo', 'SKILL.md'), 'utf8')).toContain('disable-model-invocation: true');
+});

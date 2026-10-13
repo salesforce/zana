@@ -19,7 +19,9 @@ import type {
   SkillBundleInput,
   SkillEntry
 } from '@zana-ai/zcc-domain/product';
-import { listSkills, setManyEnabled, type ListSkillsOptions } from './skills.js';
+import { listSkills, type ListSkillsOptions } from './skills.js';
+import { listInjectedSkillEntries } from './injected-skill-entries.js';
+import { applySkillStates, type SkillStateUpdate } from './skill-state.js';
 
 import { electronZccDataDir } from '../../electron-data-dir.js';
 
@@ -55,6 +57,11 @@ function readBundleFile(path: string): SkillBundle | null {
   } catch {
     return null;
   }
+}
+
+/** Both owners key state by short name; the id prefix tells them apart. */
+function stateKey(skill: SkillEntry): string {
+  return `${skill.allHarnesses ? 'injected' : skill.tool}:${skill.name}`;
 }
 
 export class SkillBundlesStore extends EventEmitter {
@@ -153,7 +160,10 @@ export class SkillBundlesStore extends EventEmitter {
    *
    * skillOverrides is keyed by short skill name (per Claude Code docs); bundle
    * skillIds are qualified `${source}:${qualifiedName}` ids — we resolve via
-   * `listSkills()` to bridge the two.
+   * `listSkills()` to bridge the two. ZCC-injected skills (`zcc:` ids) resolve
+   * against the injected catalogue and write the ZCC load policy instead.
+   * Ids that resolve to nothing writable (other harnesses, removed skills)
+   * count as skipped.
    */
   async apply(
     id: string,
@@ -164,38 +174,39 @@ export class SkillBundlesStore extends EventEmitter {
     if (!bundle) {
       return { ok: false, applied: 0, skippedPlugin: 0, message: `Bundle not found: ${id}` };
     }
-    const all = await listSkills(options);
+    const all = [...(await listSkills(options)), ...listInjectedSkillEntries(this.dataDir())];
     const byId = new Map<string, SkillEntry>(all.map((s) => [s.id, s]));
-    const toEnableNames = new Set<string>();
+    const selected = new Map<string, SkillEntry>();
     let skippedPlugin = 0;
     for (const sid of bundle.skillIds) {
       const skill = byId.get(sid);
-      if (!skill) continue;
-      // Read-only skills (Claude plugin skills, Cursor rules, …) can't be
-      // toggled from settings.json — count them as skipped. `skippedPlugin`
-      // keeps its historical name; it now means "skipped, not togglable".
-      if (!skill.toggle.supported) {
+      // Read-only or unresolvable skills (Claude plugin skills, Cursor rules,
+      // other harnesses' native skills, …) are skipped. `skippedPlugin` keeps
+      // its historical name; it now means "skipped, not togglable".
+      if (!skill || !skill.toggle.supported) {
         skippedPlugin += 1;
         continue;
       }
-      toEnableNames.add(skill.name);
+      selected.set(stateKey(skill), skill);
     }
-    const updates: Array<{ name: string; enabled: boolean }> = [];
-    if (mode === 'exclusive') {
-      const seen = new Set<string>();
-      for (const s of all) {
-        if (!s.toggle.supported) continue;
-        if (seen.has(s.name)) continue;
-        seen.add(s.name);
-        updates.push({ name: s.name, enabled: toEnableNames.has(s.name) });
-      }
-    } else {
-      for (const name of toEnableNames) {
-        updates.push({ name, enabled: true });
-      }
+    const updates: SkillStateUpdate[] = [];
+    const candidates = mode === 'exclusive' ? all.filter((s) => s.toggle.supported) : [...selected.values()];
+    const seen = new Set<string>();
+    for (const s of candidates) {
+      const key = stateKey(s);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const pick = selected.get(key);
+      // Author-pinned manual skills can't be `on`; keep them at their lowest listed state.
+      const on = pick?.toggle.states?.includes('on') === false ? 'manual' : 'on';
+      updates.push({ id: s.id, name: s.name, state: pick ? on : 'off' });
     }
-    await setManyEnabled(updates);
-    return { ok: true, applied: updates.length, skippedPlugin };
+    const written = await applySkillStates(this.dataDir(), updates);
+    return { ok: true, applied: written.applied, skippedPlugin };
+  }
+
+  private dataDir(): string {
+    return electronZccDataDir();
   }
 
   /** Path of the bundles dir (for "Open in Finder"). */

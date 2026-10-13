@@ -4,6 +4,7 @@ export type {
   SkillSource,
   SkillTool,
   SkillToggleState,
+  SkillState,
   SlashCommand,
   SkillEntry,
   SkillBundle,
@@ -12,3 +13,5 @@ export type {
   SkillBundleApplyResult,
   McpServer
 } from './product.js';
+
+export { SKILL_STATES, isSkillState } from './product.js';

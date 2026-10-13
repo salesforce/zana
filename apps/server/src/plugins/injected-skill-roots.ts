@@ -20,7 +20,11 @@ export interface InjectedSkillRootManifest {
   directoryRoots: string[];
   /** Main-authorized builtin skill targets for the filtered staging directory. */
   builtinSkillTargets?: string[];
+  /** Display owner per directory root (plugin id, or `built-in`). */
+  rootOwners?: Record<string, string>;
 }
+
+export const BUILTIN_SKILL_OWNER = 'built-in';
 
 /**
  * Always-on skills shipped next to this module (`builtin-skills/<name>/SKILL.md`).
@@ -123,7 +127,8 @@ export function collectPluginSkillDirectoryRoots(args: {
 
 export function writeInjectedSkillRootManifest(
   dataDir: string,
-  directoryRoots: readonly string[]
+  directoryRoots: readonly string[],
+  owners: Readonly<Record<string, string>> = {}
 ): void {
   mkdirSync(dataDir, { recursive: true });
   const unique = [...new Set(directoryRoots.filter((root) => existsSync(root)))].sort();
@@ -140,7 +145,10 @@ export function writeInjectedSkillRootManifest(
   const destination = injectedSkillRootsPath(dataDir);
   const temporary = `${destination}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(temporary, `${JSON.stringify({ directoryRoots: unique, builtinSkillTargets } satisfies InjectedSkillRootManifest)}\n`, { mode: 0o600 });
+    const rootOwners = Object.fromEntries(
+      unique.flatMap((root) => (owners[root] ? [[root, owners[root]]] : []))
+    );
+    writeFileSync(temporary, `${JSON.stringify({ directoryRoots: unique, builtinSkillTargets, rootOwners } satisfies InjectedSkillRootManifest)}\n`, { mode: 0o600 });
     renameSync(temporary, destination);
   } finally { rmSync(temporary, { force: true }); }
 }

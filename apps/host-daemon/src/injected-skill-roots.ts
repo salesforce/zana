@@ -17,6 +17,42 @@ export function readBuiltinSkillTargets(dataDir: string): ReadonlySet<string> {
   } catch { return new Set(); }
 }
 
+export type InjectedSkillPolicyState = 'manual' | 'off';
+
+const POLICY_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * Operator opt-outs written by the product server (`skill-policy.json`).
+ * Absent = on. `off` drops the skill from snapshots; `manual` keeps it
+ * invocable as `/name` but hides it from the model's skill listing.
+ */
+export function readInjectedSkillPolicy(dataDir: string): ReadonlyMap<string, InjectedSkillPolicyState> {
+  const out = new Map<string, InjectedSkillPolicyState>();
+  try {
+    const parsed = JSON.parse(readFileSync(join(dataDir, 'skill-policy.json'), 'utf8'));
+    const skills = parsed?.skills;
+    if (!skills || typeof skills !== 'object' || Array.isArray(skills)) return out;
+    for (const [name, state] of Object.entries(skills as Record<string, unknown>)) {
+      if (POLICY_SKILL_NAME.test(name) && name !== '__proto__' && (state === 'manual' || state === 'off')) out.set(name, state);
+    }
+  } catch { /* everything on */ }
+  return out;
+}
+
+/** Claude Code and Pi honour this frontmatter key: keep `/name`, hide from the model. */
+export function withModelInvocationDisabled(body: string): string {
+  const fence = body.match(/^---(\r?\n)([\s\S]*?)(\r?\n---)/);
+  if (!fence) return `---\ndisable-model-invocation: true\n---\n${body}`;
+  const [whole, eol, head, close] = fence;
+  const next = /^disable-model-invocation:.*$/m.test(head)
+    ? head.replace(/^disable-model-invocation:.*$/m, 'disable-model-invocation: true')
+    : `${head}${eol}disable-model-invocation: true`;
+  return `---${eol}${next}${close}${body.slice(whole.length)}`;
+}
+
+/** Codex reads implicit-invocation policy from `<skill>/agents/openai.yaml`. */
+export const CODEX_MANUAL_SKILL_POLICY = 'policy:\n  allow_implicit_invocation: false\n';
+
 function skillDescriptionFromFrontmatter(body: string, fallback: string): string {
   const fence = body.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fence) return fallback;
@@ -24,7 +60,9 @@ function skillDescriptionFromFrontmatter(body: string, fallback: string): string
   return desc?.[1]?.trim() || fallback;
 }
 
-function discoverSkills(root: string): Array<{ name: string; description: string }> {
+type DiscoveredSkill = { name: string; description: string; manual: boolean };
+
+function discoverSkills(root: string): DiscoveredSkill[] {
   if (!existsSync(root)) return [];
   let entries;
   try {
@@ -32,18 +70,22 @@ function discoverSkills(root: string): Array<{ name: string; description: string
   } catch {
     return [];
   }
-  const skills: Array<{ name: string; description: string }> = [];
+  const skills: DiscoveredSkill[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const skillFile = join(root, entry.name, 'SKILL.md');
     if (!existsSync(skillFile)) continue;
     let description = entry.name;
+    let manual = false;
     try {
-      description = skillDescriptionFromFrontmatter(readFileSync(skillFile, 'utf8'), entry.name);
+      const body = readFileSync(skillFile, 'utf8');
+      description = skillDescriptionFromFrontmatter(body, entry.name);
+      const fence = body.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+      manual = !!fence && /^disable-model-invocation:\s*true\s*$/m.test(fence[1]);
     } catch {
       /* keep the directory name */
     }
-    skills.push({ name: entry.name, description });
+    skills.push({ name: entry.name, description, manual });
   }
   return skills;
 }
@@ -94,11 +136,12 @@ export function expandDirectoryRootsToRuntimeSkillRoots(
       providerId: 'pi',
       skillDirectoryRootPath: root
     });
+    // ACP has no native skills: ZCC lists them in the session instructions, so manual ones stay out.
     out.push({
       id: `${id}:acp`,
       providerId: 'acp',
       skillDirectoryRootPath: root,
-      skills
+      skills: skills.filter((skill) => !skill.manual).map(({ name, description }) => ({ name, description }))
     });
   }
   return out;
@@ -114,12 +157,13 @@ export function loadRuntimeSkillRoots(
   ];
 }
 
-/** Stable hash of injected skill directory roots + discovered skill names. */
+/** Stable hash of injected skill directory roots + discovered skill names + load policy. */
 export function hashInjectedSkillCatalog(dataDir: string): string {
   const roots = readInjectedSkillDirectoryRoots(dataDir).slice().sort();
   const payload = roots.map((root) => ({
     root,
     skills: discoverSkills(root).map((skill) => `${skill.name}:${skill.description}`).sort()
   }));
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  const policy = [...readInjectedSkillPolicy(dataDir)].sort(([a], [b]) => a.localeCompare(b));
+  return createHash('sha256').update(JSON.stringify({ payload, policy })).digest('hex');
 }

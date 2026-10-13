@@ -1089,6 +1089,7 @@ const api: CcApi = {
     setEnabled: (name: string, enabled: boolean) =>
       ipcRenderer.invoke(IPC.skills.setEnabled, name, enabled),
     setManyEnabled: (updates) => ipcRenderer.invoke(IPC.skills.setManyEnabled, updates),
+    setState: (updates) => ipcRenderer.invoke(IPC.skills.setState, updates),
     readHooks: () => ipcRenderer.invoke(IPC.skills.readHooks),
     reveal: (skillId: string, projectPath?: string) =>
       ipcRenderer.invoke(IPC.skills.reveal, skillId, projectPath),

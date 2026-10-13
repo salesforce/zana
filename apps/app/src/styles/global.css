@@ -18463,6 +18463,44 @@ body.resizing-col .explorer-resizer::after {
   margin: 2px 0 0 0;
 }
 
+.skills-state {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 1px;
+}
+
+.skills-state-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+}
+
+.skills-state-btn + .skills-state-btn {
+  border-left: 1px solid var(--border);
+}
+
+.skills-state-btn:hover {
+  color: var(--text-primary);
+}
+
+.skills-state-btn.is-active {
+  color: #fff;
+  background: var(--accent-blue);
+}
+
+.skills-state-btn--manual.is-active {
+  background: var(--accent-amber, #b7791f);
+}
+
+.skills-state-btn--off.is-active {
+  background: var(--text-muted);
+}
+
 .skills-row-body {
   min-width: 0;
   display: flex;

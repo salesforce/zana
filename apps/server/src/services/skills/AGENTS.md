@@ -34,3 +34,13 @@ Where: Add new global CLI skill to `BUNDLED_SKILLS` once (not in the `apps/deskt
 Guard: `apps/server/src/services/skills/__tests__/redeploy-bundled-skills.test.ts`. Keep `zcc-cli`, `zcc guide` chapters, CLI `--help` in lockstep (`docs/cli-guide-and-skill.md`).
 
 When changing: Add to `BUNDLED_SKILLS` for new global skill; run test; update guide + CLI help if CLI skill.
+
+## Skill load policy (on / manual / off)
+
+Invariants:
+- Every skill defaults to **on**; manual/off are operator opt-outs. Never ship a default that hides a freshly installed plugin's skills.
+- ZCC-injected skills (`zcc:<owner>/<name>` rows) store state in `<dataDir>/skill-policy.json` (`skill-policy.ts`, atomic + serialized). Claude Code user/project skills store it in `skillOverrides` (`manual` = `user-invocable-only`). Routing lives in `skill-state.ts`; anything else is read-only.
+- Enforcement is in the host daemon at snapshot time (`apps/host-daemon/src/skill-snapshots.ts`): `off` drops the skill dir; `manual` rewrites `SKILL.md` with `disable-model-invocation: true` (Claude, Pi) and adds `agents/openai.yaml` `allow_implicit_invocation: false` (Codex); ACP's instruction listing omits manual skills. Claude ignores `skillOverrides` for plugin-sourced skills, so injected skills must be filtered there, not via settings.
+- Policy is keyed by skill directory name, and `hashInjectedSkillCatalog` includes it. Changes apply to new threads; running threads keep their immutable snapshot.
+
+When changing: keep `readSkillPolicy` (server) and `readInjectedSkillPolicy` (host daemon) validation identical; run `skill-snapshots.test.ts`, `injected-skill-roots.test.ts`, and the `apps/server/src/services/skills` suite.

@@ -4957,6 +4957,22 @@ export interface SkillToggleState {
   enabled: boolean;
   /** Shown as a hint when `supported` is false (e.g. "Managed by /plugin"). */
   reason?: string;
+  /** Load state; absent means the row only knows `enabled`. */
+  state?: SkillState;
+  /** States the owner can enforce. Present ⇒ render a tri-state control instead of a checkbox. */
+  states?: readonly SkillState[];
+}
+
+/**
+ * Opt-in context optimisation. Every skill starts `on` (listed to the model);
+ * `manual` keeps it reachable as `/name` but out of the model's skill listing;
+ * `off` removes it entirely.
+ */
+export type SkillState = 'on' | 'manual' | 'off';
+export const SKILL_STATES: readonly SkillState[] = ['on', 'manual', 'off'];
+
+export function isSkillState(value: unknown): value is SkillState {
+  return value === 'on' || value === 'manual' || value === 'off';
 }
 
 /**
@@ -5021,6 +5037,8 @@ export interface SkillEntry {
   allowedTools?: string[];
   /** Per-tool toggle capability + current state (see {@link SkillToggleState}). */
   toggle: SkillToggleState;
+  /** Injected by ZCC into every harness session, not owned by `tool`. */
+  allHarnesses?: boolean;
   /**
    * Derived convenience mirror of `toggle.enabled`, retained so existing
    * consumers (bundle apply, older UI) keep working. New UI reads `toggle`.

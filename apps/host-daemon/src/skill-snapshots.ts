@@ -3,7 +3,14 @@ import { constants } from 'node:fs';
 import { mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import type { AgentRuntimeSkillRoot } from '@zana-ai/zcc-agent-runtime';
-import { expandDirectoryRootsToRuntimeSkillRoots, readInjectedSkillDirectoryRoots, readBuiltinSkillTargets } from './injected-skill-roots.js';
+import {
+  CODEX_MANUAL_SKILL_POLICY,
+  expandDirectoryRootsToRuntimeSkillRoots,
+  readBuiltinSkillTargets,
+  readInjectedSkillDirectoryRoots,
+  readInjectedSkillPolicy,
+  withModelInvocationDisabled
+} from './injected-skill-roots.js';
 import { discoverNativeSkillRoots } from './native-skill-discovery.js';
 
 export const SKILL_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
@@ -52,27 +59,39 @@ export function createSkillSnapshotStore(dataDir: string) {
         }
         const sources = readInjectedSkillDirectoryRoots(dataDir);
         const builtinTargets = readBuiltinSkillTargets(dataDir);
+        const policy = readInjectedSkillPolicy(dataDir);
         if (sources.length > 64) throw new Error('Too many injected skill roots');
         const files: CapturedFile[] = [];
         let bytes = 0;
         let entries = 0;
         const hash = createHash('sha256').update(JSON.stringify(sources));
+        const capture = (path: string, content: Buffer, mode: number) => {
+          bytes += content.length;
+          if (bytes > SKILL_SNAPSHOT_MAX_BYTES) throw new Error('Skill snapshot exceeds 64 MiB');
+          hash.update(JSON.stringify([path, mode, content.length])).update(content);
+          files.push({ path, content, mode });
+        };
         for (const [index, source] of sources.entries()) {
           const base = await realpath(source);
-          const walk = async (dir: string, prefix: string, depth: number, anchor = base): Promise<void> => {
+          const manualSkills = new Set<string>();
+          // Depth-0 children are skill folders; `skill` names the one being walked.
+          const walk = async (dir: string, prefix: string, depth: number, anchor = base, skill = ''): Promise<void> => {
             if (depth > 16) throw new Error('Skill snapshot directory nesting exceeds the limit');
             const children = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
             for (const entry of children) {
               if (++entries > MAX_FILES) throw new Error('Skill snapshot has too many files');
+              const owner = depth === 0 ? entry.name : skill;
+              const state = policy.get(owner);
+              if (depth === 0 && state === 'off') continue;
               const path = await realpath(join(dir, entry.name));
               const dest = join(prefix, entry.name);
               if (depth === 0 && entry.isSymbolicLink() && builtinTargets.has(path)) {
-                await walk(path, dest, depth + 1, path);
+                await walk(path, dest, depth + 1, path, owner);
                 continue;
               }
               const within = relative(anchor, path);
               if (within === '..' || within.startsWith(`..${sep}`)) throw new Error('Skill snapshot symlink escapes its root');
-              if (entry.isDirectory()) { await walk(path, dest, depth + 1, anchor); continue; }
+              if (entry.isDirectory()) { await walk(path, dest, depth + 1, anchor, owner); continue; }
               const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
               try {
                 const stat = await handle.stat();
@@ -86,16 +105,21 @@ export function createSkillSnapshotStore(dataDir: string) {
                   size += bytesRead;
                 }
                 if (size > stat.size) throw new Error('Skill file changed while taking snapshot');
-                const content = buffer.subarray(0, size);
-                bytes += content.length;
-                if (bytes > SKILL_SNAPSHOT_MAX_BYTES) throw new Error('Skill snapshot exceeds 64 MiB');
-                const mode = stat.mode & 0o100 ? 0o700 : 0o600;
-                hash.update(JSON.stringify([dest, mode, content.length])).update(content);
-                files.push({ path: dest, content, mode });
+                let content = buffer.subarray(0, size);
+                if (state === 'manual' && depth === 1 && entry.name === 'SKILL.md') {
+                  content = Buffer.from(withModelInvocationDisabled(content.toString('utf8')), 'utf8');
+                  manualSkills.add(owner);
+                }
+                capture(dest, content, stat.mode & 0o100 ? 0o700 : 0o600);
               } finally { await handle.close(); }
             }
           };
           await walk(base, String(index), 0);
+          const captured = new Set(files.map((file) => file.path));
+          for (const skill of [...manualSkills].sort()) {
+            const codexPolicy = join(String(index), skill, 'agents', 'openai.yaml');
+            if (!captured.has(codexPolicy)) capture(codexPolicy, Buffer.from(CODEX_MANUAL_SKILL_POLICY, 'utf8'), 0o600);
+          }
         }
         const id = hash.digest('hex');
         let roots = catalogs.get(id);

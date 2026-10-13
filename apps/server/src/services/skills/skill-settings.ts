@@ -2,6 +2,7 @@ import { readFile, writeFile, rename, mkdir, rm } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { isSkillState, type SkillState } from '@zana-ai/zcc-domain/product';
 
 function settingsFile(): string {
   const home = process.env.ZCC_CLAUDE_HOME || homedir();
@@ -102,6 +103,44 @@ function disabledNamesFromOverrides(settings: Record<string, unknown>): Set<stri
     if (value === 'off') out.add(name);
   }
   return out;
+}
+
+/** Claude Code's `skillOverrides` value for each ZCC state ("manual" = hidden from the model, `/name` kept). */
+const OVERRIDE_FOR_STATE: Record<SkillState, string> = {
+  on: 'on',
+  manual: 'user-invocable-only',
+  off: 'off'
+};
+
+export async function skillOverrideStates(): Promise<Map<string, SkillState>> {
+  return serializeSettings(async () => {
+    const overrides = (await readSettingsWithMigration()).skillOverrides;
+    const out = new Map<string, SkillState>();
+    if (!overrides || typeof overrides !== 'object') return out;
+    for (const [name, value] of Object.entries(overrides as Record<string, unknown>)) {
+      if (value === 'off') out.set(name, 'off');
+      else if (value === 'user-invocable-only') out.set(name, 'manual');
+    }
+    return out;
+  });
+}
+
+export function setSkillStates(updates: ReadonlyArray<{ name: string; state: SkillState }>): Promise<void> {
+  const valid = updates.filter(
+    ({ name, state }) => typeof name === 'string' && name.length > 0 && name !== '__proto__' && isSkillState(state)
+  );
+  if (!valid.length) return Promise.resolve();
+  return serializeSettings(async () => {
+    const settings = await readSettingsWithMigration();
+    const raw = settings.skillOverrides;
+    const overrides =
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? ({ ...raw } as Record<string, string>)
+        : {};
+    for (const { name, state } of valid) overrides[name] = OVERRIDE_FOR_STATE[state];
+    settings.skillOverrides = overrides;
+    await writeSettings(settings);
+  });
 }
 
 export function setSkillEnabled(name: string, enabled: boolean): Promise<void> {

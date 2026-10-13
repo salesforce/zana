@@ -510,6 +510,7 @@ export const IPC = {
     list: 'skills:list',
     setEnabled: 'skills:setEnabled',
     setManyEnabled: 'skills:setManyEnabled',
+    setState: 'skills:setState',
     readHooks: 'skills:readHooks',
     reveal: 'skills:reveal',
     onChanged: 'skills:onChanged',

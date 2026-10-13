@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   resolve: vi.fn(),
   disabled: vi.fn(),
+  manual: new Set<string>(),
+  injected: vi.fn(),
   primary: { id: 'local' },
   environment: vi.fn()
 }));
@@ -12,7 +14,16 @@ vi.mock('@zana-ai/zcc-db', () => ({
 vi.mock('../../plugins/plugin-host-rpc.js', () => ({
   callPluginHostRpc: (...args: unknown[]) => mocks.resolve(...args)
 }));
-vi.mock('./skill-settings.js', () => ({ disabledSkillNames: () => mocks.disabled() }));
+vi.mock('./skill-settings.js', () => ({
+  skillOverrideStates: async () =>
+    new Map([
+      ...[...mocks.manual].map((name) => [name, 'manual'] as const),
+      ...[...((await mocks.disabled()) as Set<string>)].map((name) => [name, 'off'] as const)
+    ])
+}));
+vi.mock('./injected-skill-entries.js', () => ({
+  listInjectedSkillEntries: (...args: unknown[]) => mocks.injected(...args)
+}));
 import { listNativeCapabilities } from './native-capabilities.js';
 import { registerThreadProvider } from '../threads/thread-provider-catalog.js';
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
@@ -68,6 +79,8 @@ const row = (name: string, extra = {}) => ({
 beforeEach(() => {
   mocks.resolve.mockReset().mockResolvedValue({ skills: [], commands: [] });
   mocks.disabled.mockReset().mockResolvedValue(new Set());
+  mocks.manual.clear();
+  mocks.injected.mockReset().mockReturnValue([]);
   mocks.environment.mockReset();
 });
 afterEach(() => {
@@ -230,4 +243,25 @@ it('honors execution-host overrides remotely without consulting server settings'
   expect(result.skills.find((row) => row.name === 'check')?.enabled).toBe(false);
   expect(mocks.disabled).not.toHaveBeenCalled();
   expect(call.mock.calls[0][0].command.nativeRoots.resolved).toEqual({ skills: [], commands: [] });
+});
+
+it('reports tri-state load policy for settings-backed skills and appends ZCC-injected rows', async () => {
+  provider();
+  const { ctx, call } = context();
+  ctx.dataDir = '/zcc-data';
+  mocks.manual.add('quiet');
+  mocks.disabled.mockResolvedValue(new Set(['gone']));
+  mocks.injected.mockReturnValue([{ id: 'zcc:gus/gus-work', name: 'gus-work', allHarnesses: true }]);
+  call.mockResolvedValue({
+    commands: [row('loud'), row('quiet'), row('gone'), row('pinned', { disableModelInvocation: true })]
+  });
+  const result = await listNativeCapabilities(ctx, { projectId: 'p' });
+  const byName = Object.fromEntries(result.skills.map((skill) => [skill.name, skill]));
+  expect(mocks.injected).toHaveBeenCalledWith('/zcc-data', 'local');
+  expect(byName['gus-work']).toMatchObject({ allHarnesses: true });
+  expect(byName.loud.toggle).toMatchObject({ supported: true, state: 'on', states: ['on', 'manual', 'off'] });
+  expect(byName.quiet.toggle).toMatchObject({ state: 'manual', enabled: true });
+  expect(byName.gone.toggle).toMatchObject({ state: 'off', enabled: false });
+  expect(byName.pinned.toggle).toMatchObject({ state: 'manual', states: ['manual', 'off'] });
+  expect(result.commands.map((command) => command.name)).toEqual(['/loud', '/quiet', '/pinned']);
 });

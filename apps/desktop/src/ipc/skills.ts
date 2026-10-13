@@ -4,6 +4,8 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { listCommands } from '@zana-ai/zcc-server/services/skills/commands';
 import { listSkills, readHooks, revealSkillDir, setManyEnabled as setManySkillsEnabled, setSkillEnabled } from '@zana-ai/zcc-server/services/skills/skills';
+import { applySkillStates, type SkillStateUpdate } from '@zana-ai/zcc-server/services/skills/skill-state';
+import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import type { SkillBundleApplyMode, SkillBundleInput } from '@zana-ai/zcc-domain/product';
 
 export function registerSkillsIpc(): void {
@@ -22,6 +24,11 @@ export function registerSkillsIpc(): void {
     IPC.skills.setManyEnabled,
     (updates: Array<{ name: string; enabled: boolean }>) => setManySkillsEnabled(updates),
     () => undefined
+  );
+  ctx.safeHandle(
+    IPC.skills.setState,
+    (updates: SkillStateUpdate[]) => applySkillStates(electronZccDataDir(), updates),
+    () => ({ ok: false, applied: 0, rejected: 0 })
   );
   ctx.safeHandle(IPC.skills.readHooks, () => readHooks(), () => null);
   ctx.safeHandle(

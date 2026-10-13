@@ -132,6 +132,7 @@ import type {
   SkillBundleApplyResult,
   SkillBundleInput,
   SkillEntry,
+  SkillState,
   SlashCommand,
   SquadBundle,
   SshHostEntry,
@@ -1390,6 +1391,10 @@ export interface CcApi {
     list(projectPath?: string): Promise<SkillEntry[]>;
     setEnabled(name: string, enabled: boolean): Promise<void>;
     setManyEnabled(updates: Array<{ name: string; enabled: boolean }>): Promise<void>;
+    /** On / manual / off. Main routes each id to its owner and rejects read-only rows. */
+    setState(
+      updates: Array<{ id: string; name: string; state: SkillState }>
+    ): Promise<{ ok: boolean; applied: number; rejected: number }>;
     readHooks(): Promise<unknown>;
     reveal(skillId: string, projectPath?: string): Promise<{ ok: boolean; path: string; message?: string }>;
     onChanged(cb: () => void): () => void;

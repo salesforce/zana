@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   legacy: vi.fn(),
   bundles: vi.fn(),
   toggle: vi.fn(),
+  setState: vi.fn(),
   reveal: vi.fn(),
   off: vi.fn(),
   projectId: 'p',
@@ -22,6 +23,7 @@ vi.mock('../../lib/product-client.js', () => ({
     skills: {
       list: state.legacy,
       setEnabled: state.toggle,
+      setState: state.setState,
       reveal: state.reveal,
       onChanged: () => state.off,
       bundles: { list: state.bundles, onChanged: () => state.off }
@@ -76,6 +78,7 @@ beforeEach(() => {
     });
   state.bundles.mockReset().mockResolvedValue([]);
   state.toggle.mockReset().mockResolvedValue(undefined);
+  state.setState.mockReset().mockResolvedValue({ ok: true, applied: 1, rejected: 0 });
   state.reveal.mockReset().mockResolvedValue({ ok: true });
   state.off.mockReset();
 });
@@ -142,4 +145,67 @@ it('keeps local rule files alongside native skills without duplicating legacy sk
  await screen.findByText('Project rule');
  expect(screen.getByText('Rule')).toBeTruthy();
  expect(screen.getAllByText('review')).toHaveLength(1);
+});
+
+const injected = {
+  ...skill,
+  id: 'zcc:gus/gus-work',
+  name: 'gus-work',
+  tool: 'zcc',
+  toolLabel: 'All harnesses',
+  allHarnesses: true,
+  source: 'plugin',
+  pluginName: 'gus',
+  linked: false,
+  disableModelInvocation: false,
+  revealable: false,
+  toggle: { supported: true, enabled: true, state: 'on', states: ['on', 'manual', 'off'] }
+};
+const codex = { ...skill, id: 'codex:user:lint', name: 'lint', tool: 'codex', toolLabel: 'Codex', disableModelInvocation: false, toggle: { supported: false, enabled: true } };
+
+it('sets a tri-state load policy and rolls back when the owner rejects it', async () => {
+  state.native.mockResolvedValue({ skills: [skill, injected], diagnostics: [] });
+  render(<SkillsBody />);
+  await screen.findByText('gus-work');
+  expect(screen.getByText('ZCC · gus')).toBeTruthy();
+  const group = screen.getByRole('radiogroup', { name: 'Load state for gus-work' });
+  const radio = (label: string) => Array.from(group.querySelectorAll('[role="radio"]')).find((el) => el.textContent === label) as HTMLElement;
+  expect(radio('On').getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(radio('Manual'));
+  await waitFor(() => expect(radio('Manual').getAttribute('aria-checked')).toBe('true'));
+  expect(state.setState).toHaveBeenCalledWith([{ id: 'zcc:gus/gus-work', name: 'gus-work', state: 'manual' }]);
+  fireEvent.click(radio('Manual'));
+  expect(state.setState).toHaveBeenCalledTimes(1);
+  state.setState.mockResolvedValue({ ok: false, applied: 0, rejected: 1 });
+  fireEvent.click(radio('Off'));
+  await waitFor(() => expect(state.setState).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(radio('Manual').getAttribute('aria-checked')).toBe('true'));
+  state.setState.mockRejectedValue(new Error('boom'));
+  fireEvent.click(radio('On'));
+  await waitFor(() => expect(state.setState).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(radio('Manual').getAttribute('aria-checked')).toBe('true'));
+});
+
+it('filters by harness and load state; shared ZCC skills appear under every harness', async () => {
+  state.native.mockResolvedValue({
+    skills: [skill, codex, { ...injected, toggle: { ...injected.toggle, state: 'off', enabled: false }, enabled: false }],
+    diagnostics: []
+  });
+  render(<SkillsBody />);
+  await screen.findByText('lint');
+  const harness = screen.getByRole('tablist', { name: 'Harness filter' });
+  fireEvent.click(Array.from(harness.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Codex'))!);
+  expect(screen.queryByText('review')).toBeNull();
+  expect(screen.getByText('lint')).toBeTruthy();
+  expect(screen.getByText('gus-work')).toBeTruthy();
+  fireEvent.click(Array.from(harness.querySelectorAll('button')).find((b) => b.textContent === 'All harnesses')!);
+  const states = screen.getByRole('tablist', { name: 'State filter' });
+  fireEvent.click(Array.from(states.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Off'))!);
+  expect(screen.queryByText('review')).toBeNull();
+  expect(screen.getByText('gus-work')).toBeTruthy();
+  fireEvent.click(Array.from(states.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Any state'))!);
+  fireEvent.change(screen.getByLabelText('Search skills'), { target: { value: 'harness:codex state:on' } });
+  await waitFor(() => expect(screen.queryByText('review')).toBeNull());
+  expect(screen.getByText('lint')).toBeTruthy();
+  expect(screen.queryByText('gus-work')).toBeNull();
 });

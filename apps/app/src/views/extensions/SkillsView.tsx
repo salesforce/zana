@@ -16,9 +16,17 @@ import type {
   SkillBundle,
   SkillBundleApplyMode,
   SkillEntry,
-  SkillSource
+  SkillSource,
+  SkillState
 } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '@/store';
+import {
+  filterSkills,
+  harnessOptions,
+  skillState,
+  stateCounts,
+  type StateFilter
+} from './skills-filter.js';
 
 const SOURCE_FILTERS: Array<{ id: 'all' | SkillSource; label: string }> = [
   { id: 'all', label: 'All' },
@@ -26,6 +34,21 @@ const SOURCE_FILTERS: Array<{ id: 'all' | SkillSource; label: string }> = [
   { id: 'plugin', label: 'Plugins' },
   { id: 'project', label: 'Project' }
 ];
+
+const STATE_FILTERS: Array<{ id: StateFilter; label: string }> = [
+  { id: 'all', label: 'Any state' },
+  { id: 'on', label: 'On' },
+  { id: 'manual', label: 'Manual' },
+  { id: 'off', label: 'Off' }
+];
+
+const STATE_LABEL: Record<SkillState, string> = { on: 'On', manual: 'Manual', off: 'Off' };
+
+const STATE_HINT: Record<SkillState, string> = {
+  on: 'Listed to the agent, which loads it when relevant',
+  manual: 'Hidden from the agent; invoke it yourself with /name',
+  off: 'Not loaded at all'
+};
 
 const SOURCE_LABEL: Record<SkillSource, string> = {
   user: 'User',
@@ -67,6 +90,8 @@ export function SkillsBody({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<'all' | SkillSource>(initialFilter);
+  const [harness, setHarness] = useState('all');
+  const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [query, setQuery] = useState('');
   const [editingBundle, setEditingBundle] = useState<SkillBundle | 'new' | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -164,15 +189,17 @@ export function SkillsBody({
     return () => window.clearTimeout(t);
   }, []);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return skills.filter((s) => {
-      if (filter !== 'all' && s.source !== filter) return false;
-      if (!q) return true;
-      const haystack = `${s.name} ${s.description ?? ''} ${s.pluginName ?? ''}`.toLowerCase();
-      return haystack.includes(q);
-    });
-  }, [skills, filter, query]);
+  const filtered = useMemo(
+    () => filterSkills(skills, { source: filter, harness, state: stateFilter, query }),
+    [skills, filter, harness, stateFilter, query]
+  );
+
+  const harnesses = useMemo(() => harnessOptions(skills), [skills]);
+  const states = useMemo(() => stateCounts(skills), [skills]);
+  // A harness that disappeared after a reload must not leave the list empty.
+  useEffect(() => {
+    if (harness !== 'all' && !harnesses.some((h) => h.label === harness)) setHarness('all');
+  }, [harness, harnesses]);
 
   const counts = useMemo(() => {
     const c = { all: skills.length, user: 0, plugin: 0, project: 0 };
@@ -206,6 +233,24 @@ export function SkillsBody({
           s.id === skill.id ? { ...s, enabled: !enabled, toggle: { ...s.toggle, enabled: !enabled } } : s
         )
       );
+    }
+  };
+
+  const setSkillLoadState = async (skill: SkillEntry, state: SkillState) => {
+    if (!skill.toggle.supported || !skill.toggle.states?.includes(state)) return;
+    const withState = (s: SkillEntry, next: SkillState): SkillEntry => ({
+      ...s,
+      enabled: next !== 'off',
+      toggle: { ...s.toggle, state: next, enabled: next !== 'off' }
+    });
+    const previous = skillState(skill);
+    setSkills((prev) => prev.map((s) => (s.id === skill.id ? withState(s, state) : s)));
+    try {
+      const result = await product.skills.setState([{ id: skill.id, name: skill.name, state }]);
+      if (!result.ok) throw new Error('Skill state was rejected');
+      flashSaved();
+    } catch {
+      setSkills((prev) => prev.map((s) => (s.id === skill.id ? withState(s, previous) : s)));
     }
   };
 
@@ -258,12 +303,12 @@ export function SkillsBody({
         {!pluginBannerDismissed && (
           <aside className="skills-plugin-banner" role="note">
             <div>
-              <strong>Installed plugin skills reload with <code>zcc plugin dev</code>.</strong>{' '}
-              Skills contributed by a ZCC plugin (manifest <code>zcc.skills</code> or{' '}
-              <code>contributeSkills</code>) are not toggled here — edit the plugin
-              and live-reload. Claude Code marketplace plugins under{' '}
-              <code>~/.claude/plugins</code> still use Claude&apos;s <code>/plugin</code>{' '}
-              command.
+              <strong>Every skill starts On.</strong> To trim what agents load, set a skill to{' '}
+              <strong>Manual</strong> (hidden from the agent, still available as{' '}
+              <code>/name</code>) or <strong>Off</strong>. Skills from installed ZCC plugins
+              apply to every harness and take effect in new threads. Claude Code marketplace
+              plugins under <code>~/.claude/plugins</code> still use Claude&apos;s{' '}
+              <code>/plugin</code> command.
             </div>
             <button
               type="button"
@@ -290,7 +335,7 @@ export function SkillsBody({
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search skills…"
+                    placeholder="Search skills…  harness:codex  state:manual  plugin:gus"
                     aria-label="Search skills"
                   />
                 </div>
@@ -327,6 +372,48 @@ export function SkillsBody({
                   </button>
                 ))}
               </div>
+              {harnesses.length > 1 && (
+                <div className="skills-filter" role="tablist" aria-label="Harness filter">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={harness === 'all'}
+                    className={`skills-filter-btn ${harness === 'all' ? 'is-active' : ''}`}
+                    onClick={() => setHarness('all')}
+                  >
+                    All harnesses
+                  </button>
+                  {harnesses.map((h) => (
+                    <button
+                      key={h.label}
+                      type="button"
+                      role="tab"
+                      aria-selected={harness === h.label}
+                      className={`skills-filter-btn ${harness === h.label ? 'is-active' : ''}`}
+                      onClick={() => setHarness(h.label)}
+                      title={`Skills ${h.label} sessions receive, including ZCC-injected skills`}
+                    >
+                      {h.label}
+                      <span className="skills-filter-count">{h.count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="skills-filter" role="tablist" aria-label="State filter">
+                {STATE_FILTERS.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={stateFilter === f.id}
+                    className={`skills-filter-btn ${stateFilter === f.id ? 'is-active' : ''}`}
+                    onClick={() => setStateFilter(f.id)}
+                  >
+                    {f.label}
+                    <span className="skills-filter-count">{states[f.id]}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {loading ? (
@@ -353,6 +440,7 @@ export function SkillsBody({
                     skill={skill}
                     showTool={showTool}
                     onToggle={(enabled) => toggleSkill(skill, enabled)}
+                    onSetState={(next) => void setSkillLoadState(skill, next)}
                     onReveal={() => reveal(skill)}
                   />
                 ))}
@@ -418,19 +506,49 @@ export function SkillsBody({
   );
 }
 
+function SkillStateControl({
+  skill,
+  onSetState
+}: {
+  skill: SkillEntry;
+  onSetState: (state: SkillState) => void;
+}) {
+  const current = skillState(skill);
+  return (
+    <div className="skills-state" role="radiogroup" aria-label={`Load state for ${skill.name}`}>
+      {(skill.toggle.states ?? []).map((state) => (
+        <button
+          key={state}
+          type="button"
+          role="radio"
+          aria-checked={current === state}
+          className={`skills-state-btn skills-state-btn--${state} ${current === state ? 'is-active' : ''}`}
+          title={STATE_HINT[state]}
+          onClick={() => current !== state && onSetState(state)}
+        >
+          {STATE_LABEL[state]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function SkillRow({
   skill,
   showTool,
   onToggle,
+  onSetState,
   onReveal
 }: {
   skill: SkillEntry;
   /** Show the tool chip — true only when the catalogue spans >1 tool. */
   showTool: boolean;
   onToggle: (enabled: boolean) => void;
+  onSetState: (state: SkillState) => void;
   onReveal: () => void;
 }) {
   const subtitle = (() => {
+    if (skill.allHarnesses) return `ZCC · ${skill.pluginName ?? 'injected'}`;
     if (skill.source === 'plugin' && skill.pluginName) {
       return `Installed plugin · ${skill.pluginName}`;
     }
@@ -444,9 +562,12 @@ function SkillRow({
   const isReadOnly = !skill.toggle.supported;
   const readOnlyReason = skill.toggle.reason ?? 'Read-only';
   const readOnlyChip = skill.source === 'plugin' ? 'plugin' : 'read-only';
+  const triState = !isReadOnly && (skill.toggle.states?.length ?? 0) > 0;
   return (
-    <li className={`skills-row ${skill.enabled ? '' : 'is-disabled'} ${isReadOnly ? 'is-plugin-managed' : ''}`}>
-      {isReadOnly ? (
+    <li className={`skills-row ${skill.enabled ? '' : 'is-disabled'} ${isReadOnly ? 'is-plugin-managed' : ''} ${triState ? 'has-state' : ''}`}>
+      {triState ? (
+        <SkillStateControl skill={skill} onSetState={onSetState} />
+      ) : isReadOnly ? (
         <span
           className="skills-row-managed"
           title={readOnlyReason}

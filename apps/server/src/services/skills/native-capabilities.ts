@@ -10,13 +10,14 @@ import {
   normalizeProviderNativeRoots
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { HostProviderCommand } from '@zana-ai/zcc-host-daemon-contract';
-import type { SkillEntry } from '@zana-ai/zcc-domain/product';
+import { SKILL_STATES, type SkillEntry, type SkillState } from '@zana-ai/zcc-domain/product';
 import {
   listThreadProviders,
   canonicalThreadProviderId
 } from '../threads/thread-provider-catalog.js';
 import { entryId, SKILL_PROVIDERS } from '../skill-providers/registry.js';
-import { disabledSkillNames } from './skill-settings.js';
+import { skillOverrideStates } from './skill-settings.js';
+import { listInjectedSkillEntries } from './injected-skill-entries.js';
 
 export interface NativeCapabilityOptions {
   projectId?: string;
@@ -68,7 +69,8 @@ export async function listNativeCapabilities(
   }
   ctx.hostHub.ensureHostSessionReady(hostId);
   const local = hostId === getPrimaryHost(ctx.db)?.id;
-  const disabled = local ? await disabledSkillNames() : new Set<string>();
+  const overrideStates = local ? await skillOverrideStates() : new Map<string, SkillState>();
+  const disabled = new Set([...overrideStates].filter(([, state]) => state === 'off').map(([name]) => name));
   const result: NativeCapabilityListing = { skills: [], commands: [], diagnostics: [] };
   const providers = listThreadProviders()
     .filter(
@@ -171,6 +173,14 @@ export async function listNativeCapabilities(
                     : 'Managed by the provider on its execution host'
               };
         toggle.enabled = enabled;
+        if (toggle.supported && descriptor?.toggle.kind === 'settings-overrides') {
+          // Author-level `disable-model-invocation` already pins the skill to manual.
+          const state =
+            (enabled ? overrideStates.get(shortName) : 'off') ??
+            (row.disableModelInvocation ? 'manual' : 'on');
+          toggle.state = state;
+          toggle.states = row.disableModelInvocation ? ['manual', 'off'] : SKILL_STATES;
+        }
         result.skills.push({
           id:
             row.source === 'command'
@@ -210,6 +220,7 @@ export async function listNativeCapabilities(
       );
     }
   }
+  if (local && !options.providerId) result.skills.push(...listInjectedSkillEntries(ctx.dataDir, hostId));
   // Skills take precedence over legacy commands; project roots were scanned before user roots.
   result.commands.sort((a, b) => Number(a.source === 'command') - Number(b.source === 'command'));
   const seen = new Set<string>();

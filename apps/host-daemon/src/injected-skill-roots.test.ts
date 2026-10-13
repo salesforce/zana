@@ -7,7 +7,9 @@ import {
   expandDirectoryRootsToRuntimeSkillRoots,
   hashInjectedSkillCatalog,
   loadRuntimeSkillRoots,
-  readInjectedSkillDirectoryRoots
+  readInjectedSkillDirectoryRoots,
+  readInjectedSkillPolicy,
+  withModelInvocationDisabled
 } from './injected-skill-roots.js';
 
 const dirs: string[] = [];
@@ -71,5 +73,42 @@ describe('injected skill roots', () => {
     const withSkill = hashInjectedSkillCatalog(dataDir);
     expect(withSkill).not.toBe(empty);
     expect(hashInjectedSkillCatalog(dataDir)).toBe(withSkill);
+  });
+
+  it('reads only valid manual/off policy entries', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-skill-policy-'));
+    dirs.push(dataDir);
+    expect(readInjectedSkillPolicy(dataDir).size).toBe(0);
+    writeFileSync(join(dataDir, 'skill-policy.json'), '{bad');
+    expect(readInjectedSkillPolicy(dataDir).size).toBe(0);
+    writeFileSync(join(dataDir, 'skill-policy.json'), JSON.stringify({ skills: ['a'] }));
+    expect(readInjectedSkillPolicy(dataDir).size).toBe(0);
+    writeFileSync(join(dataDir, 'skill-policy.json'), JSON.stringify({
+      version: 1,
+      skills: { a: 'manual', b: 'off', c: 'on', '../x': 'off', d: 7 }
+    }));
+    expect([...readInjectedSkillPolicy(dataDir)]).toEqual([['a', 'manual'], ['b', 'off']]);
+  });
+
+  it('pins disable-model-invocation in SKILL.md frontmatter', () => {
+    expect(withModelInvocationDisabled('---\nname: a\n---\nbody')).toBe('---\nname: a\ndisable-model-invocation: true\n---\nbody');
+    expect(withModelInvocationDisabled('---\r\nname: a\r\ndisable-model-invocation: false\r\n---\r\nbody'))
+      .toBe('---\r\nname: a\r\ndisable-model-invocation: true\r\n---\r\nbody');
+    expect(withModelInvocationDisabled('no frontmatter')).toBe('---\ndisable-model-invocation: true\n---\nno frontmatter');
+  });
+
+  it('keeps author-manual skills out of the ACP listing and rehashes on policy change', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-injected-manual-'));
+    dirs.push(dataDir);
+    const root = join(dataDir, 'skills-generated');
+    mkdirSync(join(root, 'auto'), { recursive: true });
+    mkdirSync(join(root, 'slash'), { recursive: true });
+    writeFileSync(join(root, 'auto', 'SKILL.md'), '---\nname: auto\n---\n');
+    writeFileSync(join(root, 'slash', 'SKILL.md'), '---\nname: slash\ndisable-model-invocation: true\n---\n');
+    const acp = expandDirectoryRootsToRuntimeSkillRoots([root]).find((row) => row.providerId === 'acp');
+    expect(acp && 'skills' in acp ? acp.skills?.map((skill) => skill.name) : []).toEqual(['auto']);
+    const before = hashInjectedSkillCatalog(dataDir);
+    writeFileSync(join(dataDir, 'skill-policy.json'), JSON.stringify({ version: 1, skills: { auto: 'off' } }));
+    expect(hashInjectedSkillCatalog(dataDir)).not.toBe(before);
   });
 });

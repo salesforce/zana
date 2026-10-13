@@ -85,6 +85,7 @@ import {
 } from './plugin-commands-skill.js';
 import { syncPluginInstructionsSkill } from './plugin-instructions-skill.js';
 import {
+  BUILTIN_SKILL_OWNER,
   collectPluginSkillDirectoryRoots,
   selectBuiltinSkillDirectoryRoots,
   writeInjectedSkillRootManifest
@@ -842,6 +843,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         ...(await configuredInstructions())
       ]);
       const config = opts.getAppConfig?.() ?? {};
+      const owners: Record<string, string> = {};
       const directoryRoots = [
         ...selectBuiltinSkillDirectoryRoots({
           dataDir: opts.dataDir,
@@ -853,22 +855,23 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         }),
         generatedSkillsRootPath(opts.dataDir)
       ];
+      for (const root of directoryRoots) owners[root] = BUILTIN_SKILL_OWNER;
       for (const row of store.list()) {
         if (!row.enabled) continue;
         try {
           const manifest = loadManifestFromDir(row.rootDir);
-          directoryRoots.push(
-            ...collectPluginSkillDirectoryRoots({
-              rootDir: row.rootDir,
-              relativeRoots: manifest.skillsRootPaths,
-              extraRoots: live.get(row.id)?.handle?.extraSkillRoots
-            })
-          );
+          const roots = collectPluginSkillDirectoryRoots({
+            rootDir: row.rootDir,
+            relativeRoots: manifest.skillsRootPaths,
+            extraRoots: live.get(row.id)?.handle?.extraSkillRoots
+          });
+          for (const root of roots) owners[root] ??= row.id;
+          directoryRoots.push(...roots);
         } catch {
           /* skip unreadable plugins */
         }
       }
-      writeInjectedSkillRootManifest(opts.dataDir, directoryRoots);
+      writeInjectedSkillRootManifest(opts.dataDir, directoryRoots, owners);
     } catch (error) {
       console.error('[plugins] syncPluginCommandsSkill failed', error);
     }

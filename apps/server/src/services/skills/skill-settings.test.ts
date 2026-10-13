@@ -6,7 +6,9 @@ import {
   disabledSkillNames,
   readHooks,
   setSkillEnabled,
-  setManyEnabled
+  setManyEnabled,
+  setSkillStates,
+  skillOverrideStates
 } from './skill-settings.js';
 let home: string;
 beforeEach(async () => {
@@ -72,4 +74,32 @@ it('recovers malformed overrides during legacy migration', async () => {
     JSON.stringify({ disabledSkills: ['old'], skillOverrides: 7 })
   );
   expect(await disabledSkillNames()).toEqual(new Set(['old']));
+});
+it('maps tri-state load policy onto Claude Code skillOverrides', async () => {
+  await mkdir(join(home, '.claude'));
+  await writeFile(
+    join(home, '.claude/settings.json'),
+    JSON.stringify({ skillOverrides: { keep: 'name-only', old: 'off' } })
+  );
+  await setSkillStates([
+    { name: 'a', state: 'manual' },
+    { name: 'b', state: 'off' },
+    { name: 'old', state: 'on' },
+    { name: '__proto__', state: 'off' },
+    { name: 'c', state: 'constructor' as never }
+  ]);
+  expect(JSON.parse(await readFile(join(home, '.claude/settings.json'), 'utf8')).skillOverrides).toEqual({
+    keep: 'name-only',
+    old: 'on',
+    a: 'user-invocable-only',
+    b: 'off'
+  });
+  expect([...(await skillOverrideStates())]).toEqual([
+    ['a', 'manual'],
+    ['b', 'off']
+  ]);
+  await setSkillStates([]);
+});
+it('reports no states when settings are missing', async () => {
+  expect((await skillOverrideStates()).size).toBe(0);
 });
