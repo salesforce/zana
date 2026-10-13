@@ -79,6 +79,33 @@ function providerRequest(threadId: string, extras?: { providerRequestId?: string
 }
 
 describe('PendingInteractionLifecycle', () => {
+  it.each(['Allow once', false, null, { draft: ['line one', 'line two'], approved: true }])('round-trips a plugin request answer %j and clears Need you', async (value) => {
+    const { lifecycle, thread, callHostOnlineRpc, hub } = setup();
+    const request = { ...providerRequest(thread.id), payload: { kind: 'test-plugin/dialog', title: 'Choose', data: { options: ['Allow once', 'Block'] } } };
+    const registered = lifecycle.registerPendingInteraction(request);
+    if (registered.outcome === 'rejected') throw new Error(registered.reason);
+    expect(lifecycle.hasPendingThreadInteraction(thread.id)).toBe(true);
+    expect(lifecycle.listPendingThreadInteractions(thread.id)[0]?.payload).toEqual(request.payload);
+    expect(hub.emit).toHaveBeenCalledWith('threads:updated', expect.objectContaining({ hasPendingInteraction: true }));
+    const resolution = { kind: 'request_answer' as const, value };
+    const args = { threadId: thread.id, interactionId: registered.interactionId, resolution };
+    expect((await lifecycle.resolvePendingInteraction(args)).resolution).toEqual(resolution);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'interactive.resolve', resolution }) }));
+    expect((await lifecycle.resolvePendingInteraction(args)).status).toBe('resolved');
+    expect(callHostOnlineRpc).toHaveBeenCalledTimes(1);
+    expect(lifecycle.hasPendingThreadInteraction(thread.id)).toBe(false);
+    expect(hub.emit).toHaveBeenCalledWith('threads:updated', expect.objectContaining({ hasPendingInteraction: false }));
+    await expect(lifecycle.resolvePendingInteraction({ ...args, resolution: { kind: 'request_answer', value: 'different' } })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('rejects an approval answer for a plugin request before changing its pending state', async () => {
+    const { lifecycle, thread, callHostOnlineRpc } = setup();
+    const registered = lifecycle.registerPendingInteraction({ ...providerRequest(thread.id), payload: { kind: 'test-plugin/dialog', title: 'Choose', data: {} } });
+    if (registered.outcome === 'rejected') throw new Error(registered.reason);
+    await expect(lifecycle.resolvePendingInteraction({ threadId: thread.id, interactionId: registered.interactionId, resolution: { decision: 'deny' } })).rejects.toMatchObject({ status: 400 });
+    expect(callHostOnlineRpc).not.toHaveBeenCalled();
+    expect(lifecycle.listPendingThreadInteractions(thread.id)[0]?.status).toBe('pending');
+  });
   it('registers a provider request and reuses a duplicate payload', () => {
     const { lifecycle, thread } = setup();
     const created = lifecycle.registerPendingInteraction(providerRequest(thread.id));

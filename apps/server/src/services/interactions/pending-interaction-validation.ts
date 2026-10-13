@@ -1,7 +1,11 @@
+import { isDeepStrictEqual } from 'node:util';
 import {
   isApprovalPendingInteractionPayload,
   isApprovalPendingInteractionResolution,
   isPluginPendingInteractionResolution,
+  isPluginExtensionPendingInteraction,
+  isPluginExtensionInteractionResolution,
+  PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES,
   isUserQuestionPendingInteractionPayload,
   isUserQuestionPendingInteractionResolution,
   type ApprovalPendingInteractionPayload,
@@ -77,6 +81,11 @@ export function pendingInteractionResolutionEquals(
   right: PendingInteraction['resolution']
 ): boolean {
   if (left === null || right === null) return left === right;
+  if (isPluginExtensionInteractionResolution(left) || isPluginExtensionInteractionResolution(right)) {
+    return isPluginExtensionInteractionResolution(left)
+      && isPluginExtensionInteractionResolution(right)
+      && isDeepStrictEqual(left.value, right.value);
+  }
   if (isPluginPendingInteractionResolution(left) || isPluginPendingInteractionResolution(right)) {
     return isPluginPendingInteractionResolution(left) && isPluginPendingInteractionResolution(right);
   }
@@ -204,6 +213,15 @@ export function validatePendingInteractionResolution(
   }
   if (isUserQuestionPendingInteraction(interaction)) {
     validateUserQuestionResolution(interaction, resolution);
+    return;
+  }
+  if (isPluginExtensionPendingInteraction(interaction)) {
+    if (!isPluginExtensionInteractionResolution(resolution)) {
+      throw new ThreadCreateError(400, 'invalid_request', 'Plugin requests require a request-answer resolution');
+    }
+    if (Buffer.byteLength(JSON.stringify(resolution.value), 'utf8') > PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES) {
+      throw new ThreadCreateError(400, 'invalid_request', 'Plugin request answer exceeds 64 KiB');
+    }
     return;
   }
   if (!isApprovalPendingInteraction(interaction)) {

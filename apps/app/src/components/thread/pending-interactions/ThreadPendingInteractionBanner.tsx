@@ -4,15 +4,14 @@ import { Check } from 'lucide-react';
 import {
   isApprovalPendingInteractionPayload,
   isPluginPendingInteraction,
+  isPluginExtensionPendingInteraction,
   isUserQuestionPendingInteractionPayload,
   type PendingInteraction,
   type PendingInteractionApprovalDecision,
-  type PluginPendingInteraction,
   type UserQuestionPendingInteractionPayload
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { MarkdownContent } from '../../MarkdownContent.js';
 import { product } from '../../../lib/product-client.js';
-import { listPendingInteractionSlots, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import {
   approvalDecisionIndexForKey,
   approvalDecisionLabel,
@@ -39,6 +38,7 @@ import {
   type QuestionAnswerDraft
 } from './pending-interaction-question-form.js';
 import { PendingInteractionShell } from './PendingInteractionShell.js';
+import { ThreadPluginInteractionBanner } from './ThreadPluginInteractionBanner.js';
 
 interface SourceThread {
   href: string;
@@ -54,9 +54,9 @@ export function ThreadPendingInteractionBanner({
   threadId: string;
   sourceThread?: SourceThread;
 }) {
-  if (isPluginPendingInteraction(interaction)) {
+  if (isPluginPendingInteraction(interaction) || isPluginExtensionPendingInteraction(interaction)) {
     return (
-      <PluginPendingInteractionBanner
+      <ThreadPluginInteractionBanner
         interaction={interaction}
         threadId={threadId}
         sourceThread={sourceThread}
@@ -553,51 +553,6 @@ function QuestionPendingInteractionBanner({
           )}
         </div>
       </form>
-    </BannerShell>
-  );
-}
-
-function PluginPendingInteractionBanner({
-  interaction,
-  threadId,
-  sourceThread
-}: {
-  interaction: PluginPendingInteraction;
-  threadId: string;
-  sourceThread?: SourceThread;
-}) {
-  const [generation, setGeneration] = useState(0);
-  useEffect(() => subscribePluginSlots(() => setGeneration((current) => current + 1)), []);
-  const slot = listPendingInteractionSlots().find(
-    (entry) => entry.id === interaction.origin.rendererId && entry.pluginId === interaction.origin.pluginId
-  );
-  void generation;
-  if (!slot) {
-    return (
-      <BannerShell title={interaction.payload.title} sourceThread={sourceThread}>
-        <p className="thread-pending-banner-reason">Plugin form is not registered.</p>
-      </BannerShell>
-    );
-  }
-  const Component = slot.component;
-  return (
-    <BannerShell title={interaction.payload.title} sourceThread={sourceThread}>
-      <Component
-        interaction={{
-          id: interaction.id,
-          threadId: interaction.threadId,
-          title: interaction.payload.title,
-          payload: interaction.payload.data,
-          createdAt: interaction.createdAt,
-          expiresAt: interaction.expiresAt ?? null
-        }}
-        submit={async (value) => {
-          await product.threads.interactions.respond(threadId, interaction.id, value);
-        }}
-        cancel={async () => {
-          await product.threads.interactions.cancel(threadId, interaction.id);
-        }}
-      />
     </BannerShell>
   );
 }
