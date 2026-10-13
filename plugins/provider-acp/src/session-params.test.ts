@@ -462,9 +462,9 @@ describe("buildAcpSessionParams parameterized model selection", () => {
     });
   });
 
-  it("maps Cursor Auto sentinels onto the live auto-smart family", () => {
+  it("maps Cursor Auto onto the advertised parameterized default family", () => {
     expect(cursorSessionParams({ model: "default" }).modelSelection).toEqual({
-      modelId: "auto-smart",
+      modelId: "default",
     });
   });
 
@@ -496,7 +496,7 @@ describe("buildAcpSessionParams parameterized model selection", () => {
 
   it("maps auto onto Cursor's live Auto family", () => {
     expect(cursorSessionParams({ model: "auto" }).modelSelection).toEqual({
-      modelId: "auto-smart",
+      modelId: "default",
     });
   });
 });

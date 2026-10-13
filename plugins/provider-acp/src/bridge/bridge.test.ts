@@ -802,6 +802,26 @@ describe("acp bridge", () => {
     ]);
   });
 
+  it.each(["default", "auto"])("starts Cursor Auto and accepts repeated turns: %s", async (model) => {
+    const requestLog = join(workspaceDir, "cursor-auto-requests.jsonl");
+    const launch: AgentLaunchArgs = {
+      dialectId: "cursor", parameterizedModelPicker: true,
+      envVars: { FAKE_ACP_CURSOR_PARAMETERIZED_MODELS: "1", FAKE_ACP_REQUEST_LOG: requestLog },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch, model, reasoningLevel: "medium", serviceTier: "default",
+    });
+    for (let turn = 0; turn < 2; turn += 1) {
+      expect(await completeTurnWith(providerThreadId, "echo-selected-model", executionOptions({
+        model, reasoningLevel: "medium", serviceTier: "default",
+        providerOptions: launchProviderOptions(launch),
+      }))).toBe("selected-model:default");
+    }
+    expect(loggedAcpRequests(requestLog).filter(request =>
+      request.method === "session/set_model" || request.method === "session/set_config_option"
+    )).toEqual([]);
+  });
+
   it("pins a parameterized Cursor family over session/set_config_option", async () => {
     const requestLog = join(workspaceDir, "cursor-session-requests.jsonl");
     await startThread({
@@ -1597,6 +1617,19 @@ describe("acp bridge", () => {
         turnOptions("fake/strong"),
       ),
     ).toBe("selected-effort:high");
+  });
+
+  it.each(["default", "auto"])("returns a pinned Cursor session to Auto on later turns: %s", async (model) => {
+    const launch: AgentLaunchArgs = {
+      dialectId: "cursor", parameterizedModelPicker: true,
+      envVars: { FAKE_ACP_CURSOR_PARAMETERIZED_MODELS: "1" },
+    };
+    const { providerThreadId } = await startThread({ ...launch, model: "grok-4.6" });
+    for (let turn = 0; turn < 2; turn += 1) {
+      expect(await completeTurnWith(providerThreadId, "echo-selected-model", executionOptions({
+        model, providerOptions: launchProviderOptions(launch),
+      }))).toBe("selected-model:default");
+    }
   });
 
   it("applies a changed ACP-native service tier before a follow-up prompt", async () => {

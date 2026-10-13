@@ -820,6 +820,12 @@ async function handleMessage(message) {
       return;
     }
     case "session/prompt":
+      if (JSON.stringify(message.params?.prompt ?? []).includes("reject-with-error-data")) {
+        send({ jsonrpc: "2.0", id: message.id, error: {
+          code: -32602, message: "Invalid params", data: { message: "Invalid model value: auto-smart" },
+        } });
+        return;
+      }
       await handlePrompt(message);
       return;
     case "session/cancel":

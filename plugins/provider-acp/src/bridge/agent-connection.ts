@@ -90,8 +90,26 @@ interface ParsedAgentMessage {
   id?: string | number;
   method?: string;
   result?: unknown;
-  error?: { code?: number; message?: string };
+  error?: { code?: number; message?: string; data?: unknown };
   params?: unknown;
+}
+
+export function formatAgentError(error: NonNullable<ParsedAgentMessage["error"]>): string {
+  const message = error.message ?? `ACP agent returned error code ${error.code ?? "unknown"}`;
+  const data = error.data;
+  if (data === undefined || data === null) return message;
+  if (typeof data === "string") return data.trim() ? `${message}: ${data}` : message;
+  if (typeof data === "object") {
+    for (const key of ["message", "details"] as const) {
+      const detail = (data as Record<string, unknown>)[key];
+      if (typeof detail === "string" && detail.trim()) return `${message}: ${detail}`;
+    }
+  }
+  try {
+    return `${message}: ${JSON.stringify(data)}`;
+  } catch {
+    return message;
+  }
 }
 
 function parseAgentLine(line: string): ParsedAgentMessage | null {
@@ -206,10 +224,7 @@ export function createAcpAgentConnection(
           pending.delete(numericId);
           if (message.error) {
             request.reject(
-              new Error(
-                message.error.message ??
-                  `ACP agent returned error code ${message.error.code ?? "unknown"}`,
-              ),
+              new Error(formatAgentError(message.error)),
             );
           } else {
             request.resolve(message.result);

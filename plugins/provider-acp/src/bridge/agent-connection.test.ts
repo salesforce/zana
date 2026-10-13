@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { createAcpAgentConnection, formatAcpLaunchFailure } from "./agent-connection.js";
+import { createAcpAgentConnection, formatAcpLaunchFailure, formatAgentError } from "./agent-connection.js";
 import { createCodexAppServerConnection, type CodexAppServerConnection } from "../../../provider-codex/src/bridge/app-server-connection.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
@@ -27,6 +27,38 @@ function start(create: typeof createAcpAgentConnection | typeof createCodexAppSe
 
 beforeEach(() => { vi.useFakeTimers(); spawnMock.mockReset(); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+describe("ACP error details", () => {
+  it.each([
+    [undefined, "Invalid params"],
+    [null, "Invalid params"],
+    ["", "Invalid params"],
+    ["  ", "Invalid params"],
+    ["Invalid model value: auto-smart", "Invalid params: Invalid model value: auto-smart"],
+    [{ message: "Invalid model value: auto-smart" }, "Invalid params: Invalid model value: auto-smart"],
+    [{ details: "Unknown config option: fast" }, "Invalid params: Unknown config option: fast"],
+    [{ message: "", details: "Missing cwd" }, "Invalid params: Missing cwd"],
+    [{ field: "cwd" }, 'Invalid params: {"field":"cwd"}'],
+    [42, "Invalid params: 42"],
+  ])("preserves provider detail %j", (data, expected) => {
+    expect(formatAgentError({ message: "Invalid params", data })).toBe(expected);
+  });
+
+  it("keeps a usable message for absent messages and unserializable details", () => {
+    expect(formatAgentError({ code: -32602 })).toBe("ACP agent returned error code -32602");
+    const data: Record<string, unknown> = {};
+    data.self = data;
+    expect(formatAgentError({ message: "Invalid params", data })).toBe("Invalid params");
+  });
+
+  it("delivers Cursor's nested error message to the caller", async () => {
+    const { child, connection, receive } = start(createAcpAgentConnection);
+    const failure = connection.request({ method: "session/set_model", params: {}, resultSchema: z.string() });
+    receive({ id: 1, error: { code: -32602, message: "Invalid params", data: { message: "Invalid model value: auto-smart" } } });
+    await expect(failure).rejects.toThrow("Invalid params: Invalid model value: auto-smart");
+    child.emit("close", 0, null);
+  });
+});
 
 describe.each([
   ["ACP", createAcpAgentConnection], ["Codex", createCodexAppServerConnection],

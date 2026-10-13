@@ -294,13 +294,11 @@ function cursorParameterizedSelection(
   model: string,
   reasoningLevel: ReasoningLevel | undefined,
 ): CursorParameterizedSelection {
-  // Live Cursor ACP advertises Auto as `auto-smart`. The host picker still
-  // persists `default` / `auto` from the parameterized catalog; forwarding
-  // those sentinels as session/set_config_option makes cursor-agent reject
-  // the session with JSON-RPC Invalid params.
+  // Cursor's parameterized ACP picker advertises Auto as `default`.
+  // `auto` is a legacy CLI alias; `auto-smart` is not an ACP model ID.
   const familyId =
     model === "auto" || model === "default"
-      ? "auto-smart"
+      ? "default"
       : agentModelFamilyId(model);
   const bareFamilyId = familyId.startsWith("cursor-")
     ? familyId.slice("cursor-".length)
