@@ -146,6 +146,9 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : new Date().toISOString()
   };
-  if (goal.assignment.kind === 'team' && !goal.assignment.teamId) return { error: 'team goal requires teamId' };
+  // Legacy Squad goals predating the teamId requirement stay visible so the
+  // operator can edit them; an active one is demoted to paused because it
+  // cannot launch. Create/update still require teamId (goal-manager).
+  if (goal.assignment.kind === 'team' && !goal.assignment.teamId && goal.status === 'active') goal.status = 'paused';
   return goal;
 }

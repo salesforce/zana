@@ -205,7 +205,8 @@ describe('validateGoalFile', () => {
     const valid = validateGoalFile({ ...baseGoal, assignment: { kind: 'team', teamId: ' release-squad ' } });
     expect('error' in valid).toBe(false);
     if (!('error' in valid)) expect(valid.assignment).toEqual({ kind: 'team', teamId: 'release-squad' });
-    expect(validateGoalFile({ ...baseGoal, assignment: { kind: 'team' } })).toEqual({ error: 'team goal requires teamId' });
+    // GV1: a legacy team goal without a usable id loads (paused), not dropped.
+    expect(validateGoalFile({ ...baseGoal, assignment: { kind: 'team' } })).toMatchObject({ assignment: { kind: 'team', teamId: undefined }, status: 'paused' });
   });
 
   it('preserves durable squad execution identity for restart observation', () => {
@@ -249,5 +250,22 @@ describe('clampRetain', () => {
     expect(clampRetain(-5)).toBe(1);
     expect(clampRetain(99999)).toBe(100);
     expect(clampRetain(12.7)).toBe(13);
+  });
+});
+
+describe('legacy Squad goals without teamId (GV1)', () => {
+  it('loads an active legacy Squad goal paused instead of dropping it', () => {
+    const r = validateGoalFile({ ...baseGoal, assignment: { kind: 'team' } });
+    expect('error' in r).toBe(false);
+    if ('error' in r) return;
+    expect(r.status).toBe('paused');
+    expect(r.assignment).toMatchObject({ kind: 'team' });
+  });
+
+  it('keeps a non-active status for a legacy Squad goal', () => {
+    const r = validateGoalFile({ ...baseGoal, status: 'draft', assignment: { kind: 'team', teamId: '  ' } });
+    expect('error' in r).toBe(false);
+    if ('error' in r) return;
+    expect(r.status).toBe('draft');
   });
 });

@@ -41,14 +41,32 @@ const PLAIN_BULLET_LABEL = /^\s*[-*]\s+([A-Za-z][A-Za-z /-]*):\s*(.*)$/;
 const BARE_LABEL = /^\*\*([^:*]+):\*\*\s*(.*)$/;
 const FENCE = /^\s*(```|~~~)/; // fenced-code delimiter: freeze label detection inside
 
-/** Match a field-label line from Markdown or composer-normalized plain text. */
-function matchLabel(raw: string): { key: string; rest: string } | null {
+function indentOf(raw: string): number {
+  return raw.length - raw.trimStart().length;
+}
+
+/**
+ * Match a field-label line from Markdown or composer-normalized plain text.
+ * A plain (non-bold) bullet is a label only when its key is a known label (or a
+ * near-miss spelling, so typos still reject) AND it sits at the label indent
+ * (`labelIndent`, the indent of the first label in the block). Anything else
+ * (`  - Run tests: x` under `**Work:**`, a nested `  - Works: x`) is
+ * continuation text of the current label.
+ */
+function matchLabel(raw: string, labelIndent: number): { key: string; rest: string; indent: number } | null {
+  const indent = indentOf(raw);
   const bullet = BULLET_LABEL.exec(raw);
-  if (bullet) return { key: bullet[1].trim().toLowerCase(), rest: bullet[2] };
+  if (bullet) return { key: bullet[1].trim().toLowerCase(), rest: bullet[2], indent };
   const plainBullet = PLAIN_BULLET_LABEL.exec(raw);
-  if (plainBullet) return { key: plainBullet[1].trim().toLowerCase(), rest: plainBullet[2] };
+  if (plainBullet) {
+    const key = plainBullet[1].trim().toLowerCase();
+    const normalized = key.replace(/\s+/g, ' ');
+    const knownOrNearMiss = (KNOWN_LABELS as readonly string[]).includes(normalized) || nearMissLabel(key) !== undefined;
+    if (knownOrNearMiss && indent <= labelIndent) return { key, rest: plainBullet[2], indent };
+    return null;
+  }
   const bare = BARE_LABEL.exec(raw);
-  if (bare) return { key: bare[1].trim().toLowerCase(), rest: bare[2] };
+  if (bare) return { key: bare[1].trim().toLowerCase(), rest: bare[2], indent };
   return null;
 }
 
@@ -198,6 +216,7 @@ function parseStepLabels(body: string[]): Map<string, string> {
   const fence = new FenceTracker();
   let current: string | null = null;
   let buffer: string[] = [];
+  let labelIndent = Number.POSITIVE_INFINITY;
   const flush = (): void => {
     if (current !== null) labels.set(current, buffer.join('\n').trim());
     current = null;
@@ -205,8 +224,9 @@ function parseStepLabels(body: string[]): Map<string, string> {
   };
   for (const raw of body) {
     const inFence = fence.step(raw);
-    const label = inFence ? null : matchLabel(raw);
+    const label = inFence ? null : matchLabel(raw, labelIndent);
     if (label) {
+      if (labelIndent === Number.POSITIVE_INFINITY) labelIndent = label.indent;
       flush();
       current = label.key;
       buffer = [label.rest];

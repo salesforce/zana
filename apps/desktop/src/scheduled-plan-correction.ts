@@ -14,10 +14,13 @@ export interface ScheduledPromptDeps {
   getSchedule(scheduleId: string): ScheduleRef;
   /** Confined read of the corrected-plan artifact for this execution. */
   readCorrectedPlanText(projectRoot: string, executionId: string): Promise<string | undefined>;
-  updateSchedule(scheduleId: string, patch: { prompt: string }): Promise<unknown>;
+  /** `expectedPrompt` is a compare-and-swap guard enforced by the scheduler at
+   *  its write boundary; a mismatch rejects with `code: 'DEFINITION_CONFLICT'`. */
+  updateSchedule(scheduleId: string, patch: { prompt: string; expectedPrompt: string }): Promise<unknown>;
   /** Goal-triggered Squads; throws when the goal no longer exists. */
   getGoal?(goalId: string): GoalRef;
-  updateGoal?(goalId: string, patch: { statement: string }): Promise<unknown>;
+  /** `expectedStatement` is the goal manager's compare-and-swap guard. */
+  updateGoal?(goalId: string, patch: { statement: string; expectedStatement: string }): Promise<unknown>;
 }
 
 /** Minimal goal shape needed to decide whether a correction may rewrite it. */
@@ -46,6 +49,24 @@ export function parseGoalLaunchRequestId(requestId: string | undefined): string 
   const goalId = requestId.slice('goal:'.length, separator);
   if (!goalId || separator === 'goal:'.length) throw new Error('invalid goal Squad launch request');
   return goalId;
+}
+
+const SCHEDULE_EDITED = 'the schedule prompt was edited since this run launched; review the schedule before approving the correction';
+const GOAL_EDITED = 'the goal plan was edited since this run launched; review the goal before approving the correction';
+
+/** ScheduleConflictError / GoalConflictError, matched structurally across the package seam. */
+function isDefinitionConflict(error: unknown): boolean {
+  return !!error && typeof error === 'object' && (error as { code?: unknown }).code === 'DEFINITION_CONFLICT';
+}
+
+/** Run a guarded write; translate a compare-and-swap conflict into the operator message. */
+async function guardedWrite(write: () => Promise<unknown>, editedMessage: string): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    if (isDefinitionConflict(error)) throw new InboxActionOperatorError(editedMessage);
+    throw error;
+  }
 }
 
 function digestOfPlanText(text: string): string | undefined {
@@ -82,7 +103,7 @@ export async function updateScheduledPromptFromCorrection(
   // not overwrite their edit.
   const launched = execution.request?.objective?.trim();
   if (!launched || schedule.prompt?.trim() !== launched) {
-    throw new InboxActionOperatorError('the schedule prompt was edited since this run launched; review the schedule before approving the correction');
+    throw new InboxActionOperatorError(SCHEDULE_EDITED);
   }
   const prompt = await deps.readCorrectedPlanText(ctx.projectRoot, ctx.executionId);
   if (!prompt?.trim()) throw new InboxActionOperatorError('corrected plan artifact is unavailable');
@@ -91,7 +112,9 @@ export async function updateScheduledPromptFromCorrection(
   if (digestOfPlanText(prompt) !== launchDigest(approvedUnits as ExecutionWorkUnitInput[])) {
     throw new InboxActionOperatorError('corrected plan changed after approval; renewed approval is required');
   }
-  await deps.updateSchedule(scheduleId, { prompt });
+  // The fence above is advisory (it read a snapshot); the scheduler re-checks
+  // `expectedPrompt` against the owner's record inside its serialized write.
+  await guardedWrite(() => deps.updateSchedule(scheduleId, { prompt, expectedPrompt: launched }), SCHEDULE_EDITED);
 }
 
 async function updateGoalStatementFromCorrection(
@@ -110,14 +133,15 @@ async function updateGoalStatementFromCorrection(
   // different statement now means the user edited the goal during review.
   const launched = execution.request?.objective?.trim();
   if (!launched || goal.statement?.trim() !== launched) {
-    throw new InboxActionOperatorError('the goal plan was edited since this run launched; review the goal before approving the correction');
+    throw new InboxActionOperatorError(GOAL_EDITED);
   }
   const plan = await deps.readCorrectedPlanText(ctx.projectRoot, ctx.executionId);
   if (!plan?.trim()) throw new InboxActionOperatorError('corrected plan artifact is unavailable');
   if (digestOfPlanText(plan) !== launchDigest(approvedUnits as ExecutionWorkUnitInput[])) {
     throw new InboxActionOperatorError('corrected plan changed after approval; renewed approval is required');
   }
-  await deps.updateGoal(goalId, { statement: plan });
+  const updateGoal = deps.updateGoal;
+  await guardedWrite(() => updateGoal(goalId, { statement: plan, expectedStatement: launched }), GOAL_EDITED);
 }
 
 /**

@@ -1,6 +1,9 @@
 import type { ScheduledTask, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
+
+/** Upper bound on pending reservations + active Squad runs kept per schedule file. */
+const MAX_UNRESOLVED_RUNS = 100;
 /**
  * Validate a schedule JSON file. Returns the schedule on success, or a string
  * reason on failure (so callers can log the reason rather than silently
@@ -40,6 +43,7 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
   if (rawRuns !== undefined && !Array.isArray(rawRuns)) return { error: 'runs must be an array' };
   const runs: ScheduledTask['status']['runs'] = [];
   let terminalRecords = 0;
+  let unresolvedRecords = 0;
   for (const value of (rawRuns ?? []) as unknown[]) {
     if (!value || typeof value !== 'object') return { error: 'invalid run' };
     const run = value as ScheduledTask['status']['runs'][number];
@@ -53,6 +57,9 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
     // it during validation would allow a restart to overlap a live Squad run.
     const activeSquadRun = (run.launchKind ?? kind) === 'team' && run.launchState === 'running' && !!run.executionId && !run.finishedAt;
     if (run.launchState === 'pending' || activeSquadRun) {
+      // Unresolved runs are exempt from display history but still bounded so a
+      // corrupt or hand-edited file cannot load an unbounded array.
+      if (++unresolvedRecords > MAX_UNRESOLVED_RUNS) return { error: 'too many unresolved runs' };
       runs.push(run);
     } else if (terminalRecords++ < 100) {
       runs.push(run);

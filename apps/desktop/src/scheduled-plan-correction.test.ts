@@ -80,7 +80,7 @@ describe('updateScheduledPromptFromCorrection (stubbed deps)', () => {
     expect(d.getExecution).toHaveBeenCalledWith('p1', 'exec-1');
     expect(d.getSchedule).toHaveBeenCalledWith('sched-1');
     expect(d.readCorrectedPlanText).toHaveBeenCalledWith('/proj', 'exec-1');
-    expect(d.updateSchedule).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN });
+    expect(d.updateSchedule).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN, expectedPrompt: OBJECTIVE });
   });
 
   it.each(['ui:abc', undefined])('does nothing for non-scheduled launch %s', async (launchRequestId) => {
@@ -162,6 +162,14 @@ describe('updateScheduledPromptFromCorrection (stubbed deps)', () => {
     const d = deps({ updateSchedule: vi.fn(async () => { throw new Error('disk full'); }) });
     await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toThrow('disk full');
   });
+
+  it('maps a schedule compare-and-swap conflict to the operator edit message', async () => {
+    const conflict = Object.assign(new Error('schedule sched-1 prompt was edited since this run launched'), { code: 'DEFINITION_CONFLICT' });
+    const d = deps({ updateSchedule: vi.fn(async () => { throw conflict; }) });
+    const err = await updateScheduledPromptFromCorrection(d, ctx, APPROVED).catch((e) => e);
+    expect(err).toBeInstanceOf(InboxActionOperatorError);
+    expect(err.message).toBe('the schedule prompt was edited since this run launched; review the schedule before approving the correction');
+  });
 });
 
 describe('parseGoalLaunchRequestId', () => {
@@ -194,7 +202,7 @@ describe('updateScheduledPromptFromCorrection for goal Squads', () => {
     const d = deps();
     await updateScheduledPromptFromCorrection(d, ctx, APPROVED);
     expect(d.getGoal).toHaveBeenCalledWith('g1');
-    expect(d.updateGoal).toHaveBeenCalledWith('g1', { statement: VALID_PLAN });
+    expect(d.updateGoal).toHaveBeenCalledWith('g1', { statement: VALID_PLAN, expectedStatement: OBJECTIVE });
     expect(d.updateSchedule).not.toHaveBeenCalled();
   });
 
@@ -243,6 +251,14 @@ describe('updateScheduledPromptFromCorrection for goal Squads', () => {
     const d = deps({ updateGoal: vi.fn(async () => { throw new Error('disk full'); }) });
     await expect(updateScheduledPromptFromCorrection(d, ctx, APPROVED)).rejects.toThrow('disk full');
   });
+
+  it('maps a goal compare-and-swap conflict to the operator edit message', async () => {
+    const conflict = Object.assign(new Error('goal g1 statement was edited'), { code: 'DEFINITION_CONFLICT' });
+    const d = deps({ updateGoal: vi.fn(async () => { throw conflict; }) });
+    const err = await updateScheduledPromptFromCorrection(d, ctx, APPROVED).catch((e) => e);
+    expect(err).toBeInstanceOf(InboxActionOperatorError);
+    expect(err.message).toBe('the goal plan was edited since this run launched; review the goal before approving the correction');
+  });
 });
 
 describe('updateScheduledPromptFromCorrection (real confined artifact read)', () => {
@@ -268,7 +284,7 @@ describe('updateScheduledPromptFromCorrection (real confined artifact read)', ()
     writeFileSync(join(root, correctedPlanRelPath('exec-1')), VALID_PLAN);
     const update = vi.fn(async () => ({}));
     await updateScheduledPromptFromCorrection(realDeps(update), ctxFor(root), APPROVED);
-    expect(update).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN });
+    expect(update).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN, expectedPrompt: OBJECTIVE });
   });
 
   it('rejects when the artifact is missing', async () => {
@@ -342,7 +358,7 @@ describe('PlanCorrectionService + updateScheduledPrompt closure', () => {
     const t = build({});
     const ref = await t.offer();
     await runPlanCorrectionHostAction(t.service, ref, 'approve');
-    expect(t.updateSchedule).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN });
+    expect(t.updateSchedule).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN, expectedPrompt: OBJECTIVE });
     expect(t.resume).toHaveBeenCalledOnce();
     expect(t.updateSchedule.mock.invocationCallOrder[0]).toBeLessThan(t.resume.mock.invocationCallOrder[0]!);
     expect(await t.service.hasApproval('exec-1')).toBe(true);
@@ -406,7 +422,7 @@ describe('PlanCorrectionService + updateScheduledPrompt closure', () => {
     const ref = await t.offer();
     await runPlanCorrectionHostAction(t.service, ref, 'approve');
     expect(t.updateSchedule).toHaveBeenCalledOnce();
-    expect(t.updateSchedule).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN });
+    expect(t.updateSchedule).toHaveBeenCalledWith('sched-1', { prompt: VALID_PLAN, expectedPrompt: OBJECTIVE });
     rmSync(t.root, { recursive: true, force: true });
   });
 });

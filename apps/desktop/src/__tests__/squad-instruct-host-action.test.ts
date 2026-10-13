@@ -8,9 +8,7 @@ describe('retained squad instruct host action', () => {
   const host = readFileSync(new URL('../host.ts', import.meta.url), 'utf8');
 
   it('reports retained terminal worktree status without rendering lifecycle actions as Inbox questions', () => {
-    expect(host).toContain("subject: 'Squad worktree retained'");
-    expect(host).toContain('origin: { title: record.jobTitle }');
-    expect(host).toContain('Open Squad details to inspect recovery options and manage the retained worktree.');
+    expect(host).toContain('inboxStore.appendOnce(squadWorktreeRetainedNotice({');
     const terminalNotice = host.slice(host.indexOf('async function handleSquadWorktreeTerminal'), host.indexOf('async function replayUndisposedSquadWorktreeTerminalEffects'));
     expect(terminalNotice).not.toContain("questions: [{ prompt: 'Choose worktree disposition'");
   });
@@ -22,7 +20,7 @@ describe('retained squad instruct host action', () => {
       host.indexOf('setWorktreePushProtection(project.path, worktree.path, false)')
     );
     expect(host.indexOf('if (!mayReleaseSquadWorktreeGuard(teardown)) return;')).toBeLessThan(
-      host.indexOf("subject: 'Squad worktree retained'")
+      host.indexOf('inboxStore.appendOnce(squadWorktreeRetainedNotice({')
     );
   });
 

@@ -63,3 +63,20 @@ describe('QuestionBlock host action metadata', () => {
     await waitFor(() => expect(onHostAction).toHaveBeenCalledWith({ optionId: 'delete' }));
   });
 });
+
+describe('QuestionBlock canSend', () => {
+  it('never enables Continue when there are no questions to answer', () => {
+    const view = render(
+      <QuestionBlock
+        entry={{ id: 'empty', ts: 1, projectId: 'project' }}
+        questions={[]}
+        sessionId="session"
+        sessionTitle="Agent"
+        onReply={vi.fn()}
+      />
+    );
+    const button = within(view.container).queryByRole('button', { name: 'Continue', exact: true });
+    if (button) expect(button.hasAttribute('disabled')).toBe(true);
+  });
+});
+

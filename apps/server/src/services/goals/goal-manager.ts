@@ -43,6 +43,25 @@ const PROGRESS_VERDICTS: ReadonlySet<GoalVerdict> = new Set<GoalVerdict>(['pass'
 
 type Logger = (context: string, err: unknown) => void;
 
+/**
+ * Update patch accepted by {@link GoalManager.update}. `expectedStatement` is a
+ * compare-and-swap guard: when present, the update is rejected with
+ * {@link GoalConflictError} unless the goal's current statement (trimmed)
+ * still equals it. The guard itself is never persisted.
+ */
+export type GoalUpdatePatch = GoalUpdateInput & { expectedStatement?: string };
+
+/** The goal statement was edited after the caller captured `expectedStatement`. */
+export class GoalConflictError extends Error {
+  readonly code = 'DEFINITION_CONFLICT' as const;
+  constructor(readonly goalId: string) {
+    super(`goal ${goalId} statement was edited since this run launched`);
+    this.name = 'GoalConflictError';
+  }
+}
+
+const NO_SQUAD_SELECTED = 'Squad goal has no Squad selected; edit the goal to choose one before resuming';
+
 /** Input the evaluator micro-call needs; mirrors the `builtin:goal-evaluator` template vars. */
 export interface GoalEvalVars {
   statement: string;
@@ -230,7 +249,7 @@ export class GoalManager extends EventEmitter {
   }
 
   create(input: GoalCreateInput): Promise<Goal> { return this.serial(() => this.createNow(input)); }
-  update(id: string, patch: GoalUpdateInput): Promise<Goal> { return this.serial(() => this.updateNow(id, patch)); }
+  update(id: string, patch: GoalUpdatePatch): Promise<Goal> { return this.serial(() => this.updateNow(id, patch)); }
   setStatus(id: string, status: GoalStatus): Promise<Goal | null> { return this.serial(() => this.setStatusNow(id, status)); }
   remove(id: string): Promise<void> { return this.serial(() => this.removeNow(id)); }
   runNow(id: string): Promise<Goal> { return this.serial(() => this.runNowInternal(id)); }
@@ -344,9 +363,23 @@ export class GoalManager extends EventEmitter {
     return goal;
   }
 
-  private async updateNow(id: string, patch: GoalUpdateInput): Promise<Goal> {
+  private async updateNow(id: string, input: GoalUpdatePatch): Promise<Goal> {
     const live = this.live.get(id);
     if (!live) throw new Error(`goal not found: ${id}`);
+    const { expectedStatement, ...patch } = input;
+    if (expectedStatement !== undefined) {
+      const expected = expectedStatement.trim();
+      const matches = (goal: Goal) => !!expected && (goal.statement ?? '').trim() === expected;
+      if (!matches(live.goal)) throw new GoalConflictError(id);
+      // Re-check the owner's record at the write boundary when it is readable:
+      // a remote/hand edit may not have reached this process's snapshot yet.
+      if (this.deps?.persistence?.read) {
+        const epoch = this.epoch;
+        const owned = await this.deps.persistence.read(live.goal);
+        if (epoch !== this.epoch) throw new Error('Goal manager stopped');
+        if (!matches(owned)) throw new GoalConflictError(id);
+      }
+    }
     const next: Goal = { ...live.goal };
     if (patch.title !== undefined) next.title = patch.title.trim();
     if (patch.statement !== undefined) next.statement = patch.statement.trim();
@@ -409,6 +442,7 @@ export class GoalManager extends EventEmitter {
       this.emit('changed');
       return live.goal;
     }
+    if (status === 'active' && this.missingSquad(live)) throw new Error(NO_SQUAD_SELECTED);
     if (status === 'active' && !(await this.recoverPending(live))) throw new Error('Unconfirmed worker launch; reconcile its session before resuming');
     await this.commit(live, { ...live.goal, status, updatedAt: new Date().toISOString() });
     if (status === 'active') {
@@ -450,6 +484,7 @@ export class GoalManager extends EventEmitter {
       await this.completeTerminalization(live);
       return live.goal;
     }
+    if (this.missingSquad(live)) throw new Error(NO_SQUAD_SELECTED);
     if (!(await this.recoverPending(live))) throw new Error('Unconfirmed worker launch; reconcile its session before resuming');
     if (live.goal.status !== 'active') {
       await this.commit(live, { ...live.goal, status: 'active', updatedAt: new Date().toISOString() });
@@ -681,10 +716,16 @@ export class GoalManager extends EventEmitter {
     if ((!live.pendingTerminal && !live.goal.terminalStatus && (!live.goal.terminalMessage || live.goal.terminalNotificationDelivered)) || live.terminalRetryTimer) return;
     live.terminalRetryTimer = setTimeout(() => {
       live.terminalRetryTimer = null;
+      const epoch = this.epoch;
       void this.serial(async () => {
         if (this.live.get(live.goal.id) !== live || live.goal.status === 'paused') return;
         await this.completeTerminalization(live);
-      }).catch(error => this.log(`terminalize ${live.goal.id}`, error));
+      }).catch(error => {
+        this.log(`terminalize ${live.goal.id}`, error);
+        // The serial slot itself was rejected (queue full). Durable terminal
+        // intent must not be stranded; re-arm only for the same live identity.
+        if (epoch === this.epoch && this.live.get(live.goal.id) === live) this.retryTerminalization(live);
+      });
     }, 1_000);
     live.terminalRetryTimer.unref?.();
   }
@@ -717,6 +758,11 @@ export class GoalManager extends EventEmitter {
       this.log(`terminalize ${live.goal.id}`, error);
       this.retryTerminalization(live);
     }
+  }
+
+  /** A legacy Squad goal loaded without a teamId can never launch until edited. */
+  private missingSquad(live: Live): boolean {
+    return live.goal.assignment.kind === 'team' && !live.goal.assignment.teamId?.trim();
   }
 
   /** True if this goal has a spawned worker still running/starting. */
@@ -786,7 +832,7 @@ export class GoalManager extends EventEmitter {
   private async arm(id: string): Promise<void> {
     const live = this.live.get(id);
     if (!live || live.goal.status !== 'active' || live.goal.terminalStatus || this.hasLiveSessionFor(id) || this.evaluating.has(id)) return;
-    if (live.goal.history.iterations.some(it => it.launchState === 'pending')) return;
+    if (live.goal.history.iterations.some(it => it.launchState === 'pending') || this.missingSquad(live)) return;
     this.clearRetry(live);
     if (live.goal.iteration >= live.goal.maxIterations) {
       await this.finish(id, 'exhausted', `Goal **${live.goal.title}** reached its ${live.goal.maxIterations}-iteration limit.`);
@@ -1009,9 +1055,15 @@ export class GoalManager extends EventEmitter {
 
   private async evaluateSquadTerminal(goalId: string, iterationId: string, state: string, summary: string) {
     const live = this.live.get(goalId);
-    if (!live || this.evaluating.has(goalId)) return;
+    if (!live) return;
     const iteration = live.goal.history.iterations.find(it => it.id === iterationId);
     if (!iteration || iteration.verdict !== undefined) return;
+    if (this.evaluating.has(goalId)) {
+      // Another iteration of this goal is being evaluated. Re-observe this one
+      // shortly instead of dropping its terminal outcome on the floor.
+      if (iteration.executionId) this.retrySquadObservation(goalId, live, iterationId, iteration.executionId);
+      return;
+    }
     this.evaluating.add(goalId);
     try {
       const result = await this.deps!.runEvaluator({

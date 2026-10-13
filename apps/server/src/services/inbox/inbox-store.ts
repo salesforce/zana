@@ -110,6 +110,8 @@ export interface InboxInput {
   blockerId?: string;
   /** Host-stamped routing fence for desktop-only action entries. */
   hostActionRequired?: true;
+  /** Host-stamped Squad worktree lifecycle notice marker. */
+  squadNotice?: 'worktree-lifecycle';
   /** Host-authored decision context rendered with deferred technical Details. */
   decisionGuidance?: InboxDecisionGuidance;
 }

@@ -121,6 +121,7 @@ import { readExecutionStoreSqliteState } from '@zana-ai/zcc-server/services/exec
 import { executionStoreCreationBackend, sqliteExecutionStoreWarning } from '@zana-ai/zcc-server/services/execution/storage/backend-policy';
 import { createInboxActionRegistry, InboxActionOperatorError } from './inbox-actions/registry.js';
 import { currentRetainedSquadWorktreeAction, isTerminalSquadExecution, isWithinRetainedSquadWorktreeBase, squadFollowUpPrompt, type RetainedSquadWorktreeAction } from './inbox-actions/squad-instruct.js';
+import { squadWorktreeRetainedNotice, squadWorktreeUnavailableNotice } from './squad-worktree-notice.js';
 import { claimSquadWorktreeFollowUp, ineligibleSquadWorktreeFallback, mayReleaseSquadWorktreeGuard, releaseSquadWorktreeFollowUp, resolveSquadWorktreeDisposition, resolveSquadWorktreePreparation, restoreSquadWorktreeFollowUp, shouldReplaySquadWorktreeTerminalEffects, squadWorktreeFollowUpExecution, squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock } from './squad-worktree-lifecycle.js';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
 import { preflightWorkflowProfile } from '@zana-ai/zcc-server/services/agents/squad-bundle';
@@ -5281,16 +5282,6 @@ function squadWorktreeSlug(teamId: string, executionId: string): string {
   return sanitizeBranchSlug(`${teamId}-${executionId}`) ?? `squad-${executionId.replace(/[^a-zA-Z0-9]/g, '_')}`;
 }
 
-function isWithinProjectWorktreeBase(candidate: string, projectRoot: string): boolean {
-  const base = join(projectRoot, '.worktrees');
-  try {
-    mkdirSync(base, { recursive: true, mode: 0o700 });
-    return isWithin(candidate, realpathSync(base));
-  } catch {
-    return false;
-  }
-}
-
 function isWithinSquadWorktreeBase(candidate: string, projectRoot: string): boolean {
   try {
     return isWithin(candidate, realpathSync(join(projectRoot, '.worktrees')));
@@ -5368,18 +5359,11 @@ async function prepareSquadWorktree(record: ExecutionRecord, request: { worktree
   const created = await createWorktree(project.path, target, branch, join(project.path, '.worktrees'), true);
   if (!created.ok) {
     if (retainedWorktree) throw new Error('WORKTREE_UNAVAILABLE');
-    await inboxStore.appendOnce({
-      projectId: project.id,
-      projectLabel: project.name,
-      subject: 'Squad worktree unavailable',
-      comments: `Squad run uses project root because shared worktree creation failed: ${created.reason}`,
-      executionId: record.id,
-      dedupeKey: `squad-worktree-fallback:${record.id}`
-    });
+    await inboxStore.appendOnce(squadWorktreeUnavailableNotice(project, record.id, created.reason));
     return record;
   }
   const path = realpathSync(created.path);
-  if (!isWithinProjectWorktreeBase(path, project.path)) {
+  if (!isWithinSquadWorktreeBase(path, project.path)) {
     throw new Error('squad worktree escaped registered project worktree base');
   }
   const baseBranch = retainedWorktree?.baseBranch ?? (await getGitStatus(project.path))?.branch;
@@ -6099,15 +6083,15 @@ async function handleSquadWorktreeTerminal(record: ExecutionRecord): Promise<voi
     }
     // Inbox records the terminal outcome only. Recovery and retained-worktree
     // lifecycle controls belong to Squad details, where their run state is visible.
-    await inboxStore.appendOnce({
+    await inboxStore.appendOnce(squadWorktreeRetainedNotice({
       projectId: record.projectId,
       projectLabel: project?.name,
       executionId: record.id,
-      subject: 'Squad worktree retained',
-      origin: { title: record.jobTitle },
-      comments: `Execution ${record.state.toLowerCase()}. The shared worktree remains at \`${worktree.path}\`. Open Squad details to inspect recovery options and manage the retained worktree.`,
-      dedupeKey: `squad-worktree-retained:${record.id}:${record.stateVersion}`
-    });
+      stateVersion: record.stateVersion,
+      jobTitle: record.jobTitle,
+      state: record.state,
+      worktreePath: worktree.path
+    }));
     await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);
   });
 }

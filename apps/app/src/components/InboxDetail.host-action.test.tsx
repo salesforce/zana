@@ -80,7 +80,7 @@ describe('InboxDetail host-owned actions', () => {
     expect(state.send).not.toHaveBeenCalled();
   });
 
-  it('marks host entry answered after successful host delivery without terminal fallback', async () => {
+  it('delivers through the host action without marking answered or falling back to the terminal', async () => {
     render(view());
     fireEvent.click(await screen.findByRole('radio', { name: /Delete/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Continue', exact: true }));
@@ -91,7 +91,7 @@ describe('InboxDetail host-owned actions', () => {
   });
 
   it('routes retained Squad worktree actions to Agents instead of rendering legacy Inbox choices', async () => {
-    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1' };
+    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1', squadNotice: 'worktree-lifecycle' };
     state.action = { ...state.action!, kind: 'squad-worktree-lifecycle' };
     render(view());
     expect(await screen.findByText('This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.')).toBeTruthy();
@@ -102,7 +102,7 @@ describe('InboxDetail host-owned actions', () => {
   });
 
   it('names the Squad run on a retained-worktree card with no live session', async () => {
-    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1', sessionId: undefined, origin: { title: 'Write Output File' } };
+    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1', squadNotice: 'worktree-lifecycle', sessionId: undefined, origin: { title: 'Write Output File' } };
     state.action = { ...state.action!, kind: 'squad-worktree-lifecycle' };
     render(view());
     expect(await screen.findByTitle('Squad run')).toBeTruthy();
@@ -112,12 +112,53 @@ describe('InboxDetail host-owned actions', () => {
 
   it('keeps the Squad-details link when project and legacy host binding are gone', async () => {
     state.projects = [];
-    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1' };
+    state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1', squadNotice: 'worktree-lifecycle' };
     state.action = undefined;
     render(view());
     expect(await screen.findByRole('button', { name: 'Open Squad details' })).toBeTruthy();
     expect(screen.queryByText(/Project no longer exists/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
+  });
+
+  it('keeps the reply box for a worker blocker that merely mentions a shared worktree', async () => {
+    state.action = undefined;
+    state.entry = {
+      id: 'host-entry', ts: 1, projectId: 'p', sessionId: 'terminal',
+      subject: 'Blocked on merge', comments: 'The shared worktree has conflicts. How should I proceed?',
+      executionId: 'run-1', blockerId: 'blocker-1'
+    };
+    render(view());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Open Squad details' })).toBeNull());
+    expect(screen.queryByText(/Recovery and worktree actions are available from Squad details/)).toBeNull();
+    expect(screen.getByText('The shared worktree has conflicts. How should I proceed?')).toBeTruthy();
+  });
+
+  it('hides the reply box for a host-stamped Squad worktree notice without a host action', async () => {
+    state.action = undefined;
+    state.entry = {
+      id: 'host-entry', ts: 1, projectId: 'p', sessionId: 'terminal',
+      subject: 'Squad worktree unavailable', comments: 'Squad run uses project root.',
+      executionId: 'run-1', squadNotice: 'worktree-lifecycle'
+    };
+    render(view());
+    expect(await screen.findByRole('button', { name: 'Open Squad details' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Leave a reply|Reopen & answer|Send/ })).toBeNull();
+  });
+
+  it('derives the notice from the squad-worktree-lifecycle host action kind without a stamp', async () => {
+    state.entry = { id: 'host-entry', ts: 1, projectId: 'p', sessionId: 'terminal', comments: 'Retained.', executionId: 'run-1' };
+    state.action = { entryId: 'host-entry', kind: 'squad-worktree-lifecycle', status: 'pending' };
+    render(view());
+    expect(await screen.findByRole('button', { name: 'Open Squad details' })).toBeTruthy();
+  });
+
+  it('shows the plan-correction context line alongside a pending host action', async () => {
+    state.entry = {
+      ...state.entry, subject: 'Plan correction required', executionId: 'execution-1',
+      decisionGuidance: { kind: 'plan-correction', diagnostic: 'unknown dependency' }
+    };
+    render(view());
+    expect(await screen.findByText('Keep this Squad run context while reviewing the correction.')).toBeTruthy();
   });
 
   it('opens a scheduled Squad correction in details instead of creating an Agent', async () => {

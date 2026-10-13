@@ -672,6 +672,12 @@ export interface InboxEntry {
    */
   hostActionRequired?: true;
   /**
+   * Host-stamped marker for Squad worktree lifecycle notices. The renderer
+   * routes these to Squad details instead of the generic reply box; it is
+   * presentation only and never authorizes an action (main does).
+   */
+  squadNotice?: 'worktree-lifecycle';
+  /**
    * Optional host-authored decision context. Main content stays plain-language;
    * technical material appears only after the user opens its Details disclosure.
    */

@@ -232,7 +232,8 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   const hasDocs = (entry.docs?.length ?? 0) > 0;
   const hasComments = (entry.comments ?? '').trim().length > 0;
   const squadDetailsNotice = !!entry.executionId && (
-    /(?:squad|shared) worktree/i.test(`${entry.subject ?? ''}\n${entry.comments ?? ''}`)
+    entry.squadNotice === 'worktree-lifecycle'
+    || hostAction?.kind === 'squad-worktree-lifecycle'
     || entry.decisionGuidance?.kind === 'plan-correction'
   );
   const decisionGuidance = entry.decisionGuidance;
@@ -788,9 +789,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
 
        {entry.decisionGuidance?.kind === 'plan-correction' && hostAction && (
          <div className="inbox-reply" role="status">
-           <p>{entry.decisionGuidance?.kind === 'plan-correction'
-             ? 'Keep this Squad run context while reviewing the correction.'
-             : 'Recovery and worktree actions are available from Squad details.'}</p>
+           <p>Keep this Squad run context while reviewing the correction.</p>
            <button type="button" className="btn inbox-reply-open-details" onClick={() => {
              setPendingSquadDetailsTarget({ projectId: entry.projectId, executionId: entry.executionId! });
              setNav('agents');

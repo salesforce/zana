@@ -149,7 +149,7 @@ export function QuestionBlock({
   const selectedHostActionNeedsText = hostOwned
     && selectedHostOptionId !== undefined
     && selectedHostOptionId === hostActionTextOptionId;
-  const canSend = answers.every((a) => a.trim().length > 0)
+  const canSend = answers.length > 0 && answers.every((a) => a.trim().length > 0)
     && (!selectedHostActionNeedsText || hostActionText.trim().length > 0);
 
   // What actually gets injected. One question → its raw answer (unchanged from
