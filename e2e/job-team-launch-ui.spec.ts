@@ -39,8 +39,11 @@ for (const {
   planningLabel,
   coordinationMode
 } of [
-  { planningLabel: 'Infer plan from goal', coordinationMode: 'freeform' },
-  { planningLabel: 'Plan provided in goal', coordinationMode: 'structured' }
+  // "Plan provided in goal" with prose and no plan steps now parks for Inbox plan
+  // correction instead of letting the coordinator derive a DAG; that case is in
+  // job-team-plan-correction.spec.ts and a valid provided plan is seeded by the
+  // dedicated test below.
+  { planningLabel: 'Infer plan from goal', coordinationMode: 'freeform' }
 ] as const) {
 test(`launching a ${coordinationMode} Team with ${profile} through the real UI completes durable work`, async ({ app }) => {
   const { window } = app;
@@ -249,7 +252,8 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
  * coordinator) supplied the plan: the fake orchestrator logs `plan present` and
  * NEVER `plan registered`.
  */
-test('a structured Team seeds a provided portable plan pre-launch and dispatches without a coordinator register', async ({ app }) => {
+for (const profile of ['claude', 'codex'] as const) {
+test(`a structured Team seeds a provided portable plan pre-launch with ${profile} and dispatches without a coordinator register`, async ({ app }) => {
   const { window } = app;
   const agent = makeJobTeamCoordinatorBinary();
 
@@ -289,29 +293,34 @@ test('a structured Team seeds a provided portable plan pre-launch and dispatches
   let projectId: string | null = null;
 
   try {
-    await window.evaluate((bin) => window.cc.config.set({
+    await window.evaluate(({ bin, profile }) => window.cc.config.set({
       teamJobLaunchEnabled: true,
       sponsorPromptDismissed: true,
       claudeBinary: bin,
-      defaultHarness: 'claude'
-    }), agent.path);
+      codexBinary: bin,
+      trustZccToolsEnabled: false,
+      defaultCodexSandbox: 'workspace-write',
+      defaultCodexApproval: 'on-request',
+      tmuxScope: 'off',
+      defaultHarness: profile
+    }), { bin: agent.path, profile });
 
-    await window.evaluate(() => window.cc.personas.save({
+    await window.evaluate((profile) => window.cc.personas.save({
       id: 'e2e-orchestrator',
       name: 'E2E Orchestrator',
-      description: 'Claude orchestrator for the job-team launch spec',
-      baseProfile: 'claude',
+      description: 'Orchestrator for the job-team launch spec',
+      baseProfile: profile,
       permissionMode: 'default',
       systemPrompt: ''
-    }));
-    await window.evaluate(() => window.cc.personas.save({
+    }), profile);
+    await window.evaluate((profile) => window.cc.personas.save({
       id: 'e2e-worker',
       name: 'E2E Worker',
-      description: 'Claude worker for the job-team launch spec',
-      baseProfile: 'claude',
+      description: 'Worker for the job-team launch spec',
+      baseProfile: profile,
       permissionMode: 'default',
       systemPrompt: ''
-    }));
+    }), profile);
     await window.evaluate(() => window.cc.teams.save({
       id: 'e2e-job-team',
       name: 'E2E Job Team',
@@ -422,3 +431,4 @@ test('a structured Team seeds a provided portable plan pre-launch and dispatches
     agent.cleanup();
   }
 });
+}

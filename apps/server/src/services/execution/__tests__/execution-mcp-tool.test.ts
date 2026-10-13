@@ -56,6 +56,8 @@ function service() {
     resume: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } }))
     ,controlWithHandoff: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } }))
     ,retry: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', attempt: 2, state: 'RUNNING' } }))
+    ,resumeRun: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', attempt: 2, state: 'RUNNING' } }))
+    ,recoverRetained: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', attempt: 2, state: 'RUNNING' } }))
     ,putArtifact: vi.fn(async () => ({ ok: true as const, value: { id: 'artifact-1' } })),
     listArtifacts: vi.fn(async () => [{ id: 'artifact-1', content: 'secret' }]),
     mintResumeGrant: vi.fn(async () => ({ ok: true as const, value: { token: 'replacement-token', expiresAt: 100 } }))
@@ -81,6 +83,12 @@ function service() {
     ,dispatchReady: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1' } }))
     ,answerBlockerByCoordinator: vi.fn(async () => ({ ok: true as const, pending: true as const, notified: true, value: { id: 'execution-1' } }))
   };
+}
+
+async function tools_failure(tools: Map<string, ToolHandler>, name: string, extra: Record<string, unknown>) {
+  const result = await tools.get(name)!({ executionId: 'execution-1', expectedStateVersion: 4, ...extra });
+  expect(result.isError).toBe(true);
+  expect(text(result)).toBe(`${name} failed: stale execution state`);
 }
 
 const contractFixturePath = fileURLToPath(new URL('../../../../test/fixtures/execution-contract-v1.json', import.meta.url));
@@ -157,11 +165,19 @@ describe('execution MCP tools', () => {
     const execution = service();
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
-    const workUnits = [{ id: 'a', title: 'A', task: 'A', dependencies: [], files: ['a.txt'], verification: ['check a'] }];
+    const workUnits = [{ id: 'a', title: 'A', task: 'A', dependencies: [], files: ['a.txt'], verification: ['check a'], requires: { skills: ['review'], mcpServers: ['repo'] } }];
     await expect(tools.get('execution.start')!({
       version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }], workUnits
     })).resolves.not.toMatchObject({ isError: true });
     expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ workUnits }));
+  });
+
+  it('rejects work-unit requirement names outside the portable contract bounds', () => {
+    const { server, definitions } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: service() as never, validateRouteIdentity: () => true });
+    const schema = (definitions.get('execution.plan.register') as { inputSchema: { workUnits: { element: { safeParse(value: unknown): { success: boolean } } } } }).inputSchema.workUnits.element;
+    expect(schema.safeParse({ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], requires: { skills: ['x'.repeat(257)] } }).success).toBe(false);
+    expect(schema.safeParse({ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], requires: { mcpServers: Array.from({ length: 51 }, (_, index) => `mcp-${index}`) } }).success).toBe(false);
   });
 
   it('accepts bounded versioned routing metadata without caller slot authority', async () => {
@@ -659,6 +675,7 @@ describe('execution MCP tools', () => {
       }
     };
     expect(inputSchema.safeParse(valid).success).toBe(true);
+    expect(inputSchema.safeParse({ ...valid, worktree: true }).success).toBe(true);
     expect(inputSchema.safeParse({ requestPath: '/Users/me/.zcc/execution-requests/request.json' }).success).toBe(true);
     for (const invalid of [
       { ...valid, modelTier: 'HIGH' },
@@ -683,18 +700,73 @@ describe('execution MCP tools', () => {
     }));
   });
 
-  it('routes stop, respond, and resume through authenticated route scope', async () => {
+  it('routes retained recovery controls through authenticated route scope', async () => {
     const execution = service();
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
     await tools.get('execution.stop')!({ executionId: 'execution-1', expectedStateVersion: 4 });
     await tools.get('execution.retry')!({ executionId: 'execution-1', expectedStateVersion: 4 });
+    await tools.get('execution.resume_run')!({ executionId: 'execution-1', expectedStateVersion: 4 });
+    await tools.get('execution.relaunch_retained_plan')!({ executionId: 'execution-1', expectedStateVersion: 4 });
+    await tools.get('execution.recover_retained')!({ executionId: 'execution-1', expectedStateVersion: 4, mode: 'exact-native' });
     await tools.get('execution.respond')!({ executionId: 'execution-1', expectedStateVersion: 5, slotId: 'slot-1', message: 'Answer' });
     await tools.get('execution.resume')!({ executionId: 'execution-1', expectedStateVersion: 6, slotId: 'slot-1', message: 'Continue' });
     expect(execution.stop).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 4);
     expect(execution.retry).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 4);
+    expect(execution.resumeRun).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 4, false);
+    expect(execution.recoverRetained).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 4, 'fresh-plan');
+    expect(execution.recoverRetained).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 4, 'exact-native');
     expect(execution.respond).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 5, 'slot-1', 'Answer');
     expect(execution.resume).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 6, 'slot-1', 'Continue');
+  });
+
+  it('forwards worktree and per-unit requires on execution.start', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+    const unit = { id: 'u1', title: 'T', task: 'do', dependencies: [], requires: { skills: ['review'], mcpServers: ['repo'] } };
+    await tools.get('execution.start')!({ version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }], worktree: true, workUnits: [unit] });
+    expect(execution.start).toHaveBeenLastCalledWith('session-1', 'project-1', expect.objectContaining({ worktree: true, workUnits: [unit] }));
+    await tools.get('execution.start')!({ version: 1, teamId: 'team-1', launchRequestId: 'request-2', slots: [{ initialTask: 'work' }] });
+    expect(execution.start.mock.calls.at(-1)![2]).not.toHaveProperty('worktree');
+  });
+
+  it('denies retained recovery controls on stale route identity and surfaces service failures', async () => {
+    const stale = service();
+    const a = fakeServer();
+    registerExecutionTools(a.server as never, { sessionId: 'session-1', projectId: 'project-1', service: stale as never, validateRouteIdentity: () => false });
+    for (const name of ['execution.recover_retained', 'execution.relaunch_retained_plan', 'execution.resume_run']) {
+      const result = await a.tools.get(name)!({ executionId: 'execution-1', expectedStateVersion: 4, mode: 'fresh-plan' });
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain('not authorized');
+    }
+    expect(stale.recoverRetained).not.toHaveBeenCalled();
+    expect(stale.resumeRun).not.toHaveBeenCalled();
+
+    const failing = service();
+    const fail = { ok: false as const, code: 'CONFLICT', message: 'stale execution state' } as never;
+    failing.recoverRetained.mockResolvedValue(fail);
+    failing.resumeRun.mockResolvedValue(fail);
+    const b = fakeServer();
+    registerExecutionTools(b.server as never, { sessionId: 'session-1', projectId: 'project-1', service: failing as never, validateRouteIdentity: () => true });
+    await tools_failure(b.tools, 'execution.relaunch_retained_plan', {});
+    await tools_failure(b.tools, 'execution.resume_run', { replay: true });
+    expect(failing.resumeRun).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 4, true);
+  });
+
+  it('returns exact-native compatibility rejection without relaunching fresh-plan', async () => {
+    const execution = service();
+    execution.recoverRetained.mockResolvedValueOnce({
+      ok: false, code: 'NO_RESTORABLE_SLOTS', message: 'exact-native recovery requires at least one restorable native slot'
+    });
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+
+    const result = await tools.get('execution.recover_retained')!({ executionId: 'execution-1', expectedStateVersion: 4, mode: 'exact-native' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(text(result)).toContain('exact-native recovery requires at least one restorable native slot');
+    expect(execution.recoverRetained).toHaveBeenCalledExactlyOnceWith('session-1', 'project-1', 'execution-1', 4, 'exact-native');
   });
 
   it('rejects stale route identity before every execution operation', async () => {

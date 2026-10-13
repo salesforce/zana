@@ -5,6 +5,7 @@ import { executionEvidenceFor, executionTargetFor } from '@zana-ai/zcc-host-daem
 import type { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import type { ExecutionConsentScope, createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { LaunchProvider } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
+import { withLiveModelTargets } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
 import { providerFor, registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { harnessEnabledFromProbe } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import {
@@ -12,7 +13,8 @@ import {
   allowsLiveListedModelTarget,
   resolveExecutionState,
   resolveModelTarget,
-  resolveRoleTarget
+  resolveRoleTarget,
+  type AuthorizedModelTarget
 } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { evaluateFacetEvidence, evaluateTargetEvidence } from '@zana-ai/zcc-host-daemon/harness/routing-evidence';
 import type { ExecutionAuthorizationInput, ExecutionPreflightDecision } from './preflight.js';
@@ -57,21 +59,30 @@ export async function preflightTerminalExecution(
   }
 ): Promise<ExecutionPreflightDecision> {
   const effectiveProfile = input.persona?.baseProfile ?? input.profile;
-  const provider = deps.provider ?? providerFor(effectiveProfile);
-  const adapterId = harnessFamilyOf(effectiveProfile) || provider.adapter.descriptor.id;
+  const sharedProvider = deps.provider ?? providerFor(effectiveProfile);
+  const adapterId = harnessFamilyOf(effectiveProfile) || sharedProvider.adapter.descriptor.id;
+  // Providers are process-wide singletons. A live inventory belongs to THIS
+  // launch only: it is probed at most once and resolved through a launch-scoped
+  // view — never written onto the shared provider or into any keyed store, where
+  // an interleaved launch (another project, a sibling slot sharing this cwd, or
+  // one whose probe failed) would pick it up. The concrete model id a portable
+  // level resolves to travels in the decision (`modelPin`), is bound into the
+  // authorized launch digest, and is used verbatim by the spawn.
+  const liveModels = liveModelProbe(sharedProvider, input, deps.discovery);
+  let provider: LaunchProvider = sharedProvider;
   let resolved: ReturnType<typeof resolveExecutionState>;
   let preflight: ReturnType<typeof resolveStructuredRouting>;
   try {
-    resolved = resolveExecutionState(provider, {
-      config: input.config,
-      persona: input.persona,
-      projectSettings: input.projectSettings,
-      perTabRouting: input.harnessRouting,
-      profile: effectiveProfile,
-      extraArgs: input.extraArgs ?? [],
-      scope: input.scope
-    });
+    resolved = resolveExecutionState(provider, executionResolutionInput(input, effectiveProfile));
     preflight = resolveStructuredRouting(provider, input);
+    // A portable level must follow the currently installed gateway catalog. Probe
+    // after the initial resolution tells us a level was selected, then resolve
+    // again against this launch's live view before authorization or spawn.
+    if (preflight.model.level && liveModels.available) {
+      provider = withLiveModelTargets(sharedProvider, await liveModels.read());
+      resolved = resolveExecutionState(provider, executionResolutionInput(input, effectiveProfile));
+      preflight = resolveStructuredRouting(provider, input);
+    }
   } catch (error) {
     return {
       decision: 'blocked',
@@ -84,10 +95,13 @@ export async function preflightTerminalExecution(
       executionTargetId: preflight.execution.targetId
     });
   if (combinationError) return { decision: 'blocked', reason: combinationError };
+  const modelPin = authorizedModelPin(effectiveProfile, preflight.model);
+  const pinned = (decision: ExecutionPreflightDecision): ExecutionPreflightDecision =>
+    decision.decision === 'allowed' && modelPin ? { ...decision, modelPin } : decision;
   let installedVersion: string | undefined;
   if (preflight.requested) {
     installedVersion = await deps.installedVersion(adapterId);
-    const unavailable = await preflightStructuredRouting(provider, input, installedVersion, preflight, deps.discovery);
+    const unavailable = await preflightStructuredRouting(provider, input, installedVersion, preflight, deps.discovery, liveModels);
     if (unavailable) return { decision: 'blocked', reason: unavailable };
   }
   if (resolved.origin === 'inherited-native-default' || (resolved.origin === 'explicit-native' && !resolved.targetId)) {
@@ -95,7 +109,7 @@ export async function preflightTerminalExecution(
     // to 'explicit-native' but carries no target to validate — treat it the same
     // as the native-default fallback rather than falling through to the
     // target-required authorization path below.
-    return { decision: 'allowed', scope: input.scope };
+    return pinned({ decision: 'allowed', scope: input.scope });
   }
   if (resolved.origin === 'legacy-compatibility') {
     const selection = resolved.targetId && resolved.nativePolicy
@@ -108,13 +122,13 @@ export async function preflightTerminalExecution(
     const reason = selection
       ? provider.adapter.legacyRouting?.auditExecution?.(selection) ?? 'unaudited legacy compatibility target'
       : 'unaudited legacy compatibility target';
-    return reason ? { decision: 'blocked', reason } : { decision: 'allowed', scope: input.scope };
+    return reason ? { decision: 'blocked', reason } : pinned({ decision: 'allowed', scope: input.scope });
   }
   const target = resolved.targetId ? executionTargetFor(provider, resolved.targetId) : undefined;
   const consentScopes: readonly ExecutionConsentScope[] = input.mode === 'interactive'
     ? ['one-launch', 'project']
     : ['project'];
-  return preflightExecutionAuthorization({
+  return pinned(await preflightExecutionAuthorization({
     adapterId,
     provenance: resolved.origin,
     target,
@@ -129,7 +143,21 @@ export async function preflightTerminalExecution(
   }, {
     reserve: deps.consentStore.reserve,
     request: deps.consentService?.request.bind(deps.consentService)
-  });
+  }));
+}
+
+/**
+ * The launch's level → concrete model id, when a portable level selected the
+ * model. Explicit ids need no pin: the spawn already uses them verbatim.
+ */
+function authorizedModelPin(
+  profile: LaunchProfileId,
+  model: { level?: AuthorizedModelTarget['level']; targetId?: string }
+): AuthorizedModelTarget | undefined {
+  const adapterId = harnessFamilyOf(profile);
+  return adapterId && model.level && model.targetId
+    ? { adapterId, level: model.level, targetId: model.targetId }
+    : undefined;
 }
 
 async function preflightStructuredRouting(
@@ -137,7 +165,8 @@ async function preflightStructuredRouting(
   input: TerminalExecutionPreflightInput,
   installedVersion: string | undefined,
   resolved: ReturnType<typeof resolveStructuredRouting>,
-  discovery?: TerminalExecutionDiscovery
+  discovery: TerminalExecutionDiscovery | undefined,
+  liveModels: LiveModelProbe
 ): Promise<string | undefined> {
   if (!installedVersion) return 'selected harness is unavailable or has no verifiable version';
   const registration = registrationFor(provider.adapter.descriptor.defaultProfileId ?? input.profile);
@@ -188,11 +217,9 @@ async function preflightStructuredRouting(
     // cases, catching a drifted-away id before the spawn. Only when no probe is
     // possible (no projectPath, or the provider can't list) do we fall back to the
     // snapshot rule (evidence for a snapshot id; live-listed allowance otherwise).
-    const liveModels = provider.discoverModelTargets && input.projectPath
-      ? await (discovery ? discovery.models() : provider.discoverModelTargets({ cwd: input.projectPath, config: input.config }))
-      : undefined;
-    if (liveModels) {
-      if (!liveModels.includes(model.targetId)) return 'model target unavailable';
+    const live = liveModels.available ? await liveModels.read() : undefined;
+    if (live) {
+      if (!live.includes(model.targetId)) return 'model target unavailable';
     } else if (snapshotTarget) {
       const evaluated = evaluateTargetEvidence(provider, snapshotTarget, input.scope, installedVersion);
       if (evaluated.classification === 'unavailable') return `model target: ${evaluated.reason}`;
@@ -204,6 +231,44 @@ async function preflightStructuredRouting(
     }
   }
   return undefined;
+}
+
+interface LiveModelProbe {
+  /** The provider can probe a live inventory for this launch's cwd. */
+  readonly available: boolean;
+  /** Call only when `available`. At most one probe per launch; the outcome never outlives it. */
+  read(): Promise<readonly string[] | undefined>;
+}
+
+function liveModelProbe(
+  provider: LaunchProvider,
+  input: TerminalExecutionPreflightInput,
+  discovery: TerminalExecutionDiscovery | undefined
+): LiveModelProbe {
+  const projectPath = input.projectPath;
+  const available = !!(provider.discoverModelTargets && projectPath);
+  let pending: Promise<readonly string[] | undefined> | undefined;
+  return {
+    available,
+    read() {
+      pending ??= discovery
+        ? discovery.models()
+        : provider.discoverModelTargets!({ cwd: projectPath!, config: input.config });
+      return pending;
+    }
+  };
+}
+
+function executionResolutionInput(input: TerminalExecutionPreflightInput, profile: LaunchProfileId) {
+  return {
+    config: input.config,
+    persona: input.persona,
+    projectSettings: input.projectSettings,
+    perTabRouting: input.harnessRouting,
+    profile,
+    extraArgs: input.extraArgs ?? [],
+    scope: input.scope
+  };
 }
 
 function resolveStructuredRouting(provider: LaunchProvider, input: TerminalExecutionPreflightInput) {

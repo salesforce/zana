@@ -30,6 +30,24 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({ ...base, harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'selected/model' } } } }, services)).rejects.toThrow('selected machine offline');
     expect(provider.discoverRoleTargets).not.toHaveBeenCalled(); expect(provider.discoverModelTargets).not.toHaveBeenCalled();
   });
+
+  it('maps an OpenCode portable level through the live inventory before launch', async () => {
+    const provider = new OpenCodeProvider();
+    const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => [
+      'llmgw/gpt-7-luna', 'llmgw/gpt-7-terra', 'llmgw/gpt-7-sol'
+    ]) };
+    const services = { ...deps(), provider, discovery };
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p', projectPath: '/selected/source', scope: 'local',
+      mode: 'interactive', idempotencyKey: 'live-level', persona: { id: 'p', name: 'P', modelLevel: 'low' }
+    }, services)).resolves.toEqual({
+      decision: 'allowed', scope: 'local',
+      modelPin: { adapterId: 'opencode', level: 'low', targetId: 'llmgw/gpt-7-luna' }
+    });
+    expect(discovery.models).toHaveBeenCalled();
+    // The shared provider keeps its snapshot; the live id rides in the decision.
+    expect(provider.adapter.descriptor.targets?.modelLevelMapping?.low).toBe('llmgw/gpt-6-luna');
+  });
   const deps = () => ({
     consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },
     installedVersion: vi.fn(async () => '1.18.10')

@@ -13,6 +13,7 @@ import {
   X,
   ChevronDown,
   History,
+  MoreHorizontal,
   CheckCircle2,
   XCircle,
   CircleSlash,
@@ -28,7 +29,8 @@ import type {
   GoalIteration,
   GoalStatus,
   GoalVerdict,
-  LaunchProfileId
+  LaunchProfileId,
+  Team
 } from '@zana-ai/zcc-domain/product';
 import { useData, useGoals, useUi } from '@/store';
 import { ImprovePromptButton } from '@/components/ImprovePromptButton';
@@ -489,14 +491,14 @@ function GoalRow({
                       <button
                         type="button"
                         className="scheduler-run-report-btn"
-                        title={it.error ? 'View error' : 'View report'}
-                        aria-label="View iteration report"
+                        title={it.error ? 'View error details' : 'View report'}
+                        aria-label={it.error ? 'View iteration error details' : 'View iteration report'}
                         onClick={(e) => {
                           e.stopPropagation();
                           onShowReport(it);
                         }}
                       >
-                        <History size={13} strokeWidth={1.75} />
+                        {it.error && !it.report ? <MoreHorizontal size={13} strokeWidth={1.75} /> : <History size={13} strokeWidth={1.75} />}
                       </button>
                     )}
                   </li>
@@ -534,6 +536,11 @@ function GoalModal({
   const [profile, setProfile] = useState<LaunchProfileId>(
     goal?.assignment.kind === 'profile' ? goal.assignment.profile ?? 'claude-yolo' : 'claude-yolo'
   );
+  const [runAs, setRunAs] = useState<'agent' | 'team'>(goal?.assignment.kind === 'team' ? 'team' : 'agent');
+  const [teamId, setTeamId] = useState(goal?.assignment.kind === 'team' ? goal.assignment.teamId ?? '' : '');
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsError, setTeamsError] = useState(false);
+  const [planSource, setPlanSource] = useState<'provided' | 'infer'>(goal?.planSource ?? 'infer');
   const [maxIterations, setMaxIterations] = useState<number>(goal?.maxIterations ?? 10);
   const [noProgressLimit, setNoProgressLimit] = useState<number>(goal?.noProgressLimit ?? 2);
   const [scope, setScope] = useState<'global' | 'project'>(
@@ -551,7 +558,18 @@ function GoalModal({
         .filter(Boolean),
     [criteriaText]
   );
-  const canSave = title.trim().length > 0 && statement.trim().length > 0 && Boolean(projectId);
+  const isSquad = runAs === 'team';
+  const canSave = title.trim().length > 0 && statement.trim().length > 0 && Boolean(projectId) && (runAs === 'agent' || Boolean(teamId));
+
+  useEffect(() => {
+    let active = true;
+    void product.teams.list().then((nextTeams) => {
+      if (active) { setTeams(nextTeams); setTeamsError(false); }
+    }).catch(() => {
+      if (active) { setTeams([]); setTeamsError(true); }
+    });
+    return () => { active = false; };
+  }, []);
 
   const save = async () => {
     if (!canSave) return;
@@ -563,8 +581,9 @@ function GoalModal({
           projectId,
           title: title.trim(),
           statement: statement.trim(),
-          successCriteria: criteria,
-          assignment: { kind: 'profile', profile },
+          successCriteria: isSquad ? [] : criteria,
+          assignment: runAs === 'team' ? { kind: 'team', teamId } : { kind: 'profile', profile },
+          ...(isSquad ? { planSource } : {}),
           maxIterations,
           noProgressLimit,
           scope: scope === 'project' ? { projectId } : 'global',
@@ -580,8 +599,9 @@ function GoalModal({
         const result = await product.goals.update(goal!.id, {
           title: title.trim(),
           statement: statement.trim(),
-          successCriteria: criteria,
-          assignment: { kind: 'profile', profile },
+          successCriteria: isSquad ? [] : criteria,
+          assignment: runAs === 'team' ? { kind: 'team', teamId } : { kind: 'profile', profile },
+          ...(isSquad ? { planSource } : {}),
           maxIterations,
           noProgressLimit
         });
@@ -645,7 +665,21 @@ function GoalModal({
             />
           </div>
           <div className="scheduler-form-field">
-            <label htmlFor="goal-statement">Objective</label>
+            <label htmlFor="goal-run-as">Run as</label>
+            <PopoverPicklist
+              id="goal-run-as"
+              ariaLabel="Run as"
+              value={runAs}
+              searchable={false}
+              onChange={(nextRunAs) => setRunAs(nextRunAs as 'agent' | 'team')}
+              options={[
+                { value: 'agent', label: 'Agent' },
+                { value: 'team', label: 'Squad' }
+              ]}
+            />
+          </div>
+          <div className="scheduler-form-field">
+            <label htmlFor="goal-statement">{isSquad ? 'Plan or prompt' : 'Objective'}</label>
             <textarea
               id="goal-statement"
               value={statement}
@@ -655,6 +689,7 @@ function GoalModal({
             />
             <ImprovePromptButton value={statement} onChange={setStatement} />
           </div>
+          {!isSquad ? (
           <div className="scheduler-form-field">
             <label htmlFor="goal-criteria">
               Success criteria <span className="scheduler-form-optional">(one per line)</span>
@@ -671,6 +706,7 @@ function GoalModal({
               clearer these are, the more reliable the “achieved” verdict.
             </p>
           </div>
+          ) : null}
           <div className="scheduler-form-row">
             <div className="scheduler-form-field">
               <label htmlFor="goal-project">Project</label>
@@ -685,18 +721,56 @@ function GoalModal({
                 options={projects.map((project) => ({ value: project.id, label: project.name }))}
               />
             </div>
+            {runAs === 'agent' ? (
+              <div className="scheduler-form-field">
+                <label htmlFor="goal-profile">Launch profile</label>
+                <PopoverPicklist
+                  id="goal-profile"
+                  ariaLabel="Launch profile"
+                  value={profile}
+                  searchable={false}
+                  onChange={(nextProfile) => setProfile(nextProfile as LaunchProfileId)}
+                  options={PROFILES.map((profile) => ({ value: profile, label: PROFILE_LABEL[profile] }))}
+                />
+              </div>
+            ) : null}
+          </div>
+          {runAs === 'team' ? (
             <div className="scheduler-form-field">
-              <label htmlFor="goal-profile">Launch profile</label>
+              <label htmlFor="goal-team">Squad</label>
               <PopoverPicklist
-                id="goal-profile"
-                ariaLabel="Launch profile"
-                value={profile}
+                id="goal-team"
+                ariaLabel="Squad"
+                value={teamId}
+                onChange={setTeamId}
+                placeholder="Choose squad"
+                searchPlaceholder="Search squads"
+                options={teams.map((team) => ({ value: team.id, label: team.name }))}
+              />
+              <p className="modal-hint">Each iteration runs as a durable squad job.</p>
+              {teamsError ? (
+                <p className="modal-error" role="alert">Could not load squads. Close and reopen this form to retry.</p>
+              ) : teams.length === 0 ? (
+                <p className="modal-hint">No squads available. Create one in Squads first.</p>
+              ) : null}
+            </div>
+          ) : null}
+          {isSquad ? (
+            <div className="scheduler-form-field">
+              <label htmlFor="goal-plan-source">Squad planning</label>
+              <PopoverPicklist
+                id="goal-plan-source"
+                ariaLabel="Squad planning"
+                value={planSource}
                 searchable={false}
-                onChange={(nextProfile) => setProfile(nextProfile as LaunchProfileId)}
-                options={PROFILES.map((profile) => ({ value: profile, label: PROFILE_LABEL[profile] }))}
+                onChange={(value) => setPlanSource(value as typeof planSource)}
+                options={[
+                  { value: 'infer', label: 'Infer plan from goal' },
+                  { value: 'provided', label: 'Plan provided in goal' }
+                ]}
               />
             </div>
-          </div>
+          ) : null}
           <div className="scheduler-form-row">
             <div className="scheduler-form-field">
               <label htmlFor="goal-max">Max iterations</label>
@@ -899,16 +973,18 @@ function ReportModal({
         </div>
         <div className="modal-body scheduler-report-body">
           {iteration.error && <div className="modal-error">{iteration.error}</div>}
-          <div className="inbox-md">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: (props) => <a {...props} target="_blank" rel="noreferrer" />
-              }}
-            >
-              {iteration.report ?? '_No report filed for this iteration._'}
-            </ReactMarkdown>
-          </div>
+          {iteration.report || !iteration.error ? (
+            <div className="inbox-md">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  a: (props) => <a {...props} target="_blank" rel="noreferrer" />
+                }}
+              >
+                {iteration.report ?? '_No report filed for this iteration._'}
+              </ReactMarkdown>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

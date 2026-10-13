@@ -5,6 +5,7 @@ import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import { useData, useAgentStatus, useCatchUpSummary, useInbox, useInboxAnswered } from '../store.js';
+import { resolveInboxHostAction, useInboxHostActions } from '../stores/live.js';
 import { inboxPrimaryTitle } from '../lib/inboxPresentation.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
 import { AGENT_MODAL_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
@@ -256,10 +257,25 @@ function ModalPendingQuestion({ session }: { session: TerminalSession }) {
       ) ?? null
     );
   }, [structuredQuestions, entries, answeredIds, session.id]);
+  const hostAction = useInboxHostActions((s) => s.byEntryId[pending?.id ?? '']);
+  const ownership = useInboxHostActions((s) => s.resolutionByEntryId[pending?.id ?? '']);
+
+  useEffect(() => {
+    if (pending) void resolveInboxHostAction(pending);
+  }, [pending?.id, pending?.hostActionRequired]);
 
   if (!pending) return null;
   const questions = inboxQuestions(pending);
   if (questions.length === 0) return null;
+
+  // Host-only answers never belong in a PTY. The Inbox owns desktop execution;
+  // browser/mobile keeps the entry fenced until an authoritative owner is present.
+  if (ownership?.loading ?? true) {
+    return <div className="agent-modal-question" role="status">Checking question owner…</div>;
+  }
+  if (ownership?.error || hostAction || pending.hostActionRequired) {
+    return <div className="agent-modal-question" role="status">Answer this host action in Inbox.</div>;
+  }
 
   // The actual question text. In single-question mode the question
   // lives in `comments` (the `question` field holds only the lettered options);

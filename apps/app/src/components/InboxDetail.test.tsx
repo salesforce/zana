@@ -21,11 +21,14 @@ vi.mock('../store.js', () => ({
   useInboxKeep: (pick: (s: unknown) => unknown) => pick({ keptIds: state.kept ? { one: true } : {} }),
   useSavedMark: (pick: (s: unknown) => unknown) => pick({ savedEntryIds: state.saved ? { one: true } : {} }),
   useInboxAnswered: (pick: (s: unknown) => unknown) => pick({ answeredIds: {} }),
+  useInboxHostActions: (pick: (s: unknown) => unknown) => pick({ byEntryId: {}, resolutionByEntryId: {} }),
   useSuggestions: (pick: (s: unknown) => unknown) => pick({ entries: [] }),
   deleteInboxEntry: (id: string) => state.remove(id),
   toggleInboxKeep: (id: string) => state.keep(id),
   saveInboxEntry: (...args: unknown[]) => state.save(...args),
-  replyToInboxEntry: vi.fn()
+  replyToInboxEntry: vi.fn(),
+  resolveInboxHostAction: vi.fn(async () => {}),
+  runInboxHostAction: vi.fn(async () => {})
 }));
 vi.mock('../lib/product-client.js', () => ({ product: {
   fs: { readFile: (...args: unknown[]) => state.readFile(...args), readDataUrl: (...args: unknown[]) => state.readDataUrl(...args), resolveDoc: (...args: unknown[]) => state.resolveDoc(...args) },
@@ -45,9 +48,9 @@ describe('InboxDetail attention layout', () => {
   const source = readFileSync(`${process.cwd()}/apps/app/src/components/InboxDetail.tsx`, 'utf8');
 
   it('puts the answer surface above comments/docs when the entry is a question', () => {
-    const early = source.indexOf('{questionFirst ? answerSurface : null}');
+    const early = source.indexOf('{(ownershipLoading || ownershipError || hostAction || questionFirst) ? answerSurface : null}');
     const comments = source.indexOf('inbox-detail-comments');
-    const late = source.indexOf('{questionFirst ? null : answerSurface}');
+    const late = source.indexOf('{(ownershipLoading || ownershipError || hostAction || questionFirst) ? null : answerSurface}');
     const footer = source.indexOf('inbox-detail-footer');
     const related = source.indexOf('<RelatedNextSteps');
     expect(early).toBeGreaterThan(-1);

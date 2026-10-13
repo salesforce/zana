@@ -54,6 +54,7 @@ const createCalls: Array<{
   remote?: unknown;
   remoteToolProxy?: boolean;
   openingPrompt?: string;
+  authorizedModel?: unknown;
 }> = [];
 
 vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
@@ -69,8 +70,10 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
       remote?: unknown;
       remoteToolProxy?: boolean;
       openingPrompt?: string;
+      authorizedModel?: unknown;
     }) {
       createCalls.push({
+        authorizedModel: opts.authorizedModel,
         cwd: opts.cwd,
         extraArgs: opts.extraArgs,
         profile: opts.profile,
@@ -390,6 +393,21 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
   beforeEach(() => {
     createCalls.length = 0;
     projects = [PROJECT];
+  });
+
+  it('forwards only the main-supplied authorized model pin to ptys.create', () => {
+    const pin = { adapterId: 'opencode', level: 'low' as const, targetId: 'llmgw/gpt-7-luna' };
+    const forged = { adapterId: 'opencode', level: 'low', targetId: 'evil/model' };
+    // A request-borne field (renderer/CLI input) is never the pin source.
+    expect(createTerminalConfined({
+      projectId: 'p1', profile: 'claude', cols: 80, rows: 24, authorizedModel: forged
+    } as Parameters<typeof createTerminalConfined>[0]).ok).toBe(true);
+    expect(lastCreate().authorizedModel).toBeUndefined();
+    expect(createTerminalConfined(
+      { projectId: 'p1', profile: 'claude', cols: 80, rows: 24, authorizedModel: forged } as Parameters<typeof createTerminalConfined>[0],
+      { authorizedModel: pin }
+    ).ok).toBe(true);
+    expect(lastCreate().authorizedModel).toEqual(pin);
   });
 
   it('strips a denied flag while preserving benign flags (--flag value form)', () => {

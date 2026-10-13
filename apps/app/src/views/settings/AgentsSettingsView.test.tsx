@@ -30,6 +30,7 @@ describe('AgentsTab worktree isolation', () => {
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-label="Prefer a new git worktree by default"');
     expect(html).not.toContain('type="checkbox"');
+    expect(html).toContain('Durable squads use their own project and squad settings');
   });
 
   it('places PTY session ceilings under CLI Agent', () => {
@@ -229,6 +230,11 @@ describe('Agents settings search entries', () => {
     expect(valueOf('agents.notification-default-level')).toBe('All activity');
     expect(valueOf('agents.notification-child-level')).toBe('Needs input only');
     expect(valueOf('agents.notification-previews')).toBe('On');
+  });
+
+  it('indexes current worktree help for Squad defaults', () => {
+    expect(byId.get('agents.git-worktrees.intro')?.help).toContain('Durable squads use their own project and squad settings');
+    expect(byId.get('agents.worktree-default')?.help).toContain('Squads use it when their project and Squad settings use default behavior');
   });
 
   it('reads configured values', () => {

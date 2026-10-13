@@ -80,6 +80,13 @@ describe('validateScheduleFile', () => {
     if ('error' in r) expect(r.error).toMatch(/invalid profile/i);
   });
 
+  it('preserves a team schedule and rejects one without a team id', () => {
+    const valid = validateScheduleFile({ ...baseTask, kind: 'team', teamId: 'release-squad', planSource: 'provided' });
+    expect('error' in valid).toBe(false);
+    if (!('error' in valid)) expect(valid).toMatchObject({ kind: 'team', teamId: 'release-squad', planSource: 'provided' });
+    expect(validateScheduleFile({ ...baseTask, kind: 'team' })).toEqual({ error: 'team schedule requires teamId' });
+  });
+
   it('rejects non-string name', () => {
     const r = validateScheduleFile({ ...baseTask, name: 42 });
     expect('error' in r).toBe(true);

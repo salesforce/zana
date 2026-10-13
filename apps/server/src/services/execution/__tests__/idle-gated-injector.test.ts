@@ -255,7 +255,7 @@ describe('IdleGatedInjector — headless worker (deliverableWhenSilent)', () => 
     expect(injector.deliver('w1', 'verify-upstream assignment')).toBe(true); // accepted
     expect(reply).not.toHaveBeenCalled(); // NOT injected into the booting TUI
     expect(injector.pendingCount('w1')).toBe(1);
-    // Boots, runs its standby --prompt turn, settles at waiting → delivers now.
+    // A rest edge proves the worker booted and flushes the queued assignment.
     injector.onState('w1', 'waiting');
     expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'verify-upstream assignment');
     expect(injector.pendingCount('w1')).toBe(0);
@@ -273,15 +273,21 @@ describe('IdleGatedInjector — headless worker (deliverableWhenSilent)', () => 
     expect(injector.pendingCount('w1')).toBe(0);
   });
 
-  it('delivers immediately to a headless worker resting at waiting (rest state proves boot on deliver)', () => {
-    // deliver() sees the live state is a rest state ('waiting'), which itself
-    // latches booted — so a first delivery to an already-resting worker (no prior
-    // onState edge) is trusted immediately rather than queued.
+  it('delivers immediately to a headless worker already resting at idle', () => {
     const { injector, reply, setState } = makeHeadless();
-    setState('w1', 'waiting');
+    setState('w1', 'idle');
     injector.deliver('w1', 'task A');
     expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'task A');
     expect(injector.pendingCount('w1')).toBe(0);
+  });
+
+  it('flushes a queued first delivery on a headless rest edge', () => {
+    const { injector, reply, setState } = makeHeadless();
+    setState('w1', 'working');
+    injector.deliver('w1', 'task A');
+    setState('w1', 'idle');
+    injector.onState('w1', 'idle');
+    expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'task A');
   });
 
   it('STILL queues for a headless worker that is actively working (mid-turn paste guard preserved)', () => {
@@ -290,7 +296,7 @@ describe('IdleGatedInjector — headless worker (deliverableWhenSilent)', () => 
     expect(injector.deliver('w1', 'task A')).toBe(true);
     expect(reply).not.toHaveBeenCalled();
     expect(injector.pendingCount('w1')).toBe(1);
-    // The settle edge into a silent state flushes it (no 45s force-flush needed).
+    setState('w1', 'waiting');
     injector.onState('w1', 'waiting');
     expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'task A');
     expect(injector.pendingCount('w1')).toBe(0);
@@ -304,7 +310,8 @@ describe('IdleGatedInjector — headless worker (deliverableWhenSilent)', () => 
     injector.onState('w1', 'unknown'); // not a rest state; worker hasn't proven boot
     expect(reply).not.toHaveBeenCalled();
     expect(injector.pendingCount('w1')).toBe(1);
-    // A genuine rest edge boots it and flushes.
+    // A genuine rest edge boots it and flushes the assignment.
+    setState('w1', 'idle');
     injector.onState('w1', 'idle');
     expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'task A');
     expect(injector.pendingCount('w1')).toBe(0);
@@ -314,7 +321,8 @@ describe('IdleGatedInjector — headless worker (deliverableWhenSilent)', () => 
     const { injector, reply, setState } = makeHeadless();
     setState('w1', 'working');
     injector.deliver('w1', 'task A');
-    injector.onState('w1', 'waiting'); // boots + flushes task A
+    setState('w1', 'waiting');
+    injector.onState('w1', 'waiting'); // boots and flushes task A
     expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'task A');
     // A later assignment while its telemetry has gone quiet back to unknown
     // delivers immediately now that the worker is proven booted.

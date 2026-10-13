@@ -219,6 +219,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const requestIdentityRef = useRef<{ blockerId: string; text: string; id: string } | undefined>(undefined);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [artifactContent, setArtifactContent] = useState<Record<string, string>>({});
+  const [followUpInstruction, setFollowUpInstruction] = useState('');
   const refresh = useCallback(async (after = 0) => {
     const scope = scopeRef.current;
     if (!scope.live || scope.key !== `${projectId}:${executionId}` || scope.inFlight) return;
@@ -265,6 +266,18 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   );
   const execution = snapshot.execution;
   const isTerminal = terminal.has(execution.state);
+  const retainedRecovery = execution.recovery?.actions;
+  const exactNativeUnavailableReason = retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
+    ? 'Existing Squad sessions cannot be restored on this device.'
+    : undefined;
+  const recoveryActions = <div className="execution-details-actions execution-details-primary-actions">
+    {execution.state === 'STOPPED' && execution.timeoutReason === 'unresolved-blocker' && !execution.successorExecutionId && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverTimedOut(projectId, executionId, execution.stateVersion ?? 0, crypto.randomUUID()))}>Recover timed-out run</button>}
+    {retainedRecovery?.freshPlan.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'fresh-plan'))}>Relaunch Squad from retained plan</button>}
+    {retainedRecovery?.exactNative.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'exact-native'))}>Resume existing Squad</button>}
+    {exactNativeUnavailableReason && <button className="btn" type="button" disabled title={exactNativeUnavailableReason}>Resume existing Squad</button>}
+    {execution.successorExecutionId && <p role="status">Recovered successor: {execution.successorExecutionId}</p>}
+    {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}
+  </div>;
   const deliveryPending = snapshot.execution.currentBlocker?.delivery?.state === 'PENDING' || snapshot.execution.currentBlocker?.delivery?.state === 'LEASED';
   const replyBytes = new TextEncoder().encode(replyDraft).byteLength;
   const replyTooLarge = replyBytes > 16 * 1024;
@@ -295,11 +308,27 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       .then(() => useUi.getState().pushToast('Job details copied', 'info'))
       .catch(() => useUi.getState().pushToast('Failed to copy job details', 'error'));
   };
+  const worktreeAction = async (action: 'leave' | 'instruct' | 'delete' | 'force-delete') => {
+    if (!execution.retainedWorktree || execution.stateVersion === undefined) return;
+    if ((action === 'delete' || action === 'force-delete') && !window.confirm(
+      `${action === 'force-delete' ? 'Force delete unmerged worktree' : 'Delete retained worktree'}?\n\n${execution.retainedWorktree.path}\n\nThis cannot be undone.`
+    )) return;
+    if (action === 'instruct' && !followUpInstruction.trim()) {
+      useUi.getState().pushToast('Enter an instruction for the follow-up agent.', 'error');
+      return;
+    }
+    await mutate(() => window.cc.executionBoard.worktreeAction(
+      projectId, executionId, execution.stateVersion!, action,
+      action === 'instruct' ? followUpInstruction.trim() : undefined
+    ));
+    if (action === 'instruct') setFollowUpInstruction('');
+  };
 
   return (
     <section className="execution-details" aria-label="Squad details">
-      <header><strong>Squad · {execution.jobTitle}</strong><button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button></header>
-      <div className="execution-details-copy"><button className="btn" type="button" onClick={copyJobDetails}>Copy details</button></div>
+       <header><strong>Squad · {execution.jobTitle}</strong><button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button></header>
+       <div className="execution-details-copy"><button className="btn" type="button" onClick={copyJobDetails}>Copy details</button></div>
+       {recoveryActions}
       <dl className="execution-details-meta">
         <dt>Run ID</dt><dd><code>{execution.executionId}</code></dd>
         <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? 'Squad execution'}</dd>
@@ -309,9 +338,23 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         <dt>Squad</dt><dd>{execution.teamName ?? execution.teamId ?? '—'}</dd>
         <dt>Orchestrator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
       </dl>
-      {execution.recoveryAttention && <p role="alert">Orchestrator lost. {execution.recovery?.status === 'available'
+       {execution.recoveryAttention && <p role="alert">Orchestrator lost. {execution.recovery?.status === 'available'
         ? 'Recovery available. Rotation creates a replacement credential; no cached token is required.'
-        : 'Recovery deadline expired.'}</p>}
+         : 'Recovery deadline expired.'}</p>}
+       {execution.retainedWorktree && <section className="execution-worktree" aria-label="Retained Squad worktree">
+         <h4>Retained worktree</h4>
+         <p><code>{execution.retainedWorktree.path}</code> · {execution.retainedWorktree.branch}</p>
+         {execution.retainedWorktree.disposition === 'left' ? <p role="status">Worktree left by user. No further lifecycle action is pending.</p> : <>
+           <p>Leave preserves this checkout. Delete requires confirmation and refuses dirty worktrees.</p>
+           <textarea aria-label="Follow-up agent instruction" value={followUpInstruction} onChange={(event) => setFollowUpInstruction(event.target.value)} placeholder="Describe the follow-up work…" rows={3} />
+           <div className="execution-details-actions">
+             <button className="btn" type="button" disabled={busy || !followUpInstruction.trim()} onClick={() => void worktreeAction('instruct')}>Instruct an agent</button>
+             <button className="btn" type="button" disabled={busy} onClick={() => void worktreeAction('leave')}>Leave worktree</button>
+             <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('delete')}>Delete worktree</button>
+             <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('force-delete')}>Force delete unmerged work</button>
+           </div>
+         </>}
+       </section>}
       <h4>Sources</h4>
       {execution.sources?.length ? execution.sources.map((source) => (
         <div key={source.id}>{source.name} · {source.contentDigest}{source.extractionWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div>
@@ -423,13 +466,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       <h4>Route fit</h4>
       {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
       <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>
-      <div className="execution-details-actions">
-        {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}
-        {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>}
-        {execution.state === 'STOPPED' && execution.timeoutReason === 'unresolved-blocker' && !execution.successorExecutionId && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverTimedOut(projectId, executionId, execution.stateVersion ?? 0, crypto.randomUUID()))}>Recover timed-out run</button>}
-        {execution.successorExecutionId && <p role="status">Recovered successor: {execution.successorExecutionId}</p>}
-        {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}
-      </div>
+       <div className="execution-details-actions">
+         {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}
+         {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>}
+       </div>
     </section>
   );
 }

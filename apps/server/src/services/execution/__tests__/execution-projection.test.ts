@@ -77,6 +77,30 @@ describe('projectExecutionProjection', () => {
     });
     expect(projectExecutionProjection([input], [])[0].currentBlocker?.notice).toMatchObject({ status: 'ACKNOWLEDGED', inboxItemId: 'inbox-1' });
   });
+  it('projects aggregate recovery action availability without native identifiers', () => {
+    const input = record();
+    input.state = 'FAILED';
+    input.nativeRecoverySnapshots = [{ version: 1, attempt: input.attempt, slotId: 'builder', role: 'worker', personaId: 'builder', nativeConversationId: 'native-secret', capturedAt: 4 }];
+    const projected = projectExecutionProjection([input], [])[0];
+    expect(projected.recovery?.actions).toEqual({
+      freshPlan: { available: true },
+      exactNative: { available: false, restorableSlots: 1, reason: 'NATIVE_RESTORE_UNAVAILABLE' }
+    });
+    expect(JSON.stringify(projected)).not.toContain('native-secret');
+  });
+
+  it('retains aggregate native recovery availability after a replacement launch fails', () => {
+    const input = record();
+    input.state = 'FAILED';
+    input.attempt = 2;
+    input.nativeRecoverySnapshots = [{ version: 1, attempt: 1, slotId: 'builder', role: 'worker', personaId: 'builder', nativeConversationId: 'native-secret', capturedAt: 4 }];
+
+    const projected = projectExecutionProjection([input], [])[0];
+    expect(projected.recovery?.actions.exactNative).toEqual({
+      available: false, restorableSlots: 1, reason: 'NATIVE_RESTORE_UNAVAILABLE'
+    });
+    expect(JSON.stringify(projected)).not.toContain('native-secret');
+  });
 
   it('projects bounded assembled detail without raw structured result', () => {
     const input = record();

@@ -71,6 +71,10 @@ const SCHEDULED_NONHOOK_MAX_RUNTIME_MS = 30 * 60 * 1000; // 30 min
 /** Bound a hook-capable parent that never receives its matching SubagentStop. */
 const SCHEDULED_SUBAGENT_WAIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 min
 
+/** Squad executions have no PTY exit event. Poll durable terminal state while
+ * any scheduled Squad run remains active, even when its cadence is paused. */
+const SQUAD_OBSERVATION_INTERVAL_MS = 5_000;
+
 export { parseEveryShared as parseEvery };
 
 interface Live {
@@ -92,6 +96,13 @@ interface Live {
   firing?: boolean;
 }
 
+function scheduledSquadObjective(task: ScheduledTask): string {
+  return [task.prompt, task.description, task.name]
+    .map(value => value?.trim())
+    .find((value): value is string => Boolean(value))
+    ?? '';
+}
+
 type DeferredClose = {
   taskId: string;
   runId?: string;
@@ -104,6 +115,23 @@ type DeferredClose = {
 const COUNTED_RUN_IDS_CAP = 512;
 
 type Logger = (context: string, err: unknown) => void;
+
+/**
+ * Compare-and-swap guard for a main-owned write-back (plan correction). Never
+ * persisted: `expectedPrompt` is the trimmed prompt the caller observed; the
+ * update is rejected with {@link ScheduleConflictError} unless the current
+ * definition on disk still has that prompt.
+ */
+export type ScheduleUpdatePatch = ScheduleUpdateInput & { expectedPrompt?: string };
+
+/** Thrown when a guarded update finds the definition edited since it was observed. */
+export class ScheduleConflictError extends Error {
+  readonly code = 'DEFINITION_CONFLICT' as const;
+  constructor(readonly scheduleId: string) {
+    super(`schedule ${scheduleId} prompt was edited since this run launched`);
+    this.name = 'ScheduleConflictError';
+  }
+}
 
 type Deps = {
   inspectWorkerLaunch?: InspectWorkerLaunch;
@@ -122,6 +150,10 @@ type Deps = {
   resolvePersona?: (id: string) => Persona | undefined;
   /** Main-owned Task lifecycle state. Never accept this count from a hook request. */
   getPendingSubagentCount?: (sessionId: string) => number;
+  /** Main-authorized durable squad launch. Scheduler never expands teams or trusts renderer input. */
+  launchSquad?: (input: { schedule: ScheduledTask; project: Project; runId: string; objective: string }) => Promise<{ executionId: string }>;
+  getSquadExecution?: (projectId: string, executionId: string) => Promise<{ state: string; finalSummary?: string } | undefined>;
+  findSquadExecution?: (projectId: string, launchRequestId: string) => Promise<{ executionId: string; state: string; finalSummary?: string } | undefined>;
 };
 
 /**
@@ -183,6 +215,8 @@ export class SchedulerManager extends EventEmitter {
   private pending = 0;
   private epoch = 0;
   private exitListeners = new Map<string, () => void>();
+  /** One shared terminal-state observer for all active scheduled Squad runs. */
+  private squadObservationTimer: NodeJS.Timeout | null = null;
 
   private serial<T>(work: () => Promise<T>): Promise<T> {
     if (this.pending >= 100) return Promise.reject(new Error('Too many pending scheduler operations'));
@@ -197,7 +231,7 @@ export class SchedulerManager extends EventEmitter {
   }
 
   create(input: ScheduleCreateInput): Promise<ScheduledTask> { return this.serial(() => this.createNow(input)); }
-  update(id: string, patch: ScheduleUpdateInput): Promise<ScheduledTask> { return this.serial(() => this.updateNow(id, patch)); }
+  update(id: string, patch: ScheduleUpdatePatch): Promise<ScheduledTask> { return this.serial(() => this.updateNow(id, patch)); }
   setEnabled(id: string, enabled: boolean): Promise<ScheduledTask | null> { return this.serial(() => this.setEnabledNow(id, enabled)); }
   remove(id: string): Promise<void> { return this.serial(() => this.removeNow(id)); }
   runNow(id: string): Promise<ScheduledTask> { return this.serial(() => this.runNowInternal(id)); }
@@ -212,10 +246,10 @@ export class SchedulerManager extends EventEmitter {
       if (!live) throw new Error(`schedule not found: ${id}`);
       this.deps?.ptys.reapDeadSessions();
       const sessionIds = this.liveSessions(live);
-      if (sessionIds.length || live.task.status.runs.some(run => run.launchState === 'pending')) {
+      if (this.hasUnresolvedRun(live)) {
         this.deferredReloads.add(id);
         this.scheduleReload();
-        return { reloaded: false, schedule: this.get(id), reason: sessionIds.length ? `run ${sessionIds.join(', ')} is live` : 'worker launch is unconfirmed', sessionIds };
+        return { reloaded: false, schedule: this.get(id), reason: sessionIds.length ? `run ${sessionIds.join(', ')} is live` : 'run is unresolved', sessionIds };
       }
       const task = await this.readCurrent(live.task);
       this.replaceDefinition(live, task);
@@ -267,7 +301,7 @@ export class SchedulerManager extends EventEmitter {
     const ids = new Set(tasks.map(task => task.id));
     let deferred = false;
     for (const [id, live] of this.live) {
-      if (this.liveSessions(live).length || live.task.status.runs.some(run => run.launchState === 'pending')) {
+      if (this.hasUnresolvedRun(live)) {
         if (!ids.has(id)) this.deferredReloads.add(id);
         deferred ||= !ids.has(id) || this.deferredReloads.has(id);
         continue;
@@ -283,7 +317,7 @@ export class SchedulerManager extends EventEmitter {
       const existing = this.live.get(task.id);
       if (existing) {
         const differs = !isDeepStrictEqual(this.snapshotSignature(existing.task), this.snapshotSignature(task));
-        if (this.liveSessions(existing).length || existing.task.status.runs.some(run => run.launchState === 'pending')) {
+        if (this.hasUnresolvedRun(existing)) {
           if (differs) this.deferredReloads.add(task.id);
           deferred ||= this.deferredReloads.has(task.id);
         }
@@ -309,6 +343,9 @@ export class SchedulerManager extends EventEmitter {
       if (task.enabled) this.arm(task.id);
     }
     this.emitChangedIfDifferent();
+    // `loadAll` can restore active Squad executions without a cadence timer,
+    // including disabled Run now schedules after restart.
+    this.scheduleSquadObservation();
     if (deferred) this.scheduleReload();
   }
 
@@ -334,6 +371,9 @@ export class SchedulerManager extends EventEmitter {
       enabled: input.enabled ?? true,
       projectId: input.projectId,
       profile: input.profile,
+      kind: input.kind ?? 'agent',
+      teamId: input.kind === 'team' ? input.teamId?.trim() || undefined : undefined,
+      planSource: input.kind === 'team' ? input.planSource ?? 'infer' : undefined,
       extraArgs: input.extraArgs,
       prompt: input.prompt,
       schedule,
@@ -362,6 +402,7 @@ export class SchedulerManager extends EventEmitter {
       autoCloseOnFinish: input.autoCloseOnFinish ?? true,
       maxDurationMinutes: input.maxDurationMinutes
     };
+    if (task.kind === 'team' && !task.teamId) throw new Error('teamId is required for team schedules');
     await this.persist(task, task);
     this.live.set(task.id, this.makeLive(task));
     if (task.enabled) this.arm(task.id);
@@ -369,20 +410,38 @@ export class SchedulerManager extends EventEmitter {
     return task;
   }
 
-  private async updateNow(id: string, patch: ScheduleUpdateInput): Promise<ScheduledTask> {
+  private async updateNow(id: string, input: ScheduleUpdatePatch): Promise<ScheduledTask> {
+    const { expectedPrompt, ...patch } = input;
+    // CAS against the definition actually being overwritten (disk), not the
+    // possibly-stale in-memory snapshot the caller fenced against.
+    const guard = expectedPrompt === undefined ? undefined : (current: ScheduledTask) => {
+      if ((current.prompt ?? '').trim() !== expectedPrompt.trim()) throw new ScheduleConflictError(id);
+    };
     const live = this.live.get(id);
     if (!live) throw new Error(`schedule not found: ${id}`);
     if (patch.projectId && patch.projectId !== live.task.projectId && live.task.source !== 'global') throw new Error('Project schedules cannot change their metadata owner');
+    if (patch.kind !== undefined && patch.kind !== live.task.kind && this.hasUnresolvedRun(live)) {
+      throw new Error('Cannot change schedule mode while an existing run or launch is unresolved');
+    }
     if (patch.enabled && live.task.status.runs.some(run => run.launchState === 'pending')) {
       await this.recoverPending(live);
     }
     const current = await this.readCurrent(live.task);
+    guard?.(current);
+    if (current.kind !== live.task.kind && this.hasUnresolvedRun(live)) {
+      throw new Error('Cannot change schedule mode while an existing run or launch is unresolved');
+    }
     const next: ScheduledTask = { ...current, status: structuredClone(live.task.status) };
     if (patch.name !== undefined) next.name = patch.name.trim();
     if (patch.description !== undefined) next.description = patch.description.trim() || undefined;
     if (patch.enabled !== undefined) next.enabled = patch.enabled;
     if (patch.projectId !== undefined) next.projectId = patch.projectId;
     if (patch.profile !== undefined) next.profile = patch.profile;
+    if (patch.kind !== undefined) next.kind = patch.kind;
+    if (patch.teamId !== undefined) next.teamId = patch.teamId?.trim() || undefined;
+    if (patch.planSource !== undefined) next.planSource = patch.planSource ?? undefined;
+    if (next.kind === 'team' && !next.teamId) throw new Error('teamId is required for team schedules');
+    if (next.kind !== 'team') { next.teamId = undefined; next.planSource = undefined; }
     if (patch.extraArgs !== undefined) next.extraArgs = patch.extraArgs;
     if (patch.prompt !== undefined) next.prompt = patch.prompt;
     // Cadence edits. `every` and `cron` are mutually exclusive: setting one
@@ -428,7 +487,7 @@ export class SchedulerManager extends EventEmitter {
       const field = key === 'every' || key === 'cron' || key === 'tz' ? 'schedule' : key === 'retain' ? 'history' : key;
       Object.assign(definitionPatch, { [field]: next[field as keyof ScheduledTask] });
     }
-    await this.persist(next, definitionPatch);
+    await this.persist(next, definitionPatch, guard);
     live.task = next;
     this.disarm(id);
     if (next.enabled) this.arm(id);
@@ -456,6 +515,7 @@ export class SchedulerManager extends EventEmitter {
     this.clearDeferredClosesForTask(id);
     for (const run of live.task.status.runs) if (run.sessionId) this.releaseSession(run.sessionId);
     this.live.delete(id);
+    if (!this.hasLiveSquadExecutions()) this.clearSquadObservation();
     this.emit('changed');
   }
 
@@ -472,6 +532,7 @@ export class SchedulerManager extends EventEmitter {
 
   private async recoverPending(live: Live, strict = true): Promise<boolean> {
     const pending = live.task.status.runs.filter(run => run.launchState === 'pending');
+    if (pending.some(run => this.runLaunchKind(live.task, run) === 'team')) return this.recoverPendingSquad(live, strict);
     const sessions = this.deps?.ptys.list(live.task.projectId) ?? [];
     const evidence = await Promise.all(pending.map(run => {
       if (sessions.some(session => session.id === run.sessionId && session.projectId === live.task.projectId)) return 'present' as const;
@@ -494,6 +555,34 @@ export class SchedulerManager extends EventEmitter {
       this.releaseSession(session.id);
       await this.finishLaunch(live.task.id, run.id, live, { manual: false }, project, session.profile, session, false);
     }
+    return true;
+  }
+
+  private async recoverPendingSquad(live: Live, strict: boolean): Promise<boolean> {
+    const pending = live.task.status.runs.filter(run => run.launchState === 'pending');
+    if (!pending.length) return true;
+    if (!this.deps?.getSquadExecution) {
+      if (!strict) return false;
+      throw new Error('Unconfirmed squad launch; reconcile its execution before enabling or running this schedule');
+    }
+    const records = await Promise.all(pending.map(async run => run.executionId
+      ? this.deps!.getSquadExecution!(live.task.projectId, run.executionId)
+      : run.launchRequestId ? this.deps!.findSquadExecution?.(live.task.projectId, run.launchRequestId) : undefined));
+    if (records.some(record => !record)) {
+      if (!strict) return false;
+      throw new Error('Unconfirmed squad launch; reconcile its execution before enabling or running this schedule');
+    }
+    for (const [index, run] of pending.entries()) {
+      const record = records[index]!;
+      await this.recordRun(live.task.id, {
+        ...run,
+        ...(run.executionId ? {} : { executionId: (record as { executionId?: string }).executionId }),
+        launchState: 'running',
+        result: record.state === 'FAILED' ? 'error' : record.state === 'COMPLETED' ? 'success' : 'skipped',
+        ...(record.finalSummary ? { message: record.finalSummary } : {})
+      }, false);
+    }
+    this.scheduleSquadObservation();
     return true;
   }
 
@@ -520,6 +609,7 @@ export class SchedulerManager extends EventEmitter {
     this.timedOutSessions.clear();
     for (const release of this.exitListeners.values()) release();
     this.exitListeners.clear();
+    this.clearSquadObservation();
   }
 
   /**
@@ -654,10 +744,112 @@ export class SchedulerManager extends EventEmitter {
     for (const live of this.live.values()) {
       const aliveIds = aliveIdsFor(live.task.projectId);
       for (const r of live.task.status.runs) {
-        if (r.sessionId && aliveIds.has(r.sessionId)) counted.add(r.sessionId);
+        if (this.runLaunchKind(live.task, r) === 'team') {
+          if (this.isLiveSquadRun(r)) counted.add(`squad:${live.task.id}:${r.id ?? r.executionId}`);
+        } else if (r.sessionId && aliveIds.has(r.sessionId)) {
+          counted.add(r.sessionId);
+        }
       }
     }
     return counted.size;
+  }
+
+  private isLiveSquadRun(run: ScheduleRun): boolean {
+    return run.launchState === 'running' && !!run.executionId && !run.finishedAt;
+  }
+
+  /** Older records predate `launchKind`; infer their mode once from definition. */
+  private runLaunchKind(task: ScheduledTask, run: ScheduleRun): 'agent' | 'team' {
+    return run.launchKind ?? task.kind ?? 'agent';
+  }
+
+  /**
+   * An unresolved launch fences definition mode changes until lifecycle work is
+   * complete. Each new run also persists its own mode for durable ownership.
+   */
+  private hasUnresolvedRun(live: Live): boolean {
+    return this.liveSessions(live).length > 0 || live.task.status.runs.some(run =>
+      run.launchState === 'pending' ||
+      (this.runLaunchKind(live.task, run) === 'team' && this.isLiveSquadRun(run))
+    );
+  }
+
+  private retainRuns(task: ScheduledTask, runs: ScheduleRun[]): ScheduleRun[] {
+    let terminalRecords = 0;
+    return runs.filter(run => {
+      // Squad runs are scheduler-owned overlap state until their durable
+      // execution reaches a terminal state. Keep them outside display history.
+      if (run.launchState === 'pending' || (this.runLaunchKind(task, run) === 'team' && this.isLiveSquadRun(run))) return true;
+      terminalRecords += 1;
+      return terminalRecords <= task.history.retain;
+    });
+  }
+
+  private async observeSquadExecutions() {
+    if (!this.deps?.getSquadExecution) return;
+    for (const live of this.live.values()) {
+      const project = this.deps.store.listProjects().find(candidate => candidate.id === live.task.projectId);
+      if (!project) continue;
+      for (const run of live.task.status.runs.filter(run => this.runLaunchKind(live.task, run) === 'team' && this.isLiveSquadRun(run))) {
+        // Isolate each run: one unreadable execution or failed finalization
+        // write must not block other runs or every schedule's automatic fire.
+        try {
+          const execution = await this.deps.getSquadExecution(live.task.projectId, run.executionId!);
+          if (!execution || !['COMPLETED', 'FAILED', 'STOPPED'].includes(execution.state)) continue;
+          const finishedAt = new Date().toISOString();
+          const startedAt = Date.parse(run.at);
+          const finalRun: ScheduleRun = {
+            ...run,
+            result: execution.state === 'COMPLETED' ? 'success' : 'error',
+            finishedAt,
+            ...(Number.isFinite(startedAt) ? { durationMs: Math.max(0, Date.now() - startedAt) } : {}),
+            ...(execution.finalSummary ? { message: execution.finalSummary } : {})
+          };
+          await this.recordRun(live.task.id, finalRun);
+          if ((live.task.inboxLevel ?? 'quiet') !== 'silent') {
+            void this.notifyInboxOnExit(live.task, finalRun, project, finalRun.result === 'error');
+          }
+        } catch (error) {
+          this.log(`observe squad ${live.task.id} ${run.executionId}`, error);
+        }
+      }
+    }
+    if (!this.hasLiveSquadExecutions()) this.clearSquadObservation();
+  }
+
+  private hasLiveSquadExecutions(): boolean {
+    return [...this.live.values()].some(live =>
+      live.task.status.runs.some(run => this.runLaunchKind(live.task, run) === 'team' && this.isLiveSquadRun(run))
+    );
+  }
+
+  /**
+   * Cadence ticks already observe Squad completion, but a manual run on a
+   * disabled schedule has no future tick. Keep one independent observer alive
+   * until every durable Squad execution reaches a terminal state.
+   */
+  private scheduleSquadObservation() {
+    if (this.squadObservationTimer || !this.deps?.getSquadExecution || !this.hasLiveSquadExecutions()) return;
+    const epoch = this.epoch;
+    this.squadObservationTimer = setTimeout(() => {
+      this.squadObservationTimer = null;
+      void this.serial(async () => {
+        try {
+          await this.observeSquadExecutions();
+        } catch (error) {
+          // Keep observing after transient durable-store failures. A completed
+          // Squad must not remain pinned solely because one poll failed.
+          this.log('observe squads', error);
+        }
+        if (epoch === this.epoch) this.scheduleSquadObservation();
+      }).catch(error => this.log('observe squads', error));
+    }, SQUAD_OBSERVATION_INTERVAL_MS);
+    this.squadObservationTimer.unref?.();
+  }
+
+  private clearSquadObservation() {
+    if (this.squadObservationTimer) clearTimeout(this.squadObservationTimer);
+    this.squadObservationTimer = null;
   }
 
   private liveSessions(live: Live): string[] {
@@ -672,6 +864,7 @@ export class SchedulerManager extends EventEmitter {
     for (const run of task.status.runs) if (run.id) live.countedRunIds.add(run.id);
     while (live.countedRunIds.size > COUNTED_RUN_IDS_CAP) live.countedRunIds.delete(live.countedRunIds.values().next().value!);
     if (task.enabled) this.arm(task.id);
+    this.scheduleSquadObservation();
   }
 
   private publishRuntime(live: Live, task: ScheduledTask) {
@@ -719,6 +912,7 @@ export class SchedulerManager extends EventEmitter {
         dropped += 1;
       }
     }
+    if (!this.hasLiveSquadExecutions()) this.clearSquadObservation();
     if (dropped > 0) this.emit('changed');
   }
 
@@ -733,17 +927,29 @@ export class SchedulerManager extends EventEmitter {
     };
   }
 
-  private async persist(task: ScheduledTask, definitionPatch: Partial<ScheduledTask> = {}) {
+  private async persist(task: ScheduledTask, definitionPatch: Partial<ScheduledTask> = {}, guard?: (current: ScheduledTask) => void) {
     if (!this.deps) return;
     // Delay the watcher until the write is settled; its event stays queued.
     this.suppressWatchUntil = Date.now() + 1_000;
     const epoch = this.epoch;
+    let record = task;
     if (definitionPatch.id !== task.id) {
       const current = await this.readCurrent(task);
-      Object.assign(task, { ...current, ...definitionPatch, status: task.status });
+      // Re-check at the write boundary: this is the record the save merges onto.
+      guard?.(current);
+      if (this.deferredReloads.has(task.id)) {
+        // The disk definition must not be adopted in memory until the
+        // unresolved run settles, but the written record is always the
+        // owner's: only the patch and runtime status are layered onto it, so
+        // a full-record save never restores the stale live definition.
+        Object.assign(task, { ...definitionPatch, status: task.status });
+        record = { ...current, ...definitionPatch, status: task.status };
+      } else {
+        Object.assign(task, { ...current, ...definitionPatch, status: task.status });
+      }
     }
-    if (this.deps.persistence) await this.deps.persistence.save(task, definitionPatch);
-    else saveSchedule(task, this.deps.store.listProjects(), definitionPatch);
+    if (this.deps.persistence) await this.deps.persistence.save(record, definitionPatch);
+    else saveSchedule(record, this.deps.store.listProjects(), definitionPatch);
     if (epoch !== this.epoch) throw new Error('Scheduler stopped');
   }
 
@@ -815,10 +1021,16 @@ export class SchedulerManager extends EventEmitter {
     const enabledBeforeRefresh = live.task.enabled;
     const priorCadence = live.task.schedule;
     const current = await this.readCurrent(live.task);
-    live.task = { ...current, status: live.task.status };
+    if (this.hasUnresolvedRun(live) && current.kind !== live.task.kind) {
+      this.deferredReloads.add(id);
+    } else {
+      live.task = { ...current, status: live.task.status };
+    }
     this.disarm(id);
     if (!opts.manual && enabledBeforeRefresh && !live.task.enabled) { this.emit('changed'); return; }
-    if (!opts.manual && !isDeepStrictEqual(priorCadence, current.schedule)) { this.arm(id); this.emit('changed'); return; }
+    // Compare against the definition actually adopted. A deferred reload keeps
+    // the prior cadence live, so comparing to `current` would re-arm forever.
+    if (!opts.manual && !isDeepStrictEqual(priorCadence, live.task.schedule)) { this.arm(id); this.emit('changed'); return; }
     if (live.task.status.runs.some(run => run.launchState === 'pending')) throw new Error('Unconfirmed worker launch');
 
     // Concurrent-duplicate guard: a fire whose launch is async (remote/coordinator
@@ -839,6 +1051,19 @@ export class SchedulerManager extends EventEmitter {
     }
     if (!opts.manual) live.firing = true;
 
+    // Squad executions have no PTY exit event. Every automatic tick observes
+    // durable state first so terminal squads free overlap and global slots even
+    // when a different schedule owns this tick.
+    if (!opts.manual) {
+      try {
+        await this.observeSquadExecutions();
+      } catch (error) {
+        // Observation is best-effort and isolated per run. Never let it block
+        // this tick: the guards below still see any unresolved run and skip.
+        this.log(`observe squads ${id}`, error);
+      }
+    }
+
     const project = this.deps.store.listProjects().find((p) => p.id === live.task.projectId);
     if (!project) {
       if (!opts.manual) live.firing = false;
@@ -853,6 +1078,36 @@ export class SchedulerManager extends EventEmitter {
         message: `project ${live.task.projectId} not found`
       });
       if (live.task.enabled) this.arm(id);
+      return;
+    }
+
+    if (live.task.kind === 'team') {
+      if (!opts.manual) {
+        if (live.task.status.runs.some(run => this.isLiveSquadRun(run))) {
+          live.firing = false;
+          await this.recordRun(id, {
+            id: randomUUID(),
+            at: new Date().toISOString(),
+            result: 'skipped',
+            message: 'previous squad run still active'
+          });
+          if (live.task.enabled) this.arm(id);
+          return;
+        }
+        const liveScheduledRuns = this.countLiveScheduledRuns() + this.pendingLaunches;
+        if (liveScheduledRuns >= MAX_CONCURRENT_SCHEDULED_RUNS) {
+          live.firing = false;
+          await this.recordRun(id, {
+            id: randomUUID(),
+            at: new Date().toISOString(),
+            result: 'skipped',
+            message: `concurrency-cap: ${liveScheduledRuns}/${MAX_CONCURRENT_SCHEDULED_RUNS} scheduled runs active`
+          });
+          if (live.task.enabled) this.arm(id);
+          return;
+        }
+      }
+      await this.fireSquad(live, project, opts);
       return;
     }
 
@@ -983,7 +1238,7 @@ export class SchedulerManager extends EventEmitter {
     const unattendedLaunch = applyUnattendedScheduledLaunch(launchOptions);
     // Reserve before any process can start. Persist disabled so a downgrade
     // cannot replay a launch whose acknowledgement was lost.
-    await this.recordRun(id, { id: runId, at: new Date().toISOString(), result: 'skipped', sessionId: reservedSessionId,
+    await this.recordRun(id, { id: runId, at: new Date().toISOString(), result: 'skipped', sessionId: reservedSessionId, launchKind: 'agent',
       launchState: 'pending', message: 'Worker launch pending confirmation' }, false);
     this.pendingLaunches++;
     let session: Awaited<ReturnType<LaunchTerminal>>;
@@ -997,6 +1252,37 @@ export class SchedulerManager extends EventEmitter {
     // A failed acknowledgement write must retain the pending reservation and
     // must never be mistaken for a failed spawn that is safe to retry.
     await this.finishLaunch(id, runId, live, opts, project, effectiveProfile, session, wasEnabled);
+  }
+
+  private async fireSquad(live: Live, project: Project, opts: { manual: boolean }) {
+    if (!this.deps?.launchSquad) throw new Error('Squad execution service unavailable');
+    const runId = randomUUID();
+    const wasEnabled = live.task.enabled;
+    const launchRequestId = `schedule:${live.task.id}:${runId}`;
+    await this.recordRun(live.task.id, {
+      id: runId, at: new Date().toISOString(), result: 'skipped', launchKind: 'team', launchState: 'pending',
+      launchRequestId, message: 'Squad launch pending confirmation'
+    }, false);
+    this.pendingLaunches++;
+    let launched: { executionId: string };
+    try {
+      launched = await this.deps.launchSquad({
+        schedule: live.task,
+        project,
+        runId,
+        objective: scheduledSquadObjective(live.task)
+      });
+    } catch (error) {
+      await this.recordLaunchFailure(live.task.id, runId, live, opts, error, wasEnabled);
+      return;
+    } finally { this.pendingLaunches--; }
+    if (!opts.manual) live.firing = false;
+    if (this.live.get(live.task.id) !== live) return;
+    await this.recordRun(live.task.id, {
+      id: runId, at: new Date().toISOString(), result: 'success', executionId: launched.executionId, launchRequestId, launchKind: 'team', launchState: 'running'
+    }, wasEnabled);
+    this.scheduleSquadObservation();
+    if (live.task.enabled) this.arm(live.task.id);
   }
 
   private async recordLaunchFailure(id: string, runId: string, live: Live, opts: { manual: boolean }, err: unknown, wasEnabled: boolean) {
@@ -1264,7 +1550,7 @@ export class SchedulerManager extends EventEmitter {
       }
       return;
     } else {
-      status.runs = [run, ...status.runs].slice(0, live.task.history.retain);
+      status.runs = this.retainRuns(live.task, [run, ...status.runs]);
       status.runCount += 1;
       if (run.id) {
         countedRunIds.add(run.id);
@@ -1275,13 +1561,14 @@ export class SchedulerManager extends EventEmitter {
           countedRunIds.delete(oldest);
         }
       }
-      // After unshift everything shifts right by one. Rebuild the index from
-      // surviving entries so we can still find them on their exit-time update.
-      runIndexBySession.clear();
-      status.runs.forEach((r, idx) => {
-        if (r.sessionId) runIndexBySession.set(r.sessionId, idx);
-      });
     }
+    // Terminal records obey the configured history cap even when this was an
+    // update to a formerly-active squad run. Rebuild indexes from survivors.
+    status.runs = this.retainRuns(live.task, status.runs);
+    runIndexBySession.clear();
+    status.runs.forEach((r, idx) => {
+      if (r.sessionId) runIndexBySession.set(r.sessionId, idx);
+    });
     if (run.result === 'error') {
       this.log(`run ${id}`, run.message ?? 'error (no message)');
     }

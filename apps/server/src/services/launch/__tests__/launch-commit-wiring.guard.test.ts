@@ -18,7 +18,13 @@ describe('launch commit revalidation wiring', () => {
 
   it('uses common project/store/task/capacity commit checks for interactive and background launches', () => {
     expect(source.match(/revalidateCommonLaunchCommit\(authorizedPlan/g)).toHaveLength(2);
-    expect(source).toContain('evidenceDigest: currentExecution.evidenceDigest');
+    // Evidence/consent AND the authorized model pin are re-checked at commit.
+    expect(source.match(/return compareCommitExecution\(currentExecution, authorizedPlan\.binding, /g)).toHaveLength(2);
+  });
+
+  it('spawns with the main-owned authorized model pin, never a request field', () => {
+    expect(source.match(/authorizedModel: finalPlan\.executionAuthorization\.modelPin/g)).toHaveLength(2);
+    expect(source).toContain('authorizedModel: opts?.authorizedModel');
   });
 
   it('passes one main-owned effective launch cwd to initial/commit preflight and spawn', () => {

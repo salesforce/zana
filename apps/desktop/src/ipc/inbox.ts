@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { ipcMain } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { exportInboxPdf } from '../native/inbox-pdf.js';
@@ -89,6 +89,65 @@ export function registerInboxIpc(): void {
     (ids: string[]) => ctx.inboxReadStore.migrateCurrentOriginReadIds(Array.isArray(ids) ? ids : []),
     emptyReadState
   );
+  const inboxProjectAllowed = (window: BrowserWindow, projectId: string) => {
+    const scopedProjectId = ctx.windows.get(window.id)?.projectId;
+    return !scopedProjectId || scopedProjectId === projectId;
+  };
+  const unavailableHostAction = (entry: InboxEntry) => ({
+    entryId: entry.id,
+    kind: 'unavailable',
+    status: 'failed' as const,
+    unavailable: true,
+    message: 'This host action is unavailable. Ordinary reply delivery is disabled.'
+  });
+  ctx.safeHandleFromWindow(
+    IPC.inbox.hostActions.list,
+    async (window) => ctx.inboxActionRegistry.list(
+      (await ctx.inboxStore.read({ limit: 200 })).entries.filter((entry: InboxEntry) => inboxProjectAllowed(window, entry.projectId))
+    ),
+    () => []
+  );
+  ctx.safeHandleFromWindow(
+    IPC.inbox.hostActions.get,
+    async (window, entryId: string) => {
+      if (typeof entryId !== 'string' || entryId.length === 0) return { resolved: true, action: null };
+      const entry = await ctx.inboxStore.get(entryId);
+      if (!entry || !inboxProjectAllowed(window, entry.projectId)) return { resolved: true, action: null };
+      const action = ctx.inboxActionRegistry.list([entry])[0] ?? null;
+      // The durable entry marker is the routing fence. Registry absence may mean
+      // a disabled database, missing handler, or changed entry content; none may
+      // downgrade a host-owned entry into terminal/reopen delivery.
+      return { resolved: true, action: action ?? (entry.hostActionRequired ? unavailableHostAction(entry) : null) };
+    },
+    () => ({ resolved: false, action: null })
+  );
+  ctx.safeHandleFromWindow(
+    IPC.inbox.hostActions.run,
+    async (window, entryId: string, input?: { optionId?: unknown; text?: unknown }) => {
+      if (typeof entryId !== 'string' || entryId.length === 0 || !input || typeof input.optionId !== 'string' || (input.text !== undefined && typeof input.text !== 'string')) {
+        return { ok: false, status: 'missing' as const };
+      }
+      const entry = await ctx.inboxStore.get(entryId);
+      return entry && inboxProjectAllowed(window, entry.projectId)
+        ? ctx.inboxActionRegistry.run(entry, input)
+        : { ok: false, status: 'missing' as const };
+    },
+    () => ({ ok: false, status: 'missing' as const })
+  );
+  ctx.safeHandleFromWindow(
+    IPC.inbox.hostActions.readDecisionArtifact,
+    async (window, entryId: string, path: string) => {
+      if (typeof entryId !== 'string' || typeof path !== 'string') return { ok: false, code: 'INVALID' as const, message: 'Decision details unavailable' };
+      const entry = await ctx.inboxStore.get(entryId);
+      if (!entry || !inboxProjectAllowed(window, entry.projectId)) return { ok: false, code: 'NOT_FOUND' as const, message: 'Decision details unavailable' };
+      const bound = ctx.inboxActionRegistry.bound(entry.id);
+      const content = bound?.kind === 'plan-correction' ? await ctx.planCorrection.readArtifact(bound.ref, path) : undefined;
+      return content === undefined
+        ? { ok: false, code: 'NOT_FOUND' as const, message: 'Decision details unavailable' }
+        : { ok: true, value: { content } };
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE' as const, message: 'Decision details unavailable' })
+  );
   ctx.safeHandle(
     IPC.usage.getSummary,
     () => ctx.usageService.summarize(),
@@ -115,12 +174,14 @@ export function registerInboxIpc(): void {
   // once-registered subscriptions below.
   ctx.offLoudInboxAppended = ctx.inboxStore.onAppended(ctx.handleLoudInboxEntry);
   ctx.inboxStore.onRemoved((id: string) => {
+    ctx.inboxActionRegistry.remove([id]);
     ctx.safeSend(IPC.inbox.onRemoved, id);
   });
   ctx.inboxStore.onUpdated((entry: InboxEntry) => {
     ctx.safeSend(IPC.inbox.onUpdated, entry);
   });
   ctx.inboxStore.onPruned((removedIds: string[]) => {
+    ctx.inboxActionRegistry.remove(removedIds);
     ctx.safeSend(IPC.inbox.onPruned, removedIds);
   });
 
@@ -162,4 +223,3 @@ export function registerInboxIpc(): void {
     ctx.safeSend(IPC.suggestions.onPruned, removedIds);
   });
 }
-

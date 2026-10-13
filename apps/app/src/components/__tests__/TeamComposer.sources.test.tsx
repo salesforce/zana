@@ -32,6 +32,7 @@ const projectsFixture = [
 ];
 const teamsFixture = [{ id: 't1', name: 'Team One' }];
 const dataState = { projects: projectsFixture, loadProjects };
+const openProjectSettings = vi.fn();
 
 vi.mock('../../store.js', () => ({
   useData: Object.assign(
@@ -39,7 +40,7 @@ vi.mock('../../store.js', () => ({
     { getState: () => dataState }
   ),
   useTeams: (selector: (s: { teams: typeof teamsFixture }) => unknown) => selector({ teams: teamsFixture }),
-  useUi: (selector: (s: { pushToast: typeof pushToast }) => unknown) => selector({ pushToast })
+  useUi: (selector: (s: { pushToast: typeof pushToast; openProjectSettings: typeof openProjectSettings }) => unknown) => selector({ pushToast, openProjectSettings })
 }));
 
 vi.mock('../composer/use-composer-prompt-field.js', () => ({
@@ -120,6 +121,7 @@ describe('TeamComposer source-capability clearing', () => {
     startJob.mockClear();
     uploadToRemote.mockClear();
     pushToast.mockClear();
+    openProjectSettings.mockClear();
   });
 
   it('clears previously picked source capabilities when the effective project changes', async () => {
@@ -141,5 +143,54 @@ describe('TeamComposer source-capability clearing', () => {
 
     await waitFor(() => expect(screen.queryByLabelText('Attached sources')).toBeNull());
     expect(screen.queryByText('notes.txt')).toBeNull();
+  });
+
+  it('shows resolved per-unit requirements and cancels without another launch', async () => {
+    startJob.mockResolvedValueOnce({
+      ok: false,
+      code: 'REQUIREMENT_UNAVAILABLE',
+      message: 'work unit build requirement unavailable: skills: review',
+      requirementFailure: { workUnits: [{ id: 'build', title: 'Build UI', missingSkills: ['review'], missingMcpServers: ['repo'] }] }
+    });
+    const onClose = vi.fn();
+    render(<TeamComposer onClose={onClose} />);
+
+    fireEvent.click(screen.getByTestId('pick-project-p1'));
+    fireEvent.click(screen.getByTestId('team-command-send'));
+    expect((await screen.findByRole('alert')).textContent).toContain('Build UI');
+    expect(screen.getByText('Missing Skills')).toBeTruthy();
+    expect(screen.getByText('review')).toBeTruthy();
+    expect(screen.getByText('Missing MCP servers')).toBeTruthy();
+    expect(screen.getByText('repo')).toBeTruthy();
+    expect(screen.getByText(/Choose another project with project selector below/)).toBeTruthy();
+    expect(screen.getByText(/Complete this work without these Skills or MCP servers/)).toBeTruthy();
+    expect(screen.getByText('REQUIREMENT_UNAVAILABLE')).toBeTruthy();
+    expect(screen.getByText('build')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Configure project' }));
+    expect(openProjectSettings).toHaveBeenCalledWith('p1');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(startJob).toHaveBeenCalledOnce();
+  });
+
+  it('shows retry guidance for transient capability inventory failures without missing names', async () => {
+    startJob.mockResolvedValueOnce({
+      ok: false,
+      code: 'CAPABILITY_AVAILABILITY_UNKNOWN',
+      message: 'Project capability availability could not be verified',
+      availabilityUnknown: { failedSources: ['skills', 'mcpServers'] }
+    }).mockResolvedValueOnce({ ok: true, value: { executionId: 'execution-1', state: 'RUNNING' } });
+    const onClose = vi.fn();
+    render(<TeamComposer onClose={onClose} />);
+
+    fireEvent.click(screen.getByTestId('pick-project-p1'));
+    fireEvent.click(screen.getByTestId('team-command-send'));
+    expect((await screen.findByRole('alert')).textContent).toContain('Project capabilities could not be verified');
+    expect(screen.getByText(/Retry after connection or capability discovery is available/)).toBeTruthy();
+    expect(screen.queryByText('review')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(startJob).toHaveBeenCalledTimes(2));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

@@ -24,10 +24,12 @@ export type PortablePlanParse =
 const STEP_MARKER = /<!--\s*executable-step\s*-->/i;
 const HEADING = /^\s*###\s+(.*)$/;
 const SECTION_BREAK = /^\s*(#{1,3})\s+/; // next H1/H2/H3 ends a step block
-// Two shapes count as a field LABEL:
+// Three shapes count as a field LABEL:
 //   (a) BULLET_LABEL — a leading list marker + space at any indent (`- **Work:**`,
 //       `  - **Work:**`).
-//   (b) BARE_LABEL — an UNINDENTED, non-bulleted top-level `**Work:**`. The prior
+//   (b) PLAIN_BULLET_LABEL — a renderer-safe Markdown-stripped list label
+//       (`- Work:`). The Team composer stores this form in launch requests.
+//   (c) BARE_LABEL — an UNINDENTED, non-bulleted top-level `**Work:**`. The prior
 //       grammar accepted this and real/persisted plans still use it (e.g.
 //       `**Work:** inspect only`); requiring a marker regressed those to
 //       "missing Work" and collapsed the whole plan to coordinator-derive.
@@ -35,15 +37,36 @@ const SECTION_BREAK = /^\s*(#{1,3})\s+/; // next H1/H2/H3 ends a step block
 // label: it is an inner sub-bold on a continuation line, folded into the current
 // label's multi-line value. Same for a `**bold**` inside prose (no `:` inside).
 const BULLET_LABEL = /^\s*[-*]\s+\*\*([^:*]+):\*\*\s*(.*)$/;
+const PLAIN_BULLET_LABEL = /^\s*[-*]\s+([A-Za-z][A-Za-z /-]*):\s*(.*)$/;
 const BARE_LABEL = /^\*\*([^:*]+):\*\*\s*(.*)$/;
 const FENCE = /^\s*(```|~~~)/; // fenced-code delimiter: freeze label detection inside
 
-/** Match a field-label line (bulleted at any indent, or an unindented bare label). */
-function matchLabel(raw: string): { key: string; rest: string } | null {
+function indentOf(raw: string): number {
+  return raw.length - raw.trimStart().length;
+}
+
+/**
+ * Match a field-label line from Markdown or composer-normalized plain text.
+ * A plain (non-bold) bullet is a label only when its key is a known label (or a
+ * near-miss spelling, so typos still reject) AND it sits at the label indent
+ * (`labelIndent`, the indent of the first label in the block). Anything else
+ * (`  - Run tests: x` under `**Work:**`, a nested `  - Works: x`) is
+ * continuation text of the current label.
+ */
+function matchLabel(raw: string, labelIndent: number): { key: string; rest: string; indent: number } | null {
+  const indent = indentOf(raw);
   const bullet = BULLET_LABEL.exec(raw);
-  if (bullet) return { key: bullet[1].trim().toLowerCase(), rest: bullet[2] };
+  if (bullet) return { key: bullet[1].trim().toLowerCase(), rest: bullet[2], indent };
+  const plainBullet = PLAIN_BULLET_LABEL.exec(raw);
+  if (plainBullet) {
+    const key = plainBullet[1].trim().toLowerCase();
+    const normalized = key.replace(/\s+/g, ' ');
+    const knownOrNearMiss = (KNOWN_LABELS as readonly string[]).includes(normalized) || nearMissLabel(key) !== undefined;
+    if (knownOrNearMiss && indent <= labelIndent) return { key, rest: plainBullet[2], indent };
+    return null;
+  }
   const bare = BARE_LABEL.exec(raw);
-  if (bare) return { key: bare[1].trim().toLowerCase(), rest: bare[2] };
+  if (bare) return { key: bare[1].trim().toLowerCase(), rest: bare[2], indent };
   return null;
 }
 
@@ -58,6 +81,7 @@ function matchLabel(raw: string): { key: string; rest: string } | null {
  */
 class FenceTracker {
   private marker: '```' | '~~~' | null = null;
+  get open(): boolean { return this.marker !== null; }
   step(line: string): boolean {
     const match = FENCE.exec(line);
     if (match) {
@@ -84,19 +108,98 @@ function stripBackticks(value: string): string {
   return value.replace(/`/g, '').trim();
 }
 
+/** A trailing sentence period ("None.", "`a`.") is prose, not part of the value. */
+function stripSentencePeriod(value: string): string {
+  return stripBackticks(value).replace(/\.$/, '').trim();
+}
+
 /** `None` (case-insensitive, possibly back-ticked) → empty; else comma-split + de-ticked. */
 function parseList(value: string): string[] {
   const cleaned = stripBackticks(value);
-  if (!cleaned || cleaned.toLowerCase() === 'none') return [];
-  return cleaned
+  if (!cleaned || stripSentencePeriod(cleaned).toLowerCase() === 'none') return [];
+  return stripSentencePeriod(cleaned)
     .split(',')
-    .map((item) => item.trim())
+    .map((item) => stripSentencePeriod(item))
     .filter((item) => item && item.toLowerCase() !== 'none');
+}
+
+/** Parse `Skills: alpha, beta; MCP servers: repo` portable requirement syntax. */
+function parseRequires(
+  value: string,
+  unitId: string
+): { ok: true; requires: ExecutionWorkUnitInput['requires'] | undefined } | { ok: false; reason: string } {
+  const flat = value.replace(/\s*\n\s*/g, ' ');
+  if (!flat.trim() || /^none$/i.test(stripBackticks(flat))) return { ok: true, requires: undefined };
+  const requires: NonNullable<ExecutionWorkUnitInput['requires']> = {};
+  for (const entry of flat.split(';')) {
+    const text = entry.trim();
+    if (!text || /^none$/i.test(stripBackticks(text))) continue;
+    const match = /^(skills|mcp\s*servers)\s*:\s*(.*)$/i.exec(text);
+    if (!match) {
+      return {
+        ok: false,
+        reason: `step ${unitId} has malformed Requires entry "${text}" (expected "Skills: a, b; MCP servers: c" or "None")`
+      };
+    }
+    const names = parseList(match[2]);
+    if (!names.length) continue;
+    if (/^skills$/i.test(match[1])) requires.skills = names;
+    else requires.mcpServers = names;
+  }
+  return { ok: true, requires: requires.skills || requires.mcpServers ? requires : undefined };
+}
+
+const KNOWN_LABELS = [
+  'depends on', 'execution class', 'mode', 'read scope', 'write scope', 'excludes', 'work',
+  'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires'
+] as const;
+
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * The known label a near-miss spelling was probably meant to be. A misspelled
+ * gating label ("Require", "Depend on", "Write scopes") would otherwise be
+ * ignored and silently drop the requirement, dependency or scope it carried.
+ * Only close spellings match, so unrelated labels ("Purpose / why", "Notes")
+ * stay free-form. Short labels match only singular/plural variants.
+ */
+function nearMissLabel(key: string): string | undefined {
+  const normalized = key.replace(/\s+/g, ' ').trim();
+  if ((KNOWN_LABELS as readonly string[]).includes(normalized)) return undefined;
+  const compact = normalized.replace(/\s/g, '');
+  return KNOWN_LABELS.find((known) => {
+    const knownCompact = known.replace(/\s/g, '');
+    if (known.length <= 5) return compact === `${knownCompact}s` || `${compact}s` === knownCompact;
+    return editDistance(compact, knownCompact) <= (known.length > 8 ? 2 : 1);
+  });
 }
 
 interface PlanStepBlock {
   heading: string;
   body: string[];
+}
+
+/**
+ * Whether text contains a heading the portable-plan parser will treat as an
+ * executable step. Keep invalid-plan callers on this grammar so they cannot
+ * silently fall back to inferred planning for marker spelling variants.
+ */
+export function hasPortablePlanStep(text: string): boolean {
+  return text.split(/\r?\n/).some(isPortablePlanStepLine);
+}
+
+function isPortablePlanStepLine(line: string): boolean {
+  return HEADING.test(line) && STEP_MARKER.test(line);
 }
 
 /**
@@ -113,6 +216,7 @@ function parseStepLabels(body: string[]): Map<string, string> {
   const fence = new FenceTracker();
   let current: string | null = null;
   let buffer: string[] = [];
+  let labelIndent = Number.POSITIVE_INFINITY;
   const flush = (): void => {
     if (current !== null) labels.set(current, buffer.join('\n').trim());
     current = null;
@@ -120,8 +224,9 @@ function parseStepLabels(body: string[]): Map<string, string> {
   };
   for (const raw of body) {
     const inFence = fence.step(raw);
-    const label = inFence ? null : matchLabel(raw);
+    const label = inFence ? null : matchLabel(raw, labelIndent);
     if (label) {
+      if (labelIndent === Number.POSITIVE_INFINITY) labelIndent = label.indent;
       flush();
       current = label.key;
       buffer = [label.rest];
@@ -144,6 +249,10 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
   if (!title) return { ok: false, reason: `step ${id} missing title` };
 
   const labels = parseStepLabels(block.body);
+  for (const key of labels.keys()) {
+    const intended = nearMissLabel(key);
+    if (intended) return { ok: false, reason: `step ${id} has unrecognised label "${key}" (did you mean "${intended}"?)` };
+  }
 
   const task = labels.get('work');
   if (!task) return { ok: false, reason: `step ${id} missing Work` };
@@ -154,6 +263,9 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
   const readOnly = /read[-\s]?only/i.test(labels.get('mode') ?? '');
   const executionClass = stripBackticks(labels.get('execution class') ?? '').toLowerCase();
   const minimumLevel = EXECUTION_CLASS_LEVEL[executionClass];
+  const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
+  if (!parsedRequires.ok) return parsedRequires;
+  const requires = parsedRequires.requires;
 
   return {
     ok: true,
@@ -165,7 +277,8 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
       ...(files.length ? { files } : {}),
       ...(verificationText ? { verification: [verificationText] } : {}),
       ...(readOnly ? { readOnly: true } : {}),
-      ...(minimumLevel ? { routing: { version: 1, minimumLevel } } : {})
+      ...(minimumLevel ? { routing: { version: 1, minimumLevel } } : {}),
+      ...(requires ? { requires } : {})
     }
   };
 }
@@ -178,7 +291,7 @@ export function parsePortablePlan(text: string): PortablePlanParse {
   const blocks: Array<{ heading: string; body: string[] }> = [];
   for (let i = 0; i < lines.length; i += 1) {
     const headingMatch = HEADING.exec(lines[i]);
-    if (!headingMatch || !STEP_MARKER.test(lines[i])) continue;
+    if (!headingMatch || !isPortablePlanStepLine(lines[i])) continue;
     const body: string[] = [];
     let j = i + 1;
     // Track fenced-code state while collecting so a `#`-prefixed line INSIDE a
@@ -191,6 +304,9 @@ export function parsePortablePlan(text: string): PortablePlanParse {
       const inFence = fence.step(lines[j]);
       if (!inFence && SECTION_BREAK.test(lines[j])) break;
       body.push(lines[j]);
+    }
+    if (fence.open) {
+      return { ok: false, reason: `step contains an unterminated code fence: ${stripInlineComment(headingMatch[1])}` };
     }
     blocks.push({ heading: headingMatch[1], body });
     i = j - 1;

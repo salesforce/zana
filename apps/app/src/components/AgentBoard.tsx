@@ -405,8 +405,10 @@ function executionHost(member: AgentCard | undefined, execution: ExecutionBoardP
   const session = member?.session ?? {
       id: `execution:${execution.executionId}`,
       title: displayTitle,
-    status: terminal ? 'exited' : 'running',
-    profile: 'claude'
+      status: terminal ? 'exited' : 'running',
+      profile: 'claude',
+      createdAt: execution.createdAt,
+      ...(terminal ? { finishedAt: execution.updatedAt } : {})
   } as TerminalSession;
   return {
     ...(member ?? { projectId: execution.projectId, projectName: 'Project', liveSubagents: 0 }),
@@ -507,6 +509,7 @@ export function groupCardsByProject(cards: AgentCard[]): ProjectGroup[] {
 }
 
 export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms)) return '0s';
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -698,6 +701,18 @@ function SquadWorkers({
   );
 }
 
+async function runWorktreeAction(execution: ExecutionBoardProjection, action: 'leave' | 'delete'): Promise<void> {
+  try {
+    const result = await window.cc.executionBoard.worktreeAction(
+      execution.projectId, execution.executionId, execution.stateVersion!, action
+    );
+    if (!result.ok) useUi.getState().pushToast(`Squad worktree action failed: ${result.message ?? result.code}`, 'error');
+  } catch (err) {
+    console.error(`[AgentBoard] ${execution.executionId} worktree ${action} failed`, err);
+    useUi.getState().pushToast(`Squad worktree action failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+  }
+}
+
 interface AgentBoardLanesProps {
   cards: FleetItem[];
   /** Which session or thread id is the active tab (highlighted). */
@@ -742,8 +757,6 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
   // both layouts drive the same pty and expose the same menu.
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
-  const [relaunchingExecutionId, setRelaunchingExecutionId] = useState<string | null>(null);
-  const [controllingExecutionId, setControllingExecutionId] = useState<string | null>(null);
   const [executionMenu, setExecutionMenu] = useState<{ card: AgentCard; execution: ExecutionBoardProjection; x: number; y: number } | null>(null);
   const [laneMenu, setLaneMenu] = useState<{ x: number; y: number; agents: AgentCard[] } | null>(null);
   const { done: pendingDone, busy: moving } = useAgentBoardMoves();
@@ -1138,60 +1151,12 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
       </button>
     );
 
-    // A solo agent (or a worker whose orchestrator is gone) renders as the bare
-    // card. An orchestrator with live workers wraps its card in a squad shell and
-    // nests compact worker rows beneath it, so the whole team is one board unit.
-    const controlAction = execution && c.isSyntheticExecutionHost && !exited ? (
-      <span className="agent-squad-worker">
-        <button
-          type="button"
-          disabled={controllingExecutionId === execution.executionId}
-          onClick={async () => {
-            setControllingExecutionId(execution.executionId);
-            try {
-              if (execution.stateVersion === undefined) return;
-              const retryable = execution.state === 'BLOCKED' && !execution.orchestratorSessionId;
-              const result = retryable
-                ? await window.cc.executionBoard.retry(execution.projectId, execution.executionId, execution.stateVersion)
-                : await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
-               if (!result.ok) useUi.getState().pushToast(`Squad control failed: ${result.message ?? result.code}`, 'error');
-            } catch (err) {
-              console.error(`[AgentBoard] ${execution.executionId} control (retry/stop) failed`, err);
-               useUi.getState().pushToast(`Squad control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
-            } finally { setControllingExecutionId(null); }
-          }}
-        >
-          {controllingExecutionId === execution.executionId
-             ? 'Updating Squad run...'
-             : execution.state === 'BLOCKED' && !execution.orchestratorSessionId ? 'Retry Squad run' : 'Stop Squad run'}
-        </button>
-      </span>
-    ) : null;
-    const monitorAction = execution && c.isSyntheticExecutionHost && execution.recovery?.status === 'available' && !exited ? (
-      <button
-        type="button"
-        className="agent-squad-worker"
-        disabled={relaunchingExecutionId === execution.executionId}
-        onClick={async () => {
-          setRelaunchingExecutionId(execution.executionId);
-          try {
-            const result = await window.cc.executionBoard.relaunchMonitor(execution.projectId, execution.executionId);
-            if (!result.ok) useUi.getState().pushToast(`Monitor relaunch failed: ${result.message ?? result.code}`, 'error');
-          } catch (err) {
-            console.error(`[AgentBoard] ${execution.executionId} relaunchMonitor failed`, err);
-            useUi.getState().pushToast(`Monitor relaunch failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
-          } finally { setRelaunchingExecutionId(null); }
-        }}
-      >
-        {relaunchingExecutionId === execution.executionId ? 'Launching monitor...' : 'Relaunch monitor'}
-      </button>
-    ) : null;
-    if (nestedWorkers.length === 0 && !monitorAction && !controlAction) return cardButton;
+    // Lifecycle controls belong in Squad details or the card context menu. The
+    // Kanban card is a compact status surface, never a button stack.
+    if (nestedWorkers.length === 0) return cardButton;
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}
-        {controlAction}
-        {monitorAction}
         <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} personas={personas} execution={execution} />
       </div>
     );
@@ -1409,6 +1374,19 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           onMouseDown={(event) => event.stopPropagation()}
         >
           <button onClick={() => { onInspect(agentFleetItem(executionMenu.card)); setExecutionMenu(null); }}>Inspect details</button>
+          {executionMenu.execution.retainedWorktree?.disposition !== 'left' && executionMenu.execution.retainedWorktree && executionMenu.execution.stateVersion !== undefined && <>
+            <button onClick={async () => {
+              const { execution } = executionMenu;
+              setExecutionMenu(null);
+              await runWorktreeAction(execution, 'leave');
+            }}>Leave worktree</button>
+            <button className="tab-context-danger" onClick={async () => {
+              const { execution } = executionMenu;
+              if (!window.confirm(`Delete retained worktree?\n\n${execution.retainedWorktree!.path}\n\nThis cannot be undone.`)) return;
+              setExecutionMenu(null);
+              await runWorktreeAction(execution, 'delete');
+            }}>Delete worktree</button>
+          </>}
           {!['COMPLETED', 'FAILED', 'STOPPED'].includes(executionMenu.execution.state) && (
             <button onClick={async () => {
               const { execution } = executionMenu;

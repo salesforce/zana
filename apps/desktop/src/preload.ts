@@ -315,6 +315,12 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.executionBoard.retryDelivery, projectId, executionId, expectedStateVersion, blockerId, deliveryId),
     recoverTimedOut: (projectId, executionId, expectedStateVersion, clientRequestId) =>
       ipcRenderer.invoke(IPC.executionBoard.recoverTimedOut, projectId, executionId, expectedStateVersion, clientRequestId),
+    recoverRetainedSquad: (projectId, executionId, expectedStateVersion, mode) =>
+      ipcRenderer.invoke(IPC.executionBoard.recoverRetained, projectId, executionId, expectedStateVersion, mode),
+    worktreeAction: (projectId, executionId, expectedStateVersion, action, instruction) =>
+      ipcRenderer.invoke(IPC.executionBoard.worktreeAction, projectId, executionId, expectedStateVersion, action, instruction),
+    resumeRun: (projectId, executionId, expectedStateVersion, replay) =>
+      ipcRenderer.invoke(IPC.executionBoard.resumeRun, projectId, executionId, expectedStateVersion, replay === true),
     clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
     relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
   },
@@ -819,6 +825,12 @@ const api: CcApi = {
     markAllRead: (ids) => ipcRenderer.invoke(IPC.inbox.markAllRead, ids),
     pruneRead: (ids) => ipcRenderer.invoke(IPC.inbox.pruneRead, ids),
     migrateCurrentOriginReadIds: (ids) => ipcRenderer.invoke(IPC.inbox.migrateReadState, ids),
+    hostActions: {
+      list: () => ipcRenderer.invoke(IPC.inbox.hostActions.list),
+      get: (entryId) => ipcRenderer.invoke(IPC.inbox.hostActions.get, entryId),
+      run: (entryId, input) => ipcRenderer.invoke(IPC.inbox.hostActions.run, entryId, input),
+      readDecisionArtifact: (entryId, path) => ipcRenderer.invoke(IPC.inbox.hostActions.readDecisionArtifact, entryId, path)
+    },
     onAppended: (cb) => {
       const handler = (_e: unknown, entry: InboxEntry) => cb(entry);
       ipcRenderer.on(IPC.inbox.onAppended, handler);

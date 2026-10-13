@@ -37,6 +37,16 @@ it('exposes timeout recovery through its dedicated execution IPC channel', async
   );
 });
 
+it('exposes typed retained-run recovery through its dedicated execution IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce({ ok: true });
+
+  await api.executionBoard.recoverRetainedSquad('project-1', 'execution-1', 4, 'exact-native');
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.executionBoard.recoverRetained, 'project-1', 'execution-1', 4, 'exact-native');
+});
+
 it('exposes schedule get and reload through their distinct product IPC channels', async () => {
   await import('./preload.js');
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
@@ -87,4 +97,29 @@ it('leaves thread notification levels to the product client', async () => {
   await expect(api.threads.notificationLevel('thread-1')).rejects.toThrow('threads require the product server');
   await expect(api.threads.setNotificationLevel('thread-1', 'muted')).rejects.toThrow('threads require the product server');
   expect(electron.invoke).not.toHaveBeenCalled();
+});
+
+it('exposes squad worktree, resume and inbox host-action channels with coerced replay', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({ ok: true });
+
+  await api.executionBoard.worktreeAction('p', 'e', 2, 'instruct', 'go');
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.worktreeAction, 'p', 'e', 2, 'instruct', 'go');
+  await api.executionBoard.resumeRun('p', 'e', 2, true);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.resumeRun, 'p', 'e', 2, true);
+  await api.executionBoard.resumeRun('p', 'e', 2);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.resumeRun, 'p', 'e', 2, false);
+  await api.executionBoard.resumeRun('p', 'e', 2, 'yes');
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.resumeRun, 'p', 'e', 2, false);
+
+  await api.inbox.hostActions.list();
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.inbox.hostActions.list);
+  await api.inbox.hostActions.get('entry');
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.inbox.hostActions.get, 'entry');
+  await api.inbox.hostActions.run('entry', { optionId: 'o' });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.inbox.hostActions.run, 'entry', { optionId: 'o' });
+  await api.inbox.hostActions.readDecisionArtifact('entry', '.zana/x.md');
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.inbox.hostActions.readDecisionArtifact, 'entry', '.zana/x.md');
 });

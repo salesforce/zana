@@ -45,6 +45,7 @@ export interface IpcCtx {
   executionArtifacts: any;
   executionConsentManagement: any;
   executionDeliveryDrain: any;
+  exactNativeRecoveryAvailability: any;
   executionHandoffs: any;
   executionResumeGrants: any;
   executionResumeTokens: any;
@@ -65,6 +66,8 @@ export interface IpcCtx {
   hostCommandRelay: any;
   inboxStore: any;
   inboxReadStore: any;
+  inboxActionRegistry: any;
+  planCorrection: any;
   inboxSummary: any;
   isTeamWorkerRestore: any;
   keepAwake: any;
@@ -102,6 +105,7 @@ export interface IpcCtx {
   resolveWorktreeForRequest: any;
   resolvedAppVersion: any;
   restoreCapabilities: any;
+  restoreSquadWorktreeFollowUpClaim: any;
   restorePrincipal: any;
   runDiskSync: any;
   runtimeSupervisor: any;
@@ -117,6 +121,7 @@ export interface IpcCtx {
   ensureMainWindowReady: any;
   skillBundles: any;
   squadExecutionService: any;
+  squadWorktreeAction: any;
   sshHostProviderRegistry: any;
   stampFeedEvent: any;
   startTeamJobFromUi: any;

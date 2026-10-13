@@ -2,7 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue, hashBytes, readRawFile } from '../harness-routing/storage.js';
+import type { ExecutionDatabase } from '@zana-ai/zcc-db';
 import type { ExecutionState } from './store.js';
+import { readExecutionSqliteState, writeExecutionSqliteState } from './storage/sqlite-state.js';
+import { assertSideStoreStorage, executionStorageBackendForId, type ExecutionSideStoreStorage, type ExecutionStorageBackend } from './storage/backend-policy.js';
 
 export interface ResumeGrantV1 {
   version: 1;
@@ -66,15 +69,21 @@ function validGeneration(value: unknown): value is GenerationRecord {
     && Number.isInteger(entry.generation) && (entry.generation ?? -1) >= 0;
 }
 
-export function createResumeGrantStore(options: { filePath: string; now?: () => number; token?: () => string }) {
+export function createResumeGrantStore(options: ExecutionSideStoreStorage & { filePath: string; now?: () => number; token?: () => string }) {
+  assertSideStoreStorage(options, 'execution resume grant store');
   const now = options.now ?? Date.now;
   const token = options.token ?? randomUUID;
+  function owner(executionId: string): ExecutionStorageBackend {
+    return executionStorageBackendForId({ filePath: options.executionFilePath ?? options.filePath, database: options.database, executionId });
+  }
 
-  function read(): { state: StateFile; hash: string | null } {
-    const bytes = readRawFile(options.filePath);
-    if (!bytes) return { state: { version: 1, revision: 0, grants: [], generations: [] }, hash: null };
+  function read(backend: ExecutionStorageBackend): { state: StateFile; hash: string | null } {
+    const sqlite = backend === 'sqlite' ? readExecutionSqliteState<StateFile>(options.database, 'execution-resume-grant-store') : null;
+    if (backend === 'sqlite' && !sqlite) return { state: { version: 1, revision: 0, grants: [], generations: [] }, hash: null };
+    const bytes = backend === 'json' ? readRawFile(options.filePath) : null;
+    if (!sqlite && !bytes) return { state: { version: 1, revision: 0, grants: [], generations: [] }, hash: null };
     try {
-      const parsed = JSON.parse(bytes.toString('utf8')) as Partial<StateFile>;
+      const parsed = (sqlite?.value ?? JSON.parse(bytes!.toString('utf8'))) as Partial<StateFile>;
       if (!Array.isArray(parsed.generations) && Array.isArray(parsed.grants)) {
         const migrated = new Map<string, GenerationRecord>();
         for (const grant of parsed.grants) {
@@ -88,7 +97,7 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
       }
       if (parsed.version !== 1 || !Number.isInteger(parsed.revision) || !Array.isArray(parsed.grants) || !parsed.grants.every(validGrant)
         || !Array.isArray(parsed.generations) || !parsed.generations.every(validGeneration)) throw new Error('invalid shape');
-      return { state: parsed as StateFile, hash: hashBytes(bytes) };
+      return { state: parsed as StateFile, hash: sqlite?.hash ?? hashBytes(bytes!) };
     } catch (error) {
       throw new Error(`corrupt execution resume grant store: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -104,15 +113,18 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
     }
   }
 
-  function persist(state: StateFile, expectedHash: string | null): void {
+  function persist(state: StateFile, expectedHash: string | null, backend: ExecutionStorageBackend): void {
     const timestamp = now();
     // Prune only terminal grants (expired or revoked). Active grants — including
     // consumed-and-bound ones needed for idempotent recovery — are never dropped;
     // growth is bounded by assertGrantCapacity at the mint/rotate sites instead.
     state.grants = state.grants.filter((grant) => isActive(grant, timestamp));
     state.revision += 1;
-    mkdirSync(dirname(options.filePath), { recursive: true });
-    atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
+    if (backend === 'sqlite') writeExecutionSqliteState(options.database!, 'execution-resume-grant-store', state, expectedHash);
+    else {
+      mkdirSync(dirname(options.filePath), { recursive: true });
+      atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
+    }
   }
 
   async function rotate(input: { executionId: string; projectId: string; callerPrincipalId: string; expectedGeneration: number; expiresAt?: number }) {
@@ -123,7 +135,8 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
     const expiresAt = input.expiresAt ?? now() + RESUME_GRANT_TTL_MS;
     if (!Number.isFinite(expiresAt) || expiresAt <= now()) throw new Error('invalid execution resume grant expiry');
     return queue.run(async () => {
-      const snapshot = read();
+      const backend = owner(executionId);
+      const snapshot = read(backend);
       let generationRecord = snapshot.state.generations.find((entry) => entry.executionId === executionId && entry.projectId === projectId);
       const currentGeneration = generationRecord?.generation ?? 0;
       if (currentGeneration < input.expectedGeneration || currentGeneration > input.expectedGeneration + 1) throw new Error('stale execution recovery generation');
@@ -151,7 +164,7 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
       }
       assertGrantCapacity(snapshot.state, timestamp);
       snapshot.state.grants.push(grant);
-      persist(snapshot.state, snapshot.hash);
+      persist(snapshot.state, snapshot.hash, backend);
       return { token: rawToken, expiresAt: grant.expiresAt, generation };
     });
   }
@@ -163,7 +176,8 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
     const expiresAt = input.expiresAt ?? now() + RESUME_GRANT_TTL_MS;
     if (!Number.isFinite(expiresAt) || expiresAt <= now()) throw new Error('invalid execution resume grant expiry');
     return queue.run(async () => {
-      const snapshot = read();
+      const backend = owner(executionId);
+      const snapshot = read(backend);
       const generationRecord = snapshot.state.generations.find((entry) => entry.executionId === executionId && entry.projectId === projectId);
       const generation = generationRecord ? generationRecord.generation + 1 : 0;
       const rawToken = string(token(), 'token');
@@ -177,7 +191,7 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
       snapshot.state.grants.push({
         version: 1, executionId, projectId, callerPrincipalId, tokenDigest: digest(rawToken), mintedAt: timestamp, expiresAt, generation
       });
-      persist(snapshot.state, snapshot.hash);
+      persist(snapshot.state, snapshot.hash, backend);
       return { token: rawToken, expiresAt, generation };
     });
   }
@@ -188,7 +202,8 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
     const projectId = string(input.projectId, 'project id');
     const effectiveOwnerPrincipalId = string(input.effectiveOwnerPrincipalId, 'effective owner principal id');
     return queue.run(async () => {
-      const snapshot = read();
+      const backend = owner(executionId);
+      const snapshot = read(backend);
       const grant = snapshot.state.grants.find((candidate) => candidate.tokenDigest === digest(rawToken));
       if (!grant || grant.executionId !== executionId || grant.projectId !== projectId || grant.revokedAt !== undefined || grant.expiresAt <= now()
         || (input.generation !== undefined && grant.generation !== input.generation)) {
@@ -202,7 +217,7 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
       grant.consumedAt = now();
       grant.boundOwnerPrincipalId = effectiveOwnerPrincipalId;
       grant.boundAt = now();
-      persist(snapshot.state, snapshot.hash);
+      persist(snapshot.state, snapshot.hash, backend);
       return { outcome: 'consumed' as const, grant: clone(grant) };
     });
   }
@@ -211,11 +226,12 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
     const safeExecutionId = string(executionId, 'execution id');
     const safeProjectId = string(projectId, 'project id');
     await queue.run(async () => {
-      const snapshot = read();
+      const backend = owner(safeExecutionId);
+      const snapshot = read(backend);
       for (const grant of snapshot.state.grants) {
         if (grant.executionId === safeExecutionId && grant.projectId === safeProjectId && grant.consumedAt === undefined) grant.revokedAt = now();
       }
-      persist(snapshot.state, snapshot.hash);
+      persist(snapshot.state, snapshot.hash, backend);
     });
   }
 
@@ -224,12 +240,13 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
     const safeProjectId = string(projectId, 'project id');
     const safeOwnerPrincipalId = string(effectiveOwnerPrincipalId, 'effective owner principal id');
     await queue.run(async () => {
-      const snapshot = read();
+      const backend = owner(safeExecutionId);
+      const snapshot = read(backend);
       for (const grant of snapshot.state.grants) {
         if (grant.executionId === safeExecutionId && grant.projectId === safeProjectId
           && grant.boundOwnerPrincipalId === safeOwnerPrincipalId) grant.revokedAt = now();
       }
-      persist(snapshot.state, snapshot.hash);
+      persist(snapshot.state, snapshot.hash, backend);
     });
   }
 

@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 
@@ -53,6 +53,18 @@ describe('ScheduleInfoPanel', () => {
     expect(screen.getByTestId('pending-worker-recovery')).toBeTruthy();
     expect((screen.getByRole('button', { name: /Run now/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: /Resume/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it('lists the cause of a failed run and hides messages on successful runs', () => {
+    render(<ScheduleInfoPanel task={{ ...baseTask, status: { runCount: 2, runs: [
+      { id: 'r2', at: new Date().toISOString(), result: 'error', message: 'Squad requirements are unavailable' },
+      { id: 'r1', at: new Date().toISOString(), result: 'success', message: 'all good' }
+    ] } }} />);
+    expect(screen.queryByText('Squad requirements are unavailable')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'View run details' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'View run details' }));
+    expect(within(screen.getByRole('dialog')).getByText('Squad requirements are unavailable')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
   afterEach(() => {
     cleanup();
@@ -174,5 +186,20 @@ describe('ScheduleInfoPanel', () => {
     await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('Run failed: busy', 'error'));
     fireEvent.click(screen.getByRole('button', { name: /Resume/ }));
     await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('denied', 'error'));
+  });
+
+  it('toasts the recorded cause when run-now was accepted but the launch was refused, and fired otherwise', async () => {
+    const withRun = (result: string, message?: string) => ({
+      ...baseTask,
+      status: { runCount: 1, runs: [{ id: 'r', at: new Date().toISOString(), result, message }] }
+    }) as unknown as ScheduledTask;
+    runNow.mockResolvedValueOnce({ ok: true, value: withRun('error', 'Squad requirements are unavailable') });
+    render(<ScheduleInfoPanel task={baseTask} />);
+    fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+    await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('Run failed: Squad requirements are unavailable', 'error'));
+    expect(pushToast).not.toHaveBeenCalledWith('Fired "Morning digest"', 'info');
+    runNow.mockResolvedValueOnce({ ok: true, value: withRun('success') });
+    fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+    await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('Fired "Morning digest"', 'info'));
   });
 });

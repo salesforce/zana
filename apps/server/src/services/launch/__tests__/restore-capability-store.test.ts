@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRestoreCapabilityStore } from '../restore-capability-store.js';
 
 const dirs: string[] = [];
@@ -23,12 +23,13 @@ describe('restore capability store', () => {
       sessionProfile: 'claude',
       sessionTitle: 'Trusted session',
       remoteTmuxId: 'tmux-1',
+      followUpExecutionId: 'execution-1',
       createdAt: 1
     });
 
     const reopened = createRestoreCapabilityStore({ filePath });
     expect(reopened.get('cap-1')?.request.cwd).toBe('/trusted');
-    expect(reopened.list()).toMatchObject([{ id: 'cap-1', sessionId: 'session-1' }]);
+    expect(reopened.list()).toMatchObject([{ id: 'cap-1', sessionId: 'session-1', followUpExecutionId: 'execution-1' }]);
     const listed = reopened.list();
     listed[0].request.cwd = '/mutated';
     expect(reopened.get('cap-1')?.request.cwd).toBe('/trusted');
@@ -134,5 +135,53 @@ describe('restore capability store', () => {
     expect(store.removeSession('stale-session')).toBe(true);
     expect(store.findSession('stale-session')).toBeUndefined();
     expect(store.removeSession('stale-session')).toBe(false);
+  });
+
+  describe('retention cap', () => {
+    const cap = (id: string, extra: Record<string, unknown> = {}, createdAt = 1) => ({
+      id,
+      request: { projectId: 'p1', profile: 'claude' as const, cols: 80, rows: 24 },
+      createdAt,
+      ...extra
+    });
+    async function fresh(maxEntries: number) {
+      const dir = await mkdtemp(join(tmpdir(), 'zcc-restore-cap-'));
+      dirs.push(dir);
+      return createRestoreCapabilityStore({ filePath: join(dir, 'restore.json'), maxEntries });
+    }
+
+    it('keeps a live follow-up entry across >200 newer puts (default cap)', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'zcc-restore-cap-'));
+      dirs.push(dir);
+      const filePath = join(dir, 'restore.json');
+      const store = createRestoreCapabilityStore({ filePath });
+      store.put(cap('live', { sessionId: 's-live', followUpExecutionId: 'exec-1' }));
+      for (let i = 0; i < 250; i += 1) store.put(cap(`n${i}`, {}, i + 2));
+      const reopened = createRestoreCapabilityStore({ filePath });
+      expect(reopened.get('live')).toMatchObject({ followUpExecutionId: 'exec-1' });
+      expect(reopened.list().length).toBe(200);
+    });
+
+    it('evicts exited entries before unprotected ones, oldest first, keeping order', async () => {
+      const store = await fresh(3);
+      store.put(cap('plain-old'));
+      store.put(cap('exited', { sessionId: 's1', exitedAt: 5 }));
+      store.put(cap('live', { sessionId: 's2' }));
+      store.put(cap('new'));
+      expect(store.list().map((e) => e.id)).toEqual(['plain-old', 'live', 'new']);
+      store.put(cap('newer'));
+      expect(store.list().map((e) => e.id)).toEqual(['live', 'new', 'newer']);
+    });
+
+    it('exceeds the cap for protected entries, then drops oldest protected past the hard bound', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const store = await fresh(2);
+      for (let i = 0; i < 4; i += 1) store.put(cap(`f${i}`, { followUpExecutionId: `e${i}` }));
+      expect(store.list().map((e) => e.id)).toEqual(['f0', 'f1', 'f2', 'f3']);
+      expect(warn).toHaveBeenCalled();
+      store.put(cap('f4', { followUpExecutionId: 'e4' }));
+      expect(store.list().map((e) => e.id)).toEqual(['f1', 'f2', 'f3', 'f4']);
+      warn.mockRestore();
+    });
   });
 });

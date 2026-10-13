@@ -174,6 +174,41 @@ describe('Team admission', () => {
     expect(() => normalizeExecutionPlan([{ ...validPlan[0], files: ['../secret'] }], true)).toThrow('invalid work unit file scope');
   });
 
+  it('normalizes bounded per-work-unit requirements and rejects malformed requirements', () => {
+    const normalized = normalizeExecutionPlan([{
+      ...validPlan[0], requires: { skills: ['review', 'review'], mcpServers: ['repo'] }
+    }], true);
+    expect(normalized[0]?.requires).toEqual({ skills: ['review'], mcpServers: ['repo'] });
+    expect(() => normalizeExecutionPlan([{ ...validPlan[0], requires: { skills: Array.from({ length: 51 }, (_, index) => `skill-${index}`) } }], true))
+      .toThrow('invalid work unit required skills');
+    expect(() => normalizeExecutionPlan([{ ...validPlan[0], requires: { unknown: ['x'] } } as any], true))
+      .toThrow('invalid work unit requires');
+  });
+
+  it('rejects a plan atomically when a work-unit requirement is unavailable', () => {
+    const result = evaluateTeamAdmission({
+      workUnits: [{ ...validPlan[0], requires: { skills: ['review'], mcpServers: ['repo'] } }],
+      requireCompletePlan: true, slotCount: 1, maxSlots: 1, initialTasks: ['work'], now: 10,
+      inventory: { version: 1, observedAt: 10, maxAgeMs: 100, skills: [{ name: 'review', available: true }], mcpServers: [{ name: 'repo', available: false }], models: [], providers: [] }
+    });
+    expect(result).toMatchObject({ ready: false, checks: expect.arrayContaining([
+      expect.objectContaining({ code: 'SKILL_AVAILABLE', subject: 'build', status: 'PASS' }),
+      expect.objectContaining({ code: 'MCP_AVAILABLE', subject: 'build', status: 'FAIL', unavailable: ['repo'], message: 'work unit build requirement unavailable: MCP servers: repo' })
+    ]) });
+  });
+
+  it('does not label declared capabilities missing when inventory is unavailable', () => {
+    const result = evaluateTeamAdmission({
+      workUnits: [{ ...validPlan[0], requires: { skills: ['review'], mcpServers: ['repo'] } }],
+      requireCompletePlan: true, slotCount: 1, maxSlots: 1, initialTasks: ['work'], now: 10
+    });
+
+    expect(result).toMatchObject({ ready: false, checks: expect.arrayContaining([
+      expect.not.objectContaining({ code: 'SKILL_AVAILABLE', subject: 'build', unavailable: expect.anything() }),
+      expect.not.objectContaining({ code: 'MCP_AVAILABLE', subject: 'build', unavailable: expect.anything() })
+    ]) });
+  });
+
   it('uses identical deterministic output for preview and admission calls', () => {
     const input = {
       workUnits: validPlan, requireCompletePlan: true, slotCount: 2, maxSlots: 4,
@@ -309,6 +344,45 @@ describe('Team admission', () => {
       slotCount: 1, maxSlots: 1, initialTasks: ['work'], now: inventory.observedAt,
       requiredSkills: ['skill'], inventory
     })).toMatchObject({ ready: false });
+    expect(inventory.sourceStatuses).toEqual([
+      { source: 'skills', status: 'failed' }, { source: 'mcpServers', status: 'failed' },
+      { source: 'models', status: 'failed' }, { source: 'providers', status: 'failed' }
+    ]);
+  });
+
+  it('marks failed Skills and MCP reads unavailable without naming capabilities missing', async () => {
+    const failure = async () => { throw new Error('transient discovery failure'); };
+    const inventory = await collectTeamAdmissionInventory({ requiredSkills: ['review'], requiredMcpServers: ['repo'] }, {
+      listSkills: failure, listMcpServers: failure, modelHealth: async () => [], providerHealth: async () => [], now: () => 10
+    });
+    const result = evaluateTeamAdmission({
+      workUnits: [{ ...validPlan[0], requires: { skills: ['review'], mcpServers: ['repo'] } }],
+      requireCompletePlan: true, slotCount: 1, maxSlots: 1, initialTasks: ['work'], inventory, now: 10
+    });
+    expect(result).toMatchObject({ ready: false, availabilityUnknown: { failedSources: ['skills', 'mcpServers'] } });
+    expect(result.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SKILL_AVAILABLE', subject: 'build', status: 'UNKNOWN' }),
+      expect.objectContaining({ code: 'MCP_AVAILABLE', subject: 'build', status: 'UNKNOWN' })
+    ]));
+    expect(result.checks.filter((check) => check.subject === 'build').flatMap((check) => check.unavailable ?? [])).toEqual([]);
+  });
+
+  it('reports availability unknown only for failed sources a requirement depends on', () => {
+    const base = { slotCount: 1, maxSlots: 1, initialTasks: ['work'], now: 10 };
+    const inventory = (failed: ('skills' | 'mcpServers' | 'models' | 'providers')[]) => ({
+      version: 1 as const, observedAt: 10, maxAgeMs: 100, skills: [], mcpServers: [], models: [], providers: [],
+      sourceStatuses: failed.map((source) => ({ source, status: 'failed' as const }))
+    });
+    // No requirement depends on a failed source: not an availability problem.
+    expect(evaluateTeamAdmission({ ...base, inventory: inventory(['skills', 'mcpServers']) }).availabilityUnknown).toBeUndefined();
+    // Failed model/provider reads never map to skill/MCP availability.
+    expect(evaluateTeamAdmission({ ...base, requiredSkills: ['review'], inventory: { ...inventory(['models', 'providers']), skills: [{ name: 'review', available: true }] } }).availabilityUnknown).toBeUndefined();
+    // Only the depended-on source is reported.
+    expect(evaluateTeamAdmission({ ...base, requiredSkills: ['review'], inventory: inventory(['skills', 'mcpServers']) }).availabilityUnknown)
+      .toEqual({ failedSources: ['skills'] });
+    expect(evaluateTeamAdmission({
+      ...base, workUnits: [{ ...validPlan[0], requires: { mcpServers: ['repo'] } }], requireCompletePlan: true, inventory: inventory(['skills', 'mcpServers'])
+    }).availabilityUnknown).toEqual({ failedSources: ['mcpServers'] });
   });
 
   it('keeps source failure fallback when diagnostics throw', async () => {
@@ -316,7 +390,7 @@ describe('Team admission', () => {
       listSkills: async () => { throw new Error('offline'); },
       listMcpServers: async () => [], modelHealth: async () => [], providerHealth: async () => [],
       onError: () => { throw new Error('logger offline'); }
-    })).resolves.toMatchObject({ skills: [] });
+    })).resolves.toMatchObject({ skills: [], sourceStatuses: expect.arrayContaining([{ source: 'skills', status: 'failed' }]) });
   });
 
   it('keeps digest stable across requirement and inventory ordering', () => {

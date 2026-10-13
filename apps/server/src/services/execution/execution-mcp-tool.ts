@@ -39,6 +39,10 @@ const workUnitSchema = z.strictObject({
   id: z.string().min(1).max(2048), title: z.string().min(1).max(2048), task: z.string().min(1).max(16384),
   dependencies: z.array(z.string().min(1).max(2048)).max(100), preferredRole: z.string().min(1).max(2048).optional(),
   files: z.array(z.string().min(1).max(2048)).max(100).optional(), verification: z.array(z.string().min(1).max(2048)).max(100).optional(), readOnly: z.boolean().optional(),
+  requires: z.strictObject({
+    skills: z.array(z.string().min(1).max(256)).max(50).optional(),
+    mcpServers: z.array(z.string().min(1).max(256)).max(50).optional()
+  }).optional(),
   routing: z.strictObject({
     version: z.literal(1), taskClass: z.string().min(1).max(2048).optional(),
     minimumLevel: z.enum(['low', 'medium', 'high', 'extra-high']).optional(),
@@ -65,6 +69,7 @@ const executionStartSchema = z.strictObject({
   maxTurnsPerClaim: z.number().int().min(1).max(10_000).optional(),
   maxClaimWallClockMs: z.number().int().min(1_000).max(24 * 60 * 60 * 1000).optional(),
   usageBudget: z.strictObject({ maxTokens: z.number().int().min(1).optional(), maxUsd: z.number().positive().optional() }).optional(),
+  worktree: z.boolean().optional(),
   workflow: workflowSchema.optional(),
   workUnits: z.array(workUnitSchema).min(1).max(100).optional()
 });
@@ -77,6 +82,8 @@ const MAX_START_WORK_UNITS_BYTES = 512 * 1024;
 
 const executionIdSchema = { executionId: z.string().min(1).max(2048) };
 const executionControlSchema = { ...executionIdSchema, expectedStateVersion: z.number().int().min(0) };
+const executionResumeRunSchema = { ...executionControlSchema, replay: z.boolean().optional() };
+const executionRetainedRecoverySchema = { ...executionControlSchema, mode: z.enum(['exact-native', 'fresh-plan']) };
 const executionEventsSchema = { ...executionIdSchema, after: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() };
 const executionSnapshotSchema = { ...executionIdSchema, after: z.number().int().min(0).optional() };
 const executionProducerEventSchema = {
@@ -421,10 +428,11 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     } catch (error) {
       return { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: ${error instanceof Error ? error.message : String(error)}` }] };
     }
-    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits } = start;
+    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, worktree } = start;
     const request: ExecutionRequestV1 = {
       version, launchKind, ...(launchDisplay === undefined ? {} : { launchDisplay }), teamId, launchRequestId, jobTitle, summary, slots,
       ...(workflow === undefined ? {} : { workflow }), ...(workUnits === undefined ? {} : { workUnits }), coordinationMode: 'job-team',
+      ...(worktree === undefined ? {} : { worktree }),
       policy: {
         ...(deadlineMs === undefined ? {} : { deadlineMs }),
         ...(maxConcurrent === undefined ? {} : { maxConcurrent }),
@@ -584,6 +592,36 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
       : { isError: true, content: [{ type: 'text' as const, text: `execution.retry failed: ${result.message}` }] };
+  });
+
+  register('execution.recover_retained', {
+    description: 'Recover retained failed or stopped Squad work by exact native restoration or by relaunching its retained plan.', inputSchema: executionRetainedRecoverySchema
+  }, async ({ executionId, expectedStateVersion, mode }) => {
+    if (!authorized()) return denied('execution.recover_retained');
+    const result = await options.service.recoverRetained(options.sessionId!, options.projectId, executionId, expectedStateVersion, mode);
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.recover_retained failed: ${result.message}` }] };
+  });
+
+  register('execution.relaunch_retained_plan', {
+    description: 'Relaunch retained failed or stopped Squad plan. Completed work stays retained; all other units are reprompted.', inputSchema: executionControlSchema
+  }, async ({ executionId, expectedStateVersion }) => {
+    if (!authorized()) return denied('execution.relaunch_retained_plan');
+    const result = await options.service.recoverRetained(options.sessionId!, options.projectId, executionId, expectedStateVersion, 'fresh-plan');
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.relaunch_retained_plan failed: ${result.message}` }] };
+  });
+
+  register('execution.resume_run', {
+    description: 'Deprecated alias for execution.relaunch_retained_plan.', inputSchema: executionResumeRunSchema
+  }, async ({ executionId, expectedStateVersion, replay }) => {
+    if (!authorized()) return denied('execution.resume_run');
+    const result = await options.service.resumeRun(options.sessionId!, options.projectId, executionId, expectedStateVersion, replay === true);
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.resume_run failed: ${result.message}` }] };
   });
 
   register('execution.respond', {

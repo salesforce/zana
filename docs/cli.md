@@ -92,7 +92,7 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   skill list|show|files|cli-skills-status|install-cli-skills
   settings show|general|experiment|appearance
   terminal list|create|show|output|wait|send|close
-  team launch --team <id> --project <id> --goal "..." [--mode structured|freeform]
+  team launch --team <id> --project <id> --goal "..." [--mode freeform|structured]
   team status|wait|answer|stop <id>
   environment status|diff|diff-files|pull-request|processes <id>
   browser instances|tabs|create|acquire|connection|release|reveal|capture|close|watch|import-sources|import-cookies
@@ -271,11 +271,11 @@ zcc team ls --json
 
 ### `team launch|status|wait|answer|stop`
 
-Start and watch one durable Team execution. `--mode freeform` asks the coordinator to infer a plan; `--mode structured` (default) says the goal contains the plan. **Product API — needs the app running.**
+Start and watch one durable Team execution. `--mode freeform` (default) asks the coordinator to infer a plan from the goal. `--mode structured` says the goal itself contains a complete portable plan; a prose goal with `--mode structured` is refused with `INVALID_PLAN` (headless launches raise an Inbox notice instead of parking for correction). **Product API — needs the app running.**
 Launch, answer, and stop are operator-only.
 
 ```bash
-zcc team launch --team <id> --project <id> --goal "ship it" [--mode structured|freeform] [--wait]
+zcc team launch --team <id> --project <id> --goal "ship it" [--mode freeform|structured] [--wait]
 zcc team status <executionId>
 zcc team wait <id> [--timeout 5m]
 zcc team answer <id> --text "yes" [--blocker <blockerId>]

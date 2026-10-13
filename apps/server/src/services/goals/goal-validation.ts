@@ -38,7 +38,7 @@ function sanitizeAssignment(raw: unknown): GoalAssignment {
     return { kind, personaId: typeof r.personaId === 'string' ? r.personaId : undefined };
   }
   if (kind === 'team') {
-    return { kind, teamId: typeof r.teamId === 'string' ? r.teamId : undefined };
+    return { kind, teamId: typeof r.teamId === 'string' && r.teamId.trim() ? r.teamId.trim() : undefined };
   }
   const profile =
     typeof r.profile === 'string' && VALID_PROFILES.includes(r.profile as LaunchProfileId)
@@ -62,6 +62,8 @@ function sanitizeIteration(raw: unknown): GoalIteration | null {
     id: r.id,
     at: r.at,
     sessionId: typeof r.sessionId === 'string' ? r.sessionId : undefined,
+    executionId: typeof r.executionId === 'string' ? r.executionId : undefined,
+    launchRequestId: typeof r.launchRequestId === 'string' ? r.launchRequestId : undefined,
     launchState: r.launchState === 'pending' || r.launchState === 'running' || r.launchState === 'failed' ? r.launchState : undefined,
     verdict:
       typeof r.verdict === 'string' && VALID_VERDICTS.includes(r.verdict as GoalVerdict)
@@ -100,6 +102,11 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
     typeof r.status === 'string' && VALID_STATUS.includes(r.status as GoalStatus)
       ? (r.status as GoalStatus)
       : 'draft';
+  const terminalStatus =
+    r.terminalStatus === 'achieved' || r.terminalStatus === 'exhausted' ||
+    r.terminalStatus === 'escalated' || r.terminalStatus === 'cancelled'
+      ? r.terminalStatus
+      : undefined;
 
   const rawHistory = (r.history && typeof r.history === 'object' ? r.history : {}) as Record<
     string,
@@ -117,6 +124,7 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
     title: r.title.trim(),
     statement: r.statement,
     successCriteria: toStringArray(r.successCriteria),
+    ...(r.planSource === 'provided' || r.planSource === 'infer' ? { planSource: r.planSource } : {}),
     driver,
     assignment: sanitizeAssignment(r.assignment),
     cadence: sanitizeCadence(r.cadence),
@@ -130,10 +138,17 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
         ? Math.round(r.noProgressLimit)
         : 2,
     status,
+    terminalStatus,
+    terminalMessage: typeof r.terminalMessage === 'string' ? r.terminalMessage : undefined,
+    terminalNotificationDelivered: r.terminalNotificationDelivered === true ? true : undefined,
     history: { retain: clampRetain(rawHistory.retain as number | undefined), iterations },
     externalRef: typeof r.externalRef === 'string' ? r.externalRef : undefined,
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : new Date().toISOString()
   };
+  // Legacy Squad goals predating the teamId requirement stay visible so the
+  // operator can edit them; an active one is demoted to paused because it
+  // cannot launch. Create/update still require teamId (goal-manager).
+  if (goal.assignment.kind === 'team' && !goal.assignment.teamId && goal.status === 'active') goal.status = 'paused';
   return goal;
 }

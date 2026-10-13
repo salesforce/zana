@@ -149,22 +149,49 @@ describe('structured providers final local argv', () => {
 
   it('emits OpenCode model without auto-approve for accept-edits', () => {
     expect(spawn('opencode', routing('opencode', {
-      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
+      modelTargetId: 'llmgw/gpt-6.1-sol',
       executionState: 'accept-edits'
     }))).toEqual({
       command: 'opencode',
-      args: ['--model', 'llmgw/gpt-5.6-sol-1M']
+      args: ['--model', 'llmgw/gpt-6.1-sol']
     });
+  });
+
+  it('maps an OpenCode portable level to the authorized pin of THIS launch only', () => {
+    // Two slots sharing ONE worktree cwd, each authorized with its own resolved
+    // id: each spawn uses its own pin verbatim; no keyed state links them.
+    const create = (targetId?: string) => {
+      new PtyManager().create({
+        projectId: 'proj1', profile: 'opencode', cwd: '/tmp/shared-worktree', cols: 80, rows: 24, config: CONFIG,
+        harnessRouting: routing('opencode', { modelLevel: 'low' }),
+        ...(targetId ? { authorizedModel: { adapterId: 'opencode', level: 'low' as const, targetId } } : {})
+      });
+      return spawns.at(-1)!.args;
+    };
+    expect(create('llmgw/gpt-7-luna')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-7-luna']));
+    expect(create('llmgw/gpt-8-luna')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-8-luna']));
+    expect(create('llmgw/gpt-7-luna')).not.toContain('llmgw/gpt-8-luna');
+    // No preflight pin: the reviewed snapshot mapping, exactly as before.
+    expect(create()).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-6-luna']));
+  });
+
+  it('a native role still suppresses an authorized model pin', () => {
+    new PtyManager().create({
+      projectId: 'proj1', profile: 'opencode', cwd: '/tmp/shared-worktree', cols: 80, rows: 24, config: CONFIG,
+      harnessRouting: routing('opencode', { modelLevel: 'low', roleTargetId: 'reviewer' }),
+      authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'llmgw/gpt-7-luna' }
+    });
+    expect(spawns.at(-1)!.args).not.toContain('--model');
   });
 
   it('emits OpenCode auto-approve only for autonomous', () => {
     expect(spawn('opencode', routing('opencode', {
-      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
+      modelTargetId: 'llmgw/gpt-6.1-sol',
       executionState: 'autonomous'
     }))).toEqual({
       command: 'opencode',
       args: [
-        '--model', 'llmgw/gpt-5.6-sol-1M',
+        '--model', 'llmgw/gpt-6.1-sol',
         '--agent', 'build', '--auto'
       ]
     });
@@ -204,7 +231,7 @@ describe('structured providers final local argv', () => {
     // alongside it dies with ProviderModelNotFoundError (exit 64) on any install
     // whose inventory differs from the shipped snapshot. The role wins, no model.
     expect(spawn('opencode', routing('opencode', {
-      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
+      modelTargetId: 'llmgw/gpt-6.1-sol',
       roleTargetId: 'custom-agent'
     }))).toEqual({
       command: 'opencode',
@@ -223,7 +250,7 @@ describe('structured providers final local argv', () => {
       cwd: '/tmp/work',
       cols: 80,
       rows: 24,
-      config: { ...CONFIG, harnessRouting: routing('opencode', { modelTargetId: 'llmgw/gpt-5.6-sol-1M' }) },
+      config: { ...CONFIG, harnessRouting: routing('opencode', { modelTargetId: 'llmgw/gpt-6.1-sol' }) },
       harnessRouting: routing('opencode', { roleTargetId: 'custom-agent' })
     });
     const last = spawns.at(-1)!;

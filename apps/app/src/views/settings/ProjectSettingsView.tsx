@@ -68,9 +68,7 @@ export function ProjectSettingsView({
 
       <ProjectHarnessSettings project={project} onOpen={onOpen} onSaved={onSaved} />
 
-      {!project.remote && !project.quickAgent && (
-        <ProjectWorktreeSettings project={project} onSaved={onSaved} />
-      )}
+      <ProjectWorktreeSettings project={project} onSaved={onSaved} />
 
       <ProjectProcessesSection project={project} />
 
@@ -340,6 +338,9 @@ export function ProjectWorktreeSettings({
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const [value, setValue] = useState<boolean | undefined>(undefined);
+  const [gitRepo, setGitRepo] = useState<boolean | null>(() => project.remote || project.quickAgent ? false : null);
+  const [probeError, setProbeError] = useState(false);
+  const [probeAttempt, setProbeAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -351,6 +352,13 @@ export function ProjectWorktreeSettings({
     currentProjectId.current = project.id;
     setLoaded(false);
     setError(null);
+    setProbeError(false);
+    if (project.remote || project.quickAgent) {
+      setGitRepo(false);
+      setLoaded(true);
+      return () => { cancelled = true; };
+    }
+    setGitRepo(null);
     product.projectSettings.get(project.id)
       .then((settings) => {
         if (!cancelled) {
@@ -367,17 +375,35 @@ export function ProjectWorktreeSettings({
     return () => { cancelled = true; };
   }, [project.id]);
 
+  // The Git probe is separate so a transient IPC failure shows a retryable
+  // probe-error state instead of being misreported as "not a Git project".
+  useEffect(() => {
+    if (project.remote || project.quickAgent) return;
+    let cancelled = false;
+    setGitRepo(null);
+    setProbeError(false);
+    product.git.isRepo(project.path)
+      .then((isRepo) => {
+        if (!cancelled) setGitRepo(isRepo);
+      })
+      .catch(() => {
+        if (!cancelled) setProbeError(true);
+      });
+    return () => { cancelled = true; };
+  }, [project.id, project.path, project.remote, project.quickAgent, probeAttempt]);
+
   useEffect(() => product.projectSettings.onChanged((projectId) => {
+    if (gitRepo !== true) return;
     if (projectId !== project.id || savingRef.current) return;
     void product.projectSettings.get(projectId).then((settings) => {
       if (projectId === currentProjectId.current) setValue(settings.worktreeIsolation);
     }).catch(() => {
       // A background refresh is advisory and must not replace an already-rendered value.
     });
-  }), [project.id]);
+  }), [project.id, gitRepo]);
 
   const save = async (next: boolean | undefined) => {
-    if (saving) return;
+    if (saving || gitRepo !== true) return;
     const previous = value;
     setValue(next);
     savingRef.current = true;
@@ -409,10 +435,31 @@ export function ProjectWorktreeSettings({
       title="Git worktrees"
       help="Choose whether new agents for this project use separate branches and checkouts. This project setting overrides the global Agents default."
     >
-      {loaded ? (
+      {probeError ? (
+        <>
+          <ProjectWorktreeIsolationField
+            value={value}
+            disabled
+            unavailableLabel="Git status could not be checked"
+            onChange={() => {}}
+          />
+          <p className="modal-error" role="alert">Could not check whether this project is a Git repository.</p>
+          <button type="button" className="settings-btn" onClick={() => setProbeAttempt((n) => n + 1)}>Retry</button>
+        </>
+      ) : gitRepo === false ? (
+        <>
+          <ProjectWorktreeIsolationField
+            value={value}
+            disabled
+            unavailableLabel="Project does not support worktrees"
+            onChange={() => {}}
+          />
+          <p className="settings-help">Worktrees need a local Git project. Squads here run in the project folder.</p>
+        </>
+      ) : loaded ? (
         <ProjectWorktreeIsolationField
           value={value}
-          disabled={saving}
+          disabled={saving || gitRepo !== true}
           onChange={(next) => void save(next)}
         />
       ) : (
@@ -905,10 +952,12 @@ export function CodexHarnessFiles({
 export function ProjectWorktreeIsolationField({
   value,
   disabled = false,
+  unavailableLabel,
   onChange
 }: {
   value: boolean | undefined;
   disabled?: boolean;
+  unavailableLabel?: string;
   onChange: (value: boolean | undefined) => void;
 }) {
   const selected = value === true ? 'on' : value === false ? 'off' : 'inherit';
@@ -919,7 +968,7 @@ export function ProjectWorktreeIsolationField({
       help="Controls the initial Worktree choice for new agents in this project. Main still verifies the folder is a Git repository before creating a worktree."
     >
       <PopoverPicklist
-        value={selected}
+        value={unavailableLabel ? 'unavailable' : selected}
         disabled={disabled}
         ariaLabel="Worktree isolation"
         searchable={false}
@@ -927,6 +976,7 @@ export function ProjectWorktreeIsolationField({
           onChange(next === 'on' ? true : next === 'off' ? false : undefined);
         }}
         options={[
+          ...(unavailableLabel ? [{ value: 'unavailable', label: unavailableLabel }] : []),
           { value: 'inherit', label: 'Use global default' },
           { value: 'on', label: 'Always use worktrees' },
           { value: 'off', label: 'Never use worktrees' }

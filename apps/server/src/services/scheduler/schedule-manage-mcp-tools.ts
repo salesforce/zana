@@ -24,6 +24,9 @@ import type { ScheduledTask, ScheduleUpdateInput, ScheduleReloadResult } from '@
 export const scheduleDefinitionPatchSchema = z.object({
   prompt: z.string().max(1_000_000).optional(),
   extraArgs: z.array(z.string().max(16_384)).max(256).optional(),
+  kind: z.enum(['agent', 'team']).optional(),
+  teamId: z.string().min(1).max(256).nullable().optional(),
+  planSource: z.enum(['provided', 'infer']).nullable().optional(),
   every: z.string().min(1).optional(),
   cron: z.string().min(1).optional(),
   tz: z.string().min(1).nullable().optional()

@@ -13,6 +13,7 @@ import {
   partitionExecutionMembers,
   partitionSquads,
   scheduleBySessionId,
+  formatDuration,
   formatCountdown,
   type AgentCard
 } from '../components/AgentBoard.js';
@@ -523,6 +524,12 @@ describe('formatCountdown', () => {
     expect(formatCountdown(42_000)).toBe('42s');
     expect(formatCountdown(90_000)).toBe('1m 30s');
     expect(formatCountdown(3_660_000)).toBe('1h 1m');
+  });
+});
+
+describe('formatDuration', () => {
+  it('does not render invalid timestamps as NaN', () => {
+    expect(formatDuration(Number.NaN)).toBe('0s');
   });
 });
 

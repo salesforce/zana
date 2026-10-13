@@ -6,7 +6,8 @@ import type {
   LaunchProfileId,
   ScheduledTask,
   ScheduleCreateInput,
-  InboxNotifyLevel
+  InboxNotifyLevel,
+  Team
 } from '@zana-ai/zcc-domain/product';
 import { parseEvery, formatInterval } from '@zana-ai/zcc-domain/parse-every';
 import { isValidCron, nextCronRuns } from '@zana-ai/zcc-domain/parse-cron';
@@ -64,6 +65,17 @@ export function ScheduleEditor({
   const [profile, setProfile] = useState<LaunchProfileId>(
     task?.profile ?? seededTask?.profile ?? seededTemplate?.defaults.profile ?? 'claude'
   );
+  const [runAs, setRunAs] = useState<'agent' | 'team'>(
+    (task ?? seededTask)?.kind === 'team' ? 'team' : 'agent'
+  );
+  const [teamId, setTeamId] = useState(
+    (task ?? seededTask)?.kind === 'team' ? (task ?? seededTask)?.teamId ?? '' : ''
+  );
+  const [planSource, setPlanSource] = useState<'provided' | 'infer'>(
+    task?.planSource ?? seededTask?.planSource ?? 'infer'
+  );
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsError, setTeamsError] = useState(false);
   const seedCron = task?.schedule.cron ?? seededTask?.schedule.cron;
   const [cadenceMode, setCadenceMode] = useState<'interval' | 'cron'>(
     seedCron ? 'cron' : 'interval'
@@ -112,9 +124,19 @@ export function ScheduleEditor({
   }, [cadenceMode, cronValid, cron, tz]);
   const cadenceValid = cadenceMode === 'cron' ? cronValid : intervalValid;
   const canSave = useMemo(
-    () => !readOnly && name.trim().length > 0 && Boolean(projectId) && cadenceValid,
-    [readOnly, name, projectId, cadenceValid]
+    () => !readOnly && name.trim().length > 0 && Boolean(projectId) && cadenceValid && (runAs === 'agent' || Boolean(teamId)),
+    [readOnly, name, projectId, cadenceValid, runAs, teamId]
   );
+
+  React.useEffect(() => {
+    let active = true;
+    void product.teams.list().then((nextTeams) => {
+      if (active) { setTeams(nextTeams); setTeamsError(false); }
+    }).catch(() => {
+      if (active) { setTeams([]); setTeamsError(true); }
+    });
+    return () => { active = false; };
+  }, []);
 
   const banner = (() => {
     if (seededTemplate) {
@@ -160,6 +182,8 @@ export function ScheduleEditor({
           enabled: true,
           projectId,
           profile,
+          kind: runAs,
+          ...(runAs === 'team' ? { teamId, planSource } : {}),
           ...cadence,
           prompt: prompt.trim() || undefined,
           extraArgs: seededTemplate?.defaults.extraArgs ?? seededTask?.extraArgs,
@@ -186,6 +210,9 @@ export function ScheduleEditor({
           description: description.trim(),
           projectId,
           profile,
+          kind: runAs,
+          teamId: runAs === 'team' ? teamId : null,
+          planSource: runAs === 'team' ? planSource : null,
           ...cadence,
           prompt,
           inboxLevel,
@@ -258,6 +285,21 @@ export function ScheduleEditor({
           disabled={disabled}
         />
       </div>
+      <div className="scheduler-form-field">
+        <label htmlFor="sched-run-as">Run as</label>
+        <PopoverPicklist
+          id="sched-run-as"
+          ariaLabel="Run as"
+          value={runAs}
+          searchable={false}
+          disabled={disabled}
+          onChange={(nextRunAs) => setRunAs(nextRunAs as 'agent' | 'team')}
+          options={[
+            { value: 'agent', label: 'Agent' },
+            { value: 'team', label: 'Squad' }
+          ]}
+        />
+      </div>
       <div className="scheduler-form-row">
         <div className="scheduler-form-field">
           <label htmlFor="sched-project">Project</label>
@@ -271,18 +313,58 @@ export function ScheduleEditor({
             options={projects.map((project) => ({ value: project.id, label: project.name }))}
           />
         </div>
+        {runAs === 'agent' ? (
+          <div className="scheduler-form-field">
+            <label htmlFor="sched-profile">Launch profile</label>
+            <PopoverPicklist
+              id="sched-profile"
+              ariaLabel="Launch profile"
+              value={profile}
+              searchable={false}
+              onChange={(nextProfile) => setProfile(nextProfile as LaunchProfileId)}
+              options={PROFILES.map((row) => ({ value: row, label: PROFILE_LABEL[row] }))}
+            />
+          </div>
+        ) : null}
+      </div>
+      {runAs === 'team' ? (
         <div className="scheduler-form-field">
-          <label htmlFor="sched-profile">Launch profile</label>
+          <label htmlFor="sched-team">Squad</label>
           <PopoverPicklist
-            id="sched-profile"
-            ariaLabel="Launch profile"
-            value={profile}
+            id="sched-team"
+            ariaLabel="Squad"
+            value={teamId}
+            disabled={disabled}
+            onChange={setTeamId}
+            placeholder="Choose squad"
+            searchPlaceholder="Search squads"
+            options={teams.map((team) => ({ value: team.id, label: team.name }))}
+          />
+          <p className="modal-hint">Runs this schedule as a durable squad job.</p>
+          {teamsError ? (
+            <p className="modal-error" role="alert">Could not load squads. Close and reopen this form to retry.</p>
+          ) : teams.length === 0 ? (
+            <p className="modal-hint">No squads available. Create one in Squads first.</p>
+          ) : null}
+        </div>
+      ) : null}
+      {runAs === 'team' ? (
+        <div className="scheduler-form-field">
+          <label htmlFor="sched-plan-source">Squad planning</label>
+          <PopoverPicklist
+            id="sched-plan-source"
+            ariaLabel="Squad planning"
+            value={planSource}
             searchable={false}
-            onChange={(nextProfile) => setProfile(nextProfile as LaunchProfileId)}
-            options={PROFILES.map((row) => ({ value: row, label: PROFILE_LABEL[row] }))}
+            disabled={disabled}
+            onChange={(value) => setPlanSource(value as typeof planSource)}
+            options={[
+              { value: 'infer', label: 'Infer plan from goal' },
+              { value: 'provided', label: 'Plan provided in goal' }
+            ]}
           />
         </div>
-      </div>
+      ) : null}
       {isNew ? (
         <div className="scheduler-form-field">
           <label>Scope</label>
@@ -494,7 +576,7 @@ export function ScheduleEditor({
           <span>
             Auto-close when finished
             <span className="scheduler-form-optional">
-              {' '}— close the terminal once Claude finishes responding
+              {' '}— close the terminal once Agent finishes responding
               (via a Stop hook). Otherwise the tab stays open.
             </span>
           </span>

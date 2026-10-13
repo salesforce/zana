@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePortablePlan } from '../portable-plan.js';
+import { hasPortablePlanStep, parsePortablePlan } from '../portable-plan.js';
 import { normalizeExecutionPlan } from '../../launch/preflight.js';
 
 const CANONICAL = `# Minimal Workflow Execution Probe
@@ -17,6 +17,7 @@ const CANONICAL = `# Minimal Workflow Execution Probe
 - **Mode:** Mutating
 - **Read scope:** None
 - **Write scope:** \`home.txt\`
+- **Requires:** Skills: \`test-driven-development\`; MCP servers: \`repo\`, \`browser\`
 - **Excludes:** \`about.txt\`, \`result.txt\`
 - **Work:** Create \`home.txt\` containing exactly \`HOME: ready\`.
 - **Verification:** Read \`home.txt\` and confirm exact content.
@@ -56,6 +57,47 @@ const CANONICAL = `# Minimal Workflow Execution Probe
 `;
 
 describe('parsePortablePlan', () => {
+  it('accepts the MT-1 note-writing plan without correction', () => {
+    const plan = `### write-note: Write a note <!-- executable-step -->
+- **Depends on:** None
+- **Work:** Create \`NOTES.md\` containing exactly one line: \`hello\`. Commit this change on the worktree branch.
+- **Write scope:** \`NOTES.md\`
+- **Verification:** Confirm \`NOTES.md\` contains exactly \`hello\` followed by a newline. Confirm the commit succeeds.
+
+### review-note: Review the note <!-- executable-step -->
+- **Depends on:** write-note
+- **Work:** Append exactly one line: \`reviewed\` to \`NOTES.md\`. Commit this change on the same worktree branch.
+- **Write scope:** \`NOTES.md\`
+- **Verification:** Confirm \`NOTES.md\` contains exactly two lines, \`hello\` then \`reviewed\`. Confirm the second commit succeeds.`;
+
+    const result = parsePortablePlan(plan);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(() => normalizeExecutionPlan(result.units, true)).not.toThrow();
+    expect(result.units.map(({ id, dependencies, files }) => ({ id, dependencies, files }))).toEqual([
+      { id: 'write-note', dependencies: [], files: ['NOTES.md'] },
+      { id: 'review-note', dependencies: ['write-note'], files: ['NOTES.md'] }
+    ]);
+  });
+
+  it('accepts the Markdown-stripped MT-1 plan stored in Team launch requests', () => {
+    const plan = `### write-note: Write a note <!-- executable-step -->
+- Depends on: None
+- Work: Create NOTES.md containing exactly one line: hello. Commit this change on the worktree branch.
+- Write scope: NOTES.md
+- Verification: Confirm NOTES.md contains exactly hello followed by a newline. Confirm the commit succeeds.
+### review-note: Review the note <!-- executable-step -->
+- Depends on: write-note
+- Work: Append exactly one line: reviewed to NOTES.md. Commit this change on the same worktree branch.
+- Write scope: NOTES.md
+- Verification: Confirm NOTES.md contains exactly two lines, hello then reviewed. Confirm the second commit succeeds.`;
+
+    const result = parsePortablePlan(plan);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(() => normalizeExecutionPlan(result.units, true)).not.toThrow();
+  });
+
   it('parses the canonical four-step probe plan into work units', () => {
     const result = parsePortablePlan(CANONICAL);
     expect(result.ok).toBe(true);
@@ -69,6 +111,7 @@ describe('parsePortablePlan', () => {
     expect(home.verification).toEqual(['Read `home.txt` and confirm exact content.']);
     expect(home.readOnly).toBeUndefined();
     expect(home.routing).toEqual({ version: 1, minimumLevel: 'low' });
+    expect(home.requires).toEqual({ skills: ['test-driven-development'], mcpServers: ['repo', 'browser'] });
 
     const nav = result.units[2];
     expect(nav.dependencies).toEqual(['home', 'about']);
@@ -95,6 +138,13 @@ describe('parsePortablePlan', () => {
     expect(result).toEqual({ ok: false, reason: 'no executable steps found' });
   });
 
+  it('recognizes indented headings and case-insensitive, whitespace-padded markers', () => {
+    const text = '  ### home: Write <!--  EXECUTABLE-STEP  -->\n\n- **Work:** do it\n';
+
+    expect(hasPortablePlanStep(text)).toBe(true);
+    expect(parsePortablePlan(text)).toMatchObject({ ok: true, units: [{ id: 'home' }] });
+  });
+
   it('rejects empty text', () => {
     expect(parsePortablePlan('   ')).toEqual({ ok: false, reason: 'empty plan text' });
   });
@@ -105,6 +155,22 @@ describe('parsePortablePlan', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toContain('missing Work');
+  });
+
+  it('explains an unterminated code fence instead of treating following labels as example text', () => {
+    const text = [
+      '### direct: Direct execution <!-- executable-step -->',
+      '- **Work:** Create `note.md` containing:',
+      '  ```text',
+      '  hello',
+      '- **Write scope:** `note.md`',
+      '- **Verification:** Read `note.md`'
+    ].join('\n');
+
+    expect(parsePortablePlan(text)).toEqual({
+      ok: false,
+      reason: 'step contains an unterminated code fence: direct: Direct execution'
+    });
   });
 
   it('fails on an invalid (non-kebab) step id', () => {

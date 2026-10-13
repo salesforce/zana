@@ -169,16 +169,23 @@ async function selectPermissionMode(
   await expect(trigger).toContainText(pick.compactLabel);
 }
 
-async function probeHarness(window: Page, family: string, versionTitle: RegExp) {
+async function probeHarness(window: Page, family: string, statusTitle: RegExp) {
   await window.getByRole('link', { name: 'Settings' }).click();
   await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
   const settings = window.locator(`#settings-anchor-harness-${family}`);
   await expect(settings).not.toHaveClass(/opener-row--off/);
-  // Status rows render a version chip and a login chip. Target the version --ok
-  // specifically (and the stub version) so a PATH CLI cannot satisfy the probe.
+  // The renderer store probes harnesses once at boot and the tab reuses that result
+  // (#322), so it can predate the fake-binary config.set above and show the host's
+  // real CLI. Check status is the explicit re-probe against the configured binaries.
+  const check = window.getByRole('button', { name: /^(Check status|Checking…)$/ });
+  await expect(check).toBeEnabled({ timeout: 20_000 });
+  await check.click();
+  await expect(check).toHaveText('Check status', { timeout: 30_000 });
+  // Status rows render either a fake CLI version or a provider capability marker.
+  // Target the first healthy status rather than a login chip.
   const ok = settings.locator('.opener-row-status--ok').first();
   await expect(ok).toBeVisible({ timeout: 20_000 });
-  await expect(ok).toHaveAttribute('title', versionTitle, { timeout: 20_000 });
+  await expect(ok).toHaveAttribute('title', statusTitle, { timeout: 20_000 });
   await window.locator('.settings-app-back').click();
 }
 
@@ -262,7 +269,7 @@ for (const row of CLI_CASES) {
       await probeHarness(
         window,
         row.family,
-        row.expectWorking ? /2\.1\.220/ : /^2026\.09\.02$/
+        row.expectWorking ? /2\.1\.220/ : row.family === 'mastracode' ? /^(2026\.09\.02|installed)$/ : /^2026\.09\.02$/
       );
 
       projectId = await window.evaluate(async (path) => {
@@ -296,7 +303,7 @@ for (const row of CLI_CASES) {
 
       await selectHarness(window, modal, row.providerId);
 
-      if (row.family === 'claude' || row.family === 'cursor' || row.family === 'codex') {
+      if (row.family === 'claude' || row.family === 'cursor' || row.family === 'codex' || row.family === 'opencode') {
         await expect(modal.getByTestId('composer-mode-picker-trigger')).toBeVisible({ timeout: 15_000 });
         await expect(modal.getByTestId('composer-mode-picker-trigger')).toContainText('Agent');
         await expect(modal.getByTestId('native-role-picker-trigger')).toHaveCount(0);

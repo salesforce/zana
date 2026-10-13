@@ -1,3 +1,5 @@
+import { RunErrorDialog } from './RunErrorDialog.js';
+import { failedRunMessage } from '../../lib/schedule-run-outcome';
 import React, { useState, type ReactNode } from 'react';
 import { PendingWorkerRecovery } from '../PendingWorkerRecovery.js';
 import ReactMarkdown from 'react-markdown';
@@ -6,6 +8,7 @@ import {
   Copy,
   FileText,
   History,
+  MoreHorizontal,
   Play,
   Power,
   PowerOff,
@@ -35,6 +38,7 @@ export function ScheduleInfoPanel({
   const pushToast = useUi((s) => s.pushToast);
   const [tick, setTick] = useState(0);
   const [reportRun, setReportRun] = useState<ScheduleRun | null>(null);
+  const [errorRun, setErrorRun] = useState<ScheduleRun | null>(null);
 
   React.useEffect(() => {
     const timer = window.setInterval(() => setTick((n) => n + 1), 1000);
@@ -74,6 +78,11 @@ export function ScheduleInfoPanel({
     const result = await product.scheduler.runNow(task.id);
     if (!result.ok) {
       pushToast(`Run failed: ${result.message}`, 'error');
+      return;
+    }
+    const failure = failedRunMessage(result.value);
+    if (failure) {
+      pushToast(`Run failed: ${failure}`, 'error');
       return;
     }
     pushToast(`Fired "${task.name}"`, 'info');
@@ -158,6 +167,17 @@ export function ScheduleInfoPanel({
                 <span className="scheduler-run-duration">
                   {run.durationMs !== undefined ? formatDuration(run.durationMs) : '—'}
                 </span>
+                {run.message && run.result !== 'success' ? (
+                  <button
+                    type="button"
+                    className="scheduler-run-report-btn"
+                    title="View details"
+                    aria-label="View run details"
+                    onClick={() => setErrorRun(run)}
+                  >
+                    <MoreHorizontal size={13} strokeWidth={1.75} />
+                  </button>
+                ) : null}
                 {run.report ? (
                   <button
                     type="button"
@@ -174,6 +194,15 @@ export function ScheduleInfoPanel({
           </ul>
         )}
       </section>
+
+      {errorRun?.message ? (
+        <RunErrorDialog
+          title={`${task.name} — run details`}
+          when={new Date(errorRun.at).toLocaleString()}
+          message={errorRun.message}
+          onClose={() => setErrorRun(null)}
+        />
+      ) : null}
 
       {selectedReport?.report ? (
         <ScheduleRunReport run={selectedReport} taskName={task.name} />

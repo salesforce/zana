@@ -1,7 +1,7 @@
-import { isDurableCoordination, isRestfulAgentState, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, isRestfulAgentState, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -174,6 +174,10 @@ export interface ExecutionRequestV1 {
   workUnits?: ExecutionWorkUnitInput[];
   coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
   origin?: import('@zana-ai/zcc-domain/product').LaunchOrigin;
+  /** Explicit API override. Undefined defers to project then Team defaults. */
+  worktree?: boolean;
+  /** Terminal disposition for an execution-owned shared worktree. */
+  onComplete?: 'leave' | 'merge' | 'delete';
 }
 
 /** @deprecated Use ExecutionRequestV1. Retained for Team backend callers. */
@@ -191,7 +195,8 @@ export interface ExecutionServiceDeps {
     policy: NonNullable<TeamLaunchRequestInput['policy']>,
     slots: TeamLaunchAuthorizationInputSlot[],
     coordinationMode?: ExecutionRequestV1['coordinationMode'],
-    admissionDigest?: string
+    admissionDigest?: string,
+    nativeRecovery?: NonNullable<ExecutionRecord['nativeRecoverySnapshots']>
   ) => Promise<{ ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string }> | { ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string };
   launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string }>;
   getTeamLaunch: (callerPrincipalId: string, launchRequestId: string) => Promise<unknown>;
@@ -218,9 +223,30 @@ export interface ExecutionServiceDeps {
   logError?: (message: string, error: unknown) => void;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
+  /** Trusted host resolver; filters retained snapshots against current Team slots. */
+  resolveExactNativeRecoverySnapshots?: (record: ExecutionRecord) => NonNullable<ExecutionRecord['nativeRecoverySnapshots']>;
   admissionInput?: (projectId: string, request: ExecutionRequestV1) => Promise<TeamAdmissionInput> | TeamAdmissionInput;
+  /**
+   * Main-owned consent gate for corrections to a rejected supplied plan. This is
+   * checked here, rather than only in a handoff caller, so coordinator MCP calls
+   * and host-side file handoffs share the same authority boundary.
+   */
+  authorizePlanRegistration?: (record: ExecutionRecord, workUnits: readonly ExecutionWorkUnitInput[]) =>
+    Promise<{ ok: true } | { ok: false; message: string }> | { ok: true } | { ok: false; message: string };
   /** Main-owned snapshot resolver. Agent/renderer model claims never authorize routing. */
   resolveTeamModelSnapshots?: (projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'slots'>) => Promise<ResolvedModelSnapshotV1[]> | ResolvedModelSnapshotV1[];
+  /** Main-only checkout preparation after execution identity is durable but before any slot spawns. */
+  prepareSquadWorktree?: (record: ExecutionRecord, request: ExecutionRequestV1) => Promise<ExecutionRecord>;
+  /**
+   * Host-owned serialization for retained execution lifecycle effects. The generic
+   * service invokes it before advancing a retained run into its next generation,
+   * so delete/instruct/teardown cannot act on a checkout between authorization
+   * and the state-version fence. Unwired deployments retain normal store CAS.
+   */
+  withExecutionLifecycleLock?: <T>(executionId: string, run: () => Promise<T>) => Promise<T>;
+  /** Reject retained-worktree resume while a normal follow-up agent owns it. */
+  mayResumeRetainedWorktree?: (executionId: string) => boolean;
+  onTerminal?: (record: ExecutionRecord) => Promise<void> | void;
   routingEnforcementEnabled?: () => boolean;
   claimRecoveryObserveEnabled?: () => boolean;
   claimRecoveryEnforceEnabled?: () => boolean;
@@ -471,6 +497,31 @@ export function dependencyResultsSection(record: ExecutionRecord, workUnitId: st
   return `\n\nUpstream results (outputs of your completed dependencies — use these, do NOT re-ask the human for information already decided here):\n${lines.join('\n')}`;
 }
 
+/** Build renderer-safe, resolved capability gaps from admission checks before any execution is claimed. */
+export function requirementFailureFromAdmission(
+  workUnits: readonly ExecutionWorkUnitInput[] | undefined,
+  admission: TeamAdmissionResultV1
+): TeamRequirementFailure | undefined {
+  const failures = (workUnits ?? []).flatMap((unit) => {
+    const unavailable = (code: 'SKILL_AVAILABLE' | 'MCP_AVAILABLE') =>
+      admission.checks
+        .filter((check) => check.code === code && check.subject === unit.id && check.required && check.status !== 'PASS')
+        .flatMap((check) => check.unavailable ?? []);
+    const missingSkills = unavailable('SKILL_AVAILABLE');
+    const missingMcpServers = unavailable('MCP_AVAILABLE');
+    return missingSkills.length || missingMcpServers.length
+      ? [{ id: unit.id, title: unit.title, missingSkills, missingMcpServers }]
+      : [];
+  });
+  return failures.length ? { workUnits: failures } : undefined;
+}
+
+export function availabilityUnknownFromAdmission(admission: TeamAdmissionResultV1): TeamAvailabilityUnknown | undefined {
+  return admission.availabilityUnknown ? { failedSources: [...admission.availabilityUnknown.failedSources] } : undefined;
+}
+
+const MAX_PLAN_CORRECTION_STOP_ATTEMPTS = 5;
+
 export class ExecutionService {
   private readonly starting = new Map<string, number>();
   private readonly bindingTails = new Map<string, Promise<void>>();
@@ -517,7 +568,8 @@ export class ExecutionService {
   }
 
   async start(callerPrincipalId: string, projectId: string, request: ExecutionRequestV1): Promise<
-    { ok: true; value: ExecutionRecord & { resumeToken?: string; resumeTokenExpiresAt?: number } } | { ok: false; code: string; message: string }
+    { ok: true; value: ExecutionRecord & { resumeToken?: string; resumeTokenExpiresAt?: number } }
+    | { ok: false; code: string; message: string; requirementFailure?: TeamRequirementFailure; availabilityUnknown?: TeamAvailabilityUnknown }
   > {
     if (request.version !== 1 || (request.launchKind !== undefined && request.launchKind !== 'team')
       || !request.teamId?.trim() || !request.launchRequestId?.trim() || !request.slots?.length) {
@@ -552,7 +604,18 @@ export class ExecutionService {
     }
     if (!admission.ready) {
       const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
-      return { ok: false, code: 'ADMISSION_FAILED', message: failed?.message ?? 'Team admission failed' };
+      // Only skill/MCP read failures are availability problems; any other blocking
+      // check (slot capacity, DAG, budgets, routing) is the real admission error.
+      const onlyCapabilityBlockers = admission.checks
+        .filter((check) => check.required && check.status !== 'PASS')
+        .every((check) => check.code === 'SKILL_AVAILABLE' || check.code === 'MCP_AVAILABLE');
+      const availabilityUnknown = onlyCapabilityBlockers ? availabilityUnknownFromAdmission(admission) : undefined;
+      const requirementFailure = requirementFailureFromAdmission(request.workUnits, admission);
+      return availabilityUnknown
+        ? { ok: false, code: 'CAPABILITY_AVAILABILITY_UNKNOWN', message: 'Project capability availability could not be verified', availabilityUnknown }
+        : requirementFailure
+        ? { ok: false, code: 'REQUIREMENT_UNAVAILABLE', message: failed?.message ?? 'Team requirements are unavailable', requirementFailure }
+        : { ok: false, code: 'ADMISSION_FAILED', message: failed?.message ?? 'Team admission failed' };
     }
     const jobTitle = deriveJobTitle(request);
     const summary = request.summary?.trim() || undefined;
@@ -569,7 +632,7 @@ export class ExecutionService {
         ...(request.coordinationMode ? { coordinationMode: request.coordinationMode } : {}),
         ...(request.origin ? { origin: request.origin } : {}),
         launchRequestId: request.launchRequestId,
-        request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective },
+        request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective, ...(request.worktree === undefined ? {} : { worktree: request.worktree }), ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }) },
         ...(request.workUnits ? { workUnits: request.workUnits } : {}),
         resolvedModels,
         requestDigest: launchDigest({ callerPrincipalId, projectId, request: { ...withoutDefaultLaunchKind(resolvedRequest), jobTitle, summary } })
@@ -631,6 +694,11 @@ export class ExecutionService {
           return { ok: false, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message: preflight?.message ?? 'workflow profile is unavailable' };
         }
       }
+      // Preparing a managed worktree touches project activity. Authorize after it
+      // so the preissued launch bindings fence the post-preparation store state.
+      if (this.deps.prepareSquadWorktree) {
+        record = await this.deps.prepareSquadWorktree(record, request);
+      }
       const authorization = await this.deps.authorizeTeamLaunch(
         callerPrincipalId, request.teamId, projectId, record.teamLaunchRequestId,
         request.policy ?? {}, request.slots, request.coordinationMode, admission.digest
@@ -684,6 +752,8 @@ export class ExecutionService {
         callerPrincipalId, launchRequestId: record.teamLaunchRequestId, slots: authorization.value.slots,
         admissionDigest: authorization.value.admissionDigest,
         policy: request.policy, requirePreauthorization: true, executionId: record.id, executionJobTitle: record.jobTitle,
+        ...(request.worktree === undefined ? {} : { worktree: request.worktree }),
+        ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }),
         ...(request.coordinationMode ? { coordinationMode: request.coordinationMode } : {}),
         ...(request.origin ? { origin: request.origin } : {}),
         ...(isDurableCoordination(request.coordinationMode) ? { jobContext: {
@@ -1237,7 +1307,16 @@ export class ExecutionService {
 
   async registerPlan(binding: ExecutionCohortBinding, workUnits: ExecutionWorkUnitInput[]) {
     if (binding.role !== 'orchestrator') return deniedBound('only coordinator can register execution plan');
-    const result = await this.mutateBound(binding, (record) => this.deps.store.registerPlan(record.id, record.stateVersion, workUnits));
+    const result = await this.mutateBound(binding, async (record) => {
+      const consent = await this.deps.authorizePlanRegistration?.(record, workUnits);
+      if (consent && !consent.ok) throw new Error(consent.message);
+      const admission = await this.evaluateResolvedAdmission(record.projectId, this.planRegistrationRequest(record, workUnits));
+      if (!admission.ready) {
+        const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
+        throw new Error(failed?.message ?? 'Team admission failed');
+      }
+      return this.deps.store.registerPlan(record.id, record.stateVersion, workUnits);
+    });
     if (!result.ok) return result;
     this.planReadinessWatchdog.remove(binding.executionId);
     // The coordinator's single authoring WRITE (register) implies dispatch: the
@@ -1248,8 +1327,37 @@ export class ExecutionService {
     // the coordinator ALSO calls dispatch_ready — a second pass finds no
     // unassigned READY unit and is a no-op. A dispatch failure (budget/resource)
     // must NOT mask the successful register, so fall back to the register result.
+    // Recheck correction consent after persistence. A user can cancel while the
+    // coordinator's registration is in flight; terminal cancellation wins before
+    // this path can mint any worker claims.
+    const current = await this.deps.store.get(binding.executionId);
+    const consent = current && await this.deps.authorizePlanRegistration?.(current, workUnits);
+    if (consent && !consent.ok) return { ok: false as const, code: 'INVALID', message: consent.message };
     const dispatched = await this.dispatchReady(binding);
     return dispatched.ok ? dispatched : result;
+  }
+
+  /** Rebuild registration admission from immutable launch facts plus proposed plan. */
+  private planRegistrationRequest(record: ExecutionRecord, workUnits: ExecutionWorkUnitInput[]): ExecutionRequestV1 {
+    return {
+      version: 1,
+      launchKind: record.launchKind,
+      launchDisplay: record.launchDisplay,
+      teamId: record.teamId,
+      launchRequestId: record.launchRequestId,
+      jobTitle: record.jobTitle,
+      summary: record.summary,
+      slots: record.request.slots,
+      policy: record.request.policy,
+      workflow: record.request.workflow,
+      resolvedModels: record.resolvedModels,
+      sourceBundle: record.request.sourceBundle,
+      workUnits,
+      coordinationMode: record.coordinationMode,
+      origin: record.origin,
+      worktree: record.request.worktree,
+      onComplete: record.request.onComplete
+    };
   }
 
   async claimWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {
@@ -1771,7 +1879,7 @@ export class ExecutionService {
         if (blocker.resolved || blocker.audience !== 'coordinator' || blocker.escalatedAt !== undefined) continue;
         let coordinatorUnavailable = false;
         try {
-          const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.launchRequestId));
+          const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
           coordinatorUnavailable = !lifecycle?.orchestratorSessionId
             || (lifecycle.workers ?? []).find((worker) => worker.sessionId === lifecycle.orchestratorSessionId)?.process === 'exited';
         } catch {
@@ -1897,19 +2005,35 @@ export class ExecutionService {
   }
 
   async retry(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number) {
+    return this.launchRetry(callerPrincipalId, projectId, executionId, expectedStateVersion);
+  }
+
+  private async launchRetry(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, retainedRecovery?: {
+    mode: RetainedRecoveryMode;
+    snapshots?: NonNullable<ExecutionRecord['nativeRecoverySnapshots']>;
+  }) {
     const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
     let retry: ExecutionRecord;
-    this.beginStarting(record.id);
-    try {
-      retry = await this.deps.store.beginRetry(record.id, expectedStateVersion);
-    } catch (error) {
-      this.endStarting(record.id);
-      if (error instanceof Error && error.message === 'stale execution state') {
+    if (retainedRecovery) {
+      if (record.state !== 'STARTING' || record.stateVersion !== expectedStateVersion) {
         return { ok: false as const, code: 'CONFLICT', message: 'stale execution state', current: await this.deps.store.get(record.id) };
       }
-      return { ok: false as const, code: 'RETRY_NOT_ALLOWED', message: error instanceof Error ? error.message : String(error) };
+      retry = record;
+    } else {
+      this.beginStarting(record.id);
+      try {
+        retry = await this.beginRetryWithLifecycleLock(record.id, expectedStateVersion);
+      } catch (error) {
+        this.endStarting(record.id);
+        if (error instanceof Error && error.message === 'stale execution state') {
+          return { ok: false as const, code: 'CONFLICT', message: 'stale execution state', current: await this.deps.store.get(record.id) };
+        }
+        return { ok: false as const, code: 'RETRY_NOT_ALLOWED', message: error instanceof Error ? error.message : String(error) };
+      }
     }
+    this.deadlineWatchdog.schedule(retry);
+    this.planReadinessWatchdog.schedule(retry);
     const request = retry.request;
     const admissionRequest: ExecutionRequestV1 = {
       ...request,
@@ -1925,32 +2049,36 @@ export class ExecutionService {
         admission = await this.dryRun(projectId, admissionRequest);
       } catch (error) {
         this.deps.logError?.(`Team retry admission input failed for ${projectId}:${retry.launchRequestId}`, error);
-        const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', 'Team admission could not be evaluated');
-        return { ok: false as const, code: 'ADMISSION_FAILED', message: 'Team admission could not be evaluated', value: blocked };
+        const failed = await this.failRetainedRecovery(retry, retainedRecovery, 'Team admission could not be evaluated');
+        return { ok: false as const, code: 'ADMISSION_FAILED', message: 'Team admission could not be evaluated', value: failed };
       }
       if (!admission.ready) {
         const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
-        const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', failed?.message ?? 'Team admission failed');
-        return { ok: false as const, code: 'ADMISSION_FAILED', message: failed?.message ?? 'Team admission failed', value: blocked };
+        const message = failed?.message ?? 'Team admission failed';
+        const terminal = await this.failRetainedRecovery(retry, retainedRecovery, message);
+        return { ok: false as const, code: 'ADMISSION_FAILED', message, value: terminal };
       }
       if (request.workflow) {
         const preflight = this.deps.preflightWorkflow?.(retry.teamId, request.workflow);
         if (!preflight?.ok) {
-          const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', preflight?.message ?? 'workflow profile is unavailable');
-          return { ok: false as const, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message: preflight?.message ?? 'workflow profile is unavailable', value: blocked };
+          const message = preflight?.message ?? 'workflow profile is unavailable';
+          const terminal = await this.failRetainedRecovery(retry, retainedRecovery, message);
+          return { ok: false as const, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message, value: terminal };
         }
       }
       const authorization = await this.deps.authorizeTeamLaunch(
         retry.callerPrincipalId, retry.teamId, projectId, retry.teamLaunchRequestId,
-        request.policy ?? {}, request.slots, retry.coordinationMode, admission.digest
+        request.policy ?? {}, request.slots, retry.coordinationMode, admission.digest,
+        ...(retainedRecovery?.snapshots ? [retainedRecovery.snapshots] : [])
       );
       if (!authorization.ok || !authorization.value.context) {
         if (authorization.ok) {
           issuedAuthorizationIds = authorization.value.slots.map((slot) => slot.authorizationId);
           await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
         }
-        const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', authorization.ok ? 'Team authorization context unavailable' : authorization.message);
-        return { ok: false as const, code: authorization.ok ? 'AUTHORIZATION_CONTEXT_UNAVAILABLE' : authorization.code, message: authorization.ok ? 'Team authorization context unavailable' : authorization.message, value: blocked };
+        const message = authorization.ok ? 'Team authorization context unavailable' : authorization.message;
+        const terminal = await this.failRetainedRecovery(retry, retainedRecovery, message);
+        return { ok: false as const, code: authorization.ok ? 'AUTHORIZATION_CONTEXT_UNAVAILABLE' : authorization.code, message, value: terminal };
       }
       issuedAuthorizationIds = authorization.value.slots.map((slot) => slot.authorizationId);
       let current = await this.deps.store.setAuthorizationContext(retry.id, retry.stateVersion, authorization.value.context, launchDigest(authorization.value.context));
@@ -1963,25 +2091,30 @@ export class ExecutionService {
         revalidatedAdmission = await this.dryRun(projectId, admissionRequest);
       } catch (error) {
         this.deps.logError?.(`Team retry admission revalidation failed for ${projectId}:${retry.launchRequestId}`, error);
-        const blocked = await this.transitionOrCurrent(current, 'BLOCKED', 'warning', 'Team admission could not be revalidated');
+        const terminal = await this.failRetainedRecovery(current, retainedRecovery, 'Team admission could not be revalidated');
         await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
-        return { ok: false as const, code: 'STALE_PREFLIGHT', message: 'Team admission could not be revalidated', value: blocked };
+        return { ok: false as const, code: 'STALE_PREFLIGHT', message: 'Team admission could not be revalidated', value: terminal };
       }
       if (!revalidatedAdmission.ready || revalidatedAdmission.digest !== admission.digest) {
         const failed = revalidatedAdmission.checks.find((check) => check.required && check.status !== 'PASS');
         const message = failed?.message ?? 'Team admission changed after authorization';
-        const blocked = await this.transitionOrCurrent(current, 'BLOCKED', 'warning', message);
+        const terminal = await this.failRetainedRecovery(current, retainedRecovery, message);
         await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
-        return { ok: false as const, code: 'STALE_PREFLIGHT', message, value: blocked };
+        return { ok: false as const, code: 'STALE_PREFLIGHT', message, value: terminal };
       }
       if (!await this.launchMayProceed(current)) {
         await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
         return { ok: false as const, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed before Team retry launch', value: await this.deps.store.get(current.id) };
       }
+      if (this.deps.prepareSquadWorktree) {
+        current = await this.deps.prepareSquadWorktree(current, { ...request, teamId: retry.teamId, launchRequestId: retry.launchRequestId });
+      }
       const launched = await this.deps.launchTeam(retry.teamId, projectId, {
         callerPrincipalId: retry.callerPrincipalId, launchRequestId: retry.teamLaunchRequestId,
         slots: authorization.value.slots, policy: request.policy, requirePreauthorization: true, admissionDigest: authorization.value.admissionDigest,
         executionId: retry.id, executionJobTitle: retry.jobTitle,
+        ...(request.worktree === undefined ? {} : { worktree: request.worktree }),
+        ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }),
         ...(retry.coordinationMode ? { coordinationMode: retry.coordinationMode } : {}),
         ...(retry.origin ? { origin: retry.origin } : {}),
         ...(isDurableCoordination(retry.coordinationMode) ? { jobContext: {
@@ -1989,12 +2122,21 @@ export class ExecutionService {
           title: retry.jobTitle,
           ...(retry.summary ? { summary: retry.summary } : {}),
           ...(request.sourceBundle ? { sourceBundle: request.sourceBundle } : {})
-        } } : {})
+        } } : {}),
       });
       if (!launched.ok) {
         await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
         const failed = await this.failLaunch(current, launched.message ?? 'Team launch failed');
         return { ok: false as const, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed', value: failed };
+      }
+      if (retainedRecovery?.mode === 'fresh-plan') {
+        // The Team is already live: a failed bookkeeping clear must not revoke
+        // authorizations, fail the launch, or tear down the worktree.
+        try {
+          current = await this.deps.store.clearPriorNativeRecoverySnapshots(current.id);
+        } catch (error) {
+          this.deps.logError?.(`Prior native recovery snapshot clear failed for ${current.id}`, error);
+        }
       }
       if (!await this.launchMayProceed(current)) {
         return { ok: false as const, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team retry launch', value: await this.deps.store.get(current.id) };
@@ -2003,10 +2145,45 @@ export class ExecutionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-      return { ok: false as const, code: 'TEAM_LAUNCH_FAILED', message, value: await this.failLaunch(retry, `Team retry launch error: ${message}`) };
+      return { ok: false as const, code: message === 'WORKTREE_UNAVAILABLE' ? 'WORKTREE_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message, value: await this.failLaunch(retry, `Team retry launch error: ${message}`) };
+    } finally {
+      if (!retainedRecovery) this.endStarting(record.id);
+    }
+  }
+
+  /** Recover retained work through the same authorization, admission, and worktree gates as retry. */
+  async recoverRetained(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, mode: RetainedRecoveryMode) {
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+    if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
+    if (record.successorExecutionId || record.state === 'STOPPED' && (record.timeoutReason === 'unresolved-blocker' || record.timeoutReason === 'plan-correction-cancelled')) {
+      return { ok: false as const, code: 'RECOVERY_NOT_ALLOWED', message: 'execution recovery is not allowed' };
+    }
+    if (record.state !== 'FAILED' && record.state !== 'STOPPED') {
+      return { ok: false as const, code: 'RECOVERY_NOT_ALLOWED', message: 'execution recovery requires a retained failed or stopped run' };
+    }
+    const snapshots = mode === 'exact-native'
+      ? this.deps.resolveExactNativeRecoverySnapshots?.(record) ?? []
+      : undefined;
+    if (mode === 'exact-native' && (!snapshots || snapshots.length === 0)) {
+      return { ok: false as const, code: 'NO_RESTORABLE_SLOTS', message: 'exact-native recovery requires at least one restorable native slot' };
+    }
+
+    // Keep lifecycle polling from treating this valid STARTING replacement as a
+    // missing Team record until every awaited admission and launch step settles.
+    this.beginStarting(record.id);
+    try {
+      const resumed = await this.beginRetainedRecoveryWithLifecycleLock(record.id, expectedStateVersion);
+      return await this.launchRetry(callerPrincipalId, projectId, executionId, resumed.stateVersion, { mode, ...(snapshots ? { snapshots } : {}) });
+    } catch (error) {
+      return { ok: false as const, code: error instanceof Error && error.message === 'stale execution state' ? 'CONFLICT' : 'RECOVERY_NOT_ALLOWED', message: error instanceof Error ? error.message : String(error) };
     } finally {
       this.endStarting(record.id);
     }
+  }
+
+  /** @deprecated External compatibility alias for fresh-plan retained recovery. */
+  async resumeRun(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, _replay = false) {
+    return this.recoverRetained(callerPrincipalId, projectId, executionId, expectedStateVersion, 'fresh-plan');
   }
 
   /**
@@ -2187,12 +2364,24 @@ export class ExecutionService {
           if (state !== 'unknown') return;
           if ((this.deps.now ?? Date.now)() - wake.createdAt < COORDINATOR_WAKE_UNKNOWN_STALE_MS) return;
         }
-        if (!this.deps.replyToSession(sessionId, wake.message)) return;
+        const delivered_ = this.deps.replyToSession(sessionId, wake.message);
+        if (!delivered_) return;
         await this.deps.store.acknowledgeCoordinatorWake(record.id, wake.id);
       }
     } catch (error) {
       (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution coordinator wake drain failed for ${executionId}`, error);
     }
+  }
+
+  /** Queue a durable operator correction for a parked coordinator. */
+  async wakeCoordinatorForPlanCorrection(executionId: string, message: string): Promise<void> {
+    const record = await this.deps.store.get(executionId);
+    if (!record) throw new Error('execution not found');
+    await this.wakeCoordinator(record, {
+      cause: 'HUMAN_BLOCKER',
+      message,
+      stateOrClaimGeneration: record.state
+    });
   }
 
   /**
@@ -2229,6 +2418,37 @@ export class ExecutionService {
     const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
     return this.stopOwned(record, expectedStateVersion);
+  }
+
+  /** Trusted host path for a rejected plan before any work may be registered. */
+  async stopForPlanCorrection(executionId: string): Promise<ExecutionRecord | undefined> {
+    let record: ExecutionRecord | undefined;
+    // Bounded re-read loop: each stale write means another actor advanced the record.
+    for (let attempt = 0; ; attempt += 1) {
+      record = await this.deps.store.get(executionId);
+      if (!record) return undefined;
+      if (record.state === 'COMPLETED') return record;
+      if (record.state === 'STOPPED' && record.timeoutReason === 'plan-correction-cancelled') break;
+      try {
+        record = await this.deps.store.stopForPlanCorrection(record.id);
+        break;
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
+        if (attempt + 1 >= MAX_PLAN_CORRECTION_STOP_ATTEMPTS) throw error;
+        const current = await this.deps.store.get(executionId);
+        if (!current) return current;
+        const cancelled = current.state === 'STOPPED' && current.timeoutReason === 'plan-correction-cancelled';
+        if (!cancelled && isResumeGrantTerminal(current.state)) return current;
+      }
+    }
+    // The ledger's cancelled state fences plan registration and resume, but must
+    // never fence retries of terminal effects after a crash or transient failure.
+    await this.cleanupTerminal(record);
+    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    if (!canceled.ok && canceled.code !== 'NOT_FOUND') {
+      throw new Error(`${canceled.code ?? 'CANCEL_FAILED'}: ${canceled.message ?? 'Team cancellation failed'}`);
+    }
+    return record;
   }
 
   async dismiss(callerPrincipalId: string, projectId: string, executionId: string) {
@@ -2433,6 +2653,25 @@ export class ExecutionService {
     const record = await this.deps.store.get(executionId);
     return record && record.projectId === projectId
       && (record.callerPrincipalId === callerPrincipalId || record.effectiveOwnerPrincipalIds?.includes(callerPrincipalId)) ? record : undefined;
+  }
+
+  private async beginRetryWithLifecycleLock(executionId: string, expectedStateVersion: number): Promise<ExecutionRecord> {
+    const begin = () => this.deps.store.beginRetry(executionId, expectedStateVersion);
+    return this.deps.withExecutionLifecycleLock
+      ? this.deps.withExecutionLifecycleLock(executionId, begin)
+      : begin();
+  }
+
+  private async beginRetainedRecoveryWithLifecycleLock(executionId: string, expectedStateVersion: number): Promise<ExecutionRecord> {
+    const begin = () => {
+      if (this.deps.mayResumeRetainedWorktree?.(executionId) === false) {
+        throw new Error('retained squad worktree is owned by an active follow-up agent');
+      }
+      return this.deps.store.beginRetainedRecovery(executionId, expectedStateVersion);
+    };
+    return this.deps.withExecutionLifecycleLock
+      ? this.deps.withExecutionLifecycleLock(executionId, begin)
+      : begin();
   }
 
   async resumeBinding(callerPrincipalId: string, projectId: string, executionId: string, token: string) {
@@ -2694,7 +2933,7 @@ export class ExecutionService {
     }
     let rawLifecycle: any;
     try {
-      rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.launchRequestId);
+      rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
     } catch {
       // A transient lifecycle read must not turn an active execution into a
       // durable blocker during status/list polling.
@@ -2852,6 +3091,17 @@ export class ExecutionService {
     return current;
   }
 
+  /** Retained recovery must stay terminal so its recovery mode and snapshots remain actionable. */
+  private async failRetainedRecovery(
+    record: ExecutionRecord,
+    recovery: { mode: RetainedRecoveryMode } | undefined,
+    summary: string
+  ): Promise<ExecutionRecord> {
+    return recovery
+      ? this.failLaunch(record, summary)
+      : this.transitionOrCurrent(record, 'BLOCKED', 'warning', summary);
+  }
+
   private async emitOrCurrent(record: ExecutionRecord, severity: 'info' | 'warning' | 'error', summary: string): Promise<ExecutionRecord> {
     try {
       return await this.deps.store.event(record.id, record.stateVersion, severity, summary);
@@ -2875,6 +3125,11 @@ export class ExecutionService {
       await this.deps.clearResumeToken?.(record.projectId, record.id);
     } catch {
       // Token cleanup is best effort; durable grant revocation already closes authority.
+    }
+    try {
+      await this.deps.onTerminal?.(record);
+    } catch (error) {
+      this.deps.logError?.(`execution terminal lifecycle ${record.id}`, error);
     }
   }
 

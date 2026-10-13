@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,12 @@ import {
   listBranches,
   gitCommonDir,
   createWorktree,
+  setWorktreePushProtection,
+  authorizeInstructWorktreePush,
+  consumeInstructWorktreePushAuthorization,
+  mergeWorktree,
   removeWorktree,
+  sweepManagedWorktrees,
   worktreeState,
   isGitRepo,
   parseWorktreePorcelain,
@@ -28,10 +33,17 @@ const execFileP = promisify(execFile);
 // repo instead of each test's temp repo — making commits/reads fail or read
 // the wrong repo. Vitest isolates each test file in its own child process
 // (forks pool, isolate:true), so scrubbing here can't affect other files.
+const savedGitEnv: Record<string, string | undefined> = {};
 beforeAll(() => {
   for (const key of Object.keys(process.env)) {
-    if (key.startsWith('GIT_')) delete process.env[key];
+    if (key.startsWith('GIT_')) {
+      savedGitEnv[key] = process.env[key];
+      delete process.env[key];
+    }
   }
+});
+afterAll(() => {
+  for (const [key, value] of Object.entries(savedGitEnv)) process.env[key] = value;
 });
 
 // A clean environment for git subprocesses: inherit everything EXCEPT the
@@ -255,6 +267,168 @@ describe('git worktree support', () => {
       expect(linked?.branch).toBe('zcc/featx');
     });
 
+    it('guards active squad worktrees, restores normal push behavior at terminal state, and re-guards on resume', async () => {
+      const customHooks = join(base, 'custom-hooks');
+      const customPrePush = join(customHooks, 'pre-push');
+      const customCommitMsg = join(customHooks, 'commit-msg');
+      const customCommitMsgTarget = join(customHooks, 'commit-msg-target');
+      await mkdir(customHooks);
+      await writeFile(customPrePush, '#!/bin/sh\nprintf custom-hook >&2\n');
+      await writeFile(customCommitMsgTarget, '#!/bin/sh\nprintf commit-msg-hook >&2\n');
+      await symlink('commit-msg-target', customCommitMsg);
+      await chmod(customPrePush, 0o700);
+      await chmod(customCommitMsgTarget, 0o700);
+      await git(main, 'config', 'core.hooksPath', customHooks);
+
+      const target = join(base, 'wt', 'protected');
+      const ordinary = await createWorktree(main, join(base, 'wt', 'ordinary'), 'zcc/ordinary');
+      expect(ordinary.ok).toBe(true);
+      if (ordinary.ok) {
+        const ordinaryHooks = await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: ordinary.path, env: cleanGitEnv() })
+          .then(({ stdout }) => stdout.trim(), () => '');
+        expect(ordinaryHooks).toBe('');
+      }
+      const res = await createWorktree(main, target, 'zcc/protected', undefined, true);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      const local = await execFileP('git', ['config', '--worktree', '--get', 'push.default'], { cwd: res.path, env: cleanGitEnv() });
+      expect(local.stdout.trim()).toBe('nothing');
+      const mainPush = await execFileP('git', ['config', '--get', 'push.default'], { cwd: main, env: cleanGitEnv() })
+        .then(({ stdout }) => stdout.trim(), () => '');
+      expect(mainPush).not.toBe('nothing');
+      const mainHooks = await execFileP('git', ['config', '--path', '--get', 'core.hooksPath'], { cwd: main, env: cleanGitEnv() });
+      expect(mainHooks.stdout.trim()).toBe(customHooks);
+      const hooksPath = await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() });
+      const guard = join(hooksPath.stdout.trim(), 'pre-push');
+      const guardText = await readFile(guard, 'utf8');
+       expect(guardText).toContain('Zana blocked push from managed squad worktree');
+       expect(guardText).toContain(customPrePush);
+       const commitMsgProxy = await readFile(join(hooksPath.stdout.trim(), 'commit-msg'), 'utf8');
+       expect(commitMsgProxy).toContain(customCommitMsgTarget);
+
+       await writeFile(join(res.path, 'hooked.txt'), 'hooked\n');
+       await git(res.path, 'add', 'hooked.txt');
+       await expect(execFileP('git', ['commit', '-m', 'verify hook proxy'], { cwd: res.path, env: cleanGitEnv() }))
+         .resolves.toMatchObject({ stderr: expect.stringContaining('commit-msg-hook') });
+
+      await expect(execFileP(guard, [], { cwd: res.path, env: cleanGitEnv() })).rejects.toMatchObject({ stderr: expect.stringContaining('Zana blocked push') });
+      const token = authorizeInstructWorktreePush();
+      const authorization = consumeInstructWorktreePushAuthorization(token);
+      expect(authorization).toEqual({ ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: token });
+      expect(consumeInstructWorktreePushAuthorization(token)).toBeUndefined();
+      expect(guardText).not.toContain(token);
+       await expect(execFileP(guard, [], { cwd: res.path, env: { ...cleanGitEnv(), ...authorization } })).resolves.toMatchObject({ stderr: expect.stringContaining('custom-hook') });
+
+       await expect(setWorktreePushProtection(main, res.path, false)).resolves.toEqual({ ok: true });
+       await expect(execFileP('git', ['config', '--worktree', '--get', 'push.default'], { cwd: res.path, env: cleanGitEnv() })).rejects.toBeDefined();
+       await expect(execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() })).rejects.toBeDefined();
+       await expect(execFileP(customPrePush, [], { cwd: res.path, env: cleanGitEnv() })).resolves.toMatchObject({ stderr: expect.stringContaining('custom-hook') });
+       expect((await execFileP('git', ['config', '--get', 'push.default'], { cwd: main, env: cleanGitEnv() }).then(({ stdout }) => stdout.trim(), () => ''))).not.toBe('nothing');
+
+       await expect(setWorktreePushProtection(main, res.path, true)).resolves.toEqual({ ok: true });
+       const resumedHooks = await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() });
+       await expect(execFileP(join(resumedHooks.stdout.trim(), 'pre-push'), [], { cwd: res.path, env: cleanGitEnv() }))
+         .rejects.toMatchObject({ stderr: expect.stringContaining('Zana blocked push') });
+
+       const reused = await createWorktree(main, target, 'zcc/protected', undefined, true);
+      expect(reused).toMatchObject({ ok: true, reused: true });
+       await expect(execFileP(guard, [], { cwd: res.path, env: { ...cleanGitEnv(), ...authorization } })).resolves.toMatchObject({ stderr: expect.stringContaining('custom-hook') });
+    });
+
+    it('proxies executable hooks from a relative .husky/_ path in the squad worktree', async () => {
+      const huskyDir = join(main, '.husky', '_');
+      await mkdir(huskyDir, { recursive: true });
+      await writeFile(join(huskyDir, 'pre-push'), '#!/bin/sh\nprintf husky-pre-push >&2\n');
+      await writeFile(join(huskyDir, 'commit-msg'), '#!/bin/sh\nprintf husky-commit-msg >&2\n');
+      await chmod(join(huskyDir, 'pre-push'), 0o700);
+      await chmod(join(huskyDir, 'commit-msg'), 0o700);
+      await git(main, 'add', '.husky');
+      await git(main, 'commit', '-m', 'add husky hooks');
+      await git(main, 'config', 'core.hooksPath', '.husky/_');
+
+      const res = await createWorktree(main, join(base, 'wt', 'relative-hooks'), 'zcc/relative-hooks', undefined, true);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      const hooksPath = await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() });
+      const guard = join(hooksPath.stdout.trim(), 'pre-push');
+      const guardText = await readFile(guard, 'utf8');
+      expect(guardText).toContain(join(res.path, '.husky', '_', 'pre-push'));
+      const commitMsgProxy = await readFile(join(hooksPath.stdout.trim(), 'commit-msg'), 'utf8');
+      expect(commitMsgProxy).toContain(join(res.path, '.husky', '_', 'commit-msg'));
+
+      await writeFile(join(res.path, 'hooked.txt'), 'hooked\n');
+      await git(res.path, 'add', 'hooked.txt');
+      await expect(execFileP('git', ['commit', '-m', 'verify relative hook proxy'], { cwd: res.path, env: cleanGitEnv() }))
+        .resolves.toMatchObject({ stderr: expect.stringContaining('husky-commit-msg') });
+
+      const token = authorizeInstructWorktreePush();
+      const authorization = consumeInstructWorktreePushAuthorization(token);
+      expect(authorization).toEqual({ ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: token });
+      await expect(execFileP(guard, [], { cwd: res.path, env: { ...cleanGitEnv(), ...authorization } }))
+        .resolves.toMatchObject({ stderr: expect.stringContaining('husky-pre-push') });
+    });
+
+    it('fails protected setup without changing hook policy when an executable hook symlink escapes', async () => {
+      const customHooks = join(base, 'custom-hooks');
+      const escapedHook = join(base, 'escaped-hook');
+      await mkdir(customHooks);
+      await writeFile(escapedHook, '#!/bin/sh\nprintf escaped-hook >&2\n');
+      await symlink(escapedHook, join(customHooks, 'commit-msg'));
+      await chmod(escapedHook, 0o700);
+      await git(main, 'config', 'core.hooksPath', customHooks);
+
+      const res = await createWorktree(main, join(base, 'wt', 'escaped-hooks'), 'zcc/escaped-hooks', undefined, true);
+      expect(res).toEqual({
+        ok: false,
+        reason: 'cannot preserve executable hook outside configured hooks directory: commit-msg'
+      });
+
+      const linked = (await listWorktrees(main)).find((worktree) => worktree.branch === 'zcc/escaped-hooks');
+      expect(linked).toBeDefined();
+      if (!linked) return;
+      const hooksPath = await execFileP('git', ['config', '--path', '--get', 'core.hooksPath'], {
+        cwd: linked.path,
+        env: cleanGitEnv()
+      });
+      expect(hooksPath.stdout.trim()).toBe(customHooks);
+      await expect(execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], {
+        cwd: linked.path,
+        env: cleanGitEnv()
+      })).rejects.toBeDefined();
+    });
+
+    it('treats a missing hooks directory as zero preserved hooks', async () => {
+      await rm(join(main, '.git', 'hooks'), { recursive: true, force: true });
+      const res = await createWorktree(main, join(base, 'wt', 'no-hooks'), 'zcc/no-hooks', undefined, true);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      const hooksPath = await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() });
+      const guardText = await readFile(join(hooksPath.stdout.trim(), 'pre-push'), 'utf8');
+      expect(guardText).toContain('Zana blocked push from managed squad worktree');
+      expect(guardText).not.toContain('exec ');
+    });
+
+    it('does not rewrite extensions.worktreeConfig when it is already enabled', async () => {
+      await git(main, 'config', 'extensions.worktreeConfig', 'true');
+      // A directory at config.lock makes any write to the shared config fail.
+      await mkdir(join(main, '.git', 'config.lock'));
+      const res = await createWorktree(main, join(base, 'wt', 'preset'), 'zcc/preset', undefined, true);
+      expect(res.ok).toBe(true);
+    });
+
+    it('enables extensions.worktreeConfig when unset, and reports failure when the write fails', async () => {
+      await mkdir(join(main, '.git', 'config.lock'));
+      const failed = await createWorktree(main, join(base, 'wt', 'locked'), 'zcc/locked', undefined, true);
+      expect(failed.ok).toBe(false);
+      await rm(join(main, '.git', 'config.lock'), { recursive: true });
+      const res = await createWorktree(main, join(base, 'wt', 'unlocked'), 'zcc/unlocked', undefined, true);
+      expect(res.ok).toBe(true);
+      const { stdout } = await execFileP('git', ['config', '--get', 'extensions.worktreeConfig'], { cwd: main, env: cleanGitEnv() });
+      expect(stdout.trim()).toBe('true');
+    });
+
     it('adopts an existing checkout for the same branch (reused: true), idempotent', async () => {
       const target = join(base, 'wt', 'again');
       const first = await createWorktree(main, target, 'zcc/again');
@@ -267,6 +441,57 @@ describe('git worktree support', () => {
       if (!second.ok) return;
       expect(second.reused).toBe(true);
       if (first.ok) expect(second.path).toBe(first.path);
+    });
+
+    it('recreates a missing managed checkout from its recorded branch without adopting a replacement', async () => {
+      const target = join(base, 'wt', 'retained');
+      const first = await createWorktree(main, target, 'zcc/retained');
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+
+      await rm(target, { recursive: true, force: true });
+
+      const restored = await createWorktree(main, target, 'zcc/retained');
+      expect(restored).toMatchObject({ ok: true, path: realpathSync(target), branch: 'zcc/retained', reused: false });
+      expect((await listWorktrees(main)).filter((worktree) => worktree.branch === 'zcc/retained')).toHaveLength(1);
+    });
+
+    it('fails after one prune when a locked stale registration remains', async () => {
+      const target = join(base, 'wt', 'locked-stale');
+      const first = await createWorktree(main, target, 'zcc/locked-stale');
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+
+      await rm(target, { recursive: true, force: true });
+      const { stdout } = await execFileP('git', ['rev-parse', '--git-common-dir'], {
+        cwd: main,
+        env: cleanGitEnv()
+      });
+      await writeFile(join(main, stdout.trim(), 'worktrees', 'locked-stale', 'locked'), 'retained for recovery\n');
+
+      await expect(createWorktree(main, target, 'zcc/locked-stale')).resolves.toEqual({
+        ok: false,
+        reason: 'stale worktree registration remains after prune'
+      });
+      expect((await listWorktrees(main)).filter((worktree) => worktree.branch === 'zcc/locked-stale')).toHaveLength(1);
+    });
+
+    it('rejects a live replacement checkout for a retained branch', async () => {
+      const retainedTarget = join(base, 'wt', 'retained-original');
+      const replacementTarget = join(base, 'wt', 'retained-replacement');
+      const first = await createWorktree(main, retainedTarget, 'zcc/retained-replacement');
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+
+      await rm(retainedTarget, { recursive: true, force: true });
+      await execFileP('git', ['worktree', 'prune'], { cwd: main, env: cleanGitEnv() });
+      const replacement = await createWorktree(main, replacementTarget, 'zcc/retained-replacement');
+      expect(replacement.ok).toBe(true);
+
+      await expect(createWorktree(main, retainedTarget, 'zcc/retained-replacement')).resolves.toEqual({
+        ok: false,
+        reason: 'branch is checked out outside its managed destination'
+      });
     });
 
     it('serializes simultaneous allocation of the same named worktree', async () => {
@@ -330,7 +555,164 @@ describe('git worktree support', () => {
     });
   });
 
+  describe('guard + merge edge cases', () => {
+    async function protectedWt(name: string): Promise<string> {
+      const res = await createWorktree(main, join(base, 'wt', name), `zcc/${name}`, undefined, true);
+      if (!res.ok) throw new Error(res.reason);
+      return res.path;
+    }
+
+    it('skips non-executable, dangling, and sample hooks while proxying executable ones', async () => {
+      const hooks = join(base, 'mixed-hooks');
+      await mkdir(hooks);
+      await writeFile(join(hooks, 'pre-commit.sample'), '#!/bin/sh\n');
+      await chmod(join(hooks, 'pre-commit.sample'), 0o700);
+      await writeFile(join(hooks, 'commit-msg'), 'not executable\n');
+      await chmod(join(hooks, 'commit-msg'), 0o600);
+      await symlink(join(base, 'missing-target'), join(hooks, 'post-commit'));
+      await mkdir(join(hooks, 'subdir'));
+      await writeFile(join(hooks, 'pre-merge-commit'), '#!/bin/sh\n');
+      await chmod(join(hooks, 'pre-merge-commit'), 0o700);
+      await git(main, 'config', 'core.hooksPath', hooks);
+      const wt = await protectedWt('mixed');
+      const dir = (await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: wt, env: cleanGitEnv() })).stdout.trim();
+      await expect(readFile(join(dir, 'pre-merge-commit'), 'utf8')).resolves.toContain('exec ');
+      for (const skipped of ['pre-commit.sample', 'commit-msg', 'post-commit', 'subdir']) {
+        await expect(readFile(join(dir, skipped), 'utf8')).rejects.toBeDefined();
+      }
+    });
+
+    it('surfaces a non-ENOENT failure reading the hooks directory', async () => {
+      const hooks = join(base, 'file-hooks');
+      await writeFile(hooks, 'a file, not a dir\n');
+      await git(main, 'config', 'core.hooksPath', join(hooks, 'pre-push'));
+      const res = await createWorktree(main, join(base, 'wt', 'enotdir'), 'zcc/enotdir', undefined, true);
+      expect(res.ok).toBe(false);
+    });
+
+    it('re-guards a reused worktree and rejects when its guard cannot be installed', async () => {
+      const target = join(base, 'wt', 'reuse');
+      const first = await createWorktree(main, target, 'zcc/reuse', undefined, true);
+      expect(first.ok).toBe(true);
+      const hooks = join(base, 'bad-hooks');
+      await mkdir(hooks);
+      await symlink(join(base, 'outside-hook'), join(hooks, 'commit-msg'));
+      await writeFile(join(base, 'outside-hook'), '#!/bin/sh\n');
+      await chmod(join(base, 'outside-hook'), 0o700);
+      await setWorktreePushProtection(main, target, false);
+      await git(main, 'config', 'core.hooksPath', hooks);
+      const again = await createWorktree(main, target, 'zcc/reuse', undefined, true);
+      expect(again).toMatchObject({ ok: false });
+    });
+
+    it('prunes a stale registration for a worktree deleted outside Zana, then recreates it', async () => {
+      const target = join(base, 'wt', 'stale');
+      const first = await createWorktree(main, target, 'zcc/stale');
+      expect(first.ok).toBe(true);
+      await rm(target, { recursive: true, force: true });
+      const second = await createWorktree(main, target, 'zcc/stale');
+      expect(second).toMatchObject({ ok: true });
+    });
+
+    it('reports a locked stale registration instead of looping', async () => {
+      const target = join(base, 'wt', 'locked-stale');
+      const first = await createWorktree(main, target, 'zcc/locked-stale');
+      expect(first.ok).toBe(true);
+      await git(main, 'worktree', 'lock', target);
+      await rm(target, { recursive: true, force: true });
+      const second = await createWorktree(main, target, 'zcc/locked-stale');
+      expect(second).toMatchObject({ ok: false });
+    });
+
+    it('rejects invalid input for protection toggles, merge, and sweep', async () => {
+      await expect(setWorktreePushProtection('rel', join(base, 'x'), true)).resolves.toEqual({ ok: false, reason: 'invalid path' });
+      await expect(mergeWorktree('rel', join(base, 'x'), 'main')).resolves.toEqual({ ok: false, message: 'invalid path' });
+      await expect(mergeWorktree(main, join(base, 'x'), '  ')).resolves.toEqual({ ok: false, message: 'invalid path' });
+      await expect(mergeWorktree(join(base, 'nope'), join(base, 'x'), 'main')).resolves.toEqual({ ok: false, message: 'base checkout is unavailable' });
+      await expect(mergeWorktree(main, join(base, 'x'), 'other')).resolves.toEqual({ ok: false, message: 'base checkout is not on recorded branch' });
+      await expect(mergeWorktree(main, join(base, 'gone'), 'main')).resolves.toEqual({ ok: false, message: 'worktree is unavailable' });
+      await expect(sweepManagedWorktrees('rel', join(base, 'wt'))).resolves.toEqual([]);
+      await expect(sweepManagedWorktrees(main, join(base, 'missing-root'))).resolves.toEqual([]);
+    });
+
+    it('merge reports dirty worktree and detached worktree', async () => {
+      const wt = await protectedWt('dirty-src');
+      await writeFile(join(wt, 'dirty.txt'), 'x\n');
+      await expect(mergeWorktree(main, wt, 'main')).resolves.toEqual({ ok: false, message: 'worktree is dirty' });
+      await rm(join(wt, 'dirty.txt'));
+      await git(wt, 'checkout', '--detach');
+      await expect(mergeWorktree(main, wt, 'main')).resolves.toEqual({ ok: false, message: 'worktree branch is unavailable' });
+    });
+
+    it('sweep removes only clean Zana-guarded worktrees and keeps user-created and active ones', async () => {
+      const managed = join(base, 'wt');
+      const guarded = await protectedWt('sweep-guarded');
+      const active = await protectedWt('sweep-active');
+      const userPath = join(managed, 'sweep-user');
+      await git(main, 'worktree', 'add', '-b', 'user-branch', userPath);
+      const removed = await sweepManagedWorktrees(main, managed, [active]);
+      expect(removed).toEqual([guarded]);
+      const paths = (await listWorktrees(main)).map((w) => w.path);
+      expect(paths).toContain(active);
+      expect(paths).toContain(realpathSync(userPath));
+    });
+
+    it('sweep keeps a guarded worktree with unique commits', async () => {
+      const wt = await protectedWt('sweep-committed');
+      await writeFile(join(wt, 'c.txt'), 'c\n');
+      await git(wt, 'add', '.');
+      await git(wt, 'commit', '-m', 'unique');
+      await expect(sweepManagedWorktrees(main, join(base, 'wt'))).resolves.toEqual([]);
+    });
+
+    it('disabling protection on an unguarded linked worktree is a no-op success', async () => {
+      const plain = await createWorktree(main, join(base, 'wt', 'plain-off'), 'zcc/plain-off');
+      if (!plain.ok) throw new Error(plain.reason);
+      await expect(setWorktreePushProtection(main, plain.path, false)).resolves.toEqual({ ok: true });
+    });
+  });
+
   describe('worktreeState + removeWorktree', () => {
+    it('refuses merge when base checkout is dirty', async () => {
+      const target = join(base, 'wt', 'merge-dirty');
+      const res = await createWorktree(main, target, 'zcc/merge-dirty');
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      await writeFile(join(main, 'scratch.txt'), 'dirty\n');
+
+      await expect(mergeWorktree(main, res.path, 'main')).resolves.toEqual({ ok: false, message: 'base checkout is dirty' });
+    });
+
+    it('merges only clean worktrees into their recorded base branch', async () => {
+      const target = join(base, 'wt', 'merge-clean');
+      const res = await createWorktree(main, target, 'zcc/merge-clean');
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      await writeFile(join(res.path, 'feature.txt'), 'merged\n');
+      await git(res.path, 'add', '.');
+      await git(res.path, 'commit', '-m', 'feature');
+
+      await expect(mergeWorktree(main, res.path, 'main')).resolves.toEqual({ ok: true });
+      await expect(readFile(join(main, 'feature.txt'), 'utf8')).resolves.toBe('merged\n');
+    });
+
+    it('aborts a failed merge so the base checkout remains usable', async () => {
+      const target = join(base, 'wt', 'merge-conflict');
+      const res = await createWorktree(main, target, 'zcc/merge-conflict');
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      await writeFile(join(main, 'README.md'), '# main\n');
+      await git(main, 'add', '.');
+      await git(main, 'commit', '-m', 'main change');
+      await writeFile(join(res.path, 'README.md'), '# feature\n');
+      await git(res.path, 'add', '.');
+      await git(res.path, 'commit', '-m', 'feature change');
+
+      await expect(mergeWorktree(main, res.path, 'main')).resolves.toMatchObject({ ok: false });
+      await expect(execFileP('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: main, env: cleanGitEnv() })).rejects.toBeDefined();
+      await expect(readFile(join(main, 'README.md'), 'utf8')).resolves.toBe('# main\n');
+    });
+
     it('reports a fresh, empty worktree as prunable and removes it without --force', async () => {
       const target = join(base, 'wt', 'clean');
       const res = await createWorktree(main, target, 'zcc/clean');
@@ -381,6 +763,23 @@ describe('git worktree support', () => {
         commits: 0,
         prunable: false
       });
+    });
+
+    it('sweeps only clean orphan worktrees, retaining active and unique-commit worktrees', async () => {
+      const root = join(main, '.worktrees');
+      const clean = await createWorktree(main, join(root, 'clean'), 'zcc/clean-sweep', root, true);
+      const active = await createWorktree(main, join(root, 'active'), 'zcc/active-sweep', root, true);
+      const committed = await createWorktree(main, join(root, 'committed'), 'zcc/committed-sweep', root, true);
+      expect(clean.ok && active.ok && committed.ok).toBe(true);
+      if (!clean.ok || !active.ok || !committed.ok) return;
+      await writeFile(join(committed.path, 'result.txt'), 'keep\n');
+      await git(committed.path, 'add', '.');
+      await git(committed.path, 'commit', '-m', 'unique work');
+
+      expect(await sweepManagedWorktrees(main, root, [active.path])).toEqual([clean.path]);
+      const paths = (await listWorktrees(main)).map((worktree) => worktree.path);
+      expect(paths).toContain(active.path);
+      expect(paths).toContain(committed.path);
     });
   });
 });

@@ -7,6 +7,12 @@ import { listLocalTmuxSessionIds, verifyTmux } from '@zana-ai/zcc-host-daemon/tm
 import { listRememberedTombstones } from '@zana-ai/zcc-host-daemon/remembered-sessions';
 import { CliPlanWatcher } from '@zana-ai/zcc-host-daemon/harness/cli-plan-watch';
 import { isRepliable } from '../menu.js';
+import {
+  lifecycleClaimOps,
+  reconnectCapabilityLaunch,
+  restoreCapabilityLaunch,
+  type RestoreLaunchInput
+} from '../terminal-restore-launch.js';
 import { app } from 'electron';
 import type { SessionStats } from '@zana-ai/zcc-host-daemon/harness/claude/transcript-reader';
 import type { CatchUpSummaryResult, CreateTerminalRequest, LaunchProfileId, MenubarReplyResult, Result, TerminalSession } from '@zana-ai/zcc-domain/product';
@@ -46,6 +52,23 @@ export async function focusMenubarAgent(
   deps.menubar?.hide();
   deps.showMainWindow();
   deps.safeSend('app:focusSession', agentId, projectId);
+}
+
+/** Maps the named launch input onto `launchAuthorizedTerminal`'s positional signature. */
+function launchRestoredTerminal(input: RestoreLaunchInput): Promise<Result<TerminalSession>> {
+  return ctx.launchAuthorizedTerminal(
+    input.request,
+    input.principal,
+    input.spawnOpts,
+    input.teamId,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    input.legacyPersonaFacetCompatibility,
+    undefined,
+    input.followUpExecutionId
+  );
 }
 
 function cliPlanSessionId(value: unknown): string | null {
@@ -118,30 +141,16 @@ export function registerTerminalsIpc(): void {
     async (input: { capabilityId?: string; legacyRequest?: CreateTerminalRequest }): Promise<Result<TerminalSession>> => {
       const reserved = input.capabilityId ? ctx.restoreCapabilities.reserve(input.capabilityId) : undefined;
       if (reserved) {
-        const { capability, reservationId } = reserved;
-        try {
-          const resolved = await ctx.resolveWorktreeForRequest(capability.request);
-          if (!resolved.ok) {
-            ctx.restoreCapabilities.release(capability.id, reservationId);
-            return resolved;
-          }
-          const launched = await ctx.launchAuthorizedTerminal(
-            resolved.value,
-            ctx.restorePrincipal(capability),
-            capability.sessionId ? { preallocatedSessionId: capability.sessionId } : undefined,
-            capability.request.cohort?.teamId,
-            undefined,
-            undefined,
-            undefined,
-            ctx.isTeamWorkerRestore(capability.request)
-          );
-          if (launched.ok) ctx.restoreCapabilities.consume(capability.id, reservationId);
-          else ctx.restoreCapabilities.release(capability.id, reservationId);
-          return launched;
-        } catch (error) {
-          ctx.restoreCapabilities.release(capability.id, reservationId);
-          throw error;
-        }
+        return restoreCapabilityLaunch({
+          capability: reserved.capability,
+          reservationId: reserved.reservationId,
+          reservations: ctx.restoreCapabilities,
+          followUp: lifecycleClaimOps((capability) => ctx.restoreSquadWorktreeFollowUpClaim(capability)),
+          resolveWorktree: (request) => ctx.resolveWorktreeForRequest(request),
+          restorePrincipal: (capability) => ctx.restorePrincipal(capability),
+          isTeamWorkerRestore: (request) => ctx.isTeamWorkerRestore(request),
+          launch: launchRestoredTerminal
+        });
       }
       if (input.capabilityId) {
         return { ok: false, code: 'DENIED', message: 'restore capability unavailable or already reserved' };
@@ -202,21 +211,14 @@ export function registerTerminalsIpc(): void {
         release();
         return { ok: false, code: 'DENIED', message: 'reconnect capability has no remote tmux target' };
       }
-      try {
-        const launched = await ctx.launchAuthorizedTerminal(
-          capability.request,
-          legacyReconnect
-            ? { kind: 'interactive-user', id: 'reconnect:legacy-confirmed' }
-            : { kind: 'automation', id: `reconnect:${capability.id}` },
-          { reconnectTmuxId: capability.remoteTmuxId, resume: true }
-        );
-        if (launched.ok) ctx.restoreCapabilities.consume(capability.id, reserved.reservationId);
-        else release();
-        return launched;
-      } catch (error) {
-        release();
-        throw error;
-      }
+      return reconnectCapabilityLaunch({
+        capability,
+        reservationId: reserved.reservationId,
+        reservations: ctx.restoreCapabilities,
+        followUp: lifecycleClaimOps((claimed) => ctx.restoreSquadWorktreeFollowUpClaim(claimed)),
+        legacy: legacyReconnect,
+        launch: launchRestoredTerminal
+      });
     }
   );
   safeProductHandle(

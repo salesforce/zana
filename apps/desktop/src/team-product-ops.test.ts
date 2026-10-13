@@ -39,7 +39,7 @@ describe('createTeamProductOps', () => {
       respondToBlocker: vi.fn()
     });
     await expect(ops.launch({
-      teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured', title: 'Ship'
+      teamId: 't1', projectId: 'p1', goal: '### a: A <!-- executable-step -->', mode: 'structured', title: 'Ship'
     })).resolves.toEqual({ ok: true, value: { kind: 'job', id: 'ex-1', state: 'RUNNING' } });
     await expect(ops.launch({
       teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'freeform', title: 'Infer', summary: 'Context'
@@ -48,6 +48,25 @@ describe('createTeamProductOps', () => {
     expect(startTeamJobFromUi).toHaveBeenNthCalledWith(2, expect.objectContaining({
       coordinationMode: 'freeform', title: 'Infer', summary: 'Context'
     }));
+  });
+
+  it('defaults a missing mode to freeform and surfaces INVALID_PLAN for a prose structured goal', async () => {
+    const startTeamJobFromUi = vi.fn(async (input: { coordinationMode?: string }) => input.coordinationMode === 'structured'
+      ? { ok: false as const, code: 'INVALID_PLAN', message: 'provided structured plan is invalid' }
+      : { ok: true as const, value: { executionId: 'ex-1', state: 'RUNNING' } });
+    const ops = createTeamProductOps({
+      startTeamJobFromUi,
+      getExecution: async () => undefined,
+      status: async () => undefined,
+      stopJob: vi.fn(),
+      respondToBlocker: vi.fn()
+    });
+    const prose = { teamId: 't1', projectId: 'p1', goal: 'ship it' };
+    await expect(ops.launch(prose as never)).resolves.toMatchObject({ ok: true });
+    expect(startTeamJobFromUi).toHaveBeenLastCalledWith(expect.objectContaining({ coordinationMode: 'freeform' }));
+    await expect(ops.launch({ ...prose, mode: 'structured' })).resolves.toEqual({
+      ok: false, code: 'INVALID_PLAN', message: 'provided structured plan is invalid'
+    });
   });
 
   it('answers a single open blocker through durable execution control', async () => {

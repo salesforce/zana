@@ -111,6 +111,14 @@ describe('jobCoordinatorPrompt — shared invariants (both flows)', () => {
   });
 });
 
+describe('jobCoordinatorPrompt — native recovery', () => {
+  it('tells a resumed coordinator to continue durable plan state without replacing workers', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: true, recoveryResume: true });
+    expect(prompt).toContain('Recovery resume: this coordinator reopened its trusted native session');
+    expect(prompt).toContain('Do not recreate completed work, replace workers, or start a new plan.');
+  });
+});
+
 describe('jobCoordinatorPrompt — self-heal (coordinator answers a coordinator-directed blocker)', () => {
   it.each([true, false])('teaches answering a SEMANTIC_CONFLICT blockerId with execution.work.answer (planReady=%s)', (planReady) => {
     const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady });

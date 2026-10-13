@@ -1,3 +1,4 @@
+import { failedRunMessage } from '../../lib/schedule-run-outcome';
 import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -133,6 +134,11 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     const result = await product.scheduler.runNow(t.id);
     if (!result.ok) {
       useUi.getState().pushToast(`Run failed: ${result.message}`, 'error');
+      return;
+    }
+    const failure = failedRunMessage(result.value);
+    if (failure) {
+      useUi.getState().pushToast(`Run failed: ${failure}`, 'error');
       return;
     }
     useUi.getState().pushToast(`Fired "${t.name}"`, 'info');

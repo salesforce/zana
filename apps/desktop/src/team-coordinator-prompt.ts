@@ -144,6 +144,8 @@ export function jobCoordinatorPrompt(input: {
    * `execution.source.read` MCP call. Absent = no sources / not mirrored.
    */
   sourceFilePath?: string;
+  /** True only when this coordinator reopens a trusted provider-native session. */
+  recoveryResume?: boolean;
 }): string {
   const sources = input.job.sourceBundle?.sources ?? [];
   const sourceMetadata = JSON.stringify(sources.length ? sources : []);
@@ -160,6 +162,10 @@ export function jobCoordinatorPrompt(input: {
   return [
     `You are coordinator of Team "${input.team.name}"${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Your coordinator identity, execution binding, and worker roster are already host-bound. Do not discover, register, recover, or replace them during normal kickoff.`,
     `Workers are already running:\n${rosterLines.join('\n') || '- No workers.'}`,
+    ...(input.recoveryResume ? [
+      'Recovery resume: this coordinator reopened its trusted native session for this same execution slot.',
+      'Resume the retained plan from durable execution state. Do not recreate completed work, replace workers, or start a new plan.'
+    ] : []),
     planReadyLines.join('\n'),
     input.persona?.initialPrompt?.trim(),
     input.team.initialPrompt?.trim(),

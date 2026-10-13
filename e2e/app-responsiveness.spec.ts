@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { test, expect } from './fixtures/app.js';
+import { test, expect, closeApp } from './fixtures/app.js';
 
 test.use({ e2e: true, launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true } });
 
@@ -9,19 +9,18 @@ test('search edits do not execute a regex against retained renderer previews', a
   const root = join(home, 'regex-highlight-audit');
   mkdirSync(root);
   writeFileSync(join(root, 'preview.txt'), 'a'.repeat(26) + '!');
-  const id = await page.evaluate(async root => {
+  await page.evaluate(async root => {
     const result = await window.cc.projects.add(root);
     if (!result.ok) throw new Error(result.message);
-    return result.value.id;
   }, root);
-  await page.evaluate(id => {
-    history.pushState({}, '', `/projects/${id}`);
-    dispatchEvent(new PopStateEvent('popstate'));
-  }, id);
-  await expect(page.getByText('regex-highlight-audit', { exact: true }).first()).toBeVisible();
-  // Enter through the project control so keyboard actions have selected scope;
-  // a URL change alone can render the project before selection is established.
-  await page.getByRole('button', { name: 'Open regex-highlight-audit', exact: true }).click();
+  // Enter only through the sidebar project control: it focuses AND selects the
+  // project, and Cmd+Shift+F / SearchPanelHost key off selectedProjectId. Do not
+  // also push a `/projects/:id` route — the route swaps the global rail for
+  // ProjectScopedNav as soon as projects.onChanged lands, detaching this button
+  // mid-click (CI race), and route-only focus never establishes selection.
+  const openProject = page.getByRole('button', { name: 'Open regex-highlight-audit', exact: true });
+  await openProject.click();
+  await expect(page.getByRole('navigation', { name: 'regex-highlight-audit navigation' })).toBeVisible();
   const modifier = await page.evaluate(() => navigator.platform.toUpperCase().includes('MAC') ? 'Meta' : 'Control');
   await page.keyboard.press(`${modifier}+Shift+f`);
   const input = page.locator('.search-panel input');
@@ -116,7 +115,8 @@ test('plugin service returns survive worker transport and a blocking callback ca
   const app = await launchApp(home, { e2e: true, env: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
   try {
     const page = app.window;
-    await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'plugin-worker-regression')?.statusDetail ?? 'running')).toBe('running');
+    // list() reports status 'degraded' (null detail) while the worker is still loading, so wait for a live handle on both fixtures.
+    await expect.poll(() => page.evaluate(async () => { const apps = await window.cc.pluginApps.list(); return ['plugin-worker-regression', 'plugin-service-consumer'].map(id => apps.find(p => p.id === id)?.status); }), { timeout: 30_000 }).toEqual(['running', 'running']);
     const ready = await page.evaluate(async () => { const response = await fetch('/api/v1/plugin-apps/plugin-worker-regression/rpc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'ready', args: {} }) }); return response.json(); });
     expect(ready).toEqual({ value: { row: { value: 'native worker' }, stored: true } });
     const semantics = await page.evaluate(async () => {
@@ -168,7 +168,7 @@ test('history searches and marker lock retries keep product HTTP responsive in E
     expect(latency).toBeLessThan(500);
     lock.exec('COMMIT'); lock.close(); lock = undefined;
     const read = await request; expect(read.status).toBe(200); expect(read.elapsed).toBeGreaterThan(100);
-  } finally { try { lock?.exec('ROLLBACK'); } finally { lock?.close(); await app.electron.close(); } }
+  } finally { try { lock?.exec('ROLLBACK'); } finally { lock?.close(); await closeApp(app.electron); } }
 });
 
 test('legacy extension storage writes await persistence across the utility-process broker', async ({ home }) => {

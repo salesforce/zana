@@ -17,6 +17,7 @@ import { useData, useAgentStatus, useScheduler, useUi } from '@/store';
 import { useThreads } from '@/thread-store';
 import { usePluginRuntimeContext } from '@/plugins/PluginSlotBoundary';
 import { AgentsBoard } from './AgentsBoard.js';
+import { setPendingSquadDetailsTarget } from '@/lib/squad-details-target';
 function View(props: any) {
   const context = usePluginRuntimeContext(); fixtures.last = { ...props, context };
   return <div data-testid="plugin-view">
@@ -81,4 +82,19 @@ it('keeps the view toolbar available for an empty fleet and falls back when the 
   rerender(<MemoryRouter><AgentsBoard scope={{ kind: 'global' }} /></MemoryRouter>);
   expect(screen.queryByTestId('plugin-view')).toBeNull();
   expect(screen.getByText('No agents')).toBeTruthy();
+});
+
+it('opens a pending Inbox deep-link target on mount', async () => {
+  setPendingSquadDetailsTarget({ projectId: 'p1', executionId: 'j1' });
+  render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
+  expect((await screen.findByTestId('execution')).textContent).toBe('p1:j1');
+});
+it('opens squad details from the open event and ignores incomplete event details', async () => {
+  render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
+  await screen.findByRole('button', { name: 'Review' });
+  window.dispatchEvent(new CustomEvent('zana:open-squad-details', { detail: { projectId: 'p1' } }));
+  window.dispatchEvent(new CustomEvent('zana:open-squad-details'));
+  await waitFor(() => expect(screen.queryByTestId('execution')).toBeNull());
+  window.dispatchEvent(new CustomEvent('zana:open-squad-details', { detail: { projectId: 'p1', executionId: 'j1' } }));
+  expect((await screen.findByTestId('execution')).textContent).toBe('p1:j1');
 });

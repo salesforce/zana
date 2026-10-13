@@ -38,7 +38,7 @@ import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
 import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
-import type { ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
+import type { AuthorizedModelTarget, ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
 
 /**
  * Inner-agent liveness verdict for a tmux-backed remote worker:
@@ -108,6 +108,12 @@ export interface RemoteCommandInput {
   extraArgs?: string[];
   harnessRouting?: HarnessModelRoutingV1;
   remote: ProjectRemote;
+  /**
+   * MAIN-only: the concrete model id main's launch preflight resolved for a
+   * portable level (digest-bound). Remote builders pass it to model resolution
+   * so the remote argv carries that id verbatim, never a re-mapped one.
+   */
+  authorizedModel?: AuthorizedModelTarget;
   persona?: Persona;
   /** Registration-rendered native lifecycle contribution for remote argv/env. */
   lifecycle?: {
@@ -272,6 +278,13 @@ export interface LaunchProvider {
    * captured + cached, like {@link discoverRoleTargets}.
    */
   discoverModelTargets?(context: { cwd: string; config: AppConfig }): Promise<readonly string[] | undefined>;
+
+  /**
+   * Pure: the adapter metadata a launch sees when `targets` is the live model
+   * inventory of ITS project. Never mutates the (process-wide, shared) provider —
+   * callers obtain a launch-scoped view through {@link withLiveModelTargets}.
+   */
+  liveModelAdapter?(targets: readonly string[]): TrustedHarnessAdapter;
 
   /** Dynamic role catalogs are revalidated in main before launch. */
   acceptsDynamicRoleTargets?: boolean;
@@ -574,4 +587,22 @@ export interface LaunchProvider {
    * finalize time. The returned string is surfaced verbatim in the terminal pane.
    */
   explainUnexpectedExit?(profile: LaunchProfileId, exitCode: number, recentText: string): string | undefined;
+}
+
+/**
+ * A launch-scoped VIEW of a shared provider whose adapter metadata reflects the
+ * live model inventory of ONE launch's project. Providers are process-wide
+ * singletons (see `registry.ts`), so a live inventory must never be written onto
+ * them: concurrent launches for different projects (or one whose probe failed)
+ * would otherwise resolve portable levels through another project's inventory.
+ * The view inherits every method from the shared instance (prototype chain) and
+ * overrides only `adapter`. No inventory, an empty one, or a provider without
+ * live-model support returns the shared provider unchanged.
+ */
+export function withLiveModelTargets<P extends LaunchProvider>(provider: P, targets: readonly string[] | undefined): P {
+  if (!targets?.length || !provider.liveModelAdapter) return provider;
+  const adapter = provider.liveModelAdapter(targets);
+  return Object.create(provider, {
+    adapter: { value: adapter, enumerable: true, configurable: true }
+  }) as P;
 }

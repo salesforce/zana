@@ -10,7 +10,7 @@ function record(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
     id: 'execution-1', callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1',
     jobTitle: 'Job', requestDigest: 'digest', launchRequestId: 'request-1', teamLaunchRequestId: 'request-1',
     request: { version: 1, launchKind: 'team', slots: [{ initialTask: 'work' }], resolvedModels: [], policy: { deadlineMs: 100 } },
-    attempt: 1, state: 'RUNNING', stateVersion: 1, resolvedModels: [], createdAt: 1_000, updatedAt: 1_000,
+    attempt: 1, attemptStartedAt: 1_000, state: 'RUNNING', stateVersion: 1, resolvedModels: [], createdAt: 1_000, updatedAt: 1_000,
     ...over
   } as ExecutionRecord;
 }
@@ -39,7 +39,7 @@ function fixture(now = 1_000) {
 }
 
 describe('executionProgressAnchor', () => {
-  it('falls back to createdAt when the run has no work units (freeform / pre-plan)', () => {
+  it('falls back to attemptStartedAt when the run has no work units (freeform / pre-plan)', () => {
     expect(executionProgressAnchor(record())).toBe(1_000);
     expect(executionProgressAnchor(record({ workUnits: [] }))).toBe(1_000);
   });
@@ -49,10 +49,10 @@ describe('executionProgressAnchor', () => {
     expect(executionProgressAnchor(record({ workUnits: units([1_500, 2_400, 900]) }))).toBe(2_400);
   });
 
-  it('ignores units with no progressAt and never drops below createdAt', () => {
+  it('ignores units with no progressAt and never drops below attemptStartedAt', () => {
     // An unclaimed unit (no progressAt) and a stale progressAt below createdAt must
-    // not pull the anchor backwards — the floor is always the launch time.
-    expect(executionProgressAnchor(record({ createdAt: 5_000, workUnits: units([undefined, 1_200]) }))).toBe(5_000);
+    // not pull the anchor backwards — the floor is always the current attempt start.
+    expect(executionProgressAnchor(record({ createdAt: 1_000, attemptStartedAt: 5_000, workUnits: units([undefined, 1_200]) }))).toBe(5_000);
   });
 });
 

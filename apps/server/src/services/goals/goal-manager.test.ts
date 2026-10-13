@@ -24,6 +24,7 @@ vi.mock('./goal-store.js', () => ({
 
 import { EventEmitter } from 'node:events';
 import {
+  GoalConflictError,
   GoalManager,
   buildIterationPrompt,
   parseGoalVerdict,
@@ -274,6 +275,77 @@ describe('GoalManager — create / spawn', () => {
     expect(principals).toEqual([{ kind: 'automation', id: `goal:${goal.id}` }]);
   });
 
+  it('an activated team goal launches one durable squad iteration, not a PTY', async () => {
+    const { manager, ptys } = makeManager();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    const internals = manager as unknown as { deps: Record<string, unknown> };
+    manager.setDeps({ ...internals.deps, launchSquad });
+    const goal = await manager.create({
+      projectId: 'proj-1', title: 'T', statement: 'do it', successCriteria: ['x'],
+      assignment: { kind: 'team', teamId: 'release-squad' }, activate: true
+    });
+    expect(launchSquad).toHaveBeenCalledOnce();
+    expect(ptys.createCalls).toHaveLength(0);
+    expect(current(manager, goal.id).history.iterations[0]).toMatchObject({ executionId: 'execution-1', launchState: 'running' });
+  });
+
+  it('passes goal context and latest evaluator feedback to a squad objective', async () => {
+    const { manager } = makeManager();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    const internals = manager as unknown as {
+      deps: Record<string, unknown>;
+      live: Map<string, { goal: Goal }>;
+    };
+    manager.setDeps({ ...internals.deps, launchSquad });
+    const goal = await manager.create({
+      projectId: 'proj-1', title: 'T', statement: 'Ship goal context', successCriteria: ['tests pass'],
+      assignment: { kind: 'team', teamId: 'release-squad' }
+    });
+    internals.live.get(goal.id)!.goal = {
+      ...current(manager, goal.id),
+      history: {
+        retain: 20,
+        iterations: [{ id: 'prior', at: '2026-01-01T00:00:00.000Z', verdict: 'partial', rationale: 'coverage remains below target' }]
+      }
+    };
+
+    await manager.runNow(goal.id);
+
+    expect(launchSquad).toHaveBeenCalledWith(expect.objectContaining({
+      goal: expect.objectContaining({
+        statement: expect.stringContaining('Ship goal context')
+      })
+    }));
+    const squadGoal = launchSquad.mock.calls[0]![0].goal as Goal;
+    expect(squadGoal.statement).toContain('- tests pass');
+    expect(squadGoal.statement).toContain('verdict: partial');
+    expect(squadGoal.statement).toContain('coverage remains below target');
+  });
+
+  it('launches a provided-plan squad goal with the raw statement as objective', async () => {
+    const { manager } = makeManager();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    const internals = manager as unknown as { deps: Record<string, unknown> };
+    manager.setDeps({ ...internals.deps, launchSquad });
+    const plan = '### a: A <!-- executable-step -->\n- Work: do';
+    const goal = await manager.create({
+      projectId: 'proj-1', title: 'T', statement: plan, successCriteria: [], planSource: 'provided',
+      assignment: { kind: 'team', teamId: 'release-squad' }
+    });
+    expect(goal.planSource).toBe('provided');
+    await manager.runNow(goal.id);
+    const squadGoal = launchSquad.mock.calls[0]![0].goal as Goal;
+    expect(squadGoal.statement).toBe(plan);
+  });
+
+  it('update changes planSource; omitted planSource stays unset', async () => {
+    const { manager } = makeManager();
+    const goal = await manager.create({ projectId: 'proj-1', title: 'T', statement: 'x', successCriteria: [] });
+    expect(goal.planSource).toBeUndefined();
+    const updated = await manager.update(goal.id, { planSource: 'provided' });
+    expect(updated.planSource).toBe('provided');
+  });
+
   it('runNow forces one iteration on a draft goal', async () => {
     const { manager, ptys } = makeManager();
     const g = await manager.create({
@@ -320,6 +392,22 @@ describe('GoalManager — create / spawn', () => {
     expect(ptys.createCalls).toHaveLength(1); // spawned a worker
     expect(ptys.createCalls[0].profile).toBe('codex-yolo');
     expect(current(manager, g.id).status).toBe('active'); // looping, not escalated
+  });
+
+  it('rejects an Agent-to-Squad assignment change while its active worker is unresolved', async () => {
+    const { manager, ptys } = makeManager();
+    const goal = await manager.create({
+      projectId: 'proj-1',
+      title: 'T',
+      statement: 'do it',
+      successCriteria: ['x'],
+      activate: true
+    });
+
+    await expect(manager.update(goal.id, { assignment: { kind: 'team', teamId: 'release-squad' } }))
+      .rejects.toThrow('Cannot change goal assignment kind');
+    expect(current(manager, goal.id)).toMatchObject({ assignment: { kind: 'profile', profile: 'claude-yolo' } });
+    expect(ptys.createCalls).toHaveLength(1);
   });
 });
 
@@ -557,6 +645,22 @@ describe('GoalManager — concurrency cap', () => {
     }
     expect(ptys.createCalls).toHaveLength(3);
   });
+
+  it('counts unresolved squad executions against MAX_CONCURRENT_GOAL_RUNS', async () => {
+    const { manager } = makeManager();
+    const launchSquad = vi.fn(async ({ iterationId }: { iterationId: string }) => ({ executionId: `execution-${iterationId}` }));
+    const internals = manager as unknown as { deps: Record<string, unknown> };
+    manager.setDeps({ ...internals.deps, launchSquad, getSquadExecution: vi.fn(async () => ({ state: 'RUNNING' })) });
+
+    for (let i = 0; i < 4; i += 1) {
+      await manager.create({
+        projectId: 'proj-1', title: `Team ${i}`, statement: 'do it', successCriteria: ['x'],
+        assignment: { kind: 'team', teamId: 'release-squad' }, activate: true
+      });
+    }
+
+    expect(launchSquad).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('GoalManager — launch failures respect the stall budget', () => {
@@ -672,6 +776,348 @@ describe('GoalManager — attachReport', () => {
   });
 });
 
+describe('GoalManager — squad execution observation', () => {
+  it('cancellation wins when a running squad evaluator returns late', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, deps } = durableManager();
+      const evaluation = deferred<LlmRunResult>();
+      deps.launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      deps.getSquadExecution = execution;
+      vi.mocked(deps.runEvaluator).mockReturnValue(evaluation.promise);
+      manager.setDeps(deps);
+      const goal = await manager.create({ projectId: project.id, title: 'Team', statement: 'do it', activate: true,
+        assignment: { kind: 'team', teamId: 'release-squad' } });
+
+      execution.mockResolvedValue({ state: 'COMPLETED', finalSummary: 'done' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(deps.runEvaluator).toHaveBeenCalledOnce());
+      await manager.setStatus(goal.id, 'cancelled');
+      evaluation.resolve({ ok: true, text: '{"verdict":"pass"}', provider: 'test', ms: 1 } as LlmRunResult);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(current(manager, goal.id)).toMatchObject({ status: 'cancelled' });
+      expect(current(manager, goal.id).terminalStatus).toBeUndefined();
+      expect(current(manager, goal.id).terminalMessage).toBeUndefined();
+      expect(current(manager, goal.id).history.iterations[0]).toMatchObject({ verdict: 'pass', report: 'done' });
+      expect(deps.inbox!.append).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumes terminal squad observation after pause instead of wedging the iteration', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, deps } = durableManager();
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      deps.launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+      deps.getSquadExecution = execution;
+      manager.setDeps(deps);
+      const goal = await manager.create({ projectId: project.id, title: 'Team', statement: 'do it', activate: true,
+        assignment: { kind: 'team', teamId: 'release-squad' } });
+
+      await manager.setStatus(goal.id, 'paused');
+      execution.mockResolvedValue({ state: 'COMPLETED', finalSummary: 'done' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(current(manager, goal.id).status).toBe('paused');
+      expect(current(manager, goal.id)).toMatchObject({ terminalStatus: 'achieved' });
+      expect(current(manager, goal.id).history.iterations[0].verdict).toBe('pass');
+
+      await manager.setStatus(goal.id, 'active');
+      await vi.waitFor(() => expect(current(manager, goal.id).status).toBe('achieved'));
+      expect(deps.runEvaluator).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runNow resumes terminal squad observation after pause instead of rearming', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, deps } = durableManager();
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      deps.launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+      deps.getSquadExecution = execution;
+      manager.setDeps(deps);
+      const goal = await manager.create({ projectId: project.id, title: 'Team', statement: 'do it', activate: true,
+        assignment: { kind: 'team', teamId: 'release-squad' } });
+
+      await manager.setStatus(goal.id, 'paused');
+      execution.mockResolvedValue({ state: 'COMPLETED', finalSummary: 'done' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(current(manager, goal.id)).toMatchObject({ terminalStatus: 'achieved' });
+      expect(current(manager, goal.id).history.iterations[0].verdict).toBe('pass');
+
+      await manager.runNow(goal.id);
+      await vi.waitFor(() => expect(current(manager, goal.id).status).toBe('achieved'));
+      expect(deps.launchSquad).toHaveBeenCalledOnce();
+      expect(deps.runEvaluator).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a running execution live and resumes terminal observation after restart', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps, ptys } = durableManager();
+      records.set('squad-goal', goalFixture({
+        id: 'squad-goal',
+        assignment: { kind: 'team', teamId: 'release-squad' },
+        history: { retain: 20, iterations: [{ id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'running' }] }
+      }));
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      deps.getSquadExecution = execution;
+      manager.setDeps(deps);
+
+      await manager.loadAll([project]);
+      expect(ptys.createCalls).toHaveLength(0);
+      expect(execution).toHaveBeenCalledWith(project.id, 'execution-1');
+
+      execution.mockResolvedValueOnce({ state: 'COMPLETED', finalSummary: 'done' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(current(manager, 'squad-goal').status).toBe('achieved');
+      expect(ptys.createCalls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears squad polls on removal and never re-arms after stale lookup resolves', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps, ptys, persistence } = durableManager();
+      const lookup = deferred<{ state: string; finalSummary?: string } | undefined>();
+      deps.getSquadExecution = vi.fn(() => lookup.promise);
+      manager.setDeps(deps);
+      records.set('squad-goal', goalFixture({
+        id: 'squad-goal',
+        assignment: { kind: 'team', teamId: 'release-squad' },
+        history: { retain: 20, iterations: [{ id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'running' }] }
+      }));
+
+      const loading = manager.loadAll([project]);
+      await vi.waitFor(() => expect(deps.getSquadExecution).toHaveBeenCalledOnce());
+      await manager.remove('squad-goal');
+      lookup.resolve({ state: 'COMPLETED', finalSummary: 'done' });
+      await loading;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(manager.list()).toEqual([]);
+      expect(persistence.remove).toHaveBeenCalledOnce();
+      expect(ptys.createCalls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not install a stale poll timer after stop and reload', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps } = durableManager();
+      const lookup = deferred<{ state: string; finalSummary?: string } | undefined>();
+      deps.getSquadExecution = vi.fn(() => lookup.promise);
+      manager.setDeps(deps);
+      records.set('squad-goal', goalFixture({
+        id: 'squad-goal', assignment: { kind: 'team', teamId: 'release-squad' },
+        history: { retain: 20, iterations: [{ id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'running' }] }
+      }));
+
+      await manager.loadAll([project]);
+      await vi.waitFor(() => expect(deps.getSquadExecution).toHaveBeenCalledOnce());
+      manager.stopAll();
+      records.set('squad-goal', goalFixture({ id: 'squad-goal', status: 'draft' }));
+      await manager.loadAll([project]);
+      lookup.resolve({ state: 'RUNNING' });
+      await Promise.resolve();
+
+      const pollSize = () => (manager as unknown as { squadPollTimers: Map<string, NodeJS.Timeout> }).squadPollTimers.size;
+      expect(pollSize()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a transient squad execution lookup failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps } = durableManager();
+      const execution = vi.fn()
+        .mockRejectedValueOnce(new Error('execution store unavailable'))
+        .mockResolvedValue({ state: 'RUNNING' });
+      deps.getSquadExecution = execution;
+      manager.setDeps(deps);
+      records.set('squad-goal', goalFixture({
+        id: 'squad-goal', assignment: { kind: 'team', teamId: 'release-squad' },
+        history: { retain: 20, iterations: [{ id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'running' }] }
+      }));
+
+      await manager.loadAll([project]);
+      await vi.waitFor(() => expect(execution).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(execution).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-arms one terminal observation when verdict persistence fails transiently', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, persistence, deps, ptys } = durableManager();
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      deps.launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+      deps.getSquadExecution = execution;
+      manager.setDeps(deps);
+      const goal = await manager.create({ projectId: project.id, title: 'Team', statement: 'do it', activate: true,
+        assignment: { kind: 'team', teamId: 'release-squad' } });
+
+      execution.mockResolvedValue({ state: 'COMPLETED', finalSummary: 'done' });
+      persistence.save.mockRejectedValueOnce(new Error('metadata owner offline'));
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(current(manager, goal.id).history.iterations[0].verdict).toBeUndefined();
+      expect((manager as unknown as { squadPollTimers: Map<string, NodeJS.Timeout> }).squadPollTimers.size).toBe(1);
+      expect(deps.launchSquad).toHaveBeenCalledOnce();
+      expect(ptys.createCalls).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(current(manager, goal.id).status).toBe('achieved');
+      expect(deps.runEvaluator).toHaveBeenCalledTimes(2);
+      expect(deps.launchSquad).toHaveBeenCalledOnce();
+      expect(ptys.createCalls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries terminal status after verdict commit failure without another squad launch or verdict', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, persistence, records, deps, ptys } = durableManager();
+      deps.launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      deps.getSquadExecution = execution;
+      manager.setDeps(deps);
+      const goal = await manager.create({ projectId: project.id, title: 'Team', statement: 'do it', activate: true,
+        assignment: { kind: 'team', teamId: 'release-squad' } });
+
+      execution.mockResolvedValue({ state: 'COMPLETED', finalSummary: 'done' });
+      let rejectTerminalStatus = true;
+      persistence.save.mockImplementation(async value => {
+        if (rejectTerminalStatus && value.status === 'achieved') throw new Error('status owner offline');
+        records.set(value.id, structuredClone(value));
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(current(manager, goal.id)).toMatchObject({ status: 'active', terminalStatus: 'achieved' });
+      expect(current(manager, goal.id).history.iterations[0]).toMatchObject({ verdict: 'pass' });
+      expect(records.get(goal.id)).toMatchObject({ status: 'active', terminalStatus: 'achieved' });
+      expect(deps.runEvaluator).toHaveBeenCalledOnce();
+      expect(deps.launchSquad).toHaveBeenCalledOnce();
+      expect(ptys.createCalls).toHaveLength(0);
+      await expect(manager.runNow(goal.id)).resolves.toMatchObject({ terminalStatus: 'achieved' });
+
+      rejectTerminalStatus = false;
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(current(manager, goal.id)).toMatchObject({ status: 'achieved', terminalStatus: undefined });
+      expect(deps.runEvaluator).toHaveBeenCalledOnce();
+      expect(deps.launchSquad).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries persisted terminalization after reload without observing or launching another squad', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, persistence, records, deps } = durableManager();
+      records.set('squad-goal', goalFixture({
+        id: 'squad-goal',
+        assignment: { kind: 'team', teamId: 'release-squad' },
+        iteration: 1,
+        terminalStatus: 'achieved',
+        history: { retain: 20, iterations: [{ id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'running', verdict: 'pass' }] }
+      }));
+      deps.launchSquad = vi.fn(async () => ({ executionId: 'unexpected' }));
+      deps.getSquadExecution = vi.fn(async () => ({ state: 'COMPLETED', finalSummary: 'done' }));
+      manager.setDeps(deps);
+
+      persistence.save.mockRejectedValue(new Error('status owner offline'));
+      await manager.loadAll([project]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(current(manager, 'squad-goal')).toMatchObject({ status: 'active', terminalStatus: 'achieved' });
+      expect(deps.getSquadExecution).not.toHaveBeenCalled();
+      expect(deps.launchSquad).not.toHaveBeenCalled();
+
+      persistence.save.mockImplementation(async value => { records.set(value.id, structuredClone(value)); });
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(current(manager, 'squad-goal')).toMatchObject({ status: 'achieved', terminalStatus: undefined });
+      expect(deps.getSquadExecution).not.toHaveBeenCalled();
+      expect(deps.launchSquad).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not re-arm a failed lookup after goal removal', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps } = durableManager();
+      const lookup = deferred<{ state: string; finalSummary?: string } | undefined>();
+      deps.getSquadExecution = vi.fn(() => lookup.promise);
+      manager.setDeps(deps);
+      records.set('squad-goal', goalFixture({
+        id: 'squad-goal', assignment: { kind: 'team', teamId: 'release-squad' },
+        history: { retain: 20, iterations: [{ id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'running' }] }
+      }));
+
+      await manager.loadAll([project]);
+      await vi.waitFor(() => expect(deps.getSquadExecution).toHaveBeenCalledOnce());
+      await manager.remove('squad-goal');
+      lookup.reject(new Error('execution store unavailable'));
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deps.getSquadExecution).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['remove', 'stop', 'project removal'] as const)('%s clears scheduled squad polling', async action => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps } = durableManager();
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      deps.getSquadExecution = execution;
+      manager.setDeps(deps);
+      records.set('squad-goal', goalFixture({
+        id: 'squad-goal',
+        assignment: { kind: 'team', teamId: 'release-squad' },
+        history: { retain: 20, iterations: [{ id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'running' }] }
+      }));
+      await manager.loadAll([project]);
+      await vi.waitFor(() => expect(execution).toHaveBeenCalledOnce());
+      const pollSize = () => (manager as unknown as { squadPollTimers: Map<string, NodeJS.Timeout> }).squadPollTimers.size;
+      expect(pollSize()).toBe(1);
+
+      if (action === 'remove') await manager.remove('squad-goal');
+      else if (action === 'stop') manager.stopAll();
+      else await manager.onProjectRemoved(project.id);
+
+      expect(pollSize()).toBe(0);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(execution).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 function durableManager() {
   const manager = new GoalManager(), ptys = new FakePtyManager();
   const records = new Map<string, Goal>();
@@ -782,6 +1228,56 @@ describe('GoalManager original-owner durability', () => {
     expect(current(manager, goal.id)).toMatchObject({ status: 'paused', title: 'Edited while evaluating' });
     expect(current(manager, goal.id).history.iterations[0]).toMatchObject({ report: 'report during evaluation', verdict: 'pass' });
     expect(ptys.createCalls).toHaveLength(1); await manager.onAgentFinished(sid); expect(deps.runEvaluator).toHaveBeenCalledOnce();
+  });
+  it('resumes a terminal evaluator outcome persisted while paused', async () => {
+    const { manager, input, ptys } = durableManager();
+    const goal = await manager.create({ ...input, activate: true });
+    const sid = ptys.sessions[0].id;
+    ptys.simulateExit(sid);
+    await manager.setStatus(goal.id, 'paused');
+    await manager.onAgentFinished(sid);
+    expect(current(manager, goal.id)).toMatchObject({
+      status: 'paused',
+      terminalStatus: 'achieved',
+      terminalMessage: expect.stringContaining('Goal achieved')
+    });
+
+    await manager.setStatus(goal.id, 'active');
+
+    expect(current(manager, goal.id)).toMatchObject({
+      status: 'achieved',
+      terminalStatus: undefined,
+      terminalNotificationDelivered: true
+    });
+  });
+  it('retries terminal status after restart and delivers one deferred notification', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, persistence, input, ptys, deps, records } = durableManager();
+      const goal = await manager.create({ ...input, activate: true });
+      const sid = ptys.sessions[0].id;
+      ptys.simulateExit(sid);
+      persistence.save.mockImplementation(async value => {
+        if (value.status === 'achieved') throw new Error('metadata owner offline');
+        records.set(value.id, structuredClone(value));
+      });
+
+      await manager.onAgentFinished(sid);
+
+      expect(current(manager, goal.id)).toMatchObject({ status: 'active', terminalStatus: 'achieved' });
+      expect(deps.inbox!.append).not.toHaveBeenCalled();
+      persistence.save.mockImplementation(async value => { records.set(value.id, structuredClone(value)); });
+      manager.stopAll();
+      await manager.loadAll([project]);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(current(manager, goal.id)).toMatchObject({ status: 'achieved', terminalNotificationDelivered: true });
+      expect(deps.inbox!.append).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(deps.inbox!.append).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('delete during evaluation cannot resurrect or launch the goal', async () => {
     const { manager, input, ptys, deps } = durableManager();
@@ -981,4 +1477,210 @@ it('GoalManager passes other events through without touching the change fingerpr
   manager.on('other', other); manager.on('changed', changed);
   expect(manager.emit('other', 1)).toBe(true); expect(other).toHaveBeenCalledWith(1);
   await manager.loadAll([project]); expect(changed).toHaveBeenCalledTimes(1); manager.stopAll();
+});
+
+describe('goal statement compare-and-swap (PC1)', () => {
+  it('writes when the expected statement still matches and never persists the guard', async () => {
+    const { manager, records, input } = durableManager();
+    const goal = await manager.create(input);
+    const updated = await manager.update(goal.id, { statement: 'Corrected plan', expectedStatement: '  Complete work ' });
+    expect(updated.statement).toBe('Corrected plan');
+    expect(records.get(goal.id)!.statement).toBe('Corrected plan');
+    expect(records.get(goal.id)).not.toHaveProperty('expectedStatement');
+    expect(updated).not.toHaveProperty('expectedStatement');
+  });
+
+  it('rejects with GoalConflictError when the statement changed since launch', async () => {
+    const { manager, records, persistence, input } = durableManager();
+    const goal = await manager.create(input);
+    records.set(goal.id, { ...structuredClone(records.get(goal.id)!), statement: 'Hand edited' });
+    await manager.loadAll([project]);
+    persistence.save.mockClear();
+    const error = await manager.update(goal.id, { statement: 'Corrected plan', expectedStatement: 'Complete work' }).catch(e => e);
+    expect(error).toBeInstanceOf(GoalConflictError);
+    expect(error).toMatchObject({ code: 'DEFINITION_CONFLICT', goalId: goal.id });
+    expect(persistence.save).not.toHaveBeenCalled();
+    expect(current(manager, goal.id).statement).toBe('Hand edited');
+  });
+
+  it('re-checks the owner record at the write boundary when persistence can read', async () => {
+    const { manager, records, persistence, deps, input } = durableManager();
+    const goal = await manager.create(input);
+    (persistence as typeof persistence & { read?: (g: Goal) => Promise<Goal> }).read =
+      vi.fn(async (g: Goal) => ({ ...structuredClone(records.get(g.id)!), statement: 'Remote edit' }));
+    manager.setDeps({ ...deps, persistence });
+    persistence.save.mockClear();
+    await expect(manager.update(goal.id, { statement: 'Corrected plan', expectedStatement: 'Complete work' }))
+      .rejects.toBeInstanceOf(GoalConflictError);
+    expect(persistence.save).not.toHaveBeenCalled();
+  });
+
+  it('treats an empty expected statement as a guard, not as absent', async () => {
+    const { manager, input } = durableManager();
+    const goal = await manager.create(input);
+    await expect(manager.update(goal.id, { statement: 'x', expectedStatement: '' })).rejects.toBeInstanceOf(GoalConflictError);
+  });
+});
+
+describe('legacy Squad goal without teamId (GV1)', () => {
+  function legacy() {
+    const env = durableManager();
+    env.records.set('legacy', goalFixture({ id: 'legacy', status: 'paused', assignment: { kind: 'team', teamId: '' } }));
+    env.deps.launchSquad = vi.fn(async () => ({ executionId: 'never' }));
+    env.manager.setDeps(env.deps);
+    return env;
+  }
+
+  it('cannot be resumed or run until a Squad is selected', async () => {
+    const { manager, deps } = legacy();
+    await manager.loadAll([project]);
+    expect(current(manager, 'legacy').status).toBe('paused');
+    await expect(manager.setStatus('legacy', 'active')).rejects.toThrow(/no Squad selected/);
+    await expect(manager.runNow('legacy')).rejects.toThrow(/no Squad selected/);
+    expect(deps.launchSquad).not.toHaveBeenCalled();
+    expect(current(manager, 'legacy').status).toBe('paused');
+  });
+
+  it('resumes after the goal is edited to choose a Squad', async () => {
+    const { manager, deps } = legacy();
+    deps.getSquadExecution = vi.fn(async () => ({ state: 'RUNNING' }));
+    await manager.loadAll([project]);
+    await manager.update('legacy', { assignment: { kind: 'team', teamId: 'release-squad' } });
+    await manager.setStatus('legacy', 'active');
+    expect(deps.launchSquad).toHaveBeenCalledOnce();
+    manager.stopAll();
+  });
+
+  it('still allows pausing or cancelling the legacy goal', async () => {
+    const { manager } = legacy();
+    await manager.loadAll([project]);
+    await expect(manager.setStatus('legacy', 'cancelled')).resolves.toMatchObject({ status: 'cancelled' });
+  });
+});
+
+describe('terminalization retry survives a rejected serial slot (GM1)', () => {
+  it('re-arms when the queued terminalization is rejected before it runs', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps } = durableManager();
+      records.set('t-goal', goalFixture({ id: 't-goal', terminalStatus: 'achieved', terminalMessage: 'done' }));
+      await manager.loadAll([project]);
+      const internals = manager as unknown as { pending: number };
+      const realPending = internals.pending;
+      internals.pending = 100;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deps.logger).toHaveBeenCalledWith('terminalize t-goal', expect.objectContaining({ message: 'Too many pending goal operations' }));
+      expect(current(manager, 't-goal').status).toBe('active');
+      internals.pending = realPending;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(current(manager, 't-goal')).toMatchObject({ status: 'achieved', terminalStatus: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not re-arm after stop', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, persistence } = durableManager();
+      records.set('t-goal', goalFixture({ id: 't-goal', terminalStatus: 'achieved', terminalMessage: 'done' }));
+      await manager.loadAll([project]);
+      const live = (manager as unknown as { live: Map<string, unknown> }).live.get('t-goal');
+      manager.stopAll();
+      // A retry armed for a stale live identity must not loop after teardown.
+      (manager as unknown as { retryTerminalization(l: unknown): void }).retryTerminalization(live);
+      persistence.save.mockClear();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(persistence.save).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('recovering several terminal Squad iterations (GM2)', () => {
+  it('evaluates every terminal iteration instead of dropping the busy one', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps } = durableManager();
+      records.set('multi', goalFixture({
+        id: 'multi', status: 'paused', maxIterations: 10, noProgressLimit: 10,
+        assignment: { kind: 'team', teamId: 'release-squad' },
+        history: { retain: 20, iterations: [
+          { id: 'iteration-2', at: '', executionId: 'execution-2', launchState: 'pending' },
+          { id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'pending' }
+        ] }
+      }));
+      deps.launchSquad = vi.fn(async () => ({ executionId: 'unexpected' }));
+      deps.getSquadExecution = vi.fn(async () => ({ state: 'FAILED', finalSummary: 'broke' }));
+      manager.setDeps(deps);
+      await manager.loadAll([project]);
+      await vi.advanceTimersByTimeAsync(3_000);
+      const iterations = current(manager, 'multi').history.iterations;
+      expect(iterations.find(it => it.id === 'iteration-1')?.verdict).toBe('fail');
+      expect(iterations.find(it => it.id === 'iteration-2')?.verdict).toBe('fail');
+      expect(deps.runEvaluator).toHaveBeenCalledTimes(2);
+      manager.stopAll();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Squad goal launch and continuation paths', () => {
+  it('records a failed Squad launch instead of leaving the iteration pending', async () => {
+    const { manager, deps, ptys } = durableManager();
+    deps.launchSquad = vi.fn(async () => { throw new Error('no capacity'); });
+    manager.setDeps(deps);
+    const goal = await manager.create({ projectId: project.id, title: 'Team', statement: 'do it', activate: true,
+      assignment: { kind: 'team', teamId: 'release-squad' } });
+    const iteration = current(manager, goal.id).history.iterations[0];
+    expect(iteration.launchState).not.toBe('pending');
+    expect(iteration.error).toContain('no capacity');
+    expect(ptys.createCalls).toHaveLength(0);
+    manager.stopAll();
+  });
+
+  it('polls a recovered pending Squad that is still running', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, records, deps } = durableManager();
+      records.set('running', goalFixture({ id: 'running', status: 'paused', assignment: { kind: 'team', teamId: 'release-squad' },
+        history: { retain: 20, iterations: [{ id: 'iteration-1', at: '', executionId: 'execution-1', launchState: 'pending' }] } }));
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      deps.getSquadExecution = execution;
+      manager.setDeps(deps);
+      await manager.loadAll([project]);
+      expect(current(manager, 'running').history.iterations[0].launchState).toBe('running');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(execution.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(deps.runEvaluator).not.toHaveBeenCalled();
+      manager.stopAll();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('launches the next Squad iteration after a failing verdict with budget left', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, deps } = durableManager();
+      const execution = vi.fn(async () => ({ state: 'RUNNING' }));
+      let n = 0;
+      deps.launchSquad = vi.fn(async () => ({ executionId: `execution-${++n}` }));
+      deps.getSquadExecution = execution;
+      deps.runEvaluator = vi.fn(async () => ({ ok: true, text: '{"verdict":"partial"}', provider: 'test', ms: 1 }) as LlmRunResult);
+      manager.setDeps(deps);
+      const goal = await manager.create({ projectId: project.id, title: 'Team', statement: 'do it', activate: true, maxIterations: 5,
+        assignment: { kind: 'team', teamId: 'release-squad' } });
+      execution.mockResolvedValueOnce({ state: 'COMPLETED', finalSummary: 'half' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deps.launchSquad).toHaveBeenCalledTimes(2);
+      expect(current(manager, goal.id).status).toBe('active');
+      manager.stopAll();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

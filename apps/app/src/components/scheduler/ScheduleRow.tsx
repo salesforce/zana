@@ -1,3 +1,4 @@
+import { failedRunMessage } from '../../lib/schedule-run-outcome';
 import { product } from '../../lib/product-client.js';
 import React, { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
@@ -55,6 +56,11 @@ export const ScheduleRow = React.memo(function ScheduleRow({
     const result = await product.scheduler.runNow(task.id);
     if (!result.ok) {
       pushToast(`Run failed: ${result.message}`, 'error');
+      return;
+    }
+    const failure = failedRunMessage(result.value);
+    if (failure) {
+      pushToast(`Run failed: ${failure}`, 'error');
       return;
     }
     pushToast(`Fired "${task.name}"`, 'info');

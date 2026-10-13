@@ -6,6 +6,7 @@ import { ExecutionService, KeyedColdStartSemaphore, type ExecutionRequestV1, Squ
 import { createExecutionStore, KICKOFF_FAILURE_BLOCK_THRESHOLD, type ExecutionRecord } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 import { createResumeGrantStore } from '../resume-grant-store.js';
+import { executionBoardProjection } from '../projection.js';
 
 async function fixture(run: (filePath: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'zcc-execution-service-'));
@@ -29,6 +30,7 @@ function deps(filePath: string, over: Partial<ConstructorParameters<typeof Squad
     getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', task: 'unknown' }] }),
     cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }),
     replyToSession: () => true,
+    resolveExactNativeRecoverySnapshots: (record: ExecutionRecord) => record.nativeRecoverySnapshots ?? [],
     ...over
   };
 }
@@ -61,6 +63,174 @@ describe('dependencyResultsSection', () => {
 });
 
 describe('execution admission', () => {
+  it('rechecks inferred runtime plan requirements before coordinator registration', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      admissionInput: (_projectId, incoming) => ({
+        workUnits: incoming.workUnits,
+        requireCompletePlan: true,
+        slotCount: 1,
+        maxSlots: 1,
+        initialTasks: ['work'],
+        inventory: {
+          version: 1, observedAt: Date.now(), maxAgeMs: 60_000,
+          skills: [{ name: 'missing-skill', available: false }], mcpServers: [], models: [], providers: []
+        }
+      })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'lead-1', role: 'orchestrator' as const };
+
+    await expect(service.registerPlan(coordinator, [{
+      id: 'runtime', title: 'Runtime', task: 'use unavailable requirement', dependencies: [],
+      files: ['src/runtime.ts'], verification: ['pnpm test'], requires: { skills: ['missing-skill'] }
+    }])).resolves.toEqual({
+      ok: false, code: 'INVALID', message: 'work unit runtime requirement unavailable: skills: missing-skill'
+    });
+    expect((await store.get('execution-1'))?.workUnits).toBeUndefined();
+  }));
+
+  it('enforces authoritative correction consent for direct coordinator registration', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const authorizePlanRegistration = vi.fn(() => ({ ok: false as const, message: 'plan correction approval is pending' }));
+    const service = new SquadExecutionService(deps(filePath, { store, authorizePlanRegistration }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'lead-1', role: 'orchestrator' as const };
+
+    await expect(service.registerPlan(coordinator, [{
+      id: 'direct', title: 'Direct', task: 'bypass handoff', dependencies: [], files: ['src/direct.ts'], verification: ['pnpm test']
+    }])).resolves.toEqual({ ok: false, code: 'INVALID', message: 'plan correction approval is pending' });
+    expect(authorizePlanRegistration).toHaveBeenCalledOnce();
+    expect((await store.get('execution-1'))?.workUnits).toBeUndefined();
+  }));
+
+  it('rejects direct coordinator registration after correction cancellation', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      authorizePlanRegistration: () => ({ ok: false as const, message: 'plan correction was cancelled' })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'lead-1', role: 'orchestrator' as const };
+
+    await expect(service.registerPlan(coordinator, [{
+      id: 'cancelled', title: 'Cancelled', task: 'bypass cancellation', dependencies: [], files: ['src/cancelled.ts'], verification: ['pnpm test']
+    }])).resolves.toEqual({ ok: false, code: 'INVALID', message: 'plan correction was cancelled' });
+    expect((await store.get('execution-1'))?.workUnits).toBeUndefined();
+  }));
+
+  it('cancels a plan-correction run before workers can claim work and rejects resume', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true as const, value: { canceledSessionIds: ['coordinator-1'], pendingSessionIds: [] } }));
+    const onTerminal = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, { store, cancelTeamLaunch, onTerminal }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    if (!started.ok) throw new Error(started.message);
+
+    await expect(service.stopForPlanCorrection(started.value.id)).resolves.toMatchObject({
+      state: 'STOPPED', timeoutReason: 'plan-correction-cancelled'
+    });
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1');
+    expect(onTerminal).toHaveBeenCalledWith(expect.objectContaining({ state: 'STOPPED', timeoutReason: 'plan-correction-cancelled' }));
+    expect((await store.get(started.value.id))?.workUnits).toBeUndefined();
+    await expect(service.resumeRun('owner', 'project-1', started.value.id, (await store.get(started.value.id))!.stateVersion)).resolves.toMatchObject({
+      ok: false, code: 'RECOVERY_NOT_ALLOWED'
+    });
+  }));
+
+  it('retries cancelled correction terminalization after transient Team cleanup failure', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const cancelTeamLaunch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, code: 'CANCEL_FAILED', message: 'temporary teardown failure' })
+      .mockResolvedValueOnce({ ok: true, value: { canceledSessionIds: ['coordinator-1'], pendingSessionIds: [] } });
+    const onTerminal = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, { store, cancelTeamLaunch, onTerminal }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    if (!started.ok) throw new Error(started.message);
+
+    await expect(service.stopForPlanCorrection(started.value.id)).rejects.toThrow('CANCEL_FAILED: temporary teardown failure');
+    await expect(store.get(started.value.id)).resolves.toMatchObject({
+      state: 'STOPPED', timeoutReason: 'plan-correction-cancelled'
+    });
+    await expect(service.stopForPlanCorrection(started.value.id)).resolves.toMatchObject({
+      state: 'STOPPED', timeoutReason: 'plan-correction-cancelled'
+    });
+    expect(cancelTeamLaunch).toHaveBeenCalledTimes(2);
+    expect(onTerminal).toHaveBeenCalledTimes(2);
+    await expect(service.resumeRun('owner', 'project-1', started.value.id, (await store.get(started.value.id))!.stateVersion)).resolves.toMatchObject({
+      ok: false, code: 'RECOVERY_NOT_ALLOWED'
+    });
+  }));
+
+  it('retries cancelled correction terminalization after a concurrent terminal write', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const stop = vi.spyOn(store, 'stopForPlanCorrection');
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true as const, value: { canceledSessionIds: ['coordinator-1'], pendingSessionIds: [] } }));
+    const service = new SquadExecutionService(deps(filePath, { store, cancelTeamLaunch }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    if (!started.ok) throw new Error(started.message);
+    await store.stopForPlanCorrection(started.value.id);
+
+    await expect(service.stopForPlanCorrection(started.value.id)).resolves.toMatchObject({
+      state: 'STOPPED', timeoutReason: 'plan-correction-cancelled'
+    });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1');
+  }));
+
+  it('prepares one persisted squad worktree before launching the Team', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const authorizeTeamLaunch = vi.fn(async () => ({ ok: true as const, value: {
+      teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: []
+      }
+    } }));
+    const prepareSquadWorktree = vi.fn(async (record: ExecutionRecord) =>
+      await serviceDeps.store.setSquadWorktree(record.id, record.stateVersion, {
+        path: '/repo/.worktrees/team-execution-1', branch: 'zcc/team-execution-1', baseBranch: 'main'
+      })
+    );
+    const serviceDeps = deps(filePath, { launchTeam, authorizeTeamLaunch, prepareSquadWorktree });
+    const service = new ExecutionService(serviceDeps);
+
+    const started = await service.start('owner', 'project-1', { ...request, worktree: true });
+
+    expect(started).toMatchObject({ ok: true, value: { squadWorktree: {
+      path: '/repo/.worktrees/team-execution-1', branch: 'zcc/team-execution-1', baseBranch: 'main'
+    } } });
+    expect(prepareSquadWorktree).toHaveBeenCalledOnce();
+    expect(prepareSquadWorktree.mock.invocationCallOrder[0]).toBeLessThan(authorizeTeamLaunch.mock.invocationCallOrder[0]!);
+    expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ worktree: true }));
+  }));
+
+  it('persists and forwards requested squad worktree completion policy', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const service = new ExecutionService(deps(filePath, { launchTeam }));
+
+    const started = await service.start('owner', 'project-1', { ...request, onComplete: 'merge' });
+
+    expect(started).toMatchObject({ ok: true, value: { request: { onComplete: 'merge' } } });
+    expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ onComplete: 'merge' }));
+  }));
+
+  it('notifies host lifecycle for failed executions with a squad worktree', async () => fixture(async (filePath) => {
+    const onTerminal = vi.fn();
+    const serviceDeps = deps(filePath, {
+      onTerminal,
+      prepareSquadWorktree: async (record) => serviceDeps.store.setSquadWorktree(record.id, record.stateVersion, {
+        path: '/repo/.worktrees/team-execution-1', branch: 'zcc/team-execution-1'
+      }),
+      launchTeam: async () => ({ ok: false, message: 'spawn failed' })
+    });
+    const failing = new ExecutionService(serviceDeps);
+
+    await failing.start('owner', 'project-1', { ...request, worktree: true });
+
+    expect(onTerminal).toHaveBeenCalledWith(expect.objectContaining({ state: 'FAILED', squadWorktree: expect.anything() }));
+  }));
+
+
   it('does not claim an execution or authorize workers when the machine route is unsupported', async () => fixture(async (filePath) => {
     const authorizeTeamLaunch = vi.fn();
     const launchTeam = vi.fn();
@@ -108,6 +278,60 @@ describe('execution admission', () => {
       ok: false, code: 'ADMISSION_FAILED', message: 'provider health is unknown'
     });
     expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+  }));
+
+  it('returns resolved per-unit missing requirements before any claim or worker launch', async () => fixture(async (filePath) => {
+    const authorizeTeamLaunch = vi.fn();
+    const launchTeam = vi.fn();
+    const options = deps(filePath, {
+      authorizeTeamLaunch,
+      launchTeam,
+      admissionInput: () => ({
+        workUnits: [{ id: 'build', title: 'Build UI', task: 'Build', dependencies: [], files: ['src/ui.ts'], verification: ['test'], requires: { skills: ['review', 'write'], mcpServers: ['repo', 'browser'] } }],
+        requireCompletePlan: true, slotCount: 1, maxSlots: 1, initialTasks: ['work'], now: 10,
+        inventory: { version: 1 as const, observedAt: 10, maxAgeMs: 100, skills: [{ name: 'review', available: false }, { name: 'write', available: true }], mcpServers: [{ name: 'repo', available: false }, { name: 'browser', available: true }], models: [], providers: [] }
+      })
+    });
+    const claim = vi.spyOn(options.store, 'claim');
+    const service = new ExecutionService(options);
+
+    await expect(service.start('owner', 'project-1', { ...request, workUnits: [{ id: 'build', title: 'Build UI', task: 'Build', dependencies: [], files: ['src/ui.ts'], verification: ['test'], requires: { skills: ['review', 'write'], mcpServers: ['repo', 'browser'] } }] }))
+      .resolves.toEqual({
+        ok: false,
+        code: 'REQUIREMENT_UNAVAILABLE',
+        message: 'work unit build requirement unavailable: skills: review',
+        requirementFailure: { workUnits: [{ id: 'build', title: 'Build UI', missingSkills: ['review'], missingMcpServers: ['repo'] }] }
+      });
+    expect(claim).not.toHaveBeenCalled();
+    expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+    expect(launchTeam).not.toHaveBeenCalled();
+  }));
+
+  it('returns availability unknown without confirmed missing requirements before any claim or worker launch', async () => fixture(async (filePath) => {
+    const authorizeTeamLaunch = vi.fn();
+    const launchTeam = vi.fn();
+    const options = deps(filePath, {
+      authorizeTeamLaunch,
+      launchTeam,
+      admissionInput: () => ({
+        workUnits: [{ id: 'build', title: 'Build UI', task: 'Build', dependencies: [], files: ['src/ui.ts'], verification: ['test'], requires: { skills: ['review'], mcpServers: ['repo'] } }],
+        requireCompletePlan: true, slotCount: 1, maxSlots: 1, initialTasks: ['work'], now: 10,
+        inventory: { version: 1 as const, observedAt: 10, maxAgeMs: 100, skills: [], mcpServers: [], models: [], providers: [], sourceStatuses: [{ source: 'skills' as const, status: 'failed' as const }, { source: 'mcpServers' as const, status: 'failed' as const }] }
+      })
+    });
+    const claim = vi.spyOn(options.store, 'claim');
+    const service = new ExecutionService(options);
+
+    await expect(service.start('owner', 'project-1', { ...request, workUnits: [{ id: 'build', title: 'Build UI', task: 'Build', dependencies: [], files: ['src/ui.ts'], verification: ['test'], requires: { skills: ['review'], mcpServers: ['repo'] } }] }))
+      .resolves.toEqual({
+        ok: false,
+        code: 'CAPABILITY_AVAILABILITY_UNKNOWN',
+        message: 'Project capability availability could not be verified',
+        availabilityUnknown: { failedSources: ['skills', 'mcpServers'] }
+      });
+    expect(claim).not.toHaveBeenCalled();
+    expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+    expect(launchTeam).not.toHaveBeenCalled();
   }));
 
   it('rejects an unregistered owner project before any durable claim or spawn', async () => fixture(async (filePath) => {
@@ -1469,6 +1693,49 @@ describe('SquadExecutionService', () => {
     expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
   }));
 
+  it('queues and delivers a plan-correction wake to the parked coordinator, then acks it', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+
+    await service.wakeCoordinatorForPlanCorrection('execution-1', 'write the corrected plan');
+
+    expect(replyToSession).toHaveBeenCalledWith('coordinator', 'write the corrected plan');
+    expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
+  }));
+
+  it('keeps a plan-correction wake queued while the coordinator is mid-turn', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession, getAgentState: () => 'working',
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+
+    await service.wakeCoordinatorForPlanCorrection('execution-1', 'write the corrected plan');
+
+    expect(replyToSession).not.toHaveBeenCalled();
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toBe('write the corrected plan');
+  }));
+
+  it('rejects a plan-correction wake for an unknown execution', async () => fixture(async (filePath) => {
+    const service = new SquadExecutionService(deps(filePath, { store: createExecutionStore({ filePath, id: () => 'execution-1' }) }));
+    await expect(service.wakeCoordinatorForPlanCorrection('missing', 'x')).rejects.toThrow('execution not found');
+  }));
+
   it('attempts immediate wake delivery without optional idle-state wiring', async () => fixture(async (filePath) => {
     const replyToSession = vi.fn(() => true);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
@@ -2394,6 +2661,428 @@ describe('SquadExecutionService', () => {
     expect(await store.get(source.id)).toMatchObject({ state: 'STOPPED', timeoutReason: 'unresolved-blocker', successorExecutionId: 'execution-2' });
   }));
 
+  it('resumes retained failed work in place, retaining completed units and resetting claims', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let record = await store.registerPlan(started.value.id, started.value.stateVersion, [
+      { id: 'done', title: 'Done', task: 'Inspect', dependencies: [], readOnly: true },
+      { id: 'failed', title: 'Failed', task: 'Report', dependencies: ['done'], readOnly: true },
+      { id: 'claimed', title: 'Claimed', task: 'Verify', dependencies: ['done'], readOnly: true }
+    ]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'done');
+    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'done', 'retained');
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'failed');
+    record = await store.failWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'failed', 'failed');
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'claimed');
+    record = await store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'failed');
+
+    const resumed = await service.resumeRun('owner', 'project-1', record.id, record.stateVersion);
+    expect(resumed).toMatchObject({ ok: true, value: { id: record.id, state: 'RUNNING', attempt: 2 } });
+    expect((await store.get(record.id))?.workUnits).toMatchObject(expect.arrayContaining([
+      expect.objectContaining({ id: 'done', state: 'COMPLETED', result: 'retained' }),
+      expect.objectContaining({ id: 'failed', state: 'READY' }),
+      expect.objectContaining({ id: 'claimed', state: 'READY' })
+    ]));
+  }));
+
+  it('rejects exact-native recovery cleanly when retained run has no restorable slots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    const failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'exact-native')).resolves.toEqual({
+      ok: false, code: 'NO_RESTORABLE_SLOTS', message: 'exact-native recovery requires at least one restorable native slot'
+    });
+    expect(await store.get(failed.id)).toMatchObject({ state: 'FAILED', stateVersion: failed.stateVersion });
+  }));
+
+  it('rejects exact-native recovery when host confirms no current slot is compatible', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      launchTeam,
+      resolveExactNativeRecoverySnapshots: () => []
+    }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'former-builder', profileId: 'codex', nativeConversationId: 'native-1'
+    });
+
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'exact-native')).resolves.toEqual({
+      ok: false, code: 'NO_RESTORABLE_SLOTS', message: 'exact-native recovery requires at least one restorable native slot'
+    });
+    expect(launchTeam).toHaveBeenCalledTimes(1);
+    expect(await store.get(failed.id)).toMatchObject({ state: 'FAILED', stateVersion: failed.stateVersion });
+  }));
+
+  it('passes trusted exact-native slot snapshots through the normal retained retry launch', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const authorizeTeamLaunch = vi.fn((_caller, _team, _project, _request, _policy, slots, _mode, _admission, nativeRecovery) => ({
+      ok: true as const,
+      value: {
+        teamId: 'team-1',
+        projectId: 'project-1',
+        slots: slots.map((slot, index) => ({
+          ...slot,
+          slotId: `worker-${index + 1}`,
+          personaId: 'builder',
+          authorizationId: `authorization-${index + 1}`,
+          ...(nativeRecovery?.[index] ? { nativeRecovery: nativeRecovery[index] } : {})
+        })),
+        context: { version: 1 as const, principalId: 'team:team-1:owner:request-1', authorizedAt: 10, expiresAt: 20, slots: [] }
+      }
+    }));
+    const service = new SquadExecutionService(deps(filePath, { store, launchTeam, authorizeTeamLaunch }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'exact-native')).resolves.toMatchObject({
+      ok: true, value: { state: 'RUNNING', attempt: 2 }
+    });
+    expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({
+      slots: [expect.objectContaining({
+        slotId: 'worker-1',
+        nativeRecovery: expect.objectContaining({ slotId: 'worker-1', nativeConversationId: 'native-1' })
+      })]
+    }));
+    expect(launchTeam.mock.calls[0]?.[2]).not.toHaveProperty('retainedRecovery');
+  }));
+
+  it('preserves retained native identities when fresh-plan recovery fails before launch', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let admissionCalls = 0;
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      admissionInput: () => ({ slotCount: 1, maxSlots: 1, initialTasks: ['work'], ...(admissionCalls++ < 2 ? {} : { workUnits: [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], requires: { skills: ['missing'] } }] }), inventory: {
+        version: 1, observedAt: 1, maxAgeMs: 60_000, skills: [], mcpServers: [], models: [], providers: []
+      } })
+    }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'fresh-plan'))
+      .resolves.toMatchObject({ ok: false, code: 'ADMISSION_FAILED' });
+    const current = await store.get(failed.id);
+    expect(current).toMatchObject({ state: 'FAILED' });
+    expect(current?.nativeRecoverySnapshots).toEqual([expect.objectContaining({ nativeConversationId: 'native-1' })]);
+    expect(executionBoardProjection(current!).recovery?.actions.freshPlan).toEqual({ available: true });
+  }));
+
+  it.each(['admission', 'preflight'] as const)('keeps exact-native recovery actionable after %s fails before Team launch', async (failure) => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let admissionCalls = 0;
+    let workflowCalls = 0;
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      admissionInput: () => ({
+        slotCount: 1, maxSlots: 1, initialTasks: ['work'],
+        ...(failure === 'admission' && admissionCalls++ >= 2 ? {
+          workUnits: [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], requires: { skills: ['missing'] } }]
+        } : {}),
+        inventory: { version: 1, observedAt: 1, maxAgeMs: 60_000, skills: [], mcpServers: [], models: [], providers: [] }
+      }),
+      preflightWorkflow: failure === 'preflight'
+        ? () => workflowCalls++ < 2 ? { ok: true } : { ok: false, code: 'WORKFLOW_UNAVAILABLE', message: 'workflow unavailable' }
+        : undefined
+    }));
+    const started = await service.start('owner', 'project-1', failure === 'preflight' ? { ...request, workflow: { supportedRequestVersions: [1] } as never } : request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'exact-native'))
+      .resolves.toMatchObject({ ok: false, code: failure === 'admission' ? 'ADMISSION_FAILED' : 'WORKFLOW_UNAVAILABLE' });
+    const current = await store.get(failed.id);
+    expect(current).toMatchObject({ state: 'FAILED' });
+    expect(current?.nativeRecoverySnapshots).toEqual([expect.objectContaining({ nativeConversationId: 'native-1' })]);
+    expect(executionBoardProjection(current!).recovery?.actions).toMatchObject({
+      freshPlan: { available: true },
+      exactNative: { restorableSlots: 1 }
+    });
+    await expect(service.retry('owner', 'project-1', failed.id, current!.stateVersion)).resolves.toMatchObject({
+      ok: false, code: 'RETRY_NOT_ALLOWED'
+    });
+  }));
+
+  it('preserves exact-native identities when recovery worktree preparation fails', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let worktreeCalls = 0;
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      prepareSquadWorktree: async (record) => {
+        if (++worktreeCalls > 1) throw new Error('WORKTREE_UNAVAILABLE');
+        return record;
+      }
+    }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'exact-native'))
+      .resolves.toMatchObject({ ok: false, code: 'WORKTREE_UNAVAILABLE' });
+    expect((await store.get(failed.id))?.nativeRecoverySnapshots).toEqual([expect.objectContaining({ nativeConversationId: 'native-1' })]);
+  }));
+
+  it('preserves exact-native identities when recovery relaunch fails', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const launchTeam = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, code: 'SPAWN_FAILED', message: 'replacement spawn failed' });
+    const service = new SquadExecutionService(deps(filePath, { store, launchTeam }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'exact-native'))
+      .resolves.toMatchObject({ ok: false, code: 'SPAWN_FAILED' });
+    expect((await store.get(failed.id))?.nativeRecoverySnapshots).toEqual([expect.objectContaining({ nativeConversationId: 'native-1' })]);
+  }));
+
+  it('clears prior native identities only after fresh-plan replacement launch succeeds', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const service = new SquadExecutionService(deps(filePath, { store, launchTeam }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'fresh-plan'))
+      .resolves.toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2 } });
+    expect((await store.get(failed.id))?.nativeRecoverySnapshots).toEqual([]);
+    expect(launchTeam).toHaveBeenCalledTimes(2);
+  }));
+
+  it.each(['exact-native', 'fresh-plan'] as const)('keeps %s recovery STARTING while replacement admission is pending during status polling', async (mode) => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let recovering = false;
+    let delayAdmission = false;
+    let releaseAdmission!: () => void;
+    let admissionEntered!: () => void;
+    const admissionPending = new Promise<void>((resolve) => { admissionEntered = resolve; });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      admissionInput: async () => {
+        if (delayAdmission) {
+          admissionEntered();
+          await new Promise<void>((resolve) => { releaseAdmission = resolve; });
+        }
+        return { slotCount: 1, maxSlots: 1, initialTasks: ['work'], inventory: {
+          version: 1, observedAt: 1, maxAgeMs: 60_000, skills: [], mcpServers: [], models: [], providers: []
+        } };
+      },
+      getTeamLaunch: async () => recovering ? {} : {
+        workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }]
+      }
+    }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    if (mode === 'exact-native') {
+      failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+        attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+      });
+    }
+
+    recovering = true;
+    delayAdmission = true;
+    const recovered = service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, mode);
+    await admissionPending;
+    await expect(service.status('owner', 'project-1', failed.id)).resolves.toMatchObject({ state: 'STARTING' });
+    delayAdmission = false;
+    releaseAdmission();
+    await expect(recovered).resolves.toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2 } });
+  }));
+
+  it.each(['exact-native', 'fresh-plan'] as const)('keeps %s recovery STARTING while replacement launch is pending during status polling', async (mode) => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let recovering = false;
+    let releaseLaunch!: () => void;
+    let launchEntered!: () => void;
+    const launchPending = new Promise<void>((resolve) => { launchEntered = resolve; });
+    let launchCount = 0;
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      launchTeam: async () => {
+        if (++launchCount > 1) {
+          launchEntered();
+          await new Promise<void>((resolve) => { releaseLaunch = resolve; });
+        }
+        return { ok: true };
+      },
+      getTeamLaunch: async () => recovering ? {} : {
+        workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }]
+      }
+    }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    if (mode === 'exact-native') {
+      failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+        attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+      });
+    }
+
+    recovering = true;
+    const recovered = service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, mode);
+    await launchPending;
+    await expect(service.status('owner', 'project-1', failed.id)).resolves.toMatchObject({ state: 'STARTING' });
+    releaseLaunch();
+    await expect(recovered).resolves.toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2 } });
+  }));
+
+  it('serializes retained resume generation with worktree deletion lifecycle effects', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let releaseResume!: () => void;
+    let resumeEntered!: () => void;
+    let locked = false;
+    const lifecycleQueue: Array<() => void> = [];
+    const withExecutionLifecycleLock = async <T>(_executionId: string, run: () => Promise<T>): Promise<T> => {
+      if (locked) await new Promise<void>((resolve) => lifecycleQueue.push(resolve));
+      locked = true;
+      try { return await run(); } finally {
+        locked = false;
+        lifecycleQueue.shift()?.();
+      }
+    };
+    const originalBeginRetainedRecovery = store.beginRetainedRecovery;
+    let holdResume = true;
+    const service = new SquadExecutionService(deps(filePath, {
+      store: { ...store, beginRetainedRecovery: async (...args) => {
+        resumeEntered();
+        if (holdResume) await new Promise<void>((resolve) => { releaseResume = resolve; });
+        return originalBeginRetainedRecovery(...args);
+      } },
+      withExecutionLifecycleLock
+    }));
+    await service.start('owner', 'project-1', request);
+    const running = await store.get('execution-1');
+    if (!running) throw new Error('missing execution');
+    const failed = await store.transition(running.id, running.stateVersion, 'FAILED', 'error', 'failed');
+
+    const resume = service.resumeRun('owner', 'project-1', failed.id, failed.stateVersion);
+    await new Promise<void>((resolve) => { resumeEntered = resolve; });
+    let checkoutRemoved = false;
+    const deleteCheckout = withExecutionLifecycleLock(failed.id, async () => {
+      const current = await store.get(failed.id);
+      checkoutRemoved = current?.state === 'FAILED' && current.stateVersion === failed.stateVersion;
+    });
+
+    releaseResume();
+    holdResume = false;
+    await expect(resume).resolves.toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2 } });
+    await deleteCheckout;
+    expect(checkoutRemoved).toBe(false);
+  }));
+
+  it('defers retained resume while an active normal follow-up owns its worktree', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      withExecutionLifecycleLock: async (_executionId, run) => run(),
+      mayResumeRetainedWorktree: () => false
+    }));
+    await service.start('owner', 'project-1', request);
+    const running = await store.get('execution-1');
+    if (!running) throw new Error('missing execution');
+    const failed = await store.transition(running.id, running.stateVersion, 'FAILED', 'error', 'failed');
+
+    await expect(service.resumeRun('owner', 'project-1', failed.id, failed.stateVersion)).resolves.toMatchObject({
+      ok: false,
+      code: 'RECOVERY_NOT_ALLOWED',
+      message: 'retained squad worktree is owned by an active follow-up agent'
+    });
+    expect(await store.get(failed.id)).toMatchObject({ state: 'FAILED', stateVersion: failed.stateVersion });
+  }));
+
+  it('gives retained failed and stopped resumes fresh deadline windows after original deadlines elapse', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    let nextId = 0;
+    const store = createExecutionStore({ filePath, id: () => `execution-${++nextId}`, now: () => now });
+    const setTimer = vi.fn(() => 0 as unknown as NodeJS.Timeout);
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      now: () => now,
+      setTimer,
+      clearTimer: vi.fn(),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] })
+    }));
+    for (const terminalState of ['FAILED', 'STOPPED'] as const) {
+      const started = await service.start('owner', 'project-1', { ...request, launchRequestId: `retained-${terminalState}`, policy: { deadlineMs: 100 } });
+      if (!started.ok) throw new Error('source launch failed');
+      const record = await store.transition(started.value.id, started.value.stateVersion, terminalState, 'error', terminalState.toLowerCase());
+
+      now += 101;
+      const resumed = await service.resumeRun('owner', 'project-1', record.id, record.stateVersion);
+      expect(resumed).toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2, attemptStartedAt: now } });
+      expect(setTimer).toHaveBeenLastCalledWith(expect.any(Function), 100);
+
+      now += 99;
+      await expect(service.status('owner', 'project-1', record.id)).resolves.toMatchObject({ state: 'RUNNING' });
+      now += 2;
+      await expect(service.status('owner', 'project-1', record.id)).resolves.toMatchObject({ state: 'STOPPED', timeoutReason: 'idle' });
+    }
+  }));
+
+  it('gives a retained resume fresh plan-readiness grace after original grace elapses', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    const setTimer = vi.fn(() => 0 as unknown as NodeJS.Timeout);
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      now: () => now,
+      setTimer,
+      clearTimer: vi.fn(),
+      planStartupGraceMs: () => 100
+    }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    if (!started.ok) throw new Error('source launch failed');
+    const failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+
+    now += 101;
+    const resumed = await service.resumeRun('owner', 'project-1', failed.id, failed.stateVersion);
+
+    expect(resumed).toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2, attemptStartedAt: now } });
+    expect(setTimer).toHaveBeenLastCalledWith(expect.any(Function), 100);
+  }));
+
+  it('rejects retained resume for timeout successors and unresolved blocker timeouts', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let record = await store.transition(started.value.id, started.value.stateVersion, 'STOPPED', 'warning', 'stopped');
+    const raw = JSON.parse(await readFile(filePath, 'utf8')) as { records: Array<{ timeoutReason?: string; successorExecutionId?: string }> };
+    raw.records[0]!.timeoutReason = 'unresolved-blocker';
+    await writeFile(filePath, JSON.stringify(raw));
+    record = (await createExecutionStore({ filePath, id: () => 'unused' }).get(record.id))!;
+    await expect(service.resumeRun('owner', 'project-1', record.id, record.stateVersion)).resolves.toMatchObject({ ok: false, code: 'RECOVERY_NOT_ALLOWED' });
+  }));
+
   it('validates timeout recovery input and carries completed output plus unresolved question into its successor', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: (() => { let next = 0; return () => `execution-${++next}`; })(), now: () => now });
@@ -2422,6 +3111,46 @@ describe('SquadExecutionService', () => {
     expect(successor?.request.objective).toContain('Inspect: Inspection found target A.');
     expect(successor?.request.objective).toContain('Approve target A?');
     expect(successor?.workUnits).toEqual([expect.objectContaining({ id: 'pending', dependencies: [] })]);
+  }));
+
+  it('preserves unfinished work-unit requirements in a timeout successor', async () => fixture(async (filePath) => {
+    let executionId = 0;
+    const store = createExecutionStore({ filePath, id: () => `execution-${++executionId}` });
+    const service = new ExecutionService({ ...deps(filePath, {
+      store,
+      admissionInput: (_projectId, incoming) => ({
+        workUnits: incoming.workUnits,
+        requireCompletePlan: false,
+        slotCount: 1,
+        maxSlots: 1,
+        initialTasks: ['Recover'],
+        now: 10,
+        inventory: {
+          version: 1,
+          observedAt: 10,
+          maxAgeMs: 100,
+          skills: [{ name: 'inspect', available: true }],
+          mcpServers: [{ name: 'repo', available: true }],
+          models: [],
+          providers: []
+        }
+      })
+    }), store });
+    let source = (await store.claim({
+      callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Recover', requestDigest: 'recover-requires', launchRequestId: 'recover-requires', resolvedModels: [],
+      request: { version: 1, slots: [{ initialTask: 'Recover' }], resolvedModels: [] },
+      workUnits: [{ id: 'pending', title: 'Pending', task: 'Inspect', dependencies: [], readOnly: true, requires: { skills: ['inspect'], mcpServers: ['repo'] } }]
+    })).record;
+    source = await store.transition(source.id, source.stateVersion, 'STARTING', 'info', 'start');
+    source = await store.transition(source.id, source.stateVersion, 'RUNNING', 'info', 'run');
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'pending');
+    source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'pending', { id: 'blocker', question: 'Need input' });
+    source = (await store.decideDeadline(source.id, 0, 0)).record;
+    const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-requires');
+    expect(recovered).toMatchObject({ ok: true });
+    expect((await store.get('execution-2'))?.workUnits).toEqual([
+      expect.objectContaining({ id: 'pending', requires: { skills: ['inspect'], mcpServers: ['repo'] } })
+    ]);
   }));
 
   it('fails closed rather than rerunning a timed-out mutating unit without provenance', async () => fixture(async (filePath) => {
@@ -2860,6 +3589,102 @@ describe('SquadExecutionService', () => {
     await expect(service.retry('session-1', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true, value: { id: 'execution-1', attempt: 2, state: 'RUNNING', teamLaunchRequestId: 'execution-1:attempt:2' } });
     expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots, undefined, expect.stringMatching(/^launch-v1:/));
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ launchRequestId: 'execution-1:attempt:2', executionId: 'execution-1', executionJobTitle: 'Build release' }));
+  }));
+
+  it('reconciles a retained recovery against its running replacement cohort, not the failed original cohort', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let originalCohortFailed = false;
+    const getTeamLaunch = vi.fn(async (_caller: string, launchRequestId: string) => launchRequestId === 'request-1'
+      ? originalCohortFailed
+        ? { workers: [], outcome: { status: 'completed', result: { ok: false, message: 'original cohort failed' } } }
+        : { workers: [{ slotId: 'slot-1', sessionId: 'worker-original', projectId: 'project-1', process: 'running' }] }
+      : { workers: [{ slotId: 'slot-1', sessionId: 'worker-replacement', projectId: 'project-1', process: 'running' }] });
+    const service = new SquadExecutionService(deps(filePath, { store, getTeamLaunch }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error(started.message);
+    const failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'original cohort failed');
+
+    const recovered = await service.resumeRun('owner', 'project-1', failed.id, failed.stateVersion);
+    expect(recovered).toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2, teamLaunchRequestId: 'execution-1:attempt:2' } });
+    originalCohortFailed = true;
+
+    await expect(service.status('owner', 'project-1', started.value.id)).resolves.toMatchObject({ state: 'RUNNING', attempt: 2 });
+    expect(getTeamLaunch).toHaveBeenLastCalledWith('owner', 'execution-1:attempt:2');
+  }));
+
+  it('keeps a live Team RUNNING when clearing prior native snapshots fails after launch', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const revokeTeamAuthorizations = vi.fn();
+    const onTerminal = vi.fn();
+    const logError = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, { store, revokeTeamAuthorizations, onTerminal, logError }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error(started.message);
+    const failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    vi.spyOn(store, 'clearPriorNativeRecoverySnapshots').mockRejectedValueOnce(new Error('disk full'));
+    revokeTeamAuthorizations.mockClear();
+    onTerminal.mockClear();
+
+    await expect(service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'fresh-plan'))
+      .resolves.toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2 } });
+    expect(revokeTeamAuthorizations).not.toHaveBeenCalled();
+    expect(onTerminal).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('execution-1'), expect.any(Error));
+    await expect(store.get(failed.id)).resolves.toMatchObject({ state: 'RUNNING' });
+  }));
+
+  it('does not mask real admission errors as availability unknown when a capability source failed', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, {
+      launchTeam,
+      admissionInput: () => ({
+        workUnits: [{ id: 'build', title: 'Build', task: 'Build', dependencies: [], files: ['a.ts'], verification: ['t'], requires: { skills: ['review'] } }],
+        requireCompletePlan: true, slotCount: 3, maxSlots: 1, initialTasks: ['work'], now: 10,
+        inventory: { version: 1 as const, observedAt: 10, maxAgeMs: 100, skills: [], mcpServers: [], models: [], providers: [], sourceStatuses: [{ source: 'skills' as const, status: 'failed' as const }] }
+      })
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toMatchObject({ ok: false, code: 'ADMISSION_FAILED', message: '3 slots exceed capacity 1' });
+    expect(launchTeam).not.toHaveBeenCalled();
+  }));
+
+  it('keeps retry public surface at four parameters', () => {
+    expect(ExecutionService.prototype.retry.length).toBe(4);
+  });
+
+  it('bounds stopForPlanCorrection stale retries and handles vanished and terminal records', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    if (!started.ok) throw new Error(started.message);
+
+    // Persistently stale writes terminate instead of recursing forever.
+    const stale = vi.spyOn(store, 'stopForPlanCorrection').mockRejectedValue(new Error('stale execution state'));
+    await expect(service.stopForPlanCorrection(started.value.id)).rejects.toThrow('stale execution state');
+    expect(stale).toHaveBeenCalledTimes(5);
+
+    // Non-stale errors surface immediately.
+    stale.mockReset().mockRejectedValueOnce(new Error('boom'));
+    await expect(service.stopForPlanCorrection(started.value.id)).rejects.toThrow('boom');
+
+    // Record vanishes between the stale write and the re-read.
+    const get = vi.spyOn(store, 'get');
+    stale.mockReset().mockRejectedValueOnce(new Error('stale execution state'));
+    get.mockResolvedValueOnce(await store.get(started.value.id)).mockResolvedValueOnce(undefined);
+    await expect(service.stopForPlanCorrection(started.value.id)).resolves.toBeUndefined();
+
+    // A concurrent terminal transition wins: returned as-is without cancellation.
+    const cancelTeamLaunch = vi.fn();
+    const terminalService = new SquadExecutionService(deps(filePath, { store, cancelTeamLaunch }));
+    stale.mockReset().mockRejectedValueOnce(new Error('stale execution state'));
+    const current = await store.get(started.value.id);
+    get.mockReset();
+    get.mockResolvedValueOnce(current).mockResolvedValueOnce({ ...current!, state: 'FAILED' });
+    await expect(terminalService.stopForPlanCorrection(started.value.id)).resolves.toMatchObject({ state: 'FAILED' });
+    expect(cancelTeamLaunch).not.toHaveBeenCalled();
+    get.mockReset();
+    await expect(terminalService.stopForPlanCorrection('missing')).resolves.toBeUndefined();
+    get.mockResolvedValueOnce({ ...current!, state: 'COMPLETED' });
+    await expect(terminalService.stopForPlanCorrection(started.value.id)).resolves.toMatchObject({ state: 'COMPLETED' });
   }));
 
   it('uses immutable audit owner for retries requested by an effective owner', async () => fixture(async (filePath) => {

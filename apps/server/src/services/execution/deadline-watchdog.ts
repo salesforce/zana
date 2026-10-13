@@ -14,7 +14,7 @@ export interface ExecutionDeadlineWatchdogDeps {
 
 /**
  * Idle-deadline anchor: the most recent GENUINE forward-progress timestamp for a
- * run, floored at its creation time. A run's execution deadline is measured from
+ * run, floored at its current attempt start. A run's execution deadline is measured from
  * THIS anchor, not from `createdAt` — so a healthy run that keeps making progress
  * (every worker heartbeat / real output advances a unit's `progressAt`) re-arms the
  * timer and is never guillotined mid-flight, while a run that makes no forward
@@ -26,10 +26,11 @@ export interface ExecutionDeadlineWatchdogDeps {
  * `renewWorkerLease` with `advanceProgress: false`), so a silent-but-connected worker
  * does NOT keep a stuck run alive forever — that is the claim-stall backstop's job, and
  * here it correctly counts as "no progress". A run with no work units yet (freeform, or
- * pre-plan) falls back to `createdAt`, i.e. the historical fixed cap from launch.
+ * pre-plan) falls back to `attemptStartedAt`. Retained resumes reset that durable
+ * anchor before launch, so their new attempt gets a full deadline window.
  */
 export function executionProgressAnchor(record: ExecutionRecord): number {
-  let anchor = record.createdAt;
+  let anchor = record.attemptStartedAt;
   for (const unit of record.workUnits ?? []) {
     if (typeof unit.progressAt === 'number' && unit.progressAt > anchor) anchor = unit.progressAt;
   }

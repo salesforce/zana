@@ -26,7 +26,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, appendFile, mkdir, writeFile, rename, open, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { EventEmitter } from 'node:events';
-import type { InboxDoc, InboxEntry, InboxNotifyLevel, InboxQuestion } from '@zana-ai/zcc-domain/product';
+import type { InboxDecisionGuidance, InboxDoc, InboxEntry, InboxNotifyLevel, InboxQuestion } from '@zana-ai/zcc-domain/product';
 import { isThreadPendingInboxClone } from '@zana-ai/zcc-domain/product';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 
@@ -108,6 +108,12 @@ export interface InboxInput {
   target?: { moduleId: string };
   executionId?: string;
   blockerId?: string;
+  /** Host-stamped routing fence for desktop-only action entries. */
+  hostActionRequired?: true;
+  /** Host-stamped Squad worktree lifecycle notice marker. */
+  squadNotice?: 'worktree-lifecycle';
+  /** Host-authored decision context rendered with deferred technical Details. */
+  decisionGuidance?: InboxDecisionGuidance;
 }
 
 export interface InboxReadOpts {
@@ -125,6 +131,8 @@ export interface IInboxStore {
    */
   appendOnce(input: InboxInput): Promise<InboxEntry>;
   read(opts?: InboxReadOpts): Promise<{ entries: InboxEntry[]; hasMore: boolean }>;
+  /** Read one live entry by id without depending on history pagination. */
+  get(id: string): Promise<InboxEntry | null>;
   /**
    * Every live entry id currently on disk / in memory. Used by the sibling
    * read-state store to existence-validate markers without the history
@@ -679,6 +687,25 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
     return { entries, hasMore: false };
   }
 
+  async function get(id: string): Promise<InboxEntry | null> {
+    if (!id) return null;
+    try {
+      for await (const line of newestInboxLines(filePath)) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line) as InboxEntry;
+          if (entry.id === id) return entry;
+        } catch (err) {
+          console.warn('[inbox] skipped torn JSONL line while reading entry', { line, err });
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+    return null;
+  }
+
   async function loadLiveIds(): Promise<Set<string>> {
     if (liveIds) return liveIds;
     let raw: string;
@@ -833,6 +860,7 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
     append,
     appendOnce,
     read,
+    get,
     listIds,
     hasId,
     delete: deleteEntry,
@@ -915,6 +943,10 @@ export function createMemoryInboxStore(): IInboxStore {
     return { entries: [...window].reverse(), hasMore: window.length < scoped.length };
   }
 
+  async function get(id: string): Promise<InboxEntry | null> {
+    return entries.find((entry) => entry.id === id) ?? null;
+  }
+
   async function listIds(): Promise<string[]> {
     return entries.map((entry) => entry.id);
   }
@@ -977,6 +1009,7 @@ export function createMemoryInboxStore(): IInboxStore {
     append,
     appendOnce,
     read,
+    get,
     listIds,
     hasId,
     delete: deleteEntry,

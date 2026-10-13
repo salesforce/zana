@@ -2,17 +2,21 @@
  * @vitest-environment happy-dom
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const create = vi.fn();
 const update = vi.fn();
 const upsertSchedulerTask = vi.hoisted(() => vi.fn());
+const teamsList = vi.hoisted(() => vi.fn());
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
     scheduler: {
       create: (...args: unknown[]) => create(...args),
       update: (...args: unknown[]) => update(...args)
+    },
+    teams: {
+      list: (...args: unknown[]) => teamsList(...args)
     }
   }
 }));
@@ -42,7 +46,20 @@ vi.mock('../ui/PopoverPicklist.js', () => ({
     onChange: (next: string) => void;
     ariaLabel: string;
   }) => (
-    <button type="button" id={id} aria-label={ariaLabel} onClick={() => onChange(value || 'p1')}>
+    <button
+      type="button"
+      id={id}
+      aria-label={ariaLabel}
+      onClick={() => onChange(
+        id === 'sched-run-as'
+          ? value === 'agent' ? 'team' : 'agent'
+          : id === 'sched-team'
+            ? 'team-1'
+            : id === 'sched-plan-source'
+              ? 'provided'
+              : value || 'p1'
+      )}
+    >
       {value || ariaLabel}
     </button>
   )
@@ -51,6 +68,11 @@ vi.mock('../ui/PopoverPicklist.js', () => ({
 import { ScheduleEditor } from './ScheduleEditor.js';
 
 describe('ScheduleEditor', () => {
+  beforeEach(() => {
+    teamsList.mockReset();
+    teamsList.mockResolvedValue([{ id: 'team-1', name: 'Release squad', slots: [] }]);
+  });
+
   afterEach(() => {
     cleanup();
     create.mockReset();
@@ -84,6 +106,60 @@ describe('ScheduleEditor', () => {
     );
   });
 
+  it('replaces launch profile with required squad controls and persists selected planning on create', async () => {
+    create.mockResolvedValue({ ok: true, value: { id: 'team-schedule' } });
+    render(<ScheduleEditor task={null} />);
+    expect(screen.getByLabelText('Launch profile')).toBeTruthy();
+    fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, {
+      target: { value: 'Release check' }
+    });
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
+    expect(screen.queryByLabelText('Launch profile')).toBeNull();
+    expect(screen.getByLabelText('Squad planning')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create schedule' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByLabelText('Squad'));
+    fireEvent.click(screen.getByLabelText('Squad planning'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'team',
+      teamId: 'team-1',
+      planSource: 'provided'
+    }));
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('personaId');
+  });
+
+  it('shows a load-error hint when the squad list fails', async () => {
+    teamsList.mockRejectedValue(new Error('offline'));
+    render(<ScheduleEditor task={null} />);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not load squads'));
+  });
+
+  it('shows an empty hint when no squads exist, none when squads load', async () => {
+    teamsList.mockResolvedValue([]);
+    const first = render(<ScheduleEditor task={null} />);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByText(/No squads available/)).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
+    first.unmount();
+    teamsList.mockResolvedValue([{ id: 'team-1', name: 'Release squad', slots: [] }]);
+    render(<ScheduleEditor task={null} />);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.queryByText(/No squads available/)).toBeNull());
+  });
+
+  it('restores launch profile after changing a Squad schedule back to Agent', async () => {
+    render(<ScheduleEditor task={null} />);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByLabelText('Launch profile')).toBeTruthy());
+    expect(screen.queryByLabelText('Squad')).toBeNull();
+  });
+
   it('saves edits and re-enables the submit button', async () => {
     update.mockResolvedValue({ ok: true, value: { id: 'sched-1' } });
     const onSaved = vi.fn();
@@ -107,6 +183,35 @@ describe('ScheduleEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await vi.waitFor(() => expect(onSaved).toHaveBeenCalledWith('sched-1'));
     expect(screen.getByRole('button', { name: 'Save changes' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('persists changed squad plan source on edit', async () => {
+    update.mockResolvedValue({ ok: true, value: { id: 'squad-1' } });
+    const task = {
+      id: 'squad-1',
+      name: 'Release check',
+      enabled: true,
+      projectId: 'p1',
+      profile: 'claude',
+      kind: 'team',
+      teamId: 'team-1',
+      planSource: 'infer',
+      schedule: { every: '1h' },
+      overlap: 'skip',
+      history: { retain: 10 },
+      status: { runCount: 0, runs: [] },
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    };
+    render(<ScheduleEditor task={task as never} />);
+    fireEvent.click(screen.getByLabelText('Squad planning'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await vi.waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update).toHaveBeenCalledWith('squad-1', expect.objectContaining({
+      kind: 'team',
+      teamId: 'team-1',
+      planSource: 'provided'
+    }));
   });
 
   it('shows a create error and stays on the form', async () => {
@@ -157,13 +262,16 @@ describe('ScheduleEditor', () => {
     expect((document.querySelector('#sched-name') as HTMLInputElement).value).toBe('Daily standup');
   });
 
-  it('prefills from a duplicate seed', () => {
+  it('preserves squad assignment and planning when duplicating a squad schedule', () => {
     const source = {
       id: 'sched-1',
       name: 'Morning digest',
       enabled: true,
       projectId: 'p1',
       profile: 'claude',
+      kind: 'team',
+      teamId: 'team-1',
+      planSource: 'provided',
       schedule: { every: '1h' },
       overlap: 'skip',
       history: { retain: 10 },
@@ -178,6 +286,10 @@ describe('ScheduleEditor', () => {
     expect((document.querySelector('#sched-name') as HTMLInputElement).value).toBe(
       'Morning digest (copy)'
     );
+    expect(screen.queryByLabelText('Launch profile')).toBeNull();
+    expect(screen.getByLabelText('Run as').textContent).toBe('team');
+    expect(screen.getByLabelText('Squad').textContent).toBe('team-1');
+    expect(screen.getByLabelText('Squad planning').textContent).toBe('provided');
   });
 
   it('creates a cron schedule', async () => {

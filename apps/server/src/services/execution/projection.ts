@@ -172,6 +172,20 @@ function coordinatorWakesProjection(record: ExecutionRecord): ExecutionBoardProj
   };
 }
 
+function retainedRecoveryActions(record: ExecutionRecord): NonNullable<ExecutionBoardProjection['recovery']>['actions'] {
+  const eligible = !record.successorExecutionId && (record.state === 'FAILED' || record.state === 'STOPPED')
+    && !(record.state === 'STOPPED' && (record.timeoutReason === 'unresolved-blocker' || record.timeoutReason === 'plan-correction-cancelled'));
+  // Exact-native recovery accepts every retained snapshot. A failed replacement
+  // increments attempt without invalidating a snapshot from its source attempt.
+  const restorableSlots = (record.nativeRecoverySnapshots ?? []).length;
+  return {
+    freshPlan: eligible ? { available: true } : { available: false, reason: 'RECOVERY_NOT_ALLOWED' },
+    exactNative: !eligible ? { available: false, restorableSlots, reason: 'RECOVERY_NOT_ALLOWED' }
+      : restorableSlots === 0 ? { available: false, restorableSlots, reason: 'NO_RESTORABLE_SLOTS' }
+      : { available: false, restorableSlots, reason: 'NATIVE_RESTORE_UNAVAILABLE' }
+  };
+}
+
 export function assembledResultProjection(record: ExecutionRecord): ExecutionBoardProjection['assembledResult'] {
   if (!record.assembledResult) return undefined;
   return {
@@ -239,6 +253,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     updatedAt: record.updatedAt,
     ...(record.request.objective ? { objective: record.request.objective } : {}),
     ...(record.summary ? { summary: record.summary } : {}),
+    ...(terminal && record.squadWorktree ? { retainedWorktree: { ...record.squadWorktree, ...(record.squadWorktreeDisposition ? { disposition: record.squadWorktreeDisposition } : {}) } } : {}),
     sources: (record.request.sourceBundle?.sources ?? []).map((source) => ({
       id: source.id, name: source.name, mediaType: source.mediaType, byteSize: source.byteSize,
       contentDigest: source.contentDigest, extractionWarnings: source.extractionWarnings
@@ -265,7 +280,8 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...(record.successorExecutionId ? { successorExecutionId: record.successorExecutionId } : {}),
     recovery: {
       status: terminal ? 'terminal' : (record.recoveryDeadlineAt ?? 0) > Date.now() ? 'available' : 'expired',
-      ...(record.recoveryDeadlineAt === undefined ? {} : { deadlineAt: record.recoveryDeadlineAt })
+      ...(record.recoveryDeadlineAt === undefined ? {} : { deadlineAt: record.recoveryDeadlineAt }),
+      actions: retainedRecoveryActions(record)
     }
   };
 }

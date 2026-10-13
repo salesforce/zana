@@ -76,6 +76,10 @@ import type {
   HarnessVerifyResult,
   IdleTriageResult,
   InboxEntry,
+  InboxHostAction,
+  InboxHostActionInput,
+  InboxHostActionResult,
+  InboxHostActionLookup,
   InboxPdfExport,
   InboxPdfExportResult,
   InboxSummaryResult,
@@ -142,7 +146,7 @@ import type {
   Team,
   TeamInput,
   TeamJobLaunchInput,
-  TeamJobLaunchResult,
+  TeamJobLaunchResponse,
   TerminalSession,
   TmuxRestoreCandidate,
   TmuxVerifyResult,
@@ -242,6 +246,10 @@ export interface CcApi {
     resume(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
     retryDelivery(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, deliveryId: string): Promise<Result<ExecutionBoardProjection>>;
     recoverTimedOut(projectId: string, executionId: string, expectedStateVersion: number, clientRequestId: string): Promise<Result<ExecutionBoardProjection>>;
+    recoverRetainedSquad(projectId: string, executionId: string, expectedStateVersion: number, mode: 'exact-native' | 'fresh-plan'): Promise<Result<ExecutionBoardProjection>>;
+    worktreeAction(projectId: string, executionId: string, expectedStateVersion: number, action: 'leave' | 'instruct' | 'delete' | 'force-delete', instruction?: string): Promise<Result<true>>;
+    /** @deprecated Compatibility alias for `recoverRetainedSquad(..., 'fresh-plan')`. */
+    resumeRun(projectId: string, executionId: string, expectedStateVersion: number, replay?: boolean): Promise<Result<ExecutionBoardProjection>>;
     clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
     relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };
@@ -1480,6 +1488,13 @@ export interface CcApi {
     migrateCurrentOriginReadIds(
       ids: string[]
     ): Promise<{ readIds: Record<string, true>; migratedFromLocalStorage: boolean }>;
+    /** Main-owned host-action ownership lookup. */
+    hostActions?: {
+      list(): Promise<InboxHostAction[]>;
+      get(entryId: string): Promise<InboxHostActionLookup>;
+      run(entryId: string, input?: InboxHostActionInput): Promise<InboxHostActionResult>;
+      readDecisionArtifact(entryId: string, path: string): Promise<Result<{ content: string }>>;
+    };
     onAppended(cb: (entry: InboxEntry) => void): () => void;
     onRemoved(cb: (id: string) => void): () => void;
     /**
@@ -1941,7 +1956,7 @@ export interface CcApi {
     /** Cancel sessions from a renderer-owned interactive Team launch. */
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
     /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
-    startJob(input: TeamJobLaunchInput): Promise<Result<TeamJobLaunchResult>>;
+    startJob(input: TeamJobLaunchInput): Promise<TeamJobLaunchResponse>;
     /**
      * Launch a team as an AUTONOMOUS run into a project: opens orchestrator +
      * worker tabs, the orchestrator seeded with `goal`, and a main-side

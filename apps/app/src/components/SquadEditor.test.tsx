@@ -67,5 +67,24 @@ describe('SquadEditor orchestrator toggle (edit form)', () => {
     // The orchestrator slot's toggle is pressed.
     expect(html).toContain('aria-pressed="true"');
   });
-});
 
+  it('exposes squad-only tri-state shared-worktree settings', () => {
+    const html = renderToStaticMarkup(
+      <SquadEditor team={{ ...team, worktreeIsolation: true }} mode="edit" onClose={vi.fn()} />
+    );
+
+    expect(html).toContain('Worktree isolation');
+    expect(html).toContain('aria-label="Squad worktree isolation"');
+    expect(html).toContain('>On<');
+    expect(html).toContain('Use default follows the effective project-or-global setting');
+    expect(html).toContain('On forces a shared squad worktree; Off disables it');
+  });
+
+  it('keeps an absent worktree setting at Use default', () => {
+    const html = renderToStaticMarkup(
+      <SquadEditor team={team} mode="edit" onClose={vi.fn()} />
+    );
+
+    expect(html).toContain('>Use default</span>');
+  });
+});

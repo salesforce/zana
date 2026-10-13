@@ -15,6 +15,22 @@ export interface TargetResolutionInput {
   extraArgs: string[];
   /** Main-derived launch scope. Per-tab routing cannot select a local-only target remotely. */
   scope?: HarnessScope;
+  /**
+   * MAIN-only: the concrete model id main's launch preflight resolved (and bound
+   * into the authorized launch digest) for a portable model level. When the
+   * spawn resolves the same adapter + level it uses this id VERBATIM instead of
+   * re-mapping the level through provider metadata — a spawn never re-probes or
+   * re-maps against an inventory its preflight did not authorize. Never sourced
+   * from renderer input.
+   */
+  authorizedModel?: AuthorizedModelTarget;
+}
+
+/** A launch's main-resolved level → concrete model id (see {@link TargetResolutionInput.authorizedModel}). */
+export interface AuthorizedModelTarget {
+  readonly adapterId: string;
+  readonly level: ModelLevel;
+  readonly targetId: string;
 }
 
 export interface ModelResolution {
@@ -244,7 +260,10 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
   }
 
   if (!targetId && level) {
-    targetId = provider.adapter.descriptor.targets?.modelLevelMapping?.[level];
+    const authorized = input.authorizedModel;
+    targetId = authorized && authorized.adapterId === adapterId && authorized.level === level
+      ? authorized.targetId
+      : provider.adapter.descriptor.targets?.modelLevelMapping?.[level];
     if (!targetId) {
       throw new Error(`${provider.adapter.descriptor.label} does not support ${level} model level.`);
     }

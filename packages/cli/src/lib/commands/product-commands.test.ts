@@ -702,7 +702,7 @@ describe('product API command groups', () => {
       teamId: 't1',
       projectId: 'p1',
       goal: 'ship it',
-      mode: 'structured'
+      mode: 'freeform'
     });
 
     const shown = await runCli(['node', 'zcc', 'team', 'status', 'ex-1'], { fetchImpl });
@@ -767,6 +767,27 @@ describe('product API command groups', () => {
     expect(oversized.stderr).toContain('exceeds 4000 bytes');
   });
 
+  it('defaults a prose goal to freeform and reports INVALID_PLAN for explicit structured', async () => {
+    const modes: unknown[] = [];
+    const fetchImpl = router({
+      'POST /api/v1/teams/launch': (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        modes.push(body.mode);
+        return body.mode === 'structured'
+          ? jsonResponse(422, { ok: false, code: 'INVALID_PLAN', message: 'provided structured plan is invalid' })
+          : jsonResponse(201, { ok: true, value: { kind: 'job', id: 'execution-1', state: 'RUNNING' } });
+      }
+    });
+    const base = ['node', 'zcc', 'team', 'launch', '--team', 't1', '--project', 'p1', '--goal', 'ship it'];
+    const dflt = await runCli(base, { fetchImpl });
+    expect(dflt.exitCode).toBe(0);
+    expect(dflt.stdout).toContain('execution-1');
+    const strict = await runCli([...base, '--mode', 'structured'], { fetchImpl });
+    expect(strict.exitCode).not.toBe(0);
+    expect(strict.stderr).toContain('INVALID_PLAN');
+    expect(modes).toEqual(['freeform', 'structured']);
+  });
+
   it('waits for a terminal team launch and sends optional launch fields', async () => {
     let body: unknown;
     let state = 'RUNNING';
@@ -798,7 +819,7 @@ describe('product API command groups', () => {
       teamId: 't1',
       projectId: 'p1',
       goal: 'ship it',
-      mode: 'structured',
+      mode: 'freeform',
       title: 'Release',
       summary: 'Verify release'
     });

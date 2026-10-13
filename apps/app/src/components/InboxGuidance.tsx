@@ -15,8 +15,8 @@ export function InboxGuidance() {
         <span>How to push to this inbox</span>
       </div>
       <p className="inbox-guidance-body">
-        Claude tabs spawned from the app already have <code>ZCC_MCP_URL</code> in their
-        environment. From inside a session, ask Claude to call the local{' '}
+        Agent tabs spawned from the app already have <code>ZCC_MCP_URL</code> in their
+        environment. From inside a session, ask the agent to call the local{' '}
         <code>mcp__cc__inbox_push</code> tool with a short comment — finished
         analyses, blocked tasks, or questions back to you land here.
       </p>

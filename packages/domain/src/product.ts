@@ -665,6 +665,66 @@ export interface InboxEntry {
    */
   executionId?: string;
   blockerId?: string;
+  /**
+   * Host-stamped routing fence for an entry whose answer is handled only by a
+   * desktop main-process action. Browser and mobile clients must never inject
+   * its option labels into a terminal when that capability is unavailable.
+   */
+  hostActionRequired?: true;
+  /**
+   * Host-stamped marker for Squad worktree lifecycle notices. The renderer
+   * routes these to Squad details instead of the generic reply box; it is
+   * presentation only and never authorizes an action (main does).
+   */
+  squadNotice?: 'worktree-lifecycle';
+  /**
+   * Optional host-authored decision context. Main content stays plain-language;
+   * technical material appears only after the user opens its Details disclosure.
+   */
+  decisionGuidance?: InboxDecisionGuidance;
+}
+
+export interface InboxDecisionGuidance {
+  kind: 'plan-correction';
+  diagnostic: string;
+  /** Snapshots exist only when producer captured them for this offer. */
+  originalPlanPath?: string;
+  correctedPlanPath?: string;
+  diffPath?: string;
+}
+
+/** Renderer-safe projection of a host-authorized inbox action. The action's
+ * implementation and durable reference remain main-process-only. */
+export interface InboxHostAction {
+  entryId: string;
+  kind: string;
+  status: 'pending' | 'claimed' | 'done' | 'failed';
+  /** Option that must carry operator-authored text to main. */
+  textOptionId?: string;
+  /** Durable, main-authored reason why this host action cannot proceed yet. */
+  message?: string;
+  /** Action has been superseded and cannot be retried. */
+  unavailable?: boolean;
+}
+
+/** Result of a main-owned host-action ownership lookup. `resolved` is false
+ * only when main could not determine ownership, never for a confirmed non-host
+ * entry. */
+export interface InboxHostActionLookup {
+  resolved: boolean;
+  action: InboxHostAction | null;
+}
+
+/** Renderer input for one main-authorized inbox action. */
+export interface InboxHostActionInput {
+  optionId: string;
+  text?: string;
+}
+
+/** Result of asking main to run one host-authorized inbox action. */
+export interface InboxHostActionResult {
+  ok: boolean;
+  status: InboxHostAction['status'] | 'missing';
 }
 
 /**
@@ -836,6 +896,8 @@ export interface LibraryDoc {
   relPath: string;            // posix, relative to its library dir
   title: string;
   summary?: string;
+  /** Terminal shared checkout retained for recovery or a follow-up agent. */
+  retainedWorktree?: { path: string; branch: string; baseBranch?: string; disposition?: 'left' };
   tags?: string[];
   kind: LibraryDocKind;       // derived from ext
   createdAt: number;
@@ -1277,6 +1339,8 @@ export interface SessionCohort {
   slotLabel?: string;
   /** Main-minted stable identity for this expanded slot within one cohort. */
   slotId?: string;
+  /** Configured Team profile; distinct from an effective native-resume spawn profile. */
+  configuredProfile?: LaunchProfileId;
   /** Durable execution identity stamped only by main's execution coordinator. */
   executionId?: string;
   /** Immutable execution title stamped by main for board display. */
@@ -3545,6 +3609,12 @@ export type CloneProjectResult =
 export interface ScheduleRun {
   /** Durable spawn reservation; pending launches must never be replayed. */
   launchState?: 'pending' | 'running' | 'failed';
+  /**
+   * Immutable target selected when this fire was reserved. Lifecycle recovery,
+   * overlap, and concurrency must not reinterpret an unresolved run after an
+   * external schedule-definition edit changes `ScheduledTask.kind`.
+   */
+  launchKind?: 'agent' | 'team';
   /** Stable per-run id (uuid). Older records may not have it; renderer
    *  falls back to `at + sessionId` for keys. */
   id?: string;
@@ -3561,6 +3631,10 @@ export interface ScheduleRun {
   result: 'success' | 'error' | 'skipped' | 'incomplete';
   /** PtyManager session id, if a terminal was actually spawned. */
   sessionId?: string;
+  /** Durable squad execution id when this fire targets a squad. */
+  executionId?: string;
+  /** Stable durable request key for squad launch recovery before execution id acknowledgement. */
+  launchRequestId?: string;
   /** Time from spawn to pty exit (only set once the session ends). */
   durationMs?: number;
   /**
@@ -3614,6 +3688,12 @@ export interface ScheduledTask {
   /** Project to spawn the terminal in (FK into projects.json). */
   projectId: string;
   profile: LaunchProfileId;
+  /** Agent schedules retain the legacy terminal path; squad schedules use ExecutionService. */
+  kind?: 'agent' | 'team';
+  /** Required when kind is `team`. Resolved and authorized only in main. */
+  teamId?: string;
+  /** Structured team kickoff policy. `provided` fails closed when prompt contains an invalid plan. */
+  planSource?: 'provided' | 'infer';
   /**
    * Optional persona to launch this scheduled run as. Resolved against the
    * persona store at fire time; its `baseProfile` (if any) overrides `profile`.
@@ -3710,6 +3790,9 @@ export interface ScheduleCreateInput {
   enabled?: boolean;
   projectId: string;
   profile: LaunchProfileId;
+  kind?: 'agent' | 'team';
+  teamId?: string;
+  planSource?: 'provided' | 'infer';
   personaId?: string;
   extraArgs?: string[];
   prompt?: string;
@@ -4072,10 +4155,18 @@ export interface TeamLaunchTaskSlot {
   slotId: string;
   initialTask: string;
   authorizationId?: string;
+  nativeRecovery?: TeamLaunchAuthorizationInputSlot['nativeRecovery'];
 }
 
 export interface TeamLaunchAuthorizationInputSlot {
   initialTask: string;
+  /** Trusted native recovery identity, injected only by ExecutionService. */
+  nativeRecovery?: {
+    role: 'worker' | 'orchestrator';
+    personaId?: string;
+    profileId?: string;
+    nativeConversationId: string;
+  };
 }
 
 export interface TeamLaunchAuthorizationResult {
@@ -4105,6 +4196,10 @@ export interface TeamLaunchRequestInput {
   requirePreauthorization?: boolean;
   /** Main-only correlation for execution-managed Team launches. */
   executionId?: string;
+  /** Main-authorized request to run this execution cohort in one shared worktree. */
+  worktree?: boolean;
+  /** Main-owned terminal disposition for an execution-owned shared worktree. */
+  onComplete?: 'leave' | 'merge' | 'delete';
   /** Main-only immutable execution display title for Team session cohorts. */
   executionJobTitle?: string;
   /** Main-derived admission digest; launch revalidates it before spawning. */
@@ -4122,6 +4217,11 @@ export interface TeamLaunchRequestInput {
       contentRef: string;
       sources: Array<Omit<ExecutionSourceSnapshot, 'extractedText'>>;
     };
+  };
+  /** Trusted execution-service recovery input. Never accepted from renderer input. */
+  retainedRecovery?: {
+    mode: 'exact-native';
+    slots: Array<{ slotId: string; role: 'worker' | 'orchestrator'; personaId?: string; profileId?: string; nativeConversationId: string }>;
   };
 }
 
@@ -4177,6 +4277,8 @@ export interface Team {
   defaultProjectId?: string;
   /** Opening prompt handed to the orchestrator's tab. */
   initialPrompt?: string;
+  /** Shared-worktree override for execution-backed squad runs. Absent ⇒ use the next default. */
+  worktreeIsolation?: boolean;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -4459,6 +4561,9 @@ export interface ScheduleUpdateInput {
   enabled?: boolean;
   projectId?: string;
   profile?: LaunchProfileId;
+  kind?: 'agent' | 'team';
+  teamId?: string | null;
+  planSource?: 'provided' | 'infer' | null;
   /** Persona id, or null to clear (launch the bare profile). Omit to leave unchanged. */
   personaId?: string | null;
   extraArgs?: string[];
@@ -4539,6 +4644,10 @@ export interface GoalIteration {
   at: string;
   /** The pty session this iteration spawned (absent if the spawn errored). */
   sessionId?: string;
+  /** Durable squad execution id when assignment.kind is `team`. */
+  executionId?: string;
+  /** Stable durable request key for squad launch recovery before execution id acknowledgement. */
+  launchRequestId?: string;
   /** Evaluator verdict once the session finished and was scored. */
   verdict?: GoalVerdict;
   /** Evaluator's one-line rationale for the verdict. */
@@ -4576,8 +4685,13 @@ export interface Goal {
   title: string;
   /** The objective in prose — handed to the worker as its opening prompt. */
   statement: string;
-  /** Falsifiable checks the evaluator scores each iteration against. */
+  /** Falsifiable checks the evaluator scores each iteration against. Unused for Squad goals (the plan's completion is the criterion). */
   successCriteria: string[];
+  /**
+   * Squad goals only: whether `statement` is a provided executable plan or an
+   * objective the coordinator infers a plan from. Defaults to `infer`.
+   */
+  planSource?: 'provided' | 'infer';
   /** Execution engine. Defaults to `native`. */
   driver: GoalDriver;
   assignment: GoalAssignment;
@@ -4597,6 +4711,15 @@ export interface Goal {
    */
   noProgressLimit: number;
   status: GoalStatus;
+  /**
+   * Durable terminal-status write still owed after an outcome was committed.
+   * While present, the goal must never begin another iteration.
+   */
+  terminalStatus?: 'achieved' | 'exhausted' | 'escalated' | 'cancelled';
+  /** Durable terminal outcome text. Kept until its inbox notification is delivered. */
+  terminalMessage?: string;
+  /** Prevents retry/restart from delivering the same terminal outcome twice. */
+  terminalNotificationDelivered?: boolean;
   history: {
     /** Ring cap on {@link iterations}. */
     retain: number;
@@ -4618,6 +4741,8 @@ export interface GoalCreateInput {
   title: string;
   statement: string;
   successCriteria: string[];
+  /** Squad goals only. Defaults to `infer`. */
+  planSource?: 'provided' | 'infer';
   /** Defaults to `native`. */
   driver?: GoalDriver;
   /** Defaults to `{ kind: 'profile', profile: 'claude-yolo' }`. */
@@ -4639,6 +4764,7 @@ export interface GoalUpdateInput {
   title?: string;
   statement?: string;
   successCriteria?: string[];
+  planSource?: 'provided' | 'infer';
   assignment?: GoalAssignment;
   cadence?: Goal['cadence'];
   maxIterations?: number;
@@ -5720,6 +5846,8 @@ export interface ExecutionBoardProjection {
   teamName?: string;
   objective?: string;
   summary?: string;
+  /** Terminal shared checkout retained for recovery or a follow-up agent. */
+  retainedWorktree?: { path: string; branch: string; baseBranch?: string; disposition?: 'left' };
   sources?: Array<{
     id: string;
     name: string;
@@ -5873,10 +6001,22 @@ export interface ExecutionBoardProjection {
   eventCursor?: number;
   coordinator?: { status: 'live' | 'parked' | 'lost' | 'complete'; sessionId?: string };
   recoveryAttention?: boolean;
-  /** Present only when deadline enforcement stopped this run. */
-  timeoutReason?: 'idle' | 'unresolved-blocker';
+  /** Present when a durable execution stop has a specific non-resumable reason. */
+  timeoutReason?: 'idle' | 'unresolved-blocker' | 'plan-correction-cancelled';
   successorExecutionId?: string;
-  recovery?: { status: 'available' | 'expired' | 'terminal'; deadlineAt?: number };
+  recovery?: {
+    status: 'available' | 'expired' | 'terminal';
+    deadlineAt?: number;
+    /** Aggregate-only recovery capability. Native conversation ids never leave main. */
+    actions: {
+      freshPlan: { available: boolean; reason?: 'RECOVERY_NOT_ALLOWED' };
+      exactNative: {
+        available: boolean;
+        restorableSlots: number;
+        reason?: 'RECOVERY_NOT_ALLOWED' | 'NO_RESTORABLE_SLOTS' | 'NATIVE_RESTORE_UNAVAILABLE';
+      };
+    };
+  };
 }
 
 /** Renderer advisory input for a durable Team job. Main owns project and slot expansion. */
@@ -5917,6 +6057,33 @@ export interface TeamJobLaunchResult {
   executionId: string;
   state: ExecutionBoardProjection['state'];
 }
+
+/** Resolved pre-spawn requirements that prevent a structured Team job from starting. */
+export interface TeamRequirementFailure {
+  workUnits: Array<{
+    id: string;
+    title: string;
+    missingSkills: string[];
+    missingMcpServers: string[];
+  }>;
+}
+
+/** Inventory read failed, so no capability name is confirmed absent. */
+export interface TeamAvailabilityUnknown {
+  failedSources: Array<'skills' | 'mcpServers'>;
+}
+
+export type TeamJobLaunchResponse = Result<TeamJobLaunchResult> | {
+  ok: false;
+  code: 'REQUIREMENT_UNAVAILABLE';
+  message: string;
+  requirementFailure: TeamRequirementFailure;
+} | {
+  ok: false;
+  code: 'CAPABILITY_AVAILABILITY_UNKNOWN';
+  message: string;
+  availabilityUnknown: TeamAvailabilityUnknown;
+};
 
 export const TEAM_ID_MAX_CHARS = 256;
 export const TEAM_GOAL_MAX_CHARS = 4_000;

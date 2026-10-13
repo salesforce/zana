@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { ScheduledTask, Project } from '@zana-ai/zcc-domain/product';
-import { SchedulerManager } from './scheduler.js';
+import { ScheduleConflictError, SchedulerManager } from './scheduler.js';
 import { LaunchSpawnError } from '../launch/coordinator.js';
 import { validateScheduleFile } from './schedule-validation.js';
 
@@ -121,6 +121,358 @@ describe('original-owner scheduler persistence', () => {
     persistence.save.mockRejectedValue(new Error('offline'));
     await expect(manager.runNow(task.id)).rejects.toThrow('offline'); expect(deps.launchTerminal).not.toHaveBeenCalled();
     expect(manager.list()[0].status.runCount).toBe(0);
+  });
+  it('reserves and launches a team schedule through durable squad deps, never a PTY', async () => {
+    const { manager, input, deps } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, launchSquad });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad', prompt: 'Ship release' });
+    await manager.runNow(task.id);
+    expect(launchSquad).toHaveBeenCalledWith(expect.objectContaining({ schedule: expect.objectContaining({ kind: 'team', teamId: 'release-squad' }) }));
+    expect(deps.launchTerminal).not.toHaveBeenCalled();
+    expect(manager.list()[0].status.runs[0]).toMatchObject({ executionId: 'execution-1', launchState: 'running' });
+  });
+  it('passes provided plan source to the scheduled Squad trigger', async () => {
+    const { manager, input, deps } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, launchSquad });
+    const task = await manager.create({
+      ...input,
+      kind: 'team',
+      teamId: 'release-squad',
+      planSource: 'provided',
+      prompt: '### supplied plan'
+    });
+
+    await manager.runNow(task.id);
+
+    expect(launchSquad).toHaveBeenCalledWith(expect.objectContaining({
+      schedule: expect.objectContaining({ planSource: 'provided' })
+    }));
+  });
+  it('falls back to description when an edited Squad prompt is blank', async () => {
+    const { manager, input, deps } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, launchSquad });
+    const task = await manager.create({
+      ...input,
+      kind: 'team',
+      teamId: 'release-squad',
+      description: '  Check release readiness  ',
+      prompt: 'Initial objective'
+    });
+
+    await manager.update(task.id, { prompt: '   ' });
+    await manager.runNow(task.id);
+
+    expect(launchSquad).toHaveBeenCalledWith(expect.objectContaining({
+      objective: 'Check release readiness'
+    }));
+  });
+  it('uses the first nonblank trimmed Squad objective candidate', async () => {
+    const { manager, input, deps } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, launchSquad });
+    const task = await manager.create({
+      ...input,
+      kind: 'team',
+      teamId: 'release-squad',
+      name: '  Release fallback  ',
+      description: '  Description fallback  ',
+      prompt: '  Initial objective  '
+    });
+
+    await manager.runNow(task.id);
+    expect(launchSquad).toHaveBeenLastCalledWith(expect.objectContaining({
+      objective: 'Initial objective'
+    }));
+
+    await manager.update(task.id, { prompt: ' ' });
+    await manager.runNow(task.id);
+    expect(launchSquad).toHaveBeenLastCalledWith(expect.objectContaining({
+      objective: 'Description fallback'
+    }));
+
+    await manager.update(task.id, { description: ' ' });
+    await manager.runNow(task.id);
+    expect(launchSquad).toHaveBeenLastCalledWith(expect.objectContaining({
+      objective: 'Release fallback'
+    }));
+  });
+  it('does not overlap live squad executions across ticks', async () => {
+    const { manager, input, deps } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    const getSquadExecution = vi.fn(async () => ({ state: 'RUNNING' }));
+    manager.setDeps({ ...deps, launchSquad, getSquadExecution });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad' });
+
+    await manager.runNow(task.id);
+    await (manager as any).fire(task.id, { manual: false });
+
+    expect(launchSquad).toHaveBeenCalledOnce();
+    expect(getSquadExecution).toHaveBeenCalledWith(project.id, 'execution-1');
+    expect(manager.get(task.id).status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ executionId: 'execution-1', launchState: 'running' }),
+      expect.objectContaining({ result: 'skipped', message: 'previous squad run still active' })
+    ]));
+  });
+  it('rejects a Squad-to-Agent mode change while its active execution is unresolved', async () => {
+    const { manager, input, deps, records } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, launchSquad, getSquadExecution: vi.fn(async () => ({ state: 'RUNNING' })) });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad' });
+
+    await manager.runNow(task.id);
+
+    await expect(manager.update(task.id, { kind: 'agent' })).rejects.toThrow('Cannot change schedule mode');
+    expect(manager.get(task.id)).toMatchObject({ kind: 'team', teamId: 'release-squad', status: {
+      runs: [expect.objectContaining({ executionId: 'execution-1', launchState: 'running' })]
+    } });
+    expect(records.get(task.id)).toMatchObject({ kind: 'team', teamId: 'release-squad' });
+  });
+  it('defers an external Squad-to-Agent edit until the recorded Squad run resolves', async () => {
+    const { manager, input, deps, records } = fixture();
+    let state = 'RUNNING';
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    const getSquadExecution = vi.fn(async () => ({ state }));
+    manager.setDeps({ ...deps, launchSquad, getSquadExecution });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad' });
+
+    await manager.runNow(task.id);
+    Object.assign(records.get(task.id)!, { kind: 'agent', teamId: undefined, planSource: undefined });
+    await manager.loadAll([project]);
+
+    expect(manager.get(task.id)).toMatchObject({ kind: 'team', status: { runs: [expect.objectContaining({ launchKind: 'team', executionId: 'execution-1' })] } });
+    expect(await manager.reload(task.id)).toMatchObject({ reloaded: false, reason: 'run is unresolved' });
+
+    state = 'COMPLETED';
+    await (manager as any).observeSquadExecutions();
+    // Completion persistence owns status, so repeat editor's intended definition
+    // after it races the terminal lifecycle write.
+    Object.assign(records.get(task.id)!, { kind: 'agent', teamId: undefined, planSource: undefined });
+    await manager.loadAll([project]);
+    expect(manager.get(task.id).kind).toBe('agent');
+    await manager.runNow(task.id);
+    expect(deps.launchTerminal).toHaveBeenCalledOnce();
+  });
+  it('retains an active squad run beyond retain=1 so repeated ticks keep skipping it', async () => {
+    const { manager, input, deps } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    const getSquadExecution = vi.fn(async () => ({ state: 'RUNNING' }));
+    manager.setDeps({ ...deps, launchSquad, getSquadExecution });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad', retain: 1 });
+
+    await manager.runNow(task.id);
+    await (manager as any).fire(task.id, { manual: false });
+    await (manager as any).fire(task.id, { manual: false });
+
+    expect(launchSquad).toHaveBeenCalledOnce();
+    expect(manager.get(task.id).status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ executionId: 'execution-1', launchState: 'running' })
+    ]));
+    expect(manager.get(task.id).status.runs.filter(run => run.result === 'skipped')).toHaveLength(1);
+  });
+  it('counts live squad executions toward global concurrency before dispatch', async () => {
+    const { manager, input, deps } = fixture();
+    let sequence = 0;
+    const launchSquad = vi.fn(async () => ({ executionId: `execution-${++sequence}` }));
+    manager.setDeps({ ...deps, launchSquad, getSquadExecution: vi.fn(async () => ({ state: 'RUNNING' })) });
+    const tasks = await Promise.all(Array.from({ length: 6 }, (_, index) => manager.create({
+      ...input, name: `squad-${index}`, kind: 'team', teamId: `team-${index}`
+    })));
+
+    for (const task of tasks.slice(0, 5)) await manager.runNow(task.id);
+    await (manager as any).fire(tasks[5].id, { manual: false });
+
+    expect(launchSquad).toHaveBeenCalledTimes(5);
+    expect(manager.get(tasks[5].id).status.runs[0]).toMatchObject({
+      result: 'skipped',
+      message: 'concurrency-cap: 5/5 scheduled runs active'
+    });
+  });
+  it('finalizes terminal squad execution before next dispatch and notifies', async () => {
+    const { manager, input, deps } = fixture();
+    const launchSquad = vi.fn()
+      .mockResolvedValueOnce({ executionId: 'execution-1' })
+      .mockResolvedValueOnce({ executionId: 'execution-2' });
+    const getSquadExecution = vi.fn(async (_projectId: string, executionId: string) => ({
+      state: executionId === 'execution-1' ? 'COMPLETED' : 'RUNNING',
+      finalSummary: executionId === 'execution-1' ? 'release shipped' : undefined
+    }));
+    manager.setDeps({ ...deps, launchSquad, getSquadExecution });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad', inboxLevel: 'quiet' });
+
+    await manager.runNow(task.id);
+    await (manager as any).fire(task.id, { manual: false });
+
+    const finished = manager.get(task.id).status.runs.find(run => run.executionId === 'execution-1');
+    expect(finished).toMatchObject({ result: 'success', launchState: 'running', message: 'release shipped' });
+    expect(finished?.finishedAt).toEqual(expect.any(String));
+    expect(finished?.durationMs).toEqual(expect.any(Number));
+    expect(launchSquad).toHaveBeenCalledTimes(2);
+    expect(deps.inbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      subject: 'Scheduled work',
+      comments: expect.stringContaining('success'),
+      notify: 'quiet'
+    }));
+  });
+  it('finalizes a disabled Squad Run now without waiting for a cadence tick', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, input, deps } = fixture();
+      let completed = false;
+      const getSquadExecution = vi.fn(async () => ({
+        state: completed ? 'COMPLETED' : 'RUNNING',
+        finalSummary: completed ? 'release shipped' : undefined
+      }));
+      manager.setDeps({
+        ...deps,
+        launchSquad: vi.fn(async () => ({ executionId: 'execution-1' })),
+        getSquadExecution
+      });
+      const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad', inboxLevel: 'quiet' });
+
+      await manager.runNow(task.id);
+      expect(manager.get(task.id).enabled).toBe(false);
+      completed = true;
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      const finished = manager.get(task.id).status.runs.find(run => run.executionId === 'execution-1');
+      expect(finished).toMatchObject({ result: 'success', launchState: 'running', message: 'release shipped' });
+      expect(finished?.finishedAt).toEqual(expect.any(String));
+      expect(deps.inbox.append).toHaveBeenCalledWith(expect.objectContaining({
+        subject: 'Scheduled work',
+        comments: expect.stringContaining('success')
+      }));
+
+      getSquadExecution.mockClear();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(getSquadExecution).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('restores the disabled Squad completion observer after restart', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, input, deps } = fixture();
+      let completed = false;
+      const getSquadExecution = vi.fn(async () => ({
+        state: completed ? 'COMPLETED' : 'RUNNING',
+        finalSummary: completed ? 'release shipped after restart' : undefined
+      }));
+      manager.setDeps({
+        ...deps,
+        launchSquad: vi.fn(async () => ({ executionId: 'execution-1' })),
+        getSquadExecution
+      });
+      const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad', inboxLevel: 'quiet' });
+
+      await manager.runNow(task.id);
+      manager.stopAll();
+      await manager.loadAll([project]);
+      expect(manager.get(task.id)).toMatchObject({ enabled: false, status: {
+        runs: [expect.objectContaining({ executionId: 'execution-1', launchState: 'running' })]
+      } });
+
+      completed = true;
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(getSquadExecution).toHaveBeenCalledOnce();
+      expect(manager.get(task.id).status.runs[0]).toMatchObject({
+        executionId: 'execution-1', result: 'success', finishedAt: expect.any(String), message: 'release shipped after restart'
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('retains an active Squad run after terminal history truncation across restart and skips overlap', async () => {
+    const { manager, input, deps, records } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-2' }));
+    const getSquadExecution = vi.fn(async () => ({ state: 'RUNNING' }));
+    manager.setDeps({ ...deps, launchSquad, getSquadExecution });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad' });
+    const terminalRuns = Array.from({ length: 101 }, (_, index) => ({
+      id: `terminal-${index}`, at: '2026-01-01T00:00:00.000Z', result: 'success' as const
+    }));
+    const persisted = validateScheduleFile({
+      ...task,
+      status: {
+        ...task.status,
+        runs: [...terminalRuns, {
+          id: 'active-squad', at: '2026-01-02T00:00:00.000Z', result: 'success',
+          launchKind: 'team', launchState: 'running', executionId: 'execution-1'
+        }]
+      }
+    });
+    if ('error' in persisted) throw new Error(persisted.error);
+    records.set(task.id, persisted);
+
+    manager.stopAll();
+    await manager.loadAll([project]);
+    await (manager as any).fire(task.id, { manual: false });
+
+    expect(manager.get(task.id).status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ executionId: 'execution-1', launchState: 'running' })
+    ]));
+    expect(launchSquad).not.toHaveBeenCalled();
+    expect(getSquadExecution).toHaveBeenCalledWith(project.id, 'execution-1');
+  });
+  it('cleans the Squad completion observer when its schedule is removed', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, input, deps } = fixture();
+      const getSquadExecution = vi.fn(async () => ({ state: 'RUNNING' }));
+      manager.setDeps({
+        ...deps,
+        launchSquad: vi.fn(async () => ({ executionId: 'execution-1' })),
+        getSquadExecution
+      });
+      const task = await manager.create({ ...input, kind: 'team', teamId: 'release-squad' });
+
+      await manager.runNow(task.id);
+      await manager.remove(task.id);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(getSquadExecution).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('rearms an automatic fire after transient squad observation persistence failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, input, deps, persistence } = fixture();
+      const launchSquad = vi.fn()
+        .mockResolvedValueOnce({ executionId: 'execution-1' })
+        .mockResolvedValueOnce({ executionId: 'execution-2' });
+      manager.setDeps({
+        ...deps,
+        launchSquad,
+        getSquadExecution: vi.fn(async () => ({ state: 'COMPLETED' }))
+      });
+      const task = await manager.create({ ...input, enabled: true, kind: 'team', teamId: 'release-squad' });
+
+      await manager.runNow(task.id);
+      persistence.save.mockRejectedValueOnce(new Error('owner temporarily offline'));
+
+      // One run's failed finalization is logged, never rethrown: the tick still
+      // completes (here: skips the still-live run) and re-arms its cadence.
+      await expect((manager as any).fire(task.id, { manual: false })).resolves.toBeUndefined();
+      expect(deps.logger).toHaveBeenCalledWith(expect.stringContaining(task.id), expect.objectContaining({ message: 'owner temporarily offline' }));
+      expect(manager.get(task.id).status.runs[0]).toMatchObject({ result: 'skipped', message: 'previous squad run still active' });
+      // Cadence retry plus independent Squad completion observer remain armed.
+      expect(vi.getTimerCount()).toBe(2);
+
+      // The failed observation must not strand this schedule: its next tick can
+      // observe the completed execution and dispatch a replacement.
+      await (manager as any).fire(task.id, { manual: false });
+      expect(launchSquad).toHaveBeenCalledTimes(2);
+      expect(manager.get(task.id).enabled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('keeps an ambiguous launch disabled and cannot replay it after restart', async () => {
     const { manager, input, records, persistence, deps } = fixture(); const task = await manager.create(input);
@@ -402,20 +754,326 @@ describe('original-owner scheduler persistence', () => {
   });
 });
 
+describe('scheduled Squad observation isolation (SC1)', () => {
+  async function twoSquadSchedules() {
+    const f = fixture();
+    let sequence = 0;
+    const launchSquad = vi.fn(async () => ({ executionId: `execution-${++sequence}` }));
+    const getSquadExecution = vi.fn(async (_projectId: string, executionId: string) => {
+      if (executionId === 'execution-1') throw new Error('poisoned execution record');
+      return { state: 'COMPLETED', finalSummary: `${executionId} done` };
+    });
+    f.manager.setDeps({ ...f.deps, launchSquad, getSquadExecution });
+    const poisoned = await f.manager.create({ ...f.input, name: 'poisoned', kind: 'team', teamId: 'squad-a' });
+    const healthy = await f.manager.create({ ...f.input, name: 'healthy', kind: 'team', teamId: 'squad-b' });
+    await f.manager.runNow(poisoned.id);
+    await f.manager.runNow(healthy.id);
+    return { ...f, launchSquad, getSquadExecution, poisoned, healthy };
+  }
+
+  it('finalizes other runs when one execution lookup throws', async () => {
+    const { manager, deps, poisoned, healthy } = await twoSquadSchedules();
+
+    await expect((manager as any).observeSquadExecutions()).resolves.toBeUndefined();
+
+    expect(manager.get(healthy.id).status.runs[0]).toMatchObject({
+      executionId: 'execution-2', result: 'success', finishedAt: expect.any(String), message: 'execution-2 done'
+    });
+    expect(manager.get(poisoned.id).status.runs[0]).toMatchObject({ executionId: 'execution-1', launchState: 'running' });
+    expect(manager.get(poisoned.id).status.runs[0].finishedAt).toBeUndefined();
+    expect(deps.logger).toHaveBeenCalledWith(expect.stringContaining(poisoned.id), expect.objectContaining({ message: 'poisoned execution record' }));
+  });
+
+  it('still fires an automatic tick for another schedule while one run is poisoned', async () => {
+    const { manager, input, launchSquad, deps } = await twoSquadSchedules();
+    const other = await manager.create({ ...input, name: 'other', kind: 'team', teamId: 'squad-c' });
+
+    await expect((manager as any).fire(other.id, { manual: false })).resolves.toBeUndefined();
+
+    expect(launchSquad).toHaveBeenCalledTimes(3);
+    expect(manager.get(other.id).status.runs[0]).toMatchObject({ executionId: 'execution-3', launchState: 'running' });
+    expect(deps.logger).toHaveBeenCalled();
+  });
+
+  it('logs instead of rejecting when observation itself fails', async () => {
+    const { manager, input, deps } = fixture();
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, launchSquad, getSquadExecution: vi.fn(async () => ({ state: 'RUNNING' })) });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad' });
+    vi.spyOn(manager as any, 'observeSquadExecutions').mockRejectedValueOnce(new Error('observer crashed'));
+
+    await expect((manager as any).fire(task.id, { manual: false })).resolves.toBeUndefined();
+
+    expect(deps.logger).toHaveBeenCalledWith(`observe squads ${task.id}`, expect.objectContaining({ message: 'observer crashed' }));
+    expect(launchSquad).toHaveBeenCalledOnce();
+  });
+});
+
+describe('deferred reload cadence (SC2)', () => {
+  it('fires on cadence while a mode change is deferred instead of re-arming forever', async () => {
+    vi.useFakeTimers();
+    const { manager, input, deps, persistence, records } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, persistence, launchSquad, getSquadExecution: vi.fn(async () => ({ state: 'RUNNING' })) });
+    const task = await manager.create({ ...input, enabled: true, kind: 'team', teamId: 'squad' });
+    await manager.runNow(task.id);
+    // External edit changes both mode and cadence while the Squad run is live.
+    Object.assign(records.get(task.id)!, { kind: 'agent', teamId: undefined, schedule: { every: '1h' } });
+
+    await (manager as any).fire(task.id, { manual: false });
+
+    expect(manager.get(task.id)).toMatchObject({ kind: 'team', schedule: { every: '5m' } });
+    expect(manager.get(task.id).status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ result: 'skipped', message: 'previous squad run still active' })
+    ]));
+    expect(manager.get(task.id).status.nextRunAt).toBe(new Date(Date.now() + 5 * 60_000).toISOString());
+  });
+
+  it('never writes the stale in-memory definition over an owner edit while a reload is deferred', async () => {
+    vi.useFakeTimers();
+    const { manager, input, deps, persistence, records } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    let state = 'RUNNING';
+    const launchSquad = vi.fn(async () => ({ executionId: 'execution-1' }));
+    manager.setDeps({ ...deps, persistence, launchSquad, getSquadExecution: vi.fn(async () => ({ state, finalSummary: 'squad done' })) });
+    const task = await manager.create({ ...input, enabled: true, kind: 'team', teamId: 'squad', prompt: 'launched objective' });
+    await manager.runNow(task.id);
+    const owner = { prompt: 'owner edit', kind: 'agent' as const, teamId: undefined, schedule: { every: '1h' } };
+    Object.assign(records.get(task.id)!, owner);
+
+    // Skipped-run record: a runtime persist while the reload is deferred.
+    await (manager as any).fire(task.id, { manual: false });
+
+    const saved = persistence.save.mock.calls.at(-1)![0] as ScheduledTask;
+    expect(saved).toMatchObject({ prompt: 'owner edit', kind: 'agent', schedule: { every: '1h' } });
+    expect(saved.teamId).toBeUndefined();
+    expect(saved.status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ result: 'skipped', message: 'previous squad run still active' })
+    ]));
+    expect(records.get(task.id)).toMatchObject({ prompt: 'owner edit', kind: 'agent', schedule: { every: '1h' } });
+    // The live definition stays the launched one until the deferred reload applies.
+    expect(manager.get(task.id)).toMatchObject({ prompt: 'launched objective', kind: 'team', teamId: 'squad', schedule: { every: '5m' } });
+    expect(manager.get(task.id).status.nextRunAt).toBe(new Date(Date.now() + 5 * 60_000).toISOString());
+    expect((manager as any).deferredReloads.has(task.id)).toBe(true);
+
+    // Run completion (recordRun via observation) is also a runtime persist.
+    state = 'COMPLETED';
+    await (manager as any).observeSquadExecutions();
+    expect(records.get(task.id)).toMatchObject({ prompt: 'owner edit', kind: 'agent', schedule: { every: '1h' } });
+    expect(records.get(task.id)!.status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ executionId: 'execution-1', result: 'success', finishedAt: expect.any(String) })
+    ]));
+
+    // Once the run settles the deferred reload (watcher refresh) adopts the owner's definition.
+    await manager.loadAll([project]);
+    expect(manager.get(task.id)).toMatchObject({ prompt: 'owner edit', kind: 'agent', schedule: { every: '1h' } });
+  });
+
+  it('merges an explicit update patch onto the owner record while a reload is deferred', async () => {
+    const { manager, input, deps, persistence, records } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    manager.setDeps({ ...deps, persistence, launchSquad: vi.fn(async () => ({ executionId: 'execution-1' })), getSquadExecution: vi.fn(async () => ({ state: 'RUNNING' })) });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad', prompt: 'launched objective' });
+    await manager.runNow(task.id);
+    records.get(task.id)!.prompt = 'owner edit';
+    await manager.reload(task.id);
+
+    await manager.update(task.id, { name: 'Renamed' });
+
+    expect(records.get(task.id)).toMatchObject({ name: 'Renamed', prompt: 'owner edit', kind: 'team', teamId: 'squad' });
+    expect(manager.get(task.id)).toMatchObject({ name: 'Renamed' });
+  });
+});
+
+describe('schedule prompt compare-and-swap (PC1)', () => {
+  it('writes when the disk prompt still matches the expected prompt and never persists the guard', async () => {
+    const { manager, input, persistence, records } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad', prompt: '  launched objective\n' });
+
+    await manager.update(task.id, { prompt: 'corrected plan', expectedPrompt: 'launched objective' });
+
+    expect(records.get(task.id)!.prompt).toBe('corrected plan');
+    expect(records.get(task.id)).not.toHaveProperty('expectedPrompt');
+    expect(manager.get(task.id)).not.toHaveProperty('expectedPrompt');
+  });
+
+  it('rejects with ScheduleConflictError and keeps an unreloaded disk edit', async () => {
+    const { manager, input, persistence, records } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad', prompt: 'launched objective' });
+    records.get(task.id)!.prompt = 'hand edit';
+    const saves = persistence.save.mock.calls.length;
+
+    const error = await manager.update(task.id, { prompt: 'corrected plan', expectedPrompt: 'launched objective' }).catch(e => e);
+
+    expect(error).toBeInstanceOf(ScheduleConflictError);
+    expect(error).toMatchObject({ code: 'DEFINITION_CONFLICT', scheduleId: task.id });
+    expect(records.get(task.id)!.prompt).toBe('hand edit');
+    expect(persistence.save).toHaveBeenCalledTimes(saves);
+    expect(manager.get(task.id).prompt).toBe('launched objective');
+  });
+
+  it('rejects an edit that lands between the update read and the write-boundary read', async () => {
+    const { manager, input, persistence, records } = fixture();
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad', prompt: 'launched objective' });
+    let reads = 0;
+    persistence.read = vi.fn(async value => {
+      reads += 1;
+      if (reads === 2) records.get(value.id)!.prompt = 'late hand edit';
+      return structuredClone(records.get(value.id)!);
+    });
+    const saves = persistence.save.mock.calls.length;
+
+    await expect(manager.update(task.id, { prompt: 'corrected plan', expectedPrompt: 'launched objective' }))
+      .rejects.toBeInstanceOf(ScheduleConflictError);
+
+    expect(records.get(task.id)!.prompt).toBe('late hand edit');
+    expect(persistence.save).toHaveBeenCalledTimes(saves);
+  });
+
+  it('treats a missing disk prompt as a conflict', async () => {
+    const { manager, input } = fixture();
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad' });
+    await expect(manager.update(task.id, { prompt: 'corrected', expectedPrompt: 'launched' })).rejects.toThrow(ScheduleConflictError);
+  });
+});
+
 describe('schedule reservation validation', () => {
   it.each([null, { at: 'invalid', result: 'success' }, { at: '2026-01-01', result: 'unknown' }, { at: '2026-01-01', result: 'success', sessionId: 1 }, { at: '2026-01-01', result: 'success', launchState: 'unknown' }, { at: '2026-01-01', result: 'skipped', launchState: 'pending' }])('rejects malformed history without dropping a launch fence: %j', async run => {
     const { manager, input } = fixture(); const task = await manager.create(input);
     expect(validateScheduleFile({ ...task, status: { ...task.status, runs: [run] } })).toHaveProperty('error');
   });
-  it('bounds history but never silently drops an unresolved reservation', async () => {
+  it('bounds terminal history but retains unresolved reservations and active Squad runs', async () => {
     const { manager, input } = fixture(); const task = await manager.create(input);
     const runs = Array.from({ length: 101 }, () => ({ at: '2026-01-01', result: 'success' }));
     const parsed = validateScheduleFile({ ...task, history: { retain: 10000 }, status: { runs } });
     expect(parsed).toMatchObject({ history: { retain: 100 }, status: { runs: expect.any(Array) } }); if ('error' in parsed) throw new Error(parsed.error);
     expect(parsed.status.runs).toHaveLength(100);
-    Object.assign(runs[100], { sessionId: 'reserved', launchState: 'pending' });
-    expect(validateScheduleFile({ ...task, status: { runs } })).toHaveProperty('error');
+    runs.push(
+      { at: '2026-01-02', result: 'skipped', launchState: 'pending' },
+      { at: '2026-01-03', result: 'success', launchKind: 'team', launchState: 'running', executionId: 'execution-1' }
+    );
+    const retained = validateScheduleFile({ ...task, kind: 'team', teamId: 'release-squad', status: { runs } });
+    if ('error' in retained) throw new Error(retained.error);
+    expect(retained.status.runs).toHaveLength(102);
+    expect(retained.status.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ launchState: 'pending' }),
+      expect.objectContaining({ executionId: 'execution-1', launchState: 'running' })
+    ]));
     expect(validateScheduleFile({ ...task, status: { runs: {} } })).toHaveProperty('error');
     expect(validateScheduleFile({ ...task, extraArgs: ['valid', 42], history: { retain: NaN } })).toMatchObject({ extraArgs: ['valid'], history: { retain: 10 } });
+  });
+  it('rejects a file with an unbounded number of unresolved runs (P3)', async () => {
+    const { manager, input } = fixture(); const task = await manager.create(input);
+    const squad = { ...task, kind: 'team', teamId: 'release-squad' };
+    const active = (index: number) => ({ id: `active-${index}`, at: '2026-01-03', result: 'success', launchKind: 'team', launchState: 'running', executionId: `execution-${index}` });
+    const atCap = validateScheduleFile({ ...squad, status: { runs: Array.from({ length: 100 }, (_, index) => active(index)) } });
+    if ('error' in atCap) throw new Error(atCap.error);
+    expect(atCap.status.runs).toHaveLength(100);
+    const runs = [...Array.from({ length: 100 }, (_, index) => active(index)), { at: '2026-01-02', result: 'skipped', launchState: 'pending' }];
+    expect(validateScheduleFile({ ...squad, status: { runs } })).toEqual({ error: 'too many unresolved runs' });
+  });
+});
+
+describe('scheduled Squad pending-launch recovery', () => {
+  async function pendingSquad(runs: ScheduledTask['status']['runs'], extra: Record<string, unknown> = {}) {
+    const env = fixture();
+    const task = await env.manager.create({ ...env.input, kind: 'team', teamId: 'squad' });
+    env.records.set(task.id, { ...structuredClone(env.records.get(task.id)!), status: { runCount: runs.length, runs } });
+    env.manager.setDeps({ ...env.deps, ...extra });
+    await env.manager.loadAll([project]);
+    return { ...env, task };
+  }
+  const pendingRun = (over: Partial<ScheduledTask['status']['runs'][number]> = {}) => ({
+    id: 'run-1', at: new Date().toISOString(), result: 'skipped' as const, launchKind: 'team' as const, launchState: 'pending' as const,
+    launchRequestId: 'schedule:x:run-1', ...over
+  });
+
+  it('cannot confirm a pending Squad launch without an execution lookup', async () => {
+    const { manager, task } = await pendingSquad([pendingRun()]);
+    await expect(manager.reconcile(task.id)).resolves.toBe(false);
+    await expect(manager.runNow(task.id)).rejects.toThrow('Unconfirmed squad launch');
+  });
+
+  it('cannot confirm a pending Squad launch whose execution is unknown', async () => {
+    const getSquadExecution = vi.fn(async () => undefined);
+    const { manager, task } = await pendingSquad([pendingRun({ executionId: 'execution-1' })], { getSquadExecution });
+    await expect(manager.reconcile(task.id)).resolves.toBe(false);
+    await expect(manager.runNow(task.id)).rejects.toThrow('Unconfirmed squad launch');
+    expect(manager.get(task.id).status.runs[0].launchState).toBe('pending');
+  });
+
+  it('confirms pending Squad launches by execution id or launch request id and maps their state', async () => {
+    const getSquadExecution = vi.fn(async (_p: string, id: string) => id === 'execution-1'
+      ? { state: 'FAILED', finalSummary: 'broke' } : { state: 'RUNNING' });
+    const findSquadExecution = vi.fn(async () => ({ executionId: 'execution-2', state: 'COMPLETED' }));
+    const { manager, task } = await pendingSquad([
+      pendingRun({ id: 'run-1', executionId: 'execution-1' }),
+      pendingRun({ id: 'run-2', launchRequestId: 'schedule:x:run-2' }),
+      pendingRun({ id: 'run-3', executionId: 'execution-3' })
+    ], { getSquadExecution, findSquadExecution });
+    await expect(manager.reconcile(task.id)).resolves.toBe(true);
+    const runs = manager.get(task.id).status.runs;
+    expect(runs.find(run => run.id === 'run-1')).toMatchObject({ launchState: 'running', result: 'error', message: 'broke' });
+    expect(runs.find(run => run.id === 'run-2')).toMatchObject({ launchState: 'running', result: 'success', executionId: 'execution-2' });
+    expect(runs.find(run => run.id === 'run-3')).toMatchObject({ launchState: 'running', result: 'skipped' });
+    expect(findSquadExecution).toHaveBeenCalledWith(project.id, 'schedule:x:run-2');
+  });
+});
+
+describe('scheduled Squad definition edits', () => {
+  it('rejects an edit while a disk mode change waits on an unresolved Squad run', async () => {
+    const { manager, input, deps, records, persistence } = fixture();
+    persistence.read = vi.fn(async task => structuredClone(records.get(task.id)!));
+    manager.setDeps({ ...deps, persistence, launchSquad: vi.fn(async () => ({ executionId: 'execution-1' })), getSquadExecution: vi.fn(async () => ({ state: 'RUNNING' })) });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad' });
+    await manager.runNow(task.id);
+    records.get(task.id)!.kind = 'agent';
+    await expect(manager.update(task.id, { name: 'Renamed' })).rejects.toThrow('Cannot change schedule mode');
+  });
+
+  it('switches mode, trims teamId and clears Squad-only fields for agent schedules', async () => {
+    const { manager, input } = fixture();
+    const task = await manager.create(input);
+    await expect(manager.update(task.id, { kind: 'team', teamId: '  squad  ', planSource: 'provided' }))
+      .resolves.toMatchObject({ kind: 'team', teamId: 'squad', planSource: 'provided' });
+    await expect(manager.update(task.id, { kind: 'team', teamId: '  ' })).rejects.toThrow('teamId is required');
+    const agent = await manager.update(task.id, { kind: 'agent' });
+    expect(agent).toMatchObject({ kind: 'agent', teamId: undefined, planSource: undefined });
+  });
+});
+
+describe('scheduled Squad launch failures', () => {
+  it('refuses to fire a Squad schedule without a launch service', async () => {
+    const { manager, input } = fixture();
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad' });
+    await expect(manager.runNow(task.id)).rejects.toThrow('Squad execution service unavailable');
+  });
+
+  it('records a failed Squad launch instead of leaving a pending reservation', async () => {
+    const { manager, input, deps } = fixture();
+    manager.setDeps({ ...deps, launchSquad: vi.fn(async () => { throw new Error('no capacity'); }) });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad' });
+    await manager.runNow(task.id).catch(() => undefined);
+    const run = manager.get(task.id).status.runs[0];
+    expect(run.launchState).not.toBe('pending');
+    expect(run).toMatchObject({ result: 'error' });
+  });
+
+  it('keeps the observation loop alive when one timed observation pass fails', async () => {
+    vi.useFakeTimers();
+    const { manager, input, deps } = fixture();
+    const getSquadExecution = vi.fn(async () => ({ state: 'RUNNING' }));
+    manager.setDeps({ ...deps, launchSquad: vi.fn(async () => ({ executionId: 'execution-1' })), getSquadExecution });
+    const task = await manager.create({ ...input, kind: 'team', teamId: 'squad' });
+    await manager.runNow(task.id);
+    const observe = vi.spyOn(manager as any, 'observeSquadExecutions').mockRejectedValueOnce(new Error('store offline'));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(deps.logger).toHaveBeenCalledWith('observe squads', expect.objectContaining({ message: 'store offline' }));
+    observe.mockRestore();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getSquadExecution).toHaveBeenCalled();
   });
 });

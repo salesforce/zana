@@ -25,6 +25,41 @@ separate Return arrive. It also emits disable/enable controls in one output
 chunk and exercises working/idle transitions between assignments. Headless
 Squad sessions intentionally omit native lifecycle hooks.
 
+`e2e/job-team-plan-correction.spec.ts` covers the Squad plan-correction flow
+with the `plan-correction` / `plan-correction-silent` fake-coordinator scenarios:
+a defective provided plan (Mutating step, no Write scope) parks the run, Inbox
+card 1 "Request changes" wakes the coordinator, which writes
+`.zana/execution-plan-corrected-<executionId>.md`; card 2 "Approve" runs the
+corrected plan to `COMPLETED`. The silent scenario never writes the file, so the
+"finished its turn without writing a corrected plan" card appears and Cancel
+ends `STOPPED` with `timeoutReason: plan-correction-cancelled`. The valid-plan
+bypass (no card) is covered by `job-team-launch-ui.spec.ts`.
+
+`e2e/job-team-plan-correction-schedule.spec.ts` runs the same two cards for a
+scheduled Squad: Approve also persists the corrected plan into the schedule
+prompt. Approve is rejected if the schedule was edited during review, or if the
+corrected plan no longer matches the approved digest.
+
+`e2e/job-team-plan-correction-goal.spec.ts` does the same for a Squad goal
+(`assignment: {kind:'team'}`, `planSource: 'provided'`, `successCriteria: []`,
+created via `goals.create` like GoalsPanel): activating it parks on a defective
+statement, and Approve rewrites the goal statement to the corrected plan and
+completes the same execution. A second case edits the goal statement during
+review and expects Approve to fail with "the goal plan was edited". The fake
+coordinator writes realistic corrected plans (`Depends on: None.`, write scope
+with a trailing period) to cover portable-plan trailing-period parsing.
+
+`e2e/squad-execution-store-ownership.spec.ts` (manual test MT-8) reuses one
+isolated HOME across five built-app launches (`ZCC_EXECUTION_STORE=json`, none,
+none, `json`, none). Every run is a real `teams.startJob` Squad (provided
+`write-note` -> `review-note` plan, fake coordinator) driven to `COMPLETED`; no
+record is seeded. After each quit it reads `squad-executions.json` and, via
+`createSqliteDatabase` read-only, `squad-executions.sqlite` to prove each run
+stays in its creating store, `executionBoard.dismiss` lands only in the owning
+store, and a `json` relaunch neither imports nor alters SQLite-owned runs.
+Limitation: the `json` relaunch is only a stand-in for a JSON-only reader; this
+spec does not run a genuinely older build.
+
 Check the approval arguments against an installed Codex without a model call:
 
 ```bash

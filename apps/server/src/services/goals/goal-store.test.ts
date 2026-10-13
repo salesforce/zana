@@ -53,6 +53,28 @@ describe('validateGoalFile', () => {
     expect(r.history.iterations).toHaveLength(1);
   });
 
+  it('preserves durable terminal intent and notification delivery state', () => {
+    const r = validateGoalFile({
+      ...baseGoal,
+      status: 'active',
+      terminalStatus: 'escalated',
+      terminalMessage: 'Goal needs attention.',
+      terminalNotificationDelivered: true
+    });
+    if ('error' in r) throw new Error('unexpected error');
+    expect(r).toMatchObject({
+      terminalStatus: 'escalated',
+      terminalMessage: 'Goal needs attention.',
+      terminalNotificationDelivered: true
+    });
+  });
+
+  it.each([['provided', 'provided'], ['infer', 'infer'], ['bogus', undefined]])('planSource %s loads as %s', (input, expected) => {
+    const r = validateGoalFile({ ...baseGoal, planSource: input });
+    if ('error' in r) throw new Error('unexpected error');
+    expect(r.planSource).toBe(expected);
+  });
+
   it('trims and drops blank success criteria', () => {
     const r = validateGoalFile({ ...baseGoal });
     if ('error' in r) throw new Error('unexpected error');
@@ -179,6 +201,37 @@ describe('validateGoalFile', () => {
     expect(r.assignment).toEqual({ kind: 'persona', personaId: 'reviewer' });
   });
 
+  it('preserves a team assignment only with a usable team id', () => {
+    const valid = validateGoalFile({ ...baseGoal, assignment: { kind: 'team', teamId: ' release-squad ' } });
+    expect('error' in valid).toBe(false);
+    if (!('error' in valid)) expect(valid.assignment).toEqual({ kind: 'team', teamId: 'release-squad' });
+    // GV1: a legacy team goal without a usable id loads (paused), not dropped.
+    expect(validateGoalFile({ ...baseGoal, assignment: { kind: 'team' } })).toMatchObject({ assignment: { kind: 'team', teamId: undefined }, status: 'paused' });
+  });
+
+  it('preserves durable squad execution identity for restart observation', () => {
+    const r = validateGoalFile({
+      ...baseGoal,
+      assignment: { kind: 'team', teamId: 'release-squad' },
+      history: {
+        retain: 10,
+        iterations: [{
+          id: 'squad-iteration',
+          at: '2026-01-01T00:00:00.000Z',
+          executionId: 'execution-1',
+          launchRequestId: 'goal:g1:squad-iteration',
+          launchState: 'running'
+        }]
+      }
+    });
+    if ('error' in r) throw new Error('unexpected error');
+    expect(r.history.iterations[0]).toMatchObject({
+      executionId: 'execution-1',
+      launchRequestId: 'goal:g1:squad-iteration',
+      launchState: 'running'
+    });
+  });
+
   it('reads a clocked cadence', () => {
     const r = validateGoalFile({ ...baseGoal, cadence: { every: '1h' } });
     if ('error' in r) throw new Error('unexpected error');
@@ -197,5 +250,22 @@ describe('clampRetain', () => {
     expect(clampRetain(-5)).toBe(1);
     expect(clampRetain(99999)).toBe(100);
     expect(clampRetain(12.7)).toBe(13);
+  });
+});
+
+describe('legacy Squad goals without teamId (GV1)', () => {
+  it('loads an active legacy Squad goal paused instead of dropping it', () => {
+    const r = validateGoalFile({ ...baseGoal, assignment: { kind: 'team' } });
+    expect('error' in r).toBe(false);
+    if ('error' in r) return;
+    expect(r.status).toBe('paused');
+    expect(r.assignment).toMatchObject({ kind: 'team' });
+  });
+
+  it('keeps a non-active status for a legacy Squad goal', () => {
+    const r = validateGoalFile({ ...baseGoal, status: 'draft', assignment: { kind: 'team', teamId: '  ' } });
+    expect('error' in r).toBe(false);
+    if ('error' in r) return;
+    expect(r.status).toBe('draft');
   });
 });

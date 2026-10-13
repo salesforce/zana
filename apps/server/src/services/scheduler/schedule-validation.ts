@@ -1,6 +1,9 @@
 import type { ScheduledTask, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
+
+/** Upper bound on pending reservations + active Squad runs kept per schedule file. */
+const MAX_UNRESOLVED_RUNS = 100;
 /**
  * Validate a schedule JSON file. Returns the schedule on success, or a string
  * reason on failure (so callers can log the reason rather than silently
@@ -18,6 +21,11 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
   if (typeof r.profile !== 'string' || !VALID_PROFILES.includes(r.profile as LaunchProfileId)) {
     return { error: `invalid profile: ${String(r.profile)}` };
   }
+  const kind = r.kind === undefined ? 'agent' : r.kind;
+  if (kind !== 'agent' && kind !== 'team') return { error: 'invalid schedule kind' };
+  if (kind === 'team' && (typeof r.teamId !== 'string' || !r.teamId.trim())) return { error: 'team schedule requires teamId' };
+  const teamId = typeof r.teamId === 'string' ? r.teamId.trim() : undefined;
+  if (r.planSource !== undefined && r.planSource !== 'provided' && r.planSource !== 'infer') return { error: 'invalid planSource' };
   const schedule = r.schedule as { every?: unknown; cron?: unknown; tz?: unknown } | undefined;
   if (!schedule || typeof schedule !== 'object') {
     return { error: 'missing schedule' };
@@ -34,6 +42,8 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
   const rawRuns = r.status && typeof r.status === 'object' ? (r.status as { runs?: unknown }).runs : undefined;
   if (rawRuns !== undefined && !Array.isArray(rawRuns)) return { error: 'runs must be an array' };
   const runs: ScheduledTask['status']['runs'] = [];
+  let terminalRecords = 0;
+  let unresolvedRecords = 0;
   for (const value of (rawRuns ?? []) as unknown[]) {
     if (!value || typeof value !== 'object') return { error: 'invalid run' };
     const run = value as ScheduledTask['status']['runs'][number];
@@ -41,9 +51,19 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
         !['success', 'error', 'skipped', 'incomplete'].includes(run.result)) return { error: 'invalid run timestamp or result' };
     if (run.sessionId !== undefined && typeof run.sessionId !== 'string') return { error: 'invalid run session' };
     if (run.launchState !== undefined && !['pending', 'running', 'failed'].includes(run.launchState)) return { error: 'invalid run launch state' };
-    if (run.launchState === 'pending' && !run.sessionId) return { error: 'pending run requires a reserved session' };
-    if (runs.length < 100) runs.push(run);
-    else if (run.launchState === 'pending') return { error: 'pending run exceeds retained history' };
+    if (run.launchKind !== undefined && run.launchKind !== 'agent' && run.launchKind !== 'team') return { error: 'invalid run launch kind' };
+    if (run.launchState === 'pending' && !run.sessionId && kind !== 'team') return { error: 'pending run requires a reserved session' };
+    // Keep unresolved ownership state beyond terminal display history. Dropping
+    // it during validation would allow a restart to overlap a live Squad run.
+    const activeSquadRun = (run.launchKind ?? kind) === 'team' && run.launchState === 'running' && !!run.executionId && !run.finishedAt;
+    if (run.launchState === 'pending' || activeSquadRun) {
+      // Unresolved runs are exempt from display history but still bounded so a
+      // corrupt or hand-edited file cannot load an unbounded array.
+      if (++unresolvedRecords > MAX_UNRESOLVED_RUNS) return { error: 'too many unresolved runs' };
+      runs.push(run);
+    } else if (terminalRecords++ < 100) {
+      runs.push(run);
+    }
   }
   // Defensive defaults — older hand-edited files may be missing pieces.
   const task: ScheduledTask = {
@@ -53,6 +73,9 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
     enabled: r.enabled,
     projectId: r.projectId,
     profile: r.profile as LaunchProfileId,
+    kind,
+    teamId: kind === 'team' ? teamId : undefined,
+    planSource: kind === 'team' ? (r.planSource ?? 'infer') : undefined,
     extraArgs: Array.isArray(r.extraArgs)
       ? (r.extraArgs as unknown[]).filter((s): s is string => typeof s === 'string')
       : undefined,

@@ -58,7 +58,8 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
         teamId: input.teamId,
         projectId: input.projectId,
         goal: input.goal,
-        coordinationMode: input.mode,
+        // Headless callers have no correction window: default to coordinator inference.
+        coordinationMode: input.mode ?? 'freeform',
         ...(input.title ? { title: input.title } : {}),
         ...(input.summary ? { summary: input.summary } : {})
       });
