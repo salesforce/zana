@@ -323,14 +323,21 @@ export function PopoverPicklist<T extends string>({
       const selectedIndex = visibleOptions.findIndex((option) => option.value === value && !option.disabled);
       const firstEnabledIndex = visibleOptions.findIndex((option) => !option.disabled);
       setActiveIndex(selectedIndex >= 0 ? selectedIndex : Math.max(0, firstEnabledIndex));
-      if (searchable) searchRef.current?.focus();
-      else menuRef.current?.focus();
     } else {
       setQuery('');
       if (wasOpenRef.current) triggerRef.current?.focus();
     }
     wasOpenRef.current = open;
   }, [open, searchable, value]);
+
+  // The menu first commits with `visibility: hidden` until it is placed, and
+  // browsers ignore focus() on hidden elements — so focus only once placed.
+  const menuPlaced = open && position !== null;
+  useEffect(() => {
+    if (!menuPlaced) return;
+    if (searchable) searchRef.current?.focus();
+    else menuRef.current?.focus();
+  }, [menuPlaced, searchable]);
 
   useEffect(() => {
     if (activeIndex >= visibleOptions.length) setActiveIndex(0);
