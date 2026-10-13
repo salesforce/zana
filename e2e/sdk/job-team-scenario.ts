@@ -81,11 +81,18 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: { workerQ
     slots: [{ personaId: 'e2e-worker', quantity }], orchestratorPersonaId: 'e2e-orchestrator'
   }), opts.workerQuantity);
 
-  // Refresh cached harness verification after replacing the Claude binary.
+  // Refresh cached harness verification after replacing the Claude binary. The
+  // renderer probes harnesses once at boot and AI Harness reuses that result
+  // (#322), so it predates the config.set above and still reflects the fixture's
+  // disabled stub. Check status is the explicit re-probe against the fake binary.
   await window.getByRole('link', { name: 'Settings' }).click();
   await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
   const claudeSettings = window.locator('#settings-anchor-harness-claude');
-  await expect(claudeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
+  const check = window.getByRole('button', { name: /^(Check status|Checking…)$/ });
+  await expect(check).toBeEnabled({ timeout: 20_000 });
+  await check.click();
+  await expect(check).toHaveText('Check status', { timeout: 30_000 });
+  await expect(claudeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/, { timeout: 20_000 });
   await window.locator('.settings-app-back').click();
 
   const projectId = await window.evaluate(async (path) => {
