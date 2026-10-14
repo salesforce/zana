@@ -177,6 +177,11 @@ export function ThreadCommandComposer({
   const threads = useThreads((s) => s.threads);
   const currentThread = threadId ? threads.find((row) => row.id === threadId) : undefined;
   const [hostId, setHostId] = useState(() => defaultHostId(hosts, pinnedProject));
+  // A thread's catalogue scope (project + host + environment) must come from one record;
+  // the composer project can still be the preferred fallback while the thread view loads.
+  const scopeProject = currentThread?.projectId
+    ? projects.find((row) => row.id === currentThread.projectId)
+    : selectedProject;
   const catalogHostId = currentThread?.hostId ?? (selectedProject?.remote ? selectedProject.hostId : hostId ?? selectedProject?.hostId);
   const options = useThreadComposerOptions({
     threadId,
@@ -378,9 +383,9 @@ export function ThreadCommandComposer({
     testId: 'thread-command-input',
     hostId: catalogHostId,
     environmentId: currentThread?.environmentId ?? undefined,
-    projectId,
+    projectId: currentThread?.projectId ?? projectId,
     threadId,
-    projectRoot: selectedProject?.path,
+    projectRoot: scopeProject?.path,
     projects,
     disabled: busy,
     autoFocus: autoFocus && !compact,

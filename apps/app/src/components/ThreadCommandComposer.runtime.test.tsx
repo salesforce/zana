@@ -34,7 +34,7 @@ const h = vi.hoisted(() => {
     create: vi.fn(async (): Promise<{ ok: boolean; value: { id: string }; message?: string }> => ({ ok: true, value: { id: 'created' } })),
     upsert: vi.fn(), persistImages: vi.fn(async () => ['/tmp/uploaded.png']),
     loadProjects: vi.fn(), navigateOnCreate: false, hostBlocked: false, cliBlocked: false,
-    threads: [] as Array<{ id: string; hostId: string; projectId: string }>
+    threads: [] as Array<{ id: string; hostId: string; projectId: string; environmentId?: string }>
   };
 });
 
@@ -149,6 +149,22 @@ describe('Modern composer submission contracts', () => {
     expect(h.removeAttachment).toHaveBeenCalledWith(1);
     fireEvent.click(screen.getByRole('button', { name: 'Reload models' }));
     expect(h.options.refreshModels).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Modern composer catalogue scope', () => {
+  it('scopes the prompt field to the thread record while the thread view has not pinned its project yet', () => {
+    h.threads = [{ id: 't1', hostId: 'host2', projectId: 'p2', environmentId: 'env2' }];
+    render(composer({ project: undefined }));
+    expect(h.fieldArgs).toEqual(expect.objectContaining({
+      projectId: 'p2', hostId: 'host2', environmentId: 'env2', projectRoot: undefined
+    }));
+  });
+
+  it('falls back to the composer project when there is no thread record', () => {
+    h.threads = [];
+    render(composer({ threadId: undefined }));
+    expect(h.fieldArgs).toEqual(expect.objectContaining({ projectId: 'p1', projectRoot: '/tmp/project' }));
   });
 });
 
