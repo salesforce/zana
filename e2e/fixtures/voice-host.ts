@@ -2,6 +2,7 @@
 // credential storage and the external transcription service are fixtures; the
 // credential selection, child capture and transcription code are production.
 import { execFile } from 'node:child_process';
+import { CodexVoiceTranscribeCommandSchema } from '../../packages/contracts/src/host-rpc.js';
 import { readCodexKeyring } from '../../apps/host-daemon/src/codex-auth-storage.js';
 import { transcribeCodexVoice } from '../../apps/host-daemon/src/codex-voice-transcribe.js';
 import { transcribeVoiceOnHost } from '../../apps/server/src/services/threads/voice-transcription.js';
@@ -23,7 +24,7 @@ export async function transcribe(args: {
     config: { getConfig: () => ({}) },
     hostHub: {
       resolveHostId: () => 'voice-fixture',
-      callHostOnlineRpc: async ({ command }) => transcribeCodexVoice(command, {
+      callHostOnlineRpc: async ({ command }) => transcribeCodexVoice(CodexVoiceTranscribeCommandSchema.parse(command), {
         env: { CODEX_HOME: args.codexHome },
         readKeyring: (home) => readCodexKeyring(home, { platform: 'darwin', execFileImpl: run }),
         fetchImpl: async (url, init) => {

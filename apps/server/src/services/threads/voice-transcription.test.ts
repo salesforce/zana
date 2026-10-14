@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { HostRpcCommandSchema } from '@zana-ai/zcc-contracts/host-rpc';
 import { HostUnavailableError, AmbiguousHostError } from '../../http/host-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { transcribeVoiceOnHost, VoiceTranscriptionError, voiceTranscriptionEnabled } from './voice-transcription.js';
@@ -56,6 +57,19 @@ describe('voice transcription service', () => {
         prompt: 'context'
       })
     }));
+  });
+
+  it('sends a schema-valid command with time for the RPC to return its result', async () => {
+    const rpc = vi.fn(async ({ command, timeoutMs }) => {
+      const parsed = HostRpcCommandSchema.parse(command);
+      expect(parsed.type).toBe('codex.voice.transcribe');
+      expect(timeoutMs).toBeGreaterThan(command.timeoutMs);
+      return { model: command.model, text: 'transcribed' };
+    });
+    await expect(transcribeVoiceOnHost(ctx({ rpc }), {
+      bytes: Buffer.from('audio'), mimeType: 'audio/mp4', filename: 'recording.mp4'
+    })).resolves.toBe('transcribed');
+    expect(rpc).toHaveBeenCalledOnce();
   });
 
   it('rejects empty audio and maps missing Codex auth to 501', async () => {

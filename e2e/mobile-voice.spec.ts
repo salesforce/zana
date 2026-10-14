@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
-import { chromium } from '@playwright/test';
+import { chromium, type Page, type Route } from '@playwright/test';
 import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -9,9 +9,28 @@ import { test, expect } from './fixtures/app.js';
 
 const { build } = createRequire(new URL('../apps/host-daemon/package.json', import.meta.url))('esbuild') as typeof import('../apps/host-daemon/node_modules/esbuild');
 
-test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
+test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true, voiceInputEnabled: true } });
 
-test('mobile voice uses the host Keychain and inserts MP4 transcripts; blocked reads remain actionable', async ({ app, home }, testInfo) => {
+function installSyntheticMicrophone() {
+  Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: async () => new MediaStream() });
+  class Recorder {
+    static isTypeSupported(type: string) { return type === 'audio/mp4'; }
+    mimeType = 'audio/mp4';
+    state = 'inactive';
+    onstart?: () => void;
+    ondataavailable?: (event: { data: Blob }) => void;
+    onstop?: () => void;
+    start() { this.state = 'recording'; this.onstart?.(); }
+    stop() {
+      this.state = 'inactive';
+      this.ondataavailable?.({ data: new Blob(['synthetic-microphone-audio'], { type: this.mimeType }) });
+      this.onstop?.();
+    }
+  }
+  Object.defineProperty(window, 'MediaRecorder', { value: Recorder });
+}
+
+test('desktop and mobile voice validate host commands and insert MP4 transcripts; blocked reads remain actionable', async ({ app, home }, testInfo) => {
   test.setTimeout(120_000);
   const codexHome = join(home, 'voice-codex');
   mkdirSync(codexHome);
@@ -49,6 +68,47 @@ else {
     const body = await response.json();
     return (body.thread ?? body.value).id;
   }, project);
+  const transcribeRoute = async (route: Route) => {
+    const req = route.request();
+    const form = await new Request(req.url(), { method: 'POST', headers: { 'content-type': req.headers()['content-type']! }, body: req.postDataBuffer()! }).formData();
+    const audio = form.get('file') as File;
+    expect(audio.name).toBe('recording.mp4');
+    const result = await invoke(Buffer.from(await audio.arrayBuffer()).toString('base64'), audio.type, audio.name);
+    await testInfo.attach('voice-response', { body: JSON.stringify(result), contentType: 'application/json' });
+    await route.fulfill({ status: result.status, json: result.body });
+  };
+  const record = async (window: Page, send = false) => {
+    await expect(window.getByTestId('thread-voice-bar')).toHaveCount(0);
+    const options = window.getByRole('button', { name: 'Composer options', exact: true });
+    if (await options.isVisible() && await options.getAttribute('aria-expanded') !== 'true') await options.click();
+    await window.getByRole('button', { name: 'Start voice input', exact: true }).click();
+    await expect(window.getByTestId('thread-voice-bar')).toBeVisible();
+    await window.waitForTimeout(1100); // real minimum recording duration
+    await window.getByRole('button', { name: send ? 'Transcribe and send recording' : 'Stop and transcribe recording', exact: true }).click();
+  };
+
+  // Avoid a real OS microphone prompt while exercising the built desktop
+  // composer and the schema-validated production transcription service.
+  await app.electron.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('voice:ensureMicAccess');
+    ipcMain.handle('voice:ensureMicAccess', async () => true);
+  });
+  await app.window.addInitScript(installSyntheticMicrophone);
+  await app.window.route('**/api/v1/system/voice-status', (route) => route.fulfill({ json: { enabled: true } }));
+  await app.window.route('**/api/v1/system/voice-transcription', transcribeRoute);
+  writeFileSync(join(codexHome, 'mode'), 'success');
+  await app.window.goto(`${new URL(app.window.url()).origin}/threads/${threadId}`);
+  const desktopInput = app.window.getByTestId('thread-command-input');
+  await expect(desktopInput).toBeVisible();
+  await desktopInput.fill('Desktop draft: ');
+  await desktopInput.press('End');
+  await record(app.window);
+  await expect(desktopInput).toContainText('Voice works on my phone.');
+  await expect(desktopInput).toContainText('Desktop draft:');
+  await expect(app.window.getByRole('button', { name: 'Retry voice transcription', exact: true })).toHaveCount(0);
+  await expect(app.window.locator('.toast.error')).toHaveCount(0);
+  await app.window.screenshot({ path: testInfo.outputPath('desktop-voice-transcript.png') });
+
   const reservation = createServer();
   await new Promise<void>((r) => reservation.listen(0, '127.0.0.1', r));
   const port = (reservation.address() as { port: number }).port;
@@ -63,57 +123,24 @@ else {
     expect((await context.request.post(`${serverUrl}/_mobile/session`, { headers: { authorization: `Bearer ${credential.credential}` } })).ok()).toBe(true);
     const window = await context.newPage();
     window.setDefaultTimeout(15_000);
-    await window.addInitScript(() => {
-      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: async () => new MediaStream() });
-      class Recorder {
-        static isTypeSupported(type: string) { return type === 'audio/mp4'; }
-        mimeType = 'audio/mp4';
-        state = 'inactive';
-        onstart?: () => void;
-        ondataavailable?: (event: { data: Blob }) => void;
-        onstop?: () => void;
-        start() { this.state = 'recording'; this.onstart?.(); }
-        stop() {
-          this.state = 'inactive';
-          this.ondataavailable?.({ data: new Blob(['synthetic-microphone-audio'], { type: this.mimeType }) });
-          this.onstop?.();
-        }
-      }
-      Object.defineProperty(window, 'MediaRecorder', { value: Recorder });
-    });
+    await window.addInitScript(installSyntheticMicrophone);
     await window.route('**/api/v1/system/voice-status', (route) => route.fulfill({ json: { enabled: true } }));
-    await window.route('**/api/v1/system/voice-transcription', async (route) => {
-      const req = route.request();
-      const form = await new Request(req.url(), { method: 'POST', headers: { 'content-type': req.headers()['content-type']! }, body: req.postDataBuffer()! }).formData();
-      const audio = form.get('file') as File;
-      expect(audio.name).toBe('recording.mp4');
-      const result = await invoke(Buffer.from(await audio.arrayBuffer()).toString('base64'), audio.type, audio.name);
-      await testInfo.attach('voice-response', { body: JSON.stringify(result), contentType: 'application/json' });
-      await route.fulfill({ status: result.status, json: result.body });
-    });
+    await window.route('**/api/v1/system/voice-transcription', transcribeRoute);
     await window.goto(`${serverUrl}/threads/${threadId}`);
     await expect(window.locator('.app-shell')).toHaveAttribute('data-mobile', 'true');
     const input = window.getByTestId('thread-command-input');
     await expect(input).toBeVisible();
-    const record = async (send = false) => {
-      const options = window.getByRole('button', { name: 'Composer options', exact: true });
-      if (await options.getAttribute('aria-expanded') !== 'true') await options.click();
-      await window.getByRole('button', { name: 'Start voice input', exact: true }).click();
-      await expect(window.getByTestId('thread-voice-bar')).toBeVisible();
-      await window.waitForTimeout(1100); // real minimum recording duration
-      await window.getByRole('button', { name: send ? 'Transcribe and send recording' : 'Stop and transcribe recording', exact: true }).click();
-    };
     writeFileSync(join(codexHome, 'mode'), 'success');
     await input.fill('Draft: ');
     await input.press('End');
-    await record();
+    await record(window);
     await expect(input).toContainText('Voice works on my phone.');
     await expect(input).toContainText('Draft:');
     await expect(window.locator('.toast.error')).toHaveCount(0);
     await window.screenshot({ path: testInfo.outputPath('mobile-voice-transcript.png') });
 
     writeFileSync(join(codexHome, 'mode'), 'locked');
-    await record();
+    await record(window);
     await expect(window.locator('.toast.error')).toContainText('Keychain');
     await expect(window.locator('.toast.error')).not.toContainText('synthetic-private-error');
     await expect(input).toContainText('Draft:');
@@ -121,10 +148,12 @@ else {
 
     writeFileSync(join(codexHome, 'mode'), 'success');
     await window.getByRole('button', { name: 'Retry voice transcription', exact: true }).click();
+    await expect.poll(async () => (await input.innerText()).match(/Voice works on my phone\./g)?.length ?? 0).toBe(2);
+    await expect(window.getByTestId('thread-voice-bar')).toHaveCount(0);
     await expect(window.getByRole('button', { name: 'Retry voice transcription', exact: true })).toHaveCount(0);
     await expect(input).toContainText('Voice works on my phone.');
     await input.fill('Send this recording:');
-    await record(true);
+    await record(window, true);
     await expect(window.getByTestId('thread-timeline')).toContainText('Send this recording:');
     await expect(window.getByTestId('thread-timeline')).toContainText('Voice works on my phone.');
     await expect(input).toBeEmpty();
