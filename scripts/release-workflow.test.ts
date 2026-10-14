@@ -1,10 +1,79 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
 const { load } = createRequire(import.meta.url)('js-yaml');
 const workflow = load(readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8'));
 const builder = load(readFileSync(new URL('../apps/desktop/electron-builder.yml', import.meta.url), 'utf8'));
+
+describe('Release verification', () => {
+  it('splits the complete root suite across the same isolated runners as merge CI', () => {
+    const ci = load(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+    const unit = workflow.jobs.unit;
+    expect(unit['runs-on']).toBe('ubuntu-latest');
+    expect(unit.strategy.matrix.shard).toEqual(ci.jobs.unit.strategy.matrix.shard);
+    expect(unit.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
+    expect(unit.strategy['fail-fast']).toBe(false);
+    expect(unit.needs).toBeUndefined();
+    const commands = unit.steps.map((step: any) => step.run).filter(Boolean);
+    expect(commands).toContain('pnpm exec vitest run --shard=${{ matrix.shard }}/4');
+    expect(commands).toContain('pnpm --filter zcc-plugin-slack-bridge-2ff2 package');
+    expect(commands).toContain('pnpm --dir plugins/slack-bridge-2ff2 exec puppeteer browsers install chrome');
+    expect(commands).toContain('sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0');
+    expect(commands).not.toContain('pnpm test');
+  });
+
+  it('runs typechecking, notes and package suites alongside the root shards', () => {
+    const checks = workflow.jobs.checks;
+    expect(checks.needs).toBeUndefined();
+    const commands = checks.steps.map((step: any) => step.run).filter(Boolean);
+    expect(commands).toEqual(expect.arrayContaining([
+      'pnpm run typecheck',
+      'pnpm run check:release-notes',
+      'pnpm exec vitest run --config plugins/tasks/vitest.config.ts',
+      'pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts',
+      'pnpm exec vitest run --config vitest.release-coverage.config.ts',
+    ]));
+    expect(commands.indexOf('pnpm --filter @zana-ai/zcc-plugin-sdk build'))
+      .toBeLessThan(commands.indexOf('pnpm exec vitest run --config vitest.release-coverage.config.ts'));
+    expect(commands).toContain('pnpm --filter @zana-ai/zcc-plugin-sdk build');
+    for (const job of [workflow.jobs.unit, checks, workflow.jobs.verify]) {
+      expect(job['continue-on-error']).toBeUndefined();
+      expect(job.steps.every((step: any) => !step['continue-on-error'])).toBe(true);
+    }
+  });
+
+  it('keeps smoke and packaging behind a gate that runs even after a shard fails', () => {
+    const verify = workflow.jobs.verify;
+    expect(verify.needs).toEqual(['unit', 'checks']);
+    expect(verify.if).toBe('always()');
+    expect(verify.steps[0].env).toEqual({
+      UNIT_RESULT: '${{ needs.unit.result }}',
+      CHECKS_RESULT: '${{ needs.checks.result }}',
+    });
+    expect(workflow.jobs.smoke.needs).toBe('verify');
+    for (const job of [workflow.jobs.smoke, workflow.jobs.build, workflow.jobs['build-windows']]) {
+      expect(job['continue-on-error']).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ['success', 'success', true],
+    ['failure', 'success', false],
+    ['cancelled', 'success', false],
+    ['skipped', 'success', false],
+    ['success', 'failure', false],
+    ['success', 'cancelled', false],
+    ['success', 'skipped', false],
+  ])('accepts unit=%s and checks=%s only when both succeed', (unit, checks, passes) => {
+    const result = spawnSync('bash', ['-e', '-c', workflow.jobs.verify.steps[0].run], {
+      env: { ...process.env, UNIT_RESULT: unit, CHECKS_RESULT: checks },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status === 0).toBe(passes);
+  });
+});
 
 describe('Windows release pipeline', () => {
   it('makes Windows opt-in for manual rebuilds while retaining both Mac architectures and release gates', () => {
@@ -69,7 +138,7 @@ describe('Windows release pipeline', () => {
     const publish = workflow.jobs.release.steps.find((step: any) => step.uses?.startsWith('softprops/action-gh-release@'));
     expect(publish.with.body_path).toBe('docs/releases/${{ steps.meta.outputs.title }}.md');
     expect(workflow.jobs.release.steps.find((step: any) => step.id === 'meta').run).toContain('title=${GITHUB_REF_NAME#v}');
-    expect(workflow.jobs.verify.steps.some((step: any) => step.run === 'pnpm run check:release-notes')).toBe(true);
+    expect(workflow.jobs.checks.steps.some((step: any) => step.run === 'pnpm run check:release-notes')).toBe(true);
   });
 
   it('builds natively and tests the actual Windows package before uploading', () => {

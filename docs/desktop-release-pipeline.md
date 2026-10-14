@@ -6,6 +6,12 @@ typechecking, unit tests, and the Linux Electron boot/IPC gate before packaging.
 All three packages must succeed before the workflow creates a draft release on
 `salesforce/zana`. A human publishes the draft.
 
+Root unit tests run on four separate Ubuntu runners, matching merge CI. Each
+shard keeps serial file execution to isolate real bridge and PTY subprocesses.
+Typechecking, release-note validation and the package-specific Tasks, Pi and
+release tests run alongside those shards. Every shard and package check must
+pass before the Linux smoke gate and platform packaging can start.
+
 The Windows job builds an NSIS installer named
 `Zana-Command-Center-<version>-win-x64-Setup.exe`. It launches
 `dist/win-unpacked/Zana.exe` with an isolated home, exercises renderer/server IPC,

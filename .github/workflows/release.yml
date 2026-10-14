@@ -38,8 +38,37 @@ permissions:
   contents: write # needed to create the GitHub Release
 
 jobs:
-  verify:
-    name: Typecheck and test
+  # Keep files serial within each VM: the suite spawns real bridges and PTYs.
+  # Match merge CI's four isolated runners instead of raising local concurrency.
+  unit:
+    name: Unit tests (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Slack runtime assets
+        run: pnpm --filter zcc-plugin-slack-bridge-2ff2 package
+      - name: Install Chrome for Slack diagram tests
+        run: pnpm --dir plugins/slack-bridge-2ff2 exec puppeteer browsers install chrome
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Unit tests
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4
+
+  checks:
+    name: Typecheck, release notes and package tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -57,17 +86,32 @@ jobs:
       # can't ship without it (see scripts/check-release-notes.mjs).
       - run: pnpm run check:release-notes
       - run: pnpm run typecheck
-      # The Slack diagram tests consume the packaged asset and launch Chromium.
-      # Match the prerequisites in ci.yml for a clean release checkout.
-      - name: Prepare Slack runtime assets
-        run: pnpm --filter zcc-plugin-slack-bridge-2ff2 package
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: pnpm test
+      - name: Tasks tests with package configuration
+        run: pnpm exec vitest run --config plugins/tasks/vitest.config.ts
+      - name: Pi provider tests with package configuration
+        run: pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts
+      - name: Build plugin SDK runtime
+        run: pnpm --filter @zana-ai/zcc-plugin-sdk build
+      - name: Release package tests
+        run: pnpm exec vitest run --config vitest.release-coverage.config.ts
+
+  verify:
+    name: Typecheck and test
+    runs-on: ubuntu-latest
+    needs: [unit, checks]
+    if: always()
+    steps:
+      - name: Require every test shard and package check
+        env:
+          UNIT_RESULT: ${{ needs.unit.result }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: |
+          test "$UNIT_RESULT" = success
+          test "$CHECKS_RESULT" = success
 
   # Release gate: boot the BUILT app under headless Electron and confirm it
-  # launches + its main↔renderer IPC round-trips (e2e/smoke.spec.ts). Unlike
-  # ci.yml's informational e2e job, this one is REQUIRED — `build` needs it, so
+  # launches + its main↔renderer IPC round-trips (e2e/smoke.spec.ts).
+  # Every unit shard and package check must pass before this job, so
   # a build that can't even boot never reaches signing/notarization/publish.
   # Only the single smoke spec runs (test:smoke:only), not the heavier
   # marketplace/registry specs, so the gate stays fast and stable.
