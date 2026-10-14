@@ -3,9 +3,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createPluginApi } from './plugin-api';
-import { createIsolatedPluginRuntime } from './isolated-plugin-runtime';
+import { createIsolatedPluginRuntime, resolvePluginWorkerExecArgv } from './isolated-plugin-runtime';
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+
+it('resolves tsx loader URL for TypeScript worker entries and empty argv for JavaScript', () => {
+  const tsArgv = resolvePluginWorkerExecArgv('/path/to/worker.ts');
+  expect(tsArgv[0]).toBe('--import');
+  expect(tsArgv[1]).toMatch(/^file:\/\/\/.+tsx/);
+
+  const jsArgv = resolvePluginWorkerExecArgv('/path/to/worker.js');
+  expect(jsArgv).toEqual([]);
+});
 async function fixture(source: string, timings = {}, configure?: (api: ReturnType<typeof createPluginApi>['api']) => void) {
   const dir = await mkdtemp(join(tmpdir(), 'plugin-isolation-')); cleanups.push(() => rm(dir, { recursive: true, force: true }));
   const entry = join(dir, 'server.mjs'); await writeFile(entry, source);

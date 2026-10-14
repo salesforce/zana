@@ -8,6 +8,11 @@ import {
   sanitizeInheritedChildProcessEnv,
   withoutBridgeRuntimeEnv,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import {
+  isNoteworthyFallback,
+  resolveWindowsPiInstallation,
+  type WindowsPiInstallKind,
+} from "./windows-resolver.js";
 
 export const PI_BRIDGE_COMMAND_ENV = "ZCC_PI_BRIDGE_COMMAND";
 export const PI_BRIDGE_ARGS_ENV = "ZCC_PI_BRIDGE_ARGS";
@@ -67,13 +72,47 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-export function resolvePiLaunch(env: NodeJS.ProcessEnv): {
+export interface PiLaunchConfig {
   command: string;
   args: string[];
-} {
+  /** The executable the user would run (e.g. `pi.cmd`), when `command` is not it. */
+  displayExecutablePath?: string;
+  installKind?: WindowsPiInstallKind;
+  /** Variables the launch itself requires; they win over inherited env. */
+  env?: Record<string, string>;
+}
+
+const DEFAULT_PI_LAUNCH: PiLaunchConfig = { command: "pi", args: [] };
+
+/** Fallback messages already written, so repeated status polls log once. */
+const reportedWindowsFallbacks = new Set<string>();
+
+function resolveDefaultPiLaunch(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): PiLaunchConfig {
+  if (platform !== "win32") return { ...DEFAULT_PI_LAUNCH };
+  const resolution = resolveWindowsPiInstallation({
+    pathEnv: env.PATH ?? env.Path,
+  });
+  if (resolution.kind === "resolved") return resolution.launch;
+  if (isNoteworthyFallback(resolution.reason)) {
+    const message = `pi bridge: using pi shim, windows resolve skipped (${resolution.reason}): ${resolution.detail}\n`;
+    if (!reportedWindowsFallbacks.has(message)) {
+      reportedWindowsFallbacks.add(message);
+      process.stderr.write(message);
+    }
+  }
+  return { ...DEFAULT_PI_LAUNCH };
+}
+
+export function resolvePiLaunch(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): PiLaunchConfig {
   const command = env[PI_BRIDGE_COMMAND_ENV] ?? env.BB_PI_BRIDGE_COMMAND;
   if (!command) {
-    return { command: "pi", args: [] };
+    return resolveDefaultPiLaunch(env, platform);
   }
   const rawArgs = env[PI_BRIDGE_ARGS_ENV] ?? env.BB_PI_BRIDGE_ARGS;
   if (!rawArgs) {
@@ -87,6 +126,22 @@ export function resolvePiLaunch(env: NodeJS.ProcessEnv): {
     throw new Error(`${PI_BRIDGE_ARGS_ENV} must be a JSON array of strings`);
   }
   return { command, args: parsed };
+}
+
+/**
+ * Applies the launch's own variables on top of `base`. The launch wins, as in
+ * Pi's `pi-launcher.js`, so a stray inherited `PI_MANAGED_INSTALL_ROOT` can't
+ * point the session at a different install than the one we resolved.
+ */
+export function withPiLaunchEnv(
+  base: NodeJS.ProcessEnv,
+  launch: PiLaunchConfig,
+): NodeJS.ProcessEnv {
+  return launch.env ? { ...base, ...launch.env } : base;
+}
+
+export function resetPiLaunchReportsForTests(): void {
+  reportedWindowsFallbacks.clear();
 }
 
 export function buildPiChildEnv(
@@ -131,9 +186,10 @@ export class PiRpcChild {
     });
     const launch = resolvePiLaunch(process.env);
     this.child = spawnPortableProcess({
-      command: launch.command, args: [...launch.args, ...args.args],
+      command: launch.command,
+      args: [...launch.args, ...args.args],
       cwd: args.cwd,
-      env: args.env,
+      env: withPiLaunchEnv(args.env, launch),
       stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
     });
     experimental_recordProviderChildIo(this.child, {

@@ -18,7 +18,11 @@ import {
   experimental_resolveExecutablePath as resolveExecutablePath,
   experimental_versionFrom as versionFrom,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
-import { resolvePiLaunch } from "./rpc-child.js";
+import {
+  type PiLaunchConfig,
+  resolvePiLaunch,
+  withPiLaunchEnv,
+} from "./rpc-child.js";
 
 const execFileAsync = runPortableCommand;
 export const PI_MINIMUM_SUPPORTED_VERSION = "0.84.0";
@@ -128,8 +132,41 @@ async function piGlobalInstallCommand(
     : npmGlobalInstallCommand(PI_NPM_PACKAGE);
 }
 
-export async function probePiVersion(): Promise<PiVersionProbe> {
-  const launch = resolvePiLaunch(process.env);
+/**
+ * Pi's own installer (~/.pi/agent) updates itself; offering `npm i -g` would
+ * install a second copy that the managed shim keeps shadowing, so "Update
+ * available" would never clear.
+ */
+function managedSelfUpdateCommand(
+  launch: PiLaunchConfig,
+): ProviderInstallationCommand {
+  const args = ["update", "self"];
+  return {
+    command: launch.displayExecutablePath ?? "pi",
+    args,
+    displayCommand: formatCommand("pi", args),
+  };
+}
+
+async function piInstallCommand(
+  launch: PiLaunchConfig,
+  executablePath: string | null,
+): Promise<ProviderInstallationCommand> {
+  return launch.installKind === "managed"
+    ? managedSelfUpdateCommand(launch)
+    : piGlobalInstallCommand(executablePath);
+}
+
+/** The path the user would run; for a resolved Windows launch that's the shim, not node.exe. */
+function piExecutablePath(launch: PiLaunchConfig): Promise<string | null> {
+  return launch.displayExecutablePath
+    ? Promise.resolve(launch.displayExecutablePath)
+    : resolveExecutablePath(launch.command);
+}
+
+export async function probePiVersion(
+  launch: PiLaunchConfig = resolvePiLaunch(process.env),
+): Promise<PiVersionProbe> {
   const display = formatCommand(launch.command, [...launch.args, "--version"]);
   let stdout: string;
   try {
@@ -138,6 +175,7 @@ export async function probePiVersion(): Promise<PiVersionProbe> {
       [...launch.args, "--version"],
       {
         timeout: VERSION_PROBE_TIMEOUT_MS,
+        env: launch.env ? withPiLaunchEnv(process.env, launch) : undefined,
       },
     ));
   } catch (error) {
@@ -169,12 +207,17 @@ export function describePiVersionProbeFailure(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function getPiProviderInstallationStatus(): Promise<ProviderInstallationStatus> {
-  const launch = resolvePiLaunch(process.env);
+export function getPiProviderInstallationStatus(): Promise<ProviderInstallationStatus> {
+  return piInstallationStatusFor(resolvePiLaunch(process.env));
+}
+
+async function piInstallationStatusFor(
+  launch: PiLaunchConfig,
+): Promise<ProviderInstallationStatus> {
   const [resolvedExecutable, probe, latestVersion, npmGlobal] =
     await Promise.all([
-      resolveExecutablePath(launch.command),
-      probePiVersion(),
+      piExecutablePath(launch),
+      probePiVersion(launch),
       npmLatestVersion(PI_NPM_PACKAGE),
       probeNpmGlobalPackage(PI_NPM_PACKAGE),
     ]);
@@ -200,7 +243,7 @@ export async function getPiProviderInstallationStatus(): Promise<ProviderInstall
       : {
           kind: actionKind,
           label: actionKind === "install" ? "Install" : "Update",
-          command: (await piGlobalInstallCommand(resolvedExecutable))
+          command: (await piInstallCommand(launch, resolvedExecutable))
             .displayCommand,
         };
 
@@ -227,7 +270,8 @@ export async function getPiProviderInstallationStatus(): Promise<ProviderInstall
 export async function getPiProviderInstallationRun(
   action: "install" | "update",
 ): Promise<ProviderInstallationRunResult> {
-  const status = await getPiProviderInstallationStatus();
+  const launch = resolvePiLaunch(process.env);
+  const status = await piInstallationStatusFor(launch);
   if (status.installAction?.kind !== action) {
     return {
       available: false,
@@ -236,7 +280,7 @@ export async function getPiProviderInstallationRun(
   }
   return {
     available: true,
-    command: await piGlobalInstallCommand(status.executablePath),
+    command: await piInstallCommand(launch, status.executablePath),
     verification: installationVerification(status, action),
   };
 }
@@ -280,9 +324,10 @@ export type PiInstallGate =
 
 const INSTALL_GUIDANCE = `Install ${PI_NPM_PACKAGE} ${PI_MINIMUM_SUPPORTED_VERSION} or newer: ${npmGlobalInstallCommand(PI_NPM_PACKAGE).displayCommand}`;
 
-async function probePiInstallGate(): Promise<PiInstallGate> {
-  const launch = resolvePiLaunch(process.env);
-  if ((await resolveExecutablePath(launch.command)) === null) {
+async function probePiInstallGate(
+  launch: PiLaunchConfig,
+): Promise<PiInstallGate> {
+  if ((await piExecutablePath(launch)) === null) {
     return {
       ok: false,
       status: "not_installed",
@@ -290,7 +335,7 @@ async function probePiInstallGate(): Promise<PiInstallGate> {
       result: piHealthResult("not_installed"),
     };
   }
-  const probe = await probePiVersion();
+  const probe = await probePiVersion(launch);
   if (probe.version === null) {
     const statusMessage = `Could not determine the pi version: ${probe.failure}. ${INSTALL_GUIDANCE}`;
     return {
@@ -329,7 +374,7 @@ export function getPiInstallGate(): Promise<PiInstallGate> {
   if (cached !== undefined && cached.expiresAt > now) {
     return cached.gate;
   }
-  const gate = probePiInstallGate();
+  const gate = probePiInstallGate(launch);
   installGateMemo.set(key, { expiresAt: now + INSTALL_GATE_TTL_MS, gate });
   gate.catch(() => {
     if (installGateMemo.get(key)?.gate === gate) installGateMemo.delete(key);
