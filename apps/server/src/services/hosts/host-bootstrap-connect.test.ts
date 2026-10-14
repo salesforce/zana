@@ -7,6 +7,7 @@ import { openDatabase, upsertHost, updateHostSshIdentity, getHost } from '@zana-
 import { bootstrapHostForProject, repairHost, isPeerNetworkFailure } from './host-bootstrap.js';
 import { issueConnectHostCode } from './connect-enrollment.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import { ConnectRequestError } from '../../mobile/connect-account.js';
 
 vi.mock('./connect-enrollment.js', async importOriginal => ({
   ...await importOriginal<typeof import('./connect-enrollment.js')>(),
@@ -117,4 +118,42 @@ it('surfaces a failed SSH fallback without binding or reporting success', async 
 
 it.each(['curl: (22) The requested URL returned error: 403', 'Enrollment denied', 'Node.js >= 22 is required', 'host did not connect'])(
   'does not bypass application or enrollment failures: %s', message => { expect(isPeerNetworkFailure(new Error(message))).toBe(false); }
+);
+
+it.each([
+  ['a revoked account credential', new ConnectRequestError(401)],
+  ['a forbidden account credential', new ConnectRequestError(403)],
+  ['an unreachable account service', new TypeError('fetch failed')],
+  ['a timed-out account service', Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })]
+])('repairs an SSH machine through the primary-owned tunnel despite %s', async (_label, error) => {
+  const f = fixture();
+  vi.mocked(issueConnectHostCode).mockRejectedValueOnce(error);
+  const events = await repairHost(f.ctx, f.remote.id);
+  expect(events.at(-1)).toEqual({ type: 'done', hostId: f.remote.id });
+  expect(f.rpc).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ hostId: f.primary.id, command: expect.objectContaining({
+    hostId: f.remote.id, joinCode: 'zcde_tunnel', sshTunnel: expect.objectContaining({ localPort: 43210 }) }) }));
+  expect(f.rpc.mock.calls[0][0]).not.toHaveProperty('command.connect');
+  expect(f.ctx.joinCodes.mintForHost).toHaveBeenCalledWith(f.remote.id);
+  expect(events.some(event => event.type === 'log' && /Zana Connect is unavailable.*connecting through SSH/.test(event.text))).toBe(true);
+});
+
+it('installs a new SSH machine with a local join code when the account refuses enrollment', async () => {
+  const f = fixture();
+  updateHostSshIdentity(f.ctx.db, f.remote.id, { host: 'another' });
+  vi.mocked(issueConnectHostCode).mockRejectedValueOnce(new ConnectRequestError(401));
+  vi.mocked(f.ctx.joinCodes.mint).mockReturnValueOnce({ hostId: f.remote.id, joinCode: 'zcde_fresh' } as never);
+  const events = await bootstrapHostForProject(f.ctx, 'project');
+  expect(events.at(-1)).toEqual({ type: 'done', hostId: f.remote.id });
+  expect((f.rpc.mock.calls[0][0] as any).command).toMatchObject({ joinCode: 'zcde_fresh', hostId: f.remote.id });
+  expect(f.ctx.joinCodes.mintForHost).not.toHaveBeenCalled();
+  expect(f.bind).toHaveBeenCalledWith('project', { hostId: f.remote.id, path: '/srv/project' });
+});
+
+it.each([new ConnectRequestError(500), new Error('Invalid machine enrollment response')])(
+  'still surfaces account failures that are not an outage or refusal: %s', async error => {
+    const f = fixture();
+    vi.mocked(issueConnectHostCode).mockRejectedValueOnce(error);
+    await expect(repairHost(f.ctx, f.remote.id)).rejects.toBe(error);
+    expect(f.rpc).not.toHaveBeenCalled();
+  }
 );

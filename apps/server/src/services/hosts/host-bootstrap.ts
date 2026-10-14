@@ -17,6 +17,7 @@ import { resolveHostArtifact } from './host-artifact.js';
 import type { ProjectRecord } from '../../project-store.js';
 import type { PeerDaemonStatusResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { connectInstallCommand, issueConnectHostCode, usesConnect } from './connect-enrollment.js';
+import { ConnectRequestError } from '../../mobile/connect-account.js';
 import { createHash } from 'node:crypto';
 
 const PEER_HOST_ID_RE =
@@ -453,9 +454,38 @@ async function bindRemoteProject(
   input.emit({ type: 'done', hostId: input.hostId });
 }
 
+/** The primary owns the SSH connection. The forwarded port is loopback-only on
+ * both ends; the normal one-time host enrollment and host-key authentication
+ * still gate the product connection, so no account credential is involved. */
+async function installTunnelPeer(ctx: ProductHttpContext, remote: ProjectRemote, emit: HostBootstrapListener, localCode: { hostId: string; joinCode: string }): Promise<string> {
+  const { hostId } = localCode;
+  const remotePort = 20000 + createHash('sha256').update(hostId).digest().readUInt32BE(0) % 40000;
+  await installPeer(ctx, {
+    remote, hostId, joinCode: localCode.joinCode,
+    serverUrl: `http://127.0.0.1:${remotePort}`, emit,
+    sshTunnel: { localPort: ctx.origins.serverPort, remotePort }
+  });
+  updateHostSshIdentity(ctx.db, hostId, { host: remote.host, user: remote.user, proxyJump: remote.proxyJump });
+  ctx.hub.emit('hosts:changed', undefined);
+  return hostId;
+}
+
+/** A refused or unreachable account must not strand a machine this server can reach over SSH. */
+function isConnectAccountUnavailable(error: unknown): boolean {
+  return (error instanceof ConnectRequestError && [401, 403].includes(error.status)) || isPeerNetworkFailure(error) ||
+    (error instanceof Error && error.name === 'TimeoutError');
+}
+
 async function installConnectPeer(ctx: ProductHttpContext, remote: ProjectRemote, emit: HostBootstrapListener, hostId?: string): Promise<string> {
   const primary = requirePrimaryHost(ctx);
-  const issued = await issueConnectHostCode(ctx, { name: remote.host.slice(0, 80), ...(hostId ? { hostId } : {}) });
+  let issued: Awaited<ReturnType<typeof issueConnectHostCode>>;
+  try {
+    issued = await issueConnectHostCode(ctx, { name: remote.host.slice(0, 80), ...(hostId ? { hostId } : {}) });
+  } catch (error) {
+    if (!isConnectAccountUnavailable(error)) throw error;
+    emit({ type: 'log', text: `Zana Connect is unavailable (${error instanceof Error ? error.message : String(error)}); connecting through SSH…` });
+    return installTunnelPeer(ctx, remote, emit, hostId ? ctx.joinCodes.mintForHost(hostId) : ctx.joinCodes.mint());
+  }
   emit({ type: 'log', text: 'Installing the machine through Zana Connect…' });
   try {
     const result = await ctx.hostHub.callHostOnlineRpc<{ ok: true; log: string }>({
@@ -475,20 +505,7 @@ async function installConnectPeer(ctx: ProductHttpContext, remote: ProjectRemote
   } catch (error) {
     if (isPeerNetworkFailure(error)) {
       emit({ type: 'log', text: 'Public HTTPS is unavailable on this machine; connecting through SSH…' });
-      // The authenticated primary owns the SSH connection. The forwarded port
-      // is loopback-only on both ends; the normal one-time host enrollment and
-      // host-key authentication still gate the product connection.
-      const remotePort = 20000 + createHash('sha256').update(issued.hostId).digest().readUInt32BE(0) % 40000;
-      const localPort = ctx.origins.serverPort;
-      const localCode = ctx.joinCodes.mintForHost(issued.hostId);
-      await installPeer(ctx, {
-        remote, hostId: issued.hostId, joinCode: localCode.joinCode,
-        serverUrl: `http://127.0.0.1:${remotePort}`, emit,
-        sshTunnel: { localPort, remotePort }
-      });
-      updateHostSshIdentity(ctx.db, issued.hostId, { host: remote.host, user: remote.user, proxyJump: remote.proxyJump });
-      ctx.hub.emit('hosts:changed', undefined);
-      return issued.hostId;
+      return installTunnelPeer(ctx, remote, emit, ctx.joinCodes.mintForHost(issued.hostId));
     }
     const classified = classifyInstallFailure(error);
     throw new HostBootstrapError(classified.code, classified.message, connectInstallCommand(issued));
