@@ -96,6 +96,18 @@ describe('goalExecutionSourcePaths', () => {
     expect(descriptors.length).toBeGreaterThan(0);
   });
 
+  it('discovers a quoted path with spaces under an existing home', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'zcc-home-'));
+    const targetDir = join(home, 'proj with spaces', 'src folder');
+    mkdirSync(targetDir, { recursive: true });
+    const targetFile = join(targetDir, 'my app.ts');
+    writeFileSync(targetFile, '// stub');
+
+    const descriptors = await goalExecutionSourcePaths(`fix the bug in "${targetFile}"`, home);
+    expect(descriptors.length).toBeGreaterThan(0);
+    expect(descriptors[0]?.canonicalPath).toBe(realpathSync(targetFile));
+  });
+
   it('discovers a plan referenced OUTSIDE the project but under the user HOME', async () => {
     // The reported stall: the goal named a plan in a doc vault under HOME, which
     // sits outside the selected project. It must still be snapshotted — its

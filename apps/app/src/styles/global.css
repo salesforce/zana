@@ -168,12 +168,15 @@ input {
   --shell-leading-reserve: 184px;
 }
 
-.app-shell[data-windows-caption='true'] {
-  /* Match titlebar height with macOS, reserve room on top-right for native
-     Windows 11 caption buttons (minimize, maximize, close ~138px). */
+.app-shell[data-platform='windows'] {
+  /* Match titlebar height with macOS, persistent across fullscreen and windowed. */
   --titlebar-h: 44px;
-  --windows-caption-reserve: 138px;
   --shell-trigger-left: 12px;
+}
+
+.app-shell[data-windows-caption='true'] {
+  /* Reserve room on top-right for native Windows 11 caption buttons (minimize, maximize, close ~138px). */
+  --windows-caption-reserve: 138px;
 }
 
 /* Always-on status strip: add a fixed bottom row for it. Composes with the
@@ -41584,8 +41587,12 @@ body.split-frame-guard webview {
   --titlebar-h: 44px;
 }
 
-.plugin-view-shell[data-windows-caption='true'] {
+.plugin-view-shell[data-platform='windows'] {
   --titlebar-h: 44px;
+}
+
+.plugin-view-shell[data-windows-caption='true'] {
+  --windows-caption-reserve: 138px;
 }
 
 .plugin-view-titlebar {
@@ -41605,7 +41612,7 @@ body.split-frame-guard webview {
 }
 
 .plugin-view-shell[data-windows-caption='true'] .plugin-view-titlebar {
-  padding-right: 146px;
+  padding-right: calc(var(--windows-caption-reserve, 138px) + 8px);
 }
 
 .plugin-view-title {

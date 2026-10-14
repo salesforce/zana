@@ -4745,8 +4745,16 @@ export async function goalExecutionSourcePaths(
     const rel = relative(base, real);
     return rel !== '' && !(rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel));
   });
-  const matches = goal.match(/(?:^|[\s`'"(])([A-Za-z]:[/\\][^\s`'"),;:]+|\/[^\s`'"),;:]+)/g) ?? [];
-  for (const match of matches) {
+  const rawCandidates: string[] = [];
+  // 1. Quoted paths (preserves spaces in "C:\Program Files\..." or '/path with space/...')
+  for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/)[^"'`]+)["'`]/g)) {
+    if (m[1]) rawCandidates.push(m[1]);
+  }
+  // 2. Unquoted paths
+  for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) {
+    if (m[1]) rawCandidates.push(m[1]);
+  }
+  for (const match of rawCandidates) {
     const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
     const candidates = [raw];
     if (raw.endsWith('.')) candidates.push(raw.slice(0, -1));
@@ -6163,6 +6171,15 @@ function createMainTeamProductOps() {
 }
 
 /**
+ * Geometry and theme for Windows Electron titleBarOverlay.
+ * Must match the CSS tokens in apps/app/src/styles/global.css:
+ * --titlebar-h (44px), --bg-base (#181818), --text-muted (#a1a1aa).
+ */
+export const WINDOWS_TITLEBAR_HEIGHT = 44;
+export const WINDOWS_TITLEBAR_OVERLAY_BG = '#181818';
+export const WINDOWS_TITLEBAR_OVERLAY_SYMBOL = '#a1a1aa';
+
+/**
  * Open an app window. With no `projectId` it's the full, unscoped shell (the
  * default window opened at boot and on dock-reactivate). With a `projectId` the
  * renderer locks to that one project — see `windows:openProject` and the
@@ -6227,9 +6244,9 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       ? {
           titleBarStyle: 'hidden' as const,
           titleBarOverlay: {
-            color: '#181818',
-            symbolColor: '#a1a1aa',
-            height: 44
+            color: WINDOWS_TITLEBAR_OVERLAY_BG,
+            symbolColor: WINDOWS_TITLEBAR_OVERLAY_SYMBOL,
+            height: WINDOWS_TITLEBAR_HEIGHT
           }
         }
       : {

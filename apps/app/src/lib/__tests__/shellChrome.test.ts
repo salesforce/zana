@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   shellPlatform,
   shouldReserveMacosTrafficLights,
@@ -44,8 +44,55 @@ describe('shouldReserveWindowsCaptionButtons', () => {
 });
 
 describe('shellPlatform', () => {
-  it('detects platform correctly', () => {
-    const current = shellPlatform();
-    expect(['macos', 'windows', 'linux', 'other']).toContain(current);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('detects macOS from navigator.platform', () => {
+    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+    expect(shellPlatform()).toBe('macos');
+  });
+
+  it('detects macOS from navigator.userAgentData', () => {
+    vi.stubGlobal('navigator', { userAgentData: { platform: 'macOS' }, platform: '' });
+    expect(shellPlatform()).toBe('macos');
+  });
+
+  it('detects Windows from navigator.platform', () => {
+    vi.stubGlobal('navigator', { platform: 'Win32' });
+    expect(shellPlatform()).toBe('windows');
+  });
+
+  it('detects Windows from navigator.userAgentData', () => {
+    vi.stubGlobal('navigator', { userAgentData: { platform: 'Windows' }, platform: '' });
+    expect(shellPlatform()).toBe('windows');
+  });
+
+  it('detects Linux from navigator.platform', () => {
+    vi.stubGlobal('navigator', { platform: 'Linux x86_64' });
+    expect(shellPlatform()).toBe('linux');
+  });
+
+  it('detects Linux from navigator.userAgentData', () => {
+    vi.stubGlobal('navigator', { userAgentData: { platform: 'Linux' }, platform: '' });
+    expect(shellPlatform()).toBe('linux');
+  });
+
+  it('prioritizes userAgentData over legacy navigator.platform', () => {
+    vi.stubGlobal('navigator', {
+      userAgentData: { platform: 'Windows' },
+      platform: 'Linux x86_64'
+    });
+    expect(shellPlatform()).toBe('windows');
+  });
+
+  it('falls back to other for unknown platforms', () => {
+    vi.stubGlobal('navigator', { platform: 'FreeBSD' });
+    expect(shellPlatform()).toBe('other');
+  });
+
+  it('falls back to other when navigator is undefined', () => {
+    vi.stubGlobal('navigator', undefined);
+    expect(shellPlatform()).toBe('other');
   });
 });
