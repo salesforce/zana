@@ -1239,6 +1239,37 @@ describe('SquadExecutionService', () => {
     expect((await store.get('execution-1'))?.resolvedModels).toMatchObject([{ slotId: 'slot-1', model: 'fresh-model' }]);
   }));
 
+  it('enforces refreshed routing during dispatch and cascade', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      routingEnforcementRequested: () => true,
+      routingEnforcementEnabled: () => true,
+      resolveTeamModelSnapshots: () => [{ slotId: 'slot-1', personaId: 'worker', provider: 'provider', model: 'model' }],
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'team:team-1:session-1:request-1', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'worker-d' }
+        ]
+      } } }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    const started = await service.start('owner', 'project-1', {
+      ...request,
+      coordinationMode: 'job-team'
+    });
+    if (!started.ok) throw new Error(started.message);
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const worker = { ...coordinator, slotId: 'slot-1', role: 'worker' as const };
+
+    await expect(service.registerPlan(coordinator, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'], routing: { version: 1, requiredRole: 'worker' } },
+      { id: 'b', title: 'B', task: 'do b', dependencies: ['a'], files: ['b.txt'], verification: ['check b'], routing: { version: 1, requiredRole: 'worker' } }
+    ])).resolves.toMatchObject({ ok: true });
+    await expect(service.completeWork(worker, 'a', 'done')).resolves.toMatchObject({ ok: true });
+    expect((await store.get('execution-1'))?.workUnits?.find((unit) => unit.id === 'b')).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1' });
+  }));
+
   it('does not type an assignment into a dead-agent worker (releases instead of stdin-echo into the surviving shell)', async () => fixture(async (filePath) => {
     const replyToSession = vi.fn(() => true);
     const deliverToWorker = vi.fn(() => true);

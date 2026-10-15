@@ -160,6 +160,19 @@ it('uses an install when dependency inputs change and broad tests for runner con
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+it('falls back to install and skips optional test stages when no code inputs or guards exist', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-empty-'));
+  const run = vi.fn((command, args) => {
+    if (command === 'fd') return { status: 0, stdout: '' };
+    return { status: 0 };
+  });
+  try {
+    runFastVerification({ oid: OID, base: BASE, paths: [], root, run, log: vi.fn() });
+    expect(run).toHaveBeenCalledWith('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], expect.anything());
+    expect(run).not.toHaveBeenCalledWith('pnpm', expect.arrayContaining(['vitest']), expect.anything());
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 it('uses broad changed-test selection for test and runner configuration inputs', () => {
   const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-broad-'));
   const run = vi.fn((command, args) => {

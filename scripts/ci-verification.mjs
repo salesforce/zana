@@ -74,7 +74,7 @@ function pluginBuildFile(path, root) {
 
 function productionFile(path, root) {
   return /^(apps\/.*\/src\/|packages\/.*\/src\/|plugins\/[^/]+\/|website\/(lib|app)\/|services\/|scripts\/)/.test(path) &&
-    /\.(?:[cm]?js|tsx?)$/.test(path) && !pluginBuildFile(path, root) && !/(?:\.test\.|\.spec\.|\/vitest\.(?:config|setup)\.|\/__tests__\/|\/(test|testing|fixtures)\/|\/test-harness\.tsx?$|\/fake-[^/]+(?:\.[cm]?js|-harness\.ts)$|\.d\.ts$)/.test(path);
+    /\.(?:[cm]?js|tsx?)$/.test(path) && !pluginBuildFile(path, root) && !/(?:\.test\.|\.spec\.|\/vitest\.(?:config|setup)\.|\/__tests__\/|\/(test|testing|fixtures)\/|\/test-harness\.tsx?$|\/fake-[^/]+(?:\.[cm]?js|-harness\.ts)$|\.d\.ts$|^scripts\/run-[^/]+-e2e\.mjs$)/.test(path);
 }
 
 /** Comments do not change runtime behavior, even inside an uncovered function. */

@@ -139,6 +139,16 @@ it('allows type-only files while rejecting uncovered runtime TypeScript', () => 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+it('leaves E2E suite launchers to their selected Playwright specs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zcc-ci-e2e-launcher-'));
+  const path = 'scripts/run-feature-e2e.mjs';
+  try {
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    writeFileSync(join(root, path), 'export const select = [\'e2e/feature.spec.ts\'];');
+    expect(coverageFailures(new Map([[path, new Set([1])]]), {}, root)).toEqual([]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 it('excludes Vitest setup and test harnesses while still requiring coverage for product runtime and build scripts', () => {
   const root = mkdtempSync(join(tmpdir(), 'zcc-ci-test-support-'));
   const paths = [
