@@ -26,6 +26,27 @@ describe('PersonaEditor harness-neutral fields', () => {
     expect(html).not.toContain('Base profile');
   });
 
+  it('shows Claude-only detail options only when a persona has them', () => {
+    const neutral = renderToStaticMarkup(
+      <PersonaEditor persona={{ id: 'neutral', name: 'Neutral', source: 'builtin' }} mode="view" onClose={() => {}} />
+    );
+    const configured = renderToStaticMarkup(
+      <PersonaEditor persona={{ id: 'configured', name: 'Configured', source: 'user', allowedTools: ['Read'] }} mode="view" onClose={() => {}} />
+    );
+    const denied = renderToStaticMarkup(
+      <PersonaEditor persona={{ id: 'denied', name: 'Denied', source: 'user', deniedTools: ['Write'] }} mode="view" onClose={() => {}} />
+    );
+    const directories = renderToStaticMarkup(
+      <PersonaEditor persona={{ id: 'directories', name: 'Directories', source: 'user', addDirs: ['/tmp/context'] }} mode="view" onClose={() => {}} />
+    );
+
+    expect(neutral).not.toContain('data-testid="persona-claude-options"');
+    expect(configured).toContain('data-testid="persona-claude-options"');
+    expect(denied).toContain('data-testid="persona-claude-options"');
+    expect(directories).toContain('data-testid="persona-claude-options"');
+    expect(configured).toContain('Persona tool policy and context directories');
+  });
+
   it('collapses Claude-only role capabilities and hides inert MCP server entry', () => {
     const html = renderToStaticMarkup(
       <PersonaEditor persona={null} mode="edit" onClose={() => {}} />

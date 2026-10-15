@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -130,6 +130,33 @@ it('installs dependencies and prepares Slack assets only when Slack source chang
       ['fd', ['-e', 'ts', 'guard\\.test']],
       ['pnpm', ['exec', 'vitest', 'run', 'apps/app/src/__tests__/rule6.guard.test.ts', 'scripts/install-seam.guard.test.ts']],
     ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('reuses installed dependencies when manifests are unchanged and skips tests for non-code inputs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-reuse-'));
+  mkdirSync(join(root, 'node_modules'));
+  const run = vi.fn((command, args) => {
+    if (command === 'fd') return { status: 0, stdout: '' };
+    return { status: 0 };
+  });
+  try {
+    runFastVerification({ oid: OID, base: BASE, paths: ['docs/guide.md'], root, run, log: vi.fn() });
+    expect(run).not.toHaveBeenCalledWith('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], expect.anything());
+    expect(run).not.toHaveBeenCalledWith('pnpm', expect.arrayContaining(['vitest']), expect.anything());
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('uses an install when dependency inputs change and broad tests for runner config', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-dependencies-'));
+  const run = vi.fn((command, args) => {
+    if (command === 'fd') return { status: 0, stdout: '' };
+    return { status: 0 };
+  });
+  try {
+    runFastVerification({ oid: OID, base: BASE, paths: ['pnpm-lock.yaml', 'vitest.config.ts'], root, run, log: vi.fn() });
+    expect(run).toHaveBeenCalledWith('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], expect.anything());
+    expect(run).toHaveBeenCalledWith('pnpm', ['exec', 'vitest', 'run', '--changed', BASE], expect.anything());
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

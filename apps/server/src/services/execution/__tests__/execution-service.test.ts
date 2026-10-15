@@ -1211,6 +1211,34 @@ describe('SquadExecutionService', () => {
     expect(replyToSession.mock.calls[0]?.[1]).not.toContain('agent_send');
   }));
 
+  it('refreshes route facts when routing was requested before routing can be enforced', async () => fixture(async (filePath) => {
+    const resolveTeamModelSnapshots = vi.fn(() => [{ slotId: 'slot-1', personaId: 'worker', provider: 'provider', model: 'fresh-model' }]);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      routingEnforcementRequested: () => true,
+      routingEnforcementEnabled: () => false,
+      resolveTeamModelSnapshots,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'team:team-1:session-1:request-1', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'worker-d' }
+        ]
+      } } }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', {
+      ...request,
+      coordinationMode: 'job-team',
+      workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'], routing: { version: 1, requiredRole: 'worker' } }]
+    });
+
+    resolveTeamModelSnapshots.mockClear();
+    await expect(service.dispatchReady({ executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' })).resolves.toMatchObject({ ok: true });
+    expect(resolveTeamModelSnapshots).toHaveBeenCalledTimes(1);
+    expect((await store.get('execution-1'))?.resolvedModels).toMatchObject([{ slotId: 'slot-1', model: 'fresh-model' }]);
+  }));
+
   it('does not type an assignment into a dead-agent worker (releases instead of stdin-echo into the surviving shell)', async () => fixture(async (filePath) => {
     const replyToSession = vi.fn(() => true);
     const deliverToWorker = vi.fn(() => true);
