@@ -223,23 +223,37 @@ async function drawerLog(drawer: ReturnType<Page['getByTestId']>, { expand = fal
  * reuse bind) can unmount the drawer before a poll sees it. Record every distinct
  * log text the drawer renders from the page itself, independent of the drawer staying mounted.
  */
-async function captureDrawerLogs(win: Page): Promise<void> {
-  await win.evaluate(() => {
-    const w = window as unknown as { __drawerLogSeen?: string[]; __drawerLogObserver?: MutationObserver };
+async function captureDrawerLogs(win: Page, { expand = false } = {}): Promise<void> {
+  await win.evaluate((expandLog) => {
+    const w = window as unknown as {
+      __drawerLogSeen?: string[]; __drawerStages?: Record<string, string>; __drawerLogObserver?: MutationObserver;
+    };
     w.__drawerLogObserver?.disconnect();
     w.__drawerLogSeen = [];
+    w.__drawerStages = {};
     const record = () => {
+      // Staged installs hide the log; expanding as soon as the toggle mounts pins the drawer
+      // past success, which a Playwright click can lose to the auto-close on a slow runner.
+      const toggle = document.querySelector<HTMLButtonElement>('[data-testid="host-install-log-toggle"][aria-expanded="false"]');
+      if (expandLog && toggle) toggle.click();
       const text = document.querySelector('[data-testid="host-install-log"]')?.textContent;
       if (text && w.__drawerLogSeen!.at(-1) !== text) w.__drawerLogSeen!.push(text);
+      for (const row of document.querySelectorAll<HTMLElement>('[data-testid^="host-install-stage-"][data-status]')) {
+        w.__drawerStages![row.dataset.testid!.slice('host-install-stage-'.length)] = row.dataset.status!;
+      }
     };
     const observer = new MutationObserver(record);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-status'] });
     w.__drawerLogObserver = observer;
-  });
+  }, expand);
 }
 
 async function capturedDrawerLogs(win: Page): Promise<string> {
   return win.evaluate(() => ((window as unknown as { __drawerLogSeen?: string[] }).__drawerLogSeen ?? []).join('\n'));
+}
+
+async function capturedDrawerStages(win: Page): Promise<Record<string, string>> {
+  return win.evaluate(() => ({ ...(window as unknown as { __drawerStages?: Record<string, string> }).__drawerStages }));
 }
 
 async function expectExplorerLists(win: Page, name: string, fileName: string): Promise<void> {
@@ -434,14 +448,17 @@ test('a remote project with no public URL installs from the composer over the tu
 
     // Scenario 7.
     await addRemoteProject(win, 'Tunnel project', checkout);
-    const { modal, drawer } = await composerInstall(win, 'Tunnel project');
-    // Open the log while installing: an expanded log keeps the drawer past success.
-    const drawerLogText = await drawerLog(drawer, { expand: true });
-    await expectAllStagesPassed(drawer);
-    await expect(drawerLogText).toContainText('connecting through SSH');
-    await expect(drawerLogText).not.toContainText('public_url_required');
-    await expect(drawerLogText).not.toContainText('relay_offline');
-    expect(await drawerLogText.textContent()).not.toMatch(JOIN_CODE_RE);
+    // A fast install can finish and auto-close the drawer before its log toggle is
+    // clickable, so read stages and log from what the drawer rendered, not from it staying mounted.
+    await captureDrawerLogs(win, { expand: true });
+    const { modal } = await composerInstall(win, 'Tunnel project');
+    await expect.poll(() => capturedDrawerStages(win), { timeout: 120_000 })
+      .toEqual(Object.fromEntries(STAGES.map(([stage]) => [stage, 'passed'])));
+    await expect.poll(() => capturedDrawerLogs(win), { timeout: 30_000 }).toContain('connecting through SSH');
+    const drawerLogText = await capturedDrawerLogs(win);
+    expect(drawerLogText).not.toContain('public_url_required');
+    expect(drawerLogText).not.toContain('relay_offline');
+    expect(drawerLogText).not.toMatch(JOIN_CODE_RE);
     const [machine] = await remoteHosts(win);
     expect(machine?.status).toBe('connected');
     await expect.poll(() => projectHostId(win, 'Tunnel project'), { timeout: 30_000 }).toBe(machine!.id);

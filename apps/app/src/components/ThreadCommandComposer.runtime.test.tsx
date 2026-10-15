@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCommandComposer, type ThreadCommandComposerProps } from './ThreadCommandComposer.js';
+import { bootstrapOutcome, composerBootstrapErrorMessage } from './composer-host-status.js';
 import { consumeVoiceDraft, voiceDraft } from './thread/voice/voice-drafts.js';
 
 const h = vi.hoisted(() => {
@@ -34,7 +35,12 @@ const h = vi.hoisted(() => {
     create: vi.fn(async (): Promise<{ ok: boolean; value: { id: string }; message?: string }> => ({ ok: true, value: { id: 'created' } })),
     upsert: vi.fn(), persistImages: vi.fn(async () => ['/tmp/uploaded.png']),
     loadProjects: vi.fn(), navigateOnCreate: false, hostBlocked: false, cliBlocked: false,
-    threads: [] as Array<{ id: string; hostId: string; projectId: string; environmentId?: string }>
+    threads: [] as Array<{ id: string; hostId: string; projectId: string; environmentId?: string }>,
+    hostAction: { kind: 'ready' } as Record<string, unknown>,
+    hosts: [] as Array<{ id: string; name?: string }>,
+    drawer: vi.fn(), appendLogs: vi.fn(), setDrawerOpen: vi.fn(),
+    renew: vi.fn(async () => undefined), bootstrap: vi.fn(async () => []), repair: vi.fn(async () => []),
+    updateSsh: vi.fn(async () => undefined)
   };
 });
 
@@ -42,20 +48,24 @@ vi.mock('../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({ projects: [h.project], lastProjectId: 'p1',
     loadProjects: h.loadProjects, defaultHarness: 'codex', composerSendMode: 'queue-if-active',
     setComposerSendMode: vi.fn(), nativeAgentDiscoveryEnabled: false }),
-  useUi: (select: (state: unknown) => unknown) => select({ selectedProjectId: 'p1' })
+  useUi: Object.assign((select: (state: unknown) => unknown) => select({ selectedProjectId: 'p1' }),
+    { getState: () => ({ appendHostInstallLogs: h.appendLogs, setHostInstallDrawerOpen: h.setDrawerOpen }) })
 }));
+vi.mock('../lib/host-install-run.js', () => ({ runHostInstallWithDrawer: h.drawer }));
 vi.mock('../thread-store.js', () => ({ useThreads: (select: (state: unknown) => unknown) => select({ threads: h.threads, upsert: h.upsert }) }));
 vi.mock('../lib/product-client.js', () => ({ product: {
+  hosts: { bootstrap: h.bootstrap, repair: h.repair, updateSshIdentity: h.updateSsh },
+  relay: { renewJoinWindow: h.renew },
   threads: { send: h.send, create: h.create, promptHistory: async () => ({ entries: [] }), compact: vi.fn(), stop: vi.fn() }
 } }));
-vi.mock('../hooks/useHosts.js', () => ({ defaultHostId: () => 'host1', useHosts: () => [] }));
+vi.mock('../hooks/useHosts.js', () => ({ defaultHostId: () => 'host1', useHosts: () => h.hosts }));
 vi.mock('../hooks/useRouteState.js', () => ({ useRouteState: () => ({ isProjectFocused: false }) }));
 vi.mock('../hooks/usePublicAppUrl.js', () => ({ usePublicAppUrl: () => null }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => false }));
 vi.mock('../lib/use-boolean-preference.js', () => ({ useBooleanPreference: () => [h.navigateOnCreate] }));
 vi.mock('../lib/prompt-attachments.js', () => ({ persistComposerImages: h.persistImages }));
 vi.mock('./composer-host-status.js', () => ({
-  composerHostsForProject: () => [], resolveComposerHostAction: () => ({ kind: 'ready' }),
+  composerHostsForProject: () => [], resolveComposerHostAction: () => h.hostAction,
   shouldBlockComposerSend: () => h.hostBlocked, shouldShowHostPicker: () => false,
   composerRemoteHostBadge: () => null, isForeignExecutionHost: () => false,
   bootstrapOutcome: vi.fn(), composerBootstrapErrorMessage: vi.fn()
@@ -81,8 +91,12 @@ vi.mock('../plugins/PluginComposerSlots.js', () => ({ PluginComposerAdvanced: ()
 vi.mock('./composer/ComposerPromptField.js', () => ({ ComposerPromptField: () => <div /> }));
 vi.mock('./EnvironmentPicker.js', () => ({ EnvironmentPicker: () => null, defaultWorkspaceChoice: () => ({ kind: 'unmanaged' }) }));
 vi.mock('./HostMachinePicker.js', () => ({ HostMachinePicker: () => null }));
-vi.mock('./HostSshIdentityDialog.js', () => ({ HostSshIdentityDialog: () => null }));
-vi.mock('./ComposerHostActionChip.js', () => ({ ComposerHostActionChip: () => null }));
+vi.mock('./HostSshIdentityDialog.js', () => ({ HostSshIdentityDialog: ({ onSubmit, onClose }: { onSubmit: (i: unknown) => Promise<void>; onClose: () => void }) =>
+  <><button onClick={() => void onSubmit({ host: 'x' })}>Bind SSH</button><button onClick={onClose}>Close SSH</button></> }));
+vi.mock('./ComposerHostActionChip.js', () => ({ ComposerHostActionChip: ({ onAction, onCopyPairing, pairingCommand, busyLabel }: any) =>
+  <><button data-testid="host-action" onClick={onAction}>{busyLabel ?? 'act'}</button>
+    {pairingCommand ? <span data-testid="pairing">{pairingCommand}</span> : null}
+    {onCopyPairing ? <button onClick={onCopyPairing}>copy</button> : null}</> }));
 vi.mock('./ComposerRemoteHostBadge.js', () => ({ ComposerRemoteHostBadge: () => null }));
 vi.mock('./ComposerProjectPicker.js', () => ({ ComposerProjectPicker: () => null }));
 vi.mock('./thread/ThreadContextMeter.js', () => ({ ThreadContextMeter: () => null }));
@@ -101,6 +115,7 @@ beforeEach(() => {
   h.options.rosterReady = true; h.options.serviceTierOptions = undefined; h.options.registeredProviderIds = ['codex'];
   h.navigateOnCreate = false; h.hostBlocked = false; h.cliBlocked = false;
   h.threads = [{ id: 't1', hostId: 'host1', projectId: 'p1' }];
+  h.hostAction = { kind: 'ready' }; h.hosts = []; h.project = { id: 'p1', name: 'Project', path: '/tmp/project' } as Project;
   h.voice.stop.mockImplementation((send?: (text: string) => Promise<void>) => { h.frozenSend = send ?? null; });
   for (const id of ['t1', 't2', null]) {
     const owner = JSON.stringify([id, 'p1', 'host1']);
@@ -294,5 +309,127 @@ describe('Modern composer voice submission', () => {
     render(composer({ status }));
     fireEvent.click(screen.getByRole('button', { name: 'Transcribe and send recording' }));
     expect(h.voice.stop).not.toHaveBeenCalled();
+  });
+});
+
+describe('Peer daemon install and repair from the composer', () => {
+  const mockedOutcome = () => vi.mocked(bootstrapOutcome);
+  /** Drive onSettled with a canned result; optionally run the real `run` callback too. */
+  function settle(events: Array<Record<string, unknown>>, runCallback = false) {
+    h.drawer.mockImplementation(async (input: any) => {
+      if (runCallback) await input.run(() => undefined);
+      await input.onSettled(events);
+    });
+  }
+  const click = async () => { await act(async () => { fireEvent.click(screen.getByTestId('host-action')); }); };
+
+  it('binds the host and reloads projects after a successful install', async () => {
+    h.hostAction = { kind: 'install', reason: 'r' };
+    settle([], true);
+    mockedOutcome().mockReturnValue({ ok: true, hostId: 'hNew' });
+    render(composer());
+    await click();
+    expect(h.drawer).toHaveBeenCalledWith(expect.objectContaining({ kind: 'install', target: 'remote machine' }));
+    expect(h.bootstrap).toHaveBeenCalledWith('p1', expect.any(Function));
+    expect(h.loadProjects).toHaveBeenCalled();
+    expect(screen.queryByTestId('pairing')).toBeNull();
+  });
+
+  it('surfaces the failure message and pairing command, no ssh dialog for non-identity errors', async () => {
+    h.hostAction = { kind: 'install', reason: 'r' };
+    settle([]);
+    vi.mocked(composerBootstrapErrorMessage).mockReturnValue('pairing door closed');
+    mockedOutcome().mockReturnValue({ ok: false, code: 'join_expired', message: 'm', pairingCommand: 'ssh x' });
+    render(composer());
+    await click();
+    expect(screen.getByTestId('pairing').textContent).toBe('ssh x');
+    expect(screen.queryByText('Bind SSH')).toBeNull();
+    expect(h.loadProjects).not.toHaveBeenCalled();
+  });
+
+  it('failure without pairing command leaves it unset and ignores ssh code when no target host', async () => {
+    h.hostAction = { kind: 'install', reason: 'r' };
+    settle([]);
+    mockedOutcome().mockReturnValue({ ok: false, code: 'ssh_identity_required', message: 'm' });
+    render(composer());
+    await click();
+    expect(screen.queryByTestId('pairing')).toBeNull();
+    expect(screen.queryByText('Bind SSH')).toBeNull();
+  });
+
+  it.each([
+    ['named host', [{ id: 'hR', name: 'Box' }]],
+    ['unknown host', []]
+  ])('opens the ssh identity dialog on ssh_identity_required for a %s, then repairs after binding', async (_n, roster) => {
+    h.hosts = roster;
+    h.hostAction = { kind: 'fix', hostId: 'hR', reason: 'r' };
+    settle([], true);
+    mockedOutcome().mockReturnValueOnce({ ok: false, code: 'ssh_identity_required', message: 'm' })
+      .mockReturnValue({ ok: true, hostId: 'hR' });
+    render(composer());
+    await click();
+    expect(h.repair).toHaveBeenCalledWith('hR', expect.any(Function));
+    expect(screen.getByText('Bind SSH')).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByText('Bind SSH')); });
+    expect(h.updateSsh).toHaveBeenCalledWith('hR', { host: 'x' });
+    expect(screen.queryByText('Bind SSH')).toBeNull();
+    expect(h.loadProjects).toHaveBeenCalled();
+  });
+
+  it('uses user@host for a remote project target and tolerates a failing renew', async () => {
+    h.project = { id: 'p1', name: 'P', path: '/x', remote: { host: 'devbox', user: 'me' } } as unknown as Project;
+    h.hostAction = { kind: 'install', reason: 'r' };
+    h.renew.mockRejectedValueOnce(new Error('relay down'));
+    settle([], true);
+    mockedOutcome().mockReturnValue({ ok: true, hostId: 'h1' });
+    render(composer({ project: h.project }));
+    await click();
+    expect(h.drawer).toHaveBeenCalledWith(expect.objectContaining({ target: 'me@devbox' }));
+    expect(h.bootstrap).toHaveBeenCalled();
+  });
+
+  it('uses the bare host for a remote project without user, and the thrown error message', async () => {
+    h.project = { id: 'p1', name: 'P', path: '/x', remote: { host: 'devbox' } } as unknown as Project;
+    h.hostAction = { kind: 'install', reason: 'r' };
+    h.drawer.mockRejectedValue('boom');
+    render(composer({ project: h.project }));
+    await click();
+    expect(h.drawer).toHaveBeenCalledWith(expect.objectContaining({ target: 'devbox' }));
+    h.drawer.mockRejectedValue(new Error('drawer exploded'));
+    await click();
+    expect(h.drawer).toHaveBeenCalledTimes(2);
+  });
+
+  it('opens the drawer instead of restarting while busy', async () => {
+    h.hostAction = { kind: 'fix', hostId: 'hR', reason: 'r' };
+    let release!: () => void;
+    h.drawer.mockImplementation(() => new Promise<void>(resolve => { release = resolve; }));
+    render(composer());
+    await click();
+    await click();
+    expect(h.setDrawerOpen).toHaveBeenCalledWith(true);
+    await act(async () => { release(); });
+  });
+
+  it('asks for the ssh identity first when the fix needs a pick, and ignores non-actionable states', async () => {
+    h.hostAction = { kind: 'fix', hostId: 'hR', needsSshPick: true, reason: 'r' };
+    render(composer());
+    await click();
+    expect(h.drawer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Close SSH'));
+    expect(screen.queryByText('Bind SSH')).toBeNull();
+    cleanup();
+    h.hostAction = { kind: 'blocked', reason: 'r' };
+    render(composer());
+    await click();
+    expect(h.drawer).not.toHaveBeenCalled();
+  });
+
+  it('follows a remote project rebind and keeps the current host when the project has no binding', () => {
+    const remote = { id: 'p1', name: 'P', path: '/x', remote: { host: 'devbox' }, hostId: 'hBound' } as unknown as Project;
+    const view = render(composer({ project: remote }));
+    view.rerender(composer({ project: { ...remote, hostId: 'hRebound' } as Project }));
+    view.rerender(composer({ project: { ...remote, hostId: undefined } as Project }));
+    expect(screen.getByTestId('host-action')).toBeTruthy();
   });
 });

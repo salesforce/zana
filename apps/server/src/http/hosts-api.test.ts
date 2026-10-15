@@ -29,6 +29,16 @@ vi.mock('../services/hosts/connect-enrollment.js', async (importActual) => {
   };
 });
 
+const reconcileMock = vi.hoisted(() => ({ failure: undefined as unknown, active: false }));
+vi.mock('../services/hosts/host-bootstrap.js', async (importActual) => {
+  const actual = await importActual<typeof import('../services/hosts/host-bootstrap.js')>();
+  return {
+    ...actual,
+    reconcileRemoteProjectBindings: (ctx: never) =>
+      reconcileMock.active ? Promise.reject(reconcileMock.failure) : actual.reconcileRemoteProjectBindings(ctx)
+  };
+});
+
 let server: ProductServer | null = null;
 
 afterEach(async () => {
@@ -38,6 +48,9 @@ afterEach(async () => {
   delete process.env.ZCC_HOST_ARTIFACT;
   pairingMock.resolve = null;
   connectMock.uses = false;
+  reconcileMock.active = false;
+  reconcileMock.failure = undefined;
+  vi.restoreAllMocks();
 });
 
 async function start(envUrl?: string) {
@@ -651,6 +664,59 @@ createServer((_req, res) => {
       timeoutMs: 10 * 60 * 1000,
       command: { type: 'host.pick_folder' }
     });
+  });
+});
+
+describe('ssh-identity reconcile failure', () => {
+  it.each([
+    ['Error', new Error('reconcile exploded'), 'reconcile exploded'],
+    ['non-Error', 'tok_secret_session_123', 'unknown error']
+  ])('warns with the message only and still answers when reconcile rejects with %s', async (_label, failure, expected) => {
+    await start('https://machine.example.com');
+    await fetch(`${server!.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer enroll-token-enroll-token-enroll',
+        'content-type': 'application/json',
+        'x-forwarded-host': 'machine.example.com'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'laptop',
+        instanceId: '11111111-1111-4111-8111-111111111111'
+      })
+    });
+    const minted = await fetch(`${server!.url}api/v1/hosts/join-codes`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+    }).then((response) => response.json()) as { joinCode: string; hostId: string };
+    const enrolled = await fetch(`${server!.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${minted.joinCode}`,
+        'content-type': 'application/json',
+        'x-forwarded-host': 'machine.example.com'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'devbox',
+        instanceId: '33333333-3333-4333-8333-333333333333',
+        hostId: minted.hostId
+      })
+    });
+    expect(enrolled.status).toBe(201);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    reconcileMock.failure = failure;
+    reconcileMock.active = true;
+    const patched = await fetch(`${server!.url}api/v1/hosts/${minted.hostId}/ssh-identity`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ host: 'devbox', user: 'me' })
+    });
+    expect(patched.status).toBe(200);
+    await expect(patched.json()).resolves.toMatchObject({ id: minted.hostId });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(`[zcc] remote project reconcile failed: ${expected}`);
+    expect(String(warn.mock.calls[0]![0])).not.toContain('tok_secret');
+    expect(String(warn.mock.calls[0]![0])).not.toContain(minted.joinCode);
   });
 });
 
