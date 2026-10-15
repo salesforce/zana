@@ -10,7 +10,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import yaml from "js-yaml";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ProviderNativeRoot,
   ProviderNativeRootSet,
@@ -1214,6 +1215,20 @@ it('reports invalid frontmatter as a single-line diagnostic and skips the skill'
  const records = await scanProviderCommands({ roots: [{ rootPath, namePrefix: '', source: 'skill', origin: 'user', shape: 'skill' }], diagnostics });
  expect(records.map((record) => record.name)).toEqual(['valid']);
  expect(diagnostics).toEqual([expect.stringMatching(/^Invalid frontmatter in .*broken[\\/]SKILL\.md \(line 3\): bad indentation of a mapping entry$/)]);
+});
+
+it('falls back to the plain error message when the parser gives no reason or position', async () => {
+ const rootPath = path.join(tempRoot, 'opaque-frontmatter-error');
+ await writeFileEnsuringDir(path.join(rootPath, 'opaque', 'SKILL.md'), '---\nname: opaque\n---\nBody');
+ const load = vi.spyOn(yaml, 'load').mockImplementationOnce(() => { throw new Error('parser exploded'); });
+ const diagnostics: string[] = [];
+ try {
+  const records = await scanProviderCommands({ roots: [{ rootPath, namePrefix: '', source: 'skill', origin: 'user', shape: 'skill' }], diagnostics });
+  expect(records).toEqual([]);
+ } finally {
+  load.mockRestore();
+ }
+ expect(diagnostics).toEqual([expect.stringMatching(/^Invalid frontmatter in .*opaque[\\/]SKILL\.md: parser exploded$/)]);
 });
 
 it('confines resolved single directories and files through symlinked parents', async () => {
