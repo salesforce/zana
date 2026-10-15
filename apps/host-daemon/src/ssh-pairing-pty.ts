@@ -42,9 +42,15 @@ export interface SshPairingStatus {
   exitCode: number | null;
 }
 
+/**
+ * Validate a renderer pairing request and build its ssh argv. A public origin
+ * installs with a one-shot `ssh host <installer>`; the reverse-tunnel argv is
+ * only used when the caller explicitly passes a loopback dev origin. With no
+ * origin there is nothing to join, so nothing is built.
+ */
 export function authorizeSshPairing(
   input: unknown,
-  origins: { localServerUrl: string; publicServerUrl?: string | null }
+  origins: { localServerUrl: string; publicServerUrl: string | null }
 ): { ok: true; argv: SshPairingArgv; sshHost: string; cols: number; rows: number } | { ok: false; message: string } {
   if (!input || typeof input !== 'object') {
     return { ok: false, message: 'Choose a valid SSH host' };
@@ -64,7 +70,8 @@ export function authorizeSshPairing(
   const publicServer = origins.publicServerUrl
     ? sanitizePairingServerUrl(origins.publicServerUrl)
     : null;
-  const argv = publicServer && !isLoopbackOrigin(publicServer)
+  if (!publicServer) return { ok: false, message: 'No reachable pairing server for this machine' };
+  const argv = !isLoopbackOrigin(publicServer)
     ? sshPublicPairingArgv({
       sshHost: host,
       serverUrl: publicServer,

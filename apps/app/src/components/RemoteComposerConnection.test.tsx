@@ -22,7 +22,7 @@ vi.mock('./HostSshIdentityDialog.js', () => ({ HostSshIdentityDialog: ({ onSubmi
 const project = { id: 'remote-project', hostId: 'remote', remote: { host: 'devbox' } } as Project;
 const hosts = [{ id: 'primary', status: 'connected', isPrimary: true }, { id: 'remote', name: 'Remote', status: 'disconnected', canRepairViaSsh: true }] as Host[];
 function setup(target: Project = project, roster: Host[] = hosts) {
-  vi.mocked(runHostInstallWithDrawer).mockImplementation(async input => input.run(() => {}));
+  vi.mocked(runHostInstallWithDrawer).mockImplementation(async input => { const events = await input.run(() => {}); await input.onSettled?.(events); return events; });
   vi.mocked(product.hosts.repair).mockResolvedValue([{ type: 'done', hostId: 'remote' }]);
   vi.mocked(product.hosts.bootstrap).mockResolvedValue([{ type: 'done', hostId: 'remote' }]);
   const onConnected = vi.fn(async () => {}), onError = vi.fn();
@@ -37,7 +37,7 @@ it('repairs only the bound remote and refreshes the project after successful con
   fireEvent.click(screen.getByTestId('composer-host-action'));
   await waitFor(() => expect(f.onConnected).toHaveBeenCalledOnce());
   expect(product.hosts.repair).toHaveBeenCalledWith('remote', expect.any(Function));
-  expect(f.onError).toHaveBeenCalledExactlyOnceWith(null);
+  expect(f.onError.mock.calls.every(call => call[0] === null)).toBe(true);
 });
 
 it('installs a daemon for an unbound remote project', async () => {
@@ -86,4 +86,28 @@ it.each([new Error('Network failed'), 'Network failed'])('reports transport erro
   fireEvent.click(screen.getByTestId('composer-host-action'));
   await waitFor(() => expect(f.onError).toHaveBeenCalledWith(error instanceof Error ? error.message : 'Could not reconnect the remote machine'));
   expect(screen.getByTestId('composer-host-action').textContent).toBe('Fix connection');
+});
+
+it('reports a non-SSH failure without opening the SSH dialog', async () => {
+  const f = setup();
+  vi.mocked(product.hosts.repair).mockResolvedValue([{ type: 'error', code: 'daemon_down', message: 'Daemon is down' }]);
+  fireEvent.click(screen.getByTestId('composer-host-action'));
+  await waitFor(() => expect(f.onError).toHaveBeenCalledWith('Daemon is down'));
+  expect(screen.queryByText('Bind SSH')).toBeNull();
+});
+
+it('does not open the SSH dialog for an unbound project even on ssh_identity_required', async () => {
+  const f = setup({ ...project, hostId: undefined });
+  vi.mocked(product.hosts.bootstrap).mockResolvedValue([{ type: 'error', code: 'ssh_identity_required', message: 'Bind first' }]);
+  fireEvent.click(screen.getByTestId('composer-host-action'));
+  await waitFor(() => expect(f.onError).toHaveBeenCalledWith('Bind first'));
+  expect(screen.queryByText('Bind SSH')).toBeNull();
+});
+
+it('falls back to the project remote host name when the bound machine has no display name', async () => {
+  const f = setup(project, [hosts[0]!, { ...hosts[1]!, name: undefined } as unknown as Host]);
+  vi.mocked(product.hosts.repair).mockResolvedValue([{ type: 'error', code: 'ssh_identity_required', message: 'Bind first' }]);
+  fireEvent.click(screen.getByTestId('composer-host-action'));
+  await waitFor(() => expect(f.onError).toHaveBeenCalledWith('Bind first'));
+  expect(screen.queryByText('Bind SSH')).not.toBeNull();
 });

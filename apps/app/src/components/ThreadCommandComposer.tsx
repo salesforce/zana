@@ -256,6 +256,10 @@ export function ThreadCommandComposer({
     if (hostProjectRef.current !== selectedProject?.id) {
       hostProjectRef.current = selectedProject?.id;
       setHostId(defaultHostId(hosts, selectedProject));
+    } else if (selectedProject?.remote) {
+      // A remote project has exactly one execution machine: its binding. Follow a
+      // rebind (machine re-enrolled, project reconciled) instead of keeping the old host.
+      setHostId(current => selectedProject.hostId ?? current);
     } else {
       // Status refreshes must not silently move an unsent prompt to another host.
       setHostId(current => current ?? defaultHostId(hosts, selectedProject));
@@ -500,7 +504,7 @@ export function ThreadCommandComposer({
       : (hosts.find((row) => row.id === targetHostId)?.name ?? 'remote machine');
     try {
       if (kind === 'install' || kind === 'fix') setHostBusy('Renewing pairing…');
-      const events = await runHostInstallWithDrawer({
+      await runHostInstallWithDrawer({
         kind,
         target,
         startLogs: ['Renewing pairing…'],
@@ -518,20 +522,25 @@ export function ThreadCommandComposer({
           useUi.getState().appendHostInstallLogs(['Reconnecting…']);
           setHostBusy('Reconnecting…');
           return product.hosts.repair(targetHostId!, onEvent);
+        },
+        // Replayed by the drawer's Retry too, so a retried success still binds the host.
+        onSettled: async (events) => {
+          const outcome = bootstrapOutcome(events);
+          if (!outcome.ok) {
+            setError(composerBootstrapErrorMessage(outcome));
+            if (outcome.pairingCommand) setPairingCommand(outcome.pairingCommand);
+            if (outcome.code === 'ssh_identity_required' && targetHostId) {
+              const host = hosts.find((row) => row.id === targetHostId);
+              setSshPick({ hostId: targetHostId, name: host?.name ?? 'machine' });
+            }
+            return;
+          }
+          setError(null);
+          setPairingCommand(null);
+          setHostId(outcome.hostId);
+          await loadProjects();
         }
       });
-      const outcome = bootstrapOutcome(events);
-      if (!outcome.ok) {
-        setError(composerBootstrapErrorMessage(outcome));
-        if (outcome.pairingCommand) setPairingCommand(outcome.pairingCommand);
-        if (outcome.code === 'ssh_identity_required' && targetHostId) {
-          const host = hosts.find((row) => row.id === targetHostId);
-          setSshPick({ hostId: targetHostId, name: host?.name ?? 'machine' });
-        }
-        return;
-      }
-      setHostId(outcome.hostId);
-      await loadProjects();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not update host daemon');
     } finally {

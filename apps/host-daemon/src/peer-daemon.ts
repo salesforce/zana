@@ -20,6 +20,7 @@ export interface PeerDaemonSshResult {
 export interface PeerDaemonSsh {
   tunnel?(remote: ProjectRemote, localPort: number, remotePort: number): Promise<void>;
   untunnel?(remote: ProjectRemote, localPort: number, remotePort: number): void;
+  untunnelAll?(remote: ProjectRemote): boolean;
   close?(): void;
   run(remote: ProjectRemote, remoteCmd: string, timeoutMs?: number): Promise<PeerDaemonSshResult>;
   pipeFile(
@@ -85,6 +86,7 @@ export function createSystemPeerDaemonSsh(spawnImpl: PeerDaemonSpawn = spawn): P
   return {
     tunnel: (remote, localPort, remotePort) => tunnels.open(remote, localPort, remotePort),
     untunnel: (remote, localPort, remotePort) => tunnels.remove(remote, localPort, remotePort),
+    untunnelAll: (remote) => tunnels.closeFor(remote),
     close: () => tunnels.close(),
     async run(remote, remoteCmd, timeoutMs = SSH_TIMEOUT_MS) {
       const proc = spawnImpl('ssh', [...sshBaseArgs(remote), remoteCmd], {
@@ -307,6 +309,8 @@ export function peerInstallServiceCommand(input: {
     `server_url=${shQuote(input.serverUrl)}`,
     'if [ -f "$data_dir/host.id" ]; then existing_id=$(tr -d "[:space:]" < "$data_dir/host.id"); if [ "$existing_id" != "$host_id" ]; then rm -f "$data_dir/host.id" "$data_dir/auth.json"; fi; fi',
     'export ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url"',
+    // Marks where this attempt's output begins so the primary reads only its lines.
+    'printf "zcc-join: attempt %s host=%s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$host_id" >>"$data_dir/host-daemon.log"',
     'nohup "$node_bin" "$join_bin" join --join-code "$join_code" --host-id "$host_id" --server-url "$server_url" --host-daemon-port "$port" --auto-update >>"$data_dir/host-daemon.log" 2>&1 &',
     'join_pid=$!',
     'printf "%s\\n" "$join_pid" > "$data_dir/host-daemon.pid"',

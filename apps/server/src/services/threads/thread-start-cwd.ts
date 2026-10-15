@@ -14,3 +14,13 @@ export function threadStartCwd(
   if (!environment || environment.workspaceProvisionType === 'unmanaged') return requestedCwd;
   return environment.path ?? undefined;
 }
+
+/** A host-owned cwd is never the renderer's local placeholder: launch drops it, so the model
+ * catalogue is read in the environment's own directory. */
+export function modelCatalogCwd(
+  environment: Pick<EnvironmentRow, 'path'> | null | undefined,
+  launchCwd: string | undefined,
+  hostOwnsCwd: boolean | undefined
+): string | undefined {
+  return hostOwnsCwd ? environment?.path ?? undefined : launchCwd;
+}

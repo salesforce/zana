@@ -106,7 +106,7 @@ describe('MachinesTab', () => {
         onUpdate={vi.fn().mockResolvedValue(undefined)}
       />
     );
-    expect(html).toContain('Public app URL');
+    expect(html).toContain('Relay pairing URL');
     expect(html).toContain('data-testid="public-app-url"');
     expect(html).toContain('https://machine.example.com');
     expect(html).not.toContain('Relay token');

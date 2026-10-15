@@ -35,6 +35,7 @@ import type {
   EventProjectionTurn,
 } from "./event-projection-types.js";
 import { assertNever } from "./assert-never.js";
+import { normalizeShellPath } from "./tool-call-parsing.js";
 import {
   durationToCompactString,
   getMessageStartedAt,
@@ -525,6 +526,24 @@ function relativizeWorkspacePath(
   return path;
 }
 
+/**
+ * A command's relative read path is relative to the command's own `cwd`, which
+ * providers such as Codex may set outside the thread workspace (another
+ * checkout or a `/tmp` worktree). Preview resolves relative paths against the
+ * workspace, so anchor the path on `cwd` first: reads inside the workspace stay
+ * workspace-relative, reads elsewhere become absolute and lose their Preview.
+ */
+function anchorCommandIntent(
+  intent: EventProjectionToolParsedIntent,
+  cwd: string | null,
+  workspaceRoot: string | null,
+): EventProjectionToolParsedIntent {
+  if (intent.type !== "read" || !intent.path || !workspaceRoot) return intent;
+  if (!cwd?.startsWith("/") || /^[/~]|[$`]/u.test(intent.path)) return intent;
+  const absolute = normalizeShellPath(`${cwd}/${intent.path}`);
+  return { ...intent, path: relativizeWorkspacePath(absolute, workspaceRoot) };
+}
+
 function toTimelineFileChange(
   change: EventProjectionFileEditChange,
   workspaceRoot: string | null,
@@ -666,7 +685,10 @@ function convertMessage(
           completedAt: message.completedAt,
           approvalStatus: message.approvalStatus,
           activityIntents: message.parsedIntents.map((intent) =>
-            convertActivityIntent(intent, options.previewRoots),
+            convertActivityIntent(
+              anchorCommandIntent(intent, message.cwd, options.workspaceRoot),
+              options.previewRoots,
+            ),
           ),
           ...rowPresentation(message),
         },

@@ -24,9 +24,11 @@ import {
   PluginAppSnapshotSchema,
   MenubarThreadOpenResultSchema,
   MenubarThreadsListResultSchema,
+  PairingTargetSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   type NativeToolPolicyRequest,
+  type PairingTarget,
   type ProjectMutationPatchSchema,
   type ProjectRecordSchema,
   type RuntimeOutbound
@@ -74,6 +76,11 @@ export interface RuntimeSupervisor {
   openMenubarThread(threadId: string, projectId: string): Promise<{ ok: boolean; reason?: string }>;
   onMenubarThreadsChanged(listener: () => void): () => void;
   relaunchEnrolledHost(): Promise<{ ok: true } | { ok: false; message: string }>;
+  /**
+   * The server runtime's join target for a remote host daemon. Never rejects:
+   * an unreachable runtime or malformed reply resolves to a tunnel fallback.
+   */
+  pairingTarget(): Promise<PairingTarget>;
   appVersion(): Promise<string>;
   listProjects(): Promise<RuntimeProject[]>;
   projectMetadata(request: ProjectMetadataRequest): Promise<ProjectMetadataResult>;
@@ -233,6 +240,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
         message: 'This session does not run a packaged host daemon'
       };
     },
+    pairingTarget: async () => ({ ...PAIRING_TARGET_FALLBACK }),
     appVersion: async () => options.version ?? '',
     listProjects: async () => [],
     projectCatalogs: async () => { throw new Error('Project catalogues require the product runtime'); },
@@ -303,7 +311,7 @@ interface UtilityChild {
 interface UtilityRuntime {
   child: UtilityChild;
   url: string;
-  request(operation: 'app-version' | 'projects-list'): Promise<unknown>;
+  request(operation: 'app-version' | 'projects-list' | 'pairing-target'): Promise<unknown>;
   request(operation: 'project-metadata', request: ProjectMetadataRequest): Promise<unknown>;
   request(operation: 'project-catalogs', request: ProjectCatalogRequest): Promise<unknown>;
   request(operation: 'project-feed', request: ProjectFeedRequest): Promise<unknown>;
@@ -347,6 +355,18 @@ interface UtilityRuntime {
   request(operation: 'marketplace-refresh', url: string): Promise<unknown>;
   request(operation: 'marketplace-remove', url: string): Promise<unknown>;
   stop(): Promise<void>;
+}
+
+const PAIRING_TARGET_FALLBACK: PairingTarget = { kind: 'tunnel', reason: 'relay_offline' };
+
+/** Ask for the pairing target; a failed request or unexpected reply means tunnel. */
+export async function requestPairingTarget(request: () => Promise<unknown>): Promise<PairingTarget> {
+  try {
+    const parsed = PairingTargetSchema.safeParse(await request());
+    return parsed.success ? parsed.data : { ...PAIRING_TARGET_FALLBACK };
+  } catch {
+    return { ...PAIRING_TARGET_FALLBACK };
+  }
 }
 
 function processEnvRecord(): Record<string, string> {
@@ -571,6 +591,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
       menubarThreadListeners.add(listener);
       return () => menubarThreadListeners.delete(listener);
     },
+    pairingTarget: () => requestPairingTarget(() => server.request('pairing-target')),
     appVersion: async () => {
       const value = await server.request('app-version');
       return typeof value === 'string' ? value : '';
@@ -735,7 +756,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'plugins-tool-policy' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'pairing-target' | 'thread-live' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'plugins-tool-policy' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
        ...args: [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));

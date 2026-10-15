@@ -9,6 +9,16 @@ import { startProductServer, type ProductServer } from './product-server.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
+const reconcileMock = vi.hoisted(() => ({ failure: undefined as unknown, active: false }));
+vi.mock('../services/hosts/host-bootstrap.js', async (importActual) => {
+  const actual = await importActual<typeof import('../services/hosts/host-bootstrap.js')>();
+  return {
+    ...actual,
+    reconcileRemoteProjectBindings: (ctx: never) =>
+      reconcileMock.active ? Promise.reject(reconcileMock.failure) : actual.reconcileRemoteProjectBindings(ctx)
+  };
+});
+
 let server: ProductServer | null = null;
 const providerHandles: Array<{ unregister(): void }> = [];
 
@@ -33,9 +43,30 @@ afterEach(async () => {
   server = null;
   for (const handle of providerHandles.splice(0)) handle.unregister();
   vi.unstubAllEnvs();
+  reconcileMock.active = false;
+  reconcileMock.failure = undefined;
+  vi.restoreAllMocks();
 });
 
 describe('product HTTP', () => {
+  it.each([
+    ['Error', new Error('reconcile exploded'), 'reconcile exploded'],
+    ['non-Error', 'tok_secret_session_123', 'unknown error']
+  ])('GET /projects warns with the message only and still lists projects when reconcile rejects with %s', async (_label, failure, expected) => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-reconcile-warn-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    reconcileMock.failure = failure;
+    reconcileMock.active = true;
+    const response = await fetch(`${server.url}api/v1/projects`);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ projects: [] });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(`[zcc] remote project reconcile failed: ${expected}`);
+    expect(String(warn.mock.calls[0]![0])).not.toContain('tok_secret');
+  });
+
   it('serves native catalogues from the authorized host and preserves discovery failures at the HTTP boundary', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-native-catalogue-'));
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [{

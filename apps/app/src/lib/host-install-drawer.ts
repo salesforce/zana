@@ -2,12 +2,86 @@ import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 
 export type HostInstallKind = 'install' | 'fix';
 
+export type HostBootstrapStage = Extract<HostBootstrapEvent, { type: 'stage' }>['stage'];
+
+export type HostInstallStageStatus = 'running' | 'passed' | 'failed';
+
+export interface HostInstallStageEntry {
+  stage: HostBootstrapStage;
+  status: HostInstallStageStatus;
+  reason?: string;
+  limitMs?: number;
+  /** Epoch ms when the stage reported `running`. */
+  startedAt?: number;
+}
+
+export const HOST_INSTALL_STAGE_LABELS: Record<HostBootstrapStage, string> = {
+  ssh: 'Connecting over SSH',
+  tunnel: 'Opening tunnel',
+  install: 'Installing',
+  wait: 'Waiting for machine',
+  register: 'Registering with this app',
+  connected: 'Connected'
+};
+
+/** `m:ss` for a millisecond duration. */
+export function formatHostInstallDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+type StageEvent = Extract<HostBootstrapEvent, { type: 'stage' }>;
+
+/** Insert or update a stage in arrival order; `running` records the start time. */
+export function upsertStage(
+  stages: HostInstallStageEntry[],
+  event: StageEvent,
+  now: number = Date.now()
+): HostInstallStageEntry[] {
+  const index = stages.findIndex((entry) => entry.stage === event.stage);
+  const previous = index >= 0 ? stages[index] : undefined;
+  const next: HostInstallStageEntry = {
+    stage: event.stage,
+    status: event.status,
+    ...(event.reason !== undefined ? { reason: event.reason } : {}),
+    ...((event.limitMs ?? previous?.limitMs) !== undefined ? { limitMs: event.limitMs ?? previous?.limitMs } : {}),
+    ...(event.status === 'running'
+      ? { startedAt: now }
+      : previous?.startedAt !== undefined ? { startedAt: previous.startedAt } : {})
+  };
+  if (index < 0) return [...stages, next];
+  return stages.map((entry, i) => (i === index ? next : entry));
+}
+
+/** Display-only view of a stage: a running stage past its limit reads as failed. */
+export function resolveStageDisplay(
+  entry: HostInstallStageEntry,
+  now: number
+): { status: HostInstallStageStatus; reason?: string; elapsedMs?: number; timedOut: boolean } {
+  const elapsedMs = entry.startedAt !== undefined ? Math.max(0, now - entry.startedAt) : undefined;
+  if (entry.status === 'running' && entry.limitMs !== undefined && elapsedMs !== undefined && elapsedMs > entry.limitMs) {
+    return {
+      status: 'failed',
+      reason: `Timed out after ${formatHostInstallDuration(entry.limitMs)}`,
+      elapsedMs,
+      timedOut: true
+    };
+  }
+  return {
+    status: entry.status,
+    ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+    ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+    timedOut: false
+  };
+}
+
 export interface HostInstallDrawerState {
   open: boolean;
   busy: boolean;
   kind: HostInstallKind | null;
   target: string | null;
   logs: string[];
+  stages: HostInstallStageEntry[];
   error: string | null;
   pairingCommand: string | null;
 }
@@ -32,6 +106,7 @@ export const EMPTY_HOST_INSTALL_DRAWER: HostInstallDrawerState = {
   kind: null,
   target: null,
   logs: [],
+  stages: [],
   error: null,
   pairingCommand: null
 };
@@ -64,6 +139,7 @@ export function reduceHostInstallOpen(
     kind: input.kind,
     target: input.target,
     logs: [],
+    stages: [],
     error: null,
     pairingCommand: null
   };
@@ -79,8 +155,10 @@ export function reduceHostInstallAppend(
 
 export function reduceHostInstallEvent(
   state: HostInstallDrawerState,
-  event: HostBootstrapEvent
+  event: HostBootstrapEvent,
+  now: number = Date.now()
 ): HostInstallDrawerState {
+  if (event.type === 'stage') return { ...state, stages: upsertStage(state.stages, event, now) };
   if (event.type === 'log') return reduceHostInstallAppend(state, splitHostInstallLogText(event.text));
   if (event.type === 'error') {
     return {

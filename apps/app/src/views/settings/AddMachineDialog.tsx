@@ -1,11 +1,19 @@
 import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Loader2 } from 'lucide-react';
-import { product } from '../../lib/product-client.js';
+import { Loader2, RefreshCw } from 'lucide-react';
+import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
+import { product, requestPreferredJoinCode } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { copyText } from '../../lib/copy-text.js';
 import { Modal } from '../../components/Modal.js';
 import { useHosts } from '../../hooks/useHosts.js';
+import { HostInstallStages } from '../../components/HostInstallStages.js';
+import {
+  capHostInstallLogs,
+  splitHostInstallLogText,
+  upsertStage,
+  type HostInstallStageEntry
+} from '../../lib/host-install-drawer.js';
 import { PairingTerminal } from './PairingTerminal.js';
 import {
   formatJoinCountdown,
@@ -109,6 +117,9 @@ function PairingSshHostGroup({
   );
 }
 
+const RELAY_UNAVAILABLE_MESSAGE = 'Relay unavailable — use Connect via SSH';
+const RELAY_UNAVAILABLE_NO_SSH_MESSAGE = 'Relay unavailable — set a public URL or relay, or add this machine from the desktop app';
+
 export type PairingMethod = 'ssh' | 'command';
 
 export function AddMachineDialogView({
@@ -120,8 +131,11 @@ export function AddMachineDialogView({
   joinWindowClosed,
   loopbackWarning,
   viaSsh,
+  tunnelIssued = false,
   pairingMethod = 'command',
+  relayUnavailable = false,
   showMethodToggle = false,
+  canConnectViaSsh = true,
   sshHost,
   sshHosts,
   pairedName,
@@ -129,7 +143,19 @@ export function AddMachineDialogView({
   pairingRunning = false,
   pairingVisible = false,
   pairingError = null,
+  pairingExitCode = null,
   pairingSlot = null,
+  connectMode = false,
+  canConnect = false,
+  connectBusy = false,
+  connectStages = [],
+  connectLogs = [],
+  connectError = null,
+  hostsRefreshing = false,
+  hostsWarning = null,
+  onConnect,
+  onRetryConnect,
+  onRefreshHosts,
   onSshHostChange,
   onPairingMethodChange,
   onCopy,
@@ -146,8 +172,14 @@ export function AddMachineDialogView({
   joinWindowClosed?: boolean;
   loopbackWarning: boolean;
   viaSsh: boolean;
+  /** Relay offline: the code redeems through a reverse tunnel, so the command needs an SSH host. */
+  tunnelIssued?: boolean;
   pairingMethod?: PairingMethod;
+  /** Relay refused to mint a code: Copy stays disabled, Connect is unaffected. */
+  relayUnavailable?: boolean;
   showMethodToggle?: boolean;
+  /** Desktop bridge present and not a repair command: the SSH path actually exists. */
+  canConnectViaSsh?: boolean;
   sshHost: string;
   sshHosts: PairingSshHostOption[];
   pairedName: string | null;
@@ -155,7 +187,20 @@ export function AddMachineDialogView({
   pairingRunning?: boolean;
   pairingVisible?: boolean;
   pairingError?: string | null;
+  pairingExitCode?: number | null;
   pairingSlot?: ReactNode;
+  /** SSH host with the desktop bridge: Connect is primary, the command panel is secondary. */
+  connectMode?: boolean;
+  canConnect?: boolean;
+  connectBusy?: boolean;
+  connectStages?: HostInstallStageEntry[];
+  connectLogs?: string[];
+  connectError?: string | null;
+  hostsRefreshing?: boolean;
+  hostsWarning?: string | null;
+  onConnect?: () => void;
+  onRetryConnect?: () => void;
+  onRefreshHosts?: () => void;
   onSshHostChange: (value: string) => void;
   onPairingMethodChange?: (method: PairingMethod) => void;
   onCopy: () => void;
@@ -164,6 +209,116 @@ export function AddMachineDialogView({
   onRetryMint: () => void;
   onClose: () => void;
 }) {
+  const pairingDiagnostics = (
+    <>
+      {pairingError ? <p className="modal-error">{pairingError}</p> : null}
+      {pairingExitCode !== null ? (
+        <p className="modal-error" role="alert">
+          Pairing exited with code {pairingExitCode} — see output above.
+        </p>
+      ) : null}
+      {pairingVisible ? (
+        <div className="add-machine-pairing">{pairingSlot}</div>
+      ) : null}
+    </>
+  );
+  const commandPanel = (
+    <>
+      {relayUnavailable ? (
+        <div className="add-machine-error" data-testid="add-machine-relay-unavailable">
+          <p className="modal-error" role="alert">{canConnectViaSsh ? RELAY_UNAVAILABLE_MESSAGE : RELAY_UNAVAILABLE_NO_SSH_MESSAGE}</p>
+          <div className="add-machine-copy-row">
+            <button type="button" className="settings-btn" disabled>
+              Copy
+            </button>
+            <button type="button" className="settings-btn" onClick={onRetryMint}>
+              Try again
+            </button>
+          </div>
+        </div>
+      ) : mintError ? (
+        <div className="add-machine-error">
+          <p className="modal-error">{mintError}</p>
+          <button type="button" className="settings-btn" onClick={onRetryMint}>
+            Try again
+          </button>
+        </div>
+      ) : command ? (
+        <div className="add-machine-command">
+          <pre className="machines-join-command" data-testid="machines-join-command">{command}</pre>
+          <div className="add-machine-copy-row">
+            <button
+              type="button"
+              className="settings-btn"
+              disabled={expired}
+              onClick={onCopy}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            {canRun ? (
+              <button
+                type="button"
+                className="settings-btn"
+                disabled={expired || pairingRunning}
+                data-testid="add-machine-run"
+                onClick={onRun}
+              >
+                {pairingRunning ? 'Running' : 'Run'}
+              </button>
+            ) : null}
+            {pairingRunning && !connectMode ? (
+              <button
+                type="button"
+                className="settings-btn"
+                data-testid="add-machine-stop-tunnel"
+                onClick={onStopPairing}
+              >
+                Stop{viaSsh ? ' tunnel' : ''}
+              </button>
+            ) : null}
+            {expired ? (
+              <>
+                <span className="add-machine-expiry">
+                  {joinWindowClosed ? 'Join window closed' : 'Code expired'}
+                </span>
+                <button type="button" className="settings-btn" onClick={onRetryMint}>
+                  {joinWindowClosed ? 'Renew join window' : 'Generate a new code'}
+                </button>
+              </>
+            ) : remainingMs !== null ? (
+              <span className="add-machine-expiry">
+                Code expires in {formatJoinCountdown(remainingMs)}
+              </span>
+            ) : null}
+          </div>
+          <p className="add-machine-help">
+            {pairingMethod === 'ssh' || tunnelIssued
+              ? viaSsh
+                ? 'Run it here, or copy and paste it locally (not on the remote). Leave the tunnel open so the reverse forward stays up.'
+                : 'Run SSHs to the selected host and executes this installer there. Copy is a fallback if you prefer to paste it yourself.'
+              : 'This installs the host daemon, enrolls it, and configures it to reconnect automatically on the other machine.'}
+          </p>
+          {connectMode ? null : pairingDiagnostics}
+          {loopbackWarning && !viaSsh ? (
+            <p className="modal-warning">
+              This address is only reachable on this computer. Enter an SSH host
+              from ~/.ssh/config, or configure the machine-pairing relay.{' '}
+              {REMOTE_MACHINE_CONNECTION_HINT}
+            </p>
+          ) : null}
+        </div>
+      ) : tunnelIssued ? (
+        <p className="add-machine-help" data-testid="add-machine-tunnel-pick-host">
+          Pick an SSH host above to get a command you can run on this computer.
+        </p>
+      ) : (
+        <p className="add-machine-status">
+          <Loader2 size={16} className="add-machine-spin" aria-hidden="true" />
+          Creating a join code…
+        </p>
+      )}
+    </>
+  );
   return (
     <Modal
       title="Add a machine"
@@ -201,16 +356,35 @@ export function AddMachineDialogView({
       ) : null}
 
       <p className="add-machine-lead">
-        {pairingMethod === 'ssh'
-          ? viaSsh
-            ? 'Run this on this computer. It SSHs to the workspace with a reverse tunnel and installs the host daemon there.'
-            : 'Pick an SSH host. Run executes the installer on that machine from here.'
+        {tunnelIssued && pairingMethod === 'command'
+          ? 'The relay is offline, so the remote cannot reach this computer directly. Run the command below in a terminal on this computer: it SSHs to the machine with a reverse tunnel and installs the host daemon there.'
+          : pairingMethod === 'ssh'
+          ? connectMode
+            ? 'Pick an SSH host and Connect. This computer installs the host daemon there and keeps it connected.'
+            : viaSsh
+              ? 'Run this on this computer. It SSHs to the workspace with a reverse tunnel and installs the host daemon there.'
+              : 'Pick an SSH host. Run executes the installer on that machine from here.'
           : 'Run this on the machine you want to add. It pairs the machine to this server and keeps it available for your projects.'}
       </p>
 
-      {pairingMethod === 'ssh' ? (
+      {pairingMethod === 'ssh' || tunnelIssued ? (
         <div className="add-machine-ssh settings-field">
-          <span className="settings-label" id="add-machine-ssh-label">SSH host</span>
+          <div className="add-machine-copy-row">
+            <span className="settings-label" id="add-machine-ssh-label">SSH host</span>
+            {onRefreshHosts ? (
+              <button
+                type="button"
+                className="remote-host-refresh"
+                data-testid="add-machine-refresh-hosts"
+                disabled={hostsRefreshing}
+                onClick={onRefreshHosts}
+                aria-label="Refresh SSH hosts"
+              >
+                <RefreshCw size={12} className={hostsRefreshing ? 'spinning' : undefined} />
+                <span>{hostsRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+              </button>
+            ) : null}
+          </div>
           <div
             className="remote-host-list add-machine-ssh-list"
             role="listbox"
@@ -244,39 +418,22 @@ export function AddMachineDialogView({
           <span className="settings-help">
             Registered remotes, plus other hosts from ~/.ssh/config.
           </span>
+          {hostsWarning ? <p className="modal-warning">{hostsWarning}</p> : null}
         </div>
       ) : null}
 
-      {mintError ? (
-        <div className="add-machine-error">
-          <p className="modal-error">{mintError}</p>
-          <button type="button" className="settings-btn" onClick={onRetryMint}>
-            Try again
-          </button>
-        </div>
-      ) : command ? (
-        <div className="add-machine-command">
-          <pre className="machines-join-command" data-testid="machines-join-command">{command}</pre>
+      {connectMode ? (
+        <div className="add-machine-connect" data-testid="add-machine-connect-panel">
           <div className="add-machine-copy-row">
             <button
               type="button"
-              className="settings-btn"
-              disabled={expired}
-              onClick={onCopy}
+              className="settings-btn settings-btn--primary"
+              data-testid="add-machine-connect"
+              disabled={!canConnect || connectBusy || pairingRunning}
+              onClick={onConnect}
             >
-              {copied ? 'Copied' : 'Copy'}
+              {connectBusy ? 'Connecting…' : 'Connect'}
             </button>
-            {canRun ? (
-              <button
-                type="button"
-                className="settings-btn"
-                disabled={expired || pairingRunning}
-                data-testid="add-machine-run"
-                onClick={onRun}
-              >
-                {pairingRunning ? 'Running' : 'Run'}
-              </button>
-            ) : null}
             {pairingRunning ? (
               <button
                 type="button"
@@ -284,49 +441,42 @@ export function AddMachineDialogView({
                 data-testid="add-machine-stop-tunnel"
                 onClick={onStopPairing}
               >
-                Stop{viaSsh ? ' tunnel' : ''}
+                Stop
               </button>
             ) : null}
-            {expired ? (
-              <>
-                <span className="add-machine-expiry">
-                  {joinWindowClosed ? 'Join window closed' : 'Code expired'}
-                </span>
-                <button type="button" className="settings-btn" onClick={onRetryMint}>
-                  {joinWindowClosed ? 'Renew join window' : 'Generate a new code'}
-                </button>
-              </>
-            ) : remainingMs !== null ? (
-              <span className="add-machine-expiry">
-                Code expires in {formatJoinCountdown(remainingMs)}
-              </span>
-            ) : null}
           </div>
-          <p className="add-machine-help">
-            {pairingMethod === 'ssh'
-              ? viaSsh
-                ? 'Run it here, or copy and paste it locally (not on the remote). Leave the tunnel open so the reverse forward stays up.'
-                : 'Run SSHs to the selected host and executes this installer there. Copy is a fallback if you prefer to paste it yourself.'
-              : 'This installs the host daemon, enrolls it, and configures it to reconnect automatically on the other machine.'}
-          </p>
-          {pairingError ? <p className="modal-error">{pairingError}</p> : null}
-          {pairingVisible ? (
-            <div className="add-machine-pairing">{pairingSlot}</div>
+          <HostInstallStages stages={connectStages} onRetry={connectBusy ? undefined : onRetryConnect} />
+          {connectError ? (
+            <div className="add-machine-error">
+              <p className="modal-error" role="alert" data-testid="add-machine-connect-error">{connectError}</p>
+              {!connectBusy && !connectStages.some((entry) => entry.status === 'failed') ? (
+                <button
+                  type="button"
+                  className="settings-btn"
+                  data-testid="add-machine-connect-retry"
+                  onClick={onRetryConnect}
+                >
+                  Retry
+                </button>
+              ) : null}
+            </div>
           ) : null}
-          {loopbackWarning && !viaSsh ? (
-            <p className="modal-warning">
-              This address is only reachable on this computer. Enter an SSH host
-              from ~/.ssh/config, or configure the machine-pairing relay.{' '}
-              {REMOTE_MACHINE_CONNECTION_HINT}
-            </p>
+          {connectLogs.length > 0 ? (
+            <details className="add-machine-connect-log" data-testid="add-machine-connect-log">
+              <summary className="host-install-log-toggle">Raw output</summary>
+              <pre className="machines-join-command">{connectLogs.join('\n')}</pre>
+            </details>
           ) : null}
+          {pairingDiagnostics}
         </div>
-      ) : (
-        <p className="add-machine-status">
-          <Loader2 size={16} className="add-machine-spin" aria-hidden="true" />
-          Creating a join code…
-        </p>
-      )}
+      ) : null}
+
+      {connectMode ? (
+        <details className="add-machine-other-ways" data-testid="add-machine-other-ways">
+          <summary className="settings-label">Other ways to connect</summary>
+          {commandPanel}
+        </details>
+      ) : commandPanel}
 
       <div
         className={`add-machine-status${pairedName ? ' add-machine-status--ok' : ''}`}
@@ -338,7 +488,7 @@ export function AddMachineDialogView({
             <span className="machine-status-dot machine-status-dot--on" />
             <span className="add-machine-status-copy">{pairedName} connected</span>
           </>
-        ) : (
+        ) : (connectMode ? !connectBusy : relayUnavailable) ? null : (
           <>
             <Loader2 size={16} className="add-machine-spin" aria-hidden="true" />
             <span>Waiting for the machine to connect…</span>
@@ -363,7 +513,9 @@ function AddMachineDialogContent({
   repairHost?: { id: string; name: string };
 }) {
   const hosts = useHosts();
-  const [join, setJoin] = useState<{ enrollmentId?: string; joinCode: string; hostId: string; expiresAt: number; installCommand?: string } | null>(null);
+  const [join, setJoin] = useState<{ enrollmentId?: string; joinCode: string; hostId: string; expiresAt: number; installCommand?: string; pairingServerUrl?: string; pairingMode?: 'relay' | 'tunnel' } | null>(null);
+  const [relayUnavailable, setRelayUnavailable] = useState(false);
+  const issueGen = useRef(0);
   const [enrollmentConnected, setEnrollmentConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -371,6 +523,7 @@ function AddMachineDialogContent({
   const [pairingRunning, setPairingRunning] = useState(false);
   const [pairingVisible, setPairingVisible] = useState(false);
   const [pairingError, setPairingError] = useState<string | null>(null);
+  const [pairingExitCode, setPairingExitCode] = useState<number | null>(null);
   const [pairingMethod, setPairingMethod] = useState<PairingMethod>('command');
   const methodTouched = useRef(false);
   const [mintNonce, setMintNonce] = useState(0);
@@ -381,6 +534,15 @@ function AddMachineDialogContent({
     hostname?: string;
     user?: string;
   }>>([]);
+  const [hostsRefreshing, setHostsRefreshing] = useState(false);
+  const [hostsWarning, setHostsWarning] = useState<string | null>(null);
+  const hostsSeq = useRef(0);
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [connectStages, setConnectStages] = useState<HostInstallStageEntry[]>([]);
+  const [connectLogs, setConnectLogs] = useState<string[]>([]);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [connectedName, setConnectedName] = useState<string | null>(null);
+  const connectSeq = useRef(0);
   const copiedTimer = useRef<number | null>(null);
   const baseline = useRef<Set<string> | null>(null);
   if (baseline.current === null && hosts.length > 0) {
@@ -404,9 +566,12 @@ function AddMachineDialogContent({
   const resolved = resolveRelayPairingServerUrl({ publicAppUrl, relay, now });
   const serverUrl = resolved.url ?? resolvePairingServerUrl(publicAppUrl);
   const joinWindowClosed = resolved.error === 'join_expired';
-  const loopbackWarning = Boolean(serverUrl && isLoopbackOrigin(serverUrl));
+  const issuedUrl = join?.installCommand ? null : join?.pairingServerUrl ?? null;
+  const loopbackBase = issuedUrl ?? serverUrl;
+  const loopbackWarning = Boolean(loopbackBase && isLoopbackOrigin(loopbackBase));
+  const tunnelIssued = join?.pairingMode === 'tunnel';
   const viaSsh = Boolean(
-    pairingMethod === 'ssh' && loopbackWarning && serverUrl && join && sanitizeSshHost(sshHost)
+    (pairingMethod === 'ssh' || tunnelIssued) && loopbackWarning && issuedUrl && sanitizeSshHost(sshHost)
   );
 
   useEffect(() => {
@@ -422,19 +587,35 @@ function AddMachineDialogContent({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    const gen = ++issueGen.current;
+    const current = () => gen === issueGen.current;
     setJoin(null);
     setError(null);
-    const issue = repairHost
-      ? apiJson<{ enrollmentId: string; code: string; hostId: string; expiresAt: number; installCommand: string }>('/hosts/connect-code', { method: 'POST', body: JSON.stringify({ hostId: repairHost.id, name: repairHost.name }) }).then(row => ({ ...row, joinCode: row.code }))
-      : product.hosts.createJoinCode();
+    setRelayUnavailable(false);
+    const issue: Promise<
+      | { ok: true; join: NonNullable<typeof join> }
+      | { ok: false; error: 'relay_unavailable' | 'relay_changed' }
+    > = repairHost
+      ? apiJson<{ enrollmentId: string; code: string; hostId: string; expiresAt: number; installCommand: string }>('/hosts/connect-code', { method: 'POST', body: JSON.stringify({ hostId: repairHost.id, name: repairHost.name }) }).then(row => ({ ok: true as const, join: { ...row, joinCode: row.code } }))
+      : requestPreferredJoinCode();
     issue.then((issued) => {
-      if (!cancelled) { setJoin(issued); if (issued.installCommand) setPairingMethod('command'); }
+      if (!current()) return;
+      if (!issued.ok) {
+        if (issued.error === 'relay_unavailable') setRelayUnavailable(true);
+        else setError('The relay changed while creating the code.');
+        return;
+      }
+      if (!issued.join.installCommand && !issued.join.pairingServerUrl) {
+        setError('The server did not return a pairing address.');
+        return;
+      }
+      setJoin(issued.join);
+      if (issued.join.installCommand) setPairingMethod('command');
     }).catch((err: unknown) => {
-      if (!cancelled) setError(err instanceof Error ? err.message : 'Could not mint a join code');
+      if (current()) setError(err instanceof Error ? err.message : 'Could not mint a join code');
     });
     return () => {
-      cancelled = true;
+      if (issueGen.current === gen) issueGen.current++;
     };
   }, [mintNonce, repairHost?.id, repairHost?.name]);
 
@@ -443,24 +624,34 @@ function AddMachineDialogContent({
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
+  const refreshHosts = useCallback(() => {
     if (!hasDesktopBridge()) return;
-    let cancelled = false;
-    product.ssh.listHosts().then((rows) => {
-      if (!cancelled) {
-        setConfigHosts(rows.map((row) => ({
-          alias: row.alias,
-          hostname: row.hostname,
-          user: row.user
-        })));
-      }
+    const seq = ++hostsSeq.current;
+    setHostsRefreshing(true);
+    product.ssh.syncHosts().then(({ hosts: rows, warning }) => {
+      if (seq !== hostsSeq.current) return;
+      setConfigHosts(rows.map((row) => ({
+        alias: row.alias,
+        hostname: row.hostname,
+        user: row.user
+      })));
+      setHostsWarning(warning ?? null);
     }).catch(() => {
-      if (!cancelled) setConfigHosts([]);
+      if (seq !== hostsSeq.current) return;
+      setConfigHosts([]);
+      setHostsWarning('Could not read SSH hosts.');
+    }).finally(() => {
+      if (seq === hostsSeq.current) setHostsRefreshing(false);
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    refreshHosts();
+    return () => {
+      hostsSeq.current++;
+      connectSeq.current++;
+    };
+  }, [refreshHosts]);
 
   const sshOptions = useMemo(
     () => mergePairingSshHosts(sshHosts, configHosts),
@@ -485,8 +676,10 @@ function AddMachineDialogContent({
       setPairingRunning(status.running);
       if (status.running || status.backlog) setPairingVisible(true);
     }).catch(() => undefined);
-    const offExit = product.hosts.pairing.onExit(() => {
-      if (!cancelled) setPairingRunning(false);
+    const offExit = product.hosts.pairing.onExit((code) => {
+      if (cancelled) return;
+      setPairingRunning(false);
+      setPairingExitCode(code === 0 ? null : code);
     });
     return () => {
       cancelled = true;
@@ -512,38 +705,54 @@ function AddMachineDialogContent({
     return () => { abort.abort(); clearTimeout(timer); };
   }, [join?.enrollmentId]);
 
-  const paired = join ? hosts.find((host) => host.id === join.hostId && host.status === 'connected' && (!join.enrollmentId || enrollmentConnected)) : undefined;
+  const paired = connectedName !== null ? { name: connectedName } : join ? hosts.find((host) => host.id === join.hostId && host.status === 'connected' && (!join.enrollmentId || enrollmentConnected)) : undefined;
+
+  // A machine paired through a laptop-run ssh command is the machine behind that SSH host:
+  // record it so remote projects on that host find it.
+  const identityRecorded = useRef<string | null>(null);
+  const pairedHostId = paired && 'id' in paired ? (paired as { id: string }).id : null;
+  useEffect(() => {
+    const ssh = sanitizeSshHost(sshHost);
+    if (!pairedHostId || !ssh || !viaSsh || identityRecorded.current === pairedHostId) return;
+    identityRecorded.current = pairedHostId;
+    void product.hosts.updateSshIdentity(pairedHostId, { host: ssh }).catch(() => undefined);
+  }, [pairedHostId, viaSsh, sshHost]);
 
   const command = join?.installCommand ?? (join
-    ? pairingMethod === 'ssh' && sanitizeSshHost(sshHost)
+    ? tunnelIssued && !viaSsh
+      ? null
+      : (pairingMethod === 'ssh' || tunnelIssued) && sanitizeSshHost(sshHost)
       ? viaSsh
         ? sshPairingCommand({
           sshHost,
-          localServerUrl: serverUrl!,
+          localServerUrl: issuedUrl!,
           joinCode: join.joinCode,
           hostId: join.hostId
         })
         : (() => {
-          const argv = serverUrl
+          const argv = issuedUrl
             ? sshPublicPairingArgv({
               sshHost,
-              serverUrl,
+              serverUrl: issuedUrl,
               joinCode: join.joinCode,
               hostId: join.hostId
             })
             : null;
           return argv ? formatSshPairingCommand(argv) : pairingCommand({
-            publicAppUrl: serverUrl,
+            publicAppUrl: issuedUrl,
             joinCode: join.joinCode,
             hostId: join.hostId
           });
         })()
-      : pairingCommand({ publicAppUrl: serverUrl, joinCode: join.joinCode, hostId: join.hostId })
+      : pairingCommand({ publicAppUrl: issuedUrl, joinCode: join.joinCode, hostId: join.hostId })
     : null);
   const remaining = join
     ? joinCountdownMs(join.expiresAt, now)
     : null;
   const expired = (!join?.installCommand && joinWindowClosed) || (remaining !== null && remaining <= 0);
+
+  const canConnectViaSsh = hasDesktopBridge() && !join?.installCommand;
+  const connectMode = pairingMethod === 'ssh' && canConnectViaSsh;
 
   const copy = async () => {
     if (!command) return;
@@ -557,11 +766,53 @@ function AddMachineDialogContent({
     }
   };
 
+  const bootstrapOverSsh = async (host: string) => {
+    const seq = ++connectSeq.current;
+    const user = configHosts.find((entry) => entry.alias === host)?.user?.trim();
+    setConnectBusy(true);
+    setConnectStages([]);
+    setConnectLogs([]);
+    setConnectError(null);
+    setConnectedName(null);
+    const onEvent = (event: HostBootstrapEvent) => {
+      if (seq !== connectSeq.current) return;
+      if (event.type === 'stage') setConnectStages((stages) => upsertStage(stages, event));
+      else if (event.type === 'log') {
+        const lines = splitHostInstallLogText(event.text);
+        if (lines.length > 0) setConnectLogs((logs) => capHostInstallLogs([...logs, ...lines]));
+      } else if (event.type === 'error') setConnectError(event.message);
+    };
+    try {
+      const events = await product.hosts.bootstrapBySsh(user ? { host, user } : { host }, onEvent);
+      if (seq !== connectSeq.current) return;
+      const done = events.find((event): event is Extract<HostBootstrapEvent, { type: 'done' }> => event.type === 'done');
+      if (!done) {
+        const failure = events.find((event): event is Extract<HostBootstrapEvent, { type: 'error' }> => event.type === 'error');
+        setConnectError(failure?.message ?? 'The machine did not finish connecting.');
+        return;
+      }
+      const roster = await product.hosts.list().catch(() => [] as typeof hosts);
+      if (seq !== connectSeq.current) return;
+      setConnectedName(roster.find((row) => row.id === done.hostId)?.name ?? host);
+    } catch (err) {
+      if (seq !== connectSeq.current) return;
+      setConnectError(err instanceof Error ? err.message : 'Could not connect the machine');
+    } finally {
+      if (seq === connectSeq.current) setConnectBusy(false);
+    }
+  };
+
   const run = async () => {
-    if (!join || pairingMethod !== 'ssh' || !sanitizeSshHost(sshHost) || expired) return;
+    const host = sanitizeSshHost(sshHost);
+    if (pairingMethod !== 'ssh' || !host || connectBusy) return;
     setPairingError(null);
+    setPairingExitCode(null);
+    if (!join || expired) {
+      await bootstrapOverSsh(host);
+      return;
+    }
     const result = await product.hosts.pairing.start({
-      sshHost,
+      sshHost: host,
       joinCode: join.joinCode,
       hostId: join.hostId,
       cols: 80,
@@ -569,6 +820,10 @@ function AddMachineDialogContent({
     });
     if (result.ok === false) {
       setPairingError(result.message);
+      return;
+    }
+    if (result.handoff === 'tunnel') {
+      await bootstrapOverSsh(host);
       return;
     }
     setPairingRunning(true);
@@ -590,8 +845,11 @@ function AddMachineDialogContent({
       joinWindowClosed={!join?.installCommand && joinWindowClosed}
       loopbackWarning={!join?.installCommand && loopbackWarning}
       viaSsh={viaSsh}
+      tunnelIssued={tunnelIssued}
       pairingMethod={pairingMethod}
-      showMethodToggle={hasDesktopBridge() && !join?.installCommand}
+      relayUnavailable={relayUnavailable}
+      showMethodToggle={canConnectViaSsh}
+      canConnectViaSsh={canConnectViaSsh}
       sshHost={sshHost}
       sshHosts={sshOptions}
       pairedName={paired?.name ?? null}
@@ -599,7 +857,19 @@ function AddMachineDialogContent({
       pairingRunning={pairingRunning}
       pairingVisible={pairingVisible && pairingMethod === 'ssh'}
       pairingError={pairingError}
+      pairingExitCode={pairingExitCode}
       pairingSlot={pairingVisible && pairingMethod === 'ssh' ? <PairingTerminal /> : null}
+      connectMode={connectMode}
+      canConnect={connectMode && Boolean(sanitizeSshHost(sshHost))}
+      connectBusy={connectBusy}
+      connectStages={connectStages}
+      connectLogs={connectLogs}
+      connectError={connectError}
+      hostsRefreshing={hostsRefreshing}
+      hostsWarning={hostsWarning}
+      onConnect={() => void run()}
+      onRetryConnect={() => void run()}
+      onRefreshHosts={hasDesktopBridge() ? refreshHosts : undefined}
       onSshHostChange={setSshHost}
       onPairingMethodChange={(method) => {
         methodTouched.current = true;

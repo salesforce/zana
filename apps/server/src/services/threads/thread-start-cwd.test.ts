@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { threadStartCwd } from './thread-start-cwd.js';
+import { modelCatalogCwd, threadStartCwd } from './thread-start-cwd.js';
 
 describe('threadStartCwd', () => {
   it('honors the caller cwd for an unmanaged checkout, including a subfolder', () => {
@@ -26,5 +26,16 @@ describe('threadStartCwd', () => {
   it('passes the caller cwd through when the environment row is missing', () => {
     expect(threadStartCwd(null, '/repo')).toBe('/repo');
     expect(threadStartCwd(undefined, '/repo')).toBe('/repo');
+  });
+});
+
+describe('modelCatalogCwd', () => {
+  it('reads a host-owned catalogue in the environment path, never the local placeholder', () => {
+    expect(modelCatalogCwd({ path: '/home/dev' }, '/Users/me/placeholder', true)).toBe('/home/dev');
+    expect(modelCatalogCwd(null, '/Users/me/placeholder', true)).toBeUndefined();
+  });
+  it('keeps the launch cwd otherwise', () => {
+    expect(modelCatalogCwd({ path: '/home/dev' }, '/work', false)).toBe('/work');
+    expect(modelCatalogCwd({ path: '/home/dev' }, '/work', undefined)).toBe('/work');
   });
 });

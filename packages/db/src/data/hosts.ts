@@ -190,12 +190,10 @@ export function findHostBySsh(
   db: ZccDatabase,
   input: { host: string; user?: string }
 ): HostRow | null {
-  const rows = listHosts(db);
-  return rows.find((row) => {
-    if (!row.sshHost || row.sshHost !== input.host) return false;
-    if (input.user) return row.sshUser === input.user;
-    return true;
-  }) ?? null;
+  const rows = listHosts(db).filter((row) => row.sshHost === input.host);
+  if (!input.user) return rows[0] ?? null;
+  // A row recorded by alias alone (ssh config supplies the user) is the same machine.
+  return rows.find((row) => row.sshUser === input.user) ?? rows.find((row) => !row.sshUser) ?? null;
 }
 
 export function updateHostSshIdentity(
@@ -206,9 +204,15 @@ export function updateHostSshIdentity(
   const existing = getHost(db, id);
   if (!existing || existing.destroyedAt) return null;
   const now = Date.now();
+  // A machine's first SSH identity is the alias the user picked to pair it; name it
+  // that instead of the remote's OS hostname. Later identity changes only rename a
+  // machine whose name was itself derived from the previous alias; a user-chosen
+  // name survives (including when a host id is reused for a new alias).
+  const nameFromAlias = !existing.sshHost || existing.name === existing.sshHost;
+  const name = nameFromAlias ? input.host : existing.name;
   db.sqlite.prepare(
-    `UPDATE hosts SET ssh_host = ?, ssh_user = ?, ssh_proxy_jump = ?, updated_at = ? WHERE id = ?`
-  ).run(input.host, input.user ?? null, input.proxyJump ?? null, now, id);
+    `UPDATE hosts SET name = ?, ssh_host = ?, ssh_user = ?, ssh_proxy_jump = ?, updated_at = ? WHERE id = ?`
+  ).run(name, input.host, input.user ?? null, input.proxyJump ?? null, now, id);
   return getHost(db, id);
 }
 

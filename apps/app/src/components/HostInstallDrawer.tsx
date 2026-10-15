@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy, HardDrive, Loader2, X } from 'lucide-react';
 import { copyText } from '../lib/copy-text.js';
+import { retryLastHostInstall } from '../lib/host-install-run.js';
+import { HostInstallStages } from './HostInstallStages.js';
 import {
   HOST_INSTALL_SUCCESS_CLOSE_MS,
   hostInstallDrawerShouldAutoClose,
@@ -20,14 +22,23 @@ export function HostInstallDrawerView({
   kind,
   target,
   logs,
+  stages = [],
   error,
   pairingCommand,
   onClose,
-  onCopyPairing
+  onCopyPairing,
+  onRetry,
+  onLogOpenChange
 }: Pick<HostInstallDrawerState, 'busy' | 'kind' | 'target' | 'logs' | 'error' | 'pairingCommand'> & {
+  stages?: HostInstallDrawerState['stages'];
   onClose: () => void;
   onCopyPairing?: () => void;
+  onRetry?: () => void;
+  onLogOpenChange?: (open: boolean) => void;
 }) {
+  const hasStages = stages.length > 0;
+  const [logOpen, setLogOpen] = useState<boolean | null>(null);
+  const showLog = logOpen ?? !hasStages;
   const logRef = useRef<HTMLPreElement>(null);
   useEffect(() => {
     const el = logRef.current;
@@ -72,7 +83,24 @@ export function HostInstallDrawerView({
           </div>
         ) : null}
 
-        {logs.length === 0 && !error ? (
+        {hasStages ? <HostInstallStages stages={stages} onRetry={busy ? undefined : onRetry} /> : null}
+
+        {hasStages && logs.length > 0 ? (
+          <button
+            type="button"
+            className="host-install-log-toggle"
+            data-testid="host-install-log-toggle"
+            aria-expanded={showLog}
+            onClick={() => {
+              setLogOpen(!showLog);
+              onLogOpenChange?.(!showLog);
+            }}
+          >
+            {showLog ? 'Hide log' : 'Show log'}
+          </button>
+        ) : null}
+
+        {hasStages && !showLog ? null : logs.length === 0 && !error ? (
           <div className="quick-access-empty">
             <span className="quick-access-empty-icon"><HardDrive size={22} aria-hidden="true" /></span>
             <h3>Waiting for install output</h3>
@@ -104,17 +132,23 @@ export function HostInstallDrawer() {
   const state = useUi((s) => s.hostInstallDrawer);
   const setOpen = useUi((s) => s.setHostInstallDrawerOpen);
   const closeAfterSuccessRef = useRef(false);
+  // A user reading the log keeps the panel; success must not yank it away.
+  const logOpenRef = useRef(false);
 
   useEffect(() => {
     if (state.busy) closeAfterSuccessRef.current = true;
   }, [state.busy]);
 
   useEffect(() => {
+    if (!state.open) logOpenRef.current = false;
+  }, [state.open]);
+
+  useEffect(() => {
     if (!hostInstallDrawerShouldAutoClose(state) || !closeAfterSuccessRef.current) return;
     closeAfterSuccessRef.current = false;
     const timer = window.setTimeout(() => {
       const current = useUi.getState().hostInstallDrawer;
-      if (!hostInstallDrawerShouldAutoClose(current)) return;
+      if (!hostInstallDrawerShouldAutoClose(current) || logOpenRef.current) return;
       setOpen(false);
     }, HOST_INSTALL_SUCCESS_CLOSE_MS);
     return () => window.clearTimeout(timer);
@@ -127,9 +161,12 @@ export function HostInstallDrawer() {
       kind={state.kind}
       target={state.target}
       logs={state.logs}
+      stages={state.stages}
       error={state.error}
       pairingCommand={state.pairingCommand}
       onClose={() => setOpen(false)}
+      onRetry={() => void retryLastHostInstall().catch(() => {})}
+      onLogOpenChange={(open) => { logOpenRef.current = open; }}
       onCopyPairing={state.pairingCommand
         ? () => void copyText(state.pairingCommand!)
         : undefined}

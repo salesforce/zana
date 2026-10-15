@@ -76,4 +76,13 @@ describe('validateProviderModelSelection', () => {
       hostId: 'host-1', providerId: 'validation-provider', model: 'missing'
     })).rejects.toMatchObject({ code: 'invalid-model' });
   });
+
+  it('does not call a model unavailable when the catalogue failed to load', async () => {
+    register();
+    const { ctx, read } = context();
+    read.mockResolvedValueOnce({ models: [], selectedOnlyModels: [], modelLoadError: { providerId: 'validation-provider', code: 'timeout', detail: 'no such directory' } } as never);
+    await expect(validateProviderModelSelection(ctx, {
+      hostId: 'host-1', providerId: 'validation-provider', cwd: '/missing', model: 'live'
+    })).resolves.toBeUndefined();
+  });
 });

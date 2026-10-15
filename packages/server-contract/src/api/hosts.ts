@@ -65,6 +65,10 @@ export const createHostJoinCodeResponseSchema = z.object({
   joinCode: z.string().min(1),
   hostId: z.string().min(1),
   expiresAt: z.number().int().positive(),
+  /** Preferred route only: the URL this code redeems against, bound to the same relay session. */
+  pairingServerUrl: z.string().min(1).optional(),
+  /** Preferred route only: `tunnel` when the code redeems through the SSH reverse-tunnel forwarder instead of the relay. */
+  pairingMode: z.enum(['relay', 'tunnel']).optional(),
 });
 export type CreateHostJoinCodeResponse = z.infer<
   typeof createHostJoinCodeResponseSchema
@@ -105,13 +109,6 @@ export type HostRetryUpdateResponse = z.infer<
   typeof hostRetryUpdateResponseSchema
 >;
 
-export const hostBootstrapRequestSchema = z
-  .object({
-    projectId: z.string().min(1),
-  })
-  .strict();
-export type HostBootstrapRequest = z.infer<typeof hostBootstrapRequestSchema>;
-
 export const hostSshIdentityRequestSchema = z
   .object({
     host: z.string().trim().min(1).max(256),
@@ -120,6 +117,21 @@ export const hostSshIdentityRequestSchema = z
   })
   .strict();
 export type HostSshIdentityRequest = z.infer<typeof hostSshIdentityRequestSchema>;
+
+/** Install for a remote project, or for a machine by SSH identity alone. */
+export const hostBootstrapRequestSchema = z.union([
+  z
+    .object({
+      projectId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      ssh: hostSshIdentityRequestSchema.pick({ host: true, user: true }).strict(),
+    })
+    .strict(),
+]);
+export type HostBootstrapRequest = z.infer<typeof hostBootstrapRequestSchema>;
 
 export const hostBootstrapLogEventSchema = z.object({
   type: z.literal("log"),
@@ -135,8 +147,25 @@ export const hostBootstrapErrorEventSchema = z.object({
   message: z.string().min(1),
   pairingCommand: z.string().min(1).optional(),
 });
+export const hostBootstrapStageSchema = z.enum([
+  "ssh",
+  "tunnel",
+  "install",
+  "wait",
+  "register",
+  "connected",
+]);
+export type HostBootstrapStage = z.infer<typeof hostBootstrapStageSchema>;
+export const hostBootstrapStageEventSchema = z.object({
+  type: z.literal("stage"),
+  stage: hostBootstrapStageSchema,
+  status: z.enum(["running", "passed", "failed"]),
+  reason: z.string().min(1).optional(),
+  limitMs: z.number().int().positive().optional(),
+});
 export const hostBootstrapEventSchema = z.discriminatedUnion("type", [
   hostBootstrapLogEventSchema,
+  hostBootstrapStageEventSchema,
   hostBootstrapDoneEventSchema,
   hostBootstrapErrorEventSchema,
 ]);

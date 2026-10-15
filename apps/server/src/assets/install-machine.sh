@@ -19,7 +19,8 @@ EOF
 node_major() {
   bin=$1
   [ -n "$bin" ] && [ -x "$bin" ] || return 1
-  major=$("$bin" -p "parseInt(process.versions.node,10)" 2>/dev/null) || return 1
+  # -e with a plain write: -p colors numbers when FORCE_COLOR is set.
+  major=$("$bin" -e "process.stdout.write(String(parseInt(process.versions.node,10)))" 2>/dev/null) || return 1
   case "$major" in
     ''|*[!0-9]*) return 1 ;;
   esac
@@ -99,6 +100,11 @@ done
 server_url=${server_url%/}
 server_host=$(printf '%s' "$server_url" | sed -E 's#^https?://##; s#[/:].*##')
 [ -n "$server_host" ] || { echo "invalid --server" >&2; exit 2; }
+# Scheme://host[:port] only: no path, query, or userinfo ever reaches a marker.
+origin=$(printf '%s' "$server_url" | sed -E 's#^(https?://)([^/@]*@)?([^/?\#]+).*#\1\3#')
+
+step=prepare
+trap 'rc=$?; [ "$rc" -eq 0 ] || printf "zcc-install: failed step=%s rc=%s\n" "$step" "$rc" >&2' EXIT
 
 data_dir=${ZCC_DATA_DIR:-"$HOME/.zcc-machines/$server_host"}
 mkdir -p "$data_dir"
@@ -133,6 +139,7 @@ fi
 printf '%s\n' "$port" > "$port_file"
 printf '%s\n' "$data_dir" > "$port_dir/$port"
 
+step=node
 NODE_BIN=$(resolve_node)
 PATH="$(dirname "$NODE_BIN"):$PATH"
 export PATH
@@ -142,13 +149,25 @@ package_dir="$data_dir/runtime"
 mkdir -p "$package_dir"
 package_file="$package_dir/zcc-host.tgz"
 echo "Downloading host-daemon artifact…"
+step=download
+# No -f: the status is captured so a failed fetch reports one stable marker.
 if [ -n "${ZCC_CONNECT_HEADER_FILE:-}" ]; then
   # Credentials are in a private file, never argv; never follow a redirect.
-  curl -f --proto '=https' --header "@$ZCC_CONNECT_HEADER_FILE" --max-filesize 268435456 --connect-timeout 10 --max-time 300 --retry 2 "$server_url/install/zcc-host.tgz" -o "$package_file"
+  code=$(curl -sS --proto '=https' --header "@$ZCC_CONNECT_HEADER_FILE" --max-filesize 268435456 --connect-timeout 10 --max-time 300 --retry 2 -o "$package_file" -w '%{http_code}' "$server_url/install/zcc-host.tgz" 2>/dev/null) || code="curl-exit-$?"
 else
-  curl -fL --connect-timeout 10 --max-time 300 --retry 2 "$server_url/install/zcc-host.tgz" -o "$package_file"
+  code=$(curl -sSL --connect-timeout 10 --max-time 300 --retry 2 -o "$package_file" -w '%{http_code}' "$server_url/install/zcc-host.tgz" 2>/dev/null) || code="curl-exit-$?"
 fi
+case "$code" in
+  2??) ;;
+  *)
+    rm -f "$package_file"
+    trap - EXIT
+    printf 'zcc-install: artifact-unavailable status=%s origin=%s\n' "$code" "$origin" >&2
+    exit 1 ;;
+esac
+step=unpack
 tar -xzf "$package_file" -C "$package_dir"
+step=install
 
 join_bin=${ZCC_HOST_JOIN_CLI:-}
 # Prefer the freshly served ESM bundle over a leftover legacy CJS launcher.
@@ -164,6 +183,8 @@ fi
 [ -n "$join_bin" ] || { echo "join CLI missing from artifact" >&2; exit 1; }
 
 run_join() {
+  # Attempt boundary: readers of host-daemon.log take lines after the last marker.
+  printf 'zcc-join: attempt %s host=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$host_id" >>"$data_dir/host-daemon.log"
   ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url" \
     nohup "$NODE_BIN" "$join_bin" join \
       --join-code "$join_code" \
@@ -203,6 +224,7 @@ if [ -f "$data_dir/host-daemon.pid" ]; then
   rm -f "$data_dir/host-daemon.pid"
 fi
 
+step=join
 echo "Enrolling host daemon…"
 run_join
 
@@ -244,6 +266,7 @@ if [ "${ZCC_INSTALL_SKIP_SERVICE:-}" = 1 ]; then
   exit 0
 fi
 
+step=service
 uname_s=$(uname -s)
 if [ "$uname_s" = Darwin ]; then
   kill "$join_pid" 2>/dev/null || true

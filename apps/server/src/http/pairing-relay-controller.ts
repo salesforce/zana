@@ -1,7 +1,10 @@
 import type { ProductHttpContext } from './product-context.js';
+import { isLoopbackHttpHost } from '../browser-bootstrap.js';
+import { resolvePublicAppUrl } from './public-app-url.js';
 import {
   createPairingRelayClient,
   pairingRelayTargets,
+  resolveRelayToken,
   type PairingRelayClient,
   type PairingRelaySnapshot,
   type PairingRelayState
@@ -13,6 +16,13 @@ export interface PairingRelayHandle {
   snapshot(): PairingRelaySnapshot;
   sessionId(): string | undefined;
   joinUntil(): number | undefined;
+  /**
+   * The relay's configured public origin (env/bake/repo file, never Settings),
+   * even when no token is set; `null` when absent or loopback.
+   */
+  relayOrigin(): string | null;
+  /** Whether a relay token is configured (env/bake only). */
+  tokenPresent(): boolean;
   renewJoinWindow(): Promise<PairingRelaySnapshot>;
   refresh(): void;
   stop(): void;
@@ -20,6 +30,8 @@ export interface PairingRelayHandle {
 
 export function attachPairingRelay(ctx: ProductHttpContext, productPort: number): PairingRelayHandle {
   let client: PairingRelayClient | null = null;
+  let origin: string | null = null;
+  let hasToken = false;
 
   const emit = () => {
     ctx.hub.emit('relay:changed', client?.snapshot() ?? { state: 'unconfigured' as const });
@@ -36,6 +48,8 @@ export function attachPairingRelay(ctx: ProductHttpContext, productPort: number)
     const targets = pairingRelayTargets({
       env: process.env
     });
+    origin = relayOriginFromEnv(process.env);
+    hasToken = Boolean(resolveRelayToken({ env: process.env }));
     if (!targets.origin || !targets.token) {
       if (config.relaySessionId) ctx.config.setConfig({ relaySessionId: undefined });
     }
@@ -61,6 +75,8 @@ export function attachPairingRelay(ctx: ProductHttpContext, productPort: number)
     snapshot: () => client?.snapshot() ?? { state: 'unconfigured' },
     sessionId: () => client?.sessionId(),
     joinUntil: () => client?.joinUntil(),
+    relayOrigin: () => origin,
+    tokenPresent: () => hasToken,
     async renewJoinWindow() {
       return client?.renewJoinWindow() ?? { state: 'unconfigured' as const };
     },
@@ -72,4 +88,12 @@ export function attachPairingRelay(ctx: ProductHttpContext, productPort: number)
   };
   ctx.pairingRelay = handle;
   return handle;
+}
+
+/** Same origin resolution as {@link pairingRelayTargets}, without requiring a token. */
+export function relayOriginFromEnv(env: NodeJS.ProcessEnv, bundledUrl?: string | null): string | null {
+  const resolved = resolvePublicAppUrl({ env, ...(bundledUrl !== undefined ? { bundledUrl } : {}) });
+  // resolvePublicAppUrl only returns URLs it has already parsed.
+  if (!resolved || isLoopbackHttpHost(new URL(resolved).hostname)) return null;
+  return resolved;
 }

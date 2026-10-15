@@ -27,9 +27,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The root suite runs files serially (vitest.config.ts maxWorkers: 1) because
-  # it spawns real bridges, shells and PTYs. Shard it across runners instead:
-  # each shard is its own VM, so serial-within-shard isolation is preserved.
+  # The root suite runs pure unit files in parallel, then files that spawn real
+  # bridges, shells and PTYs one at a time (vitest.serial.ts). Each shard is its
+  # own VM, so that split holds within every shard.
   unit:
     name: Unit tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest

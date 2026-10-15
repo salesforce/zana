@@ -400,6 +400,7 @@ const api: CcApi = {
     retryUpdate: async () => ({ ok: true as const }),
     remove: async () => ({ ok: true as const }),
     bootstrap: async () => [],
+    bootstrapBySsh: async () => [],
     repair: async () => [],
     updateSshIdentity: async () => {
       throw new Error('hosts.updateSshIdentity is served over product HTTP');

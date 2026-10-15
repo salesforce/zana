@@ -70,7 +70,19 @@ describe('machine pairing command', () => {
     expect(resolveRelayPairingServerUrl({
       publicAppUrl: 'https://zcc.herokuapp.com',
       relay: { state: 'connected' }
-    }).error).toBe('join_expired');
+    })).toEqual({ url: null, error: 'join_expired' });
+  });
+
+  it('never returns the bare shared origin for unknown or offline relay', () => {
+    expect(resolveRelayPairingServerUrl({ publicAppUrl: 'https://zcc.herokuapp.com', relay: null })).toEqual({ url: null });
+    expect(resolveRelayPairingServerUrl({ publicAppUrl: 'https://zcc.herokuapp.com', relay: { state: 'offline' } }))
+      .toEqual({ url: null, error: 'relay_offline' });
+    expect(resolveRelayPairingServerUrl({
+      publicAppUrl: 'https://zcc.herokuapp.com',
+      relay: { state: 'connected', sessionId: 'bad' }
+    })).toEqual({ url: null, error: 'join_expired' });
+    expect(resolveRelayPairingServerUrl({ publicAppUrl: null, relay: { state: 'unconfigured' } }).url)
+      .toBe(resolvePairingServerUrl(null));
   });
 
   it('builds an SSH reverse-tunnel command for loopback pairing', () => {

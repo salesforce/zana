@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import { isLoopbackHttpHost } from '../browser-bootstrap.js';
 import { isAllowedHttp, isAllowedWs, resolvePairingTarget } from './pairing-allowlist.js';
+import { fetchHeadersToPairs, headerPairsToRecord, loopbackHostHeader } from './pairing-headers.js';
 import {
   BODY_CHUNK,
   FLAG,
@@ -17,27 +18,6 @@ import { resolvePublicAppUrl } from './public-app-url.js';
 
 export type PairingRelayState = 'connected' | 'offline' | 'unconfigured';
 export type PairingRelayHello = { sessionId: string; joinUntil: number };
-
-const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'trailers',
-  'transfer-encoding',
-  'upgrade',
-  'host',
-  'origin',
-  // Last hop is loopback; a forwarded Heroku Host would 403 when Settings
-  // and the public origin disagree (plan: force Host 127.0.0.1).
-  'x-forwarded-for',
-  'x-forwarded-host',
-  'x-forwarded-port',
-  'x-forwarded-proto',
-  'forwarded'
-]);
 
 const PING_MS = 20_000;
 const MAX_BACKOFF_MS = 30_000;
@@ -70,25 +50,6 @@ function isPublicOrigin(origin: string): boolean {
   } catch {
     return false;
   }
-}
-
-function headerPairsToFetch(pairs: Array<[string, string]>, loopbackHost: string): Record<string, string> {
-  const headers: Record<string, string> = { host: loopbackHost };
-  for (const [name, value] of pairs) {
-    if (!name || HOP_BY_HOP.has(name.toLowerCase())) continue;
-    const existing = headers[name];
-    headers[name] = existing ? `${existing}, ${value}` : value;
-  }
-  return headers;
-}
-
-function responseHeadersToPairs(headers: Headers): Array<[string, string]> {
-  const pairs: Array<[string, string]> = [];
-  headers.forEach((value, name) => {
-    if (HOP_BY_HOP.has(name.toLowerCase())) return;
-    pairs.push([name, value]);
-  });
-  return pairs;
 }
 
 export interface PairingRelayClientOptions {
@@ -144,7 +105,7 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
   }
 
   function loopbackHost(): string {
-    return `127.0.0.1:${options.productPort}`;
+    return loopbackHostHeader(options.productPort);
   }
 
   function send(type: number, flags: number, streamId: number, payload?: Buffer): void {
@@ -179,7 +140,7 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
       );
       return;
     }
-    const headers = headerPairsToFetch(meta.headers ?? [], loopbackHost());
+    const headers = headerPairsToRecord(meta.headers ?? [], loopbackHost());
     try {
       // Never follow redirects: a 3xx would reach a destination the allowlist
       // never saw. It is relayed back to the caller as-is.
@@ -196,7 +157,7 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
         frame.streamId,
         encodeJsonPayload({
           status: response.status,
-          headers: responseHeadersToPairs(response.headers)
+          headers: fetchHeadersToPairs(response.headers)
         })
       );
       if (!hasBody || !response.body) return;
@@ -243,7 +204,7 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
       send(TYPE.WS_CLOSE, FLAG.FIN, frame.streamId, encodeJsonPayload({ code: 1008, reason: 'not allowed' }));
       return;
     }
-    const headers = headerPairsToFetch(meta.headers ?? [], loopbackHost());
+    const headers = headerPairsToRecord(meta.headers ?? [], loopbackHost());
     const wsUrl = target.url;
     wsUrl.protocol = 'ws:';
     const child = new WsImpl(wsUrl, { headers, perMessageDeflate: false, followRedirects: false });

@@ -25,7 +25,7 @@ export const PRODUCT_EVENT_SNAPSHOT_CHANNELS: ReadonlySet<string> = new Set([
   'config:onChanged', 'scheduler:onChanged', 'scheduler:groups:onChanged', 'scheduler:onTemplatesChanged', 'goals:onChanged',
   'followups:onChanged', 'personas:onChanged', 'teams:onChanged', 'quickPrompts:onChanged', 'extensions:onChanged'
 ]);
-export const SERVER_RUNTIME_PROTOCOL_VERSION = 14;
+export const SERVER_RUNTIME_PROTOCOL_VERSION = 15;
 const ServerRuntimeProtocolVersionSchema = z.literal(SERVER_RUNTIME_PROTOCOL_VERSION);
 const RequestIdSchema = z.string().uuid();
 const DeadlineSchema = z.string().datetime();
@@ -184,6 +184,23 @@ export const NativeToolPolicyDecisionSchema = z.discriminatedUnion('action', [
 export type NativeToolPolicyRequest = z.infer<typeof NativeToolPolicyRequestSchema>;
 export type NativeToolPolicyDecision = z.infer<typeof NativeToolPolicyDecisionSchema>;
 
+/**
+ * Where a remote host daemon should be told to join. `relay` is the relay's
+ * own origin plus this machine's relay session; `direct` is a dedicated public
+ * origin that is not the relay; `tunnel` means neither is usable and the caller
+ * must fall back to an SSH tunnel.
+ */
+const PairingServerUrlSchema = z.string().url().max(4096).refine((value) => /^https?:\/\//u.test(value), 'pairing URL must be http(s)');
+export const PairingTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('relay'), serverUrl: PairingServerUrlSchema }).strict(),
+  z.object({ kind: z.literal('direct'), serverUrl: PairingServerUrlSchema }).strict(),
+  z.object({
+    kind: z.literal('tunnel'),
+    reason: z.enum(['relay_offline', 'relay_unconfigured', 'no_session', 'no_public_origin'])
+  }).strict()
+]);
+export type PairingTarget = z.infer<typeof PairingTargetSchema>;
+
 const ServerRuntimeRequestBaseSchema = z.object({
   type: z.literal('request'),
   protocolVersion: ServerRuntimeProtocolVersionSchema,
@@ -202,6 +219,7 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('library-document'), request: LibraryDocumentRequestSchema }).strict(),
   ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('app-version') }).strict(),
   ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('projects-list') }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('pairing-target') }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('projects-add'),
     path: ProjectPathSchema

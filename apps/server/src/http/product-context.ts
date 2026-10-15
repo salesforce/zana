@@ -57,6 +57,8 @@ import { createUiSendVerifier } from './ui-send-proof.js';
 import { createPluginApprovalVerifier } from './plugin-approval-proof.js';
 import { createNativeToolPolicyVerifier } from './native-tool-policy-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
+import { createDbTunnelHostStore, createTunnelHostReopener, type TunnelHostStore } from '../services/hosts/tunnel-hosts.js';
+import { repairHost, tunnelLocalPort } from '../services/hosts/host-bootstrap.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
@@ -73,6 +75,8 @@ export interface ProductHttpContext {
   dataDir: string;
   enrollToken: string;
   joinCodes: JoinCodeStore;
+  /** Remote ports of machines reached through a primary-owned SSH tunnel. */
+  tunnelHosts?: TunnelHostStore;
   db: ZccDatabase;
   hostHub: HostHub;
   modelCatalogs: ProviderModelCatalogStore;
@@ -166,6 +170,15 @@ export function createProductHttpContext(
   let pendingInteractions: PendingInteractionLifecycle;
   let ctx!: ProductHttpContext;
   const disconnectHealTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const tunnelHosts = createDbTunnelHostStore({ db, dataDir });
+  // The primary's SSH tunnels die with its daemon and target this server's
+  // per-process pairing port, so each primary connect reopens them.
+  const tunnelReopener = createTunnelHostReopener(() => ctx, {
+    store: tunnelHosts,
+    localPort: () => tunnelLocalPort(ctx!),
+    repair: (hostId) => repairHost(ctx!, hostId),
+    log: (text) => console.warn(`[zcc] ${text}`)
+  });
   const hostHub = createHostHub(db, hub, terminalSessions, {
     pluginHostGenerations: () => ctx ? [...ctx.pluginHostArtifacts.entries()].map(([pluginId, artifact]) => ({ pluginId, generation: artifact.generation })) : [],
     onNewHostInstance: (hostId) => {
@@ -181,6 +194,7 @@ export function createProductHttpContext(
         disconnectHealTimers.delete(hostId);
       }
       if (!ctx) return;
+      tunnelReopener.hostConnected(hostId);
       ctx.remoteEnvironment.hostConnected(hostId);
       void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
       void flushDueConversationSendsForHost(ctx, hostId).catch(() => undefined);
@@ -368,6 +382,7 @@ export function createProductHttpContext(
     dataDir,
     enrollToken,
     joinCodes: createJoinCodeStore(db),
+    tunnelHosts,
     db,
     hostHub,
     modelCatalogs,
@@ -396,6 +411,7 @@ export function createProductHttpContext(
       stopRetries();
       for (const timer of disconnectHealTimers.values()) clearTimeout(timer);
       disconnectHealTimers.clear();
+      tunnelReopener.dispose();
       disposeLocalHostDaemon(ctx);
       inboxRead.dispose();
       promptRegistry.stop();

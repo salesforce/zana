@@ -11,7 +11,9 @@ import { useData } from '../../store.js';
  * Disposable xterm bound to the main-owned SSH pairing PTY. Independent of
  * TerminalSurface so pairing never becomes an Agents tab.
  */
-export function PairingTerminal() {
+export function PairingTerminal({ onExit }: { onExit?: (code: number) => void } = {}) {
+  const onExitRef = useRef(onExit);
+  onExitRef.current = onExit;
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -49,7 +51,7 @@ export function PairingTerminal() {
     };
 
     const offData = product.hosts.pairing.onData(write);
-    const offExit = product.hosts.pairing.onExit(() => undefined);
+    const offExit = product.hosts.pairing.onExit((code) => onExitRef.current?.(code));
 
     void product.hosts.pairing.status().then((status) => {
       if (disposed) return;

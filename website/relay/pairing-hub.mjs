@@ -9,6 +9,9 @@ import {
   resolveMaxSessions
 } from './session-path.mjs';
 
+/** Join paths that only route through `/t/<sessionId>`, never to a sole laptop. */
+const SESSION_REQUIRED_HTTP = new Set(['/install.sh', '/internal/hosts/enroll']);
+
 /**
  * @param {{
  *   now?: () => number,
@@ -126,6 +129,13 @@ export function createPairingHub(options = {}) {
       return { handled: true, entry };
     }
     if (!isAllowedHttp(method, pathname)) return { handled: false };
+    // The relay token is shared, so a bare join would reach whichever laptop
+    // happens to be attached. Join flows always carry `/t/<sessionId>`.
+    if (SESSION_REQUIRED_HTTP.has(pathname)) {
+      return { handled: true, status: 503, error: 'session_required' };
+    }
+    // Bare update/host traffic stays routed: daemons from builds that dropped
+    // the `/t/<sessionId>` prefix still reconnect and self-update here.
     const live = liveEntries();
     if (live.length === 0) return { handled: true, status: 503, error: 'relay_offline' };
     if (live.length > 1) return { handled: true, status: 503, error: 'relay_ambiguous' };

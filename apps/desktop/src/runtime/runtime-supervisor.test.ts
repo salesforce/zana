@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime-supervisor.js';
+import { requestPairingTarget, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime-supervisor.js';
 import { TERMINAL_HOST_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/terminal-execution';
 
 let runtime: RuntimeSupervisor | null = null;
@@ -30,6 +30,8 @@ describe('runtime supervisor', () => {
       message: 'This session does not run a packaged host daemon'
     });
     await expect(runtime.listProjects()).resolves.toEqual([]);
+    // No server runtime to vouch for the relay ⇒ tunnel.
+    await expect(runtime.pairingTarget()).resolves.toEqual({ kind: 'tunnel', reason: 'relay_offline' });
     await expect(runtime.projectMetadata({ action: 'list', kind: 'followups', projectId: 'p' })).rejects.toThrow('requires the product runtime');
     await expect(runtime.libraryAgent({ action: 'list', projectId: 'p' })).rejects.toThrow('requires the product runtime');
     await expect(runtime.libraryDocument({ action: 'list' })).rejects.toThrow('requires the product runtime');
@@ -133,5 +135,31 @@ describe('runtime supervisor', () => {
     expect(source).not.toMatch(/process\.env\.ZCC_PRODUCT_SERVER_CREDENTIAL\s*=/);
     expect(source).toContain('extraEnv');
     expect(source).toContain('delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL');
+  });
+});
+
+describe('pairing target request', () => {
+  it('passes through a well-formed target', async () => {
+    const relay = { kind: 'relay', serverUrl: 'https://relay.example.com/t/zcrs_abcdefghijklmnop' };
+    await expect(requestPairingTarget(async () => relay)).resolves.toEqual(relay);
+    const direct = { kind: 'direct', serverUrl: 'https://own.example' };
+    await expect(requestPairingTarget(async () => direct)).resolves.toEqual(direct);
+    const tunnel = { kind: 'tunnel', reason: 'no_public_origin' };
+    await expect(requestPairingTarget(async () => tunnel)).resolves.toEqual(tunnel);
+  });
+
+  it.each([
+    ['null', null],
+    ['unknown kind', { kind: 'mesh', serverUrl: 'https://x.example' }],
+    ['non-http url', { kind: 'relay', serverUrl: 'javascript:alert(1)' }],
+    ['extra field', { kind: 'direct', serverUrl: 'https://x.example', token: 'leak' }],
+    ['unknown reason', { kind: 'tunnel', reason: 'because' }]
+  ])('falls back to a tunnel on a malformed reply (%s)', async (_name, reply) => {
+    await expect(requestPairingTarget(async () => reply)).resolves.toEqual({ kind: 'tunnel', reason: 'relay_offline' });
+  });
+
+  it('falls back to a tunnel when the request fails', async () => {
+    await expect(requestPairingTarget(async () => { throw new Error('server pairing-target request timed out'); }))
+      .resolves.toEqual({ kind: 'tunnel', reason: 'relay_offline' });
   });
 });

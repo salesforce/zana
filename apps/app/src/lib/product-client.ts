@@ -35,6 +35,43 @@ import { readHttpLibrary, subscribeHttpLibrary, mutateHttpLibrary, readHttpLibra
 import { readConversationJson } from './conversation-read.js';
 import { createEnvironmentStatusClient } from './environment-status-client.js';
 
+export interface PreferredJoinCode {
+  enrollmentId?: string;
+  joinCode: string;
+  hostId: string;
+  expiresAt: number;
+  installCommand?: string;
+  /** URL this code redeems against; bound to the same issuance as the code. */
+  pairingServerUrl?: string;
+  /** `tunnel`: no relay; the URL is a loopback forwarder the remote reaches via `ssh -R`. */
+  pairingMode?: 'relay' | 'tunnel';
+}
+
+export type PreferredJoinCodeResult =
+  | { ok: true; join: PreferredJoinCode }
+  | { ok: false; error: 'relay_unavailable' | 'relay_changed'; reason?: string };
+
+/** Mint a join code; 409 relay refusals come back as a typed result instead of an opaque throw. */
+export async function requestPreferredJoinCode(): Promise<PreferredJoinCodeResult> {
+  const response = await fetchWithAppSurface('/api/v1/hosts/join-codes/preferred', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}'
+  });
+  if (response.status === 409) {
+    const body = await response.json().catch(() => ({})) as { error?: string; reason?: string };
+    if (body.error === 'relay_unavailable' || body.error === 'relay_changed') {
+      return { ok: false, error: body.error, ...(typeof body.reason === 'string' ? { reason: body.reason } : {}) };
+    }
+    throw Object.assign(new Error(body.error ?? '409'), { status: 409, code: body.error });
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
+    throw Object.assign(new Error(body.message ?? body.error ?? `${response.status}`), { status: response.status, code: body.error });
+  }
+  return { ok: true, join: await response.json() as PreferredJoinCode };
+}
+
 function noopSubscribe(_cb: unknown): () => void {
   return () => {};
 }
@@ -586,6 +623,14 @@ function httpProduct(): Pick<
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ projectId })
+        });
+        return requireOkNdjson(response, onEvent);
+      },
+      bootstrapBySsh: async (ssh, onEvent) => {
+        const response = await fetchWithAppSurface('/api/v1/hosts/bootstrap', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ssh: ssh.user ? { host: ssh.host, user: ssh.user } : { host: ssh.host } })
         });
         return requireOkNdjson(response, onEvent);
       },

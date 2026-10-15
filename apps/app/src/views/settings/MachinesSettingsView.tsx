@@ -21,6 +21,7 @@ import {
 } from './machine-pairing.js';
 import { reconnectMachine } from './machine-reconnect.js';
 import { runHostInstallWithDrawer } from '../../lib/host-install-run.js';
+import { bootstrapOutcome } from '../../components/composer-host-status.js';
 import {
   actionableProviderCliRows,
   dismissInstallLogOnSuccess,
@@ -121,6 +122,13 @@ export function MachinesSettingsView({
             }
             useUi.getState().appendHostInstallLogs(['Reconnecting…']);
             return product.hosts.repair(id, onEvent);
+          },
+          // Replayed by the drawer's Retry, which bypasses this function's result handling.
+          onSettled: (events) => {
+            const outcome = bootstrapOutcome(events);
+            if (outcome.ok) setRepairError(null);
+            else if (outcome.code === 'ssh_identity_required') setSshPick({ hostId: host.id, name: host.name });
+            else setRepairError({ hostId: host.id, message: outcome.message });
           }
         })
       });
@@ -208,8 +216,8 @@ export function MachinesSettingsView({
       >
         <Field
           searchId="machines.public-app-url"
-          label="Public app URL"
-          help={`Origin remotes use to enroll. Official builds bake this. For local/dev, ${REMOTE_MACHINE_CONNECTION_HINT}`}
+          label="Relay pairing URL"
+          help={`Remotes enroll through this origin only while the pairing relay is connected. Otherwise Connect pairs over an SSH tunnel and ignores it. Official builds bake this. For local/dev, ${REMOTE_MACHINE_CONNECTION_HINT}`}
           mono
         >
           <input

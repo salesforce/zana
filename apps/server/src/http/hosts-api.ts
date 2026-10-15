@@ -23,7 +23,9 @@ import type { ProductHttpContext } from './product-context.js';
 import { listPublicHosts, parseHostUpdate, toPublicHost } from '../services/hosts/host-public.js';
 import { relaunchLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 import { HostUnavailableError } from './host-hub.js';
-import { bootstrapHostForProject, parseSshIdentity, repairHost } from '../services/hosts/host-bootstrap.js';
+import { bootstrapHostBySsh, bootstrapHostForProject, parseSshIdentity, reconcileRemoteProjectBindings, repairHost, type HostBootstrapEvent } from '../services/hosts/host-bootstrap.js';
+import { resolvePairingTargetForContext } from '../services/hosts/pairing-target.js';
+import { closeTunnelHost } from '../services/hosts/tunnel-hosts.js';
 import { issueConnectHostCode, revokeConnectHost, usesConnect, connectInstallCommand } from '../services/hosts/connect-enrollment.js';
 
 function routeParams(pathname: string, pattern: string): Record<string, string> | null {
@@ -108,6 +110,31 @@ export async function handleHostsApi(
       } catch (error) { sendJson(response, 503, { error: error instanceof Error ? error.message : 'Connect unavailable' }); }
       return true;
     }
+    if (path.endsWith('/preferred')) {
+      // Code and URL are issued together, bound to one relay session.
+      const target = await resolvePairingTargetForContext(ctx);
+      if (target.kind === 'tunnel') {
+        // No relay: the code redeems through the allowlist-only loopback forwarder,
+        // reachable from the remote only via an SSH reverse tunnel the user opens.
+        const forwarderPort = ctx.origins?.pairingPort;
+        if (!forwarderPort) {
+          sendJson(response, 409, { error: 'relay_unavailable', reason: target.reason });
+          return true;
+        }
+        const minted = ctx.joinCodes.mint();
+        sendJson(response, 201, { ...minted, pairingServerUrl: `http://127.0.0.1:${forwarderPort}`, pairingMode: 'tunnel' });
+        return true;
+      }
+      const minted = ctx.joinCodes.mint();
+      const after = await resolvePairingTargetForContext(ctx);
+      if (after.kind === 'tunnel' || after.kind !== target.kind || after.serverUrl !== target.serverUrl) {
+        ctx.joinCodes.invalidateHost(minted.hostId);
+        sendJson(response, 409, { error: 'relay_changed' });
+        return true;
+      }
+      sendJson(response, 201, { ...minted, pairingServerUrl: target.serverUrl });
+      return true;
+    }
     const issued = ctx.joinCodes.mint();
     sendJson(response, 201, issued);
     return true;
@@ -128,7 +155,9 @@ export async function handleHostsApi(
     }
     const stream = beginNdjson(response);
     try {
-      await bootstrapHostForProject(ctx, parsed.data.projectId, (event) => stream.write(event));
+      const write = (event: HostBootstrapEvent) => stream.write(event);
+      if ('ssh' in parsed.data) await bootstrapHostBySsh(ctx, parsed.data.ssh, write);
+      else await bootstrapHostForProject(ctx, parsed.data.projectId, write);
     } catch (error) {
       stream.write({
         type: 'error',
@@ -218,6 +247,11 @@ export async function handleHostsApi(
       return true;
     }
     emitHostsChanged(ctx);
+    // A machine that just learned its SSH identity may now serve existing remote projects.
+    await reconcileRemoteProjectBindings(ctx).catch((error: unknown) => {
+      console.warn(`[zcc] remote project reconcile failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return 0;
+    });
     sendJson(response, 200, toPublicHost(updated, connectedSet(ctx)));
     return true;
   }
@@ -532,6 +566,7 @@ export async function handleHostsApi(
     ctx.hostHub.getSession(host.id)?.socket.close(4003, 'host-removed');
     ctx.hostHub.detach(host.id, 'removed');
     ctx.joinCodes.invalidateHost(host.id);
+    await closeTunnelHost(ctx, host, (text) => console.warn(`[zcc] ${text}`));
     destroyHost(ctx.db, host.id);
     emitHostsChanged(ctx);
     sendJson(response, 200, { ok: true as const });

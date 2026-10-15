@@ -2,11 +2,75 @@ import { defineConfig, configDefaults } from 'vitest/config';
 import { readdirSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
+import { serialTestFiles } from './vitest.serial';
 
 const tippyDir = readdirSync(resolve(__dirname, 'node_modules/.pnpm')).find((name) => name.startsWith('tippy.js@'));
 const tippyEsm = tippyDir
   ? resolve(__dirname, 'node_modules/.pnpm', tippyDir, 'node_modules/tippy.js/dist/tippy.esm.js')
   : 'tippy.js';
+
+const rootExclude = [
+  ...configDefaults.exclude,
+  'artifacts/**',
+  // Next's standalone output can copy website tests alongside app sources.
+  'website/.next/**',
+  'e2e/**',
+  'e2e-web/**',
+  '.claude/worktrees/**',
+  '.worktrees/**',
+  // pnpm may cache complete checkouts, including tests from other branches.
+  '**/.pnpm-store/**',
+  '.zcc/**',
+  '.builtin-host-test-*/**',
+  'salesforce-only/**',
+  'marketplace/**',
+  'packages/agent-runtime/src/integration*.test.ts',
+  // Runs in CI through vitest.release-coverage.config.ts.
+  'packages/host-daemon-contract/test/**',
+  // bundled-bin asserts against packages/cli/dist (the built zcc bin) and
+  // does not build it — the root `pnpm test` deliberately never runs a
+  // build. It runs via packages/cli's own `test` script (`build && vitest`),
+  // so collecting it here fails on a stale/absent dist.
+  'packages/cli/src/__tests__/bundled-bin.test.ts',
+  // Root vitest does not compose per-package configs. Honor each package's
+  // own include/exclude so CI `pnpm test` matches `pnpm --filter … test`.
+  'packages/agent-runtime/src/permission-matrix.test.ts',
+  'packages/agent-runtime/src/runtime.acp-topology.test.ts',
+  'packages/agent-runtime/src/runtime.codex-topology.test.ts',
+  'packages/agent-runtime/src/runtime.fake-approvals.test.ts',
+  'packages/agent-runtime/src/runtime.recovery.test.ts',
+  'packages/agent-runtime/src/runtime.skill-roots-capability.test.ts',
+  'packages/host-workspace/test/**',
+  'packages/plugin-build/src/build-plugin-app.test.ts',
+  'packages/plugin-build/src/runtime-export-manifest.test.ts',
+  'packages/plugin-build/src/builtin-server-artifacts.test.ts',
+  'packages/plugin-build/src/svg-asset.test.ts',
+  'packages/plugin-build/src/build-plugin-server.test.ts',
+  'packages/provider-bridge-acp/src/bridge/bridge.recorded-conformance.test.ts',
+  'packages/provider-bridge-protocol/src/testing/parity.test.ts',
+  'packages/provider-bridge-protocol/test/provider-recordings-redact.test.ts',
+  'packages/thread-view/test/v3-item-projection.test.ts',
+  'packages/thread-view/test/delegation-item-projection.test.ts',
+  'plugins/provider-acp/server.test.ts',
+  'plugins/provider-acp/public-sdk-only.test.ts',
+  'plugins/provider-claude-code/src/server.test.ts',
+  'plugins/provider-claude-code/src/bridge/bridge.recorded-conformance.test.ts',
+  'plugins/provider-claude-code/src/bridge/bridge.conformance.test.ts',
+  'plugins/provider-claude-code/src/bridge/__tests__/bridge.calibration.test.ts',
+  'plugins/provider-codex/src/ai/chatgpt-client.test.ts',
+  'plugins/provider-codex/src/bridge/bridge.recorded-conformance.test.ts',
+  'plugins/provider-codex/src/bridge/bridge.conformance.test.ts',
+  // Pi bridge tests need `@earendil-works/pi-coding-agent` at runtime.
+  // The leftover BB `server.test.ts` is covered by src/plugin-contract.test.ts.
+  'plugins/provider-pi/server.test.ts',
+  'plugins/provider-pi/src/bridge/**',
+  'plugins/provider-pi/src/delta-translation.test.ts',
+  // Tasks tests need plugins/tasks/vitest.config.ts (tippy alias, setup,
+  // worker limits). The pre-push hook runs that package script separately.
+  'plugins/tasks/**/*.test.ts',
+  'plugins/tasks/**/*.test.tsx'
+  ];
+const serialFiles = serialTestFiles(__dirname);
 
 // Vitest doesn't read electron.vite.config.ts, so the extension-SDK alias is
 // declared here too. Keeps `@zana-ai/zcc-extension-sdk[/subpath]` resolving in tests
@@ -19,11 +83,30 @@ export default defineConfig({
     __ZCC_BUNDLED_POSTHOG_API_KEY__: JSON.stringify('')
   },
   test: {
-    // Leave CPU capacity for the real CLI subprocesses exercised by this suite.
-    // Saturating every core can starve their bounded version probes on busy hosts.
-    // Root suite has process-global workers and real bridge/PTY subprocesses;
-    // serial execution prevents cross-suite capacity races and host starvation.
-    maxWorkers: 1,
+    // Real CLI bridges, shells and PTYs starve their bounded version probes when
+    // they share CPU with other files. Those files (vitest.serial.ts) run one at
+    // a time after everything else; pure unit files run in parallel first.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'parallel',
+          exclude: [...rootExclude, ...serialFiles],
+          maxWorkers: Math.max(1, Math.min(6, Math.floor(availableParallelism() / 2))),
+          sequence: { groupOrder: 0 }
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'serial',
+          include: serialFiles,
+          exclude: rootExclude,
+          fileParallelism: false,
+          sequence: { groupOrder: 1 }
+        }
+      }
+    ],
     // The default 5s per-test timeout is too tight for the full parallel run:
     // several suites `vi.resetModules()` per test, and resetModules clears the
     // module-instantiation cache but NOT Vite's transform cache, so the first
@@ -61,67 +144,7 @@ export default defineConfig({
     // .builtin-host-test-* are temporary directories created by builtin-host-artifacts.test.ts
     // during host artifact builds. They copy plugin src/ directories (including test files)
     // but those test files' relative imports break when run from the temp location.
-    exclude: [
-      ...configDefaults.exclude,
-      'artifacts/**',
-      // Next's standalone output can copy website tests alongside app sources.
-      'website/.next/**',
-      'e2e/**',
-      'e2e-web/**',
-      '.claude/worktrees/**',
-      '.worktrees/**',
-      // pnpm may cache complete checkouts, including tests from other branches.
-      '**/.pnpm-store/**',
-      '.zcc/**',
-      '.builtin-host-test-*/**',
-      'salesforce-only/**',
-      'marketplace/**',
-      'packages/agent-runtime/src/integration*.test.ts',
-      // Runs in CI through vitest.release-coverage.config.ts.
-      'packages/host-daemon-contract/test/**',
-      // bundled-bin asserts against packages/cli/dist (the built zcc bin) and
-      // does not build it — the root `pnpm test` deliberately never runs a
-      // build. It runs via packages/cli's own `test` script (`build && vitest`),
-      // so collecting it here fails on a stale/absent dist.
-      'packages/cli/src/__tests__/bundled-bin.test.ts',
-      // Root vitest does not compose per-package configs. Honor each package's
-      // own include/exclude so CI `pnpm test` matches `pnpm --filter … test`.
-      'packages/agent-runtime/src/permission-matrix.test.ts',
-      'packages/agent-runtime/src/runtime.acp-topology.test.ts',
-      'packages/agent-runtime/src/runtime.codex-topology.test.ts',
-      'packages/agent-runtime/src/runtime.fake-approvals.test.ts',
-      'packages/agent-runtime/src/runtime.recovery.test.ts',
-      'packages/agent-runtime/src/runtime.skill-roots-capability.test.ts',
-      'packages/host-workspace/test/**',
-      'packages/plugin-build/src/build-plugin-app.test.ts',
-      'packages/plugin-build/src/runtime-export-manifest.test.ts',
-      'packages/plugin-build/src/builtin-server-artifacts.test.ts',
-      'packages/plugin-build/src/svg-asset.test.ts',
-      'packages/plugin-build/src/build-plugin-server.test.ts',
-      'packages/provider-bridge-acp/src/bridge/bridge.recorded-conformance.test.ts',
-      'packages/provider-bridge-protocol/src/testing/parity.test.ts',
-      'packages/provider-bridge-protocol/test/provider-recordings-redact.test.ts',
-      'packages/thread-view/test/v3-item-projection.test.ts',
-      'packages/thread-view/test/delegation-item-projection.test.ts',
-      'plugins/provider-acp/server.test.ts',
-      'plugins/provider-acp/public-sdk-only.test.ts',
-      'plugins/provider-claude-code/src/server.test.ts',
-      'plugins/provider-claude-code/src/bridge/bridge.recorded-conformance.test.ts',
-      'plugins/provider-claude-code/src/bridge/bridge.conformance.test.ts',
-      'plugins/provider-claude-code/src/bridge/__tests__/bridge.calibration.test.ts',
-      'plugins/provider-codex/src/ai/chatgpt-client.test.ts',
-      'plugins/provider-codex/src/bridge/bridge.recorded-conformance.test.ts',
-      'plugins/provider-codex/src/bridge/bridge.conformance.test.ts',
-      // Pi bridge tests need `@earendil-works/pi-coding-agent` at runtime.
-      // The leftover BB `server.test.ts` is covered by src/plugin-contract.test.ts.
-      'plugins/provider-pi/server.test.ts',
-      'plugins/provider-pi/src/bridge/**',
-      'plugins/provider-pi/src/delta-translation.test.ts',
-      // Tasks tests need plugins/tasks/vitest.config.ts (tippy alias, setup,
-      // worker limits). The pre-push hook runs that package script separately.
-      'plugins/tasks/**/*.test.ts',
-      'plugins/tasks/**/*.test.tsx'
-    ]
+    exclude: rootExclude
   },
   resolve: {
     alias: [

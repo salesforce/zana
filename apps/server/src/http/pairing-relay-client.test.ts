@@ -246,9 +246,9 @@ describe('pairing relay client', () => {
     const prefixed = await fetch(new URL(`t/${client!.sessionId()}/install.sh`, stack.door.url));
     expect(prefixed.status).toBe(200);
     await expect(prefixed.text()).resolves.toContain('echo join');
-    const script = await fetch(new URL('install.sh', stack.door.url));
-    expect(script.status).toBe(200);
-    await expect(script.text()).resolves.toContain('echo join');
+    const bare = await fetch(new URL('install.sh', stack.door.url));
+    expect(bare.status).toBe(503);
+    await expect(bare.json()).resolves.toEqual({ error: 'session_required' });
 
     const artifact = await fetch(new URL('install/zcc-host.tgz', stack.door.url));
     expect(artifact.status).toBe(200);
@@ -263,7 +263,7 @@ describe('pairing relay client', () => {
     expect(plugin.headers.get('content-length')).toBe(String(pluginHostJs.length));
     expect(Buffer.from(await plugin.arrayBuffer()).equals(pluginHostJs)).toBe(true);
 
-    const enrolled = await fetch(new URL('internal/hosts/enroll', stack.door.url), {
+    const enrolled = await fetch(new URL(`t/${client!.sessionId()}/internal/hosts/enroll`, stack.door.url), {
       method: 'POST',
       headers: {
         authorization: 'Bearer zcde_test',
@@ -422,5 +422,18 @@ describe('pairing relay client', () => {
     const childCall = WsImpl.mock.calls.find(([url]) => !String(url).includes('/_zcc/relay'));
     expect(String(childCall?.[0])).toBe('ws://127.0.0.1:8781/internal/hosts/ws');
     expect(childCall?.[1]).toMatchObject({ followRedirects: false });
+  });
+
+  it('client defaults to loopback-only headers when the request omits them', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    const { control, WsImpl } = await startDirectClient(fetchImpl as unknown as typeof fetch);
+    control.deliver(TYPE.HTTP_REQ, FLAG.META | FLAG.FIN, 1, encodeJsonPayload({ method: 'POST', url: '/internal/hosts/enroll' }));
+    await expect(control.response(1)).resolves.toMatchObject({ status: 200 });
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(init.headers).toEqual({ host: '127.0.0.1:8781' });
+    control.deliver(TYPE.WS_OPEN, FLAG.META | FLAG.FIN, 3, encodeJsonPayload({ url: '/internal/hosts/ws' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const childCall = WsImpl.mock.calls.find(([url]) => !String(url).includes('/_zcc/relay'));
+    expect(childCall?.[1]).toMatchObject({ headers: { host: '127.0.0.1:8781' } });
   });
 });

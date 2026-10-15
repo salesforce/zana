@@ -18,9 +18,9 @@ export const entries: readonly SettingsSearchEntry[] = [
     id: 'machines.public-app-url',
     section: 'machines',
     anchor: 'machines',
-    label: 'Public app URL',
-    help: 'Origin remotes use to enroll. Official builds bake this. For local and dev builds, point it at an address the remote machine can reach.',
-    keywords: ['origin', 'enroll url', 'server address', 'tunnel', 'domain'],
+    label: 'Relay pairing URL',
+    help: 'Remotes enroll through this origin only while the pairing relay is connected. Otherwise Connect pairs over an SSH tunnel and ignores it. Official builds bake this.',
+    keywords: ['public app url', 'origin', 'enroll url', 'server address', 'relay', 'tunnel', 'domain'],
     kind: 'setting',
     value: (s) => s.config.publicAppUrl || undefined
   },

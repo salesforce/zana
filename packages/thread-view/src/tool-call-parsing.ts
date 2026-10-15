@@ -600,7 +600,7 @@ function expandShellVariables(
 
 /** Collapses `.`/`..` and duplicate slashes without touching the filesystem.
  * Leading `..` segments of a relative path are kept. */
-function normalizeShellPath(path: string): string {
+export function normalizeShellPath(path: string): string {
   const absolute = path.startsWith("/");
   const out: string[] = [];
   for (const part of path.split("/")) {
