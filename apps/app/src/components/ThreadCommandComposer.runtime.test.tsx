@@ -168,6 +168,20 @@ describe('Modern composer catalogue scope', () => {
   });
 });
 
+describe('Modern composer remote project binding', () => {
+  it('sends new threads to the project\'s current host after it is rebound', async () => {
+    const original = h.project;
+    h.threads = [];
+    h.project = { ...original, remote: { host: 'devbox' }, hostId: 'old-host' } as Project;
+    const view = render(composer({ threadId: undefined, project: h.project }));
+    h.project = { ...h.project, hostId: 'new-host' } as Project;
+    view.rerender(composer({ threadId: undefined, project: h.project }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ hostId: 'new-host' })));
+    h.project = original;
+  });
+});
+
 describe('Modern composer voice submission', () => {
   it('delivers a normal transcript only to its owning thread, including after navigation', () => {
     const view = render(composer());

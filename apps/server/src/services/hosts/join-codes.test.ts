@@ -78,3 +78,25 @@ it('bounds pending grants, prunes expired codes, and permits repair at capacity'
   expect(store.mint(JOIN_CODE_TTL_MS + 3)).toBeTruthy();
   expect(store.recovered(first.joinCode, JOIN_CODE_TTL_MS + 3)).toBeNull();
 });
+
+describe('join code inspect', () => {
+  it('reports each rejection reason and success without mutating state', () => {
+    const store = createJoinCodeStore();
+    const issued = store.mint(1_000);
+    expect(store.inspect(issued.joinCode, undefined, 1_001)).toEqual({ ok: true, hostId: issued.hostId, expiresAt: issued.expiresAt });
+    expect(store.inspect(issued.joinCode, issued.hostId, 1_001).ok).toBe(true);
+    expect(store.inspect(issued.joinCode, '22222222-2222-4222-8222-222222222222', 1_001)).toEqual({ ok: false, reason: 'host_mismatch', hostId: issued.hostId });
+    expect(store.inspect(issued.joinCode, undefined, 1_000 + JOIN_CODE_TTL_MS)).toEqual({ ok: false, reason: 'expired', hostId: issued.hostId });
+    expect(store.inspect('nope', undefined, 1_001)).toEqual({ ok: false, reason: 'missing' });
+    expect(store.inspect('', undefined, 1_001)).toEqual({ ok: false, reason: 'missing' });
+    store.redeem(issued.joinCode, 1_002);
+    expect(store.inspect(issued.joinCode, undefined, 1_003)).toEqual({ ok: false, reason: 'redeemed', hostId: issued.hostId });
+  });
+
+  it('collapses invalidated codes into missing because invalidation deletes the row', () => {
+    const store = createJoinCodeStore();
+    const issued = store.mint(1_000);
+    store.invalidateHost(issued.hostId);
+    expect(store.inspect(issued.joinCode, undefined, 1_001)).toEqual({ ok: false, reason: 'missing' });
+  });
+});

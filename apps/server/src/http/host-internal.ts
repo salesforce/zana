@@ -90,6 +90,28 @@ export async function handleHostInternalHttp(
   return false;
 }
 
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CORRELATION_ID_SHAPE = /^[A-Za-z0-9._-]{8,64}$/;
+
+function logEnrollRejection(request: IncomingMessage, reason: string, hostId: string | undefined): void {
+  const supplied = headerValue(request.headers, 'x-zcc-correlation-id');
+  const correlationId = supplied && CORRELATION_ID_SHAPE.test(supplied) ? supplied : randomUUID();
+  const host = hostId && UUID_SHAPE.test(hostId) ? hostId : undefined;
+  // Local diagnosis only; never log the token, its digest, or any join code.
+  console.warn('host enroll rejected', `reason=${reason}`, `hostId=${host ?? '-'}`, `correlationId=${correlationId}`);
+}
+
+function diagnoseEnrollUnauthorized(
+  request: IncomingMessage,
+  ctx: ProductHttpContext,
+  token: string | null,
+  connectHost: string | undefined
+): void {
+  const claimedHost = connectHost && UUID_SHAPE.test(connectHost) ? connectHost : undefined;
+  const check = token ? ctx.joinCodes.inspect(token, claimedHost) : { ok: false as const, reason: 'missing' as const, hostId: undefined };
+  logEnrollRejection(request, check.ok ? 'not_authorized' : check.reason, claimedHost ?? (check.ok ? undefined : check.hostId));
+}
+
 async function handleHostEnroll(
   request: IncomingMessage,
   response: ServerResponse,
@@ -110,6 +132,7 @@ async function handleHostEnroll(
   const recovered = token && connectHost ? ctx.joinCodes.recovered(token) : null;
   const loopback = Boolean(token && tokenMatches(token, ctx.enrollToken));
   if (!joinPeek && !recovered && !loopback) {
+    diagnoseEnrollUnauthorized(request, ctx, token, connectHost);
     sendJson(response, 401, { error: 'unauthorized' });
     return true;
   }
@@ -141,10 +164,12 @@ async function handleHostEnroll(
     return true;
   }
   if (connectHost && (headerValue(request.headers, 'x-zcc-connect-machine-instance') !== ctx.productInstanceId || (joinPeek ?? recovered)?.hostId !== connectHost)) {
+    logEnrollRejection(request, 'host_mismatch', connectHost);
     sendJson(response, 403, { error: 'machine enrollment does not belong to this instance and host' });
     return true;
   }
   if ((joinPeek ?? recovered) && parsed.data.hostId && parsed.data.hostId !== (joinPeek ?? recovered)!.hostId) {
+    logEnrollRejection(request, 'host_mismatch', (joinPeek ?? recovered)!.hostId);
     sendJson(response, 400, { error: 'join code hostId mismatch' });
     return true;
   }

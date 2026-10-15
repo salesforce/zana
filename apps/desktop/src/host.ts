@@ -425,6 +425,8 @@ import type {
 import { MAIN_MODULES } from './modules/index.js';
 import { homedir } from 'node:os';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
+import { readPersistedHostId } from '@zana-ai/zcc-host-daemon/identity';
+import { createLocalHostIdResolver } from './runtime/local-host-id.js';
 import {
   AUTO_CLOSE_IDLE_DEFAULTS,
   HEARTBEAT_DEFAULTS,
@@ -567,7 +569,7 @@ function resolveTheme(): 'dark' | 'light' {
 
 /** Resolve `projectPath` (passed by the renderer) to listSkills options. */
 function projectPathToOptions(projectPath?: string) {
-  return localProjectPathOptions(store.listProjects(), runtimeSupervisor?.hostId, projectPath);
+  return localProjectPathOptions(store.listProjects(), localHostId(), projectPath);
 }
 
 function emitSkillsChangedDebounced() {
@@ -1341,7 +1343,7 @@ export async function flushBlockerNoticesAtBoot(
   return () => void service.flushBlockerNotices().catch((error) => logError('execution.flushBlockerNotices', error));
 }
 const savedStore: ISavedStore = createSavedStore();
-const localMetadataStore = { ...store, listProjects: () => localMetadataProjects(store.listProjects(), runtimeSupervisor?.hostId) };
+const localMetadataStore = { ...store, listProjects: () => localMetadataProjects(store.listProjects(), localHostId()) };
 const libraryStore: ILibraryStore = new LibraryStore(() => localMetadataStore.listProjects());
 const scheduler = new SchedulerManager();
 export const scheduleAgentApi = {
@@ -2466,7 +2468,7 @@ const reviewerApproval = new ReviewerApprovalService({
  *  DERIVED live by {@link FeedService} from the inbox / followups / goals /
  *  library stores, so nothing is duplicated. Emits `'changed'` per projectId. */
 const feedStore = new ProjectFeedStore({
-  projects: () => store.listProjects(), primaryHostId: () => runtimeSupervisor?.hostId,
+  projects: () => store.listProjects(), primaryHostId: () => localHostId(),
   request: request => {
     if (!runtimeSupervisor) throw new Error('Activity feed runtime is unavailable');
     return runtimeSupervisor.projectFeed(request);
@@ -2987,6 +2989,11 @@ const mobileGateway = new MobileGatewayManager({
   signQueuedSend: signMobileQueuedSend
 });
 let runtimeSupervisor: RuntimeSupervisor | null = null;
+const localHostId = createLocalHostIdResolver({
+  supervisorHostId: () => runtimeSupervisor?.hostId,
+  devAttach: () => Boolean(process.env.ELECTRON_RENDERER_URL),
+  readPersistedHostId: () => readPersistedHostId(resolveZccDataDir(process.env, app.getPath('home')))
+});
 export function discoveryForRegisteredLaunch(
   supervisor: Pick<RuntimeSupervisor, 'cliDiscovery' | 'hostId'> | null,
   project: Pick<Project, 'id' | 'remote' | 'hostId'>,
@@ -3015,7 +3022,7 @@ const libraryNotifications = createSnapshotNotifications(async () => {
   if (snapshot.complete) safeSend(IPC.library.onChanged, snapshot.docs);
 });
 const projectCatalogs = new ProjectCatalogs({
-  projects: () => store.listProjects(), primaryHostId: () => runtimeSupervisor?.hostId,
+  projects: () => store.listProjects(), primaryHostId: () => localHostId(),
   read: request => {
     if (!runtimeSupervisor) throw new Error('Project catalogue runtime is unavailable');
     return runtimeSupervisor.projectCatalogs(request);
@@ -3664,7 +3671,7 @@ async function destroyProvisionedEnvironment(environmentId: string): Promise<voi
 export async function resolveWorktreeForRequest(
   req: CreateTerminalRequest
 ): Promise<Result<CreateTerminalRequest>> {
-  const hostProblem = cliHostProblem(req, store.listProjects().find(project => project.id === req.projectId), runtimeSupervisor?.hostId);
+  const hostProblem = cliHostProblem(req, store.listProjects().find(project => project.id === req.projectId), localHostId());
   if (hostProblem) return { ok: false, code: 'HOST_UNSUPPORTED', message: hostProblem };
   // Strip any untrusted pre-set worktreeInfo / environment id — only THIS
   // function may set them.
@@ -3962,7 +3969,7 @@ export function createTerminalConfined(
   const project = opts?.launchSnapshot?.project
     ?? store.listProjects().find((p) => p.id === req.projectId);
   if (!project) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
-  const hostProblem = cliHostProblem(req, project, runtimeSupervisor?.hostId);
+  const hostProblem = cliHostProblem(req, project, localHostId());
   if (hostProblem) return { ok: false, code: 'HOST_UNSUPPORTED', message: hostProblem };
   try {
     // Remote projects ignore req.cwd entirely — the cwd is on the remote host
@@ -4559,7 +4566,7 @@ async function launchBackgroundTerminal(
   const projects = store.listProjects();
   const project = projects.find((candidate) => candidate.id === opts.projectId);
   if (!project) throw new LaunchSpawnError('NOT_FOUND', 'project not found');
-  const hostProblem = cliHostProblem({}, project, runtimeSupervisor?.hostId);
+  const hostProblem = cliHostProblem({}, project, localHostId());
   if (hostProblem) throw new LaunchSpawnError('HOST_UNSUPPORTED', hostProblem);
   const effectiveLaunch = resolveEffectiveLaunch(opts, project);
   const projectSettings = await getAuthoritativeProjectSettings(project.id);
@@ -4942,7 +4949,7 @@ async function resolveTeamModelSnapshots(
   const project = store.listProjects().find((candidate) => candidate.id === projectId);
   const team = teams.list().find((candidate) => candidate.id === request.teamId);
   if (!project || !team) throw new Error('team or project not found');
-  const hostProblem = teamHostProblem(project, runtimeSupervisor?.hostId);
+  const hostProblem = teamHostProblem(project, localHostId());
   if (hostProblem) throw new Error(hostProblem);
   const slots = expandTeamSlots(team);
   if (slots.length !== request.slots.length) throw new Error('task count does not match host-expanded Team slots');
@@ -5004,7 +5011,7 @@ export function authorizeTeamLaunch(
   if (!team) return { ok: false, code: 'NOT_FOUND', message: `team not found: ${teamId}` };
   const project = store.listProjects().find((candidate) => candidate.id === projectId);
   if (!project) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
-  const hostProblem = teamHostProblem(project, runtimeSupervisor?.hostId);
+  const hostProblem = teamHostProblem(project, localHostId());
   if (hostProblem) return { ok: false, code: 'HOST_UNSUPPORTED', message: hostProblem };
   const autonomous = coordinationMode === 'autonomous-team'
     || (coordinationMode === 'freeform' && store.getConfig().teamLaunchEnabled === true);
@@ -5279,7 +5286,7 @@ export async function launchTeam(
   }
   const project = store.listProjects().find((p) => p.id === targetProjectId);
   if (!project) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
-  const hostProblem = teamHostProblem(project, runtimeSupervisor?.hostId);
+  const hostProblem = teamHostProblem(project, localHostId());
   if (hostProblem) return { ok: false, code: 'HOST_UNSUPPORTED', message: hostProblem };
   const currentConfig = store.getConfig();
 
@@ -6121,7 +6128,7 @@ const startTriggeredSquad = createTriggeredSquadLauncher({
   projects: store,
   teams,
   personas,
-  teamHostProblem: (project) => teamHostProblem(project, runtimeSupervisor?.hostId),
+  teamHostProblem: (project) => teamHostProblem(project, localHostId()),
   expandTeamSlots,
   squadExecutionService,
   planCorrectionLaunchBinding
@@ -6155,7 +6162,7 @@ export async function startTeamJobFromUi(
   if (!project) {
     return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
   }
-  const hostProblem = teamHostProblem(project, runtimeSupervisor?.hostId);
+  const hostProblem = teamHostProblem(project, localHostId());
   if (hostProblem) return { ok: false, code: 'HOST_UNSUPPORTED', message: hostProblem };
   if (!team.orchestratorPersonaId) {
     return { ok: false, code: 'NO_ORCHESTRATOR', message: 'Team requires an orchestrator' };
@@ -7667,7 +7674,7 @@ async function bootstrapNormal() {
     store,
     persistence: new ProjectRecordStore({
       kind: 'schedules', projects: () => store.listProjects(),
-      primaryHostId: () => runtimeSupervisor?.hostId,
+      primaryHostId: () => localHostId(),
       request: request => {
         if (!runtimeSupervisor) return Promise.reject(new Error('Project metadata requires the product runtime'));
         return runtimeSupervisor.projectMetadata(request);
@@ -7696,7 +7703,7 @@ async function bootstrapNormal() {
     store,
     persistence: new ProjectRecordStore({
       kind: 'goals', projects: () => store.listProjects(),
-      primaryHostId: () => runtimeSupervisor?.hostId,
+      primaryHostId: () => localHostId(),
       request: request => {
         if (!runtimeSupervisor) return Promise.reject(new Error('Project metadata requires the product runtime'));
         return runtimeSupervisor.projectMetadata(request);
@@ -7742,7 +7749,7 @@ async function bootstrapNormal() {
     store,
     persistence: new ProjectRecordStore({
       kind: 'followups', projects: () => store.listProjects(),
-      primaryHostId: () => runtimeSupervisor?.hostId,
+      primaryHostId: () => localHostId(),
       request: request => {
         if (!runtimeSupervisor) return Promise.reject(new Error('Project metadata requires the product runtime'));
         return runtimeSupervisor.projectMetadata(request);

@@ -1224,6 +1224,16 @@ export async function dispatchHostCommand(
       return peerDaemonRestart(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
     case 'peer_daemon.logs':
       return peerDaemonLogs(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
+    case 'peer_tunnel.open': {
+      const ssh = runtime.peerSsh ?? createSystemPeerDaemonSsh();
+      if (!ssh.tunnel) throw new HostCommandError('unsupported', 'SSH tunnels are unavailable on this host');
+      await ssh.tunnel(command.remote, command.localPort, command.remotePort);
+      return { ok: true as const };
+    }
+    case 'peer_tunnel.close': {
+      const ssh = runtime.peerSsh ?? createSystemPeerDaemonSsh();
+      return { ok: true as const, closed: ssh.untunnelAll?.(command.remote) ?? false };
+    }
     case 'peer_daemon.install': {
       if ('connect' in command) {
         return peerDaemonConnectInstall(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command);

@@ -1,6 +1,5 @@
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import { isLoopbackOrigin, REMOTE_MACHINE_CONNECTION_HINT } from '../views/settings/machine-pairing.js';
 
 export type ComposerHostAction =
   | { kind: 'ready' }
@@ -107,13 +106,6 @@ export function resolveComposerHostAction(input: {
     : undefined;
 
   if (input.project?.remote && !boundHost) {
-    if (!input.publicAppUrl || isLoopbackOrigin(input.publicAppUrl)) {
-      return {
-        kind: 'blocked',
-        needsPublicUrl: true,
-        reason: `Set a public app URL before installing a remote daemon. ${REMOTE_MACHINE_CONNECTION_HINT}`
-      };
-    }
     const remote = input.project.remote;
     const target = remote.user ? `${remote.user}@${remote.host}` : remote.host;
     return {

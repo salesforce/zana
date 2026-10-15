@@ -16,12 +16,21 @@ interface JoinCodeRecord extends IssuedJoinCode {
 
 const HOST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+export type JoinCodeRejection = 'missing' | 'expired' | 'redeemed' | 'invalidated' | 'host_mismatch';
+
+/** `invalidated` is never reported: invalidation deletes the row, so it is indistinguishable from `missing`. */
+export type JoinCodeInspection =
+  | { ok: true; hostId: string; expiresAt: number }
+  | { ok: false; reason: JoinCodeRejection; hostId?: string };
+
 export interface JoinCodeStore {
   mint(now?: number): IssuedJoinCode;
   mintForHost(hostId: string, now?: number): IssuedJoinCode;
   peek(joinCode: string, now?: number): JoinCodeRecord | null;
   redeem(joinCode: string, now?: number): IssuedJoinCode | null;
   recovered(joinCode: string, now?: number): IssuedJoinCode | null;
+  /** Diagnostic only; callers must keep the rejection reason out of any remote response. */
+  inspect(joinCode: string, hostId?: string, now?: number): JoinCodeInspection;
   invalidateHost(hostId: string): void;
   status(enrollmentId: string, now?: number): { hostId: string; expiresAt: number; redeemedAt: number | null } | null;
 }
@@ -105,6 +114,14 @@ export function createJoinCodeStore(db?: ZccDatabase): JoinCodeStore {
     recovered(joinCode: string, now = Date.now()): IssuedJoinCode | null {
       const row = lookup(joinCode);
       return row && row.redeemedAt !== null && row.expiresAt > now ? { joinCode, hostId: row.hostId, expiresAt: row.expiresAt } : null;
+    },
+    inspect(joinCode: string, hostId?: string, now = Date.now()): JoinCodeInspection {
+      const row = joinCode ? lookup(joinCode) : null;
+      if (!row) return { ok: false, reason: 'missing' };
+      if (row.expiresAt <= now) return { ok: false, reason: 'expired', hostId: row.hostId };
+      if (hostId && hostId !== row.hostId) return { ok: false, reason: 'host_mismatch', hostId: row.hostId };
+      if (row.redeemedAt !== null) return { ok: false, reason: 'redeemed', hostId: row.hostId };
+      return { ok: true, hostId: row.hostId, expiresAt: row.expiresAt };
     },
     status(enrollmentId: string, now = Date.now()) {
       if (!/^[a-f0-9]{64}$/.test(enrollmentId)) return null;

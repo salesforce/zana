@@ -256,6 +256,10 @@ export function ThreadCommandComposer({
     if (hostProjectRef.current !== selectedProject?.id) {
       hostProjectRef.current = selectedProject?.id;
       setHostId(defaultHostId(hosts, selectedProject));
+    } else if (selectedProject?.remote) {
+      // A remote project has exactly one execution machine: its binding. Follow a
+      // rebind (machine re-enrolled, project reconciled) instead of keeping the old host.
+      setHostId(current => selectedProject.hostId ?? current);
     } else {
       // Status refreshes must not silently move an unsent prompt to another host.
       setHostId(current => current ?? defaultHostId(hosts, selectedProject));

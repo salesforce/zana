@@ -221,7 +221,7 @@ the public Heroku origin and relay token (inlined at `electron-vite build` from
 `wss://<origin>/_zcc/relay` — Heroku never inbound-connects to the laptop.
 
 Precedence: runtime env, then the values baked into that build, then
-**Settings → Machines → Public app URL**, then the repo `public-app-url`
+**Settings → Machines → Relay pairing URL**, then the repo `public-app-url`
 file. `pnpm dev` seeds `ZCC_APP_URL` from that file when the env is unset.
 Do not commit the token; set the same `ZCC_RELAY_TOKEN` on Heroku and in
 the release/CI environment (GitHub secrets `ZCC_APP_URL` / `ZCC_RELAY_TOKEN`,
@@ -236,7 +236,20 @@ websockets keep working until this app quits. If the laptop tunnel drops,
 join/enroll return `relay_offline` until Zana reconnects.
 
 Join commands use `https://<origin>/t/<sessionId>` so remotes route to the
-right laptop.
+right laptop. The code and URL are issued together and the code only works
+through the session URL from the same issuance. The bare door
+(`https://<origin>/install.sh`, bare enroll) answers `503 session_required` by
+design; that is expected, not an outage. Do not retry a bare-origin command.
+
+When the relay is unavailable, Add machine never issues a bare remote-run
+command (the remote cannot reach this computer). Prefer **Connect** (SSH
+tunnel; ports are chosen automatically). As a fallback, pick an SSH host and
+copy the command under **Other ways to connect** (or on the **Installer
+command** tab): it is run in a terminal on this computer, opens an
+`ssh -R` reverse tunnel to the loopback pairing forwarder, and installs there.
+Only if the forwarder itself is down is Copy disabled with *Relay unavailable —
+use Connect via SSH*. If the relay reconnects, generate a fresh command; an
+older copied command is not valid for the new session.
 
 If the origin is baked/set but the tunnel is down, Install fails with
 `relay_offline` (keep Zana running). Dev builds without those env vars stay
@@ -270,8 +283,8 @@ fallback for machine enrollment.
 2. Copy the one-line installer. It looks like:
 
 ```bash
-curl -fL ${publicAppUrl}/install.sh | sh -s -- \
-  --join-code <zcde_...> --host-id <id> --server ${publicAppUrl}
+curl -fL ${publicAppUrl}/t/<sessionId>/install.sh | sh -s -- \
+  --join-code <zcde_...> --host-id <id> --server ${publicAppUrl}/t/<sessionId>
 ```
 
 3. Run it on the computer that should execute work. The join code expires in
@@ -321,12 +334,13 @@ Fix asks you to pick a host from `~/.ssh/config`, then retries.
 Fix needs a public origin (baked into the official app, `ZCC_APP_URL`,
 Settings, or the repo `public-app-url` file), not loopback. This machine's
 host daemon must be connected — it owns `~/.ssh` and performs the SSH. If SSH
-cannot run, copy the Settings → Add machine join command.
+cannot run, use Settings → Add machine → **Connect**.
 
 **Add remote project** registers the SSH project only. Composer **Install**
 enrolls a host daemon over SSH and stays available until a daemon is bound.
 Send is blocked until that daemon is online. If SSH cannot complete the
-install, retry from the composer or copy the reverse-tunnel command.
+install, use Settings → Add machine → **Connect** (SSH tunnel, automatic
+ports). Do not blindly re-run an old copied command; generate a new one.
 
 ---
 

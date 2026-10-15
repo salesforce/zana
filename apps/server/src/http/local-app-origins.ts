@@ -1,5 +1,10 @@
 export interface LocalAppOriginArgs {
   serverPort: number;
+  /**
+   * Loopback pairing forwarder that SSH reverse tunnels target. It only
+   * forwards the pairing allowlist; unset when the forwarder is not running.
+   */
+  pairingPort?: number;
   devAppPort?: number;
   appUrl?: string;
 }

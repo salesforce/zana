@@ -1113,6 +1113,28 @@ describe('host command dispatch', () => {
     })).resolves.toEqual({ log: '--- host-daemon.log ---\njoined' });
   });
 
+  it('reopens a peer SSH tunnel through the owned tunnel set', async () => {
+    const tunnel = vi.fn(async () => {});
+    const ssh = { run: async () => ({ code: 0, stdout: '', stderr: '' }), pipeFile: async () => ({ code: 0, stdout: '', stderr: '' }) };
+    const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude, peerSsh: { ...ssh, tunnel } });
+    const command = { type: 'peer_tunnel.open' as const, remote: { host: 'devbox', user: 'me' }, localPort: 43210, remotePort: 28888 };
+    await expect(dispatchHostCommand(runtime, command)).resolves.toEqual({ ok: true });
+    expect(tunnel).toHaveBeenCalledWith({ host: 'devbox', user: 'me' }, 43210, 28888);
+    const withoutTunnels = createCommandRuntime({ verifyProviders: async () => installedClaude, peerSsh: ssh });
+    await expect(dispatchHostCommand(withoutTunnels, command)).rejects.toMatchObject({ code: 'unsupported' });
+  });
+
+  it('closes a peer SSH tunnel by identity and reports whether one ran', async () => {
+    const untunnelAll = vi.fn(() => true);
+    const ssh = { run: async () => ({ code: 0, stdout: '', stderr: '' }), pipeFile: async () => ({ code: 0, stdout: '', stderr: '' }) };
+    const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude, peerSsh: { ...ssh, untunnelAll } });
+    const command = { type: 'peer_tunnel.close' as const, remote: { host: 'devbox', user: 'me' } };
+    await expect(dispatchHostCommand(runtime, command)).resolves.toEqual({ ok: true, closed: true });
+    expect(untunnelAll).toHaveBeenCalledWith({ host: 'devbox', user: 'me' });
+    const withoutTunnels = createCommandRuntime({ verifyProviders: async () => installedClaude, peerSsh: ssh });
+    await expect(dispatchHostCommand(withoutTunnels, command)).resolves.toEqual({ ok: true, closed: false });
+  });
+
   it('dispatches desktop.browser commands through the loopback broker', async () => {
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,

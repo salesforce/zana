@@ -3,12 +3,23 @@ import { bootstrapOutcome, composerBootstrapErrorMessage } from '../components/c
 import { useUi } from '../store.js';
 import type { HostInstallKind } from './host-install-drawer.js';
 
-export async function runHostInstallWithDrawer(input: {
+export interface HostInstallRunInput {
   kind: HostInstallKind;
   target: string;
   startLogs?: string[];
   run: (onEvent: (event: HostBootstrapEvent) => void) => Promise<HostBootstrapEvent[]>;
-}): Promise<HostBootstrapEvent[]> {
+}
+
+let lastRun: HostInstallRunInput | null = null;
+
+/** Re-run the most recent install/fix through the drawer (the drawer's Retry). */
+export async function retryLastHostInstall(): Promise<HostBootstrapEvent[] | null> {
+  if (!lastRun) return null;
+  return runHostInstallWithDrawer(lastRun);
+}
+
+export async function runHostInstallWithDrawer(input: HostInstallRunInput): Promise<HostBootstrapEvent[]> {
+  lastRun = input;
   const ui = useUi.getState();
   ui.openHostInstallDrawer({ kind: input.kind, target: input.target });
   if (input.startLogs?.length) ui.appendHostInstallLogs(input.startLogs);

@@ -71,6 +71,10 @@ if(live){
     await modal.getByRole('button', { name: 'Modern', exact: true }).click();
     await modal.getByTestId('composer-host-action').click();
     const drawer = win.getByTestId('host-install-drawer');
+    // Stages collapse the raw log; open it with a real click above the launcher.
+    const logToggle = drawer.getByTestId('host-install-log-toggle');
+    await expect(logToggle).toBeVisible({ timeout: liveHost ? 90_000 : 45_000 });
+    if (await logToggle.getAttribute('aria-expanded') === 'false') await logToggle.click();
     await expect(drawer.getByTestId('host-install-log')).toContainText('Public HTTPS is unavailable', { timeout: liveHost ? 90_000 : 45_000 });
     await expect(drawer.getByTestId('host-install-log')).toContainText('Host daemon connected.', { timeout: 90_000 });
     await expect.poll(async () => win.evaluate(async id => {

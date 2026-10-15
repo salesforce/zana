@@ -3,10 +3,16 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { startStaticHost, type StaticHost } from './static-host.js';
+import { startPairingForwarder } from './http/pairing-forwarder.js';
+
+vi.mock('./http/pairing-forwarder.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./http/pairing-forwarder.js')>();
+  return { ...actual, startPairingForwarder: vi.fn(actual.startPairingForwarder) };
+});
 
 let host: StaticHost | null = null;
 const mediaRoots: string[] = [];
@@ -240,6 +246,48 @@ describe('startStaticHost', () => {
     await expect(fetch(`${host.url}install.sh`).then((response) => response.status)).resolves.toBe(200);
     await expect(fetch(host.url).then((response) => response.text())).resolves.toContain('zana');
     expect(readFileSync(join(dataDir, 'host-enroll.token'), 'utf8').trim()).toBe(product.enrollToken);
+    product.hostHub.close();
+    product.db.close();
+  });
+
+  it('exposes an allowlist-only pairing port for SSH tunnels and closes it on shutdown', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    const { createProductHttpContext } = await import('./http/product-context.js');
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-static-product-'));
+    const product = createProductHttpContext({ dataDir, origins: { serverPort: 0 } });
+    host = await startStaticHost({ rootDir: root, product });
+
+    const pairingPort = product.origins.pairingPort;
+    expect(pairingPort).toBeGreaterThan(0);
+    expect(pairingPort).not.toBe(product.origins.serverPort);
+    const pairingUrl = `http://127.0.0.1:${pairingPort}`;
+    await expect(fetch(`${pairingUrl}/install.sh`).then((response) => response.status)).resolves.toBe(200);
+    await expect(fetch(`${pairingUrl}/api/v1/health`).then((response) => response.status)).resolves.toBe(403);
+    await expect(fetch(`${pairingUrl}/api/v1/projects`).then((response) => response.status)).resolves.toBe(403);
+
+    await host.close();
+    host = null;
+    expect(product.origins.pairingPort).toBeUndefined();
+    await expect(fetch(`${pairingUrl}/install.sh`)).rejects.toThrow();
+    product.hostHub.close();
+    product.db.close();
+  });
+
+  it('keeps serving when the pairing forwarder cannot start', async () => {
+    vi.mocked(startPairingForwarder).mockRejectedValueOnce(new Error('bind failed'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    const { createProductHttpContext } = await import('./http/product-context.js');
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-static-product-'));
+    const product = createProductHttpContext({ dataDir, origins: { serverPort: 0 } });
+    host = await startStaticHost({ rootDir: root, product });
+
+    expect(product.origins.pairingPort).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('pairing forwarder failed to start: bind failed'));
+    await expect(fetch(`${host.url}api/v1/health`).then((response) => response.status)).resolves.toBe(200);
+    warn.mockRestore();
     product.hostHub.close();
     product.db.close();
   });

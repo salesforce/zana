@@ -208,8 +208,8 @@ export function MachinesSettingsView({
       >
         <Field
           searchId="machines.public-app-url"
-          label="Public app URL"
-          help={`Origin remotes use to enroll. Official builds bake this. For local/dev, ${REMOTE_MACHINE_CONNECTION_HINT}`}
+          label="Relay pairing URL"
+          help={`Remotes enroll through this origin only while the pairing relay is connected. Otherwise Connect pairs over an SSH tunnel and ignores it. Official builds bake this. For local/dev, ${REMOTE_MACHINE_CONNECTION_HINT}`}
           mono
         >
           <input

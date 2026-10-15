@@ -31,6 +31,7 @@ import { createTerminalLaunchAuthority } from './terminal-launch-authority.js';
 import { createModernTeamLaunchConfigSource } from './services/agents/modern-team-launch-config.js';
 import { createRuntimeMcpConfig } from './services/agents/runtime-mcp-config.js';
 import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
+import { resolvePairingTargetForContext } from './services/hosts/pairing-target.js';
 import { getConversationThread } from '@zana-ai/zcc-db';
 import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
@@ -279,6 +280,17 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         live = false;
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: live });
+    }
+    if (message.operation === 'pairing-target') {
+      // Main reads the join target here, never over HTTP. No product context
+      // yet, or any failure, means the relay cannot be vouched for.
+      let value: unknown = { kind: 'tunnel', reason: 'relay_offline' };
+      try {
+        if (productContext) value = await resolvePairingTargetForContext(productContext);
+      } catch {
+        // keep the tunnel fallback
+      }
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
     }
     if (message.operation === 'menubar-threads-list') {
       const agents = menubarThreads?.list(message.limit) ?? [];

@@ -96,6 +96,10 @@ describe('peer-daemon commands', () => {
     expect(script).toContain('ai.zana.zcc-host-daemon.machine.example.com');
     expect(script).toContain('/nix/store/*-nodejs-22.*/bin/node');
     expect(script).toContain('nohup "$node_bin" "$join_bin" join');
+    const marker = script.indexOf('zcc-join: attempt %s host=%s');
+    expect(marker).toBeGreaterThan(-1);
+    expect(marker).toBeLessThan(script.indexOf('nohup "$node_bin" "$join_bin" join'));
+    expect(script).toContain('"$host_id" >>"$data_dir/host-daemon.log"');
     expect(script).toContain('host-daemon.pid');
     expect(script).toContain('kill "$old_pid"');
     expect(script).toContain('existing_id=$(tr -d "[:space:]" < "$data_dir/host.id")');
@@ -234,6 +238,7 @@ describe('peer-daemon commands', () => {
       expect(result.code).not.toBe(0);
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(uncaught.filter((err) => (err as NodeJS.ErrnoException).code === 'EPIPE')).toEqual([]);
+      expect(ssh.untunnelAll?.({ host: 'devbox' })).toBe(false);
     } finally {
       process.off('uncaughtException', onUncaught);
       rmSync(dir, { recursive: true, force: true });

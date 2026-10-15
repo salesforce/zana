@@ -246,9 +246,9 @@ describe('pairing relay client', () => {
     const prefixed = await fetch(new URL(`t/${client!.sessionId()}/install.sh`, stack.door.url));
     expect(prefixed.status).toBe(200);
     await expect(prefixed.text()).resolves.toContain('echo join');
-    const script = await fetch(new URL('install.sh', stack.door.url));
-    expect(script.status).toBe(200);
-    await expect(script.text()).resolves.toContain('echo join');
+    const bare = await fetch(new URL('install.sh', stack.door.url));
+    expect(bare.status).toBe(503);
+    await expect(bare.json()).resolves.toEqual({ error: 'session_required' });
 
     const artifact = await fetch(new URL('install/zcc-host.tgz', stack.door.url));
     expect(artifact.status).toBe(200);
@@ -263,7 +263,7 @@ describe('pairing relay client', () => {
     expect(plugin.headers.get('content-length')).toBe(String(pluginHostJs.length));
     expect(Buffer.from(await plugin.arrayBuffer()).equals(pluginHostJs)).toBe(true);
 
-    const enrolled = await fetch(new URL('internal/hosts/enroll', stack.door.url), {
+    const enrolled = await fetch(new URL(`t/${client!.sessionId()}/internal/hosts/enroll`, stack.door.url), {
       method: 'POST',
       headers: {
         authorization: 'Bearer zcde_test',

@@ -56,7 +56,7 @@ import {
   threadLaunchRemote
 } from './remote-tool-proxy.js';
 import { resolveSpawnChoiceForHost } from './spawn-choice-for-host.js';
-import { threadStartCwd } from './thread-start-cwd.js';
+import { modelCatalogCwd, threadStartCwd } from './thread-start-cwd.js';
 import { toRemoteStartPathHost } from '../hosts/host-public.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { attachmentMarkersFromInput, hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
@@ -177,11 +177,13 @@ async function startConversationOnHost(
   if (!provider) {
     throw new ThreadCreateError(400, 'invalid-provider', `unknown thread provider: ${args.input.providerId}`);
   }
-  const launchCwd = threadStartCwd(getEnvironment(ctx.db, args.environmentId), args.input.cwd);
+  const environment = getEnvironment(ctx.db, args.environmentId);
+  const launchCwd = threadStartCwd(environment, args.input.cwd);
+  const validationCwd = modelCatalogCwd(environment, launchCwd, args.dropCwd || (args.project.remote && !args.remoteToolProxy));
   await validateProviderModelSelection(ctx, {
     hostId: args.hostId,
     providerId,
-    ...(launchCwd ? { cwd: launchCwd } : {}),
+    ...(validationCwd ? { cwd: validationCwd } : {}),
     ...(args.input.model ? { model: args.input.model } : {}),
     ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})
   });

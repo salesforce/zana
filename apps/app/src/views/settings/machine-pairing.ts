@@ -36,7 +36,11 @@ export type RelayStatus = {
   joinUntil?: number;
 };
 
-/** Prefer `/t/<sessionId>` when the Heroku relay is connected; direct HTTPS origins stay bare. */
+/**
+ * Prefer `/t/<sessionId>` when the relay is connected. A shared relay origin is never
+ * returned bare: unknown, offline, or session-less relay states yield no URL. Only an
+ * unconfigured relay (direct HTTPS origin) stays bare.
+ */
 export function resolveRelayPairingServerUrl(input: {
   publicAppUrl?: string | null;
   relay?: RelayStatus | null;
@@ -45,10 +49,11 @@ export function resolveRelayPairingServerUrl(input: {
   const base = resolvePairingServerUrl(input.publicAppUrl);
   if (!base) return { url: null };
   const relay = input.relay;
-  if (!relay || relay.state === 'unconfigured') return { url: base };
-  if (relay.state === 'offline') return { url: base, error: 'relay_offline' };
+  if (!relay) return { url: null };
+  if (relay.state === 'unconfigured') return { url: base };
+  if (relay.state === 'offline') return { url: null, error: 'relay_offline' };
   if (!relay.sessionId || !RELAY_SESSION_ID_RE.test(relay.sessionId)) {
-    return { url: base, error: 'join_expired' };
+    return { url: null, error: 'join_expired' };
   }
   return { url: pairingSessionServerUrl(base, relay.sessionId) };
 }

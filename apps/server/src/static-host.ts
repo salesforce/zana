@@ -8,6 +8,7 @@ import type { ProductHttpContext } from './http/product-context.js';
 import { createProductWebSocketServer, handleProductUpgrade } from './http/product-ws.js';
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './http/host-internal.js';
 import { handleInstallHttp } from './http/install-http.js';
+import { startPairingForwarder, type PairingForwarder } from './http/pairing-forwarder.js';
 import { attachPairingRelay } from './http/pairing-relay-controller.js';
 import { PLUGIN_ASSET_PATH, tryServePluginAsset } from './http/plugin-assets.js';
 import { videoByteRange } from './http/video-preview.js';
@@ -330,6 +331,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   const url = `http://${hostName}:${address.port}/`;
   expectedOrigin = url.slice(0, -1);
   let pairingRelay: ReturnType<typeof attachPairingRelay> | undefined;
+  let pairingForwarder: PairingForwarder | undefined;
   if (options.product) {
     try {
       options.product.origins.serverPort = new URL(expectedOrigin).port
@@ -339,15 +341,31 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
       /* keep the configured port */
     }
     pairingRelay = attachPairingRelay(options.product, address.port);
+    // SSH reverse tunnels target this allowlist-only port. Without it, callers
+    // fall back to serverPort.
+    try {
+      pairingForwarder = await startPairingForwarder(address.port, {
+        productHost: hostName === '::1' ? '::1' : '127.0.0.1'
+      });
+      options.product.origins.pairingPort = pairingForwarder.port;
+    } catch (error) {
+      console.warn(`[zcc] pairing forwarder failed to start: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   return {
     url,
-    close: () => new Promise<void>((resolveClose, rejectClose) => {
+    close: async () => {
       pairingRelay?.stop();
-      options.product?.dispose();
-      hostWss?.close();
-      productWss?.close();
-      server.close((error) => (error ? rejectClose(error) : resolveClose()));
-    })
+      if (options.product && options.product.origins.pairingPort === pairingForwarder?.port) {
+        delete options.product.origins.pairingPort;
+      }
+      await pairingForwarder?.close();
+      await new Promise<void>((resolveClose, rejectClose) => {
+        options.product?.dispose();
+        hostWss?.close();
+        productWss?.close();
+        server.close((error) => (error ? rejectClose(error) : resolveClose()));
+      });
+    }
   };
 }

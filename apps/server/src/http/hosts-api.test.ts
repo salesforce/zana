@@ -7,7 +7,27 @@ import { createServer } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { listHosts } from '@zana-ai/zcc-db';
+import { handleHostsApi } from './hosts-api.js';
 import { startProductServer, type ProductServer } from './product-server.js';
+
+const pairingMock = vi.hoisted(() => ({ resolve: null as null | (() => Promise<unknown>) }));
+const connectMock = vi.hoisted(() => ({ uses: false }));
+vi.mock('../services/hosts/pairing-target.js', async (importActual) => {
+  const actual = await importActual<typeof import('../services/hosts/pairing-target.js')>();
+  return {
+    ...actual,
+    resolvePairingTargetForContext: (ctx: never) =>
+      pairingMock.resolve ? pairingMock.resolve() : actual.resolvePairingTargetForContext(ctx)
+  };
+});
+vi.mock('../services/hosts/connect-enrollment.js', async (importActual) => {
+  const actual = await importActual<typeof import('../services/hosts/connect-enrollment.js')>();
+  return {
+    ...actual,
+    usesConnect: (ctx: never) => connectMock.uses || actual.usesConnect(ctx),
+    issueConnectHostCode: async () => ({ code: 'c', enrollmentId: 'e', hostId: 'h', expiresAt: 1, accountUrl: 'https://a', serverId: 's' })
+  };
+});
 
 let server: ProductServer | null = null;
 
@@ -16,6 +36,8 @@ afterEach(async () => {
   server = null;
   delete process.env.ZCC_APP_URL;
   delete process.env.ZCC_HOST_ARTIFACT;
+  pairingMock.resolve = null;
+  connectMock.uses = false;
 });
 
 async function start(envUrl?: string) {
@@ -403,7 +425,7 @@ createServer((_req, res) => {
     });
   });
 
-  it('refuses bootstrap without a public URL or when the primary daemon is offline', async () => {
+  it('routes bootstrap without a public URL through the SSH tunnel and refuses when the primary daemon is offline', async () => {
     const dataDir = await start();
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
       version: 1,
@@ -422,10 +444,9 @@ createServer((_req, res) => {
       body: JSON.stringify({ projectId: 'p-ssh' })
     });
     expect(missingUrl.status).toBe(200);
-    expect(JSON.parse((await missingUrl.text()).trim())).toMatchObject({
-      type: 'error',
-      code: 'public_url_required'
-    });
+    const missingLines = (await missingUrl.text()).trim().split('\n').map((line) => JSON.parse(line));
+    expect(missingLines).toContainEqual({ type: 'log', text: 'Pairing relay unavailable (no_public_origin); connecting through SSH…' });
+    expect(missingLines.at(-1)).toMatchObject({ type: 'error', code: 'primary_disconnected' });
 
     await server!.close();
     server = null;
@@ -446,10 +467,26 @@ createServer((_req, res) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ projectId: 'p-ssh' })
     });
-    expect(JSON.parse((await loopback.text()).trim())).toMatchObject({
-      type: 'error',
-      code: 'public_url_required'
+    const loopbackLines = (await loopback.text()).trim().split('\n').map((line) => JSON.parse(line));
+    expect(loopbackLines.some((line) => line.code === 'public_url_required')).toBe(false);
+    expect(loopbackLines.at(-1)).toMatchObject({ type: 'error', code: 'primary_disconnected' });
+
+    const bySsh = await fetch(`${server!.url}api/v1/hosts/bootstrap`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ssh: { host: 'devbox', user: 'me' } })
     });
+    expect(bySsh.status).toBe(200);
+    expect(JSON.parse((await bySsh.text()).trim().split('\n').at(-1)!)).toMatchObject({ type: 'error', code: 'primary_disconnected' });
+
+    for (const body of [{}, { projectId: '' }, { ssh: { host: 'devbox', remotePath: '/x' } }, { projectId: 'p-ssh', ssh: { host: 'devbox' } }]) {
+      const invalid = await fetch(`${server!.url}api/v1/hosts/bootstrap`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      expect(invalid.status).toBe(400);
+    }
 
     await server!.close();
     server = null;
@@ -470,7 +507,7 @@ createServer((_req, res) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ projectId: 'p-ssh' })
     });
-    expect(JSON.parse((await offline.text()).trim())).toMatchObject({
+    expect(JSON.parse((await offline.text()).trim().split('\n').at(-1)!)).toMatchObject({
       type: 'error',
       code: 'primary_disconnected'
     });
@@ -614,5 +651,89 @@ createServer((_req, res) => {
       timeoutMs: 10 * 60 * 1000,
       command: { type: 'host.pick_folder' }
     });
+  });
+});
+
+describe('preferred join-code issuance', () => {
+  async function call(path: string, origins?: { pairingPort?: number }) {
+    const minted = { joinCode: 'code-x', hostId: 'host-1', expiresAt: 5 };
+    const joinCodes = { mint: vi.fn(() => minted), invalidateHost: vi.fn() };
+    let status = 0;
+    let body: unknown;
+    const response = {} as never;
+    const json = await import('./json.js');
+    const spy = vi.spyOn(json, 'sendJson').mockImplementation(((_r: unknown, s: number, b: unknown) => {
+      status = s;
+      body = b;
+    }) as never);
+    const request = (async function* () { yield Buffer.from('{}'); })() as never;
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-pref-'));
+    await handleHostsApi(request, response, { joinCodes, dataDir, origins } as never, path, 'POST', new URL('http://x/'));
+    spy.mockRestore();
+    return { status, body, joinCodes, minted };
+  }
+  const preferred = '/api/v1/hosts/join-codes/preferred';
+
+  it.each(['no_public_origin', 'relay_unconfigured', 'relay_offline', 'no_session'])(
+    'returns 409 relay_unavailable without minting for tunnel reason %s',
+    async (reason) => {
+      pairingMock.resolve = async () => ({ kind: 'tunnel', reason });
+      const r = await call(preferred);
+      expect(r.status).toBe(409);
+      expect(r.body).toEqual({ error: 'relay_unavailable', reason });
+      expect(r.joinCodes.mint).not.toHaveBeenCalled();
+    }
+  );
+
+  it('issues a loopback-forwarder tunnel code when the relay is down and the forwarder is up', async () => {
+    pairingMock.resolve = async () => ({ kind: 'tunnel', reason: 'relay_offline' });
+    const r = await call(preferred, { pairingPort: 41234 });
+    expect(r.status).toBe(201);
+    expect(r.body).toEqual({ ...r.minted, pairingServerUrl: 'http://127.0.0.1:41234', pairingMode: 'tunnel' });
+    expect(r.joinCodes.mint).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds the relay session url to the minted code', async () => {
+    pairingMock.resolve = async () => ({ kind: 'relay', serverUrl: 'https://relay.test/t/abc' });
+    const r = await call(preferred);
+    expect(r.status).toBe(201);
+    expect(r.body).toEqual({ ...r.minted, pairingServerUrl: 'https://relay.test/t/abc' });
+    expect(r.joinCodes.invalidateHost).not.toHaveBeenCalled();
+  });
+
+  it('adds the direct url unchanged otherwise', async () => {
+    pairingMock.resolve = async () => ({ kind: 'direct', serverUrl: 'https://app.test' });
+    const r = await call(preferred);
+    expect(r.status).toBe(201);
+    expect(r.body).toEqual({ ...r.minted, pairingServerUrl: 'https://app.test' });
+  });
+
+  it.each([
+    ['session change', { kind: 'relay', serverUrl: 'https://relay.test/t/new' }],
+    ['kind change', { kind: 'direct', serverUrl: 'https://relay.test/t/abc' }],
+    ['tunnel', { kind: 'tunnel', reason: 'relay_offline' }]
+  ])('invalidates the code and returns relay_changed on %s mid-issue', async (_n, second) => {
+    const seq: unknown[] = [{ kind: 'relay', serverUrl: 'https://relay.test/t/abc' }, second];
+    pairingMock.resolve = async () => seq.shift();
+    const r = await call(preferred);
+    expect(r.status).toBe(409);
+    expect(r.body).toEqual({ error: 'relay_changed' });
+    expect(r.joinCodes.invalidateHost).toHaveBeenCalledWith('host-1');
+  });
+
+  it('leaves the raw route without target resolution', async () => {
+    pairingMock.resolve = async () => { throw new Error('should not resolve'); };
+    const r = await call('/api/v1/hosts/join-codes');
+    expect(r.status).toBe(201);
+    expect(r.body).toEqual(r.minted);
+  });
+
+  it('leaves the Connect branch unchanged', async () => {
+    connectMock.uses = true;
+    pairingMock.resolve = async () => { throw new Error('should not resolve'); };
+    const r = await call(preferred);
+    expect(r.status).toBe(201);
+    expect(r.body).toMatchObject({ joinCode: 'c', enrollmentId: 'e', hostId: 'h' });
+    expect(r.joinCodes.mint).not.toHaveBeenCalled();
   });
 });

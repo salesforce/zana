@@ -179,6 +179,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'peer_daemon.restart',
   'peer_daemon.install',
   'peer_daemon.logs',
+  'peer_tunnel.open',
+  'peer_tunnel.close',
   'desktop.browser.list_instances',
   'desktop.browser.list_tabs',
   'desktop.browser.create_tab',
@@ -858,6 +860,22 @@ export const PeerDaemonLogsCommandSchema = z.object({
 }).strict();
 export type PeerDaemonLogsCommand = z.infer<typeof PeerDaemonLogsCommandSchema>;
 
+/** Reopen a primary-owned SSH reverse tunnel for an already installed machine. */
+export const PeerTunnelOpenCommandSchema = z.object({
+  type: z.literal('peer_tunnel.open'),
+  remote: PeerDaemonRemoteSchema,
+  localPort: z.number().int().min(1).max(65535),
+  remotePort: z.number().int().min(1).max(65535)
+}).strict();
+export type PeerTunnelOpenCommand = z.infer<typeof PeerTunnelOpenCommandSchema>;
+
+/** Close the primary-owned SSH reverse tunnel for a removed machine, whatever its ports. */
+export const PeerTunnelCloseCommandSchema = z.object({
+  type: z.literal('peer_tunnel.close'),
+  remote: PeerDaemonRemoteSchema
+}).strict();
+export type PeerTunnelCloseCommand = z.infer<typeof PeerTunnelCloseCommandSchema>;
+
 export const HostGitFileCommandSchema = z.discriminatedUnion('operation', [
   z.object({ type: z.literal('host.git_file'), operation: z.literal('head'), root: PathSchema, path: PathSchema }).strict(),
   z.object({ type: z.literal('host.git_file'), operation: z.literal('discard'), root: PathSchema, path: PathSchema, expectedSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).strict()
@@ -1023,6 +1041,8 @@ export const HostRpcCommandSchema = z.union([
   PeerDaemonRestartCommandSchema,
   PeerDaemonInstallCommandSchema,
   PeerDaemonLogsCommandSchema,
+  PeerTunnelOpenCommandSchema,
+  PeerTunnelCloseCommandSchema,
   desktopBrowserCommandSchemas['desktop.browser.list_instances'],
   desktopBrowserCommandSchemas['desktop.browser.list_tabs'],
   desktopBrowserCommandSchemas['desktop.browser.create_tab'],
@@ -1476,6 +1496,12 @@ export const PeerDaemonLogsResultSchema = z.object({
 }).strict();
 export type PeerDaemonLogsResult = z.infer<typeof PeerDaemonLogsResultSchema>;
 
+export const PeerTunnelOpenResultSchema = z.object({ ok: z.literal(true) }).strict();
+export type PeerTunnelOpenResult = z.infer<typeof PeerTunnelOpenResultSchema>;
+
+export const PeerTunnelCloseResultSchema = z.object({ ok: z.literal(true), closed: z.boolean() }).strict();
+export type PeerTunnelCloseResult = z.infer<typeof PeerTunnelCloseResultSchema>;
+
 export type {
   ProviderCliInstallActionKind,
   ProviderCliInstallEvent,
@@ -1561,6 +1587,8 @@ export const HostRpcResultSchemaByType = {
   'peer_daemon.restart': PeerDaemonRestartResultSchema,
   'peer_daemon.install': PeerDaemonInstallResultSchema,
   'peer_daemon.logs': PeerDaemonLogsResultSchema,
+  'peer_tunnel.open': PeerTunnelOpenResultSchema,
+  'peer_tunnel.close': PeerTunnelCloseResultSchema,
   'desktop.browser.list_instances': desktopBrowserResultSchemas['desktop.browser.list_instances'],
   'desktop.browser.list_tabs': desktopBrowserResultSchemas['desktop.browser.list_tabs'],
   'desktop.browser.create_tab': desktopBrowserResultSchemas['desktop.browser.create_tab'],

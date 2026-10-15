@@ -101,6 +101,18 @@ async function openSession(options: {
   }
 }
 
+const trimUrl = (url: string): string => url.replace(/\/$/, '');
+
+function loopbackHost(url: string): boolean {
+  try { return ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname.toLowerCase()); } catch { return false; }
+}
+
+/** A tunnel-forwarded owner is the same server on any loopback port: the port is chosen per tunnel. */
+export function sameEnrolledServer(enrolled: string, requested: string): boolean {
+  if (trimUrl(enrolled) === trimUrl(requested)) return true;
+  return loopbackHost(enrolled) && loopbackHost(requested);
+}
+
 export async function startEnrolledHostDaemon(options: {
   dataDir: string;
   serverUrl: string;
@@ -122,7 +134,7 @@ export async function startEnrolledHostDaemon(options: {
     options = { ...options, connectCredential: options.connectCredential ?? access?.credential, hostId: options.hostId ?? access?.hostId };
     const instanceId = randomUUID();
     const existing = readHostAuth(options.dataDir);
-    if (existing?.serverUrl && existing.serverUrl.replace(/\/$/, '') !== options.serverUrl.replace(/\/$/, '')) throw new Error('Existing machine enrollment belongs to another server');
+    if (existing?.serverUrl && !sameEnrolledServer(existing.serverUrl, options.serverUrl)) throw new Error('Existing machine enrollment belongs to another server');
     const existingUsable =
       existing && (!options.hostId || existing.hostId === options.hostId) && !(options.connectCredential && options.token && existing.enrollmentId !== createHash('sha256').update(options.token).digest('hex'));
     let hostId: string;
@@ -142,6 +154,8 @@ export async function startEnrolledHostDaemon(options: {
           signal: options.signal
         });
         hostId = existing.hostId;
+        // The owner's forwarded port can change between tunnels; reconnects use the stored URL.
+        if (existing.serverUrl !== options.serverUrl) writeHostAuth(options.dataDir, { ...existing, serverUrl: options.serverUrl });
       } catch (error) {
         // Transient connectivity must not consume a join code or rotate a
         // machine key. Only an explicit authentication rejection can re-enroll.

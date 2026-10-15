@@ -63,7 +63,7 @@ describe('pairing front door', () => {
     }
   });
 
-  it('serves Next for marketing paths and 503s install.sh without a laptop (never 308)', async () => {
+  it('serves Next for marketing paths and 503s bare install.sh without a laptop (never 308)', async () => {
     const nextOrigin = await listenNext();
     door = await startFrontDoor({
       host: '127.0.0.1',
@@ -82,7 +82,7 @@ describe('pairing front door', () => {
     expect(install.headers.get('location')).toBeNull();
     const body = await fetch(new URL('install.sh', door.url), { redirect: 'manual' });
     expect(body.status).toBe(503);
-    await expect(body.json()).resolves.toEqual({ error: 'relay_offline' });
+    await expect(body.json()).resolves.toEqual({ error: 'session_required' });
 
     const relayHttp = await fetch(new URL('_zcc/relay', door.url), { redirect: 'manual' });
     expect(relayHttp.status).toBe(400);
@@ -106,7 +106,7 @@ describe('pairing front door', () => {
     })).rejects.toThrow(/401/);
   });
 
-  it('relays install.sh and streams a tarball in chunks once a laptop is attached', async () => {
+  it('relays session install.sh and streams a tarball in chunks once a laptop is attached', async () => {
     const nextOrigin = await listenNext();
     door = await startFrontDoor({
       host: '127.0.0.1',
@@ -121,6 +121,7 @@ describe('pairing front door', () => {
       path: '/_zcc/relay',
       headers: { Authorization: 'Bearer relay-token-relay-token' }
     });
+    const helloPromise = waitForHello(laptop);
     const tarball = Buffer.alloc(80 * 1024, 7);
     laptop.on('message', (payload: Buffer) => {
       const frame = decodeFrame(payload);
@@ -155,15 +156,21 @@ describe('pairing front door', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     expect(door.hasLaptop()).toBe(true);
-    const script = await fetch(new URL('install.sh', door.url), { redirect: 'manual' });
+    const { sessionId } = await helloPromise;
+    const script = await fetch(new URL(`t/${sessionId}/install.sh`, door.url), { redirect: 'manual' });
     expect(script.status).toBe(200);
     expect(script.headers.get('location')).toBeNull();
     await expect(script.text()).resolves.toContain('#!/bin/sh');
 
-    const artifact = await fetch(new URL('install/zcc-host.tgz', door.url));
+    const artifact = await fetch(new URL(`t/${sessionId}/install/zcc-host.tgz`, door.url));
     expect(artifact.status).toBe(200);
     const bytes = Buffer.from(await artifact.arrayBuffer());
     expect(bytes.equals(tarball)).toBe(true);
+
+    // Daemons whose builds dropped the session prefix self-update over the bare path.
+    const legacy = await fetch(new URL('install/zcc-host.tgz', door.url));
+    expect(legacy.status).toBe(200);
+    expect(Buffer.from(await legacy.arrayBuffer()).equals(tarball)).toBe(true);
 
     laptop.close();
   });
@@ -191,10 +198,100 @@ describe('pairing front door', () => {
 
     const bare = await fetch(new URL('install.sh', door.url));
     expect(bare.status).toBe(503);
-    await expect(bare.json()).resolves.toEqual({ error: 'relay_ambiguous' });
+    await expect(bare.json()).resolves.toEqual({ error: 'session_required' });
+    const bareEnroll = await fetch(new URL('internal/hosts/enroll', door.url), { method: 'POST', body: '{}' });
+    expect(bareEnroll.status).toBe(503);
+    await expect(bareEnroll.json()).resolves.toEqual({ error: 'session_required' });
+    const bareVersion = await fetch(new URL('install/version', door.url));
+    expect(bareVersion.status).toBe(503);
+    await expect(bareVersion.json()).resolves.toEqual({ error: 'relay_ambiguous' });
 
     first.laptop.close();
     second.laptop.close();
+  });
+
+  it('refuses bare install and enroll even with a sole laptop attached', async () => {
+    const nextOrigin = await listenNext();
+    door = await startFrontDoor({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'relay-token-relay-token',
+      spawnNext: false,
+      nextOrigin
+    });
+    const sole = await connectEchoLaptop(door.port, 'sole');
+    let soleRequests = 0;
+    sole.laptop.on('message', (payload: Buffer) => {
+      const frame = decodeFrame(payload);
+      if (frame?.type === TYPE.HTTP_REQ && frame.flags & FLAG.META) soleRequests++;
+    });
+
+    for (const [method, path] of [
+      ['GET', 'install.sh'],
+      ['HEAD', 'install.sh'],
+      ['GET', 'install.sh/'],
+      ['GET', 'install.sh?x=1'],
+      ['POST', 'internal/hosts/enroll']
+    ] as const) {
+      const response = await fetch(new URL(path, door.url), {
+        method,
+        ...(method === 'POST' ? { body: '{}' } : {})
+      });
+      expect(response.status, `${method} ${path}`).toBe(503);
+      if (method !== 'HEAD') {
+        await expect(response.json()).resolves.toEqual({ error: 'session_required' });
+      }
+    }
+    expect(soleRequests).toBe(0);
+
+    const routed = await fetch(new URL(`t/${sole.hello.sessionId}/internal/hosts/enroll`, door.url), {
+      method: 'POST',
+      body: '{}'
+    });
+    expect(routed.status).toBe(200);
+    await expect(routed.text()).resolves.toBe('sole');
+
+    const unknown = await fetch(new URL('t/zcrs_unknownunknownunknown/install.sh', door.url));
+    expect(unknown.status).toBe(503);
+    await expect(unknown.json()).resolves.toEqual({ error: 'relay_offline' });
+
+    // Bare host websockets still reach the sole laptop for daemons enrolled
+    // before the session prefix was preserved.
+    const legacyWs = await connectWs({ hostname: '127.0.0.1', port: door.port, path: '/internal/hosts/ws' });
+    legacyWs.close();
+    sole.laptop.close();
+  });
+
+  it('routes an enroll for session B only to laptop B', async () => {
+    const nextOrigin = await listenNext();
+    door = await startFrontDoor({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'relay-token-relay-token',
+      spawnNext: false,
+      nextOrigin
+    });
+    const a = await connectEchoLaptop(door.port, 'laptop-a');
+    const b = await connectEchoLaptop(door.port, 'laptop-b');
+    const seenByA: string[] = [];
+    a.laptop.on('message', (payload: Buffer) => {
+      const frame = decodeFrame(payload);
+      if (frame?.type === TYPE.HTTP_REQ && frame.flags & FLAG.META) {
+        seenByA.push((JSON.parse(frame.payload.toString()) as { url: string }).url);
+      }
+    });
+
+    const viaB = await fetch(new URL(`t/${b.hello.sessionId}/internal/hosts/enroll`, door.url), {
+      method: 'POST',
+      headers: { authorization: 'Bearer zcde_from_laptop_a' },
+      body: '{}'
+    });
+    expect(viaB.status).toBe(200);
+    await expect(viaB.text()).resolves.toBe('laptop-b');
+    expect(seenByA).toEqual([]);
+
+    a.laptop.close();
+    b.laptop.close();
   });
 
   it('answers a curl-style keep-alive GET without Content-Length', async () => {

@@ -30,6 +30,9 @@ export async function validateProviderModelSelection(
     requiredModel: input.model
   });
   const overlaid = overlayCustomModels(catalog, ctx.config.getConfig(), provider);
+  // An empty catalogue that failed to load says nothing about this model; the launch
+  // surfaces the real provider error instead of a misleading "not available".
+  if (catalog.modelLoadError && overlaid.models.length === 0 && overlaid.selectedOnlyModels.length === 0) return;
   const row = [...overlaid.models, ...overlaid.selectedOnlyModels]
     .find((model) => model.id === input.model || model.model === input.model);
   if (!row) {

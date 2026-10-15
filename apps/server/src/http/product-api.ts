@@ -9,6 +9,7 @@ import { registerProductTerminal } from './terminal-retention.js';
 import { readProjectImage, ProjectFsError } from './project-fs-via-host.js';
 import { projectGit } from './project-git.js';
 import { usesConnect } from '../services/hosts/connect-enrollment.js';
+import { reconcileRemoteProjectBindings } from '../services/hosts/host-bootstrap.js';
 import { handleSharedProductApi } from './shared-product-api.js';
 import { projectSources } from '@zana-ai/zcc-domain/project';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
@@ -544,6 +545,7 @@ export async function handleProductHttp(
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {
+      await reconcileRemoteProjectBindings(ctx).catch(() => 0);
       sendJson(response, 200, { projects: ctx.projects.list() });
       return true;
     }

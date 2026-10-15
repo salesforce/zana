@@ -65,18 +65,16 @@ describe('composer host status', () => {
     expect(composerHostActionChipLabel(action)).toBe('Install host daemon');
   });
 
-  it('blocks send when install needs a public URL', () => {
-    const action = resolveComposerHostAction({
-      hosts: [primary],
-      project: sshProject,
-      publicAppUrl: 'http://127.0.0.1:8780'
-    });
-    expect(action).toMatchObject({ kind: 'blocked', needsPublicUrl: true });
-    expect(shouldBlockComposerSend(action, sshProject)).toBe(true);
-    expect(composerHostActionChipLabel(action)).toBeNull();
+  it('offers install for an SSH remote with a loopback or absent public URL', () => {
+    for (const publicAppUrl of ['http://127.0.0.1:8780', null, undefined]) {
+      const action = resolveComposerHostAction({ hosts: [primary], project: sshProject, publicAppUrl });
+      expect(action).toMatchObject({ kind: 'install', label: 'Install' });
+      expect(shouldBlockComposerSend(action, sshProject)).toBe(true);
+      expect(composerHostActionChipLabel(action)).toBe('Install host daemon');
+    }
   });
 
-  it('blocks send when the bound remote host row is gone', () => {
+  it('offers install when the bound remote host row is gone', () => {
     const project = { ...sshProject, hostId: 'h-missing' };
     const action = resolveComposerHostAction({
       hosts: [primary],
@@ -84,9 +82,9 @@ describe('composer host status', () => {
       selectedHostId: 'h-primary',
       publicAppUrl: 'http://127.0.0.1:8780'
     });
-    expect(action).toMatchObject({ kind: 'blocked', needsPublicUrl: true });
+    expect(action).toMatchObject({ kind: 'install' });
     expect(shouldBlockComposerSend(action, project)).toBe(true);
-    expect(composerHostActionChipLabel(action)).toBeNull();
+    expect(composerHostActionChipLabel(action)).toBe('Install host daemon');
     expect(composerRemoteHostBadge({ project, host: primary })).toBeNull();
     expect(composerRemoteHostBadge({ project })).toBeNull();
   });

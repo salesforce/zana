@@ -29160,10 +29160,12 @@ body.resizing-col .library-split-resizer::after {
   color: var(--text-primary);
 }
 
+/* Installs start from the launcher modal, so the drawer (stages, Show log,
+   Retry) stacks above .palette-backdrop (z-index 100) and below toasts. */
 .quick-access-panel.quick-access-panel.host-install-drawer {
   bottom: auto;
   max-height: calc(100dvh - var(--titlebar-h) - 16px);
-  z-index: 41;
+  z-index: 110;
 }
 
 .host-install-drawer-icon {
@@ -29215,6 +29217,49 @@ body.resizing-col .library-split-resizer::after {
   color: var(--danger);
   overflow-wrap: anywhere;
 }
+
+.add-machine-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.host-install-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex-shrink: 0;
+}
+
+.host-install-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.host-install-stage-passed .host-install-stage-icon { color: var(--success, var(--text-muted)); }
+.host-install-stage-failed { color: var(--danger); }
+.host-install-stage-running { color: var(--text); }
+.host-install-stage-icon { display: inline-flex; }
+.host-install-stage-time { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.host-install-stage-reason { flex-basis: 100%; padding-left: 22px; overflow-wrap: anywhere; }
+.host-install-stage-retry,
+.host-install-log-toggle {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.host-install-log-toggle { align-self: flex-start; flex-shrink: 0; }
 
 /* ============================================================================
    Menu-bar popover (macOS frameless card) — surface=popover. A self-contained

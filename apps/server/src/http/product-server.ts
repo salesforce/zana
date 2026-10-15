@@ -10,6 +10,7 @@ import { createProductWebSocketServer, handleProductUpgrade } from './product-ws
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './host-internal.js';
 import { handleInstallHttp } from './install-http.js';
 import { attachPairingRelay } from './pairing-relay-controller.js';
+import { startPairingForwarder, type PairingForwarder } from './pairing-forwarder.js';
 import type { LocalAppOriginArgs } from './local-app-origins.js';
 import { tryServePluginAsset } from './plugin-assets.js';
 import { pluginAssetRootFromService } from './product-plugins.js';
@@ -83,21 +84,35 @@ export async function startProductServer(options: StartProductServerOptions): Pr
   const boundPort = address.port;
   ctx.origins.serverPort = boundPort;
   const pairingRelay = attachPairingRelay(ctx, boundPort);
+  // SSH reverse tunnels target this allowlist-only port. Without it, callers
+  // fall back to serverPort.
+  let pairingForwarder: PairingForwarder | undefined;
+  try {
+    pairingForwarder = await startPairingForwarder(boundPort, {
+      productHost: hostName === '::1' ? '::1' : '127.0.0.1'
+    });
+    ctx.origins.pairingPort = pairingForwarder.port;
+  } catch (error) {
+    console.warn(`[zcc] pairing forwarder failed to start: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   return {
     url: `http://${hostName}:${boundPort}/`,
     port: boundPort,
     ctx,
-    close: () =>
-      new Promise<void>((resolveClose, rejectClose) => {
-        pairingRelay.stop();
+    close: async () => {
+      pairingRelay.stop();
+      if (ctx.origins.pairingPort === pairingForwarder?.port) delete ctx.origins.pairingPort;
+      await pairingForwarder?.close();
+      await new Promise<void>((resolveClose, rejectClose) => {
         ctx.hostHub.close();
         ctx.dispose();
         hostWss.close();
         wss.close();
         ctx.db.close();
         server.close((error) => (error ? rejectClose(error) : resolveClose()));
-      })
+      });
+    }
   };
 }
 

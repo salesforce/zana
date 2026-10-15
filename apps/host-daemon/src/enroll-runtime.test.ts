@@ -161,3 +161,27 @@ it.each([false, true])('keeps saved credentials while startup is offline, cancel
       }
     } finally { vi.useRealTimers(); }
   });
+
+describe('enrollment across tunnel restarts', () => {
+  const hostId = '11111111-1111-4111-8111-111111111111';
+  const start = (serverUrl: string) => startEnrolledHostDaemon({ dataDir: mkdtempSync(join(tmpdir(), 'zcc-enroll-port-')), serverUrl, token: 'unused-join-token' });
+
+  it('keeps an enrollment when the owner is reached on another loopback tunnel port, and records the new URL', async () => {
+    vi.clearAllMocks();
+    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000' });
+    startEnrolledHostConnection.mockImplementation(() => openConnection());
+    const daemon = await start('http://127.0.0.1:38892');
+    expect(enrollDaemonHost).not.toHaveBeenCalled();
+    expect(writeHostAuth).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ hostKey: 'k', serverUrl: 'http://127.0.0.1:38892' }));
+    await daemon.close();
+  });
+
+  it('still refuses an enrollment that belongs to a different server', async () => {
+    vi.clearAllMocks();
+    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'https://other.example' });
+    await expect(start('http://127.0.0.1:38892')).rejects.toThrow('belongs to another server');
+    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000' });
+    await expect(start('https://other.example')).rejects.toThrow('belongs to another server');
+    await expect(start('not a url')).rejects.toThrow('belongs to another server');
+  });
+});

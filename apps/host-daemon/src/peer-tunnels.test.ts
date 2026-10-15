@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { spawn } from 'node:child_process';
-import { PeerTunnels } from './peer-tunnels.js';
+import { PeerTunnels, peerTunnelFailure } from './peer-tunnels.js';
 
 afterEach(() => vi.useRealTimers());
 function fixture() {
@@ -68,4 +68,51 @@ it('removes one tunnel without stopping another machine', async () => {
   const second = f.tunnels.open({ host: 'other' }, 8780, 28888); ready(f.processes[1]); await second;
   f.tunnels.remove({ host: 'pony' }, 8780, 28888); f.tunnels.remove({ host: 'missing' }, 8780, 28888);
   expect(f.processes[0].kill).toHaveBeenCalledOnce(); expect(f.processes[1].kill).not.toHaveBeenCalled(); f.tunnels.close();
+});
+
+it('tags a remote port conflict so the primary can pick another port', async () => {
+  const f = fixture(), pending = f.tunnels.open({ host: 'pony' }, 8780, 28888);
+  f.processes[0].stderr.write('Error: remote port forwarding failed for listen port 28888\n'); f.processes[0].emit('close', 255);
+  await expect(pending).rejects.toMatchObject({ code: 'peer_tunnel_port_unavailable', message: expect.stringContaining('remote port forwarding failed') });
+  const other = f.tunnels.open({ host: 'pony' }, 8780, 28889); f.processes[1].emit('close', 255);
+  await expect(other).rejects.toMatchObject({ code: 'peer_tunnel_failed', message: 'SSH tunnel closed before connecting' });
+  expect(peerTunnelFailure('ssh: Could not resolve hostname pony')).toMatchObject({ code: 'peer_tunnel_failed' });
+  f.tunnels.close();
+});
+
+it('replaces the tunnel for a machine reopened on new ports instead of duplicating it', async () => {
+  const f = fixture();
+  const first = f.tunnels.open({ host: 'pony', user: 'me' }, 8780, 28888); ready(f.processes[0]); await first;
+  const moved = f.tunnels.open({ host: 'pony', user: 'me' }, 9911, 28888); ready(f.processes[1]); await moved;
+  expect(f.processes[0].kill).toHaveBeenCalledOnce();
+  expect((f.spawnProcess.mock.calls[1] as any)[1]).toContain('127.0.0.1:28888:127.0.0.1:9911');
+  await f.tunnels.open({ host: 'pony', user: 'me' }, 9911, 28888);
+  expect(f.spawnProcess).toHaveBeenCalledTimes(2);
+  f.tunnels.remove({ host: 'pony', user: 'me' }, 8780, 28888);
+  expect(f.processes[1].kill).not.toHaveBeenCalled();
+  f.tunnels.remove({ host: 'pony', user: 'me' }, 9911, 28888);
+  expect(f.processes[1].kill).toHaveBeenCalledOnce();
+  f.tunnels.close();
+});
+
+it('a superseded pending open rejects without dropping its replacement', async () => {
+  const f = fixture();
+  const stale = f.tunnels.open({ host: 'pony' }, 8780, 28888);
+  const rejection = expect(stale).rejects.toMatchObject({ code: 'peer_tunnel_failed' });
+  const fresh = f.tunnels.open({ host: 'pony' }, 8780, 28999);
+  await rejection; ready(f.processes[1]); await fresh;
+  await f.tunnels.open({ host: 'pony' }, 8780, 28999);
+  expect(f.spawnProcess).toHaveBeenCalledTimes(2); f.tunnels.close();
+});
+
+it('closes a removed machine tunnel whatever its ports and stops reconnecting', async () => {
+  vi.useFakeTimers(); const f = fixture();
+  const first = f.tunnels.open({ host: 'pony', user: 'me' }, 9911, 28888); ready(f.processes[0]); await first;
+  const other = f.tunnels.open({ host: 'other' }, 8780, 28888); ready(f.processes[1]); await other;
+  expect(f.tunnels.closeFor({ host: 'pony', user: 'me' })).toBe(true);
+  expect(f.processes[0].kill).toHaveBeenCalledOnce(); expect(f.processes[1].kill).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(f.spawnProcess).toHaveBeenCalledTimes(2);
+  expect(f.tunnels.closeFor({ host: 'pony', user: 'me' })).toBe(false);
+  f.tunnels.close();
 });

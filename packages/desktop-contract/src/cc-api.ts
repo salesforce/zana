@@ -173,8 +173,11 @@ import type {
   PendingInteractionResolution
 } from '@zana-ai/zcc-domain/thread-runtime';
 
+export type HostBootstrapStage = 'ssh' | 'tunnel' | 'install' | 'wait' | 'register' | 'connected';
+
 export type HostBootstrapEvent =
   | { type: 'log'; text: string }
+  | { type: 'stage'; stage: HostBootstrapStage; status: 'running' | 'passed' | 'failed'; reason?: string; limitMs?: number }
   | { type: 'done'; hostId: string }
   | { type: 'error'; code: string; message: string; pairingCommand?: string };
 
@@ -408,6 +411,11 @@ export interface CcApi {
     retryUpdate(id: string): Promise<{ ok: true }>;
     remove(id: string): Promise<{ ok: true }>;
     bootstrap(projectId: string, onEvent?: (event: HostBootstrapEvent) => void): Promise<HostBootstrapEvent[]>;
+    /** Host-only install for an SSH identity, through the persistent tunnel when no public origin is usable. */
+    bootstrapBySsh(
+      ssh: { host: string; user?: string },
+      onEvent?: (event: HostBootstrapEvent) => void
+    ): Promise<HostBootstrapEvent[]>;
     repair(id: string, onEvent?: (event: HostBootstrapEvent) => void): Promise<HostBootstrapEvent[]>;
     updateSshIdentity(
       id: string,
@@ -435,8 +443,10 @@ export interface CcApi {
      */
     relaunchLocal(): Promise<{ ok: true } | { ok: false; message: string }>;
     /**
-     * Laptop-side SSH reverse-tunnel pairing PTY. Main owns argv; the renderer
-     * only supplies a sanitized host plus the join tokens it already minted.
+     * Laptop-side SSH pairing PTY. Main owns argv; the renderer only supplies a
+     * sanitized host plus the join tokens it already minted. `handoff: 'tunnel'`
+     * means main found no usable public origin and spawned nothing — the
+     * renderer continues with `bootstrapBySsh`.
      */
     pairing: {
       start(req: {
@@ -445,7 +455,11 @@ export interface CcApi {
         hostId: string;
         cols?: number;
         rows?: number;
-      }): Promise<{ ok: true } | { ok: false; message: string }>;
+      }): Promise<
+        | { ok: true; handoff: 'pty' }
+        | { ok: true; handoff: 'tunnel'; reason: 'relay_offline' | 'relay_unconfigured' | 'no_session' | 'no_public_origin' }
+        | { ok: false; message: string }
+      >;
       write(data: string): Promise<void>;
       resize(cols: number, rows: number): Promise<void>;
       stop(): Promise<void>;

@@ -29,14 +29,14 @@ function fakeHandle(): PairingPtyHandle & {
 }
 
 describe('authorizeSshPairing', () => {
-  it('builds ssh argv from allowlisted fields and the local product URL', () => {
+  it('builds a reverse-tunnel argv only for an explicit loopback dev origin', () => {
     const result = authorizeSshPairing({
       sshHost: 'limited-pony',
       joinCode: 'zcde_abc',
       hostId: UUID,
       cols: 100,
       rows: 30
-    }, { localServerUrl: 'http://127.0.0.1:8780/' });
+    }, { localServerUrl: 'http://127.0.0.1:8780/', publicServerUrl: 'http://127.0.0.1:8780' });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.argv.command).toBe('ssh');
@@ -59,7 +59,7 @@ describe('authorizeSshPairing', () => {
       joinCode: 'zcde_abc',
       hostId: UUID,
       command: 'rm'
-    }, { localServerUrl: 'http://127.0.0.1:8780/' })).toEqual({
+    }, { localServerUrl: 'http://127.0.0.1:8780/', publicServerUrl: 'https://machine.example' })).toEqual({
       ok: false,
       message: 'Pairing spawn does not accept a command string'
     });
@@ -67,17 +67,44 @@ describe('authorizeSshPairing', () => {
       sshHost: '-oProxyCommand=x',
       joinCode: 'zcde_abc',
       hostId: UUID
-    }, { localServerUrl: 'http://127.0.0.1:8780/' }).ok).toBe(false);
+    }, { localServerUrl: 'http://127.0.0.1:8780/', publicServerUrl: 'https://machine.example' }).ok).toBe(false);
     expect(authorizeSshPairing({
       sshHost: 'limited-pony',
       joinCode: 'zcde_abc;id',
       hostId: UUID
-    }, { localServerUrl: 'http://127.0.0.1:8780/' }).ok).toBe(false);
+    }, { localServerUrl: 'http://127.0.0.1:8780/', publicServerUrl: 'https://machine.example' }).ok).toBe(false);
     expect(authorizeSshPairing({
       sshHost: 'limited-pony',
       joinCode: 'zcde_abc',
       hostId: 'host;1'
-    }, { localServerUrl: 'http://127.0.0.1:8780/' }).ok).toBe(false);
+    }, { localServerUrl: 'http://127.0.0.1:8780/', publicServerUrl: 'https://machine.example' }).ok).toBe(false);
+  });
+
+  it('refuses to build any argv without a pairing origin', () => {
+    for (const publicServerUrl of [null, 'ftp://machine.example', 'https://machine.example/x?y']) {
+      expect(authorizeSshPairing({
+        sshHost: 'limited-pony',
+        joinCode: 'zcde_abc',
+        hostId: UUID
+      }, { localServerUrl: 'http://127.0.0.1:8780/', publicServerUrl })).toEqual({
+        ok: false,
+        message: 'No reachable pairing server for this machine'
+      });
+    }
+  });
+
+  it('keeps the relay session path in the public installer', () => {
+    const result = authorizeSshPairing({
+      sshHost: 'limited-pony',
+      joinCode: 'zcde_abc',
+      hostId: UUID
+    }, { localServerUrl: 'http://127.0.0.1:8780/', publicServerUrl: 'https://relay.example/t/zcrs_abcdefghijklmnop' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.argv.args).toEqual([
+      'limited-pony',
+      expect.stringContaining('--server https://relay.example/t/zcrs_abcdefghijklmnop')
+    ]);
   });
 
   it('SSHs the public installer when a public origin is configured', () => {
