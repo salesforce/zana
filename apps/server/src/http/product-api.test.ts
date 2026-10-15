@@ -19,6 +19,21 @@ vi.mock('../services/hosts/host-bootstrap.js', async (importActual) => {
   };
 });
 
+const htmlPreviewMock = vi.hoisted(() => ({ calls: [] as string[], active: false }));
+vi.mock('./html-preview.js', async (importActual) => {
+  const actual = await importActual<typeof import('./html-preview.js')>();
+  return {
+    ...actual,
+    sendHtmlPreview: (request: never, response: import('node:http').ServerResponse, ctx: never, params: URLSearchParams) => {
+      if (!htmlPreviewMock.active) return actual.sendHtmlPreview(request, response, ctx, params);
+      htmlPreviewMock.calls.push(`${(request as { method: string }).method} ${params.get('path')}`);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end((request as { method: string }).method === 'HEAD' ? undefined : '<h1>ok</h1>');
+      return Promise.resolve();
+    }
+  };
+});
+
 let server: ProductServer | null = null;
 const providerHandles: Array<{ unregister(): void }> = [];
 
@@ -45,10 +60,36 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   reconcileMock.active = false;
   reconcileMock.failure = undefined;
+  htmlPreviewMock.active = false;
+  htmlPreviewMock.calls = [];
   vi.restoreAllMocks();
 });
 
 describe('product HTTP', () => {
+  it('routes GET and HEAD /file-preview/html to the HTML preview sender and reports its failures', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-html-preview-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const url = `${server.url}api/v1/file-preview/html?path=page.html`;
+
+    htmlPreviewMock.active = true;
+    const got = await fetch(url);
+    expect(got.status).toBe(200);
+    await expect(got.text()).resolves.toBe('<h1>ok</h1>');
+    const head = await fetch(url, { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(htmlPreviewMock.calls).toEqual(['GET page.html', 'HEAD page.html']);
+
+    // Not a GET/HEAD: the route does not claim it.
+    expect((await fetch(url, { method: 'POST' })).status).not.toBe(200);
+    expect(htmlPreviewMock.calls).toHaveLength(2);
+
+    // The real sender rejects non-HTML paths; the route turns that into an HTTP failure.
+    htmlPreviewMock.active = false;
+    const rejected = await fetch(`${server.url}api/v1/file-preview/html?path=notes.txt`);
+    expect(rejected.status).toBe(415);
+  });
+
   it.each([
     ['Error', new Error('reconcile exploded'), 'reconcile exploded'],
     ['non-Error', 'tok_secret_session_123', 'unknown error']

@@ -221,6 +221,10 @@ describe('AgentScriptPanel org agents', () => {
     await act(async () => { older({ ok: true, nodes: [{ kind: 'org-agent', apiName: 'StaleOrgBot' }] }); });
     await flush();
     expect(orgLink()).toContain('2+ more in the org');
+    overrides['studio.explorer'] = () => ({ ok: true, orgAgentsNotLocal: 3, nodes: [{ kind: 'org-agent', apiName: 'NewOrgBot' }] });
+    await changeOrg('proj-1');
+    await flush();
+    expect(rpc).toHaveBeenLastCalledWith('salesforce', 'studio.explorer', expect.anything());
   });
 });
 
@@ -490,6 +494,9 @@ describe('AgentScriptPanel Open in Agentforce Builder', () => {
     overrides['agentBuilder.open'] = () => { throw new Error('host gone'); };
     await click(openButton(el));
     expect(el.textContent).toContain('host gone');
+    overrides['agentBuilder.open'] = () => { throw 'plain failure'; };
+    await click(openButton(el));
+    expect(el.textContent).toContain('plain failure');
   });
 });
 

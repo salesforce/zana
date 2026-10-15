@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { UI_USER } from '../server/rpc.js';
 import { MAX_BINARY_FILE_BYTES } from '../shared/limits.js';
 import { DocView, type DocLayout } from './DocView.js';
+import { draftDocAgent } from './Agents.js';
 import { AGENT, createHarness, type Harness } from './test-harness.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -1095,5 +1096,25 @@ describe('layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show comments & history' }));
     fireEvent.click(within(screen.getByRole('complementary')).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('complementary')).toBeNull();
+  });
+});
+
+describe('draftDocAgent', () => {
+  const doc = { id: 'doc-1', title: 'Spec' };
+
+  it('returns false without a side panel composer', () => {
+    expect(draftDocAgent({} as never, doc, { action: 'review' })).toBe(false);
+  });
+
+  it('drafts an action brief with the project, or a bare prompt without one', () => {
+    const openPanelAgent = vi.fn(() => true);
+    expect(draftDocAgent({ openPanelAgent } as never, doc, { action: 'review', path: 'a.md', projectId: 'p1' })).toBe(true);
+    expect(openPanelAgent.mock.calls[0]![0]).toMatchObject({ draft: { view: 'doc-1', projectId: 'p1' }, title: 'Spec' });
+    expect((openPanelAgent.mock.calls[0]![0] as { draft: { prompt: string } }).draft.prompt).toContain('a.md');
+
+    expect(draftDocAgent({ openPanelAgent } as never, doc, { action: null, prompt: 'Explain it' })).toBe(true);
+    const draft = (openPanelAgent.mock.calls[1]![0] as { draft: Record<string, unknown> }).draft;
+    expect(draft).not.toHaveProperty('projectId');
+    expect(draft.prompt).toContain('Explain it');
   });
 });
