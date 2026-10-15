@@ -12,6 +12,8 @@ export interface StudioLayoutState {
   bottomOpen: boolean;
   bottomTab: BottomTab;
   explorerOpen: boolean;
+  /** Explorer column width in px (wide layout), or null for the default. */
+  explorerWidth: number | null;
   /** Explorer sections the user folded (`project`, `apex`, `lightning-type`, …). A filter query shows them all. */
   collapsedSections: string[];
   share: boolean;
@@ -19,7 +21,9 @@ export interface StudioLayoutState {
   railSeeded: boolean;
 }
 export const MAX_EDITOR_TABS = 12;
-export const DEFAULT_LAYOUT: StudioLayoutState = { tool: 'code', tabs: [], activeTab: null, bottomOpen: false, bottomTab: 'problems', explorerOpen: true, collapsedSections: [], share: false, railSeeded: false };
+export const EXPLORER_WIDTH = { min: 200, max: 480, default: 260 } as const;
+export const clampExplorerWidth = (value: number) => Math.round(Math.min(EXPLORER_WIDTH.max, Math.max(EXPLORER_WIDTH.min, value)));
+export const DEFAULT_LAYOUT: StudioLayoutState = { tool: 'code', tabs: [], activeTab: null, bottomOpen: false, bottomTab: 'problems', explorerOpen: true, explorerWidth: null, collapsedSections: [], share: false, railSeeded: false };
 
 const text = (value: unknown, max = 300) => typeof value === 'string' && value.length > 0 && value.length <= max ? value : undefined;
 export function parseTab(value: unknown): EditorTab | null {
@@ -50,6 +54,7 @@ export function readStudioLayout(key: string): StudioLayoutState {
       bottomOpen: raw.bottomOpen === true,
       bottomTab: isBottomTab(raw.bottomTab) ? raw.bottomTab : 'problems',
       explorerOpen: raw.explorerOpen !== false,
+      explorerWidth: typeof raw.explorerWidth === 'number' && Number.isFinite(raw.explorerWidth) ? clampExplorerWidth(raw.explorerWidth) : null,
       collapsedSections: Array.isArray(raw.collapsedSections) ? [...new Set<string>((raw.collapsedSections as unknown[]).filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 40))].slice(0, 20) : [],
       share: raw.share === true,
       railSeeded: raw.railSeeded === true

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../lib/studio-contract.js';
-import { isSafeStudioPath, MAX_THREAD_LINKS, registerStudioAssistant, StudioLinkStore } from '../lib/studio-threads.js';
+import { BoundedSet, isSafeStudioPath, MAX_THREAD_LINKS, panelAgentPath, PendingDrafts, registerStudioAssistant, StudioLinkStore } from '../lib/studio-threads.js';
 import { viewStoreFor } from '../lib/studio-view.js';
 
 function harness(projectId = 'p1') {
@@ -11,15 +11,17 @@ function harness(projectId = 'p1') {
   let n = 0;
   const spawn = vi.fn(async (_: any) => ({ id: `t${++n}` }));
   const get = vi.fn(async (_: any): Promise<any> => ({ id: 't1', deletedAt: 1 }));
+  let configure: ((ctx: any) => Promise<unknown>) | undefined;
   const zcc: any = {
+    agents: { configure: (fn: any) => { configure = fn; } },
     storage: { kv: { get: async (k: string) => kv.get(k), set: async (k: string, v: unknown) => { kv.set(k, v); } } },
     realtime: { publish: (c: string, p: unknown) => published.push([c, p]) },
     events: { on: (e: string, h: any) => events.set(e, h) },
     sdk: { threads: { spawn, get } }
   };
   const studio: any = { zcc, registerRpc: (n2: string, h: any) => handlers.set(n2, h), contexts: { current: () => (projectId ? { projectId } : undefined) } };
-  registerStudioAssistant(studio);
-  return { kv, zcc, spawn, get, events, published, call: (n2: string, a: unknown = {}) => handlers.get(n2)!(a) };
+  registerStudioAssistant(studio).linkPanelThreads();
+  return { kv, zcc, spawn, get, events, published, configure: (ctx: any) => configure!(ctx), call: (n2: string, a: unknown = {}) => handlers.get(n2)!(a) };
 }
 
 describe('isSafeStudioPath', () => {
@@ -148,5 +150,81 @@ describe('studio.unlinkThread and lifecycle events', () => {
     const h = harness();
     h.zcc.realtime.publish = () => { throw new Error('ws down'); };
     expect((await h.call(STUDIO_RPC.askAgent, { path: 'a.agent', action: 'review' })).ok).toBe(true);
+  });
+});
+
+describe('side-panel drafts', () => {
+  const panel = (view: unknown, over: Record<string, unknown> = {}) => ({ threadId: 'pt1', projectId: 'p1', pluginMetadata: { panelAgent: { panel: 'studio', view } }, ...over });
+
+  it('studio.draftAgent returns the spawn brief without starting a thread', async () => {
+    const h = harness();
+    h.kv.set('studio:comments:p1', [{ id: 'c1', path: 'force-app/Help.agent', line: 1, endLine: 1, quote: 'q', body: 'tighten this', author: { kind: 'user', name: 'u' }, createdAt: 1 }]);
+    const draft = await h.call(STUDIO_RPC.draftAgent, { path: 'force-app/Help.agent', action: 'review' });
+    expect(draft).toMatchObject({ ok: true, title: 'Review · Help.agent' });
+    expect(draft.prompt).toContain('tighten this');
+    await h.call(STUDIO_RPC.askAgent, { path: 'force-app/Help.agent', action: 'review' });
+    expect(h.spawn.mock.calls[0][0].prompt).toBe(draft.prompt);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect((await h.call(STUDIO_RPC.draftAgent, { path: '../x', action: 'review' })).code).toBe('invalid_input');
+    expect((await harness('').call(STUDIO_RPC.draftAgent, { path: 'a.agent', action: 'review' })).code).toBe('project_required');
+  });
+
+  it('links a conversation sent from the panel to its file once, with the draft title and role', async () => {
+    const h = harness();
+    await h.call(STUDIO_RPC.draftAgent, { path: 'a.agent', action: 'review' });
+    h.published.length = 0;
+    expect(await h.configure(panel('a.agent'))).toEqual({});
+    expect((await h.call(STUDIO_RPC.threads, { path: 'a.agent' })).threads).toMatchObject([{ threadId: 'pt1', title: 'Review · a.agent', role: 'reviewer', action: 'review' }]);
+    expect(h.published).toEqual([[STUDIO_CHANGED_CHANNEL, { projectId: 'p1', path: 'a.agent', kind: 'threads' }]]);
+    // Later launches of the same thread do not undo an Unlink.
+    await h.call(STUDIO_RPC.unlink, { threadId: 'pt1' });
+    await h.configure(panel('a.agent'));
+    expect((await h.call(STUDIO_RPC.threads)).threads).toEqual([]);
+  });
+
+  it('titles a panel conversation without a draft from the thread, then the file', async () => {
+    const h = harness();
+    await h.configure(panel('a.agent', { threadId: undefined, thread: { id: 'pt2', title: ' Typed it myself ' }, projectId: undefined, project: { id: 'p1' } }));
+    await h.configure(panel('dir/b.agent', { threadId: 'pt3' }));
+    const threads = (await h.call(STUDIO_RPC.threads)).threads;
+    expect(threads.find((t: any) => t.threadId === 'pt2')).toMatchObject({ title: 'Typed it myself', role: 'assistant', path: 'a.agent' });
+    expect(threads.find((t: any) => t.threadId === 'pt3')).toMatchObject({ title: 'Agent script · b.agent', role: 'assistant' });
+    expect(threads.find((t: any) => t.threadId === 'pt3')).not.toHaveProperty('action');
+  });
+
+  it('ignores other launches and never fails one', async () => {
+    const h = harness();
+    for (const ctx of [panel('../x'), panel(7), { threadId: 't', projectId: 'p1', pluginMetadata: {} }, { threadId: 't', projectId: 'p1' }, panel('a.agent', { threadId: undefined }), panel('a.agent', { projectId: undefined })]) {
+      expect(await h.configure(ctx)).toEqual({});
+    }
+    expect((await h.call(STUDIO_RPC.threads)).threads).toEqual([]);
+    h.zcc.storage.kv.set = async () => { throw new Error('disk'); };
+    expect(await h.configure(panel('a.agent'))).toEqual({});
+  });
+
+  it('panelAgentPath reads only a safe view', () => {
+    expect(panelAgentPath({ panelAgent: { view: 'a/b.agent' } })).toBe('a/b.agent');
+    for (const bad of [undefined, null, {}, { panelAgent: [] }, { panelAgent: 'x' }, { panelAgent: { view: '/abs' } }]) expect(panelAgentPath(bad)).toBeNull();
+  });
+
+  it('PendingDrafts keeps the newest per file, expires and caps', () => {
+    let now = 0;
+    const drafts = new PendingDrafts(() => now);
+    drafts.remember('p', 'a', { title: 'old' });
+    drafts.remember('p', 'a', { title: 'new', action: 'review' });
+    expect(drafts.take('p', 'a')).toEqual({ title: 'new', action: 'review' });
+    expect(drafts.take('p', 'a')).toBeNull();
+    drafts.remember('p', 'a', { title: 'stale' });
+    now = 31 * 60_000;
+    expect(drafts.take('p', 'a')).toBeNull();
+    for (let i = 0; i < 60; i++) drafts.remember('p', `f${i}`, { title: `t${i}` });
+    expect(drafts.take('p', 'f0')).toBeNull();
+    expect(drafts.take('p', 'f59')).toEqual({ title: 't59' });
+  });
+
+  it('BoundedSet forgets the oldest entries', () => {
+    const set = new BoundedSet(2);
+    set.add('a'); set.add('b'); set.add('c');
+    expect([set.has('a'), set.has('b'), set.has('c')]).toEqual([false, true, true]);
   });
 });

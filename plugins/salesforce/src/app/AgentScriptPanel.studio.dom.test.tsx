@@ -42,12 +42,12 @@ const rpc = vi.fn(baseRpc);
 let realtime: ((p: unknown) => void) | undefined;
 const nodes: Array<() => void> = [];
 
-async function mount(arg: string | { subPath?: string; params?: unknown } = {}, extra: { params?: unknown } = {}) {
+async function mount(arg: string | { subPath?: string; params?: unknown; threadId?: string } = {}, extra: { params?: unknown } = {}) {
   const props = typeof arg === 'string' ? { subPath: arg, ...extra } : arg;
   const el = document.createElement('div'); document.body.appendChild(el);
   const root = createRoot(el);
   nodes.push(() => { root.unmount(); el.remove(); });
-  await act(async () => { root.render(createElement(AgentScriptPanel, { pluginId: 'salesforce', subPath: props.subPath ?? '', params: props.params, projectId: 'proj-1', orgPicker: false })); });
+  await act(async () => { root.render(createElement(AgentScriptPanel, { pluginId: 'salesforce', subPath: props.subPath ?? '', params: props.params, projectId: 'proj-1', orgPicker: false, ...('threadId' in props && props.threadId ? { threadId: props.threadId } : {}) })); });
   await flush();
   return el;
 }
@@ -77,6 +77,7 @@ beforeEach(() => {
 });
 afterEach(() => { nodes.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); delete (globalThis as any).__ZCC_PLUGIN_HOST__; delete (globalThis as any).__ZCC_PLUGIN_RUNTIME__; });
 
+const openReferences = async (root: ParentNode) => { const btn = [...root.querySelectorAll('.sf-as-explorer-foot button')][0]; expect(btn).toBeTruthy(); await act(async () => { fireEvent.click(btn!); }); };
 describe('AgentScriptPanel studio layout', () => {
   it('renders the wide IDE layout and keeps the iframe across tier changes', async () => {
     const el = await mount('force-app/bots/QC.agent');
@@ -100,6 +101,32 @@ describe('AgentScriptPanel studio layout', () => {
     expect(el.querySelector('iframe')).toBe(iframe);
     await resize(300);
     expect(el.querySelector('.sf-studio')!.getAttribute('data-tier')).toBe('0');
+  });
+
+  it('follows the thread it sits beside, then whichever agent drives it, with a pause', async () => {
+    const el = await mount({ subPath: 'force-app/bots/QC.agent', threadId: 'owner' });
+    await ready(el);
+    const chip = () => el.querySelector('[data-testid="salesforce-follow-chip"]')!;
+    expect(chip().textContent).toContain('Following this thread');
+    expect(control.options.threadId).toBe('owner');
+    // A side-panel conversation drives the Studio through the same control lease.
+    await act(async () => { await control.options.execute({ id: 'c2', command: 'editor.reveal', input: { line: 2 }, from: { threadId: 'panel-1', title: 'Review · QC.agent' } }); });
+    await flush();
+    expect(chip().textContent).toContain('Following Review · QC.agent');
+    await act(async () => { fireEvent.click(chip()); });
+    expect(chip().textContent).toContain('Following paused');
+    expect(chip().getAttribute('aria-pressed')).toBe('false');
+    await act(async () => { await control.options.execute({ id: 'c3', command: 'editor.reveal', input: { line: 3 }, from: { threadId: 'panel-1', title: 'Review · QC.agent' } }); });
+    await flush();
+    expect(el.querySelector('[data-testid="salesforce-follow-toast"]')!.textContent).toContain('Review · QC.agent');
+    await act(async () => { fireEvent.click(chip()); });
+    expect(chip().textContent).toContain('Following Review · QC.agent');
+  });
+
+  it('shows no follow chip until something drives the Studio', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    expect(el.querySelector('[data-testid="salesforce-follow-chip"]')).toBeNull();
   });
 
   it('switches compact tools and quick opens files with Cmd+P', async () => {
@@ -226,6 +253,7 @@ describe('AgentScriptPanel studio layout', () => {
     expect(rpc.mock.calls.some(c => c[1] === 'studio.explorer')).toBe(true);
     const badge = el.querySelector('[data-testid="sf-explorer-badge"]');
     expect(badge?.getAttribute('aria-label')).toBe('Failing');
+    await openReferences(el);
     const apex = [...el.querySelectorAll('.sf-as-explorer button, .sf-as-explorer li')].find(n => n.textContent?.includes('Foo'));
     expect(apex).toBeTruthy();
     await act(async () => { fireEvent.click(apex!); });
@@ -244,6 +272,7 @@ describe('AgentScriptPanel studio layout', () => {
     const el = await mount();
     await ready(el);
     const explorer = () => el.querySelector('[data-testid="salesforce-agent-script-explorer"]');
+    await openReferences(el);
     const typeNode = [...explorer()!.querySelectorAll('button')].find(n => n.textContent?.includes('c__Order'))!;
     await act(async () => { fireEvent.click(typeNode); });
     await flush();
@@ -278,6 +307,7 @@ describe('AgentScriptPanel studio layout', () => {
   it('keeps a target tab in front when the panel remounts without an agent to restore', async () => {
     const first = await mount('force-app/bots/QC.agent');
     await ready(first);
+    await openReferences(first);
     const apex = [...first.querySelectorAll('.sf-as-explorer button')].find(n => n.textContent?.includes('Foo'))!;
     await act(async () => { fireEvent.click(apex); });
     nodes.splice(0).forEach(fn => fn());
@@ -341,6 +371,7 @@ describe('AgentScriptPanel follows the driving thread', () => {
     await act(async () => { expect(await run('editor.reveal', { line: 3 }, from)).toMatchObject({ revealedLine: 3 }); });
     expect(reveals(el, 3)).toBe(1);
     expect(chip(el)!.textContent).toContain('Following Fix QC');
+    expect(chip(el)!.getAttribute('aria-label')).toBe('Following Fix QC: Pause');
     expect(chip(el)!.getAttribute('aria-pressed')).toBe('true');
     // An edit from the reveal itself is not typing.
     await post(el, { type: 'dirty', dirty: true });
@@ -376,6 +407,7 @@ describe('AgentScriptPanel follows the driving thread', () => {
     await act(async () => { fireEvent.click(chip(el)!); });
     expect(chip(el)!.getAttribute('aria-pressed')).toBe('false');
     expect(chip(el)!.textContent).toContain('Following paused');
+    expect(chip(el)!.getAttribute('aria-label')).toBe('Following paused: Resume');
     expect(control.options.state().follow).toBe('paused');
     let result: unknown;
     await act(async () => { result = await run('graph.focus', { node: 'topic.billing' }); });

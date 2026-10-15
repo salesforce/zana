@@ -4,12 +4,13 @@ import type { HeldReveal } from './follow-gate.js';
 /** Who the Studio follows, with a pause: while paused the agent's reveals wait for the user. */
 export function FollowChip(props: { driver?: string; paused: boolean; onToggle: () => void }) {
   const label = props.paused ? 'Following paused' : `Following ${props.driver ?? 'the agent'}`;
+  const action = props.paused ? 'Resume' : 'Pause';
   return <button type="button" className={`sf-follow-chip${props.paused ? ' is-paused' : ''}`} data-testid="salesforce-follow-chip"
-    aria-pressed={!props.paused} onClick={props.onToggle}
+    aria-pressed={!props.paused} aria-label={`${label}: ${action}`} onClick={props.onToggle}
     title={props.paused ? 'Resume: the agent can move the editor again' : 'Pause: the agent\'s reveals wait until you resume'}>
     {props.paused ? <Pause size={12} aria-hidden="true" /> : <Eye size={12} aria-hidden="true" />}
     <span className="sf-follow-label">{label}</span>
-    <span className="sf-follow-action">{props.paused ? <Play size={11} aria-hidden="true" /> : <Pause size={11} aria-hidden="true" />}{props.paused ? 'Resume' : 'Pause'}</span>
+    <span className="sf-follow-action">{props.paused ? <Play size={11} aria-hidden="true" /> : <Pause size={11} aria-hidden="true" />}<span className="sf-follow-action-text">{action}</span></span>
   </button>;
 }
 

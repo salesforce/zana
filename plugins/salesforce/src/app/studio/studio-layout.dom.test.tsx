@@ -26,6 +26,11 @@ it('falls back to defaults for missing, corrupt or hostile storage', () => {
   expect(readStudioLayout('k').collapsedSections).toEqual(['apex', 'org-agent']);
   localStorage.setItem('k', JSON.stringify({ collapsedSections: 'apex' }));
   expect(readStudioLayout('k').collapsedSections).toEqual([]);
+  // The explorer width is clamped; anything that is not a finite number is the default.
+  for (const [stored, width] of [[320.4, 320], [50, 200], [9000, 480], ['300', null], [Number.NaN, null]] as const) {
+    localStorage.setItem('k', JSON.stringify({ explorerWidth: stored }));
+    expect(readStudioLayout('k').explorerWidth).toBe(width);
+  }
 });
 
 it('keeps Lightning Type tabs', () => {

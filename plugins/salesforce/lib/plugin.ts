@@ -741,7 +741,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerRpc('actions.run', args => invokeAction(rpcString(args, 'action'), (args as { input?: unknown })?.input, { projectId: contexts.current()?.projectId ?? '', threadId: rpcString(args, 'threadId'), signal: new AbortController().signal }));
   const studio: StudioServerContext = { zcc, registerRpc, contexts, control, lab, sdk, readSettings, deps, invokeAction };
   registerControlRpc(studio);
-  registerStudioAssistant(studio);
+  const assistant = registerStudioAssistant(studio);
   registerStudioContext(studio);
   registerStudioComments(studio);
   registerStudioPreview(studio, {
@@ -872,6 +872,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       skills: ['salesforce-constitution', ...(provider !== 'toolkit' ? ['salesforce-dx'] : []), ...(provider !== 'builtin' ? ['salesforce-toolkit'] : [])]
     };
   }).catch(() => ({})));
+  // After the Salesforce brief, so a side-panel conversation's file link never precedes it.
+  assistant.linkPanelThreads();
 
   zcc.agents.registerTool({
     desktopOnly: ['ui.views', 'ui.command', 'ui.result'],

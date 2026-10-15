@@ -1,11 +1,12 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { OrgAgentsPanel } from './OrgAgentsPanel.js';
+import { lastChanged, OrgAgentsPanel } from './OrgAgentsPanel.js';
 
 const data = { org: { alias: 'dev', orgId: '00D000000000001' }, agents: [{ name: 'Support_Agent', versions: [{ fullName: 'Support_Agent_v2', version: 2 }, { fullName: 'Support_Agent_v1', version: 1 }] }, { name: 'Concierge', versions: [{ fullName: 'Concierge', version: null }] }], truncated: false };
 const file = { path: 'agentforce/00D000000000001/Support_Agent_v1/Support.agent', fullName: 'Support_Agent_v1', orgId: data.org.orgId, existing: false };
 const rpc = vi.fn(); const onOpen = vi.fn(async () => {});
+const retrieveButtons = () => screen.getAllByRole('button', { name: /^Retrieve & open / }) as HTMLButtonElement[];
 function panel(props: Partial<Parameters<typeof OrgAgentsPanel>[0]> = {}) { return <OrgAgentsPanel pluginId="salesforce" projectId="project" visible editorReady onOpen={onOpen} {...props} />; }
 beforeEach(() => {
   rpc.mockReset(); onOpen.mockClear();
@@ -20,7 +21,7 @@ it('loads on demand, searches, selects the exact version and opens the retrieved
   fireEvent.change(screen.getByLabelText('Search org agents'), { target: { value: 'Support' } });
   expect(screen.queryByText('Concierge')).toBeNull();
   fireEvent.change(screen.getByLabelText('Source version for Support_Agent'), { target: { value: 'Support_Agent_v1' } });
-  fireEvent.click(screen.getByText('Retrieve & open'));
+  fireEvent.click(screen.getByRole('button', { name: 'Retrieve & open Support_Agent' }));
   await waitFor(() => expect(onOpen).toHaveBeenCalledWith(file, expect.any(Function)));
   expect(rpc).toHaveBeenCalledWith('salesforce', 'agents.retrieve.start', { projectId: 'project', orgId: data.org.orgId, fullName: 'Support_Agent_v1' });
   expect(screen.getByRole('status').textContent).toContain('saved locally');
@@ -47,12 +48,12 @@ it('refreshes empty and failed inventories and exposes filtering empty states', 
 
 it('preserves local edits, handles failures and waits for the editor to be ready', async () => {
   const view = render(panel({ editorReady: false })); await screen.findByText('Support Agent');
-  expect(screen.getAllByText('Retrieve & open')[0]).toHaveProperty('disabled', true);
+  expect(retrieveButtons()[0]!).toHaveProperty('disabled', true);
   view.rerender(panel());
   rpc.mockImplementation(async (_plugin, method) => method === 'agents.retrieve.start' ? { ok: true, jobId: 'job' } : { ok: true, data: { state: 'done', file: { ...file, existing: true } } });
-  fireEvent.click(screen.getAllByText('Retrieve & open')[0]); await screen.findByText('Opened your local copy. Existing edits were preserved.');
+  fireEvent.click(retrieveButtons()[0]!); await screen.findByText('Opened your local copy. Existing edits were preserved.');
   rpc.mockResolvedValue({ ok: false, error: 'CLI unavailable' });
-  fireEvent.click(screen.getAllByText('Retrieve & open')[0]); expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'CLI unavailable');
+  fireEvent.click(retrieveButtons()[0]!); expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'CLI unavailable');
 });
 
 it('discards stale results and cancels an in-flight retrieval when the org changes', async () => {
@@ -64,7 +65,7 @@ it('discards stale results and cancels an in-flight retrieval when the org chang
     if (method === 'agents.retrieve.status') return new Promise(resolve => { complete = resolve; });
     return { ok: true };
   });
-  fireEvent.click(screen.getAllByText('Retrieve & open')[0]); await waitFor(() => expect(complete).toBeTypeOf('function'));
+  fireEvent.click(retrieveButtons()[0]!); await waitFor(() => expect(complete).toBeTypeOf('function'));
   await act(async () => { window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: 'unrelated' } })); });
   expect(rpc.mock.calls.some(call => call[1] === 'agents.retrieve.cancel')).toBe(false);
   await act(async () => { window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: 'project' } })); });
@@ -77,9 +78,9 @@ it('discards stale results and cancels an in-flight retrieval when the org chang
 it('reports a failed retrieval and rejects a mismatched org response', async () => {
   render(panel()); await screen.findByText('Support Agent');
   rpc.mockImplementation(async (_plugin, method) => method === 'agents.retrieve.start' ? { ok: true, jobId: 'job' } : { ok: true, data: { state: 'failed', error: 'No Agent Script in this version' } });
-  fireEvent.click(screen.getAllByText('Retrieve & open')[0]); await screen.findByText('No Agent Script in this version');
+  fireEvent.click(retrieveButtons()[0]!); await screen.findByText('No Agent Script in this version');
   rpc.mockImplementation(async (_plugin, method) => method === 'agents.retrieve.start' ? { ok: true, jobId: 'job' } : { ok: true, data: { state: 'done', file: { ...file, orgId: 'different' } } });
-  fireEvent.click(screen.getAllByText('Retrieve & open')[0]); await screen.findByText('The org changed. Refresh and select your agent again.');
+  fireEvent.click(retrieveButtons()[0]!); await screen.findByText('The org changed. Refresh and select your agent again.');
   expect(onOpen).not.toHaveBeenCalled();
 });
 
@@ -87,7 +88,7 @@ it('cancels a job that starts after the panel was unmounted', async () => {
   let start!: (value: unknown) => void;
   const view = render(panel()); await screen.findByText('Support Agent');
   rpc.mockImplementation(async (_plugin, method) => method === 'agents.retrieve.start' ? new Promise(resolve => { start = resolve; }) : { ok: true });
-  fireEvent.click(screen.getAllByText('Retrieve & open')[0]); view.unmount();
+  fireEvent.click(retrieveButtons()[0]!); view.unmount();
   await act(async () => { start({ ok: true, jobId: 'late' }); });
   expect(rpc).toHaveBeenCalledWith('salesforce', 'agents.retrieve.cancel', { projectId: 'project', jobId: 'late' });
   expect(onOpen).not.toHaveBeenCalled();
@@ -201,4 +202,64 @@ it('reports a missing agent beside an empty inventory, and a later browse select
   expect(document.activeElement).toBe(search);
   expect([search.value, search.selectionStart, search.selectionEnd]).toEqual(['Legacy_Bot', 0, 'Legacy_Bot'.length]);
   expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('lists project agents first, opens them in place and keeps them out of the org list', async () => {
+  const onLocalOpen = vi.fn(); const onPublish = vi.fn();
+  const localFiles = [{ apiName: 'Support_Agent', path: 'force-app/main/default/aiAuthoringBundles/Support_Agent/Support_Agent.agent', publishable: true }, { apiName: 'Draft', path: 'agentforce/Draft.agent' }];
+  const view = render(panel({ localFiles, onLocalOpen, onPublish }));
+  await screen.findByText('Concierge');
+  const project = screen.getByRole('region', { name: 'Agents in this project' });
+  const org = screen.getByRole('region', { name: 'Agents in the org' });
+  expect(project.textContent).toContain('Support Agent');
+  // The org's copy of a local agent is not offered again; its version picker went with it.
+  expect(org.textContent).not.toContain('Support Agent');
+  expect(screen.queryByLabelText('Source version for Support_Agent')).toBeNull();
+  expect(retrieveButtons().map(button => button.getAttribute('aria-label'))).toEqual(['Retrieve & open Concierge']);
+  expect(screen.getByLabelText('Search org agents').getAttribute('placeholder')).toBe('Search 3 agents…');
+  fireEvent.click(screen.getByText('Draft').closest('button')!);
+  expect(onLocalOpen).toHaveBeenCalledWith('agentforce/Draft.agent');
+  // Only publishable bundles offer a publish review.
+  expect(screen.queryByLabelText('Review publish for Draft')).toBeNull();
+  fireEvent.click(screen.getByLabelText('Review publish for Support_Agent'));
+  expect(onPublish).toHaveBeenCalledWith(localFiles[0]!.path);
+  // A filter applies to both groups; with every org agent on disk there is no org group and no empty state.
+  fireEvent.change(screen.getByLabelText('Search org agents'), { target: { value: 'draft' } });
+  expect(screen.queryByRole('region', { name: 'Agents in the org' })).toBeNull();
+  expect(screen.queryByText('No matching agents')).toBeNull();
+  view.rerender(panel({ localFiles: [...localFiles, { apiName: 'Concierge', path: 'agentforce/Concierge.agent' }] }));
+  fireEvent.change(screen.getByLabelText('Search org agents'), { target: { value: '' } });
+  expect(screen.queryByRole('region', { name: 'Agents in the org' })).toBeNull();
+  expect(screen.queryByText('No Agent Script sources found')).toBeNull();
+});
+
+it('shows a version picker only for agents with several versions, and the last change date', async () => {
+  rpc.mockImplementation(async (_plugin, method) => method === 'agents.list'
+    ? { ok: true, data: { ...data, agents: [{ ...data.agents[0], versions: [{ fullName: 'Support_Agent_v2', version: 2, modifiedAt: '2026-03-04T10:00:00.000Z' }, { fullName: 'Support_Agent_v1', version: 1, modifiedAt: '2026-01-02T10:00:00.000Z' }] }, data.agents[1]] } }
+    : { ok: true });
+  render(panel());
+  await screen.findByText('Support Agent');
+  expect(screen.getByLabelText('Source version for Support_Agent')).toBeTruthy();
+  expect(screen.queryByLabelText('Source version for Concierge')).toBeNull();
+  expect([...(screen.getByLabelText('Source version for Support_Agent') as HTMLSelectElement).options].map(option => option.textContent)).toEqual(['v2', 'v1']);
+  expect(document.querySelector('time')?.getAttribute('dateTime')).toBe('2026-03-04T10:00:00.000Z');
+});
+
+it('formats the newest change, adding the year only for other years', () => {
+  const agent = (...dates: Array<string | null>) => ({ name: 'A', versions: dates.map((modifiedAt, i) => ({ fullName: `A_v${i}`, version: i, modifiedAt })) });
+  const now = new Date('2026-10-15T12:00:00.000Z');
+  expect(lastChanged(agent(null), now)).toBeNull();
+  expect(lastChanged(agent('not a date'), now)).toBeNull();
+  const recent = lastChanged(agent('2026-02-01T12:00:00.000Z', null, '2026-09-01T12:00:00.000Z'), now)!;
+  expect(recent.iso).toBe('2026-09-01T12:00:00.000Z');
+  expect(recent.label).not.toMatch(/2026/);
+  expect(lastChanged(agent('2024-05-05T12:00:00.000Z'), now)!.label).toMatch(/2024/);
+});
+
+it('orders org agents naturally so numbered agents read in sequence', async () => {
+  const numbered = ['Bot_10', 'Bot_3', 'bot_2'].map(name => ({ name, versions: [{ fullName: name, version: null }] }));
+  rpc.mockImplementation(async (_plugin, method) => method === 'agents.list' ? { ok: true, data: { ...data, agents: numbered } } : { ok: true });
+  render(panel());
+  await screen.findByText('Bot 10');
+  expect(retrieveButtons().map(button => button.getAttribute('aria-label'))).toEqual(['Retrieve & open bot_2', 'Retrieve & open Bot_3', 'Retrieve & open Bot_10']);
 });

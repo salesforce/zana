@@ -179,6 +179,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [files, setFiles] = useState<PlaygroundFileRef[]>([]);
   const [explorerNodes, setExplorerNodes] = useState<ExplorerNode[]>([]);
+  const [orgAgentsMore, setOrgAgentsMore] = useState(false);
+  const [orgAgentsNotLocal, setOrgAgentsNotLocal] = useState<number | undefined>(undefined);
   const [activePath, setActivePath] = useState<string | null>(initialPath || null);
   const [sha256, setSha256] = useState<string | undefined>(undefined);
   const [dirty, setDirty] = useState(false);
@@ -333,8 +335,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const refreshExplorer = useCallback(async () => {
     const seq = ++explorerSeq.current;
     try {
-      const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs())) as { ok?: boolean; nodes?: ExplorerNode[] };
-      if (alive.current && seq === explorerSeq.current && result?.ok !== false && Array.isArray(result?.nodes)) setExplorerNodes(result.nodes);
+      const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs())) as { ok?: boolean; nodes?: ExplorerNode[]; orgAgentsTruncated?: boolean; orgAgentsNotLocal?: number };
+      if (alive.current && seq === explorerSeq.current && result?.ok !== false && Array.isArray(result?.nodes)) {
+        setExplorerNodes(result.nodes);
+        setOrgAgentsMore(result.orgAgentsTruncated === true);
+        setOrgAgentsNotLocal(typeof result.orgAgentsNotLocal === 'number' ? result.orgAgentsNotLocal : undefined);
+      }
     } catch { /* the explorer sections are an enhancement over the file tree */ }
   }, [pluginId, rpcArgs]);
 
@@ -805,7 +811,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={tools.state.open}
           headerActions={props.headerActions}
           follow={layout !== 'legacy' && (driver || threadId || followPaused) ? <FollowChip driver={driver ?? (threadId ? 'this thread' : undefined)} paused={followPaused} onToggle={() => setFollowPaused(paused => !paused)} /> : undefined}
-          orgPicker={props.orgPicker !== false && <OrgPicker pluginId={pluginId} projectId={projectId} compact />}
+          orgPicker={props.orgPicker !== false && <OrgPicker pluginId={pluginId} projectId={projectId} compact appearance="toolbar" />}
           onBrowse={() => browseAgents()} onSave={() => void save()}
           onPreview={() => openTool('preview')}
           onSaveAs={() => { setError(null); setSaveAsOpen(true); }} onShowPanel={tools.toggle}
@@ -865,7 +871,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const explorerNode = (
     <Explorer files={files} nodes={badgedNodes} activePath={activePath} dirtyPath={dirty ? activePath : null}
       query={fileQuery} onQuery={setFileQuery} onOpenFile={path => void openFile(path)}
-      onOpenNode={openNode} onBrowseOrg={() => browseAgents()}
+      onOpenNode={openNode} onBrowseOrg={() => browseAgents()} orgLabel={org?.alias} orgAgentsMore={orgAgentsMore} orgAgentsNotLocal={orgAgentsNotLocal}
       collapsed={studio.collapsedSections} onToggleSection={toggleSection} onHide={wide ? () => patch({ explorerOpen: false }) : undefined} />
   );
 
@@ -916,6 +922,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         <button type="button" className="sf-btn-small" onClick={() => setAddComment(null)}>Cancel</button>
       </form>}
       <StudioShell layout={layout} tier={tier} top={top} activity={activity} explorer={wide && studio.explorerOpen ? explorerNode : false}
+        explorerWidth={studio.explorerWidth} onExplorerWidth={width => patch({ explorerWidth: width })}
         quickOpen={quickOpen} quickItems={quickItems} onQuickOpenChange={setQuickOpen} onQuickPick={pickQuick} onSave={save}
         onToggleExplorer={wide ? () => patch({ explorerOpen: !studio.explorerOpen }) : undefined}>
         <div className="sf-main-col">
@@ -948,7 +955,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         )}
         </div>}>
           <AgentScriptTools tools={tools} hiddenTools={hiddenTools} chrome={!compact} open={compact ? splitOpen : undefined} render={(id, visible) => {
-            if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => file.path.includes('aiAuthoringBundles/'))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
+            if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => !file.path.startsWith('.zcc/')).map(file => ({ ...file, publishable: file.path.includes('aiAuthoringBundles/') }))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
             if (id === 'files') return layout === 'legacy' ? explorerNode : null;
             if (id === 'assistant') return compact ? null : <AssistantRail pluginId={pluginId} projectId={projectId} path={activePath} view={view} onShareChange={setShare} />;
             if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}

@@ -134,18 +134,22 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     await ready(el);
     const explorer = el.querySelector('[data-testid="salesforce-agent-script-explorer"]')!;
     const node = (name: RegExp) => byText(explorer, 'button', name);
+    // Apex and Flows live under their agents or in the "All references" catalogue.
+    await click(node(/All references/));
     await click(node(/Foo/));
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
     await click(node(/Bar/));
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
+    await click(explorer.querySelector('button[aria-label="Back to agents"]'));
     await click(node(/Scn/));
     // A scenario opens the Tests tool on its case table; role-play stays behind its switch.
     expect(el.querySelector('[data-testid="studio-tests-pane"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="stub-lab"]')).toBeNull();
     el.querySelector<HTMLElement>('[data-testid="stub-agents"]')?.remove();
-    await click(node(/OrgBot/));
-    // An org-agent row asks the Agents panel to retrieve and open that agent, not just to show the list.
-    expect(agentRequests.at(-1)).toEqual({ name: 'OrgBot', seq: expect.any(Number) });
+    // Org agents are one "more in the org" row that opens the Agents panel's list.
+    expect(byText(explorer, 'button', /OrgBot/)).toBeUndefined();
+    await click(explorer.querySelector('[data-testid="sf-explorer-org-link"]'));
+    expect(agentRequests.at(-1)).toEqual({ seq: expect.any(Number) });
     // Closing and reopening the Agents tab remounts the panel without replaying that request.
     const taken = agentRequests.length;
     await click(el.querySelector<HTMLElement>('[aria-label="Close Agents"]')!);
@@ -201,7 +205,8 @@ describe('AgentScriptPanel org agents', () => {
     const el = await mount();
     await ready(el);
     const explorer = () => el.querySelector('[data-testid="salesforce-agent-script-explorer"]')!;
-    expect(byText(explorer(), 'button', /OrgBot/)).toBeTruthy();
+    const orgLink = () => explorer().querySelector('[data-testid="sf-explorer-org-link"]')?.textContent ?? '';
+    expect(orgLink()).toContain('1 more in the org');
     const changeOrg = (projectId: string) => act(async () => { window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId } })); });
     rpc.mockClear();
     await changeOrg('another-project');
@@ -209,14 +214,13 @@ describe('AgentScriptPanel org agents', () => {
     let older!: (value: unknown) => void;
     overrides['studio.explorer'] = () => new Promise(resolve => { older = resolve; });
     await changeOrg('proj-1');
-    overrides['studio.explorer'] = () => ({ ok: true, nodes: [{ kind: 'org-agent', apiName: 'NewOrgBot' }] });
+    overrides['studio.explorer'] = () => ({ ok: true, orgAgentsTruncated: true, orgAgentsNotLocal: 'bad', nodes: [{ kind: 'org-agent', apiName: 'NewOrgBot' }, { kind: 'org-agent', apiName: 'OtherBot' }] });
     await changeOrg('proj-1');
     await flush();
-    expect(byText(explorer(), 'button', /NewOrgBot/)).toBeTruthy();
+    expect(orgLink()).toContain('2+ more in the org');
     await act(async () => { older({ ok: true, nodes: [{ kind: 'org-agent', apiName: 'StaleOrgBot' }] }); });
     await flush();
-    expect(byText(explorer(), 'button', /StaleOrgBot/)).toBeUndefined();
-    expect(byText(explorer(), 'button', /NewOrgBot/)).toBeTruthy();
+    expect(orgLink()).toContain('2+ more in the org');
   });
 });
 
@@ -476,12 +480,12 @@ describe('AgentScriptPanel Compile', () => {
     await click(compileButton(el));
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentScript.compile', { projectId: 'proj-1', path: 'force-app/bots/QC.agent' });
     expect(compileButton(el).disabled).toBe(true);
-    expect(compileButton(el).textContent).toBe('Compiling…');
+    expect(compileButton(el).getAttribute('aria-label')).toBe('Compiling…');
     expect(status(el)).toBe('Compiling…');
     await act(async () => { answer({ ok: true, summary: 'Compiled QC (library)' }); });
     await flush();
     expect(status(el)).toBe('Compiled QC (library)');
-    expect(compileButton(el).textContent).toBe('Compile');
+    expect(compileButton(el).getAttribute('aria-label')).toBe('Compile');
     // An edit after the compile marks the answer stale and blocks a compile of the old file on disk.
     await post(el, { type: 'dirty', dirty: true });
     expect(status(el)).toBe('Compiled QC (library) · edited since');

@@ -51,6 +51,45 @@ describe('StudioShell', () => {
     expect(onSave).toHaveBeenCalledTimes(2);
     expect(onQuickOpenChange).toHaveBeenCalledTimes(1);
   });
+  it('resizes the explorer by drag (one commit per drag), keyboard and double-click reset', () => {
+    const onExplorerWidth = vi.fn();
+    const { container, rerender } = setup({ explorerWidth: 300, onExplorerWidth });
+    const col = container.querySelector<HTMLElement>('.sf-explorer-col')!;
+    const handle = screen.getByRole('separator', { name: 'Resize explorer' });
+    expect(col.style.width).toBe('300px');
+    expect(handle.getAttribute('aria-valuenow')).toBe('300');
+    fireEvent.pointerDown(handle, { button: 2, clientX: 100 });
+    expect(handle.className).not.toContain('is-dragging');
+    fireEvent.pointerDown(handle, { button: 0, clientX: 100, pointerId: 1 });
+    expect(handle.className).toContain('is-dragging');
+    fireEvent.pointerMove(handle, { clientX: 160 });
+    expect(col.style.width).toBe('360px');
+    fireEvent.pointerMove(handle, { clientX: 2000 });
+    expect(col.style.width).toBe('480px');
+    expect(onExplorerWidth).not.toHaveBeenCalled();
+    fireEvent.pointerUp(handle, { clientX: 2000 });
+    expect(onExplorerWidth).toHaveBeenCalledWith(480);
+    expect(handle.className).not.toContain('is-dragging');
+    // A click without movement commits nothing.
+    onExplorerWidth.mockClear();
+    fireEvent.pointerDown(handle, { button: 0, clientX: 100 });
+    fireEvent.pointerCancel(handle);
+    expect(onExplorerWidth).not.toHaveBeenCalled();
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(onExplorerWidth).toHaveBeenLastCalledWith(284);
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(onExplorerWidth).toHaveBeenLastCalledWith(316);
+    fireEvent.keyDown(handle, { key: 'Home' });
+    expect(onExplorerWidth).toHaveBeenLastCalledWith(null);
+    fireEvent.keyDown(handle, { key: 'Enter' });
+    expect(onExplorerWidth).toHaveBeenCalledTimes(3);
+    fireEvent.doubleClick(handle);
+    expect(onExplorerWidth).toHaveBeenLastCalledWith(null);
+    // Default width, and no handle when the host cannot store a width.
+    rerender(<StudioShell layout="wide" tier={960} explorer={<i />} explorerWidth={null} quickOpen={false} quickItems={[]} onQuickOpenChange={vi.fn()} onQuickPick={vi.fn()} onSave={vi.fn()}><i /></StudioShell>);
+    expect(container.querySelector<HTMLElement>('.sf-explorer-col')!.style.width).toBe('260px');
+    expect(screen.queryByRole('separator')).toBeNull();
+  });
   it('toggles the explorer with Cmd/Ctrl+B only when the layout offers it', () => {
     const onToggleExplorer = vi.fn();
     const { rerender } = render(<StudioShell layout="wide" tier={960} quickOpen={false} quickItems={[]} onQuickOpenChange={vi.fn()} onQuickPick={vi.fn()} onSave={vi.fn()} onToggleExplorer={onToggleExplorer}><div data-testid="b-child" /></StudioShell>);

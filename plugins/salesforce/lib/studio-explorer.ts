@@ -10,7 +10,7 @@ import { indexProjectActions, projectActionCandidates, type ProjectActionIndex }
 import { parseActionTarget } from './agent-action-model.js';
 import { OrgAgentService } from './org-agent-service.js';
 import { lightningTypeBundlePath, readLightningType, referencedLightningTypes } from './lightning-types.js';
-import { STUDIO_RPC, type ExplorerNode } from './studio-contract.js';
+import { STUDIO_RPC, type ExplorerNode, type ExplorerUse } from './studio-contract.js';
 import { rpcFailure, rpcString, type StudioServerContext } from './studio-server-context.js';
 import type { SalesforceDeps } from './types.js';
 
@@ -58,16 +58,22 @@ export function buildLocalExplorer(root: string, deps: SalesforceDeps): Explorer
   const nodes: ExplorerNode[] = agents.map(agent => ({ kind: 'agent', path: agent.path, apiName: agent.apiName }));
   const used = new Map<string, { kind: 'apex' | 'flow' | 'prompt'; name: string; by: Set<string> }>();
   const types = new Map<string, Set<string>>();
-  for (const agent of agents.slice(0, EXPLORER_LIMITS.scanAgents)) {
+  for (const [index, agent] of agents.slice(0, EXPLORER_LIMITS.scanAgents).entries()) {
     let content: string;
     try { content = readAgentFile(root, agent.path, deps, { allowNonDx: true }).content; } catch { continue; }
+    const uses: ExplorerUse[] = [];
     for (const target of referencedTargets(content)) {
       const key = `${target.kind}:${target.name}`;
       const row = used.get(key) ?? { ...target, by: new Set<string>() };
       row.by.add(agent.path);
       used.set(key, row);
+      uses.push({ kind: target.kind, apiName: target.name });
     }
-    for (const ref of referencedLightningTypes(content)) types.set(ref, (types.get(ref) ?? new Set<string>()).add(agent.path));
+    for (const ref of referencedLightningTypes(content)) {
+      types.set(ref, (types.get(ref) ?? new Set<string>()).add(agent.path));
+      uses.push({ kind: 'lightning-type', apiName: ref });
+    }
+    nodes[index]!.uses = uses;
   }
   if (agents.length > EXPLORER_LIMITS.scanAgents) truncated = true;
   let resolved = 0;
@@ -117,15 +123,21 @@ export function registerStudioExplorer(studio: StudioServerContext): void {
     const nodes = [...local.nodes];
     let truncated = local.truncated;
     let orgError: string | undefined;
+    let orgAgentsTruncated = false;
+    let orgAgentsNotLocal: number | undefined;
     if (context?.settings.defaultOrg) {
       try {
         const catalog = await service().list();
         const rows = catalog.agents.slice(0, EXPLORER_LIMITS.orgAgents);
-        if (catalog.truncated || catalog.agents.length > rows.length) truncated = true;
+        orgAgentsTruncated = catalog.truncated || catalog.agents.length > rows.length;
+        // Counted over the whole catalog, not the capped rows, so "N more in the org" is exact.
+        const localAgents = new Set(local.nodes.filter(node => node.kind === 'agent').map(node => node.apiName));
+        orgAgentsNotLocal = catalog.agents.filter(agent => !localAgents.has(agent.name)).length;
+        if (orgAgentsTruncated) truncated = true;
         for (const agent of rows) nodes.push({ kind: 'org-agent', apiName: agent.name });
       } catch (error) { orgError = error instanceof Error ? error.message : 'Org agents are unavailable.'; }
     }
-    return { ok: true, nodes, truncated, ...(orgError ? { orgError } : {}) };
+    return { ok: true, nodes, truncated, orgAgentsTruncated, ...(orgAgentsNotLocal !== undefined ? { orgAgentsNotLocal } : {}), ...(orgError ? { orgError } : {}) };
   });
   studio.registerRpc(STUDIO_RPC.lightningType, async args => {
     const root = studio.contexts.current()?.settings.projectRoot ?? '';

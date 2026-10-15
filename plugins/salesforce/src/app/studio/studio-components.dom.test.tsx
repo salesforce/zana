@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ExplorerNode, StudioDiagnostic } from '../../../lib/studio-contract.js';
 import { BottomPanel } from './BottomPanel.js';
 import { EditorTabs } from './EditorTabs.js';
-import { Explorer, groupExplorerNodes } from './Explorer.js';
+import { Explorer, buildAgentOutline, filterOutline, groupExplorerNodes, type OutlineUse } from './Explorer.js';
 import { ProblemsPanel, sortDiagnostics } from './ProblemsPanel.js';
 import { ToolStrip } from './ToolStrip.js';
 import type { EditorTab } from './studio-layout.js';
@@ -77,6 +77,33 @@ describe('EditorTabs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close Refund' }));
     expect(onClose).toHaveBeenCalledWith('flow:Refund');
   });
+  it('turns a vertical wheel into sideways scrolling only when the strip overflows, and reveals the active tab', () => {
+    const reveal = vi.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = reveal;
+    try {
+      const { rerender } = render(<EditorTabs tabs={tabs} active="agent:a" onSelect={vi.fn()} onClose={vi.fn()} />);
+      expect(reveal).toHaveBeenCalledTimes(1);
+      rerender(<EditorTabs tabs={tabs} active="type:c__Order" onSelect={vi.fn()} onClose={vi.fn()} />);
+      expect(reveal).toHaveBeenCalledTimes(2);
+      const strip = screen.getByRole('tablist');
+      const wheel = (deltaX: number, deltaY: number) => {
+        const event = new WheelEvent('wheel', { deltaX, deltaY, cancelable: true, bubbles: true });
+        strip.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      // Everything fits: the wheel is left to the page.
+      expect(wheel(0, 40)).toBe(false);
+      Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 800 });
+      Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 300 });
+      expect(wheel(0, 40)).toBe(true);
+      expect(strip.scrollLeft).toBe(40);
+      // A sideways trackpad swipe already scrolls natively.
+      expect(wheel(30, 5)).toBe(false);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
 });
 
 describe('BottomPanel', () => {
@@ -139,72 +166,182 @@ describe('ProblemsPanel', () => {
 });
 
 describe('Explorer', () => {
+  const QC = 'force-app/bots/QC.agent';
   const nodes: ExplorerNode[] = [
-    { kind: 'apex', apiName: 'OrderLookup', path: 'classes/OrderLookup.cls', usedBy: ['a.agent', 'b.agent'] },
-    { kind: 'flow', apiName: 'RefundFlow' },
-    { kind: 'prompt', apiName: 'Greeting' },
+    { kind: 'agent', apiName: 'QC', path: QC, uses: [{ kind: 'apex', apiName: 'OrderLookup' }, { kind: 'flow', apiName: 'RefundFlow' }, { kind: 'prompt', apiName: 'Greeting' }, { kind: 'apex', apiName: 'Unresolved' }] },
+    { kind: 'apex', apiName: 'OrderLookup', path: 'classes/OrderLookup.cls', usedBy: [QC, 'b.agent'] },
+    { kind: 'flow', apiName: 'RefundFlow', usedBy: [QC] },
+    { kind: 'prompt', apiName: 'Greeting', usedBy: [QC] },
     { kind: 'scenario', apiName: 'smoke', path: 'tests/smoke.scenario.json', badge: { status: 'pass' } },
     { kind: 'org-agent', apiName: 'Billing' }
   ];
-  const files = [{ apiName: 'QC', path: 'force-app/bots/QC.agent', lines: 4 }];
-  const props = () => ({ files, nodes, activePath: null, query: '', onQuery: vi.fn(), onOpenFile: vi.fn(), onOpenNode: vi.fn(), onBrowseOrg: vi.fn() });
+  const files = [{ apiName: 'QC', path: QC, lines: 4 }];
+  const props = () => ({ files, nodes, activePath: null as string | null, query: '', onQuery: vi.fn(), onOpenFile: vi.fn(), onOpenNode: vi.fn(), onBrowseOrg: vi.fn() });
+  const twisty = (name: string) => screen.getByRole('button', { name: new RegExp(`^(Show|Hide) what ${name} uses$`) });
   it('groups nodes by kind and filters by query', () => {
     expect(groupExplorerNodes(nodes, '').map(group => group.kind)).toEqual(['apex', 'flow', 'prompt', 'scenario', 'org-agent']);
     expect(groupExplorerNodes([{ kind: 'lightning-type', apiName: 'c__T' }, ...nodes], '').map(group => group.kind)).toEqual(['apex', 'flow', 'prompt', 'lightning-type', 'scenario', 'org-agent']);
     expect(groupExplorerNodes(nodes, ' refund ').map(group => group.kind)).toEqual(['flow']);
     expect(groupExplorerNodes([], '')).toEqual([]);
   });
-  it('opens files and nodes without an examples section; prompts are not openable', () => {
-    const p = props();
-    render(<Explorer {...p} dirtyPath="force-app/bots/QC.agent" />);
-    expect(screen.queryByText(/Examples/)).toBeNull();
-    fireEvent.click(screen.getByText('Billing'));
-    expect(p.onOpenNode).toHaveBeenCalledWith(nodes[4]);
-    fireEvent.click(screen.getByText('OrderLookup'));
-    expect(p.onOpenNode).toHaveBeenCalledWith(nodes[0]);
-    expect(screen.getByText('2×')).toBeTruthy();
-    expect(screen.getByLabelText('Passing')).toBeTruthy();
-    expect((screen.getByText('Greeting').closest('button') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByTestId('salesforce-agent-script-file:force-app/bots/QC.agent'));
-    expect(p.onOpenFile).toHaveBeenCalledWith('force-app/bots/QC.agent');
+  it('builds the outline from per-agent uses, splits off .zcc history and tells same-named agents apart', () => {
+    const many = [...files, { apiName: 'QC', path: 'agentforce/org/QC.agent', lines: 2 }, { apiName: 'QC', path: '.zcc/agent-versions/QC/QC.agent', lines: 9 }];
+    const outline = buildAgentOutline(many, [...nodes, { kind: 'agent', apiName: 'QC', path: 'agentforce/org/QC.agent' }]);
+    expect(outline.history.map(file => file.path)).toEqual(['.zcc/agent-versions/QC/QC.agent']);
+    expect(outline.agents.map(agent => agent.hint)).toEqual(['force-app', 'agentforce']);
+    const uses = outline.agents[0]!.uses as OutlineUse[];
+    expect(uses.map(row => [row.use.apiName, row.node?.path])).toEqual([['OrderLookup', 'classes/OrderLookup.cls'], ['RefundFlow', undefined], ['Greeting', undefined], ['Unresolved', undefined]]);
+    expect(uses[3]!.node).toBeUndefined();
+    // An agent node without `uses` beside agents that have them was past the server's scan limit.
+    expect(outline.agents[1]!.uses).toBe('unindexed');
+  });
+  it('falls back to inverting usedBy when the server sends no per-agent uses', () => {
+    const legacy = nodes.filter(node => node.kind !== 'agent');
+    expect((buildAgentOutline(files, legacy).agents[0]!.uses as OutlineUse[]).map(row => row.use.apiName)).toEqual(['OrderLookup', 'RefundFlow', 'Greeting']);
+    expect(buildAgentOutline([{ apiName: 'Lone', path: 'Lone.agent', lines: 1 }], legacy).agents[0]!.uses).toBeNull();
+    expect(buildAgentOutline([{ apiName: 'Lone', path: 'Lone.agent', lines: 1 }], [{ kind: 'agent', apiName: 'Lone', path: 'Lone.agent' }]).agents[0]!.uses).toEqual([]);
+  });
+  it('filters agents by name, or by a reference name and then shows only the matching references', () => {
+    const { agents } = buildAgentOutline(files, nodes);
+    expect(filterOutline(agents, '')[0]!.forceOpen).toBe(false);
+    expect(filterOutline(agents, 'qc')[0]!.uses).toHaveLength(4);
+    const byRef = filterOutline(agents, 'refund');
+    expect(byRef[0]!.forceOpen).toBe(true);
+    expect((byRef[0]!.uses as OutlineUse[]).map(row => row.use.apiName)).toEqual(['RefundFlow']);
+    expect(filterOutline(agents, 'nothing')).toEqual([]);
+    expect(filterOutline([{ file: files[0]!, uses: 'unindexed' }], 'refund')).toEqual([]);
+  });
+  it('unfolds the active agent into grouped references that open; prompts are not openable', () => {
+    const p = { ...props(), activePath: QC };
+    render(<Explorer {...p} dirtyPath={QC} />);
+    expect(twisty('QC').getAttribute('aria-expanded')).toBe('true');
+    const deps = screen.getByRole('group', { name: 'QC references' });
+    expect([...deps.querySelectorAll('.sf-as-dep-label')].map(label => label.textContent)).toEqual(['Apex2', 'Flows1', 'Prompts1']);
+    fireEvent.click(within(deps).getByText('OrderLookup'));
+    expect(p.onOpenNode).toHaveBeenCalledWith(nodes[1]);
+    // A reference the explorer could not resolve still opens by name.
+    fireEvent.click(within(deps).getByText('Unresolved'));
+    expect(p.onOpenNode).toHaveBeenCalledWith({ kind: 'apex', apiName: 'Unresolved' });
+    expect((within(deps).getByText('Greeting').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId(`salesforce-agent-script-file:${QC}`));
+    expect(p.onOpenFile).toHaveBeenCalledWith(QC);
+    expect(screen.getByTestId(`salesforce-agent-script-file:${QC}`).getAttribute('aria-current')).toBe('true');
     expect(screen.getByLabelText('Unsaved changes')).toBeTruthy();
+    fireEvent.click(twisty('QC'));
+    expect(screen.queryByRole('group', { name: 'QC references' })).toBeNull();
+    fireEvent.click(twisty('QC'));
+    expect(screen.getByRole('group', { name: 'QC references' })).toBeTruthy();
+    expect(screen.queryByText('Billing')).toBeNull();
+    fireEvent.click(screen.getByTestId('sf-explorer-org-link'));
+    expect(p.onBrowseOrg).toHaveBeenCalled();
+    expect(screen.getByLabelText('Passing')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter Agentforce files'), { target: { value: 'x' } });
     expect(p.onQuery).toHaveBeenCalledWith('x');
+  });
+  it('counts org agents not already on disk in one row that opens the Agents panel', () => {
+    const org: ExplorerNode[] = [{ kind: 'org-agent', apiName: 'QC' }, { kind: 'org-agent', apiName: 'Billing' }, { kind: 'org-agent', apiName: 'Bot' }];
+    const p = props();
+    const { rerender } = render(<Explorer {...p} nodes={org} orgLabel="dev-sandbox" orgAgentsMore />);
+    const link = screen.getByTestId('sf-explorer-org-link');
+    expect(link.textContent).toContain('2+ more in the org');
+    expect(link.textContent).toContain('dev-sandbox');
+    // A filter counts only the matching org agents, and that count is exact ("bots" in QC's path keeps it listed).
+    rerender(<Explorer {...p} nodes={org} query="b" orgAgentsMore />);
+    expect(screen.getByTestId('sf-explorer-org-link').textContent).toContain('2 more in the org');
+    // The server's exact count replaces the capped list's floor, but not under a filter.
+    rerender(<Explorer {...p} nodes={org} orgAgentsMore orgAgentsNotLocal={1237} />);
+    expect(screen.getByTestId('sf-explorer-org-link').textContent).toContain('1,237 more in the org');
+    rerender(<Explorer {...p} nodes={org} query="b" orgAgentsMore orgAgentsNotLocal={1237} />);
+    expect(screen.getByTestId('sf-explorer-org-link').textContent).toContain('2 more in the org');
+    rerender(<Explorer {...p} nodes={org} query="qc" orgAgentsMore />);
+    expect(screen.queryByTestId('sf-explorer-org-link')).toBeNull();
+    // Every org agent already on disk, or nothing on disk (the empty state has its own browse action): no row.
+    rerender(<Explorer {...p} nodes={[org[0]!]} />);
+    expect(screen.queryByTestId('sf-explorer-org-link')).toBeNull();
+    rerender(<Explorer {...p} files={[]} nodes={org} />);
+    expect(screen.queryByTestId('sf-explorer-org-link')).toBeNull();
+    expect(screen.getByText('Browse agents in your org')).toBeTruthy();
+  });
+  it('unfolds an agent once it becomes active and explains empty or unindexed references', () => {
+    const p = props();
+    const other = { apiName: 'Other', path: 'Other.agent', lines: 1 };
+    const quiet = { apiName: 'Quiet', path: 'Quiet.agent', lines: 1 };
+    const withMore: ExplorerNode[] = [...nodes, { kind: 'agent', apiName: 'Other', path: 'Other.agent' }, { kind: 'agent', apiName: 'Quiet', path: 'Quiet.agent', uses: [] }];
+    const { rerender } = render(<Explorer {...p} files={[...files, other, quiet]} nodes={withMore} />);
+    expect(twisty('QC').getAttribute('aria-expanded')).toBe('false');
+    rerender(<Explorer {...p} files={[...files, other, quiet]} nodes={withMore} activePath="Other.agent" />);
+    expect(screen.getByText('References not indexed for this agent.')).toBeTruthy();
+    fireEvent.click(twisty('Quiet'));
+    expect(screen.getByText('No Apex, Flow, prompt or type references.')).toBeTruthy();
+  });
+  it('lists local history apart, folded by default, and opens its files', () => {
+    const p = props();
+    const history = { apiName: 'QC', path: '.zcc/agent-versions/QC/QC.agent', lines: 3 };
+    const onToggleSection = vi.fn();
+    const { rerender } = render(<Explorer {...p} files={[...files, history]} onToggleSection={onToggleSection} />);
+    const toggle = screen.getByRole('button', { name: 'Local history 1' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(onToggleSection).toHaveBeenCalledWith('history');
+    rerender(<Explorer {...p} files={[...files, history]} collapsed={['history']} onToggleSection={onToggleSection} activePath={history.path} dirtyPath={history.path} />);
+    fireEvent.click(screen.getByTestId(`salesforce-agent-script-file:${history.path}`));
+    expect(p.onOpenFile).toHaveBeenCalledWith(history.path);
+    expect(screen.getByText('agent-versions')).toBeTruthy();
+    // A filter shows matching history even though the section is folded by default.
+    rerender(<Explorer {...p} files={[...files, history]} query="versions" />);
+    expect(screen.getByTestId(`salesforce-agent-script-file:${history.path}`)).toBeTruthy();
+    rerender(<Explorer {...p} files={[...files, history]} query="nomatch" />);
+    expect(screen.queryByRole('button', { name: /Local history/ })).toBeNull();
   });
   it('shows an empty project state with a browse action', () => {
     const p = { ...props(), files: [], nodes: [], query: '' };
     const { rerender } = render(<Explorer {...p} />);
     fireEvent.click(screen.getByText('Browse agents in your org'));
     expect(p.onBrowseOrg).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /All references/ })).toBeNull();
     rerender(<Explorer {...p} query="zz" />);
     expect(screen.getByText('No matching files')).toBeTruthy();
   });
-  it('folds sections, keeps them open while filtering, and hides the column', () => {
+  it('swaps to the reference catalogue and back, with usage counts and type markers', () => {
     const typed: ExplorerNode[] = [...nodes, { kind: 'lightning-type', apiName: 'lightning__textType' }, { kind: 'lightning-type', apiName: 'c__Ghost', usedBy: ['a.agent'] }, { kind: 'lightning-type', apiName: 'c__Order', path: 'lightningTypes/Order' }];
-    const onToggleSection = vi.fn(); const onHide = vi.fn();
+    const onToggleSection = vi.fn();
     const p = { ...props(), nodes: typed };
-    const { rerender } = render(<Explorer {...p} collapsed={['apex', 'project']} onToggleSection={onToggleSection} onHide={onHide} />);
+    const { rerender } = render(<Explorer {...p} collapsed={['apex']} onToggleSection={onToggleSection} />);
+    const all = screen.getByRole('button', { name: /All references/ });
+    expect(all.textContent).toContain('6');
+    fireEvent.click(all);
+    expect(all.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByTestId(`salesforce-agent-script-file:${QC}`)).toBeNull();
     expect(screen.queryByText('OrderLookup')).toBeNull();
-    expect(screen.queryByTestId('salesforce-agent-script-file:force-app/bots/QC.agent')).toBeNull();
     const types = screen.getByRole('button', { name: /Lightning Types/ });
     expect(types.getAttribute('aria-expanded')).toBe('true');
     expect(types.textContent).toContain('3');
     expect(screen.getByText('std')).toBeTruthy();
     expect(screen.getByText('missing')).toBeTruthy();
+    expect(screen.getAllByLabelText('Used by 1 agent').map(el => el.textContent)).toEqual(['1', '1', '1']);
     fireEvent.click(screen.getByRole('button', { name: 'Apex 1' }));
     expect(onToggleSection).toHaveBeenCalledWith('apex');
+    rerender(<Explorer {...p} collapsed={[]} onToggleSection={onToggleSection} />);
+    expect(screen.getByLabelText('Used by 2 agents').textContent).toBe('2');
+    rerender(<Explorer {...p} query="zzz" />);
+    expect(screen.getByText('No matching references.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to agents' }));
+    expect(screen.getByRole('button', { name: /All references/ }).getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: /All references/ }));
+    fireEvent.click(screen.getByRole('button', { name: /All references/ }));
+    expect(screen.getByText('Agents in this project')).toBeTruthy();
+  });
+  it('folds sections, keeps them open while filtering, and hides the column', () => {
+    const onToggleSection = vi.fn(); const onHide = vi.fn();
+    const p = props();
+    const { rerender } = render(<Explorer {...p} collapsed={['project']} onToggleSection={onToggleSection} onHide={onHide} />);
+    expect(screen.queryByTestId(`salesforce-agent-script-file:${QC}`)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Agents in this project 1' }));
+    expect(onToggleSection).toHaveBeenCalledWith('project');
     fireEvent.click(screen.getByRole('button', { name: 'Hide explorer' }));
     expect(onHide).toHaveBeenCalled();
-    rerender(<Explorer {...p} query="order" collapsed={['apex']} onToggleSection={onToggleSection} />);
+    rerender(<Explorer {...p} query="order" collapsed={['project']} onToggleSection={onToggleSection} />);
     expect(screen.getByText('OrderLookup')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Hide explorer' })).toBeNull();
-  });
-  it('expands and collapses folders', () => {
-    const nested = [{ apiName: 'A', path: 'force-app/main/A.agent', lines: 1 }];
-    render(<Explorer {...props()} files={nested} nodes={[]} />);
-    const folder = screen.getAllByRole('button').find(button => button.getAttribute('aria-expanded') !== null && button.textContent?.includes('force-app'))!;
-    fireEvent.click(folder);
-    fireEvent.click(folder);
-    expect(folder).toBeTruthy();
   });
 });

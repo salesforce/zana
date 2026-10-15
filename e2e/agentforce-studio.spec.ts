@@ -172,8 +172,6 @@ test('Agentforce document toolbar: long paths, save state and narrow light/dark 
   const studio = page.getByTestId('salesforce-agent-script-panel');
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(frame.getByTestId('agent-script-ide')).toBeVisible();
-  const explorer = studio.getByTestId('salesforce-agent-script-explorer');
-  for (const folder of ['default', 'aiAuthoringBundles', 'Customer_Service_Agent_With_A_Long_Name']) await explorer.getByRole('button', { name: folder, exact: true }).click();
   await studio.getByTestId(`salesforce-agent-script-file:${toolbarFile}`).click();
   await expect(studio.locator('.af-document-name')).toHaveText('Customer_Service_Agent_With_A_Long_Name.agent');
   await expect(studio.getByLabel('Agentforce file', { exact: true })).toHaveAttribute('title', toolbarFile);
@@ -187,7 +185,7 @@ test('Agentforce document toolbar: long paths, save state and narrow light/dark 
       const bar = studio.locator('.af-document-bar');
       expect(await bar.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
       await expect(bar.getByRole('button', { name: 'Save Agentforce file' })).toBeVisible();
-      await expect(bar.getByRole('button', { name: 'Save as…' })).toBeVisible();
+      await expect(bar.getByRole('button', { name: 'More save options' })).toBeVisible();
       await expect(bar.getByRole('button', { name: 'Preview', exact: true })).toBeVisible();
       // Compact studios drop the folder line; wide ones show it under the title.
       const folder = studio.locator('.af-document-folder');
@@ -204,7 +202,8 @@ test('Agentforce document toolbar: long paths, save state and narrow light/dark 
   await studio.getByRole('button', { name: 'Save Agentforce file' }).click();
   await expect(studio.locator('.af-draft-state')).toHaveText('Saved');
   expect(readFileSync(join(home, 'dx', toolbarFile), 'utf8')).toContain('# toolbar save verification');
-  await studio.getByRole('button', { name: 'Save as…' }).click();
+  await studio.getByRole('button', { name: 'More save options' }).click();
+  await studio.getByRole('menuitem', { name: 'Save as…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Save agent to project' });
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
@@ -284,7 +283,8 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await expect(frame.locator('.view-lines')).toContainText('# unsaved studio draft');
   // Save as refuses a collision before publishing a complete new project file.
-  await studio.getByRole('button', { name: 'Save as…', exact: true }).click();
+  await studio.getByRole('button', { name: 'More save options' }).click();
+  await studio.getByRole('menuitem', { name: 'Save as…', exact: true }).click();
   const saveDialog = page.getByRole('dialog', { name: 'Save agent to project' });
   await saveDialog.getByLabel('File path').fill('force-app/Support.agent');
   await saveDialog.getByRole('button', { name: 'Save new file' }).click();

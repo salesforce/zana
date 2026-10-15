@@ -39,7 +39,10 @@ export interface SuiteEval {
   multiTurn: string[];
 }
 export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, { outcome: CaseOutcome; runId: string; at: number }>; lastEval?: SuiteEval }
-export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
+/** One reference an agent makes (`apex://X`, `flow://Y`, a Lightning Type), as listed on its explorer node. */
+export interface ExplorerUse { kind: 'apex' | 'flow' | 'prompt' | 'lightning-type'; apiName: string }
+/** `usedBy` lists at most 20 agent paths per reference; `uses` (agent nodes only, scanned agents only) is the uncapped inverse. */
+export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; uses?: ExplorerUse[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
 export interface LightningTypeProperty { name: string; type?: string; title?: string; description?: string; required: boolean }
 /** One Lightning Type as `studio.lightningType` returns it: a project bundle, a standard platform type, or a missing reference. */
 export interface LightningTypeView {
@@ -48,7 +51,7 @@ export interface LightningTypeView {
 }
 
 export const STUDIO_RPC = {
-  askAgent: 'studio.askAgent', threads: 'studio.threads', unlink: 'studio.unlinkThread',
+  askAgent: 'studio.askAgent', draftAgent: 'studio.draftAgent', threads: 'studio.threads', unlink: 'studio.unlinkThread',
   viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType',
   comments: 'studio.comments.list', commentAdd: 'studio.comments.add', commentResolve: 'studio.comments.resolve',
   trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run',

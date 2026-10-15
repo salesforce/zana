@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import type { EditorTab } from './studio-layout.js';
 
@@ -14,8 +15,26 @@ export function EditorTabs({ tabs, active, dirtyId, problems, onSelect, onClose 
   onSelect(id: string): void;
   onClose(id: string): void;
 }) {
-  if (tabs.length === 0) return null;
-  return <div className="sf-etabs" role="tablist" aria-label="Open files">
+  const strip = useRef<HTMLDivElement>(null);
+  const hasTabs = tabs.length > 0;
+  // The strip hides its scrollbar, so a vertical wheel scrolls it sideways. Native and non-passive, so the page does not scroll too.
+  useEffect(() => {
+    const element = strip.current;
+    if (!element) return;
+    const wheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || element.scrollWidth <= element.clientWidth) return;
+      event.preventDefault();
+      element.scrollLeft += event.deltaY;
+    };
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => element.removeEventListener('wheel', wheel);
+  }, [hasTabs]);
+  // A tab opened or selected off-screen scrolls into view.
+  useEffect(() => {
+    strip.current?.querySelector('.sf-etab.is-active')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [active, tabs.length]);
+  if (!hasTabs) return null;
+  return <div ref={strip} className="sf-etabs" role="tablist" aria-label="Open files">
     {tabs.map((tab, index) => {
       const selected = tab.id === active;
       return <span key={tab.id} className={`sf-etab${selected ? ' is-active' : ''}`} data-kind={tab.kind}>
