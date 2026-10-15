@@ -5,7 +5,7 @@ import { STUDIO_RPC, type TurnTrace } from '../../../lib/studio-contract.js';
 import { TracePanel } from './TracePanel.js';
 
 export const RUN_REPLAY_STYLES = `
-.sf-run { display:flex; flex-direction:column; gap:12px; flex:1; min-height:0; overflow:auto; padding:16px 20px; }
+.sf-run { display:flex; flex-direction:column; gap:12px; flex:1; min-height:0; overflow:auto; padding:16px 20px; user-select:text; -webkit-user-select:text; }
 .sf-run-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:11px; color:var(--sf-muted); }
 .sf-run-head strong { color:var(--sf-text); font-weight:600; }
 .sf-run-head .sf-run-close { margin-left:auto; }

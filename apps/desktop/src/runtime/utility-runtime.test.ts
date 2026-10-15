@@ -23,6 +23,17 @@ describe('utility process lifecycle', () => {
     await vi.advanceTimersByTimeAsync(300_000); await timeout;
     expect(vi.getTimerCount()).toBe(0);
   });
+  it('gives plugin RPCs the long plugin budget so slow CLI-backed handlers are not cut off at 20s', async () => {
+    vi.useFakeTimers(); const { child, runtime } = fixture();
+    const pending = runtime.request('plugins-call-rpc', 'salesforce', 'agentPreview.start', { live: true });
+    const message = child.postMessage.mock.calls[0]![0];
+    expect(message).toMatchObject({ operation: 'plugins-call-rpc', pluginId: 'salesforce', method: 'agentPreview.start', args: { live: true } });
+    expect(Date.parse(message.deadlineAt) - Date.now()).toBe(300_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    child.emit('message', { type: 'result', protocolVersion, id: message.id, value: { ok: true } });
+    expect(await pending).toEqual({ ok: true });
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('rejects pending and future calls immediately after a crash', async () => {
     vi.useFakeTimers(); const { child, runtime, gone } = fixture();
     const first = runtime.request('projects-list');

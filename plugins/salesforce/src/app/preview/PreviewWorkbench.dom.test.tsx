@@ -2,7 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PreviewWorkbench, type PreviewWorkbenchProps } from './PreviewWorkbench.js';
+import { PREVIEW_WORKBENCH_STYLES, PreviewWorkbench, type PreviewWorkbenchProps } from './PreviewWorkbench.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -717,5 +717,8 @@ describe('PreviewWorkbench run ownership', () => {
     expect(calls.find(c => c.method === 'agentLab.send')?.args).toMatchObject({ text: 'hi' });
     // A host command is not the user's click: its start still asks for approval in the thread.
     expect(calls.find(c => c.method === 'agentLab.start')?.args).not.toHaveProperty('startedByUser');
+  });
+  it('lets the user select text in the conversation, hints and errors despite the host chrome disabling selection', () => {
+    expect(PREVIEW_WORKBENCH_STYLES).toMatch(/\.sf-pw-log, \.sf-pw-hint, \.sf-pw-err, \.sf-pw-cmp \{ user-select:text; -webkit-user-select:text; \}/);
   });
 });

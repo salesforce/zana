@@ -761,7 +761,8 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
-      const timeoutMs = operation === 'plugins-cli-run' ? 300_000 : 20_000;
+      // Plugin CLI runs and RPCs may wrap slow external CLIs (e.g. `sf agent preview start`, up to 120s), so they get the long budget.
+      const timeoutMs = operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' ? 300_000 : 20_000;
       return new Promise<unknown>((resolveResult, rejectResult) => {
         const timer = setTimeout(() => {
           pending.delete(id);

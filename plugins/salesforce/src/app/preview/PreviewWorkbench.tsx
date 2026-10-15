@@ -83,6 +83,8 @@ export const PREVIEW_WORKBENCH_STYLES = `
 .sf-pw-cmp > div { border:1px solid var(--sf-border); border-radius:6px; padding:4px 6px; overflow-wrap:anywhere; white-space:pre-wrap; }
 .sf-pw-cmp > div.is-diff { border-color:var(--sf-warn); }
 .sf-pw-cmp .sf-pw-meta { grid-column:1 / -1; }
+/* The host chrome sets user-select:none; the conversation, traces, hints and errors are reading surfaces the user copies from. */
+.sf-pw-log, .sf-pw-hint, .sf-pw-err, .sf-pw-cmp { user-select:text; -webkit-user-select:text; }
 `;
 
 function snapshotTurns(snapshot: LabSnapshot): RunTurn[] {
