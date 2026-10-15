@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { COMMENT_CAP, commentsKey, registerStudioComments, reanchorComment, StudioCommentError, StudioCommentStore } from '../lib/studio-comments.js';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../lib/studio-contract.js';
+import { AGENT_SOURCE_MAX, STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../lib/studio-contract.js';
 
 function memoryKv() {
   const data = new Map<string, unknown>();
@@ -116,7 +116,7 @@ describe('registerStudioComments', () => {
     const { call } = setup({ root: '/nope' });
     const r = await call(STUDIO_RPC.commentAdd, { path: 'missing.agent', line: 1, body: 'x' });
     expect(r).toMatchObject({ ok: true, comment: { quote: '' } });
-    const big = await call(STUDIO_RPC.commentAdd, { path: 'g', line: 1, body: 'x', content: 'x'.repeat(200_000) });
+    const big = await call(STUDIO_RPC.commentAdd, { path: 'g', line: 1, body: 'x', content: 'x'.repeat(AGENT_SOURCE_MAX + 1) });
     expect(big.comment.quote).toBe('');
   });
   it('rethrows unexpected errors for the host wrapper', async () => {

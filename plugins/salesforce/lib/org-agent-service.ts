@@ -4,9 +4,10 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SalesforceDeps, PublicOrgView } from './types.js';
 import type { OrgAgent, OrgAgentCatalog, OrgAgentRetrieval, RetrievedOrgAgent } from './org-agent-contract.js';
+import { AGENT_SOURCE_MAX } from './studio-contract.js';
 
 const LIMIT = 1000;
-const SOURCE_LIMIT = 180_000;
+const SOURCE_LIMIT = AGENT_SOURCE_MAX;
 const TIMEOUT = 120_000;
 const META_LIMIT = 64_000;
 /** How many of an agent's newest authoring bundles one version read retrieves. */

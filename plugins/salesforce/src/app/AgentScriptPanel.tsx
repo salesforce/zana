@@ -234,7 +234,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [addComment, setAddComment] = useState<{ line: number; endLine: number; quote: string } | null>(null);
   const [commentBody, setCommentBody] = useState('');
   const [fixBusy, setFixBusy] = useState(false);
-  const [previewEngine, setPreviewEngine] = useState<StudioEngine>('rehearse');
+  const [previewEngine, setPreviewEngine] = useState<StudioEngine>('simulate');
   const [previewCommand, setPreviewCommand] = useState<PreviewCommand | null>(null);
   // Monotonic, so a command issued after one was handled and dropped never reuses its seq.
   const previewSeq = useRef(0);
@@ -545,6 +545,18 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     setCompileState(current => current?.status === 'running' && current.path === path ? parseCompileReply(path, sha, reply) : current);
   }, [patch, pluginId, rpcArgs, threadId]);
 
+  const [openingBuilder, setOpeningBuilder] = useState(false);
+  const openInBuilder = useCallback(async () => {
+    const path = activePathRef.current;
+    if (!path) return;
+    setOpeningBuilder(true); setError(null);
+    try {
+      const reply = await callPluginRpc(pluginId, 'agentBuilder.open', rpcArgs({ path, ...(threadId ? { threadId } : {}) })) as { ok?: boolean; error?: string } | null;
+      if (reply?.ok === false) throw new Error(reply.error || 'Could not open Agentforce Builder.');
+    } catch (err) { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }
+    finally { if (alive.current) setOpeningBuilder(false); }
+  }, [pluginId, rpcArgs, threadId]);
+
   const fixWithAgent = useCallback(async () => {
     setFixBusy(true); setError(null);
     try { await askAgent('fix-problems', { diagnostics: problems.slice(0, 50) }); }
@@ -819,7 +831,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
             shortcutHint: wide, hidePanelToggle: compact,
             onQuickOpen: () => setQuickOpen(true),
             onCompile: () => void compile(), compiling: compiled?.status === 'running',
-            onPublish: () => openTool('release')
+            onPublish: () => openTool('release'),
+            onOpenInBuilder: () => void openInBuilder(), openingBuilder
           })} />
         {orgSessionLabel(org) ? (
           <span hidden className="sf-as-crumb-seg" data-testid="salesforce-playground-org">

@@ -4,6 +4,7 @@ import { isDxProject, listFilesRecursive, resolveUnderRoot } from './dx-project.
 import { inspectAgentSource, scanAgentBundles } from './agent.js';
 import { isAgentScriptFile } from './agent-script-model.js';
 import type { SalesforceDeps } from './types.js';
+import { AGENT_SOURCE_MAX, AGENT_SOURCE_MAX_LABEL } from './studio-contract.js';
 
 export interface AgentFileListItem {
   apiName: string;
@@ -144,7 +145,7 @@ export function writeAgentFile(
 
 /** Save as never overwrites. The existing parent must resolve inside the authorized root. */
 export function createAgentFile(projectRoot: string, candidate: string, content: string, deps: SalesforceDeps, options?: AgentFilesRootOptions) {
-  if (typeof content !== 'string' || content.length > 180_000) throw new AgentFilesError('invalid_input', 'Agent source must be at most 180,000 characters.');
+  if (typeof content !== 'string' || content.length > AGENT_SOURCE_MAX) throw new AgentFilesError('invalid_input', `Agent source must be at most ${AGENT_SOURCE_MAX_LABEL}.`);
   const root = resolveAgentRoot(projectRoot, deps, options);
   if (!candidate.trim() || isAbsolute(candidate) || /^[A-Za-z]:/.test(candidate) || candidate.includes('\\') || candidate.includes('\0') || candidate.split('/').includes('..') || !isAgentScriptFile(candidate)) {
     throw new AgentFilesError('path_refused', 'Choose a relative .agent or .afscript path inside this project.');

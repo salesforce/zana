@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { UI_COMMANDS, WorkbenchControl } from '../lib/workbench-control.js';
 import { validateUiCommandInput } from '../lib/ui-command-input.js';
+import { AGENT_SOURCE_MAX } from '../lib/studio-contract.js';
 
 const sha = 'b'.repeat(64);
 const proposal = { path: 'a.agent', expectedSha256: sha, content: 'new', summary: 'tidy' };
@@ -18,12 +19,12 @@ describe('Studio UI verbs on the control channel', () => {
   it('accepts the new verbs and rejects invalid input before queuing', () => {
     const service = new WorkbenchControl();
     const { viewId } = service.register('p', { surface: 'agentforce', commands: [...UI_COMMANDS] });
-    for (const [command, input] of [['preview.start', { engine: 'rehearse' }], ['preview.send', { text: 'hi' }], ['trace.focus', { runId: 'r', turn: 1, step: 0 }], ['graph.focus', { node: 'topic.a' }], ['layout.set', { compact: false }], ['editor.proposeEdit', proposal]] as const) {
+    for (const [command, input] of [['preview.start', { engine: 'simulate' }], ['preview.send', { text: 'hi' }], ['trace.focus', { runId: 'r', turn: 1, step: 0 }], ['graph.focus', { node: 'topic.a' }], ['layout.set', { compact: false }], ['editor.proposeEdit', proposal]] as const) {
       expect(service.request('p', { viewId, command, input })).toMatchObject({ state: 'pending' });
       service.poll('p', { viewId, state: {} });
     }
     expect(() => service.request('p', { viewId, command: 'editor.proposeEdit', input: { ...proposal, expectedSha256: 'short' } })).toThrow('expectedSha256');
-    expect(() => service.request('p', { viewId, command: 'editor.proposeEdit', input: { ...proposal, content: 'x'.repeat(180_001) } })).toThrow();
+    expect(() => service.request('p', { viewId, command: 'editor.proposeEdit', input: { ...proposal, content: 'x'.repeat(AGENT_SOURCE_MAX + 1) } })).toThrow();
     expect(() => service.request('p', { viewId, command: 'editor.proposeEdit', input: { path: 'a', expectedSha256: sha, summary: 's' } })).toThrow('exactly one');
     expect(() => service.request('p', { viewId, command: 'editor.proposeEdit', input: { ...proposal, content: undefined, edits: Array.from({ length: 51 }, () => ({ startLine: 1, endLine: 1, text: '' })) } })).toThrow();
     expect(() => service.request('p', { viewId, command: 'layout.set', input: { compact: 'yes' } })).toThrow('boolean');
@@ -32,6 +33,8 @@ describe('Studio UI verbs on the control channel', () => {
 
   it('validates each verb', () => {
     expect(validateUiCommandInput('preview.start', { engine: 'x' })).toMatch(/engine/);
+    expect(validateUiCommandInput('preview.start', { engine: 'rehearse' })).toBe('engine must be simulate or live.');
+    expect(validateUiCommandInput('preview.send', { text: 'a', engine: 'rehearse' })).toBe('engine must be simulate or live.');
     expect(validateUiCommandInput('preview.start', { engine: 'live', extra: 1 })).toMatch(/only engine/);
     expect(validateUiCommandInput('preview.start', {})).toBeUndefined();
     expect(validateUiCommandInput('preview.send', { text: '' })).toMatch(/text/);

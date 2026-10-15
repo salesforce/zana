@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { sha256Hex } from './agent-files.js';
+import { AGENT_SOURCE_MAX, AGENT_SOURCE_MAX_LABEL } from './studio-contract.js';
 
 export const DRAFT_PROJECT = 'agentforce-drafts';
 const API_NAME = /^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*$/;
@@ -50,7 +51,7 @@ export function agentDraftSource(input: AgentDraftInput): string {
   if (typeof input.apiName !== 'string' || !API_NAME.test(input.apiName) || input.apiName.length > 80) throw Error('API name must start with a letter and contain letters, numbers, or single underscores.');
   if (input.purpose !== undefined && (typeof input.purpose !== 'string' || input.purpose.length > 4000)) throw Error('Purpose must be at most 4,000 characters.');
   if (input.source !== undefined) {
-    if (typeof input.source !== 'string' || !input.source.trim() || input.source.length > 180_000) throw Error('Draft source must contain 1–180,000 characters.');
+    if (typeof input.source !== 'string' || !input.source.trim() || input.source.length > AGENT_SOURCE_MAX) throw Error(`Draft source must be non-empty and at most ${AGENT_SOURCE_MAX_LABEL}.`);
     // A new draft is a new local identity; never inherit the source's name or metadata target.
     if (!/^\s+agent_name:\s*.*$/m.test(input.source)) throw Error('Source must include config.agent_name.');
     return input.source.replace(/^(\s+agent_name:)\s*.*$/m, `$1 ${JSON.stringify(input.apiName)}`);

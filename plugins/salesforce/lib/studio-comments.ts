@@ -5,14 +5,14 @@
  */
 import { randomUUID } from 'node:crypto';
 import { readAgentFile } from './agent-files.js';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_LIMITS, STUDIO_RPC, type StudioComment } from './studio-contract.js';
+import { AGENT_SOURCE_MAX, STUDIO_CHANGED_CHANNEL, STUDIO_LIMITS, STUDIO_RPC, type StudioComment } from './studio-contract.js';
 import { rpcFailure, rpcString, type StudioServerContext } from './studio-server-context.js';
 
 export const COMMENT_CAP = 500;
 export const COMMENT_BODY_MAX = 4000;
 export const COMMENT_NOTE_MAX = 2000;
 export const COMMENT_PATH_MAX = 512;
-const SOURCE_MAX = 180_000;
+const SOURCE_MAX = AGENT_SOURCE_MAX;
 
 export const commentsKey = (projectId: string) => `studio:comments:${projectId}`;
 

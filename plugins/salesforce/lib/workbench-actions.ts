@@ -59,7 +59,8 @@ export const actionParameters = {
 export function actionInput(value: unknown): Record<string, unknown> {
   if (value === undefined) return {};
   if (!value || typeof value !== 'object' || Array.isArray(value) || JSON.stringify(value).length > 200_000) throw Error('Action input must be an object of at most 200,000 characters.');
-  const { projectId: _project, threadId: _thread, orgAlias: _alias, ...input } = value as Record<string, unknown>;
+  // startedByUser marks a click in the Studio; an agent can never claim it.
+  const { projectId: _project, threadId: _thread, orgAlias: _alias, startedByUser: _user, ...input } = value as Record<string, unknown>;
   return input;
 }
 export function actionCatalog() {

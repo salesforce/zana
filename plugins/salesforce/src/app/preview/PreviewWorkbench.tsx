@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { callPluginRpc, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_ENGINES, STUDIO_RPC, type ScenarioSuite, type StudioEngine, type TurnTrace } from '../../../lib/studio-contract.js';
+import { PREVIEW_ENGINES, STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type ScenarioSuite, type StudioEngine, type TurnTrace } from '../../../lib/studio-contract.js';
 import type { LabSnapshot } from '../../../lib/agentforce-lab-contract.js';
 import {
-  REHEARSE_LABEL, appendRun, caseFromRun, diffRuns, engineToLab, exportRunPayload, suiteChip, suiteTally,
+  appendRun, caseFromRun, diffRuns, engineToLab, exportRunPayload, suiteChip, suiteTally,
   type ChipState, type RunRecord, type RunTurn
 } from '../agentforce-preview-logic.js';
 import { STUDIO_TOKENS } from '../studio/studio-tokens.js';
@@ -100,7 +100,9 @@ const LIVE_TRACE_REASON = 'Live runs do not return a planner trace here. Use Sim
 export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   const { pluginId, projectId, path } = props;
   const [innerEngine, setInnerEngine] = useState<StudioEngine>(props.engine ?? 'simulate');
-  const engine = props.engine ?? innerEngine;
+  // Rehearse is hidden for now: a stale request for it runs Simulate.
+  const chosen = props.engine ?? innerEngine;
+  const engine: StudioEngine = chosen === 'rehearse' ? 'simulate' : chosen;
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [turns, setTurns] = useState<RunTurn[]>([]);
   const [traces, setTraces] = useState<Record<string, TurnTrace>>({});
@@ -191,7 +193,8 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     finally { locked.current = false; if (alive.current) setBusy(false); }
   }
 
-  async function start() {
+  /** `byUser`: a click on Start or Send, which approves the run itself; a host command does not. */
+  async function start(byUser = false) {
     release();
     setTurns([]); setTraces({}); setOpen({}); setTracing({});
     const started = epoch.current;
@@ -199,11 +202,11 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     const lab = engineToLab(engine);
     let run: ActiveRun; let first: RunTurn[] = [];
     if (lab) {
-      const res = await rpc<LabSnapshot>('agentLab.start', { engine: lab, source: props.source, ...(path ? { path } : {}), ...(props.threadId ? { threadId: props.threadId } : {}) });
+      const res = await rpc<LabSnapshot>('agentLab.start', { engine: lab, source: props.source, ...(path ? { path } : {}), ...(props.threadId ? { threadId: props.threadId } : {}), ...(byUser ? { startedByUser: true } : {}) });
       if (!res.ok || !res.data) throw new Error(res.error || 'The preview could not start.');
       run = { ...owner, id: res.data.id }; first = snapshotTurns(res.data);
     } else {
-      const res = await rpc<{ sessionId?: string | null }>('agentPreview.start', { threadId: props.threadId, orgAlias: props.orgAlias, path, live: true });
+      const res = await rpc<{ sessionId?: string | null }>('agentPreview.start', { threadId: props.threadId, orgAlias: props.orgAlias, path, live: true, ...(byUser ? { startedByUser: true } : {}) });
       const id = res.data?.sessionId;
       if (!res.ok || !id) throw new Error(res.error || 'Live preview could not start.');
       run = { ...owner, id };
@@ -228,14 +231,14 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     const text = draft.trim();
     if (!text || !active.current) return;
     setDraft('');
-    await sendText(text);
+    await sendText(text, true);
   }
-  async function sendText(text: string) {
+  async function sendText(text: string, byUser = false) {
     const current = active.current;
     if (!current) return;
     if (current.engine === 'live') {
       setTurns(prev => [...prev, { role: 'user', text }]);
-      const res = await rpc<{ response?: string; planId?: string }>('agentPreview.send', { sessionId: current.id, utterance: text, path: current.path, live: true, orgAlias: props.orgAlias, threadId: current.threadId });
+      const res = await rpc<{ response?: string; planId?: string }>('agentPreview.send', { sessionId: current.id, utterance: text, path: current.path, live: true, orgAlias: props.orgAlias, threadId: current.threadId, ...(byUser ? { startedByUser: true } : {}) });
       if (!res.ok) throw new Error(res.error || 'The agent did not respond.');
       const reply = res.data?.response?.trim();
       if (reply) setTurns(prev => [...prev, { role: 'agent', text: reply, ...(res.data?.planId ? { planId: res.data.planId } : {}) }]);
@@ -318,18 +321,18 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
       <style>{STUDIO_TOKENS}{PREVIEW_WORKBENCH_STYLES}{TRACE_PANEL_STYLES}</style>
       <div className="sf-pw-bar">
         <div className="sf-pw-seg" role="group" aria-label="Preview engine">
-          {STUDIO_ENGINES.map(e => <button key={e} type="button" aria-pressed={engine === e} disabled={busy || running} title={ENGINE_COPY[e].hint} onClick={() => setEngine(e)}>{ENGINE_COPY[e].title}</button>)}
+          {PREVIEW_ENGINES.map(e => <button key={e} type="button" aria-pressed={engine === e} disabled={busy || running} title={ENGINE_COPY[e].hint} onClick={() => setEngine(e)}>{ENGINE_COPY[e].title}</button>)}
         </div>
         <span className="sf-pw-spacer" />
         {running
           ? <button type="button" className="sf-pw-btn" disabled={busy} onClick={() => void perform(end)}>End</button>
-          : <button type="button" className="sf-pw-btn is-primary" data-testid="pw-start" disabled={busy || liveBlocked || !props.source.trim()} onClick={() => void perform(start)}>{busy ? 'Starting…' : 'Start'}</button>}
+          : <button type="button" className="sf-pw-btn is-primary" data-testid="pw-start" disabled={busy || liveBlocked || (engine !== 'live' && !props.source.trim())} onClick={() => void perform(() => start(true))}>{busy ? 'Starting…' : 'Start'}</button>}
         {runs.length > 0 && <button type="button" className="sf-pw-btn" onClick={() => currentRun || runs[0] ? download('agentforce-run.json', exportRunPayload(currentRun ?? runs[0]!)) : undefined}>Export run</button>}
         {runs.length > 1 && <button type="button" className="sf-pw-btn" aria-pressed={Boolean(compare)} onClick={() => setCompare(compare ? null : [runs[0]!.runId, runs[1]!.runId])}>Compare runs</button>}
         {running && turns.some(t => t.role === 'user') && <button type="button" className="sf-pw-btn" disabled={!path} title={path ? 'Save this conversation as a scenario' : 'Open a saved .agent file to save scenarios'} onClick={() => setSaving(s => !s)}>Save as scenario</button>}
       </div>
       <div className={engine === 'live' ? 'sf-pw-hint is-warn' : 'sf-pw-hint'}>
-        {engine === 'rehearse' ? `${REHEARSE_LABEL}. An AI model plays your script.` : engine === 'simulate' ? 'Compiles this draft through the Preview API. Actions are simulated.' : liveBlocked ? 'Open a saved .agent file to run Live.' : `Live runs real actions${props.orgAlias ? ` on ${props.orgAlias}` : ' on the connected org'}.${props.dirty ? ' It runs the saved file, so save to include your edits.' : ''}`}
+        {engine === 'simulate' ? 'Compiles this draft through the Preview API. Actions are simulated.' : liveBlocked ? 'Open a saved .agent file to run Live.' : `Live runs real actions${props.orgAlias ? ` on ${props.orgAlias}` : ' on the connected org'}.${props.dirty ? ' It runs the saved file, so save to include your edits.' : ''}`}
         {stale && ' Your script changed; start a new run to test the edits.'}
       </div>
       {error && <div className="sf-pw-err" role="alert">{error}</div>}

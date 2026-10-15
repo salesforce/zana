@@ -467,6 +467,32 @@ describe('AgentScriptPanel startup and focus routing', () => {
   });
 });
 
+describe('AgentScriptPanel Open in Agentforce Builder', () => {
+  const openButton = (el: HTMLElement) => el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agent-script-open-builder"]')!;
+
+  it('asks the plugin to open the saved file in the builder and shows why it could not', async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    overrides['agentBuilder.open'] = () => new Promise(resolve => { answer = resolve; });
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await click(openButton(el));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentBuilder.open', { projectId: 'proj-1', path: 'force-app/bots/QC.agent' });
+    expect(openButton(el).disabled).toBe(true);
+    await act(async () => { answer({ ok: true }); });
+    await flush();
+    expect(openButton(el).disabled).toBe(false);
+    overrides['agentBuilder.open'] = () => ({ ok: false, error: 'No authoring bundle QC.' });
+    await click(openButton(el));
+    expect(el.textContent).toContain('No authoring bundle QC.');
+    overrides['agentBuilder.open'] = () => ({ ok: false });
+    await click(openButton(el));
+    expect(el.textContent).toContain('Could not open Agentforce Builder.');
+    overrides['agentBuilder.open'] = () => { throw new Error('host gone'); };
+    await click(openButton(el));
+    expect(el.textContent).toContain('host gone');
+  });
+});
+
 describe('AgentScriptPanel Compile', () => {
   const compileButton = (el: HTMLElement) => el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agent-script-compile"]')!;
   const status = (el: HTMLElement) => el.querySelector('[data-testid="salesforce-compile-status"]')?.textContent;

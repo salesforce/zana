@@ -12,6 +12,7 @@ import {
   writeAgentFile
 } from '../lib/agent-files.js';
 import type { SalesforceDeps } from '../lib/types.js';
+import { AGENT_SOURCE_MAX } from '../lib/studio-contract.js';
 
 const dirs: string[] = [];
 
@@ -136,7 +137,7 @@ describe('agent files confinement', () => {
     for (const path of ['../Outside.agent', '/tmp/Outside.agent', 'escape/Outside.agent', 'missing/New.agent', 'notes.txt', '']) {
       expect(() => createAgentFile(root, path, 'source', deps, options)).toThrow();
     }
-    expect(() => createAgentFile(root, 'New.agent', 'x'.repeat(180001), deps, options)).toThrow('180,000');
+    expect(() => createAgentFile(root, 'New.agent', 'x'.repeat(AGENT_SOURCE_MAX + 1), deps, options)).toThrow('10 MB');
     expect(() => createAgentFile(root, 'New.agent', 'source', { ...deps, createFile: undefined }, options)).toThrow('unavailable');
     expect(() => createAgentFile(root, 'New.agent', 'source', { ...deps, createFile: () => { throw Error('disk full'); } }, options)).toThrow('disk full');
     expect(readdirSync(outside)).toEqual([]);

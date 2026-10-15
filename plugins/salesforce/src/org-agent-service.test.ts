@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { OrgAgentService, parseAgentCatalog } from '../lib/org-agent-service.js';
 import type { ExecSfOptions, PublicOrgView } from '../lib/types.js';
+import { AGENT_SOURCE_MAX } from '../lib/studio-contract.js';
 
 const org: PublicOrgView = { alias: 'sandbox', orgId: '00D000000000001', username: 'me@example.com', instanceUrl: 'https://example.com', apiVersion: '67.0', kind: 'sandbox', isDefault: false };
 const roots: string[] = [];
@@ -86,7 +87,7 @@ describe('org agent sources', () => {
     execSf.mockImplementation(async (_args, opts) => {
       temporary = opts!.cwd!;
       const folder = join(temporary, 'force-app');
-      if (mode === 'large') writeFileSync(join(folder, 'Test.agent'), 'x'.repeat(180001));
+      if (mode === 'large') writeFileSync(join(folder, 'Test.agent'), 'x'.repeat(AGENT_SOURCE_MAX + 1));
       if (mode === 'symlink') symlinkSync(root, join(folder, 'escape'));
       if (mode === 'ambiguous') { writeFileSync(join(folder, 'One.agent'), 'one'); writeFileSync(join(folder, 'Two.agent'), 'two'); }
       if (mode === 'too-many') for (let index = 0; index < 101; index++) writeFileSync(join(folder, `${index}.txt`), '');
@@ -149,7 +150,7 @@ describe('org agent sources', () => {
       ['symlink', { Help_v1: { target: 'Help.v1' } }, (root: string) => symlinkSync(tmpdir(), join(root, 'escape')), 'symbolic link'],
       ['too-many', { Help_v1: { target: 'Help.v1' } }, (root: string) => { for (let index = 0; index < 1001; index++) writeFileSync(join(root, `${index}.txt`), ''); }, 'too many files'],
       ['deep', { Help_v1: { target: 'Help.v1' } }, (root: string) => mkdirSync(join(root, ...Array.from({ length: 12 }, () => 'd')), { recursive: true }), 'nested folders'],
-      ['large', { Help_v1: { target: 'Help.v1', content: 'x'.repeat(180_001) } }, undefined, 'size limit'],
+      ['large', { Help_v1: { target: 'Help.v1', content: 'x'.repeat(AGENT_SOURCE_MAX + 1) } }, undefined, 'size limit'],
       ['ambiguous', { Help_v1: { target: 'Help.v1', scripts: 2 } }, undefined, 'no single Agent Script'],
       ['oversized metadata', { Help_v1: { meta: `<target>Help.v1</target>${' '.repeat(64_001)}` } }, undefined, 'published v1'],
     ] as const)('cleans up after a %s retrieval', async (_mode, bundles, after, error) => {

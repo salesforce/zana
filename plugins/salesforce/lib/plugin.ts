@@ -201,7 +201,9 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     transport: labTransport,
     connect: () => connections.connect(),
     // Same gate as agentPreview.* and query.execute: production and unknown orgs confirm in the thread.
-    authorize: async (org, { engine, threadId }) => {
+    authorize: async (org, { engine, threadId, startedByUser }) => {
+      // The user's own click on Start is the approval; an agent-driven start still asks in its thread.
+      if (startedByUser) return;
       const verb = engine === 'preview' ? 'Simulate' : 'Rehearse';
       const mediated = await guardrail.mediate({
         threadId,
@@ -600,6 +602,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerRpc('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
   // A "Load versions" approval also lets Compile reach a production org from the window.
   registerRpc('agentScript.compile', (args) => runUiCompile(args, readGrants.wrap(sdk, releaseScope()), deps, readSettings));
+  registerRpc('agentBuilder.open', (args) => runOpenInBuilder(args, readGrants.wrap(sdk, releaseScope()), deps, readSettings));
   const release = createReleaseService({
     sdk,
     evidence: evalEvidence,
@@ -1529,6 +1532,47 @@ async function runUiCompile(
   }
 }
 
+/** The Studio "Open in Agentforce Builder" button: the CLI opens the org's builder for this bundle in Chrome. */
+async function runOpenInBuilder(
+  args: unknown,
+  sdk: SalesforceSdk,
+  deps: SalesforceDeps,
+  readSettings: () => Promise<PluginSettingsValues>
+): Promise<ToolResult> {
+  const path = rpcString(args, 'path');
+  if (!path) return fail('invalid_input', 'Open a saved .agent file first.');
+  const ctx: PluginAgentToolContext = {
+    threadId: rpcString(args, 'threadId'),
+    projectId: rpcString(args, 'projectId'),
+    signal: new AbortController().signal
+  };
+  try {
+    const loaded = await loadAgentBundles({ path }, await readSettings(), deps);
+    if (!('projectRoot' in loaded)) return loaded;
+    if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${path}`);
+    const apiName = loaded.bundle.apiName;
+    const { org, mediated } = await mediateOrgRead(ctx, sdk, (connected) => `Open ${apiName} in Agentforce Builder on ${connected.alias} (${connected.kind})`);
+    if (!mediated.approved) {
+      return fail('refused', mediated.reason === 'headless'
+        ? `${org.alias} is a ${org.kind} org. Open it beside a thread to approve, or pick a sandbox.`
+        : `Operator ${mediated.reason} opening Agentforce Builder.`);
+    }
+    const result = await sdk.execSf(
+      ['org', 'open', 'agent', '--json', '--target-org', org.alias, '--authoring-bundle', apiName, '--browser', 'chrome'],
+      agentCliOpts(loaded.projectRoot)
+    );
+    const parsed = parseSfJson(result.stdout);
+    // The CLI's JSON carries a frontdoor URL with a session id: it never leaves this process.
+    if (result.code !== 0 || parsed.status !== 0) {
+      const reason = (parsed.message || result.stderr.trim()).replace(/https?:\/\/\S+/g, '[url]');
+      return fail('open_failed', reason || `Could not open ${apiName} in Agentforce Builder.`);
+    }
+    return { ok: true, summary: `Opened ${apiName} in Agentforce Builder on ${org.alias}.` };
+  } catch (error) {
+    return connectionFailure(error);
+  }
+}
+
 async function runUiPreview(
   action: 'preview.start' | 'preview.send' | 'preview.end',
   args: unknown,
@@ -1558,7 +1602,8 @@ async function runUiPreview(
     signal: new AbortController().signal
   };
   try {
-    return await runAgentPreview(parsed.plan, ctx, sdk, artifacts, deps, snapshot);
+    const startedByUser = Boolean(args && typeof args === 'object' && (args as { startedByUser?: unknown }).startedByUser === true);
+    return await runAgentPreview(parsed.plan, ctx, sdk, artifacts, deps, snapshot, startedByUser);
   } catch (error) {
     return connectionFailure(error);
   }
@@ -1570,7 +1615,9 @@ async function runAgentPreview(
   sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
-  snapshot: PluginSettingsValues
+  snapshot: PluginSettingsValues,
+  /** The user clicked Start or Send in the Studio: that click is the approval, so nothing is asked in a thread. */
+  startedByUser = false
 ): Promise<ToolResult> {
   const verb = plan.action === 'preview.start' ? 'start' : plan.action === 'preview.send' ? 'send' : 'end';
   const resolved = await resolvePreviewIdentity(plan, snapshot, deps, verb === 'start');
@@ -1578,14 +1625,20 @@ async function runAgentPreview(
   const label = resolved.identity?.apiName ?? plan.sessionId ?? '';
   const live = plan.live || resolved.identity?.flag === 'api-name';
   // Ending only closes the session and runs no actions, so it keeps the org read gate but needs no Live approval.
-  const { org, mediated } = await mediateOrgRead(
+  const { org, mediated } = startedByUser ? { org: await sdk.connect(), mediated: { approved: true, reason: 'submitted' } } : await mediateOrgRead(
     ctx,
     sdk,
     (connected) => `${live ? 'Live ' : ''}${plan.action} ${label} on ${connected.alias} (${connected.kind})`,
     live && verb !== 'end' ? 'agent.preview.live' : undefined,
     { preview: label }
   );
-  if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} ${plan.action}.`);
+  if (!mediated.approved) {
+    return fail('refused', mediated.reason !== 'headless'
+      ? `Operator ${mediated.reason} ${plan.action}.`
+      : live
+        ? 'Live runs real actions, so it needs approval in a thread. Open this agent beside a thread to run Live, or use Simulate.'
+        : `${org.alias} is not a known sandbox. Preview it beside a thread to approve, or pick a sandbox.`);
+  }
   const result = await sdk.execSf(
     previewArgs(verb, plan, org.alias, resolved.identity),
     agentCliOpts(resolved.projectRoot ?? dxProjectRoot(snapshot, deps))

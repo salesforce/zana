@@ -131,4 +131,18 @@ describe('Agent Script document toolbar', () => {
     view.rerender(<AgentScriptDocumentBar {...defaults} />);
     expect(screen.queryByRole('button', { name: 'Preview', exact: true })).toBeNull();
   });
+
+  it('opens the saved agent in Agentforce Builder, but not an unsaved one or while opening', () => {
+    const onOpenInBuilder = vi.fn();
+    const { rerender } = render(<AgentScriptDocumentBar {...defaults} onOpenInBuilder={onOpenInBuilder} />);
+    const open = () => screen.getByRole('button', { name: 'Open in Agentforce Builder' }) as HTMLButtonElement;
+    expect(open().title).toBe('Open in Agentforce Builder (Chrome)');
+    fireEvent.click(open());
+    expect(onOpenInBuilder).toHaveBeenCalledOnce();
+    rerender(<AgentScriptDocumentBar {...defaults} onOpenInBuilder={onOpenInBuilder} openingBuilder />);
+    expect(open().disabled).toBe(true);
+    expect(open().className).toContain('is-busy');
+    rerender(<AgentScriptDocumentBar {...defaults} path={null} onOpenInBuilder={onOpenInBuilder} />);
+    expect(open().disabled).toBe(true);
+  });
 });

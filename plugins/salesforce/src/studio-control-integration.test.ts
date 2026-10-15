@@ -46,12 +46,12 @@ it('delivers ui.command editor.proposeEdit, wakes the view over realtime and ret
   expect(await waiting).toMatchObject({ state: 'completed', ok: true, outcome });
 });
 
-it('mediates preview verbs as org reads except for the rehearse engine', async () => {
+it('mediates preview verbs as org reads and no longer takes the rehearse engine', async () => {
   const { action, harness } = await fixture(true);
   const view = await harness.callRpc('control.register', { projectId: 'p', surface: 'agentforce', commands: ['preview.start', 'preview.send'] }) as any;
   expect(await action('ui.command', { viewId: view.viewId, command: 'preview.start', input: { engine: 'simulate' } })).toMatchObject({ code: 'refused' });
   expect(await action('ui.command', { viewId: view.viewId, command: 'preview.send', input: { text: 'hi' } })).toMatchObject({ code: 'refused' });
-  expect(await action('ui.command', { viewId: view.viewId, command: 'preview.start', input: { engine: 'rehearse' } })).toMatchObject({ ok: true, state: 'pending' });
+  expect(await action('ui.command', { viewId: view.viewId, command: 'preview.start', input: { engine: 'rehearse' } })).toMatchObject({ ok: false });
 });
 
 it('names the thread behind each ui.command so the Studio can show who it follows', async () => {

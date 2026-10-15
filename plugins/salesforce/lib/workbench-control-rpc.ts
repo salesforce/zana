@@ -11,8 +11,8 @@ export function uiCommandReadsOrg(command: unknown, input: Record<string, unknow
   return ['object.select', 'record.open', 'log.open'].includes(String(command))
     || (command === 'view.open' && input?.view !== 'agentforce')
     || (command === 'panel.open' && ['agents', 'org-preview', 'release'].includes(String(input?.tool)))
-    // Simulate/live sessions talk to the org; only the LLM role-play engine stays local.
-    || ((command === 'preview.start' || command === 'preview.send') && input?.engine !== 'rehearse');
+    // Preview offers only Simulate and Live, and both talk to the org.
+    || command === 'preview.start' || command === 'preview.send';
 }
 
 /** Registers the control.* renderer RPCs backed by WorkbenchControl. Owner of later changes: WS-2. */

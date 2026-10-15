@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bot, Check, ChevronDown, Circle, CopyPlus, Hammer, PanelRight, Play, Rocket, Save, Search } from 'lucide-react';
+import { Bot, Check, ChevronDown, Circle, CopyPlus, ExternalLink, Hammer, PanelRight, Play, Rocket, Save, Search } from 'lucide-react';
 import { breadcrumbSegments } from '../../lib/agent-script-file-tree.js';
 
 type DocumentBarProps = {
@@ -25,6 +25,10 @@ type DocumentBarProps = {
   /** A compile is in flight. */
   compiling?: boolean;
   onPublish?: () => void;
+  /** Open the saved agent in the org's Agentforce Builder, in Chrome. */
+  onOpenInBuilder?: () => void;
+  /** The builder is being opened. */
+  openingBuilder?: boolean;
   onQuickOpen?: () => void;
   /** Show the Cmd/Ctrl+S hint on the Save button (wide layout). */
   shortcutHint?: boolean;
@@ -59,6 +63,7 @@ export function AgentScriptDocumentBar(props: DocumentBarProps) {
       {props.headerActions}
       {props.onQuickOpen && <button type="button" className="icon-btn" title="Go to file (⌘P)" aria-label="Go to file" onClick={props.onQuickOpen}><Search size={15} aria-hidden="true" /></button>}
       {props.onCompile && <button type="button" className={`icon-btn af-document-compile${props.compiling ? ' is-busy' : ''}`} data-testid="salesforce-agent-script-compile" aria-label={props.compiling ? 'Compiling…' : 'Compile'} title={props.dirty ? 'Save first: Compile checks the file on disk' : props.compiling ? 'Compiling…' : 'Compile the saved file and show the result under Problems'} disabled={!props.path || props.dirty || props.compiling} onClick={props.onCompile}><Hammer size={15} aria-hidden="true" /></button>}
+      {props.onOpenInBuilder && <button type="button" className={`icon-btn${props.openingBuilder ? ' is-busy' : ''}`} data-testid="salesforce-agent-script-open-builder" aria-label="Open in Agentforce Builder" title="Open in Agentforce Builder (Chrome)" disabled={!props.path || props.openingBuilder} onClick={props.onOpenInBuilder}><ExternalLink size={15} aria-hidden="true" /></button>}
       {props.orgPicker && <div className="af-document-org">{props.orgPicker}</div>}
       {props.path
         ? <SaveSplit {...props} />
