@@ -807,6 +807,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           follow={layout !== 'legacy' && (driver || threadId || followPaused) ? <FollowChip driver={driver ?? (threadId ? 'this thread' : undefined)} paused={followPaused} onToggle={() => setFollowPaused(paused => !paused)} /> : undefined}
           orgPicker={props.orgPicker !== false && <OrgPicker pluginId={pluginId} projectId={projectId} compact />}
           onBrowse={() => browseAgents()} onSave={() => void save()}
+          onPreview={() => openTool('preview')}
           onSaveAs={() => { setError(null); setSaveAsOpen(true); }} onShowPanel={tools.toggle}
           {...(layout === 'legacy' ? {} : {
             shortcutHint: wide, hidePanelToggle: compact,

@@ -151,7 +151,7 @@ async function openTool(studio: import('@playwright/test').Locator, name: string
   const tab = studio.locator('.af-tools').getByRole('tab', { name, exact: true });
   if (await tab.count()) { await tab.click(); return; }
   await studio.getByRole('button', { name: 'Add side panel tab', exact: true }).click();
-  await studio.getByRole('button', { name: new RegExp(`^${name}`) }).click();
+  await studio.locator('.af-tool-picker').getByRole('button', { name: new RegExp(`^${name}`) }).click();
 }
 
 test('Agentforce document toolbar: long paths, save state and narrow light/dark layouts', async ({ app, home }, testInfo) => {
@@ -188,6 +188,7 @@ test('Agentforce document toolbar: long paths, save state and narrow light/dark 
       expect(await bar.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
       await expect(bar.getByRole('button', { name: 'Save Agentforce file' })).toBeVisible();
       await expect(bar.getByRole('button', { name: 'Save as…' })).toBeVisible();
+      await expect(bar.getByRole('button', { name: 'Preview', exact: true })).toBeVisible();
       // Compact studios drop the folder line; wide ones show it under the title.
       const folder = studio.locator('.af-document-folder');
       await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', width < 1000 ? 'compact' : 'wide');
@@ -309,7 +310,7 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await studio.getByTestId('salesforce-agent-script-save').click();
   await expect(studio.getByRole('alert')).toContainText('changed on disk');
   expect(readFileSync(join(home, 'dx/DraftCopy.afscript'), 'utf8')).toBe(externalSource);
-  await openTool(studio, 'Preview');
+  await studio.getByRole('button', { name: 'Preview', exact: true }).click();
   const preview = studio.getByTestId('preview-workbench');
   const divider = studio.getByRole('separator', { name: 'Resize editor and side panel' });
   expect(await divider.evaluate(el => parseFloat(getComputedStyle(el).width))).toBeCloseTo(1, 1);
@@ -374,10 +375,14 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(lab.getByText('Stopped · partial conversation')).toBeVisible();
   await expect(lab.getByText('Criteria met')).toHaveCount(0);
   await page.setViewportSize({ width: 760, height: 900 });
-  await expect(frame.locator('.view-lines')).toBeVisible();
   // Narrow studios show one tool at a time instead of squeezing the editor beside the panel.
   await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', 'compact');
   await expect(studio.getByRole('tablist', { name: 'Studio tools' })).toBeVisible();
+  await expect(frame.locator('.view-lines')).toBeHidden();
+  await studio.getByRole('tablist', { name: 'Studio tools' }).getByRole('tab', { name: 'Code', exact: true }).click();
+  await expect(frame.locator('.view-lines')).toBeVisible();
+  await studio.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(preview).toBeVisible();
   expect(await studio.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-narrow-light.png'));
   const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, any> }>;

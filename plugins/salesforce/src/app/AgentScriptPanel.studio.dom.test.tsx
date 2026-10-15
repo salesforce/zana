@@ -399,6 +399,24 @@ describe('AgentScriptPanel follows the driving thread', () => {
     await act(async () => { expect(await run('editor.reveal', { line: 2 })).toMatchObject({ revealedLine: 2 }); });
   });
 
+  it.each([1000, 500])('opens Preview from the document toolbar at width %i without restarting it', async (w) => {
+    width = w;
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    const button = el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agent-script-preview"]')!;
+    expect(button.disabled).toBe(false);
+    await act(async () => { fireEvent.click(button); });
+    const preview = el.querySelector('[data-testid="stub-preview"]')!;
+    expect(preview).toBeTruthy();
+    expect(preview.getAttribute('data-command')).toBe('');
+    await act(async () => { fireEvent.click(el.querySelector('[data-testid="stub-run"]')!); });
+    await act(async () => { await exec('panel.hide'); });
+    await act(async () => { fireEvent.click(button); });
+    expect(el.querySelector('[data-testid="stub-preview"]')).toBe(preview);
+    expect(preview.getAttribute('data-command')).toBe('');
+    expect(control.options.state()).toMatchObject({ tool: 'preview', panels: { open: true, active: 'preview' } });
+  });
+
   it('opens the Release tool from Publish and from an agent card, compiled state and all', async () => {
     rpc.mockImplementation(baseRpc);
     const el = await mount('force-app/bots/QC.agent');

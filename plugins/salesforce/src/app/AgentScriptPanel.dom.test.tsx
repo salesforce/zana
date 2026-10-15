@@ -224,7 +224,7 @@ describe('AgentScriptPanel', () => {
     const tab = within(el).queryByRole('tab', { name, exact: true });
     if (tab) { await act(async () => { tab.click(); }); return; }
     await act(async () => { within(el).getByRole('button', { name: 'Add side panel tab' }).click(); });
-    await act(async () => { within(el).getByRole('button', { name: new RegExp(`^${name}`) }).click(); });
+    await act(async () => { within(el.querySelector('.af-tool-picker')!).getByRole('button', { name: new RegExp(`^${name}`) }).click(); });
   }
 
   it('opens a graph beside the same editor and can hide and restore the panel', async () => {

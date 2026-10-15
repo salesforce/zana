@@ -63,4 +63,22 @@ describe('Agent Script document toolbar', () => {
     expect(view.container.querySelector('.af-document-folder')).toBeNull();
     expect(screen.getByRole('status').textContent).toBe('Saved');
   });
+
+  it('opens Preview for saved and unsaved agents, and disables it until a file is open', () => {
+    const onPreview = vi.fn();
+    const view = render(<AgentScriptDocumentBar {...defaults} onPreview={onPreview} />);
+    const preview = () => screen.getByRole('button', { name: 'Preview', exact: true }) as HTMLButtonElement;
+    expect(preview().textContent).toBe('Preview');
+    fireEvent.click(preview());
+    view.rerender(<AgentScriptDocumentBar {...defaults} dirty onPreview={onPreview} />);
+    expect(preview().disabled).toBe(false);
+    fireEvent.click(preview());
+    expect(onPreview).toHaveBeenCalledTimes(2);
+    view.rerender(<AgentScriptDocumentBar {...defaults} path={null} onPreview={onPreview} />);
+    expect(preview().disabled).toBe(true);
+    fireEvent.click(preview());
+    expect(onPreview).toHaveBeenCalledTimes(2);
+    view.rerender(<AgentScriptDocumentBar {...defaults} />);
+    expect(screen.queryByRole('button', { name: 'Preview', exact: true })).toBeNull();
+  });
 });

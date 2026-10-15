@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Bot, Check, Circle, Cloud, CopyPlus, Hammer, PanelRight, Rocket, Save, Search } from 'lucide-react';
+import { Bot, Check, Circle, Cloud, CopyPlus, Hammer, PanelRight, Play, Rocket, Save, Search } from 'lucide-react';
 import { breadcrumbSegments } from '../../lib/agent-script-file-tree.js';
 
 type DocumentBarProps = {
@@ -18,6 +18,8 @@ type DocumentBarProps = {
   onSave: () => void;
   onSaveAs: () => void;
   onShowPanel: () => void;
+  /** Open the current agent's Preview tool, retaining any running conversation. */
+  onPreview?: () => void;
   /** Studio layout: Compile runs the compiler on the saved file, Publish opens the Release tool; QuickOpen is the compact file switcher. */
   onCompile?: () => void;
   /** A compile is in flight. */
@@ -58,6 +60,7 @@ export function AgentScriptDocumentBar(props: DocumentBarProps) {
       {props.orgPicker && <div className="af-document-org"><Cloud size={14} aria-hidden="true" />{props.orgPicker}</div>}
       <button type="button" className={`sf-as-save${props.dirty && !props.saveDisabled ? ' is-dirty' : ''}`} data-testid="salesforce-agent-script-save" aria-label="Save Agentforce file" title="Save Agentforce file (⌘S / Ctrl+S)" hidden={!props.path} disabled={props.saveDisabled} onClick={props.onSave}><Save size={13} aria-hidden="true" />{props.busy ? 'Saving…' : 'Save'}{props.shortcutHint && <kbd className="sf-kbd">⌘S</kbd>}</button>
       <button type="button" className="sf-as-save" title="Save as a new project file" disabled={props.saveAsDisabled} onClick={props.onSaveAs}><CopyPlus size={13} aria-hidden="true" />Save as…</button>
+      {props.onPreview && <button type="button" className="sf-as-save" data-testid="salesforce-agent-script-preview" aria-label="Preview" title="Open Preview for this agent" disabled={!props.path} onClick={props.onPreview}><Play size={13} aria-hidden="true" />Preview</button>}
       {props.onPublish && <button type="button" className="sf-as-save" data-testid="salesforce-agent-script-publish" title="Open Release: publish, activate and roll back versions" disabled={!props.path || props.dirty} onClick={props.onPublish}><Rocket size={13} aria-hidden="true" />Publish</button>}
       {!props.panelOpen && !props.hidePanelToggle && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={props.onShowPanel}><PanelRight size={15} aria-hidden="true" /></button>}
     </div>
