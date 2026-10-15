@@ -1,6 +1,8 @@
-import { mkdirSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { cpSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { test, expect } from './fixtures/app.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
@@ -27,6 +29,19 @@ test('packaged Browser Automation controls headless and desktop browsers through
     return snapshot.apps.find((plugin: { id: string }) => plugin.id === 'browser-automation');
   });
   expect(installed?.status, JSON.stringify(installed)).toBe('running');
+  const copiedCli = join(home, 'cli');
+  cpSync(resolve('packages/cli/dist'), copiedCli, { recursive: true, dereference: true });
+  const openSession = async (backend: string, instanceId: string) => {
+    const result = await promisify(execFile)(process.execPath, [join(copiedCli, 'bin/zcc'), 'browser-automation', 'open',
+      '--backend', backend, '--machine', setup.hostId, '--thread', setup.threadId,
+      ...(backend === 'desktop' ? ['--desktop', instanceId] : ['--headless']), '--json'], {
+      cwd: root, timeout: 310_000, maxBuffer: 1024 * 1024,
+      env: { ...process.env, HOME: home, ZCC_DATA_DIR: join(home, '.zcc'), ZCC_SERVER_URL: new URL(window.url()).origin,
+        ZCC_SESSION_ID: undefined, ZCC_SESSION_TOKEN: undefined, ZCC_THREAD_ID: undefined, ZCC_PROJECT_ID: undefined,
+        BB_THREAD_ID: undefined, BB_PROJECT_ID: undefined }
+    });
+    return JSON.parse(result.stdout);
+  };
   const call = async (method: string, args: Record<string, unknown>) => {
     const result = await window.evaluate(async ({ method, args }) => {
       const response = await fetch('/api/v1/plugin-apps/browser-automation/rpc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method, args }) });
@@ -51,7 +66,8 @@ test('packaged Browser Automation controls headless and desktop browsers through
   try {
   for (const backend of ['desktop', 'local']) {
     await test.step(backend, async () => {
-    const session = await call('open', { selection: { backend, hostId: setup.hostId, ...(backend === 'desktop' ? { instanceId: instances[0].instanceId } : {}) } });
+    // Exercise the actual CLI/socket deadline through a cold runtime install.
+    const session = await openSession(backend, instances[0].instanceId);
     expect(session).toMatchObject({ hostId: setup.hostId, backend, state: 'ready' });
     try {
       const url = `http://127.0.0.1:${address.port}/?backend=${backend}`;
@@ -62,6 +78,13 @@ test('packaged Browser Automation controls headless and desktop browsers through
       }
       expect(result.exitCode, result.text + JSON.stringify(requests)).toBe(0);
       expect(result.text).toContain(`${backend} worker`); expect(result.text).toContain('frame proof');
+      for (let iteration = 0; iteration < 3; iteration++) {
+        const repeated = await call('run', { sessionId: session.id, script: `await browser.getPage('main'); JSON.stringify(await browser.listPages())`, timeoutMs: 30_000 });
+        expect(repeated.exitCode, repeated.text).toBe(0);
+        const pages = JSON.parse(repeated.text);
+        expect(pages).toHaveLength(1);
+        expect(pages[0]).toMatchObject({ name: 'main', url });
+      }
       const shot = await call('screenshot', { sessionId: session.id, page: 'main' });
       expect(shot.exitCode, shot.text).toBe(0); expect(shot.images).toHaveLength(1);
       if (backend === 'local') {

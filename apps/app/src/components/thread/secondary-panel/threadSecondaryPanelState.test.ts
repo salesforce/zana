@@ -28,6 +28,25 @@ import {
 } from './threadSecondaryPanelState.js';
 
 describe('thread secondary panel state', () => {
+  it('uses native IDs to reuse blank tabs while keeping separate targets at the same URL', () => {
+    const first = addClosableTab(emptySecondaryPanelState(), { id: 'native-a', kind: 'browser', title: 'Browser', url: '' });
+    const repeated = addClosableTab(first, { id: 'native-a', kind: 'browser', title: 'Browser', url: '' });
+    expect(repeated.tabs).toHaveLength(1);
+    const navigated = patchClosableTab(repeated, 'native-a', { url: 'https://example.test' });
+    expect(addClosableTab(navigated, { id: 'native-a', kind: 'browser', title: 'Browser', url: '' }).tabs).toHaveLength(1);
+    expect(addClosableTab(navigated, { id: 'native-b', kind: 'browser', title: 'Browser', url: 'https://example.test' }).tabs).toHaveLength(2);
+  });
+
+  it('repairs duplicate persisted tab IDs without dropping distinct tabs at the same URL', () => {
+    const state = parseSecondaryPanelState({ ...emptySecondaryPanelState(), activeId: 'native-a', tabs: [
+      { id: 'native-a', kind: 'browser', title: 'First', url: '' },
+      { id: 'native-a', kind: 'browser', title: 'Duplicate', url: 'https://example.test' },
+      { id: 'native-b', kind: 'browser', title: 'Other', url: 'https://example.test' },
+    ] });
+    expect(state.tabs.map(tab => tab.id)).toEqual(['native-a', 'native-b']);
+    expect(state.tabs[0]!.title).toBe('First');
+    expect(state.activeId).toBe('native-a');
+  });
   afterEach(() => {
     if (typeof localStorage !== 'undefined') localStorage.clear();
   });

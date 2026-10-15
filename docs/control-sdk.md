@@ -309,6 +309,15 @@ A connected host that answers `desktop_browser_unavailable` is a **failure**
 `pnpm live:matrix`. Native chrome (find-in-page, Take over)
 stays `e2e/desktop-browser-broker.spec.ts`.
 
+Playwright clients attach to the private endpoint returned by `connection` with
+`await chromium.connectOverCDP(wsEndpoint, { noDefaults: true })` (Playwright
+1.60+). This preserves Electron's existing download and presentation policy;
+the scoped bridge does not expose browser-wide settings or create additional
+browser contexts. Use `browser.contexts()[0]` for the leased pages and
+`context.newPage()` to create pages inside the same lease. The endpoint is
+loopback-only and must remain private on the desktop host. The built-Electron
+broker spec verifies input, evaluation, screenshots, new pages, and Take over.
+
 Required after desktop-browser product HTTP, broker lease/CDP, capture,
 cookie import-source redaction, or `zcc browser` / `experimental_desktopBrowsers`
 changes (see `AGENTS.md`).

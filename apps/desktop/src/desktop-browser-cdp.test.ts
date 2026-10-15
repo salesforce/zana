@@ -283,6 +283,7 @@ describe("thread-scoped browser CDP", () => {
       await first.call("Target.getTargets", {}, result.sessionId),
     ).toHaveProperty("error");
     expect(await first.call("Browser.close")).toHaveProperty("error");
+    expect(await first.call("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: "/tmp" })).toHaveProperty("error");
     expect(commands).toEqual([{ tabId: "a", method: "Runtime.evaluate" }]);
   });
 
@@ -336,6 +337,124 @@ describe("thread-scoped browser CDP", () => {
         }),
       }),
     );
+  });
+
+  it("uses Chromium's page-only default for discovery and auto-attachment", async () => {
+    const { bridge, scopeA } = await openBridge();
+    const client = await connect(
+      bridge.grant(scopeA, Date.now() + 60_000).endpoint,
+    );
+    await client.call("Target.setDiscoverTargets", { discover: true });
+    await client.call("Target.setAutoAttach", {
+      autoAttach: true,
+      flatten: true,
+      waitForDebuggerOnStart: true,
+    });
+    for (const method of ["Target.targetCreated", "Target.attachedToTarget"]) {
+      const events = client.messages.filter(
+        (message) => message.method === method,
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        params: {
+          targetInfo: {
+            type: "page",
+            targetId: desktopBrowserCdpTargetId(scopeA, "a"),
+          },
+        },
+      });
+    }
+  });
+
+  it("preserves native target IDs so page sessions match their main-frame IDs", async () => {
+    const { bridge, scopeA, tabs, nativeCommands } = await openBridge();
+    tabs.get("a")!.targetId = "native-main-frame-a";
+    tabs.get("b")!.targetId = "native-main-frame-b";
+    const client = await connect(bridge.grant(scopeA, Date.now() + 60_000).endpoint);
+    expect(await client.call("Target.getTargets")).toMatchObject({
+      result: { targetInfos: [{ targetId: "native-main-frame-a" }] },
+    });
+    expect(await client.call("Target.attachToTarget", { targetId: "native-main-frame-b", flatten: true })).toHaveProperty("error");
+    await client.call("Target.setAutoAttach", { autoAttach: true, flatten: true });
+    const { params: { sessionId } } = z.object({ params: z.object({ sessionId: z.string() }) }).parse(
+      client.messages.find((message) => message.method === "Target.attachedToTarget"),
+    );
+    expect(await client.call("Page.createIsolatedWorld", { frameId: "native-main-frame-a" }, sessionId)).toHaveProperty("result");
+    expect(nativeCommands).toContainEqual({ tabId: "a", method: "Page.createIsolatedWorld", params: { frameId: "native-main-frame-a" }, sessionId: undefined });
+    expect(await client.call("Target.closeTarget", { targetId: "native-main-frame-a" })).toHaveProperty("result");
+    expect(tabs.has("b")).toBe(true);
+  });
+
+  it("reports a nonempty default context shared by page and virtual tab targets", async () => {
+    const { bridge, scopeA, scopeB } = await openBridge();
+    const client = await connect(
+      bridge.grant(scopeA, Date.now() + 60_000).endpoint,
+    );
+    const contexts = await client.call("Target.getBrowserContexts");
+    const { defaultBrowserContextId } = z
+      .object({
+        browserContextIds: z.array(z.string()).length(0),
+        defaultBrowserContextId: z.string().min(1),
+      })
+      .parse(contexts.result);
+    const listed = await client.call("Target.getTargets", {
+      filter: [{ type: "browser", exclude: true }, {}],
+    });
+    const { targetInfos } = z
+      .object({
+        targetInfos: z.array(z.object({
+          type: z.enum(["tab", "page"]),
+          browserContextId: z.string(),
+        })),
+      })
+      .parse(listed.result);
+    expect(targetInfos).toHaveLength(2);
+    expect(targetInfos.every(
+      (info) => info.browserContextId === defaultBrowserContextId,
+    )).toBe(true);
+    await client.call("Target.setAutoAttach", { autoAttach: true, flatten: true });
+    expect(client.messages).toContainEqual(
+      expect.objectContaining({
+        method: "Target.attachedToTarget",
+        params: expect.objectContaining({
+          targetInfo: expect.objectContaining({ browserContextId: defaultBrowserContextId }),
+        }),
+      }),
+    );
+    const other = await connect(bridge.grant(scopeB, Date.now() + 60_000).endpoint);
+    const otherContexts = z.object({ defaultBrowserContextId: z.string() }).parse(
+      (await other.call("Target.getBrowserContexts")).result,
+    );
+    expect(otherContexts.defaultBrowserContextId).not.toBe(defaultBrowserContextId);
+    expect(await client.call("Target.createTarget", {
+      url: "about:blank",
+      browserContextId: otherContexts.defaultBrowserContextId,
+    })).toHaveProperty("error");
+    expect(await client.call("Target.createTarget", {
+      url: "about:blank",
+      browserContextId: defaultBrowserContextId,
+    })).toHaveProperty("result");
+  });
+
+  it("uses the discovery filter for unfiltered target queries and permits an explicit override", async () => {
+    const { bridge, scopeA } = await openBridge();
+    const client = await connect(
+      bridge.grant(scopeA, Date.now() + 60_000).endpoint,
+    );
+    await client.call("Target.setDiscoverTargets", {
+      discover: true,
+      filter: [{ type: "tab" }],
+    });
+    expect(await client.call("Target.getTargets")).toMatchObject({
+      result: { targetInfos: [{ type: "tab" }] },
+    });
+    expect(await client.call("Target.getTargets", { filter: [{ type: "page" }] })).toMatchObject({
+      result: { targetInfos: [{ type: "page" }] },
+    });
+    await client.call("Target.setDiscoverTargets", { discover: false });
+    expect(await client.call("Target.getTargets")).toMatchObject({
+      result: { targetInfos: [{ type: "page" }] },
+    });
   });
 
   it.each([false, true])(

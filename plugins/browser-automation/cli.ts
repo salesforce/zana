@@ -18,7 +18,7 @@ export const commands = [
     name: "run",
     summary: "Run a trusted DevBrowser script; runs serialize per session",
     usage:
-      "zcc browser-automation run <session-id> (--script <code> | --script-file <path> --script-host <host-id>) [--timeout-ms <1000..120000>] [--thread <id>] [--json]",
+      "zcc browser-automation run <session-id> (--script <code> | --script-file <path> --script-host <host-id>) [--timeout <duration> | --timeout-ms <1000..120000>] [--thread <id>] [--json]",
   },
   {
     name: "pages",
@@ -61,6 +61,49 @@ const methodSchema = z.enum([
   "close",
 ]);
 
+export function cliHelp(argv: string[]): string | undefined {
+  if (argv.length && !argv.includes("--help") && !argv.includes("-h"))
+    return undefined;
+  const args = argv.filter(arg => arg !== "--help" && arg !== "-h" && arg !== "--json");
+  if (args.length > 1) throw new Error("Help accepts only a command name");
+  const selected = args[0] ? commands.filter(command => command.name === args[0]) : commands;
+  if (!selected.length) throw new Error(`Unknown command: ${args[0]}`);
+  return [
+    "Browser Automation — persistent desktop and headless sessions",
+    ...selected.map(command => `${command.summary}\n${command.usage}`),
+    "Sessions expire after five minutes idle or thirty minutes total. A stopped session requires a new open.",
+    ...(args[0] === "run" || !args.length ? [
+      "Timeout defaults to 30s, range 1–120s. --timeout accepts 90s, 2m, 1500ms; bare values are seconds (1–120) or milliseconds (1000–120000).",
+      "Runs return at most 4 JPEG screenshots, 500 KB combined.",
+    ] : []),
+  ].join("\n\n");
+}
+
+function timeoutDuration(value: string): number {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m)?$/.exec(value);
+  if (!match) throw new Error("Invalid --timeout; use 90s, 2m, or 1500ms");
+  const amount = Number(match[1]);
+  const unit = match[2] ?? (amount <= 120 ? "s" : "ms");
+  const milliseconds = amount * (unit === "m" ? 60_000 : unit === "s" ? 1000 : 1);
+  if (!Number.isInteger(milliseconds) || milliseconds < 1000 || milliseconds > 120_000)
+    throw new Error("Timeout must be between 1000 and 120000 milliseconds (1–120 seconds)");
+  return milliseconds;
+}
+
+export function cliFailure(error: unknown, json: boolean) {
+  const message = error instanceof Error ? error.message : "Browser command failed";
+  const detail = /stopped or expired|does not belong to this thread/u.test(message)
+    ? { code: "session_unavailable", message, hint: "Open a new browser session and take a fresh snapshot." }
+    : /screenshot|JPEG/iu.test(message)
+      ? { code: "screenshot_limit", message, hint: "Return at most 4 JPEG screenshots per run, 500 KB combined." }
+      : { code: "command_failed", message };
+  return {
+    exitCode: 1,
+    stderr: message,
+    ...(json ? { stdout: JSON.stringify({ ok: false, error: detail }) } : {}),
+  };
+}
+
 export function parseCli(argv: string[], contextThreadId?: string) {
   const method = methodSchema.parse(argv[0]);
   const flags = new Map<string, string>();
@@ -71,7 +114,7 @@ export function parseCli(argv: string[], contextThreadId?: string) {
     ...(method === "open"
       ? ["--backend", "--machine", "--desktop", "--tab", "--headless"]
       : method === "run"
-        ? ["--script", "--script-file", "--script-host", "--timeout-ms"]
+        ? ["--script", "--script-file", "--script-host", "--timeout-ms", "--timeout"]
         : method === "screenshot"
           ? ["--page"]
           : method === "preview"
@@ -152,9 +195,13 @@ export function parseCli(argv: string[], contextThreadId?: string) {
         "--script-file requires explicit --script-host <host-id>",
       );
     input.script = flags.get("--script");
-    input.timeoutMs = flags.has("--timeout-ms")
-      ? Number(flags.get("--timeout-ms"))
-      : 30_000;
+    if (flags.has("--timeout") && flags.has("--timeout-ms"))
+      throw new Error("Supply only one of --timeout or --timeout-ms");
+    input.timeoutMs = flags.has("--timeout")
+      ? timeoutDuration(flags.get("--timeout")!)
+      : flags.has("--timeout-ms")
+        ? Number(flags.get("--timeout-ms"))
+        : 30_000;
   }
   if (method === "screenshot") input.page = flags.get("--page") ?? "main";
   if (method === "preview")

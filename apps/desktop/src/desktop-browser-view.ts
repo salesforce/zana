@@ -71,6 +71,7 @@ export interface DesktopBrowserNativeTab extends DesktopBrowserState {
 interface BrowserViewEntry {
   tabId: string;
   view: WebContentsView;
+  webContents: WebContents;
   hostWindow: DesktopBrowserHostWindow;
   threadId: string;
   generation: string;
@@ -152,6 +153,8 @@ export interface DesktopBrowserViewManager {
   }): DesktopBrowserNativeTab;
   listTabs(args: { hostWebContentsId: number; threadId: string | null }): DesktopBrowserNativeTab[];
   closeTab(args: { hostWebContentsId: number; threadId: string; tabId: string; generation: string }): void;
+  getClosedTabs(hostWebContentsId: number): Array<{ tabId: string }>;
+  allowsNavigation(webContents: WebContents, url: string): boolean;
   captureTab(args: {
     hostWebContentsId: number;
     threadId: string;
@@ -250,6 +253,10 @@ export function createDesktopBrowserViewManager(options?: {
   const appCommands = options?.appCommands;
   let downloadControlGuard = (_hostWebContentsId: number, _tabId: string) => false;
   const entries = new Map<string, BrowserViewEntry>();
+  const managedContents = new WeakSet<WebContents>();
+  // A panel can miss a close while its thread is unmounted. Do not let a stale
+  // persisted label recreate that native page when the thread is revisited.
+  const closedTabs = new Set<string>();
   const automationTargets = new Map<string, string>();
   const resizingHostIds = new Set<number>();
   const hardenedSessions = new Map<string, Session>();
@@ -430,21 +437,56 @@ export function createDesktopBrowserViewManager(options?: {
 
     webContents.setWindowOpenHandler((details) => {
       const { openTabUrl } = resolveWindowOpenAction(details.url);
-      if (openTabUrl !== null) {
-        const decision = evaluatePopupRate({
-          timestamps: entry.popupTimestamps,
-          now: Date.now(),
-          windowMs: POPUP_RATE_WINDOW_MS,
-          maxInWindow: POPUP_RATE_MAX_IN_WINDOW
-        });
-        entry.popupTimestamps = decision.timestamps;
-        if (decision.allowed && entry.visible) {
+      if (openTabUrl === null) return { action: 'deny' };
+      const decision = evaluatePopupRate({
+        timestamps: entry.popupTimestamps,
+        now: Date.now(),
+        windowMs: POPUP_RATE_WINDOW_MS,
+        maxInWindow: POPUP_RATE_MAX_IN_WINDOW
+      });
+      entry.popupTimestamps = decision.timestamps;
+      if (!decision.allowed || !entry.visible) return { action: 'deny' };
+      // Retain Chromium's popup and opener relationship. Replacing window.open
+      // with a URL-only tab loses delayed navigation, POST bodies and postMessage.
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          webPreferences: {
+            partition: partitionForProfile(entry.profile),
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
+            webSecurity: true,
+            allowRunningInsecureContent: false
+          }
+        },
+        createWindow: (options) => {
+          // Electron documents this supplied native contents but omits it from
+          // BrowserWindowConstructorOptions in its generated TypeScript types.
+          const popupWebContents = (options as typeof options & { webContents?: WebContents }).webContents;
+          const openedTabId = `browser:popup-${randomUUID()}`;
+          const popup = createEntry({
+            desiredBounds: entry.desiredBounds,
+            hostWindow,
+            tabId: openedTabId,
+            threadId: entry.threadId,
+            profile: entry.profile,
+            webContents: popupWebContents
+          });
+          applyEntryDesiredBounds(popup, hostWindow);
+          applyEntryVisibility(popup, hostWindow);
+          // Chromium defers creating webContents for background-tab disposition.
+          if (!popupWebContents) loadIfNeeded(popup, openTabUrl);
           send(hostWindow, IPC.browser.openTab, { url: openTabUrl });
-          send(hostWindow, IPC.browser.scopedOpenTab, { tabId, url: openTabUrl });
+          send(hostWindow, IPC.browser.scopedOpenTab, { tabId, url: openTabUrl, openedTabId });
+          return popup.view.webContents;
         }
-      }
-      return { action: 'deny' };
+      };
     });
+
+    // Scripted window.close and opener teardown can destroy the native popup
+    // independently of the tab bar. Reuse the same registry/label cleanup path.
+    webContents.on('destroyed', () => destroyEntry(hostWindow, browserViewKey(hostWindow, tabId)));
 
     webContents.on('context-menu', (_event, params) => {
       if (webContents.isDestroyed()) return;
@@ -548,6 +590,7 @@ export function createDesktopBrowserViewManager(options?: {
     threadId?: string;
     profile?: DesktopBrowserTabProfile;
     sessionPartition?: string;
+    webContents?: WebContents;
   }): BrowserViewEntry {
     const profile = args.profile ?? (
       isPendingAutomationTab(args.tabId)
@@ -557,6 +600,7 @@ export function createDesktopBrowserViewManager(options?: {
     const sessionPartition = args.sessionPartition ?? partitionForProfile(profile);
     ensureHardenedSession(sessionPartition);
     const view = new WebContentsView({
+      ...(args.webContents ? { webContents: args.webContents } : {}),
       webPreferences: {
         partition: sessionPartition,
         sandbox: true,
@@ -570,6 +614,7 @@ export function createDesktopBrowserViewManager(options?: {
     const entry: BrowserViewEntry = {
       tabId: args.tabId,
       view,
+      webContents: view.webContents,
       hostWindow: args.hostWindow,
       threadId: args.threadId ?? '',
       generation: randomUUID(),
@@ -589,6 +634,7 @@ export function createDesktopBrowserViewManager(options?: {
     wireWebContents(args.hostWindow, args.tabId, entry);
     args.hostWindow.contentView.addChildView(view);
     entries.set(browserViewKey(args.hostWindow, args.tabId), entry);
+    managedContents.add(view.webContents);
     notifyAutomationTabs();
     return entry;
   }
@@ -606,7 +652,7 @@ export function createDesktopBrowserViewManager(options?: {
   }
 
   function closeEntryWebContents(entry: BrowserViewEntry): void {
-    const webContents = entry.view.webContents;
+    const webContents = entry.webContents;
     if (webContents.isDestroyed()) return;
     webContents.removeListener('media-started-playing', entry.mediaStartedPlayingListener);
     try {
@@ -617,14 +663,28 @@ export function createDesktopBrowserViewManager(options?: {
     webContents.close();
   }
 
+  function removeEntryView(entry: BrowserViewEntry): void {
+    if (entry.hostWindow.isDestroyed()) return;
+    try {
+      entry.hostWindow.contentView.removeChildView(entry.view);
+    } catch (error) {
+      // Electron may dispose the native view before firing contents.destroyed.
+      if (!entry.webContents.isDestroyed()) throw error;
+    }
+  }
+
   function destroyEntry(hostWindow: DesktopBrowserHostWindow, key: string): void {
     const entry = entries.get(key);
     if (!entry) return;
     entries.delete(key);
+    managedContents.delete(entry.webContents);
+    closedTabs.add(key);
+    if (closedTabs.size > 4096) closedTabs.delete(closedTabs.values().next().value!);
     if (entry.automationTargetId) automationTargets.delete(entry.automationTargetId);
     clearEntryRendererRecoveryTimer(entry);
-    if (!hostWindow.isDestroyed()) hostWindow.contentView.removeChildView(entry.view);
+    removeEntryView(entry);
     closeEntryWebContents(entry);
+    send(hostWindow, IPC.browser.closed, { tabId: entry.tabId });
     notifyAutomationTabs();
   }
 
@@ -689,6 +749,7 @@ export function createDesktopBrowserViewManager(options?: {
       }
       const key = browserViewKey(request.hostWindow, request.tabId);
       if (entries.has(key)) throw new Error('Native browser tab already exists');
+      closedTabs.delete(key);
       const entry = createEntry({
         desiredBounds: { x: 0, y: 0, ...request.viewport },
         hostWindow: request.hostWindow,
@@ -716,6 +777,13 @@ export function createDesktopBrowserViewManager(options?: {
       const entry = entries.get(key);
       if (!entry || entry.generation !== generation) return;
       destroyEntry(entry.hostWindow, key);
+    },
+    getClosedTabs(hostWebContentsId) {
+      const prefix = `${hostWebContentsId}:`;
+      return [...closedTabs].filter((key) => key.startsWith(prefix)).map((key) => ({ tabId: key.slice(prefix.length) }));
+    },
+    allowsNavigation(webContents, url) {
+      return managedContents.has(webContents) && !webContents.isDestroyed() && isAllowedBrowserUrl(url);
     },
     async captureTab(request) {
       const key = `${request.hostWebContentsId}:${request.tabId}`;
@@ -773,6 +841,10 @@ export function createDesktopBrowserViewManager(options?: {
     attach({ hostWindow, request }) {
       const key = browserViewKey(hostWindow, request.tabId);
       const existing = entries.get(key) ?? null;
+      if (existing === null && closedTabs.has(key)) {
+        send(hostWindow, IPC.browser.closed, { tabId: request.tabId });
+        return;
+      }
       const wasVisible = existing?.visible ?? false;
       const entry = existing ?? createEntry({
         desiredBounds: request.bounds,
@@ -883,9 +955,11 @@ export function createDesktopBrowserViewManager(options?: {
     releaseWindow(hostWebContentsId) {
       resizingHostIds.delete(hostWebContentsId);
       const prefix = `${hostWebContentsId}:`;
+      for (const key of closedTabs) if (key.startsWith(prefix)) closedTabs.delete(key);
       for (const [key, entry] of [...entries.entries()]) {
         if (!key.startsWith(prefix)) continue;
         entries.delete(key);
+        managedContents.delete(entry.webContents);
         if (entry.automationTargetId) automationTargets.delete(entry.automationTargetId);
         clearEntryRendererRecoveryTimer(entry);
         closeEntryWebContents(entry);
@@ -893,9 +967,11 @@ export function createDesktopBrowserViewManager(options?: {
     },
     destroyAll() {
       resizingHostIds.clear();
+      closedTabs.clear();
       automationTargets.clear();
       for (const [key, entry] of [...entries.entries()]) {
         entries.delete(key);
+        managedContents.delete(entry.webContents);
         clearEntryRendererRecoveryTimer(entry);
         closeEntryWebContents(entry);
       }

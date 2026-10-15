@@ -39,6 +39,18 @@ function reveal(threadId = "thread-a") {
 }
 
 describe("desktop browser reveal focus", () => {
+  it("adds a missing tab once without replaying it on render or after close", () => {
+    const addTab = vi.fn(), activateTab = vi.fn();
+    const { rerender } = renderHook(({ browserTabs }) => useDesktopBrowserReveal({
+      threadId: "thread-a", isFocused: true, browserTabs, addTab, activateTab,
+    }), { initialProps: { browserTabs: [] as { id: string }[] } });
+    reveal();
+    rerender({ browserTabs: [] });
+    rerender({ browserTabs: [{ id: "browser-a" }] });
+    rerender({ browserTabs: [] });
+    expect(addTab).toHaveBeenCalledExactlyOnceWith({ id: "browser-a", kind: "browser", title: "Browser", url: "" });
+    expect(activateTab).not.toHaveBeenCalled();
+  });
   it("selects the focused thread's tab once it arrives", () => {
     const activateTab = vi.fn();
     const { rerender } = renderHook(

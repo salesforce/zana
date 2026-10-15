@@ -340,6 +340,45 @@ describe('dispatchOp', () => {
     });
   });
 
+  it('routes dev CLI discovery and execution to the SDK-equipped product server', async () => {
+    const cliContributions = vi.fn(async () => ({ cliCommands: [{ pluginId: 'fixture', name: 'fixture' }] }));
+    const runCliCommand = vi.fn(async () => ({ exitCode: 0, stdout: 'SDK works' }));
+    const fallback = { cliContributions: vi.fn(), runCliCommand: vi.fn() };
+    const deps = makeDeps({ pluginCommands: { cliContributions, runCliCommand }, pluginHost: fallback as any });
+    expect(await dispatchOp('plugin.contributions', {}, deps)).toMatchObject({ ok: true, value: { cliCommands: expect.any(Array) } });
+    expect(await dispatchOp('plugin.cli', { id: 'fixture', argv: ['run'], threadId: 't', cwd: '/project' }, deps)).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(runCliCommand).toHaveBeenCalledWith('fixture', ['run'], { threadId: 't', cwd: '/project' });
+    expect(fallback.cliContributions).not.toHaveBeenCalled();
+    expect(fallback.runCliCommand).not.toHaveBeenCalled();
+  });
+
+  it('retains process-local CLI fallback when no SDK host is attached', async () => {
+    const cliContributions = vi.fn(async () => [{ pluginId: 'fixture', name: 'fixture' }]);
+    const runCliCommand = vi.fn(async () => ({ exitCode: 0, stdout: 'fallback works' }));
+    vi.doMock('@zana-ai/zcc-server/plugins/plugin-service', () => ({
+      defaultPluginDataDir: () => '/isolated-plugin-fixture',
+      defaultBundledRoot: () => '/isolated-bundled-fixture',
+      createPluginService: () => ({ cliContributions, runCliCommand })
+    }));
+    try {
+      const deps = makeDeps();
+      expect(await dispatchOp('plugin.contributions', {}, deps)).toEqual({ ok: true, value: [{ pluginId: 'fixture', name: 'fixture' }] });
+      expect(await dispatchOp('plugin.cli', { id: 'fixture', argv: ['run'], threadId: 't' }, deps)).toEqual({ ok: true, value: { exitCode: 0, stdout: 'fallback works' } });
+      expect(runCliCommand).toHaveBeenCalledWith('fixture', ['run'], { threadId: 't' });
+    } finally { vi.doUnmock('@zana-ai/zcc-server/plugins/plugin-service'); }
+  });
+
+  it('returns SDK command errors without falling back to a different plugin runtime', async () => {
+    const fail = vi.fn(async () => { throw new Error('product server disconnected'); });
+    const fallback = { cliContributions: vi.fn(), runCliCommand: vi.fn() };
+    const deps = makeDeps({ pluginCommands: { cliContributions: fail, runCliCommand: fail }, pluginHost: fallback as any });
+    for (const [op, args] of [['plugin.contributions', {}], ['plugin.cli', { id: 'fixture' }]] as const) {
+      expect(await dispatchOp(op, args, deps)).toMatchObject({ ok: false, code: 'PLUGIN_ERROR', message: 'product server disconnected' });
+    }
+    expect(fallback.cliContributions).not.toHaveBeenCalled();
+    expect(fallback.runCliCommand).not.toHaveBeenCalled();
+  });
+
   it('term.close returns NOT_FOUND for an unknown session', async () => {
     const deps = makeDeps({ closeTerminal: () => false });
     const r = await dispatchOp('term.close', { sessionId: 'ghost' }, deps);
@@ -845,6 +884,38 @@ describe('startControlPlane (real socket)', () => {
     expect(confirmOperatorMutation).not.toHaveBeenCalled();
     expect(cliContributions).toHaveBeenCalledOnce();
     expect(runCliCommand).toHaveBeenCalledWith('tasks', ['tasks', 'add', 'write report'], { projectId: 'p1' });
+  });
+
+  it('lets authenticated plugin work complete beyond the handshake timeout', async () => {
+    const runCliCommand = vi.fn(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10_100));
+      return { exitCode: 0, stdout: 'prepared' };
+    });
+    const { socketPath, tokenPath } = await boot({ pluginHost: { runCliCommand } as any });
+    const { token, nonce } = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const result = await rawRequest(socketPath, [JSON.stringify({ token, nonce, op: 'plugin.cli', args: { id: 'fixture', argv: ['open'] } }) + '\n']);
+    expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: 'prepared' } });
+    expect(runCliCommand).toHaveBeenCalledOnce();
+  }, 20_000);
+
+  it('still enforces a finite deadline for authenticated plugin work', async () => {
+    const nativeTimeout = globalThis.setTimeout;
+    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: Parameters<typeof setTimeout>) => {
+      if (args[1] === 300_000) args[1] = 25;
+      return nativeTimeout(...args);
+    }) as typeof setTimeout);
+    let complete!: (value: { exitCode: number }) => void;
+    try {
+      const runCliCommand = vi.fn(() => new Promise(resolve => { complete = resolve; }));
+      const { socketPath, tokenPath } = await boot({ pluginHost: { runCliCommand } as any });
+      const { token, nonce } = JSON.parse(readFileSync(tokenPath, 'utf8'));
+      const result = await rawRequest(socketPath, [JSON.stringify({ token, nonce, op: 'plugin.cli', args: { id: 'fixture', argv: ['run'] } }) + '\n']);
+      expect(result).toMatchObject({ ok: false, code: 'TIMEOUT', message: 'plugin command timed out' });
+      expect(runCliCommand).toHaveBeenCalledOnce();
+      complete({ exitCode: 0 });
+    } finally {
+      timers.mockRestore();
+    }
   });
 
   it('removes the socket + token file on close', async () => {

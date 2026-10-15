@@ -67,6 +67,7 @@ function createPage(
 
   return {
     tabId,
+    targetId: webContents.getOrCreateDevToolsTargetId(),
     get url() {
       requireCurrent();
       return webContents.getURL();

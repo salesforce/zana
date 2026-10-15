@@ -119,6 +119,11 @@ zcc browser-automation stop <session-id> --json
 zcc browser-automation close <session-id> --json
 ```
 
+The `main` page reuses the session's initial tab. Repeated scripts and captures
+reuse it; other names and `browser.newPage()` intentionally create extra pages.
+Close those pages when finished. Stop/Take over retains pages for manual use;
+closing the session removes its owned tabs while preserving handed-off tabs.
+
 Outside a thread, supply `--thread <thread-id>`. Calls from an existing thread
 cannot override its ownership. `--script-file` requires `--script-host <host-id>` naming the source host
 explicitly and is read through `zcc.sdk.files`, then transferred as script text to the
@@ -147,6 +152,15 @@ active scripts do not count as idle. Archiving, deleting, or failing a thread
 closes its sessions; normal idle turns preserve them. Externally invoked CLI
 runs remain subject to the same per-run timeout and absolute session expiry. Run timeouts default to 30 seconds and are
 bounded to 1–120 seconds. Runs are serialized per session.
+
+`run` accepts either `--timeout-ms <1000-120000>` or `--timeout <duration>`
+(`90s`, `2m`, `1500ms`); bare duration values mean seconds (1–120) or
+milliseconds (1000–120000). The two flags are mutually exclusive.
+`zcc browser-automation --help` and command-level `--help` work outside a thread.
+With `--json`, request failures include `{ok:false,error:{code,message,hint?}}`
+on stdout alongside stderr and a nonzero exit code. `session_unavailable`
+directs agents to open a new session; `screenshot_limit` identifies capture
+limits.
 
 DevBrowser scripts are trusted code, not a security sandbox. Script output is
 bounded to 512 KB before parsing and 160,000 text characters after parsing.

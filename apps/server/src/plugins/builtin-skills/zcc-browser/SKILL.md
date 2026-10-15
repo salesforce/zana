@@ -41,9 +41,33 @@ host, so a server on another host needs an explicitly reachable URL or tunnel.
 
 For clicking, typing, snapshots, or scripted QA, use the Browser Automation
 plugin's `browser-automation` skill with its desktop backend, or the available
-in-app computer-use surface. A simple visible URL preview through `zcc browser`
+in-app computer-use surface. Check `zcc plugin ls --json` for an enabled, running
+`browser-automation` plugin before using its commands. Once available:
+
+```sh
+zcc browser-automation open --backend desktop --machine <host-id> --desktop <instance-id> --json
+```
+
+Retain the returned session ID and load the plugin's skill for its
+inspect/act/verify workflow. Use `--tab <tab-id>` only for a user-requested
+handoff of an existing tab and its login profile. If the plugin is missing,
+installation through Plugins or `zcc plugin install builtin:browser-automation`
+adds its commands and skill; enable it if disabled. Plugin installation uses
+the normal host trust controls. New threads receive the updated skill catalog;
+running threads keep their existing snapshot.
+
+A simple visible URL preview through `zcc browser`
 does not require installing that plugin. Headless automation is a separate
 choice and does not open this side panel.
+
+For a custom CDP integration, follow `zcc guide browser` to acquire a scoped
+lease and write its connection to a private file. The client must run on the
+browser host. With Playwright 1.60+, use
+`chromium.connectOverCDP(wsEndpoint, { noDefaults: true })`, then the existing
+default context's `pages()` or `newPage()`. Electron owns download and
+presentation defaults; browser-wide settings and independent browser contexts
+are unsupported. Keep the endpoint out of chat and shared ports, and release
+the lease in cleanup.
 
 If no desktop backend is available, explain the limitation and provide the URL.
 Do not silently switch to an external browser. Leave a preview the user needs

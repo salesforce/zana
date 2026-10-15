@@ -12,7 +12,7 @@ import {
   type RunOutput,
   type Session,
 } from "./contracts.js";
-import { parseCli, commands } from "./cli.js";
+import { cliFailure, cliHelp, parseCli, commands } from "./cli.js";
 import { previewDirective } from "./preview-directive.js";
 
 const desktopSchema = z
@@ -43,7 +43,17 @@ const keyFor = (threadId: string, sessionId: string) =>
   `sessions/${encodeURIComponent(threadId)}/${sessionId}`;
 
 export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
-  const host = zcc.host.experimental_client({ contract: hostContract });
+  // Keep Zod's non-enumerable validators in this worker. Client creation
+  // crosses the desktop's plugin worker bridge and may resolve asynchronously.
+  const transport = await zcc.host.experimental_client();
+  const host = {
+    ...transport,
+    async call(method: keyof typeof hostContract, input: unknown, options?: Parameters<typeof transport.call>[2]) {
+      const descriptor = hostContract[method];
+      const parsed = descriptor.input.parse(input);
+      return descriptor.output.parse(await transport.call(method, parsed, options));
+    },
+  };
   const desktop = zcc.sdk.experimental_desktopBrowsers;
   const active = new Map<string, RecordEntry>();
   const busy = new Map<string, number>();
@@ -58,9 +68,12 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
       record,
     );
   async function owned(threadId: string, sessionId: string) {
-    const record = recordSchema.parse(
+    const parsed = recordSchema.safeParse(
       await zcc.storage.kv.get(keyFor(threadId, sessionId)),
     );
+    if (!parsed.success)
+      throw new Error("Session does not belong to this thread or has expired");
+    const record = parsed.data;
     if (record.session.threadId !== threadId || record.session.id !== sessionId)
       throw new Error("Session does not belong to this thread");
     return active.get(sessionId) ?? record;
@@ -291,9 +304,7 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
       signal.throwIfAborted();
       if (record.desktop) {
         const target = record.desktop;
-        subscriptions.set(
-          session.id,
-          desktop.subscribe({
+        const subscription = await desktop.subscribe({
             hostId: target.hostId,
             instanceId: target.instanceId,
             generation: target.generation,
@@ -309,8 +320,13 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
             onError() {
               void finish(record, "stopped").catch(() => {});
             },
-          }),
-        );
+          });
+        if (signal.aborted || session.state !== "ready") {
+          subscription.dispose();
+          signal.throwIfAborted();
+          throw new Error("Desktop control was released while opening this session");
+        }
+        subscriptions.set(session.id, subscription);
       }
       return session;
     } catch (error) {
@@ -426,7 +442,17 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
         finish(await owned(input.threadId, input.sessionId), "closed"),
     };
   }
-  zcc.rpc.register(rpcContract, handlers(lifecycle.signal));
+  const rpcHandlers = handlers(lifecycle.signal);
+  zcc.rpc.register(rpcContract, {
+    open: input => rpcHandlers.open(rpcContract.open.input.parse(input)),
+    list: input => rpcHandlers.list(rpcContract.list.input.parse(input)),
+    run: input => rpcHandlers.run(rpcContract.run.input.parse(input)),
+    pages: input => rpcHandlers.pages(rpcContract.pages.input.parse(input)),
+    screenshot: input => rpcHandlers.screenshot(rpcContract.screenshot.input.parse(input)),
+    preview: input => rpcHandlers.preview(rpcContract.preview.input.parse(input)),
+    stop: input => rpcHandlers.stop(rpcContract.stop.input.parse(input)),
+    close: input => rpcHandlers.close(rpcContract.close.input.parse(input)),
+  });
   function dispatch(
     method: keyof typeof rpcContract,
     input: unknown,
@@ -464,6 +490,8 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
     commands,
     async run(argv, context) {
       try {
+        const help = cliHelp(argv);
+        if (help !== undefined) return { exitCode: 0, stdout: help };
         const parsed = parseCli(argv, context.threadId);
         if (parsed.method === "open" && parsed.input.selection) {
           const target = parsed.input.selection.hostId.trim();
@@ -552,11 +580,7 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
           stdout: JSON.stringify(printable),
         };
       } catch (error) {
-        return {
-          exitCode: 1,
-          stderr:
-            error instanceof Error ? error.message : "Browser command failed",
-        };
+        return cliFailure(error, argv.includes("--json"));
       }
     },
   });

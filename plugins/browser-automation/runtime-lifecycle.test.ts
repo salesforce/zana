@@ -12,7 +12,9 @@ let port = '12345\n/devtools/browser/test-id';
 let readiness = true, alive = true;
 beforeEach(() => {
   vi.clearAllMocks(); children.length = 0; readiness = true; alive = true; port = '12345\n/devtools/browser/test-id';
-  fake.execute.mockResolvedValue(done());
+  fake.execute.mockImplementation(async (_binary, args: string[]) => args.at(-1) === 'JSON.stringify(await browser.listPages())'
+    ? JSON.stringify({ type: 'result', value: JSON.stringify([{ id: 'A'.repeat(32) }]) }) + '\n' + done()
+    : done());
   fake.supervise.mockImplementation((_command, args: string[], env) => {
     const child = { alive: vi.fn(() => alive), close: vi.fn(async () => {}) }; children.push(child);
     if (readiness) {
@@ -77,4 +79,22 @@ it.each(['bad-port\n/devtools/browser/id', '1234\n/invalid'])('rejects invalid C
 it('cleans up a session whose actual socket path exceeds the Unix limit', async () => {
   const input = await args(); input.tempDir = join(input.dataDir, 'x'.repeat(85));
   await expect(createRuntime(input)).rejects.toThrow('socket path is too long'); expect(await readdir(input.tempDir)).toEqual([]);
+});
+
+it('rejects failed or malformed initial page discovery and cleans up its worker', async () => {
+  for (const response of [done(1), JSON.stringify({ type: 'result', value: 'invalid JSON' }) + '\n' + done(), JSON.stringify({ type: 'result', value: JSON.stringify([{ id: 'not-a-target' }]) }) + '\n' + done()]) {
+    fake.execute.mockResolvedValueOnce(response);
+    const input = await args('ws://127.0.0.1:1234/cdp');
+    await expect(createRuntime(input)).rejects.toThrow();
+    expect(await readdir(input.tempDir)).toEqual([]);
+  }
+});
+
+it('does not arbitrarily choose an initial page when multiple targets exist', async () => {
+  fake.execute.mockResolvedValueOnce(JSON.stringify({ type: 'result', value: JSON.stringify([{ id: 'A'.repeat(32) }, { id: 'B'.repeat(32) }]) }) + '\n' + done());
+  const input = await args('ws://127.0.0.1:1234/cdp');
+  const runtime = await createRuntime(input);
+  await runtime.run('work', 1000, input.signal);
+  expect(fake.execute.mock.calls.at(-1)![1].at(-1)).toBe('work');
+  await runtime.close();
 });

@@ -8,6 +8,7 @@
  */
 import { WebSocket } from 'ws';
 import { createServer } from 'node:http';
+import { chromium, type Browser } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 
 test.use({ e2e: true });
@@ -31,6 +32,102 @@ function createAndActivateTarget(wsEndpoint: string): Promise<string> {
     ws.once('open', () => ws.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: 'about:blank' } })));
   });
 }
+
+test('Playwright controls the visible scoped browser and disconnects on Take over', async ({ app }) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.end(`<!doctype html><title>CDP fixture</title>
+      <label>Message <input aria-label="Message"></label>
+      <button onclick="document.querySelector('output').textContent=document.querySelector('input').value">Apply</button>
+      <output></output>`);
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw Error('Missing fixture port');
+  const url = `http://127.0.0.1:${address.port}/`;
+  const execute = (command: Record<string, unknown>) => app.electron.evaluate(async (_electron, command) => {
+    const broker = (globalThis as { __zccDesktopBrowserBroker?: {
+      listInstances(): Array<{ instanceId: string; generation: string }>;
+      execute(command: Record<string, unknown>): Promise<Record<string, unknown>>;
+    } }).__zccDesktopBrowserBroker;
+    if (!broker) throw Error('Missing desktop broker');
+    return broker.execute({ ...broker.listInstances()[0], threadId: 'thr_abcdefghij', ...command });
+  }, command);
+  let browser: Browser | undefined;
+  try {
+    await expect(app.window.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+    await app.window.evaluate(() => { history.pushState({}, '', '/threads/thr_abcdefghij'); dispatchEvent(new PopStateEvent('popstate')); });
+    await expect(app.window.getByTestId('thread-detail')).toBeVisible();
+    for (const tabId of ['playwright-page', 'unleased-page']) {
+      await execute({ type: 'desktop.browser.create_tab', tabId, profile: { kind: 'automation', id: tabId }, url,
+        presentation: tabId === 'playwright-page' ? 'reveal' : 'hidden' });
+    }
+    await execute({ type: 'desktop.browser.acquire_control', leaseId: 'playwright-lease', tabIds: ['playwright-page'],
+      controllerLabel: 'Playwright regression', expiresAt: Date.now() + 60_000 });
+    await expect(app.window.getByTestId('thread-browser-tab')).toBeVisible();
+    const connection = await execute({ type: 'desktop.browser.open_connection', leaseId: 'playwright-lease', tabIds: ['playwright-page'] });
+    // Electron owns the existing context's download and presentation policy.
+    browser = await chromium.connectOverCDP(String(connection.wsEndpoint), { noDefaults: true });
+    expect(browser.contexts()).toHaveLength(1);
+    const context = browser.contexts()[0]!;
+    context.setDefaultTimeout(10_000);
+    // An unleased page in the same thread must remain outside the connection.
+    expect(context.pages()).toHaveLength(1);
+    const page = context.pages()[0]!;
+    const panelTabIds = () => app.window.evaluate(() => {
+      const raw = localStorage.getItem('zcc.secondaryPanel.thr_abcdefghij');
+      return raw ? JSON.parse(raw).tabs.filter((tab: { kind: string }) => tab.kind === 'browser').map((tab: { id: string }) => tab.id) : [];
+    });
+    await expect.poll(panelTabIds).toEqual(['playwright-page']);
+    for (let index = 0; index < 3; index++) await execute({ type: 'desktop.browser.reveal_tab', tabId: 'playwright-page' });
+    await expect.poll(panelTabIds).toEqual(['playwright-page']);
+    await page.getByRole('textbox', { name: 'Message' }).fill('CDP works');
+    await page.getByRole('button', { name: 'Apply' }).click();
+    await expect(page.locator('output')).toHaveText('CDP works');
+    expect(await page.evaluate(() => document.title)).toBe('CDP fixture');
+    expect((await page.screenshot()).subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    // New pages must initialize through default auto-attach, too.
+    const second = await context.newPage();
+    await second.goto(url + '?second');
+    await expect(second.getByRole('textbox', { name: 'Message' })).toBeVisible();
+    await expect.poll(async () => (await panelTabIds()).length).toBe(2);
+    await second.close();
+    await expect.poll(panelTabIds).toEqual(['playwright-page']);
+    await execute({ type: 'desktop.browser.reveal_tab', tabId: 'playwright-page' });
+    await app.window.getByTestId('thread-browser-take-over').click();
+    await expect.poll(() => browser!.isConnected()).toBe(false);
+    const listed = await execute({ type: 'desktop.browser.list_tabs' });
+    expect(listed.tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tabId: 'playwright-page', control: null }),
+      expect.objectContaining({ tabId: 'unleased-page', control: null }),
+    ]));
+    // Repeated create/reveal/close cycles must not leave labels that recreate
+    // closed native tabs on selection or after a renderer remount.
+    for (let index = 0; index < 3; index++) {
+      const tabId = `lifecycle-${index}`;
+      await execute({ type: 'desktop.browser.create_tab', tabId, profile: { kind: 'automation', id: tabId }, url: 'about:blank', presentation: 'reveal' });
+      await expect.poll(async () => (await panelTabIds()).length).toBe(2);
+      await execute({ type: 'desktop.browser.close_tab', tabId });
+      await expect.poll(panelTabIds).toEqual(['playwright-page']);
+    }
+    await app.window.evaluate(() => { history.pushState({}, '', '/'); dispatchEvent(new PopStateEvent('popstate')); });
+    await expect(app.window.getByTestId('thread-detail')).toHaveCount(0);
+    await execute({ type: 'desktop.browser.close_tab', tabId: 'playwright-page' });
+    await app.window.evaluate(() => { history.pushState({}, '', '/threads/thr_abcdefghij'); dispatchEvent(new PopStateEvent('popstate')); });
+    await expect(app.window.getByTestId('thread-detail')).toBeVisible();
+    await expect.poll(panelTabIds).toEqual([]);
+    await expect(app.window.getByTestId('thread-browser-tab')).toHaveCount(0);
+    expect((await execute({ type: 'desktop.browser.list_tabs' })).tabs).toEqual([expect.objectContaining({ tabId: 'unleased-page' })]);
+  } finally {
+    await browser?.close().catch(() => undefined);
+    // Closing our original tab also revokes its lease on a failed assertion.
+    for (const tabId of ['playwright-page', 'unleased-page']) {
+      await execute({ type: 'desktop.browser.close_tab', tabId }).catch(() => undefined);
+    }
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
 
 
 test('desktop browser broker leases loopback CDP and reveals a focused thread', async ({ app }) => {

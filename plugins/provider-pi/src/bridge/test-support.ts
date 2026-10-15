@@ -167,7 +167,14 @@ export async function startFakePiBridge(
       await experimental_closeAllForTests();
       harness.restore();
       vi.unstubAllEnvs();
-      rmSync(workspaceDir, { recursive: true, force: true });
+      // A cancelled turn's final file write can race recursive fixture removal.
+      // Retry transient filesystem contention, and still fail if it persists.
+      rmSync(workspaceDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 25,
+      });
     },
   };
   if (options.initialize) {

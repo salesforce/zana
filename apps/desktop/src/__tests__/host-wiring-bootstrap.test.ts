@@ -39,7 +39,9 @@ const h = vi.hoisted(() => {
     followupDeps: undefined as any,
     lifecycleStore: undefined as any,
     lifecycleIntegration: undefined as any,
-    lifecycleOverride: {} as Record<string, (...a: any[]) => any>
+    lifecycleOverride: {} as Record<string, (...a: any[]) => any>,
+    controlPlaneDeps: undefined as any,
+    browserManager: undefined as any
   };
 });
 
@@ -61,8 +63,13 @@ vi.mock('electron', () => {
     static getAllWindows() { return []; }
     static getFocusedWindow() { return null; }
     static fromWebContents() { return null; }
-    constructor() { return loose(); }
+    constructor() {
+      const fallback = { get: (target: Record<string, unknown>, key: string | symbol) =>
+        key in target ? target[key as string] : loose() };
+      return new Proxy({ id: 1, webContents: new Proxy({ id: 2 }, fallback) }, fallback);
+    }
   }
+  const display = { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } };
   return {
     safeStorage: { isEncryptionAvailable: () => false },
     app,
@@ -70,7 +77,9 @@ vi.mock('electron', () => {
     ipcMain: { handle: (c: string, fn: (...a: any[]) => any) => { h.ipcHandlers.set(c, fn); }, on: () => {}, removeHandler: () => {} },
     dialog: loose(),
     shell: loose(),
-    screen: loose(),
+    screen: new Proxy({ getAllDisplays: () => [display], getPrimaryDisplay: () => display }, {
+      get: (target, key) => key in target ? target[key as keyof typeof target] : loose()
+    }),
     Menu: { setApplicationMenu: () => {}, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
     nativeImage: { createFromPath: () => loose(), createEmpty: () => loose() },
     powerMonitor: { on: () => {}, off: () => {} },
@@ -165,13 +174,23 @@ vi.mock('@zana-ai/zcc-host-daemon/capacity', async () => {
 });
 vi.mock('../ipc/register.js',() => ({ registerIpcFamilies: (ctx: unknown) => { h.ipcCtx = ctx; } }));
 vi.mock('@zana-ai/zcc-server/services/mcp/mcp-server', () => ({
-  startMcpServer: async (deps: unknown) => { h.mcpDeps = deps; return { port: 1, close: async () => {} }; }
+  startMcpServer: async (deps: unknown) => { h.mcpDeps = deps; return { port: 9876, close: async () => {} }; }
 }));
-vi.mock('../control/control-plane.js', () => ({ startControlPlane: async () => ({ close: async () => {} }) }));
+vi.mock('../control/control-plane.js', () => ({ startControlPlane: async (deps: unknown) => {
+  h.controlPlaneDeps = deps;
+  return { close: async () => {} };
+} }));
+vi.mock('../desktop-browser-view.js', async () => {
+  const actual: any = await vi.importActual('../desktop-browser-view.js');
+  return { ...actual, createDesktopBrowserViewManager: (...args: any[]) => {
+    h.browserManager = actual.createDesktopBrowserViewManager(...args);
+    return h.browserManager;
+  } };
+});
 vi.mock('../runtime/runtime-supervisor.js', () => ({
   startRuntimeSupervisor: async () => { throw new Error('no runtime in unit test'); }
 }));
-vi.mock('../updater.js', () => ({ createUpdater: () => ({ start() {}, stop() {} }) }));
+vi.mock('../updater.js', () => ({ createUpdater: () => ({ start() {}, stop() {}, checkForUpdates: async () => {} }) }));
 vi.mock('../startup-dependency-doctor.js', () => ({ runStartupDependencyDoctor: async () => ({}) }));
 vi.mock('../test-tap.js', () => ({
   record: () => {}, recordLog: () => {}, isEnabled: () => false, enable: () => {},
@@ -215,8 +234,13 @@ describe('host bootstrap wiring', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    h.ready!();
-    await vi.waitFor(() => expect(h.mcpDeps).toBeDefined(), { timeout: 20000 });
+    vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:5173');
+    try {
+      h.ready!();
+      await vi.waitFor(() => expect(h.controlPlaneDeps, JSON.stringify(vi.mocked(console.error).mock.calls)).toBeDefined(), { timeout: 20000 });
+      expect(h.controlPlaneDeps.pluginCommands.cliContributions).toBeTypeOf('function');
+      expect(h.controlPlaneDeps.pluginCommands.runCliCommand).toBeTypeOf('function');
+    } finally { vi.unstubAllEnvs(); }
     expect(h.ipcCtx.createInteractiveTerminal).toBe(host.createInteractiveTerminal);
     expect(h.ipcCtx.launchAuthorizedTerminal).toBeTypeOf('function');
     expect(h.goalDeps.runEvaluator).toBeTypeOf('function');
@@ -229,6 +253,37 @@ describe('host bootstrap wiring', () => {
     expect((await h.mcpDeps.registerProject(dir)).alreadyExisted).toBe(true);
     project = project.project;
   }, 30000);
+
+  it('applies the browser ownership policy to navigation and redirects without exempting unrelated contents', () => {
+    const owned = Object.assign(new h.EventEmitter(), { id: 101, setWindowOpenHandler: vi.fn() });
+    const unrelated = Object.assign(new h.EventEmitter(), { id: 102, setWindowOpenHandler: vi.fn() });
+    const allow = vi.spyOn(h.browserManager, 'allowsNavigation').mockImplementation((contents, url) =>
+      contents === owned && /^https?:\/\//.test(url as string));
+    const created = h.appHandlers.get('web-contents-created')![0];
+    created({}, owned);
+    created({}, unrelated);
+    vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:5173');
+    try {
+      for (const eventName of ['will-navigate', 'will-redirect']) {
+        for (const [contents, url, blocked] of [
+          [owned, 'https://provider.test/callback', false],
+          [owned, 'javascript:alert(1)', true],
+          [unrelated, 'https://provider.test/callback', true],
+          [unrelated, 'http://127.0.0.1:5173/threads/test', false]
+        ] as const) {
+          const event = { preventDefault: vi.fn() };
+          contents.emit(eventName, event, url);
+          expect(event.preventDefault).toHaveBeenCalledTimes(blocked ? 1 : 0);
+        }
+      }
+      expect(allow).toHaveBeenCalledWith(owned, 'https://provider.test/callback');
+      expect(allow).toHaveBeenCalledWith(unrelated, 'https://provider.test/callback');
+      expect(allow).not.toHaveBeenCalledWith(unrelated, 'http://127.0.0.1:5173/threads/test');
+    } finally {
+      allow.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
 
   it('rejects registerProject targets that are missing or outside the trusted bases', async () => {
     await expect(h.mcpDeps.registerProject(`${h.root}/nope`)).rejects.toThrow(/does not exist/);

@@ -138,9 +138,15 @@ function parseTab(value: unknown): ClosableSecondaryTab | null {
 export function parseSecondaryPanelState(raw: unknown): ThreadSecondaryPanelState {
   const fallback = emptySecondaryPanelState();
   if (!isRecord(raw) || raw.version !== 1) return fallback;
-  const tabs = Array.isArray(raw.tabs)
+  const parsedTabs = Array.isArray(raw.tabs)
     ? raw.tabs.map(parseTab).filter((tab): tab is ClosableSecondaryTab => tab !== null)
     : [];
+  const seenIds = new Set<string>();
+  const tabs = parsedTabs.filter((tab) => {
+    if (seenIds.has(tab.id)) return false;
+    seenIds.add(tab.id);
+    return true;
+  });
   const activeId = typeof raw.activeId === 'string' ? raw.activeId : INFO_PIN_ID;
   const known = new Set<string>([INFO_PIN_ID, DIFF_PIN_ID, PLAN_PIN_ID, ...tabs.map((tab) => tab.id)]);
   return {
@@ -326,6 +332,8 @@ function matchExistingTab(
 ): ClosableSecondaryTab | undefined {
   return tabs.find((tab) => {
     if (tab.kind !== input.kind) return false;
+    // Native tab identity takes precedence over URL reuse, including blank tabs.
+    if (input.id !== undefined) return tab.id === input.id;
     if (input.kind === 'explorer' || input.kind === 'inbox') return true;
     if (input.kind === 'file-preview' || input.kind === 'storage-preview') return tab.path === input.path;
     if (input.kind === 'terminal') return tab.sessionId === input.sessionId;

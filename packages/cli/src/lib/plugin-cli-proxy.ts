@@ -116,6 +116,8 @@ export async function proxyPluginCliCommand(
   const ran = await callControlPlane({
     dataDir,
     op: 'plugin.cli',
+    // The desktop permits authenticated plugin commands up to five minutes.
+    timeoutMs: 305_000,
     args: { id: match.pluginId, argv: jsonOutput ? [...argv, '--json'] : argv, ...pluginCliContextFromEnv() }
   });
   if (!ran.ok) {
@@ -136,6 +138,7 @@ export async function runExplicitPluginCli(
   const ran = await callControlPlane({
     dataDir,
     op: 'plugin.cli',
+    timeoutMs: 305_000,
     args: { id: pluginId, argv, ...pluginCliContextFromEnv() }
   });
   if (!ran.ok) {

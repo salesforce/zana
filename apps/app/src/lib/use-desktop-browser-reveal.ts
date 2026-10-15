@@ -33,12 +33,16 @@ export function useDesktopBrowserReveal({
   useEffect(() => {
     if (!isFocused || pending === null || pending.threadId !== threadId) return;
     if (!browserTabs.some((tab) => tab.id === pending.tabId)) {
-      addTab?.({
+      if (!addTab) return;
+      addTab({
         id: pending.tabId,
         kind: "browser",
         title: "Browser",
         url: "",
       });
+      // addTab already opens/selects the tab. Consume the request before another
+      // render or native close can replay it and recreate the tab.
+      setPending(null);
       return;
     }
     activateTab(pending.tabId);

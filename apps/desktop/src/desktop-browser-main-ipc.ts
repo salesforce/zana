@@ -46,6 +46,10 @@ export function registerDesktopBrowserIpc(
 ): void {
   const broker = options?.broker;
   const browserImport = options?.browserImport;
+  ipcMain.handle(IPC.browser.getClosedTabs, (event) => {
+    const hostWindow = hostWindowFromEvent(event);
+    return hostWindow === null ? [] : manager.getClosedTabs(hostWindow.webContents.id);
+  });
 
   ipcMain.on(IPC.browser.attach, (event, payload: unknown) => {
     const hostWindow = hostWindowFromEvent(event);
