@@ -31,7 +31,7 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 ## Local verification
 
 - Day-to-day changed-code verification: `pnpm verify:fast`. It runs typecheck, `vitest run --changed origin/main`, and source-text guard tests. Full CI remains merge authority.
-- Pre-push verifies an isolated snapshot and escalates config, dependency, workflow, script, and domain changes to `pnpm verify:full`. Policy and the `ZANA_PRE_PUSH=fast` feature-branch override: `docs/native-runtime-isolation.md`.
+- Pre-push verifies feature branches in an isolated snapshot with typecheck, changed tests, and source-text guards. Protected refs and unsafe push shapes run `pnpm verify:full`. Policy: `docs/native-runtime-isolation.md`.
 
 ## Product Design Rules
 

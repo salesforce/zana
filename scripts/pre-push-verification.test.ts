@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { changedPaths, configuredAliases, ESCALATE_FULL, FAST_CHANGED_PATH_LIMIT, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush } from './pre-push-verification.mjs';
+import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush } from './pre-push-verification.mjs';
 
 const OID = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -63,13 +63,12 @@ it('treats repo agent instructions as inert prose outside plugins and test input
   expect(select(['AGENTS.md', 'apps/host-daemon/src/pty.ts'])).toMatchObject({ action: 'fast' });
 });
 
-it('escalates fast tier for explicit infrastructure paths and large changes', () => {
-  expect(ESCALATE_FULL).toHaveLength(5);
+it('uses changed-test verification for infrastructure paths and large feature changes', () => {
   for (const path of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tsconfig.build.json', 'vitest.workspace.config.ts', 'electron.vite.config.mts', 'scripts/build.mjs', '.github/workflows/ci.yml', '.githooks/pre-push', 'packages/domain/src/index.ts']) {
-    expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services([path]) })).toMatchObject({ action: 'full', reason: expect.stringContaining(path) });
+    expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services([path]) })).toMatchObject({ action: 'fast', reason: 'feature branch change-aware verification' });
   }
-  const paths = Array.from({ length: FAST_CHANGED_PATH_LIMIT + 1 }, (_, index) => `apps/server/src/${index}.ts`);
-  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(paths) })).toMatchObject({ action: 'full', reason: expect.stringContaining(`${FAST_CHANGED_PATH_LIMIT}`) });
+  const paths = Array.from({ length: 201 }, (_, index) => `apps/server/src/${index}.ts`);
+  expect(selectPush({ tuples: [feature], remoteUrl: 'https://github.com/salesforce/zana', ...services(paths) })).toMatchObject({ action: 'fast' });
 });
 
 it('uses strictest full policy for unsafe refs, bases, remote identity, and multiple objects', () => {
@@ -158,14 +157,12 @@ it.each([
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-it('permits fast override only for feature full selection', () => {
+it('does not let environment overrides weaken full fallback policy', () => {
+  const verify = vi.fn();
   const fastVerify = vi.fn();
-  const fullVerify = vi.fn();
-  const options = { input: '', remoteUrl: 'https://github.com/salesforce/zana', run: () => ({ status: 1 }), log: vi.fn(), error: vi.fn(), verify: fullVerify, fastVerify, prePush: 'fast' };
-  expect(runPrePush({ ...options, select: () => ({ action: 'full', reason: 'package.json', oid: OID, base: BASE, paths: ['package.json'], feature: true }) })).toBe(0);
-  expect(fastVerify).toHaveBeenCalledWith(expect.objectContaining({ oid: OID, base: BASE }));
-  expect(runPrePush({ ...options, select: () => ({ action: 'full', reason: 'protected', oid: OID, base: BASE }) })).toBe(0);
-  expect(fullVerify).toHaveBeenCalledWith(expect.objectContaining({ oid: OID }));
+  expect(runPrePush({ input: '', remoteUrl: 'https://github.com/salesforce/zana', run: () => ({ status: 1 }), log: vi.fn(), error: vi.fn(), verify, fastVerify, prePush: 'fast', select: () => ({ action: 'full', reason: 'protected', oid: OID, base: BASE }) })).toBe(0);
+  expect(verify).toHaveBeenCalledWith(expect.objectContaining({ oid: OID }));
+  expect(fastVerify).not.toHaveBeenCalled();
 });
 
 it('creates a private detached snapshot, runs named full union, and cleans it up', () => {

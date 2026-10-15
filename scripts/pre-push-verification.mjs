@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Fail-closed local verification for pre-push. A verified inert-docs change is
- * the only no-test fast path. Feature branches otherwise run change-aware tests
- * in an isolated clone of the exact object being pushed. CI remains merge authority.
+ * the only no-test fast path. Feature branches run change-aware tests in an
+ * isolated clone of the exact object being pushed. CI remains merge authority.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -20,14 +20,6 @@ const DEFAULT_GITHUB_SSH_ALIASES = ['github.com-work-public'];
 // inert. plugins/** stays out: plugin dirs are path-installed and shipped.
 const INERT_DOC = /^(?:docs\/.+\.md|README\.md|CONTRIBUTING\.md|(?:(?:apps|packages|docs)\/(?:[^/]+\/)*)?(?:AGENTS|CLAUDE)\.md)$/;
 const UNSAFE_DOC = /(?:^|\/)(?:SKILL\.md|fixtures?\/|snapshots?\/|test(?:ing)?\/|test-data\/|assets\/|generated\/|builtin-skills\/|__tests__\/)/i;
-export const ESCALATE_FULL = [
-  /^(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/,
-  /(?:^|\/)tsconfig[^/]*\.json$/,
-  /(?:^|\/)vitest[^/]*\.config\.[^/]+$/,
-  /(?:^|\/)electron\.vite\.config\.[^/]+$/,
-  /^(?:scripts|\.github|\.githooks|packages\/domain)\//,
-];
-export const FAST_CHANGED_PATH_LIMIT = 200;
 
 function git(args, { cwd = process.cwd(), encoding = 'utf8' } = {}) {
   return execFileSync('git', args, { cwd, encoding, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -89,12 +81,6 @@ function inertDocs(paths) {
   return paths.length > 0 && paths.every((path) => INERT_DOC.test(path) && !UNSAFE_DOC.test(path));
 }
 
-function fullEscalation(paths) {
-  if (paths.length > FAST_CHANGED_PATH_LIMIT) return `more than ${FAST_CHANGED_PATH_LIMIT} changed paths`;
-  const path = paths.find((candidate) => ESCALATE_FULL.some((pattern) => pattern.test(candidate)));
-  return path ? `path requires full verification: ${path}` : null;
-}
-
 /**
  * Pure selection policy. `hasObject`, `mergeBase`, and `isAncestor` are injected
  * so tests can exercise force/new-branch behavior without a network or repo.
@@ -130,8 +116,6 @@ export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBa
   const oid = [...oids][0];
   const base = [...bases][0];
   if (inertDocs(resultPaths)) return { action: 'skip', reason: 'verified inert prose only', paths: resultPaths, oid, base };
-  const escalation = fullEscalation(resultPaths);
-  if (escalation) return { action: 'full', reason: escalation, paths: resultPaths, oid, base, feature: true };
   if (!resultPaths.length) return { action: 'full', reason: 'empty diff cannot establish safe selection', paths: resultPaths, oid, base, feature: true };
   return { action: 'fast', reason: 'feature branch change-aware verification', paths: resultPaths, oid, base, feature: true };
 }
@@ -211,7 +195,7 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
   });
 }
 
-export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnSync, prePush = process.env.ZANA_PRE_PUSH } = {}) {
+export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnSync } = {}) {
   if (!remoteUrl) {
     error('pre-push: Git did not provide remote URL; aborting push.');
     return 1;
@@ -227,9 +211,6 @@ export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = 
     isAncestor: (left, right) => runGit(['merge-base', '--is-ancestor', left, right]) !== null,
     changed: (base, oid) => changedPaths(base, oid, runGit),
   });
-  if (prePush === 'fast' && selection.action === 'full' && selection.feature && selection.oid && selection.base) {
-    selection = { ...selection, action: 'fast', reason: `${selection.reason}; ZANA_PRE_PUSH=fast override` };
-  }
   log(`pre-push: ${selection.action}; ${selection.reason}`);
   if (selection.paths?.length) log(`pre-push: selected paths:\n${selection.paths.map((path) => `  ${path}`).join('\n')}`);
   if (selection.action === 'abort') return 1;
@@ -239,7 +220,6 @@ export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = 
       fastVerify({ oid: selection.oid, base: selection.base, paths: selection.paths, root, log, run });
       return 0;
     }
-    if (selection.feature) log('pre-push: full verification selected; CI runs this suite too. Set ZANA_PRE_PUSH=fast to use change-aware verification.');
     const oids = selection.oids ?? (selection.oid ? [selection.oid] : [...new Set((tuples ?? [])
       .filter((tuple) => !ZERO_OID.test(tuple.localOid)).map((tuple) => tuple.localOid))]);
     if (!oids.length) throw new Error('no pushed object available for full verification');
