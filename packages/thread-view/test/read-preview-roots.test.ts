@@ -24,7 +24,7 @@ function workRows(rows: readonly TimelineRow[]): TimelineWorkRow[] {
   );
 }
 
-function renderCommand(command: string, roots = true) {
+function renderCommand(command: string, roots = true, cwd = WORKSPACE) {
   const event = createTimelineEventFactory({ threadId: "thread-1" });
   const rendered = renderTimelineFixture({
     events: [
@@ -33,6 +33,7 @@ function renderCommand(command: string, roots = true) {
         turnId: "turn-1",
         itemId: "cmd-1",
         command,
+        cwd,
         exitCode: 0,
         aggregatedOutput: "",
         createdAt: 1_000,
@@ -49,8 +50,8 @@ function renderCommand(command: string, roots = true) {
   return row;
 }
 
-function previewAction(command: string, roots = true) {
-  return buildTimelineActivityIntentTitles(renderCommand(command, roots))[0]
+function previewAction(command: string, roots = true, cwd = WORKSPACE) {
+  return buildTimelineActivityIntentTitles(renderCommand(command, roots, cwd))[0]
     ?.title.action;
 }
 
@@ -128,6 +129,32 @@ describe("read preview roots", () => {
     expect(renderCommand("cat src/app.ts").activityIntents[0]).not.toHaveProperty(
       "previewable",
     );
+  });
+
+  it("resolves relative reads against the command cwd", () => {
+    // Codex reported `cat src/byoo/AGENTS.md` with cwd in another checkout;
+    // Preview used to open the workspace's (missing) copy of that path.
+    const other = "/tmp/data-org-verify";
+    expect(renderCommand("cat src/byoo/AGENTS.md", true, other).activityIntents[0]).toMatchObject({
+      path: `${other}/src/byoo/AGENTS.md`,
+      previewable: false,
+    });
+    expect(previewAction("cat src/byoo/AGENTS.md", true, other)).toBeNull();
+    // A cwd inside the workspace keeps a workspace-relative, previewable path.
+    expect(previewAction("cat ./app.ts", true, `${WORKSPACE}/src`)).toEqual({
+      kind: "open-file-preview",
+      path: "src/app.ts",
+    });
+    // Without a usable cwd or workspace root the path is left as written.
+    expect(previewAction("cat src/app.ts", true, "")).toEqual({
+      kind: "open-file-preview",
+      path: "src/app.ts",
+    });
+    expect(previewAction("cat src/app.ts", false, other)).toEqual({
+      kind: "open-file-preview",
+      path: "src/app.ts",
+    });
+    expect(previewAction("cat $F", true, other)).toBeNull();
   });
 
   it("rejects absolute paths that only share a root prefix or escape it", () => {
