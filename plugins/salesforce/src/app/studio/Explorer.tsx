@@ -139,9 +139,47 @@ function AgentRow({ agent, open, active, dirty, onToggle, onOpenFile, onOpenNode
   </div>;
 }
 
+/** The open agent on its own: a way back to every agent, then what it references by kind, then its local history. */
+function FocusedAgent({ agent, query, total, dirty, history, activePath, collapsed, onToggleSection, onAll, onOpenFile, onOpenNode }: {
+  agent: OutlineAgent; query: string; total: number; dirty: boolean; history: PlaygroundFileRef[]; activePath: string | null;
+  collapsed(id: string): boolean; onToggleSection?(id: string): void; onAll(): void; onOpenFile(path: string): void; onOpenNode(node: ExplorerNode): void;
+}) {
+  const { file, uses } = agent;
+  const rows = Array.isArray(uses) ? uses.filter(row => !query || row.use.apiName.toLowerCase().includes(query)) : [];
+  const groups = REF_KINDS.map(kind => ({ kind, rows: rows.filter(row => row.use.kind === kind) })).filter(group => group.rows.length);
+  return <>
+    <button type="button" className="sf-as-tree-btn sf-as-focus-back" data-testid="sf-explorer-all-agents" title={`Show all ${total.toLocaleString()} agents in this project`} onClick={onAll}>
+      <ArrowLeft size={13} aria-hidden="true" /><span className="sf-as-tree-name">All agents</span><span className="sf-as-tree-meta">{total.toLocaleString()}</span>
+    </button>
+    <button type="button" className="sf-as-tree-btn sf-as-agent-row is-active" data-testid={`salesforce-agent-script-file:${file.path}`} aria-current="true"
+      title={`${file.path}\n${file.lines.toLocaleString()} lines`} onClick={() => onOpenFile(file.path)}>
+      <KindIcon kind="agent" />
+      <span className="sf-as-tree-name">{file.apiName}</span>
+      {dirty && <span className="sf-etab-dirty" role="img" aria-label="Unsaved changes">●</span>}
+      {agent.node?.badge?.problems ? <span className="sf-as-tree-meta is-danger" aria-label={`${agent.node.badge.problems} problems`}>{agent.node.badge.problems}</span> : null}
+      <span className="sf-as-tree-meta">{file.lines.toLocaleString()} lines</span>
+    </button>
+    {uses === null && <div className="sf-as-dep-note">Finding references…</div>}
+    {uses === 'unindexed' && <div className="sf-as-dep-note">References not indexed for this agent.</div>}
+    {Array.isArray(uses) && groups.length === 0 && <div className="sf-as-dep-note">{query ? 'No matching references.' : 'No Apex, Flow, prompt or type references.'}</div>}
+    {groups.map(group => <Section key={group.kind} id={`focus-${group.kind}`} label={REF_GROUP_LABEL[group.kind]} count={group.rows.length} collapsed={collapsed(`focus-${group.kind}`)} onToggle={onToggleSection}>
+      {group.rows.map(row => <RefRow key={`${row.use.kind}:${row.use.apiName}`} node={row.node ?? { kind: row.use.kind, apiName: row.use.apiName }} depth={1} onOpen={onOpenNode} showUses />)}
+    </Section>)}
+    {history.length > 0 && <Section id="history" label="Local history" count={history.length} collapsed={collapsed('history')} onToggle={onToggleSection} muted>
+      {history.map(row => <button key={row.path} type="button" className={`sf-as-tree-btn sf-as-depth-1${activePath === row.path ? ' is-active' : ''}`} data-testid={`salesforce-agent-script-file:${row.path}`}
+        title={row.path} onClick={() => onOpenFile(row.path)}>
+        <span className="sf-as-kind-icon is-history" aria-hidden="true"><History size={13} aria-hidden="true" /></span>
+        <span className="sf-as-tree-name">{row.apiName}</span>
+        <span className="sf-as-tree-hint">{row.path.slice(HISTORY_PREFIX.length).split('/')[0]}</span>
+      </button>)}
+    </Section>}
+  </>;
+}
+
 /**
  * The Studio explorer: the project's agents, each unfolding into what it references (Apex, Flows, prompts, Lightning Types), then test
- * suites, org agents and local history. "All references" swaps the outline for the full catalogue. The same component is the wide
+ * suites, org agents and local history. An open project agent narrows it to that agent's references until "All agents" is chosen.
+ * "All references" swaps the outline for the full catalogue. The same component is the wide
  * left column and the rail's "File explorer" tool.
  */
 export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, onOpenFile, onOpenNode, onBrowseOrg, orgLabel, orgAgentsMore, orgAgentsNotLocal, collapsed = [], onToggleSection, onHide }: {
@@ -166,6 +204,8 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
   onHide?(): void;
 }) {
   const [view, setView] = useState<'outline' | 'references'>('outline');
+  // An open project agent focuses the outline on it; "All agents" widens it until another agent opens.
+  const [wideFor, setWideFor] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(activePath ? [activePath] : []));
   // Opening an agent (from anywhere) unfolds it here; folding stays the user's choice afterwards.
   useEffect(() => { if (activePath) setExpanded(current => current.has(activePath) ? current : new Set(current).add(activePath)); }, [activePath]);
@@ -185,6 +225,9 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
   const orgCount = `${orgOnly.toLocaleString()}${!exact && orgAgentsMore && !needle ? '+' : ''}`;
   const refCount = nodes.filter(node => (REF_KINDS as readonly string[]).includes(node.kind)).length;
   const isCollapsed = (id: string) => !needle && DEFAULT_COLLAPSED.has(id) !== collapsed.includes(id);
+  const focused = view === 'outline' && wideFor !== activePath ? outline.agents.find(agent => agent.file.path === activePath) : undefined;
+  // Choosing the open agent again returns to its focused view.
+  const focusOn = (path: string) => { if (path === activePath) setWideFor(null); onOpenFile(path); };
   const toggle = (path: string) => setExpanded(current => { const next = new Set(current); if (next.has(path)) next.delete(path); else next.add(path); return next; });
 
   const outlineView = <>
@@ -195,7 +238,7 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
           {query ? 'Try another file name.' : 'Create a local agent or retrieve a source from your org.'}
         </EmptyState>
         : agents.map(agent => <AgentRow key={agent.file.path} agent={agent} open={agent.forceOpen || expanded.has(agent.file.path)} active={activePath === agent.file.path}
-          dirty={dirtyPath === agent.file.path} onToggle={() => toggle(agent.file.path)} onOpenFile={onOpenFile} onOpenNode={onOpenNode} />)}
+          dirty={dirtyPath === agent.file.path} onToggle={() => toggle(agent.file.path)} onOpenFile={focusOn} onOpenNode={onOpenNode} />)}
       {orgOnly > 0 && agents.length > 0 && <button type="button" className="sf-as-org-link" data-testid="sf-explorer-org-link" onClick={onBrowseOrg}>
         <KindIcon kind="org-agent" />
         <span className="sf-as-org-link-text">
@@ -219,6 +262,10 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
     </Section>}
   </>;
 
+  const focusView = focused && <FocusedAgent agent={focused} query={needle} total={outline.agents.length} dirty={dirtyPath === focused.file.path}
+    history={history.filter(file => file.apiName === focused.file.apiName)} activePath={activePath} collapsed={isCollapsed} onToggleSection={onToggleSection}
+    onAll={() => setWideFor(activePath)} onOpenFile={onOpenFile} onOpenNode={onOpenNode} />;
+
   const referencesView = <>
     <div className="sf-as-view-head">
       <button type="button" className="icon-btn" aria-label="Back to agents" title="Back to agents" onClick={() => setView('outline')}><ArrowLeft size={14} aria-hidden="true" /></button>
@@ -232,10 +279,10 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
 
   return <aside className="sf-as-explorer" data-testid="salesforce-agent-script-explorer" aria-label="Agentforce files">
     <div className="sf-as-explorer-top">
-      <input className="sf-as-explorer-search" aria-label="Filter Agentforce files" placeholder="Filter files" value={query} onChange={event => onQuery(event.target.value)} />
+      <input className="sf-as-explorer-search" aria-label="Filter Agentforce files" placeholder={focused ? `Filter ${focused.file.apiName}` : 'Filter files'} value={query} onChange={event => onQuery(event.target.value)} />
       {onHide && <button type="button" className="icon-btn sf-as-explorer-hide" aria-label="Hide explorer" title="Hide explorer (⌘B)" onClick={onHide}><PanelLeftClose size={15} aria-hidden="true" /></button>}
     </div>
-    <div className="sf-as-explorer-scroll">{view === 'outline' ? outlineView : referencesView}</div>
+    <div className="sf-as-explorer-scroll">{view === 'references' ? referencesView : focusView || outlineView}</div>
     {refCount > 0 && <div className="sf-as-explorer-foot">
       <button type="button" className={`sf-as-tree-btn${view === 'references' ? ' is-active' : ''}`} aria-pressed={view === 'references'}
         onClick={() => setView(current => current === 'references' ? 'outline' : 'references')}>

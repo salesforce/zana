@@ -78,6 +78,16 @@ describe('buildLocalExplorer', () => {
     const agentRows = result.nodes.filter(node => node.kind === 'agent');
     expect(agentRows.filter(node => node.uses).length).toBe(EXPLORER_LIMITS.scanAgents);
   });
+  it('scans the focused agent first, past the scan limit, and ignores a path the listing does not return', () => {
+    const extra: Record<string, string> = {};
+    for (let i = 0; i < EXPLORER_LIMITS.scanAgents + 5; i++) extra[`agents/A${String(i).padStart(3, '0')}.agent`] = `x: apex://C${i}`;
+    const root = project(extra);
+    const last = `agents/A${String(EXPLORER_LIMITS.scanAgents + 4).padStart(3, '0')}.agent`;
+    const usesOf = (focus?: string) => buildLocalExplorer(root, createNodeDeps(), focus).nodes.find(node => node.kind === 'agent' && node.path === last)?.uses;
+    expect(usesOf()).toBeUndefined();
+    expect(usesOf(last)).toEqual([{ kind: 'apex', apiName: `C${EXPLORER_LIMITS.scanAgents + 4}` }]);
+    expect(usesOf('../outside.agent')).toBeUndefined();
+  });
   it('locates a target without reading its source', () => {
     const root = project({ 'force-app/main/default/classes/Big.cls': 'x'.repeat(800_000), 'agents/Big.agent': 'x: apex://Big' });
     const deps = createNodeDeps();
@@ -124,7 +134,7 @@ describe('studio.explorer RPC', () => {
       deps
     } as unknown as StudioServerContext;
     registerStudioExplorer(studio);
-    return { call: () => handlers.get('studio.explorer')!({}) as Promise<any>, dispose, deps };
+    return { call: (args: unknown = {}) => handlers.get('studio.explorer')!(args) as Promise<any>, dispose, deps };
   }
   it('refuses without a project folder', async () => {
     expect(await setup({}).call()).toMatchObject({ ok: false, code: 'not_configured' });
@@ -135,6 +145,13 @@ describe('studio.explorer RPC', () => {
     expect(result.ok).toBe(true);
     expect(result.nodes.some((node: any) => node.kind === 'agent')).toBe(true);
     expect(execSf).not.toHaveBeenCalled();
+  });
+  it('passes the open agent through as the scan focus', async () => {
+    const extra: Record<string, string> = {};
+    for (let i = 0; i < EXPLORER_LIMITS.scanAgents + 2; i++) extra[`agents/A${String(i).padStart(3, '0')}.agent`] = `x: flow://F${i}`;
+    const last = `agents/A${String(EXPLORER_LIMITS.scanAgents + 1).padStart(3, '0')}.agent`;
+    const result = await setup({ root: project(extra) }).call({ focus: last });
+    expect(result.nodes.find((node: any) => node.path === last).uses).toEqual([{ kind: 'flow', apiName: `F${EXPLORER_LIMITS.scanAgents + 1}` }]);
   });
   it('flags an org listing past the explorer cap so the count reads as a floor', async () => {
     const many = JSON.stringify({ status: 0, result: Array.from({ length: EXPLORER_LIMITS.orgAgents + 1 }, (_, i) => ({ fullName: `Bot${i}_v1` })) });

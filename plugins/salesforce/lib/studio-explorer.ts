@@ -49,11 +49,16 @@ function scenarioNodes(root: string, deps: SalesforceDeps): { nodes: ExplorerNod
   };
 }
 
-/** Pure, synchronous part of the explorer: no org access. */
-export function buildLocalExplorer(root: string, deps: SalesforceDeps): ExplorerResult {
+/**
+ * Pure, synchronous part of the explorer: no org access. `focus` is the open agent: when it is one of the listed files it is
+ * scanned first, so the agent and scan caps never leave it without references.
+ */
+export function buildLocalExplorer(root: string, deps: SalesforceDeps, focus = ''): ExplorerResult {
   let truncated = false;
   let agents: AgentFileListItem[];
   try { agents = listAgentFiles(root, deps, { allowNonDx: true }); } catch { return { nodes: [], truncated: false }; }
+  const focused = focus ? agents.findIndex(agent => agent.path === focus) : -1;
+  if (focused > 0) agents = [agents[focused]!, ...agents.slice(0, focused), ...agents.slice(focused + 1)];
   if (agents.length > EXPLORER_LIMITS.agents) { truncated = true; agents = agents.slice(0, EXPLORER_LIMITS.agents); }
   const nodes: ExplorerNode[] = agents.map(agent => ({ kind: 'agent', path: agent.path, apiName: agent.apiName }));
   const used = new Map<string, { kind: 'apex' | 'flow' | 'prompt'; name: string; by: Set<string> }>();
@@ -115,11 +120,12 @@ export function registerStudioExplorer(studio: StudioServerContext): void {
   let orgAgents: OrgAgentService | undefined;
   const service = () => orgAgents ??= new OrgAgentService({ execSf: studio.deps.execSf, connect: () => studio.sdk.connect() });
   studio.zcc.onDispose(() => orgAgents?.dispose());
-  studio.registerRpc(STUDIO_RPC.explorer, async () => {
+  studio.registerRpc(STUDIO_RPC.explorer, async args => {
     const context = studio.contexts.current();
     const root = context?.settings.projectRoot ?? '';
     if (!root) return rpcFailure('not_configured', 'Open a project folder to browse its Agentforce files.');
-    const local = buildLocalExplorer(root, studio.deps);
+    // Only a path the listing returns is honoured, so `focus` never reads outside the project's agents.
+    const local = buildLocalExplorer(root, studio.deps, rpcString(args, 'focus').slice(0, 1000));
     const nodes = [...local.nodes];
     let truncated = local.truncated;
     let orgError: string | undefined;

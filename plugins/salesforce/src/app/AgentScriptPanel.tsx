@@ -335,7 +335,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const refreshExplorer = useCallback(async () => {
     const seq = ++explorerSeq.current;
     try {
-      const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs())) as { ok?: boolean; nodes?: ExplorerNode[]; orgAgentsTruncated?: boolean; orgAgentsNotLocal?: number };
+      // The open agent is scanned first, so it shows its references however many agents the project has.
+      const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs(activePathRef.current ? { focus: activePathRef.current } : undefined))) as { ok?: boolean; nodes?: ExplorerNode[]; orgAgentsTruncated?: boolean; orgAgentsNotLocal?: number };
       if (alive.current && seq === explorerSeq.current && result?.ok !== false && Array.isArray(result?.nodes)) {
         setExplorerNodes(result.nodes);
         setOrgAgentsMore(result.orgAgentsTruncated === true);
@@ -343,6 +344,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       }
     } catch { /* the explorer sections are an enhancement over the file tree */ }
   }, [pluginId, rpcArgs]);
+
+  // A newly opened agent may sit past the explorer's scan window: list again with it in focus.
+  useEffect(() => { if (activePath) void refreshExplorer(); }, [activePath, refreshExplorer]);
 
   const refreshFiles = useCallback(async () => {
     const listed = (await callPluginRpc(pluginId, 'agentFiles.list', rpcArgs())) as {

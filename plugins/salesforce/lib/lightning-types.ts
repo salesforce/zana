@@ -42,7 +42,7 @@ export function lightningTypeBundlePath(index: ProjectActionIndex, ref: string):
   const parsed = parseLightningTypeRef(ref);
   if (!parsed || parsed.standard) return undefined;
   if (parsed.namespace && parsed.namespace !== index.namespace) return undefined;
-  return index.lightningTypes.get(parsed.bundle)?.[0];
+  return index.lightningTypes.get(parsed.bundle)?.[0] ?? index.probe?.(`lightningTypes/${parsed.bundle}`, 'dir')[0];
 }
 
 /** A file over the cap is listed but not shown: the bounded reader refuses it rather than returning a prefix. */

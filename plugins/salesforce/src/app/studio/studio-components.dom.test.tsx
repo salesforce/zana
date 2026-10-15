@@ -211,22 +211,38 @@ describe('Explorer', () => {
     expect(filterOutline(agents, 'nothing')).toEqual([]);
     expect(filterOutline([{ file: files[0]!, uses: 'unindexed' }], 'refund')).toEqual([]);
   });
-  it('unfolds the active agent into grouped references that open; prompts are not openable', () => {
+  it('focuses the open agent on its grouped references, which open; prompts are not openable', () => {
     const p = { ...props(), activePath: QC };
-    render(<Explorer {...p} dirtyPath={QC} />);
+    const history = { apiName: 'QC', path: '.zcc/agent-versions/QC/QC.agent', lines: 3 };
+    const unrelated = { apiName: 'Other', path: '.zcc/agent-versions/Other/Other.agent', lines: 3 };
+    render(<Explorer {...p} files={[...files, history, unrelated]} dirtyPath={QC} collapsed={['history']} onToggleSection={vi.fn()} />);
+    // No agent list and no org row: only the open agent, its references and its own history.
+    expect(screen.queryByRole('button', { name: /Agents in this project/ })).toBeNull();
+    expect(screen.queryByTestId('sf-explorer-org-link')).toBeNull();
+    expect(screen.getByTestId('sf-explorer-all-agents').textContent).toBe('All agents1');
+    expect((screen.getByLabelText('Filter Agentforce files') as HTMLInputElement).placeholder).toBe('Filter QC');
+    expect(['Apex 2', 'Flows 1', 'Prompts 1'].map(name => screen.getByRole('button', { name }).getAttribute('aria-expanded'))).toEqual(['true', 'true', 'true']);
+    fireEvent.click(screen.getByText('OrderLookup'));
+    expect(p.onOpenNode).toHaveBeenCalledWith(nodes[1]);
+    // A reference the explorer could not resolve still opens by name.
+    fireEvent.click(screen.getByText('Unresolved'));
+    expect(p.onOpenNode).toHaveBeenCalledWith({ kind: 'apex', apiName: 'Unresolved' });
+    expect((screen.getByText('Greeting').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByLabelText('Used by 2 agents')).toBeTruthy();
+    const row = screen.getByTestId(`salesforce-agent-script-file:${QC}`);
+    expect(row.getAttribute('aria-current')).toBe('true');
+    expect(screen.getByLabelText('Unsaved changes')).toBeTruthy();
+    fireEvent.click(row);
+    expect(p.onOpenFile).toHaveBeenCalledWith(QC);
+    fireEvent.click(screen.getByRole('button', { name: 'Local history 1' }));
+    fireEvent.click(screen.getByTestId(`salesforce-agent-script-file:${history.path}`));
+    expect(p.onOpenFile).toHaveBeenCalledWith(history.path);
+    expect(screen.queryByTestId(`salesforce-agent-script-file:${unrelated.path}`)).toBeNull();
+    // "All agents" brings back the outline, with the open agent unfolded; choosing it again focuses it.
+    fireEvent.click(screen.getByTestId('sf-explorer-all-agents'));
     expect(twisty('QC').getAttribute('aria-expanded')).toBe('true');
     const deps = screen.getByRole('group', { name: 'QC references' });
     expect([...deps.querySelectorAll('.sf-as-dep-label')].map(label => label.textContent)).toEqual(['Apex2', 'Flows1', 'Prompts1']);
-    fireEvent.click(within(deps).getByText('OrderLookup'));
-    expect(p.onOpenNode).toHaveBeenCalledWith(nodes[1]);
-    // A reference the explorer could not resolve still opens by name.
-    fireEvent.click(within(deps).getByText('Unresolved'));
-    expect(p.onOpenNode).toHaveBeenCalledWith({ kind: 'apex', apiName: 'Unresolved' });
-    expect((within(deps).getByText('Greeting').closest('button') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByTestId(`salesforce-agent-script-file:${QC}`));
-    expect(p.onOpenFile).toHaveBeenCalledWith(QC);
-    expect(screen.getByTestId(`salesforce-agent-script-file:${QC}`).getAttribute('aria-current')).toBe('true');
-    expect(screen.getByLabelText('Unsaved changes')).toBeTruthy();
     fireEvent.click(twisty('QC'));
     expect(screen.queryByRole('group', { name: 'QC references' })).toBeNull();
     fireEvent.click(twisty('QC'));
@@ -235,6 +251,8 @@ describe('Explorer', () => {
     fireEvent.click(screen.getByTestId('sf-explorer-org-link'));
     expect(p.onBrowseOrg).toHaveBeenCalled();
     expect(screen.getByLabelText('Passing')).toBeTruthy();
+    fireEvent.click(screen.getByTestId(`salesforce-agent-script-file:${QC}`));
+    expect(screen.getByTestId('sf-explorer-all-agents')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter Agentforce files'), { target: { value: 'x' } });
     expect(p.onQuery).toHaveBeenCalledWith('x');
   });
@@ -262,17 +280,35 @@ describe('Explorer', () => {
     expect(screen.queryByTestId('sf-explorer-org-link')).toBeNull();
     expect(screen.getByText('Browse agents in your org')).toBeTruthy();
   });
-  it('unfolds an agent once it becomes active and explains empty or unindexed references', () => {
+  it('focuses an agent once it becomes active and explains missing, empty, unindexed or unmatched references', () => {
     const p = props();
     const other = { apiName: 'Other', path: 'Other.agent', lines: 1 };
     const quiet = { apiName: 'Quiet', path: 'Quiet.agent', lines: 1 };
     const withMore: ExplorerNode[] = [...nodes, { kind: 'agent', apiName: 'Other', path: 'Other.agent' }, { kind: 'agent', apiName: 'Quiet', path: 'Quiet.agent', uses: [] }];
-    const { rerender } = render(<Explorer {...p} files={[...files, other, quiet]} nodes={withMore} />);
+    const all = [...files, other, quiet];
+    const { rerender } = render(<Explorer {...p} files={all} nodes={withMore} />);
     expect(twisty('QC').getAttribute('aria-expanded')).toBe('false');
-    rerender(<Explorer {...p} files={[...files, other, quiet]} nodes={withMore} activePath="Other.agent" />);
+    rerender(<Explorer {...p} files={all} nodes={withMore} activePath="Other.agent" />);
     expect(screen.getByText('References not indexed for this agent.')).toBeTruthy();
-    fireEvent.click(twisty('Quiet'));
+    rerender(<Explorer {...p} files={all} nodes={withMore} activePath="Quiet.agent" />);
     expect(screen.getByText('No Apex, Flow, prompt or type references.')).toBeTruthy();
+    // Before the explorer has answered, nothing is known about the open agent yet.
+    rerender(<Explorer {...p} files={all} nodes={[]} activePath="Quiet.agent" />);
+    expect(screen.getByText('Finding references…')).toBeTruthy();
+    // Widened for Quiet, then another agent opens: the explorer focuses again.
+    rerender(<Explorer {...p} files={all} nodes={withMore} activePath="Quiet.agent" />);
+    fireEvent.click(screen.getByTestId('sf-explorer-all-agents'));
+    expect(screen.queryByTestId('sf-explorer-all-agents')).toBeNull();
+    rerender(<Explorer {...p} files={all} nodes={withMore} activePath={QC} />);
+    expect(screen.getByTestId('sf-explorer-all-agents')).toBeTruthy();
+    rerender(<Explorer {...p} files={all} nodes={withMore} activePath={QC} query="refund" />);
+    expect(screen.getByText('RefundFlow')).toBeTruthy();
+    expect(screen.queryByText('OrderLookup')).toBeNull();
+    rerender(<Explorer {...p} files={all} nodes={withMore} activePath={QC} query="nothing" />);
+    expect(screen.getByText('No matching references.')).toBeTruthy();
+    // A local-history file is not a project agent, so it keeps the full outline.
+    rerender(<Explorer {...p} files={[...all, { apiName: 'QC', path: '.zcc/v/QC.agent', lines: 1 }]} nodes={withMore} activePath=".zcc/v/QC.agent" />);
+    expect(screen.queryByTestId('sf-explorer-all-agents')).toBeNull();
   });
   it('lists local history apart, folded by default, and opens its files', () => {
     const p = props();

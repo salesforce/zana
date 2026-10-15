@@ -328,6 +328,8 @@ describe('AgentScriptPanel studio layout', () => {
   it('reloads comments when the active file is opened again', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
+    // The open agent is the explorer's scan focus, so it has references however many agents the project lists.
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.explorer', expect.objectContaining({ focus: 'force-app/bots/QC.agent' }));
     const comment = { id: 'c1', path: 'force-app/bots/QC.agent', line: 2, endLine: 2, quote: 'a', body: 'why?', author: { kind: 'user', name: 'You' }, createdAt: 1 };
     rpc.mockImplementation(async (_p: string, method: string, args?: any) => {
       if (method === 'studio.comments.list') return { ok: true, comments: [comment] };

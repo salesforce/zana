@@ -285,6 +285,7 @@ button.af-agent-row-main { cursor:pointer; }button.af-agent-row-main:disabled { 
 .sf-as .sf-as-org-link-text > * { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sf-as .sf-as-org-link-text small { font-size:11px; color:var(--sf-muted); }
 .sf-as .sf-as-org-link-arrow { flex:none; color:var(--sf-accent); }
+.sf-as .sf-as-focus-back { color:var(--sf-muted); margin-bottom:2px; }
 .sf-as .sf-as-view-head { display:flex; align-items:center; gap:6px; padding:2px 2px 4px; font-size:12px; font-weight:600; color:var(--sf-text); }
 .sf-as .sf-as-explorer-foot { flex:none; padding:4px; border-top:1px solid var(--sf-border); }
 .sf-as .sf-as-explorer-foot .sf-as-tree-btn { color:var(--sf-muted); }

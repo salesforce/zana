@@ -38,6 +38,11 @@ export interface ProjectActionIndex {
   /** Lightning Type bundle name (the folder under `lightningTypes/`) to project-relative bundle paths. */
   lightningTypes: Map<string, string[]>;
   incomplete: boolean;
+  /**
+   * Set when the walk stopped early: the project-relative paths of `main/default/<path>` in every package root that has it.
+   * Large projects keep their source at the standard DX location, so an exact name is still found past the walk budget.
+   */
+  probe?(path: string, kind: 'file' | 'dir'): string[];
 }
 
 const ACTION_SUFFIXES = ['.cls', '.flow-meta.xml'];
@@ -48,7 +53,8 @@ export function indexProjectActions(root: string, deps: SalesforceDeps): Project
   const config = resolveUnderRoot(realRoot, 'sfdx-project.json', deps.realpath);
   const configText = config ? boundedRead(deps, config) : '';
   const namespace = (() => { try { return JSON.parse(configText).namespace as unknown; } catch { return null; } })();
-  const queue = (config ? parsePackageDirectories(configText) : ['.']).map(path => ({ path: join(realRoot, path), depth: 0 }));
+  const packageRoots = config ? parsePackageDirectories(configText) : ['.'];
+  const queue = packageRoots.map(path => ({ path: join(realRoot, path), depth: 0 }));
   const seen = new Set<string>();
   const files = new Map<string, string[]>();
   const lightningTypes = new Map<string, string[]>();
@@ -64,7 +70,8 @@ export function indexProjectActions(root: string, deps: SalesforceDeps): Project
     try { children = deps.readdir(path); } catch { continue; }
     for (const name of children) {
       if (++visited > 6000) { incomplete = true; break; }
-      if (['node_modules', '.git', '.sf', '.sfdx', 'dist', '.zcc'].includes(name)) continue;
+      // Agent bundles hold no Apex or Flows, and a large project has hundreds of them.
+      if (['node_modules', '.git', '.sf', '.sfdx', 'dist', '.zcc', 'aiAuthoringBundles'].includes(name)) continue;
       const child = resolveUnderRoot(realRoot, join(path, name), deps.realpath);
       if (!child) continue;
       if (deps.stat(child) === 'dir') {
@@ -83,7 +90,14 @@ export function indexProjectActions(root: string, deps: SalesforceDeps): Project
     }
   }
   if (queue.length) incomplete = true;
-  return { realRoot, namespace, files, lightningTypes, incomplete };
+  const index: ProjectActionIndex = { realRoot, namespace, files, lightningTypes, incomplete };
+  if (incomplete) index.probe = (path, kind) => packageRoots.flatMap(root => {
+    try {
+      const absolute = resolveUnderRoot(realRoot, join(realRoot, root, 'main', 'default', path), deps.realpath);
+      return absolute && deps.stat(absolute) === kind ? [relative(realRoot, absolute).split('\\').join('/')] : [];
+    } catch { return []; }
+  });
+  return index;
 }
 
 /** Sorted project paths implementing `target`, from an index built by `indexProjectActions`. */
@@ -94,7 +108,9 @@ export function projectActionCandidates(index: ProjectActionIndex, target: strin
   const names = new Set([parsed.name]);
   if (!parsed.namespace || index.namespace === parsed.namespace) names.add(parsed.developerName);
   const suffix = parsed.kind === 'apex' ? '.cls' : '.flow-meta.xml';
-  return [...new Set([...names].flatMap(name => index.files.get(`${name}${suffix}`) ?? []))].sort();
+  const folder = parsed.kind === 'apex' ? 'classes' : 'flows';
+  const probed = [...names].flatMap(name => index.probe?.(`${folder}/${name}${suffix}`, 'file') ?? []);
+  return [...new Set([...[...names].flatMap(name => index.files.get(`${name}${suffix}`) ?? []), ...probed])].sort();
 }
 
 export function readProjectAction(root: string, target: string, deps: SalesforceDeps, candidate?: string): ActionSource {
@@ -106,12 +122,15 @@ export function readProjectAction(root: string, target: string, deps: Salesforce
   const { realRoot, incomplete } = index;
   const candidates = projectActionCandidates(index, target);
   if (candidate && !candidates.includes(candidate)) throw Error('The selected source is not a matching implementation inside this project.');
-  if (!candidate && (candidates.length > 1 || incomplete)) return { ...base, status: 'ambiguous', candidates, message: incomplete ? 'The project scan reached its limit. Choose an exact match below, or inspect the org implementation.' : 'Multiple packages contain this implementation. Choose the source to inspect.' };
+  // A partial walk with one match (usually the standard-path probe) opens it, so only a real choice asks the user.
+  if (!candidate && candidates.length > 1) return { ...base, status: 'ambiguous', candidates, message: incomplete ? 'The project scan reached its limit. Choose an exact match below, or inspect the org implementation.' : 'Multiple packages contain this implementation. Choose the source to inspect.' };
+  if (!candidates.length && incomplete) return { ...base, message: `No ${parsed.kind === 'apex' ? 'class' : 'flow'} at the standard source path, and the project is too large to search every folder. Switch to Org to inspect the deployed implementation.` };
   const selected = candidate ?? candidates[0];
+  const partial = !candidate && incomplete ? { message: 'Opened from the standard source path. The project is too large to rule out another copy elsewhere.' } : {};
   if (!selected) return { ...base, message: 'No matching implementation in this project. The org may contain deployed or managed source.' };
   const absolute = resolveUnderRoot(realRoot, selected, deps.realpath);
   if (!absolute) throw Error('Source path is no longer inside the project.');
-  return { ...base, status: 'ready', label: selected, content: boundedRead(deps, absolute), language: parsed.kind === 'apex' ? 'apex' : 'xml', contractMessage: parsed.kind === 'apex' ? 'Inspect the org to compare the registered invocable parameters.' : undefined };
+  return { ...base, ...partial, status: 'ready', label: selected, content: boundedRead(deps, absolute), language: parsed.kind === 'apex' ? 'apex' : 'xml', contractMessage: parsed.kind === 'apex' ? 'Inspect the org to compare the registered invocable parameters.' : undefined };
 }
 
 function record(value: unknown): Record<string, any> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}; }
