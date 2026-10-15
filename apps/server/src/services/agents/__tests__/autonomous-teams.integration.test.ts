@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import type { Project, AppConfig, ProjectSettings, Persona, Team } from '@zana-ai/zcc-domain/product';
 
 /**
@@ -13,7 +16,8 @@ import type { Project, AppConfig, ProjectSettings, Persona, Team } from '@zana-a
  * one, wired to the real ptys.reply/ptys.close mocks below.
  */
 
-const PROJECT: Project = { id: 'p1', name: 'Proj', path: '/tmp/proj' } as Project;
+const PROJECT_PATH = mkdtempSync(join(tmpdir(), 'zana-autonomous-team-'));
+const PROJECT: Project = { id: 'p1', name: 'Proj', path: PROJECT_PATH } as Project;
 
 const CONFIG: AppConfig = {
   version: 1,
@@ -85,7 +89,7 @@ vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
     listProjects: () => [PROJECT],
     getConfig: () => CONFIG,
     getProjectSettings: () => ({} as ProjectSettings),
-    createScratchSubfolder: () => '/tmp/proj/scratch'
+    createScratchSubfolder: () => join(PROJECT_PATH, 'scratch')
   },
   scratchWorkspaceRoot: () => '/tmp/scratch-root',
   worktreeRoot: () => '/tmp/zcc-worktrees',
@@ -221,6 +225,10 @@ describe('autonomous teams — full lifecycle', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  afterAll(() => {
+    rmSync(PROJECT_PATH, { recursive: true, force: true });
   });
 
   it('rejects an empty goal before opening any tabs', async () => {
