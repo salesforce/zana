@@ -3,6 +3,7 @@ import { AgentforceLab } from '../lib/agentforce-lab.js';
 import { DEFAULT_LAB_MODEL, LAB_SCENARIOS, parseLabScenario, parseLabVerdict } from '../lib/agentforce-lab-contract.js';
 import type { ResolvedOrg } from '../lib/types.js';
 import type { SfapHost } from '../lib/agentforce-transport.js';
+import { AGENT_SOURCE_MAX } from '../lib/studio-contract.js';
 
 function setup() {
   let scope = 'project-a'; let time = 100;
@@ -99,7 +100,7 @@ describe('Agentforce lab', () => {
   });
   it('validates before connecting and releases a failed start slot', async () => {
     const { lab, request, args, connect } = setup();
-    for (const invalid of [{}, { ...args, engine: 'live' }, { ...args, model: '../evil' }, { ...args, source: 'x'.repeat(180001) }, { ...args, scenario: { ...args.scenario, maxTurns: 90 } }]) await expect(lab.start(invalid)).rejects.toThrow();
+    for (const invalid of [{}, { ...args, engine: 'live' }, { ...args, model: '../evil' }, { ...args, source: 'x'.repeat(AGENT_SOURCE_MAX + 1) }, { ...args, scenario: { ...args.scenario, maxTurns: 90 } }]) await expect(lab.start(invalid)).rejects.toThrow();
     expect(connect).not.toHaveBeenCalled();
     request.mockResolvedValueOnce({ host: 'api.salesforce.com', body: { status: 'failed' } });
     await expect(lab.start(args)).rejects.toThrow('compile');
@@ -112,12 +113,12 @@ describe('Agentforce lab', () => {
     const authorize = vi.fn(async () => { throw new Error('Operator cancelled the run.'); });
     const lab = new AgentforceLab({ connect, scope: () => 'project-a', authorize, transport: { request, bootstrap } });
     for (let i = 0; i < 13; i++) await expect(lab.start({ ...args, threadId: 't'.repeat(200) })).rejects.toThrow('Operator cancelled');
-    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ alias: 'dev' }), { engine: 'preview', threadId: 't'.repeat(128) });
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ alias: 'dev' }), { engine: 'preview', threadId: 't'.repeat(128), startedByUser: false });
     expect(bootstrap).not.toHaveBeenCalled();
     expect(request).not.toHaveBeenCalled();
     authorize.mockResolvedValue(undefined);
-    await lab.start({ ...args, engine: 'rehearsal', threadId: 42 });
-    expect(authorize).toHaveBeenLastCalledWith(expect.anything(), { engine: 'rehearsal', threadId: '' });
+    await lab.start({ ...args, engine: 'rehearsal', threadId: 42, startedByUser: true });
+    expect(authorize).toHaveBeenLastCalledWith(expect.anything(), { engine: 'rehearsal', threadId: '', startedByUser: true });
     expect(bootstrap).toHaveBeenCalledOnce();
   });
 });

@@ -154,6 +154,35 @@ function listSettledBackgroundTaskItems(
 }
 
 describe('settleDanglingBackgroundTasks', () => {
+  it('settles old open delegations after a stopped thread without changing completed agents or another thread', () => {
+    const database = openTestDb();
+    const host = seedHost(database);
+    const thread = seedThread(database, host.id);
+    const other = seedThread(database, host.id, { title: 'other' });
+    const add = (threadId: string, id: string, status = 'pending') => appendConversationThreadEvent(database, {
+      threadId, type: status === 'pending' ? 'item/started' : 'item/delegation/completed',
+      payload: { type: status === 'pending' ? 'item/started' : 'item/delegation/completed', threadId,
+        providerThreadId: 'provider-child', scope: threadScope(),
+        item: { type: 'delegation', id, childRef: `child-${id}`, label: id, status, background: false } },
+    });
+    add(thread.id, 'review'); add(thread.id, 'done'); add(thread.id, 'done', 'completed'); add(other.id, 'other');
+    seedOpenBackgroundTask(database, thread.id, { itemId: 'old-native' });
+    database.transaction(() => {
+      for (let i = 0; i < 300; i++) appendConversationThreadEvent(database, { threadId: thread.id, type: 'turn/diff/updated', payload: { diff: 'x' } });
+    });
+    const events = hub();
+    settleDanglingBackgroundTasksForStoppedThread({ db: database, hub: events }, { threadId: thread.id });
+    const completed = listConversationThreadEvents(database, thread.id).filter(row => row.type === 'item/delegation/completed');
+    expect(completed).toHaveLength(2);
+    expect(completed.at(-1)?.payload).toMatchObject({ type: 'item/delegation/completed', scope: threadScope(),
+      providerThreadId: 'provider-child', item: { id: 'review', status: 'interrupted' } });
+    expect(getConversationThreadActivityCounts(database, thread.id).activeBackgroundAgentCount).toBe(0);
+    expect(getConversationThreadActivityCounts(database, thread.id).activeWorkflowCount).toBe(0);
+    expect(getConversationThreadActivityCounts(database, other.id).activeBackgroundAgentCount).toBe(1);
+    settleDanglingBackgroundTasksForStoppedThread({ db: database, hub: events }, { threadId: thread.id });
+    expect(events.emit).toHaveBeenCalledTimes(2);
+  });
+
   it('settles open backgroundTask items as interrupted and is idempotent', () => {
     const database = openTestDb();
     const host = seedHost(database);

@@ -743,7 +743,7 @@ describe('salesforce family tools', () => {
     await expect(
       harness.callRpc('agentPreview.start', { path: 'force-app/main/default/agents/MyBot.agent' })
     ).resolves.toMatchObject({ ok: true });
-    await expect(harness.callRpc('agentPreview.start', { apiName: 'PublishedBot' })).resolves.toMatchObject({ code: 'refused' });
+    await expect(harness.callRpc('agentPreview.start', { apiName: 'PublishedBot' })).resolves.toMatchObject({ code: 'refused', error: expect.stringContaining('Live runs real actions, so it needs approval in a thread') });
   });
 
   it('gates activate on eval evidence and still confirms untested intent', async () => {

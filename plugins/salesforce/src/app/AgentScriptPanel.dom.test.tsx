@@ -113,7 +113,11 @@ describe('AgentScriptPanel', () => {
     expect(el.querySelector('[data-testid="salesforce-agent-script-file:force-app/bots/QC.agent"]')).toBeTruthy();
     expect(el.querySelector('select[aria-label="Agent Script file"]')).toBeNull();
     expect(el.querySelector('[aria-label="AgentScript tools"]')?.textContent).toContain('File explorer');
-    expect(el.querySelector('[data-testid="salesforce-agent-script-save"]')).toBeTruthy();
+    // No file is open yet, so the bar offers Save as… alone; Save and its menu need a file.
+    expect([...el.querySelectorAll('button')].some(b => b.textContent === 'Save as…')).toBe(true);
+    expect(el.querySelector('[data-testid="salesforce-agent-script-save"]')).toBeNull();
+    // The document bar uses the toolbar org switcher (alias + kind label over the native select).
+    expect(el.querySelector('.af-document-org .sf-org-switcher [data-testid="salesforce-org-picker"]')).toBeTruthy();
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.list', { projectId: 'proj-1' });
     expect(rpc.mock.calls.some((call) => call[0] === 'salesforce' && call[1] === 'org')).toBe(true);
     expect(el.querySelector('[data-testid="salesforce-playground-org"]')?.textContent).toBe('dev (sandbox)');
@@ -224,7 +228,7 @@ describe('AgentScriptPanel', () => {
     const tab = within(el).queryByRole('tab', { name, exact: true });
     if (tab) { await act(async () => { tab.click(); }); return; }
     await act(async () => { within(el).getByRole('button', { name: 'Add side panel tab' }).click(); });
-    await act(async () => { within(el).getByRole('button', { name: new RegExp(`^${name}`) }).click(); });
+    await act(async () => { within(el.querySelector('.af-tool-picker')!).getByRole('button', { name: new RegExp(`^${name}`) }).click(); });
   }
 
   it('opens a graph beside the same editor and can hide and restore the panel', async () => {
@@ -362,7 +366,8 @@ describe('AgentScriptPanel', () => {
   it('saves a copy of the open agent and keeps the Save as dialog open on collision', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await message(el, { type: 'ready' });
-    await act(async () => { [...el.querySelectorAll('button')].find(b => b.textContent === 'Save as…')!.click(); });
+    await act(async () => { (el.querySelector('[aria-label="More save options"]') as HTMLButtonElement).click(); });
+    await act(async () => { (el.querySelector('[role="menuitem"]') as HTMLButtonElement).click(); });
     expect(el.querySelector('dialog[open]')).toBeTruthy();
     const post = vi.spyOn(el.querySelector('iframe')!.contentWindow!, 'postMessage');
     await act(async () => { fireEvent.change(el.querySelector('dialog input')!, { target: { value: 'Copy.agent' } }); fireEvent.submit(el.querySelector('dialog form')!); });
@@ -411,7 +416,8 @@ describe('AgentScriptPanel', () => {
     await message(el, { type: 'persist', path: 'force-app/bots/QC.agent', content: 'recover me', draftKey: key });
     expect(el.querySelector('[role=alert]')?.textContent).toContain('Disk unavailable');
     expect(readAgentDraft(key)?.content).toBe('recover me');
-    await act(async () => { [...el.querySelectorAll('button')].find(b => b.textContent === 'Save as…')!.click(); });
+    await act(async () => { (el.querySelector('[aria-label="More save options"]') as HTMLButtonElement).click(); });
+    await act(async () => { (el.querySelector('[role="menuitem"]') as HTMLButtonElement).click(); });
     await act(async () => { el.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })); });
     expect(el.querySelector('dialog')).toBeNull();
   });

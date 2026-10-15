@@ -247,7 +247,7 @@ describe('autonomous teams — full lifecycle', () => {
 
   it('launches orchestrator + workers and registers a running run', async () => {
     const res = await launchAutonomousTeam('eng', 'p1', 'Ship feature X');
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true }); // a failure shows the launch error
     // Workers open FIRST (2 engineers → s1, s2), orchestrator LAST (s3).
     expect(createCount).toBe(3);
     const run = autonomousRuns.list().find((r) => r.state === 'running');
@@ -262,7 +262,7 @@ describe('autonomous teams — full lifecycle', () => {
   it('nudges an idle worker toward the goal via the real ptys.reply', async () => {
     vi.useFakeTimers();
     const res = await launchAutonomousTeam('eng', 'p1', 'Ship feature X');
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true }); // a failure shows the launch error
     // Drive the worker idle (normally the agent-status edge does this).
     autonomousRuns.observe('s2', 'idle');
     expect(replySpy).not.toHaveBeenCalled();
@@ -278,7 +278,7 @@ describe('autonomous teams — full lifecycle', () => {
 
   it('completes the run when the orchestrator exits, closing workers + notifying inbox', async () => {
     const res = await launchAutonomousTeam('eng', 'p1', 'Ship feature X');
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true }); // a failure shows the launch error
     const runId = res.ok ? res.value.runId : '';
 
     // Orchestrator (s3) declares the goal met via complete_autonomous_run.
@@ -299,7 +299,7 @@ describe('autonomous teams — full lifecycle', () => {
 
   it('treats an orchestrator pty exit without complete as orchestrator-gone failure', async () => {
     const res = await launchAutonomousTeam('eng', 'p1', 'Ship feature X');
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true }); // a failure shows the launch error
     const runId = res.ok ? res.value.runId : '';
 
     autonomousRuns.onSessionExit('s3'); // orchestrator died without declaring done
@@ -312,7 +312,7 @@ describe('autonomous teams — full lifecycle', () => {
 
   it('manual stop tears down all sessions and notifies', async () => {
     const res = await launchAutonomousTeam('eng', 'p1', 'Ship feature X');
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true }); // a failure shows the launch error
     const runId = res.ok ? res.value.runId : '';
 
     const stop = stopAutonomousRun(runId);
@@ -337,7 +337,7 @@ describe('autonomous teams — full lifecycle', () => {
     // (line 28 above) correctly disables the timeout at launch time.
     vi.useFakeTimers();
     const res = await launchAutonomousTeam('eng', 'p1', 'Ship feature X');
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true }); // a failure shows the launch error
     const runId = res.ok ? res.value.runId : '';
 
     // Simulate a very long passage of time with no activity

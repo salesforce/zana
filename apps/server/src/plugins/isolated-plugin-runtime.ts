@@ -1,6 +1,6 @@
 import { Worker } from 'node:worker_threads';
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { sqliteWorkerConfiguration } from '@zana-ai/zcc-db';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk';
@@ -15,13 +15,17 @@ function workerEntry(): string {
   throw new Error('Plugin server worker entry is unavailable');
 }
 
+export function resolvePluginWorkerExecArgv(entry: string, requireFn = createRequire(import.meta.url)): string[] {
+  return entry.endsWith('.ts') ? ['--import', pathToFileURL(requireFn.resolve('tsx')).href] : [];
+}
+
 export function createIsolatedPluginRuntime(options: {
   api: ZccPluginApi; entry: string; generation: number; databasePath: string;
   onFailure(error: Error): void; startupTimeoutMs?: number; heartbeatTimeoutMs?: number;
 }) {
   if (active >= 64) throw new Error('Plugin worker capacity exceeded');
   const entry = workerEntry();
-  const execArgv = entry.endsWith('.ts') ? ['--import', createRequire(import.meta.url).resolve('tsx')] : [];
+  const execArgv = resolvePluginWorkerExecArgv(entry);
   // Encode without exposing filesystem access or authority from a caller's free text.
   // The proxy binds each function to this already authenticated API instance.
   let bridge!: ReturnType<typeof createPluginWorkerBridge>;

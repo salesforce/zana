@@ -1,1 +1,498 @@
-var n=globalThis.__ZCC_HOST_REACT__;var ge=n.Children,me=n.Component,Pe=n.Fragment,fe=n.StrictMode,he=n.Suspense,xe=n.cloneElement,Se=n.createContext,be=n.createElement,Ae=n.createRef,ve=n.forwardRef,Ce=n.isValidElement,we=n.lazy,Ie=n.memo,Te=n.startTransition,ye=n.useCallback,Re=n.useContext,_e=n.useDebugValue,je=n.useDeferredValue,I=n.useEffect,T=n.useId,Ee=n.useImperativeHandle,Ne=n.useInsertionEffect,Le=n.useLayoutEffect,ke=n.useMemo,Oe=n.useReducer,E=n.useRef,h=n.useState,v=n.useSyncExternalStore,Me=n.useTransition,De=n.version;function q(){return globalThis.__ZCC_PLUGIN_RUNTIME__??{}}function G(e){throw new Error(`${e} is not available until the host plugin runtime is installed`)}function N(e){return{__zccPluginApp:!0,setup:e}}function L(){return q().useRpc?.()??G("useRpc")}var R=null,y=new Set;function k(e){R=e;for(let t of[...y])t()}function J(e){return y.add(e),()=>y.delete(e)}function O(e){k(e)}function _(){R!==null&&k(null)}function M(){return v(J,()=>R,()=>null)}var D="browser-preview";var $=globalThis.__ZCC_HOST_REACT__,tt=$.Fragment;function i(e,t,o){return $.createElement(e,o===void 0?t:{...t,key:o})}var p=i;var K=400,W=15e3,Q=5,X=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,V={connecting:"Connecting",live:"Live",ended:"Ended",unavailable:"Unavailable"},Y={margin:"0.5rem 0",overflow:"hidden",borderRadius:"0.5rem",border:"1px solid rgba(128, 128, 128, 0.35)",background:"rgba(128, 128, 128, 0.06)"},ee={display:"flex",alignItems:"stretch",width:"100%"},te={display:"flex",flex:"1 1 auto",minWidth:0,alignItems:"center",gap:"0.375rem",padding:"0.375rem 0.75rem",background:"transparent",border:"none",color:"inherit",font:"inherit",fontSize:"0.75rem",cursor:"pointer",textAlign:"left"},ne={display:"flex",width:"2rem",flex:"0 0 auto",alignItems:"center",justifyContent:"center",borderLeft:"1px solid rgba(128, 128, 128, 0.35)",background:"transparent",color:"inherit",cursor:"pointer",fontSize:"0.75rem"},C={minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"},ie={borderTop:"1px solid rgba(128, 128, 128, 0.35)",padding:"0.5rem"},oe={position:"fixed",inset:0,zIndex:1e3,display:"flex",alignItems:"center",justifyContent:"center",padding:"1.5rem",background:"rgba(0, 0, 0, 0.6)"},re={maxWidth:"min(96vw, 72rem)",maxHeight:"92dvh",display:"flex",flexDirection:"column",gap:"0.75rem",padding:"1rem",borderRadius:"0.75rem",border:"1px solid rgba(128, 128, 128, 0.35)",background:"var(--canvas, #1b1b1b)",color:"inherit",overflow:"auto"};function se(e){return document.addEventListener("visibilitychange",e),()=>document.removeEventListener("visibilitychange",e)}function ae(){return document.visibilityState!=="hidden"}function B(){return v(se,ae,()=>!0)}function le(){let[e,t]=h(null),[o,r]=h(!0);return I(()=>{if(!e||typeof IntersectionObserver>"u")return;let s=new IntersectionObserver(c=>{for(let a of c)r(a.isIntersecting)});return s.observe(e),()=>s.disconnect()},[e]),[t,o]}function F(e){try{let t=new URL(e);return t.protocol==="http:"||t.protocol==="https:"?`${t.host}${t.pathname==="/"?"":t.pathname}`:t.protocol==="about:"?e:t.protocol==="file:"?decodeURIComponent(t.pathname):t.protocol}catch{return e.slice(0,80)}}function H(e){let t=e?.title.trim()??"";return t===""||t===e?.url?"Headless browser":t}function z(e){let{threadId:t,sessionId:o,enabled:r,size:s,initialFrame:c}=e,a=L(),b=E(a);b.current=a;let[x,A]=h(c),[g,m]=h(c?"live":"connecting"),l=g==="ended"||g==="unavailable";return I(()=>{if(!r||l)return;let d=!1,u=null,S=0,P=0,j=async()=>{let Z=Date.now(),w;try{let f=await b.current.call("preview",{threadId:t,sessionId:o,afterSequence:S,size:s});if(d)return;if(f.session.state!=="ready"||f.session.backend!=="local"){m(f.session.backend==="local"?"ended":"unavailable");return}P=0,f.frame&&(S=f.frame.sequence,A(f.frame),m("live")),w=Math.max(0,K-(Date.now()-Z))}catch{if(d)return;if(P+=1,P>=Q){m("unavailable");return}w=Math.min(1e3*2**P,W)}u=setTimeout(()=>void j(),w)};return j(),()=>{d=!0,u!==null&&clearTimeout(u)}},[r,o,l,s,t]),{frame:x,status:g}}function U({frame:e,status:t,title:o,maxHeight:r}){let s=e??{width:16,height:9};if(!e&&t!=="connecting")return null;let c={overflow:"hidden",borderRadius:"0.375rem",border:"1px solid rgba(128, 128, 128, 0.35)",margin:"0 auto",aspectRatio:`${s.width} / ${s.height}`,width:r===void 0?"100%":`min(100%, calc(${r} * ${s.width/s.height}))`,maxWidth:r===void 0?"28rem":void 0};return i("div",{style:c,children:e?i("img",{src:`data:${e.mimeType};base64,${e.data}`,alt:t==="live"?`Live view of ${o}`:`Last view of ${o}`,draggable:!1,style:{display:"block",width:"100%",height:"100%",objectFit:"contain",opacity:t==="live"?1:.6}}):i("div",{role:"status","aria-busy":"true","aria-label":"Loading browser preview",style:{width:"100%",height:"100%",background:"rgba(128, 128, 128, 0.15)"}})})}function ce({children:e}){return i("div",{role:"alert",style:{fontSize:"0.875rem",opacity:.75},children:e})}function ue({attributes:e,source:t,message:o}){let r=e.session?.trim()??"";return X.test(r)?i(pe,{threadId:o.threadId,sessionId:r,source:t}):p(ce,{children:["browser-preview requires a valid session attribute, e.g."," ",p("code",{children:["::browser-preview",'{session="\u2026"}']})]})}function pe({threadId:e,sessionId:t,source:o}){let r=B(),[s,c]=le(),[a,b]=h(!0),x=M(),A=x?.sessionId===t,g=T(),m=T(),{frame:l,status:d}=z({threadId:e,sessionId:t,enabled:r&&c&&a&&!A,size:"thumbnail",initialFrame:null}),u=H(l),S=l?F(l.url):"";return p("section",{ref:s,"aria-label":"Browser preview",title:o,style:Y,children:[p("div",{role:"group","aria-label":`Browser preview controls: ${u}`,style:ee,children:[p("button",{type:"button",id:m,"aria-expanded":a,"aria-controls":g,"aria-label":`Browser preview: ${u}`,onClick:()=>b(P=>!P),style:te,children:[i("span",{"aria-hidden":!0,style:{flex:"0 0 auto"},children:"\u{1F310}"}),p("span",{style:{display:"flex",minWidth:0,flex:"1 1 auto",alignItems:"center",gap:"0.375rem"},children:[i("span",{style:C,title:u,children:u}),S?i("span",{style:{...C,flex:"0 1 auto",opacity:.7},title:l?.url,children:S}):null]}),i("span",{style:{flex:"0 0 auto",opacity:.7},children:V[d]}),i("span",{"aria-hidden":!0,style:{flex:"0 0 auto"},children:a?"\u25BE":"\u25B8"})]}),l?i("button",{type:"button","aria-haspopup":"dialog","aria-label":"Expand browser preview",title:"Expand",onClick:()=>O({threadId:e,sessionId:t,frame:l}),style:ne,children:"\u2922"}):null]}),a&&(l||d==="connecting")?i("div",{id:g,role:"region","aria-labelledby":m,style:ie,children:i(U,{frame:l,status:d,title:u})}):null,A&&x?i(de,{target:x}):null]})}function de({target:e}){let t=B(),{frame:o,status:r}=z({threadId:e.threadId,sessionId:e.sessionId,enabled:t,size:"full",initialFrame:e.frame}),s=H(o),c=o?F(o.url):"";return i("div",{style:oe,onClick:a=>{a.target===a.currentTarget&&_()},children:p("div",{role:"dialog","aria-modal":"true","aria-label":`Browser preview: ${s}`,tabIndex:-1,ref:a=>a?.focus(),onKeyDown:a=>{a.key==="Escape"&&_()},style:re,children:[p("div",{children:[i("div",{style:{...C,fontSize:"0.875rem",fontWeight:600},children:s}),i("div",{style:{...C,fontSize:"0.75rem",opacity:.7},children:[c,V[r]].filter(Boolean).join(" \xB7 ")})]}),i(U,{frame:o,status:r,title:s,maxHeight:"78dvh"})]})})}var at=N(e=>{e.slots.messageDirective({id:D,component:ue})});export{at as default};
+// zcc-host-react:react
+var React = globalThis.__ZCC_HOST_REACT__;
+var Children = React.Children;
+var Component = React.Component;
+var Fragment = React.Fragment;
+var StrictMode = React.StrictMode;
+var Suspense = React.Suspense;
+var cloneElement = React.cloneElement;
+var createContext = React.createContext;
+var createElement = React.createElement;
+var createRef = React.createRef;
+var forwardRef = React.forwardRef;
+var isValidElement = React.isValidElement;
+var lazy = React.lazy;
+var memo = React.memo;
+var startTransition = React.startTransition;
+var useCallback = React.useCallback;
+var useContext = React.useContext;
+var useDebugValue = React.useDebugValue;
+var useDeferredValue = React.useDeferredValue;
+var useEffect = React.useEffect;
+var useId = React.useId;
+var useImperativeHandle = React.useImperativeHandle;
+var useInsertionEffect = React.useInsertionEffect;
+var useLayoutEffect = React.useLayoutEffect;
+var useMemo = React.useMemo;
+var useReducer = React.useReducer;
+var useRef = React.useRef;
+var useState = React.useState;
+var useSyncExternalStore = React.useSyncExternalStore;
+var useTransition = React.useTransition;
+var version = React.version;
+
+// ../../packages/plugin-sdk/src/app.ts
+function pluginRuntime() {
+  return globalThis.__ZCC_PLUGIN_RUNTIME__ ?? {};
+}
+function missing(name) {
+  throw new Error(`${name} is not available until the host plugin runtime is installed`);
+}
+function definePluginApp(setup) {
+  return { __zccPluginApp: true, setup };
+}
+function useRpc() {
+  return pluginRuntime().useRpc?.() ?? missing("useRpc");
+}
+
+// lightbox-store.ts
+var target = null;
+var listeners = /* @__PURE__ */ new Set();
+function publish(next) {
+  target = next;
+  for (const listener of [...listeners]) listener();
+}
+function subscribe(listener) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+function openLightbox(next) {
+  publish(next);
+}
+function closeLightbox() {
+  if (target !== null) publish(null);
+}
+function useLightboxTarget() {
+  return useSyncExternalStore(
+    subscribe,
+    () => target,
+    () => null
+  );
+}
+
+// preview-directive.ts
+var PREVIEW_DIRECTIVE_ID = "browser-preview";
+
+// zcc-host-react:react/jsx-runtime
+var React2 = globalThis.__ZCC_HOST_REACT__;
+var Fragment2 = React2.Fragment;
+function jsx(type, props, key) {
+  return React2.createElement(type, key === void 0 ? props : { ...props, key });
+}
+var jsxs = jsx;
+
+// app.tsx
+var MIN_POLL_INTERVAL_MS = 400;
+var MAX_RETRY_INTERVAL_MS = 15e3;
+var MAX_CONSECUTIVE_FAILURES = 5;
+var SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var STATUS_LABEL = {
+  connecting: "Connecting",
+  live: "Live",
+  ended: "Ended",
+  unavailable: "Unavailable"
+};
+var cardStyle = {
+  margin: "0.5rem 0",
+  overflow: "hidden",
+  borderRadius: "0.5rem",
+  border: "1px solid rgba(128, 128, 128, 0.35)",
+  background: "rgba(128, 128, 128, 0.06)"
+};
+var headerStyle = {
+  display: "flex",
+  alignItems: "stretch",
+  width: "100%"
+};
+var toggleButtonStyle = {
+  display: "flex",
+  flex: "1 1 auto",
+  minWidth: 0,
+  alignItems: "center",
+  gap: "0.375rem",
+  padding: "0.375rem 0.75rem",
+  background: "transparent",
+  border: "none",
+  color: "inherit",
+  font: "inherit",
+  fontSize: "0.75rem",
+  cursor: "pointer",
+  textAlign: "left"
+};
+var expandButtonStyle = {
+  display: "flex",
+  width: "2rem",
+  flex: "0 0 auto",
+  alignItems: "center",
+  justifyContent: "center",
+  borderLeft: "1px solid rgba(128, 128, 128, 0.35)",
+  background: "transparent",
+  color: "inherit",
+  cursor: "pointer",
+  fontSize: "0.75rem"
+};
+var truncate = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap"
+};
+var bodyStyle = {
+  borderTop: "1px solid rgba(128, 128, 128, 0.35)",
+  padding: "0.5rem"
+};
+var backdropStyle = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 1e3,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "1.5rem",
+  background: "rgba(0, 0, 0, 0.6)"
+};
+var dialogStyle = {
+  maxWidth: "min(96vw, 72rem)",
+  maxHeight: "92dvh",
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.75rem",
+  padding: "1rem",
+  borderRadius: "0.75rem",
+  border: "1px solid rgba(128, 128, 128, 0.35)",
+  background: "var(--canvas, #1b1b1b)",
+  color: "inherit",
+  overflow: "auto"
+};
+function subscribeDocumentVisibility(onChange) {
+  document.addEventListener("visibilitychange", onChange);
+  return () => document.removeEventListener("visibilitychange", onChange);
+}
+function readDocumentVisible() {
+  return document.visibilityState !== "hidden";
+}
+function useDocumentVisible() {
+  return useSyncExternalStore(
+    subscribeDocumentVisibility,
+    readDocumentVisible,
+    () => true
+  );
+}
+function useInViewport() {
+  const [element, setElement] = useState(null);
+  const [inViewport, setInViewport] = useState(true);
+  useEffect(() => {
+    if (!element || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) setInViewport(entry.isIntersecting);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element]);
+  return [setElement, inViewport];
+}
+function pageLocation(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:")
+      return `${parsed.host}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+    if (parsed.protocol === "about:") return url;
+    if (parsed.protocol === "file:") return decodeURIComponent(parsed.pathname);
+    return parsed.protocol;
+  } catch {
+    return url.slice(0, 80);
+  }
+}
+function pageTitle(frame) {
+  const title = frame?.title.trim() ?? "";
+  return title === "" || title === frame?.url ? "Headless browser" : title;
+}
+function useLivePreview(args) {
+  const { threadId, sessionId, enabled, size, initialFrame } = args;
+  const rpc = useRpc();
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+  const [frame, setFrame] = useState(initialFrame);
+  const [status, setStatus] = useState(
+    initialFrame ? "live" : "connecting"
+  );
+  const settled = status === "ended" || status === "unavailable";
+  useEffect(() => {
+    if (!enabled || settled) return;
+    let cancelled = false;
+    let timeout = null;
+    let afterSequence = 0;
+    let failures = 0;
+    const poll = async () => {
+      const startedAt = Date.now();
+      let delayMs;
+      try {
+        const result = await rpcRef.current.call("preview", {
+          threadId,
+          sessionId,
+          afterSequence,
+          size
+        });
+        if (cancelled) return;
+        if (result.session.state !== "ready" || result.session.backend !== "local") {
+          setStatus(
+            result.session.backend === "local" ? "ended" : "unavailable"
+          );
+          return;
+        }
+        failures = 0;
+        if (result.frame) {
+          afterSequence = result.frame.sequence;
+          setFrame(result.frame);
+          setStatus("live");
+        }
+        delayMs = Math.max(0, MIN_POLL_INTERVAL_MS - (Date.now() - startedAt));
+      } catch {
+        if (cancelled) return;
+        failures += 1;
+        if (failures >= MAX_CONSECUTIVE_FAILURES) {
+          setStatus("unavailable");
+          return;
+        }
+        delayMs = Math.min(1e3 * 2 ** failures, MAX_RETRY_INTERVAL_MS);
+      }
+      timeout = setTimeout(() => void poll(), delayMs);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timeout !== null) clearTimeout(timeout);
+    };
+  }, [enabled, sessionId, settled, size, threadId]);
+  return { frame, status };
+}
+function PreviewImage({
+  frame,
+  status,
+  title,
+  maxHeight
+}) {
+  const aspect = frame ?? { width: 16, height: 9 };
+  if (!frame && status !== "connecting") return null;
+  const containerStyle = {
+    overflow: "hidden",
+    borderRadius: "0.375rem",
+    border: "1px solid rgba(128, 128, 128, 0.35)",
+    margin: "0 auto",
+    aspectRatio: `${aspect.width} / ${aspect.height}`,
+    width: maxHeight === void 0 ? "100%" : `min(100%, calc(${maxHeight} * ${aspect.width / aspect.height}))`,
+    maxWidth: maxHeight === void 0 ? "28rem" : void 0
+  };
+  return /* @__PURE__ */ jsx("div", { style: containerStyle, children: frame ? /* @__PURE__ */ jsx(
+    "img",
+    {
+      src: `data:${frame.mimeType};base64,${frame.data}`,
+      alt: status === "live" ? `Live view of ${title}` : `Last view of ${title}`,
+      draggable: false,
+      style: {
+        display: "block",
+        width: "100%",
+        height: "100%",
+        objectFit: "contain",
+        opacity: status === "live" ? 1 : 0.6
+      }
+    }
+  ) : /* @__PURE__ */ jsx(
+    "div",
+    {
+      role: "status",
+      "aria-busy": "true",
+      "aria-label": "Loading browser preview",
+      style: {
+        width: "100%",
+        height: "100%",
+        background: "rgba(128, 128, 128, 0.15)"
+      }
+    }
+  ) });
+}
+function Notice({ children }) {
+  return /* @__PURE__ */ jsx("div", { role: "alert", style: { fontSize: "0.875rem", opacity: 0.75 }, children });
+}
+function BrowserPreviewDirective({
+  attributes,
+  source,
+  message
+}) {
+  const sessionId = attributes.session?.trim() ?? "";
+  if (!SESSION_ID_PATTERN.test(sessionId)) {
+    return /* @__PURE__ */ jsxs(Notice, { children: [
+      "browser-preview requires a valid session attribute, e.g.",
+      " ",
+      /* @__PURE__ */ jsxs("code", { children: [
+        "::browser-preview",
+        '{session="\u2026"}'
+      ] })
+    ] });
+  }
+  return /* @__PURE__ */ jsx(
+    BrowserPreviewCard,
+    {
+      threadId: message.threadId,
+      sessionId,
+      source
+    }
+  );
+}
+function BrowserPreviewCard({
+  threadId,
+  sessionId,
+  source
+}) {
+  const visible = useDocumentVisible();
+  const [observe, inViewport] = useInViewport();
+  const [expanded, setExpanded] = useState(true);
+  const target2 = useLightboxTarget();
+  const enlarged = target2?.sessionId === sessionId;
+  const bodyId = useId();
+  const toggleId = useId();
+  const { frame, status } = useLivePreview({
+    threadId,
+    sessionId,
+    enabled: visible && inViewport && expanded && !enlarged,
+    size: "thumbnail",
+    initialFrame: null
+  });
+  const title = pageTitle(frame);
+  const location = frame ? pageLocation(frame.url) : "";
+  return /* @__PURE__ */ jsxs(
+    "section",
+    {
+      ref: observe,
+      "aria-label": "Browser preview",
+      title: source,
+      style: cardStyle,
+      children: [
+        /* @__PURE__ */ jsxs(
+          "div",
+          {
+            role: "group",
+            "aria-label": `Browser preview controls: ${title}`,
+            style: headerStyle,
+            children: [
+              /* @__PURE__ */ jsxs(
+                "button",
+                {
+                  type: "button",
+                  id: toggleId,
+                  "aria-expanded": expanded,
+                  "aria-controls": bodyId,
+                  "aria-label": `Browser preview: ${title}`,
+                  onClick: () => setExpanded((value) => !value),
+                  style: toggleButtonStyle,
+                  children: [
+                    /* @__PURE__ */ jsx("span", { "aria-hidden": true, style: { flex: "0 0 auto" }, children: "\u{1F310}" }),
+                    /* @__PURE__ */ jsxs(
+                      "span",
+                      {
+                        style: {
+                          display: "flex",
+                          minWidth: 0,
+                          flex: "1 1 auto",
+                          alignItems: "center",
+                          gap: "0.375rem"
+                        },
+                        children: [
+                          /* @__PURE__ */ jsx("span", { style: truncate, title, children: title }),
+                          location ? /* @__PURE__ */ jsx(
+                            "span",
+                            {
+                              style: { ...truncate, flex: "0 1 auto", opacity: 0.7 },
+                              title: frame?.url,
+                              children: location
+                            }
+                          ) : null
+                        ]
+                      }
+                    ),
+                    /* @__PURE__ */ jsx("span", { style: { flex: "0 0 auto", opacity: 0.7 }, children: STATUS_LABEL[status] }),
+                    /* @__PURE__ */ jsx("span", { "aria-hidden": true, style: { flex: "0 0 auto" }, children: expanded ? "\u25BE" : "\u25B8" })
+                  ]
+                }
+              ),
+              frame ? /* @__PURE__ */ jsx(
+                "button",
+                {
+                  type: "button",
+                  "aria-haspopup": "dialog",
+                  "aria-label": "Expand browser preview",
+                  title: "Expand",
+                  onClick: () => openLightbox({ threadId, sessionId, frame }),
+                  style: expandButtonStyle,
+                  children: "\u2922"
+                }
+              ) : null
+            ]
+          }
+        ),
+        expanded && (frame || status === "connecting") ? /* @__PURE__ */ jsx("div", { id: bodyId, role: "region", "aria-labelledby": toggleId, style: bodyStyle, children: /* @__PURE__ */ jsx(PreviewImage, { frame, status, title }) }) : null,
+        enlarged && target2 ? /* @__PURE__ */ jsx(BrowserPreviewLightbox, { target: target2 }) : null
+      ]
+    }
+  );
+}
+function BrowserPreviewLightbox({ target: target2 }) {
+  const visible = useDocumentVisible();
+  const { frame, status } = useLivePreview({
+    threadId: target2.threadId,
+    sessionId: target2.sessionId,
+    enabled: visible,
+    size: "full",
+    initialFrame: target2.frame
+  });
+  const title = pageTitle(frame);
+  const location = frame ? pageLocation(frame.url) : "";
+  return /* @__PURE__ */ jsx(
+    "div",
+    {
+      style: backdropStyle,
+      onClick: (event) => {
+        if (event.target === event.currentTarget) closeLightbox();
+      },
+      children: /* @__PURE__ */ jsxs(
+        "div",
+        {
+          role: "dialog",
+          "aria-modal": "true",
+          "aria-label": `Browser preview: ${title}`,
+          tabIndex: -1,
+          ref: (node) => node?.focus(),
+          onKeyDown: (event) => {
+            if (event.key === "Escape") closeLightbox();
+          },
+          style: dialogStyle,
+          children: [
+            /* @__PURE__ */ jsxs("div", { children: [
+              /* @__PURE__ */ jsx("div", { style: { ...truncate, fontSize: "0.875rem", fontWeight: 600 }, children: title }),
+              /* @__PURE__ */ jsx("div", { style: { ...truncate, fontSize: "0.75rem", opacity: 0.7 }, children: [location, STATUS_LABEL[status]].filter(Boolean).join(" \xB7 ") })
+            ] }),
+            /* @__PURE__ */ jsx(
+              PreviewImage,
+              {
+                frame,
+                status,
+                title,
+                maxHeight: "78dvh"
+              }
+            )
+          ]
+        }
+      )
+    }
+  );
+}
+var app_default = definePluginApp((app) => {
+  app.slots.messageDirective({
+    id: PREVIEW_DIRECTIVE_ID,
+    component: BrowserPreviewDirective
+  });
+});
+export {
+  app_default as default
+};
+//# sourceMappingURL=app.js.map

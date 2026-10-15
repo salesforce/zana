@@ -83,7 +83,7 @@ describe('creating docs', () => {
     fireEvent.click(within(dialog).getByRole('radio', { name: /Product spec/ }));
     fireEvent.change(within(dialog).getByPlaceholderText('e.g. Offline sync for the mobile app'), { target: { value: 'Offline sync' } });
     fireEvent.change(within(dialog).getByPlaceholderText(/Describe the problem/), { target: { value: 'Phones lose signal in tunnels.' } });
-    expect(within(dialog).getByText('An agent starts a new thread to draft it.')).toBeTruthy();
+    expect(within(dialog).getByText('An agent drafts it from the brief.')).toBeTruthy();
     // Enter in a field submits the form too.
     fireEvent.submit(dialog.querySelector('form')!);
 
@@ -93,8 +93,9 @@ describe('creating docs', () => {
     expect(spawned.prompt).toContain('Phones lose signal in tunnels.');
     const doc = harness.store.list({})[0]!;
     expect(spawned.pluginMetadata.designDocId).toBe(doc.id);
-    // Without a side panel on the page, the doc opens beside the agent's thread.
+    // Without a side panel composer, the thread starts here and the doc opens beside it.
     expect(harness.navigateCalls).toEqual([
+      { method: 'openPanelAgent', options: { draft: { prompt: spawned.prompt, view: doc.id, projectId: 'p2' }, title: 'Offline sync' } },
       { method: 'openPanelAgent', options: { threadId: 'thread-1', title: 'Offline sync' } },
       { method: 'openThreadPanel', options: { actionId: 'design-doc', title: 'Offline sync', params: { docId: doc.id }, threadId: 'thread-1' } },
       { method: 'toThread', threadId: 'thread-1' }

@@ -6,6 +6,7 @@ import {
   isProposalOutcome,
   isStudioComment,
   isStudioDiagnostics,
+  AGENT_SOURCE_MAX,
   STUDIO_LIMITS,
   type ProposalOutcome,
   type StudioComment,
@@ -86,9 +87,9 @@ export function isPlaygroundToHost(value: unknown): value is PlaygroundToHost {
   if (value.type === 'ready') return true;
   if (value.type === 'openAction') return typeof value.id === 'string';
   if (value.type === 'dirty') return typeof value.dirty === 'boolean';
-  if (value.type === 'snapshot') return typeof value.content === 'string' && value.content.length <= 180_000 && typeof value.issues === 'number' && Number.isFinite(value.issues) && (value.actions === undefined || (Array.isArray(value.actions) && value.actions.length <= 250 && value.actions.every(isAction))) && (value.diagnostics === undefined || isStudioDiagnostics(value.diagnostics, 200));
+  if (value.type === 'snapshot') return typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.issues === 'number' && Number.isFinite(value.issues) && (value.actions === undefined || (Array.isArray(value.actions) && value.actions.length <= 250 && value.actions.every(isAction))) && (value.diagnostics === undefined || isStudioDiagnostics(value.diagnostics, 200));
   if (value.type === 'cursor') return isPositive(value.line) && isPositive(value.column) && (value.selection === undefined || isSelection(value.selection));
-  if (value.type === 'proposalResolved') return isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= 180_000 && isProposalOutcome(value);
+  if (value.type === 'proposalResolved') return isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && isProposalOutcome(value);
   if (value.type === 'commentAction') return ['add', 'open'].includes(String(value.kind)) && isPositive(value.line) && isPositive(value.endLine) && Number(value.endLine) >= Number(value.line) && typeof value.quote === 'string' && value.quote.length <= STUDIO_LIMITS.quote;
   if (value.type === 'askSelection') return typeof value.action === 'string' && value.action.length > 0 && value.action.length <= 64 && isSelection(value);
   if (value.type === 'saveRequest') return true;
@@ -120,7 +121,7 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     return false;
   }
   return (
-    (value.type === 'graph' && typeof value.content === 'string' && value.content.length <= 180_000 && typeof value.visible === 'boolean' && ['light', 'dark'].includes(String(value.theme)) && (value.compact === undefined || typeof value.compact === 'boolean') && (value.focus === undefined || (typeof value.focus === 'string' && value.focus.length <= 200)) && (value.focusSeq === undefined || (Number.isInteger(value.focusSeq) && Number(value.focusSeq) >= 0 && Number(value.focusSeq) <= 1_000_000_000))) ||
+    (value.type === 'graph' && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.visible === 'boolean' && ['light', 'dark'].includes(String(value.theme)) && (value.compact === undefined || typeof value.compact === 'boolean') && (value.focus === undefined || (typeof value.focus === 'string' && value.focus.length <= 200)) && (value.focusSeq === undefined || (Number.isInteger(value.focusSeq) && Number(value.focusSeq) >= 0 && Number(value.focusSeq) <= 1_000_000_000))) ||
     value.type === 'init' ||
     (value.type === 'revealLine' && Number.isInteger(value.line) && Number(value.line) > 0) ||
     (value.type === 'reference' && typeof value.content === 'string' && value.content.length <= 750_000 && ['apex', 'xml', 'json'].includes(String(value.language))) ||
@@ -132,7 +133,7 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     value.type === 'setOrg' ||
     value.type === 'saved' ||
     value.type === 'flushSave' ||
-    (value.type === 'proposeEdit' && isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= 180_000 && typeof value.summary === 'string' && value.summary.length <= 1000 && typeof value.actor === 'string' && value.actor.length <= 200) ||
+    (value.type === 'proposeEdit' && isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.summary === 'string' && value.summary.length <= 1000 && typeof value.actor === 'string' && value.actor.length <= 200) ||
     (value.type === 'clearProposal' && isProposalId(value.proposalId)) ||
     (value.type === 'setComments' && Array.isArray(value.comments) && value.comments.length <= 500 && value.comments.every(isStudioComment)) ||
     (value.type === 'setHits' && Array.isArray(value.lines) && value.lines.length <= 1000 && value.lines.every(isPositive)) ||

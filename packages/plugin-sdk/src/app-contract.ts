@@ -853,11 +853,14 @@ export interface ZccNavigate {
   }): boolean;
   /**
    * Show a conversation in the agent tab of this plugin page's side panel,
-   * focusing its tab when one is already open. False when the page has no
-   * side panel (outside the desktop app, or older hosts); fall back to
-   * `openThreadPanel` or `toThread`.
+   * focusing its tab when one is already open. With `draft`, open the panel's
+   * composer prefilled with `draft.prompt` instead: the user picks the harness
+   * and model and sends it, and the thread is bound to this page like any
+   * panel conversation. False when the page has no side panel (outside the
+   * desktop app, or older hosts; hosts before drafts also return false for a
+   * draft); fall back to `openThreadPanel`, `toThread` or `toCompose`.
    */
-  openPanelAgent(options: { threadId: string; title?: string }): boolean;
+  openPanelAgent(options: ZccPanelAgentOptions): boolean;
   /**
    * Open one of this plugin's `detachable` project tabs in its own window, or
    * focus that window when it is already open. Resolves `false` outside the
@@ -865,6 +868,20 @@ export interface ZccNavigate {
    */
   openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions): Promise<boolean>;
 }
+
+/** A conversation to show, or a draft to prefill the side panel's composer with. */
+export type ZccPanelAgentOptions =
+  | { threadId: string; title?: string }
+  | {
+      /**
+       * `projectId` preselects the composer's project; the user can still change it.
+       * `view` is what the conversation is about, in the page's route form (e.g. a
+       * doc id); it is recorded as the agent's starting view in place of the page's
+       * current route, so a page without routes (a project tab) can still name it.
+       */
+      draft: { prompt: string; projectId?: string; view?: string };
+      title?: string;
+    };
 
 export interface ThreadChatMessageAction {
   id: string;

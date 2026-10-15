@@ -11,12 +11,12 @@ describe('uiCommandReadsOrg', () => {
     expect(uiCommandReadsOrg('panel.open', { tool: 'org-preview' })).toBe(true);
     expect(uiCommandReadsOrg('panel.open', { tool: 'release' })).toBe(true);
   });
-  it('treats preview.start/send as org reads unless the engine is rehearse', () => {
+  it('treats preview.start/send as org reads for every engine', () => {
     for (const command of ['preview.start', 'preview.send']) {
       expect(uiCommandReadsOrg(command, { engine: 'simulate' })).toBe(true);
       expect(uiCommandReadsOrg(command, { engine: 'live' })).toBe(true);
       expect(uiCommandReadsOrg(command, undefined)).toBe(true);
-      expect(uiCommandReadsOrg(command, { engine: 'rehearse' })).toBe(false);
+      expect(uiCommandReadsOrg(command, { engine: 'rehearse' })).toBe(true);
     }
     for (const command of ['editor.proposeEdit', 'trace.focus', 'graph.focus', 'layout.set']) expect(uiCommandReadsOrg(command, {})).toBe(false);
   });

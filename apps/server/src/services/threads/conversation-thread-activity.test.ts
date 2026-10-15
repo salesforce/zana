@@ -8,6 +8,7 @@ import {
   appendConversationThreadEvent, createConversationThread, openDatabase, upsertHost,
   listConversationThreadEvents, listConversationActiveTurnInputs, deleteConversationThreadEventsAfter,
   getConversationThreadActivityCounts, listConversationOpenBackgroundTaskItems, ACTIVE_PLAN_INPUT_PAGE_SIZE,
+  listConversationOpenBackgroundTaskEvents, conversationTimelineHeadEvents,
   OPEN_BACKGROUND_TASK_LIMIT, type ZccDatabase
 } from '@zana-ai/zcc-db';
 import { activePlanTurnForConversation, resetThreadActivityCache, threadActivityForConversation } from './conversation-thread-activity.js';
@@ -43,8 +44,66 @@ function accepted(id: string, mode = 'plan', wrapped = false) {
   }, wrapped);
   return event('turn/input/accepted', { clientRequestId: id, scope: turnScope(id) }, wrapped);
 }
+function delegation(id: string, status = 'pending', extra = {}, wrapped = false) {
+  return event(status === 'pending' ? 'item/started' : 'item/delegation/completed', {
+    item: { type: 'delegation', id, childRef: `child-${id}`, label: id, status, background: false, ...extra },
+  }, wrapped);
+}
 
 describe('bounded conversation activity', () => {
+  it('counts and backfills pending delegations from old turns without requiring a background flag', () => {
+    const start = delegation('review', 'pending', {}, true);
+    delegation('done'); delegation('done', 'completed');
+    delegation('failed', 'failed'); delegation('interrupted', 'interrupted');
+    for (let i = 0; i < 300; i++) event('turn/diff/updated', { diff: 'x'.repeat(1000) });
+    event('turn/completed', { scope: turnScope('old'), status: 'completed' });
+    const progress = event('item/delegation/progress', { item: { type: 'delegation', id: 'review', childRef: 'child-review',
+      label: 'Review progress', status: 'pending', background: false } });
+    expect(getConversationThreadActivityCounts(db, thread.id).activeBackgroundAgentCount).toBe(1);
+    expect(listConversationOpenBackgroundTaskItems(db, thread.id)).toMatchObject([{ id: 'review', label: 'Review progress' }]);
+    const snapshots = listConversationOpenBackgroundTaskEvents(db, thread.id);
+    expect(snapshots).toMatchObject([{ id: progress.id, sequence: progress.sequence, createdAt: start.createdAt,
+      payload: { item: { id: 'review', label: 'Review progress' } } }]);
+    expect(conversationTimelineHeadEvents(db, thread.id)).toEqual(snapshots);
+    expect(listConversationOpenBackgroundTaskEvents(db, 'missing')).toEqual([]);
+    event('item/completed', { item: { type: 'delegation', id: 'review', childRef: 'child-review', label: 'Review', status: 'completed', background: false } });
+    expect(listConversationOpenBackgroundTaskEvents(db, thread.id)).toEqual([]);
+  });
+
+  it('deduplicates native agent tasks and nested delegations consistently with the projector', () => {
+    delegation('native-parent');
+    task('native', 'local_agent', 'pending', { parentToolCallId: 'native-parent' });
+    delegation('parent'); delegation('nested', 'pending', { parentToolCallId: 'parent' });
+    task('nested-native', 'local_subagent', 'pending', { parentToolCallId: 'nested' });
+    delegation('hidden-parent'); task('hidden-native', 'local_agent', 'pending', { parentToolCallId: 'hidden-parent', skipTranscript: true });
+    delegation('terminal-parent'); task('terminal-native', 'local_agent', 'completed', { parentToolCallId: 'terminal-parent' });
+    const other = createConversationThread(db, { projectId: 'p', hostId: thread.hostId, providerId: 'codex' });
+    event('item/started', { item: { type: 'delegation', id: 'foreign', childRef: 'foreign', label: 'Foreign', status: 'pending', background: false } }, false, other.id);
+    expect(listConversationOpenBackgroundTaskItems(db, thread.id).map((item: any) => item.id).sort())
+      .toEqual(['hidden-parent', 'native', 'parent', 'terminal-parent']);
+    expect(getConversationThreadActivityCounts(db, thread.id).activeBackgroundAgentCount).toBe(4);
+    const events = listConversationThreadEvents(db, thread.id).map(row => ({ event: row.payload as any,
+      meta: { id: row.id, seq: row.sequence, createdAt: row.createdAt } }));
+    expect(threadActivityFromEvents(events).activeBackgroundAgentCount).toBe(4);
+    delegation('parent', 'completed');
+    expect(listConversationOpenBackgroundTaskItems(db, thread.id).map((item: any) => item.id)).toContain('nested-native');
+    delegation('command-parent'); task('command', 'local_bash', 'pending', { parentToolCallId: 'command-parent' });
+    expect(getConversationThreadActivityCounts(db, thread.id)).toMatchObject({ activeBackgroundAgentCount: 5, activeBackgroundCommandCount: 1 });
+  });
+
+  it('bounds active snapshot reads even when more tasks are pending', () => {
+    db.transaction(() => { for (let i = 0; i < OPEN_BACKGROUND_TASK_LIMIT + 3; i++) delegation(`agent-${i}`); });
+    expect(listConversationOpenBackgroundTaskEvents(db, thread.id)).toHaveLength(OPEN_BACKGROUND_TASK_LIMIT);
+    expect(listConversationOpenBackgroundTaskItems(db, thread.id)).toHaveLength(OPEN_BACKGROUND_TASK_LIMIT);
+    expect(getConversationThreadActivityCounts(db, thread.id).activeBackgroundAgentCount).toBe(OPEN_BACKGROUND_TASK_LIMIT + 3);
+  });
+
+  it('caps snapshot bytes in SQLite before materializing large task payloads', () => {
+    delegation('huge', 'pending', { label: 'x'.repeat(4 * 1024 * 1024) });
+    delegation('recent');
+    expect(listConversationOpenBackgroundTaskEvents(db, thread.id)).toMatchObject([{ payload: { item: { id: 'recent' } } }]);
+  });
+
   it('lists the running task items however old, with their latest state', () => {
     task('dev'); task('done'); task('done', 'local_bash', 'completed');
     task('hidden', 'local_bash', 'pending', { skipTranscript: true }); task('wrapped', 'local_agent', 'pending', {}, true);

@@ -14,7 +14,7 @@ import { threadStorageRoot } from '../services/threads/thread-storage.js';
 import { projectAttachmentDir } from '../services/projects/attachments.js';
 import { resolveProjectHost } from './project-host.js';
 
-type RangeReader = (offset: number, length: number) => Promise<HostReadFileResult>;
+export type RangeReader = (offset: number, length: number) => Promise<HostReadFileResult>;
 
 function confined(root: string, candidate: string): string {
   const rel = confinePathToRoot(root, candidate);
@@ -22,7 +22,8 @@ function confined(root: string, candidate: string): string {
   return rel;
 }
 
-function videoReader(ctx: ProductHttpContext, params: URLSearchParams): RangeReader {
+/** Resolves a confined byte-range reader for a preview file (workspace, thread storage or attachment). */
+export function previewFileReader(ctx: ProductHttpContext, params: URLSearchParams): RangeReader {
   const candidate = params.get('path') ?? '';
   const threadId = params.get('threadId');
   const source = params.get('source') ?? 'workspace';
@@ -68,6 +69,25 @@ function videoReader(ctx: ProductHttpContext, params: URLSearchParams): RangeRea
   return hostReader(resolveProjectHost(ctx, project.hostId), project.root, project.relPath);
 }
 
+/** Stats a preview file through its reader; maps missing files to 404 and old hosts to 502. */
+export async function previewFileSize(read: RangeReader, kind: string): Promise<number> {
+  let info: HostReadFileResult;
+  try {
+    info = await read(0, 0);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error
+      && ['path_not_found', 'ENOENT', 'EISDIR', 'ENOTDIR'].includes(String(error.code))) {
+      throw new ProjectFsError(404, 'path_not_found', `${kind} file not found`);
+    }
+    throw error;
+  }
+  const size = info.totalBytes;
+  if (size === undefined || !Number.isSafeInteger(size) || size < 0 || info.encoding !== 'base64') {
+    throw new ProjectFsError(502, `invalid-${kind}-response`, `host does not support ${kind} streaming`);
+  }
+  return size;
+}
+
 /** Single HTTP byte ranges, including suffixes. Multipart ranges are rejected. */
 export function videoByteRange(header: string | undefined, size: number): { start: number; end: number } | null {
   if (!header) return { start: 0, end: size - 1 };
@@ -91,21 +111,8 @@ export async function sendVideoPreview(
   if (request.headers['sec-fetch-site'] === 'cross-site') {
     throw new ProjectFsError(403, 'foreign-origin', 'video must be opened from the app');
   }
-  const read = videoReader(ctx, params);
-  let info: HostReadFileResult;
-  try {
-    info = await read(0, 0);
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error
-      && ['path_not_found', 'ENOENT', 'EISDIR', 'ENOTDIR'].includes(String(error.code))) {
-      throw new ProjectFsError(404, 'path_not_found', 'video file not found');
-    }
-    throw error;
-  }
-  const size = info.totalBytes;
-  if (size === undefined || !Number.isSafeInteger(size) || size < 0 || info.encoding !== 'base64') {
-    throw new ProjectFsError(502, 'invalid-video-response', 'host does not support video streaming');
-  }
+  const read = previewFileReader(ctx, params);
+  const size = await previewFileSize(read, 'video');
   const range = videoByteRange(request.headers.range, size);
   const headers = {
     'content-type': contentType,

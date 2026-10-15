@@ -9,16 +9,17 @@ import { ContextStrip, describeVisibleContext } from './ContextStrip.js';
 import { buildViewState, SHARE_STORAGE_KEY, useStudioView } from './useStudioView.js';
 
 const rpc = vi.fn();
-const navigate = { toThread: vi.fn() };
+const navigate: { toThread: ReturnType<typeof vi.fn>; openPanelAgent?: ReturnType<typeof vi.fn> } = { toThread: vi.fn() };
 let realtime: ((payload: unknown) => void) | undefined;
 const view = (over: Partial<StudioViewState> = {}): StudioViewState => ({ surface: 'studio', path: 'force-app/Help.agent', dirty: false, tool: 'code', diagnostics: [], share: true, at: 1, ...over });
 const link = (over: Partial<StudioThreadLink> = {}): StudioThreadLink => ({ threadId: 't1', title: 'Review · Help.agent', role: 'reviewer', path: 'force-app/Help.agent', lastActivityAt: Date.now(), ...over });
 
 beforeEach(() => {
-  rpc.mockReset(); navigate.toThread.mockReset(); realtime = undefined; localStorage.clear();
+  rpc.mockReset(); navigate.toThread.mockReset(); delete navigate.openPanelAgent; realtime = undefined; localStorage.clear();
   rpc.mockImplementation(async (_id: string, method: string) => {
     if (method === 'studio.threads') return { ok: true, threads: [link(), link({ threadId: 't2', title: 'Tests', role: 'tester', lastActivityAt: Date.now() - 7_200_000 })] };
     if (method === 'studio.askAgent') return { ok: true, threadId: 'new1' };
+    if (method === 'studio.draftAgent') return { ok: true, prompt: 'BRIEF', title: 'Review · Help.agent' };
     return { ok: true };
   });
   (globalThis as any).__ZCC_HOST_REACT__ = React;
@@ -159,6 +160,64 @@ describe('AssistantRail', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /Review/ }));
     await waitFor(() => expect(rpc.mock.calls.some(c => c[1] === 'studio.askAgent' && c[2].action === 'review')).toBe(true));
     await screen.findByTestId('thread-chat');
+  });
+});
+
+describe('AssistantRail with the side-panel agent', () => {
+  const props = { pluginId: 'salesforce', projectId: 'p1', path: 'force-app/Help.agent', view: view() };
+
+  it('hands an action to the panel composer instead of starting a thread', async () => {
+    navigate.openPanelAgent = vi.fn(() => true);
+    render(<AssistantRail {...props} view={view({ diagnostics: [{ line: 1, column: 1, endLine: 1, endColumn: 2, severity: 'error', message: 'm' }] })} />);
+    await screen.findByText('Tests');
+    fireEvent.click(screen.getByRole('button', { name: 'Fix problems' }));
+    await waitFor(() => expect(navigate.openPanelAgent).toHaveBeenCalledWith({ draft: { prompt: 'BRIEF', view: 'force-app/Help.agent', projectId: 'p1' }, title: 'Review · Help.agent' }));
+    expect(rpc.mock.calls.find(c => c[1] === 'studio.draftAgent')![2]).toMatchObject({ projectId: 'p1', path: 'force-app/Help.agent', action: 'fix-problems', diagnostics: [{ message: 'm' }] });
+    expect(rpc.mock.calls.some(c => c[1] === 'studio.askAgent')).toBe(false);
+    expect(screen.queryByTestId('thread-chat')).toBeNull();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Review' }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('opens linked threads in the side panel', async () => {
+    navigate.openPanelAgent = vi.fn(() => true);
+    render(<AssistantRail {...props} />);
+    fireEvent.click((await screen.findByText('Review · Help.agent')).closest('button')!);
+    expect(navigate.openPanelAgent).toHaveBeenCalledWith({ threadId: 't1', title: 'Review · Help.agent' });
+    expect(screen.queryByTestId('thread-chat')).toBeNull();
+  });
+
+  it('starts the thread here when the page has no side panel', async () => {
+    navigate.openPanelAgent = vi.fn(() => false);
+    render(<AssistantRail {...props} />);
+    await screen.findByText('Tests');
+    const input = screen.getByLabelText('Request for the agent');
+    fireEvent.change(input, { target: { value: 'add a topic' } });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(screen.getByTestId('thread-chat').textContent).toBe('new1'));
+    expect(rpc.mock.calls.find(c => c[1] === 'studio.draftAgent')![2]).toEqual({ projectId: 'p1', path: 'force-app/Help.agent', prompt: 'add a topic' });
+    expect(navigate.openPanelAgent).toHaveBeenCalledWith({ threadId: 'new1' });
+  });
+
+  it('falls back to starting the thread when the draft comes back empty', async () => {
+    navigate.openPanelAgent = vi.fn(() => true);
+    rpc.mockImplementation(async (_i: string, method: string) => method === 'studio.draftAgent' ? { ok: true } : method === 'studio.askAgent' ? { ok: true, threadId: 'new2' } : { ok: true, threads: [] });
+    render(<AssistantRail {...props} projectId={undefined} threads={[]} />);
+    expect((screen.getByRole('button', { name: 'Review' }) as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+    render(<AssistantRail {...props} threads={[]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    await waitFor(() => expect(navigate.openPanelAgent).toHaveBeenCalledWith({ threadId: 'new2' }));
+    expect(navigate.openPanelAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a draft failure without opening anything', async () => {
+    navigate.openPanelAgent = vi.fn(() => true);
+    rpc.mockImplementation(async (_i: string, method: string) => method === 'studio.draftAgent' ? { ok: false, error: 'Choose an agent file inside this project.' } : { ok: true, threads: [] });
+    render(<AssistantRail {...props} threads={[]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Choose an agent file inside this project.');
+    expect(navigate.openPanelAgent).not.toHaveBeenCalled();
+    expect(rpc.mock.calls.some(c => c[1] === 'studio.askAgent')).toBe(false);
   });
 });
 

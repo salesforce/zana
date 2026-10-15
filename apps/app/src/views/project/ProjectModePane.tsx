@@ -17,6 +17,7 @@ import { projectTerminalsAnchorId } from '@/lib/split-layout/agentSessionPortal'
 import { decodeRouteParam, getProjectModeRoutePath } from '@/lib/route-paths';
 import { useNavigate } from 'react-router-dom';
 import { SplitPaneHeaderActions } from '@/views/thread-detail/SplitPaneHeaderActions';
+import { PluginPanelHostLayout } from '@/views/thread-detail/PluginPanelHostLayout';
 import {
   DetachedPluginTab,
   OpenInWindowButton,
@@ -263,22 +264,25 @@ export function ProjectModePane({
         )}
         {isExtTab && slotTab && !slotTabDetached && (
           <div className="project-ext-tab">
-            <PluginSlotBoundary pluginId={slotTab.pluginId} generation={slotTab.generation}>
-              {(() => {
-                const Component = slotTab.component;
-                return (
-                  <Component
-                    pluginId={slotTab.pluginId}
-                    projectId={project.id}
-                    headerActions={
-                      slotTab.header === 'custom'
-                        ? withOpenInWindow(slotTab, project.id, <SplitPaneHeaderActions />)
-                        : undefined
-                    }
-                  />
-                );
-              })()}
-            </PluginSlotBoundary>
+            {/* A side panel the page can open for agents (`navigate.openPanelAgent`), one per project. */}
+            <PluginPanelHostLayout pluginId={slotTab.pluginId} panelPath={slotTab.id} scopeId={project.id} launchers={false}>
+              <PluginSlotBoundary pluginId={slotTab.pluginId} generation={slotTab.generation}>
+                {(() => {
+                  const Component = slotTab.component;
+                  return (
+                    <Component
+                      pluginId={slotTab.pluginId}
+                      projectId={project.id}
+                      headerActions={
+                        slotTab.header === 'custom'
+                          ? withOpenInWindow(slotTab, project.id, <SplitPaneHeaderActions />)
+                          : undefined
+                      }
+                    />
+                  );
+                })()}
+              </PluginSlotBoundary>
+            </PluginPanelHostLayout>
           </div>
         )}
         {isExtTab && extModule && !slotTab && (

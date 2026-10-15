@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AgentforceTransport, type SfapHost } from './agentforce-transport.js';
 import { DEFAULT_LAB_MODEL, labRecord, labText, parseLabScenario, parseLabVerdict, type LabEngine, type LabScenario, type LabSnapshot, type LabTurn } from './agentforce-lab-contract.js';
 import type { ResolvedOrg } from './types.js';
-import type { TurnTrace } from './studio-contract.js';
+import { AGENT_SOURCE_MAX, type TurnTrace } from './studio-contract.js';
 import { REHEARSAL_TRACE_REASON, TraceCache, normalizeTrace, unavailableTrace } from './agentforce-trace.js';
 import { sourceLocations } from './agent-script-parse.js';
 
@@ -35,7 +35,8 @@ export class AgentforceLab {
     connect(): Promise<ResolvedOrg>;
     scope(): string;
     /** Throws to refuse a run on the connected org (production and unknown orgs need the operator). */
-    authorize?(org: ResolvedOrg, request: { engine: LabEngine; threadId: string }): Promise<void>;
+    /** `startedByUser`: the user clicked Start in the Studio, which is itself the approval. */
+    authorize?(org: ResolvedOrg, request: { engine: LabEngine; threadId: string; startedByUser: boolean }): Promise<void>;
     transport?: Pick<AgentforceTransport, 'bootstrap' | 'request'>;
     now?: () => number;
   }) { this.transport = deps.transport ?? new AgentforceTransport(); this.now = deps.now ?? Date.now; }
@@ -82,7 +83,7 @@ export class AgentforceLab {
     for (const [id, s] of this.sessions) if (s.closed) this.sessions.delete(id);
     if (this.sessions.size + this.starts.size >= 12) throw new Error('Too many rehearsal sessions. End a run first.');
     const raw = labRecord(input);
-    labText(raw.source, 'Agent script', 180_000);
+    labText(raw.source, 'Agent script', AGENT_SOURCE_MAX);
     const source = raw.source as string;
     if (raw.engine !== 'preview' && raw.engine !== 'rehearsal') throw new Error('Choose a rehearsal engine.');
     const model = raw.model === undefined ? DEFAULT_LAB_MODEL : labText(raw.model, 'Model API name', 160);
@@ -94,7 +95,7 @@ export class AgentforceLab {
     this.starts.add(controller);
     try {
       const org = await this.deps.connect();
-      await this.deps.authorize?.(org, { engine: raw.engine, threadId: typeof raw.threadId === 'string' ? raw.threadId.slice(0, 128) : '' });
+      await this.deps.authorize?.(org, { engine: raw.engine, threadId: typeof raw.threadId === 'string' ? raw.threadId.slice(0, 128) : '', startedByUser: raw.startedByUser === true });
       const token = await this.transport.bootstrap(org, controller.signal);
       const s: Session = { id: randomUUID(), scope, engine: raw.engine, source, path, sourceHash: createHash('sha256').update(source).digest('hex'), orgAlias: org.alias, model, token, sequence: 0, scenario, turns: [], busy: false, closed: false, failed: false, touched: this.now(), calls: 0, controller, traces: new TraceCache(), traceCalls: 0 };
       if (s.engine === 'preview') {

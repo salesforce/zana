@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+// @vitest-environment-options {"settings":{"disableIframePageLoading":true}}
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { ThreadFilePreviewTab, ThreadFilePreviewView } from './ThreadFilePreviewTab.js';
@@ -227,8 +228,10 @@ describe('HTML file preview', () => {
     mocks.hostFileContent.mockResolvedValue({ content: '<h1>Mock</h1>', encoding: 'utf8' });
     const view = render(<ThreadFilePreviewTab path="mockups/page.html" threadId="t1" />);
     const frame = await view.findByTestId('thread-file-preview-html');
-    expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
-    expect(frame.getAttribute('srcdoc')).toBe('<h1>Mock</h1>');
+    // Served with its own CSP: a srcdoc frame would inherit the app CSP and block scripts.
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-modals');
+    expect(frame.getAttribute('srcdoc')).toBeNull();
+    expect(frame.getAttribute('src')).toBe('/api/v1/file-preview/html?path=mockups%2Fpage.html&source=workspace&threadId=t1');
     expect(view.getByTestId('thread-file-preview-mode-preview').getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.click(view.getByTestId('thread-file-preview-mode-code'));
@@ -238,6 +241,15 @@ describe('HTML file preview', () => {
 
     fireEvent.click(view.getByTestId('thread-file-preview-mode-preview'));
     expect(view.getByTestId('thread-file-preview-html')).toBeTruthy();
+  });
+
+  it('points the frame at thread storage with the project and refresh revision', async () => {
+    mocks.storageContent.mockResolvedValue({ content: '<script>1</script>', encoding: 'utf8' });
+    const view = render(<ThreadFilePreviewTab path="out/page.html" threadId="t1" projectId="p1" storage previewRevision={3} />);
+    const src = (await view.findByTestId('thread-file-preview-html')).getAttribute('src')!;
+    expect(Object.fromEntries(new URL(src, 'http://app').searchParams)).toEqual({
+      path: 'out/page.html', source: 'thread-storage', threadId: 't1', projectId: 'p1', rev: '3'
+    });
   });
 
   it('opens on the source when a line is targeted and forgets the choice for another file', async () => {

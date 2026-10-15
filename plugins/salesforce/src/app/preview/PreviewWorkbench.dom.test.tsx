@@ -89,21 +89,28 @@ describe('PreviewWorkbench', () => {
     expect(calls.find(c => c.method === 'studio.suites.list')?.args).toMatchObject({ agentPath: 'force-app/A.agent', projectId: 'proj-1' });
   });
 
-  it('switches engines and runs the rehearse flow with an approximation trace', async () => {
+  it('offers only Simulate and Live, and runs a stale Rehearse request as Simulate', async () => {
+    const el = await mount({ engine: 'rehearse' });
+    const engines = [...el.querySelectorAll('[aria-label="Preview engine"] button')].map(b => b.textContent);
+    expect(engines).toEqual(['Simulate', 'Live']);
+    expect(btn(el, 'Simulate').getAttribute('aria-pressed')).toBe('true');
+    await click(btn(el, 'Start'));
+    expect(calls.find(c => c.method === 'agentLab.start')?.args).toMatchObject({ engine: 'preview' });
+  });
+
+  it('runs a Simulate session for the owning thread and reports it to the host', async () => {
     const onRun = vi.fn(); const onEngine = vi.fn();
     const el = await mount({ onRunChange: onRun, onEngineChange: onEngine, threadId: 'owner' });
-    await click(btn(el, 'Rehearse'));
-    expect(onEngine).toHaveBeenCalledWith('rehearse');
+    await click(btn(el, 'Live'));
+    expect(onEngine).toHaveBeenCalledWith('live');
+    await click(btn(el, 'Simulate'));
     await click(btn(el, 'Start'));
     // The owning thread is where a production org gets approved.
-    expect(calls.find(c => c.method === 'agentLab.start')?.args).toMatchObject({ engine: 'rehearsal', threadId: 'owner' });
+    expect(calls.find(c => c.method === 'agentLab.start')?.args).toMatchObject({ engine: 'preview', threadId: 'owner', startedByUser: true });
     expect(el.textContent).toContain('Welcome');
     await typeAndSend(el, 'hello');
     expect(el.textContent).toContain('Hi there');
-    await click(btn(el, 'trace'));
-    expect(el.textContent).toContain('Approximation');
-    expect(methods()).not.toContain('agentLab.trace');
-    expect(onRun).toHaveBeenLastCalledWith({ runId: 'sess-1', engine: 'rehearse', turn: 1 });
+    expect(onRun).toHaveBeenLastCalledWith({ runId: 'sess-1', engine: 'simulate', turn: 1 });
     await click(btn(el, 'End'));
     expect(methods()).toContain('agentLab.end');
     expect(onRun).toHaveBeenLastCalledWith(null);
@@ -158,15 +165,26 @@ describe('PreviewWorkbench', () => {
   it('runs Live through agentPreview.* and blocks without a path', async () => {
     const el = await mount({ engine: 'live' });
     await click(btn(el, 'Start'));
-    expect(calls.find(c => c.method === 'agentPreview.start')?.args).toMatchObject({ live: true, path: 'force-app/A.agent' });
+    expect(calls.find(c => c.method === 'agentPreview.start')?.args).toMatchObject({ live: true, path: 'force-app/A.agent', startedByUser: true });
     await typeAndSend(el, 'go');
     expect(el.textContent).toContain('Live reply');
+    expect(calls.find(c => c.method === 'agentPreview.send')?.args).toMatchObject({ utterance: 'go', startedByUser: true });
     await click(btn(el, 'End'));
     expect(calls.find(c => c.method === 'agentPreview.end')?.args).toMatchObject({ sessionId: 'live-1', live: true });
     act(() => root!.unmount()); host!.remove();
     const blocked = await mount({ engine: 'live', path: undefined });
     expect(btn(blocked, 'Start').disabled).toBe(true);
     expect(blocked.textContent).toContain('Open a saved .agent file');
+  });
+
+  it('starts Live from the saved file without editor source, but not Rehearse', async () => {
+    const live = await mount({ engine: 'live', source: '' });
+    expect(btn(live, 'Start').disabled).toBe(false);
+    await click(btn(live, 'Start'));
+    expect(calls.find(c => c.method === 'agentPreview.start')?.args).toMatchObject({ live: true, path: 'force-app/A.agent' });
+    act(() => root!.unmount()); host!.remove();
+    const rehearse = await mount({ engine: 'rehearse', source: '' });
+    expect(btn(rehearse, 'Start').disabled).toBe(true);
   });
 
   it('surfaces start failures', async () => {
@@ -293,6 +311,7 @@ describe('PreviewWorkbench', () => {
       await render({ engine: 'live', command: { seq: 1, type: 'send', text: 'hi live', engine: 'live' } });
       expect(calls.find(c => c.method === 'agentPreview.start')).toBeTruthy();
       expect(calls.find(c => c.method === 'agentPreview.send')!.args).toMatchObject({ sessionId: 'live-1', utterance: 'hi live' });
+      expect(calls.filter(c => c.method.startsWith('agentPreview.')).some(c => 'startedByUser' in c.args)).toBe(false);
     });
 
     it('surfaces failures instead of throwing, for empty text and live without a path', async () => {
@@ -345,7 +364,7 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     await rerender({ engine: 'live' });
     expect(el.textContent).toContain('on the connected org');
     await rerender({ engine: 'rehearse' });
-    expect(el.textContent).toContain('An AI model plays your script');
+    expect(el.textContent).toContain('Actions are simulated');
   });
 
   it('keeps Start disabled for a blank draft and shows the placeholder when idle', async () => {
@@ -690,11 +709,13 @@ describe('PreviewWorkbench run ownership', () => {
 
   it('tells the host once it takes a command', async () => {
     const onCommandHandled = vi.fn();
-    await mount({ engine: 'rehearse', onCommandHandled });
-    await rerender({ engine: 'rehearse', onCommandHandled, command: { seq: 3, type: 'send', text: 'hi', engine: 'simulate' } });
+    await mount({ engine: 'live', onCommandHandled });
+    await rerender({ engine: 'live', onCommandHandled, command: { seq: 3, type: 'send', text: 'hi', engine: 'simulate' } });
     expect(onCommandHandled).not.toHaveBeenCalled();
     await rerender({ engine: 'simulate', onCommandHandled, command: { seq: 3, type: 'send', text: 'hi', engine: 'simulate' } });
     expect(onCommandHandled.mock.calls).toEqual([[3]]);
     expect(calls.find(c => c.method === 'agentLab.send')?.args).toMatchObject({ text: 'hi' });
+    // A host command is not the user's click: its start still asks for approval in the thread.
+    expect(calls.find(c => c.method === 'agentLab.start')?.args).not.toHaveProperty('startedByUser');
   });
 });

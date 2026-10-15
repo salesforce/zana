@@ -7,6 +7,7 @@ import { createSalesforcePlugin } from '../lib/plugin.js';
 import { createNodeDeps } from '../lib/node-deps.js';
 import type { SalesforceDeps } from '../lib/types.js';
 import type { AgentforceTransport } from '../lib/agentforce-transport.js';
+import { actionInput } from '../lib/workbench-actions.js';
 const roots: string[] = [];
 const disposals: Array<() => unknown> = [];
 const ctx = { projectId: 'p', threadId: '', signal: new AbortController().signal };
@@ -92,6 +93,20 @@ it('gates Agentforce lab runs on an org that is not a known sandbox, like every 
   await approved;
   expect(bootstrap).toHaveBeenCalledOnce();
 });
+it('treats a Start click in the Studio as the approval, but never an agent claiming one', async () => {
+  const bootstrap = vi.fn(async () => 'JWT');
+  const { harness, zcc, action } = await fixture(true, { bootstrap, request: vi.fn() } as unknown as AgentforceTransport);
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  const source = 'config:\n  agent_name: Help';
+  // An agent cannot forge the click: sf_workbench drops the flag, so the org gate still refuses.
+  expect(await action('studio.start', { engine: 'rehearsal', source, startedByUser: true })).toMatchObject({ ok: false, code: 'refused' });
+  expect(bootstrap).not.toHaveBeenCalled();
+  expect(await harness.callRpc('agentLab.start', { projectId: 'p', engine: 'rehearsal', source, startedByUser: true })).toMatchObject({ ok: true });
+  expect(bootstrap).toHaveBeenCalledOnce();
+  expect(confirmation).not.toHaveBeenCalled();
+  // A forged flag that reaches the lab directly is dropped by actionInput too.
+  expect(actionInput({ engine: 'preview', startedByUser: true, threadId: 't' })).toEqual({ engine: 'preview' });
+});
 it('runs Agentforce lab rehearsals on a sandbox without asking', async () => {
   const bootstrap = vi.fn(async () => 'JWT');
   const { harness, zcc } = await fixture(false, { bootstrap, request: vi.fn() } as unknown as AgentforceTransport);
@@ -130,6 +145,61 @@ it('compiles on a sandbox from the Studio button without asking', async () => {
   expect(await harness.callRpc('agentScript.compile', { projectId: 'p', path: draft.file.path })).toMatchObject({ ok: true, summary: 'Compiled Help (cli)' });
   expect(confirmation).not.toHaveBeenCalled();
   expect(await harness.callRpc('agentScript.compile', { projectId: 'p', path: '../outside.agent' })).toMatchObject({ ok: false, code: 'path_refused' });
+});
+it('opens the saved agent in Agentforce Builder through the CLI without returning its session URL', async () => {
+  const { action, harness, exec } = await fixture();
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  const open = (extra: Record<string, unknown> = {}) => harness.callRpc('agentBuilder.open', { projectId: 'p', path: draft.file.path, ...extra }) as Promise<any>;
+  const opens = () => exec.mock.calls.filter(([args]) => args[0] === 'org' && args[1] === 'open');
+  expect(await harness.callRpc('agentBuilder.open', { projectId: 'p' })).toMatchObject({ ok: false, code: 'invalid_input' });
+  expect(await open({ path: '../outside.agent' })).toMatchObject({ ok: false, code: 'path_refused' });
+  expect(await open({ path: 'force-app/main/default/aiAuthoringBundles/Nope/Nope.agent' })).toMatchObject({ ok: false });
+  const opened = await open();
+  expect(opened).toEqual({ ok: true, summary: 'Opened Help in Agentforce Builder on dev.' });
+  expect(opens()[0]![0]).toEqual(['org', 'open', 'agent', '--json', '--target-org', 'dev', '--authoring-bundle', 'Help', '--browser', 'chrome']);
+  const base = exec.getMockImplementation()!;
+  exec.mockImplementation(async (args, opts) => args[1] === 'open'
+    ? { code: 1, stderr: '', stdout: JSON.stringify({ status: 1, message: 'Cannot open https://example.my.salesforce.com/secur/frontdoor.jsp?sid=SECRET' }) }
+    : base(args, opts));
+  const failed = await open();
+  expect(failed).toMatchObject({ ok: false, code: 'open_failed', error: 'Cannot open [url]' });
+  expect(JSON.stringify(failed)).not.toContain('SECRET');
+  exec.mockImplementation(async (args, opts) => args[1] === 'open' ? { code: 1, stderr: '', stdout: '' } : base(args, opts));
+  expect(await open()).toMatchObject({ ok: false, code: 'open_failed', error: 'Could not open Help in Agentforce Builder.' });
+});
+it('explains a preview refused for lack of a thread instead of naming the internal reason', async () => {
+  const { action, harness } = await fixture(true);
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  expect(await harness.callRpc('agentPreview.start', { projectId: 'p', path: draft.file.path })).toMatchObject({ ok: false, code: 'refused', error: 'dev is not a known sandbox. Preview it beside a thread to approve, or pick a sandbox.' });
+  expect(await harness.callRpc('agentPreview.start', { projectId: 'p', path: draft.file.path, live: true })).toMatchObject({ ok: false, code: 'refused', error: expect.stringMatching(/^Live runs real actions/) });
+});
+it('starts and talks to a Live preview from the user\'s own clicks without a thread', async () => {
+  const { action, harness, zcc, exec } = await fixture(true);
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  expect(await harness.callRpc('agentPreview.start', { projectId: 'p', path: draft.file.path, live: true, startedByUser: true })).toMatchObject({ ok: true });
+  expect(await harness.callRpc('agentPreview.send', { projectId: 'p', path: draft.file.path, live: true, sessionId: 'preview', utterance: 'hi', startedByUser: true })).toMatchObject({ ok: true });
+  expect(confirmation).not.toHaveBeenCalled();
+  expect(exec.mock.calls.filter(([args]) => args[0] === 'agent' && args[1] === 'preview').map(([args]) => args[2])).toEqual(['start', 'send']);
+});
+it('asks before opening Agentforce Builder on an org that is not a known sandbox', async () => {
+  const { action, harness, zcc, exec } = await fixture(true);
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  const open = (extra: Record<string, unknown> = {}) => harness.callRpc('agentBuilder.open', { projectId: 'p', path: draft.file.path, ...extra }) as Promise<any>;
+  const opens = () => exec.mock.calls.filter(([args]) => args[0] === 'org' && args[1] === 'open');
+  expect(await open()).toMatchObject({ ok: false, code: 'refused', error: expect.stringContaining('Open it beside a thread') });
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  const denied = open({ threadId: 'thread' });
+  await vi.waitFor(() => expect(confirmation).toHaveBeenCalledOnce());
+  expect(confirmation.mock.calls[0]![0]).toMatchObject({ threadId: 'thread', payload: { summary: 'Open Help in Agentforce Builder on dev (unknown)' } });
+  harness.cancelInteraction();
+  expect(await denied).toMatchObject({ ok: false, code: 'refused', error: 'Operator cancelled opening Agentforce Builder.' });
+  expect(opens()).toHaveLength(0);
+  const approved = open({ threadId: 'thread' });
+  await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(2));
+  harness.submitInteraction({ approved: true });
+  expect(await approved).toMatchObject({ ok: true });
+  expect(opens()).toHaveLength(1);
 });
 it('runs bounded queries, stores real results and refuses cross-project presentation', async () => {
   const { action, harness, request } = await fixture();

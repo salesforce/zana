@@ -34,7 +34,16 @@ describe('Agent Script document toolbar', () => {
     expect(screen.getByRole('button', { name: 'Save Agentforce file' }).className).toContain('is-dirty');
     expect(screen.getByRole('combobox', { name: 'Salesforce org' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open beside agent' })).toBeTruthy();
-    for (const name of ['Browse org agents', 'Save Agentforce file', 'Save as…', 'Show side panel']) fireEvent.click(screen.getByRole('button', { name }));
+    for (const name of ['Browse org agents', 'Save Agentforce file', 'Show side panel']) fireEvent.click(screen.getByRole('button', { name }));
+    // Save as… sits under Save's arrow; choosing it closes the menu.
+    const more = screen.getByRole('button', { name: 'More save options' });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    expect(more.className).toContain('is-dirty');
+    fireEvent.click(more);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Save as…' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save as…' }));
+    expect(screen.queryByRole('menu')).toBeNull();
     for (const callback of [onBrowse, onSave, onSaveAs, onShowPanel]) expect(callback).toHaveBeenCalledOnce();
   });
 
@@ -46,7 +55,48 @@ describe('Agent Script document toolbar', () => {
     expect(save.disabled).toBe(true);
     expect(save.textContent).toBe('Saving…');
     expect(save.className).not.toContain('is-dirty');
-    expect((screen.getByRole('button', { name: 'Save as…' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'More save options' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('closes the Save menu on Escape, an outside click, or when Save as… becomes unavailable', () => {
+    const view = render(<AgentScriptDocumentBar {...defaults} />);
+    const more = screen.getByRole('button', { name: 'More save options' });
+    fireEvent.keyDown(more, { key: 'Escape' });
+    fireEvent.click(more);
+    fireEvent.keyDown(screen.getByRole('menuitem'), { key: 'Enter' });
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('menuitem'), { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(more);
+    fireEvent.click(more);
+    fireEvent.pointerDown(screen.getByRole('menuitem'));
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(more);
+    view.rerender(<AgentScriptDocumentBar {...defaults} saveAsDisabled />);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('fills one action at a time and shrinks Compile to an icon', () => {
+    const onCompile = vi.fn(), onPublish = vi.fn();
+    const view = render(<AgentScriptDocumentBar {...defaults} dirty onCompile={onCompile} onPublish={onPublish} />);
+    const publish = () => screen.getByTestId('salesforce-agent-script-publish');
+    expect(screen.getByRole('button', { name: 'Save Agentforce file' }).className).toContain('is-dirty');
+    expect(publish().className).not.toContain('is-primary');
+    expect((screen.getByRole('button', { name: 'Compile' }) as HTMLButtonElement).disabled).toBe(true);
+    view.rerender(<AgentScriptDocumentBar {...defaults} onCompile={onCompile} onPublish={onPublish} />);
+    expect(screen.getByRole('button', { name: 'Save Agentforce file' }).className).not.toContain('is-dirty');
+    expect(publish().className).toContain('is-primary');
+    fireEvent.click(screen.getByRole('button', { name: 'Compile' }));
+    fireEvent.click(publish());
+    expect(onCompile).toHaveBeenCalledOnce(); expect(onPublish).toHaveBeenCalledOnce();
+    view.rerender(<AgentScriptDocumentBar {...defaults} compiling onCompile={onCompile} onPublish={onPublish} />);
+    expect(screen.getByRole('button', { name: 'Compiling…' }).className).toContain('is-busy');
+    // A new draft has no file yet: Save as… stands alone and is the filled action.
+    view.rerender(<AgentScriptDocumentBar {...defaults} path={null} dirty onPublish={onPublish} />);
+    expect(screen.getByRole('button', { name: 'Save as…' }).className).toContain('is-dirty');
+    expect(publish().className).not.toContain('is-primary');
   });
 
   it('labels the no-file state and untitled drafts, hides file save and omits an empty folder path', () => {
@@ -62,5 +112,37 @@ describe('Agent Script document toolbar', () => {
     view.rerender(<AgentScriptDocumentBar {...defaults} path="Support.agent" />);
     expect(view.container.querySelector('.af-document-folder')).toBeNull();
     expect(screen.getByRole('status').textContent).toBe('Saved');
+  });
+
+  it('opens Preview for saved and unsaved agents, and disables it until a file is open', () => {
+    const onPreview = vi.fn();
+    const view = render(<AgentScriptDocumentBar {...defaults} onPreview={onPreview} />);
+    const preview = () => screen.getByRole('button', { name: 'Preview', exact: true }) as HTMLButtonElement;
+    expect(preview().textContent).toBe('Preview');
+    fireEvent.click(preview());
+    view.rerender(<AgentScriptDocumentBar {...defaults} dirty onPreview={onPreview} />);
+    expect(preview().disabled).toBe(false);
+    fireEvent.click(preview());
+    expect(onPreview).toHaveBeenCalledTimes(2);
+    view.rerender(<AgentScriptDocumentBar {...defaults} path={null} onPreview={onPreview} />);
+    expect(preview().disabled).toBe(true);
+    fireEvent.click(preview());
+    expect(onPreview).toHaveBeenCalledTimes(2);
+    view.rerender(<AgentScriptDocumentBar {...defaults} />);
+    expect(screen.queryByRole('button', { name: 'Preview', exact: true })).toBeNull();
+  });
+
+  it('opens the saved agent in Agentforce Builder, but not an unsaved one or while opening', () => {
+    const onOpenInBuilder = vi.fn();
+    const { rerender } = render(<AgentScriptDocumentBar {...defaults} onOpenInBuilder={onOpenInBuilder} />);
+    const open = () => screen.getByRole('button', { name: 'Open in Agentforce Builder' }) as HTMLButtonElement;
+    expect(open().title).toBe('Open in Agentforce Builder (Chrome)');
+    fireEvent.click(open());
+    expect(onOpenInBuilder).toHaveBeenCalledOnce();
+    rerender(<AgentScriptDocumentBar {...defaults} onOpenInBuilder={onOpenInBuilder} openingBuilder />);
+    expect(open().disabled).toBe(true);
+    expect(open().className).toContain('is-busy');
+    rerender(<AgentScriptDocumentBar {...defaults} path={null} onOpenInBuilder={onOpenInBuilder} />);
+    expect(open().disabled).toBe(true);
   });
 });

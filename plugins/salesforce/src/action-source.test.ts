@@ -54,12 +54,23 @@ describe('action source resolution', () => {
     expect(() => readProjectAction(root, 'apex://OrderLookup', legacy)).toThrow('750 KB');
     expect(() => readProjectAction(root, 'flow://CheckReturn', { ...legacy, readFile: () => null })).toThrow('could not be read');
   });
-  it('does not silently choose a match after reaching the scan limit', () => {
-    const { root, deps } = setup();
+  it('past the scan limit, opens the one source at the standard path and otherwise lets the user choose', () => {
+    const { root, write, deps } = setup();
     const limited = { ...deps, readdir: (p: string) => p.endsWith('force-app') ? Array.from({ length: 6001 }, (_, i) => `f${i}`) : deps.readdir(p) };
-    expect(readProjectAction(root, 'apex://OrderLookup', limited)).toMatchObject({ status: 'ambiguous', message: expect.stringContaining('limit') });
+    expect(readProjectAction(root, 'apex://OrderLookup', limited)).toMatchObject({ status: 'ready', content: ACTION_APEX, label: 'force-app/main/default/classes/OrderLookup.cls', message: expect.stringContaining('rule out another copy') });
+    expect(readProjectAction(root, 'apex://Nowhere', limited)).toMatchObject({ status: 'missing', message: expect.stringContaining('Switch to Org') });
+    expect(readProjectAction(root, 'flow://Nowhere', limited).message).toContain('No flow at the standard source path');
+    write('second/main/default/classes/OrderLookup.cls', 'second');
+    expect(readProjectAction(root, 'apex://OrderLookup', limited)).toMatchObject({ status: 'ambiguous', candidates: ['force-app/main/default/classes/OrderLookup.cls', 'second/main/default/classes/OrderLookup.cls'], message: expect.stringContaining('limit') });
+    write('force-app/main/default/flows/Route.flow-meta.xml', '<Flow/>');
+    expect(projectActionCandidates(indexProjectActions(root, limited), 'flow://Route')).toEqual(['force-app/main/default/flows/Route.flow-meta.xml']);
+    // A complete walk carries no probe, and agent bundles never spend the walk budget.
+    write('force-app/main/default/aiAuthoringBundles/Bot/Hidden.cls', 'x');
+    const complete = indexProjectActions(root, deps);
+    expect(complete.probe).toBeUndefined();
+    expect(complete.files.has('Hidden.cls')).toBe(false);
     const deep = { ...deps, realpath: (p: string) => p, readdir: (p: string) => p === root ? [] : ['next'], stat: () => 'dir' as const };
-    expect(readProjectAction(root, 'apex://OrderLookup', deep)).toMatchObject({ status: 'ambiguous' });
+    expect(readProjectAction(root, 'apex://OrderLookup', deep)).toMatchObject({ status: 'missing', message: expect.stringContaining('too large') });
   });
   it('indexes Apex and Flow sources once and matches namespaced targets against it', () => {
     const root = mkdtempSync(join(tmpdir(), 'sf-index-')); dirs.push(root);

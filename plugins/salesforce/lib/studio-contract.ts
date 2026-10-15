@@ -39,7 +39,10 @@ export interface SuiteEval {
   multiTurn: string[];
 }
 export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, { outcome: CaseOutcome; runId: string; at: number }>; lastEval?: SuiteEval }
-export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
+/** One reference an agent makes (`apex://X`, `flow://Y`, a Lightning Type), as listed on its explorer node. */
+export interface ExplorerUse { kind: 'apex' | 'flow' | 'prompt' | 'lightning-type'; apiName: string }
+/** `usedBy` lists at most 20 agent paths per reference; `uses` (agent nodes only, scanned agents only) is the uncapped inverse. */
+export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; uses?: ExplorerUse[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
 export interface LightningTypeProperty { name: string; type?: string; title?: string; description?: string; required: boolean }
 /** One Lightning Type as `studio.lightningType` returns it: a project bundle, a standard platform type, or a missing reference. */
 export interface LightningTypeView {
@@ -48,7 +51,7 @@ export interface LightningTypeView {
 }
 
 export const STUDIO_RPC = {
-  askAgent: 'studio.askAgent', threads: 'studio.threads', unlink: 'studio.unlinkThread',
+  askAgent: 'studio.askAgent', draftAgent: 'studio.draftAgent', threads: 'studio.threads', unlink: 'studio.unlinkThread',
   viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType',
   comments: 'studio.comments.list', commentAdd: 'studio.comments.add', commentResolve: 'studio.comments.resolve',
   trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run',
@@ -66,9 +69,15 @@ export function contextOrigin(args: unknown): string | null {
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
 }
 
+/** The largest Agent Script source the Studio edits, previews, saves or retrieves: 10 MB. */
+export const AGENT_SOURCE_MAX = 10 * 1024 * 1024;
+export const AGENT_SOURCE_MAX_LABEL = '10 MB';
+
 export const STUDIO_LIMITS = { diagnostics: 50, selectionText: 2000, quote: 2000 } as const;
 export const STUDIO_TOOLS: readonly StudioTool[] = ['code', 'preview', 'tests', 'graph', 'actions', 'data', 'deploy', 'assistant', 'comments', 'agents'];
 export const STUDIO_ENGINES: readonly StudioEngine[] = ['rehearse', 'simulate', 'live'];
+/** The engines Preview offers. Rehearse is hidden for now; saved Rehearse runs still load and replay. */
+export const PREVIEW_ENGINES: readonly StudioEngine[] = ['simulate', 'live'];
 const SEVERITIES: readonly StudioDiagnostic['severity'][] = ['error', 'warning', 'info', 'hint'];
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -106,7 +115,7 @@ export function isStudioComment(value: unknown): value is StudioComment {
     && (resolved === undefined || (isRecord(resolved) && typeof resolved.at === 'number' && typeof resolved.note === 'string' && typeof resolved.by === 'string'));
 }
 
-/** Validates the structural shape of a ProposeEditInput (bounds mirror the control channel: content <=180k, <=50 edits). */
+/** Validates the structural shape of a ProposeEditInput (bounds mirror the control channel: content <= AGENT_SOURCE_MAX, <=50 edits). */
 export function isProposeEditInput(value: unknown): value is ProposeEditInput {
   if (!isRecord(value)) return false;
   if (typeof value.path !== 'string' || !value.path || typeof value.summary !== 'string' || value.summary.length > 1000) return false;
@@ -114,9 +123,9 @@ export function isProposeEditInput(value: unknown): value is ProposeEditInput {
   const hasContent = value.content !== undefined;
   const hasEdits = value.edits !== undefined;
   if (hasContent === hasEdits) return false;
-  if (hasContent) return typeof value.content === 'string' && value.content.length <= 180_000;
+  if (hasContent) return typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX;
   return Array.isArray(value.edits) && value.edits.length >= 1 && value.edits.length <= 50
-    && value.edits.every(edit => isRecord(edit) && isPos(edit.startLine) && isPos(edit.endLine) && Number(edit.endLine) >= Number(edit.startLine) - 1 && typeof edit.text === 'string' && edit.text.length <= 180_000);
+    && value.edits.every(edit => isRecord(edit) && isPos(edit.startLine) && isPos(edit.endLine) && Number(edit.endLine) >= Number(edit.startLine) - 1 && typeof edit.text === 'string' && edit.text.length <= AGENT_SOURCE_MAX);
 }
 
 export function isStudioViewState(value: unknown): value is StudioViewState {

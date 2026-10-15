@@ -114,6 +114,10 @@ describe('readLightningType', () => {
     const index = indexProjectActions(root, deps);
     expect(lightningTypeBundlePath(index, 'acme__OrderRequest')).toBe(`${TYPES}/OrderRequest`);
     expect(lightningTypeBundlePath(index, 'lightning__textType')).toBeUndefined();
+    // Past the walk budget, a bundle at the standard path is still found; a file of that name is not a bundle.
+    const partial = { ...index, lightningTypes: new Map<string, string[]>(), incomplete: true, probe: indexProjectActions(root, { ...deps, readdir: (p: string) => p.endsWith('force-app') ? Array.from({ length: 6001 }, (_, i) => `f${i}`) : deps.readdir(p) }).probe };
+    expect(lightningTypeBundlePath(partial, 'acme__OrderRequest')).toBe(`${TYPES}/OrderRequest`);
+    expect(lightningTypeBundlePath(partial, 'acme__Absent')).toBeUndefined();
     expect(readLightningType(root, 'c__Broken', deps, index).message).toBe('schema.json is not valid JSON.');
     expect(readLightningType(root, 'c__NoSchema', deps, index)).toMatchObject({ status: 'ready', message: 'This bundle has no readable schema.json.' });
   });

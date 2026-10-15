@@ -23,8 +23,10 @@ vi.mock('../../plugins/plugin-slots.js', () => ({
   listNewThreadPanelActions: () => emptyActions
 }));
 vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
-  PanelAgentTab: ({ threadId, pluginPanel, onCreated, onOpenConversation }: {
+  PanelAgentTab: ({ threadId, draft, draftProjectId, pluginPanel, onCreated, onOpenConversation }: {
     threadId?: string;
+    draft?: string;
+    draftProjectId?: string;
     pluginPanel?: { pluginId: string; panel: string; view?: string };
     onCreated: (threadId: string) => void;
     onOpenConversation?: (conversation: { id: string; title: string | null; updatedAt: number }) => void;
@@ -37,6 +39,8 @@ vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
             type="button"
             data-testid="agent-composer"
             data-binding={`${pluginPanel?.pluginId}/${pluginPanel?.panel}/${pluginPanel?.view ?? '-'}`}
+            data-draft={draft ?? ''}
+            data-draft-project={draftProjectId ?? ''}
             onClick={() => onCreated('t-new')}
           >Send</button>
           <button type="button" data-testid="agent-reopen-old" onClick={() => onOpenConversation?.({ id: 'old', title: 'Old chat', updatedAt: 1 })}>old</button>
@@ -51,7 +55,7 @@ vi.mock('../../lib/app-surface.js', () => ({
 }));
 
 import { pluginPanelBrowserOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
-import { requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
+import { parsePanelAgentTarget, requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
 
 beforeEach(() => {
   class ResizeObserverStub {
@@ -235,5 +239,82 @@ describe('PluginPanelHostLayout', () => {
 
   it('refuses an empty thread id', () => {
     expect(requestPluginPanelAgent({ pluginId: 'design-docs', threadId: '' })).toBe(false);
+  });
+
+  it('prefills one blank composer with the draft a page asks for, then starts its thread on send', () => {
+    desktop.api = desktopApi();
+    const view = render(
+      <PluginPanelHostLayout pluginId="design-docs" panelPath="design-docs" subPath="dd_1">
+        <div>slot:docs</div>
+      </PluginPanelHostLayout>
+    );
+    let shown = false;
+    act(() => {
+      shown = requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: 'Review dd_1', projectId: 'p1' }, title: 'Doc' });
+    });
+    expect(shown).toBe(true);
+    const composer = () => screen.getByTestId('agent-composer');
+    expect(composer().getAttribute('data-draft')).toBe('Review dd_1');
+    expect(composer().getAttribute('data-draft-project')).toBe('p1');
+    // A second request re-seeds the same blank composer instead of stacking tabs.
+    act(() => {
+      requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: 'Fill the gaps' } });
+    });
+    expect(composer().getAttribute('data-draft')).toBe('Fill the gaps');
+    expect(composer().getAttribute('data-draft-project')).toBe('');
+    expect(tabLabels()).toEqual(['Close Agent']);
+
+    fireEvent.click(composer());
+    expect(screen.getByTestId('agent-chat').textContent).toBe('t-new');
+    // The started conversation keeps its tab; the next draft gets a fresh composer.
+    act(() => {
+      requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: 'Another' }, title: 'Doc' });
+    });
+    expect(composer().getAttribute('data-draft')).toBe('Another');
+    expect(tabLabels()).toEqual(['Close Agent', 'Close Doc']);
+    view.unmount();
+    desktop.api = null;
+  });
+
+  it('keeps a launcher-less panel per scope that opens only when the page asks', () => {
+    desktop.api = desktopApi();
+    const mount = (scopeId: string) => render(
+      <PluginPanelHostLayout pluginId="design-docs" panelPath="design-docs" scopeId={scopeId} launchers={false}>
+        <div>slot:docs</div>
+      </PluginPanelHostLayout>
+    );
+    let view = mount('p1');
+    expect(screen.queryByTestId('plugin-panel-secondary-show')).toBeNull();
+    expect(screen.queryByTestId('plugin-panel-agent-show')).toBeNull();
+    act(() => {
+      requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: 'Review dd_1' }, title: 'Doc' });
+    });
+    expect(screen.getByTestId('agent-composer').getAttribute('data-binding')).toBe('design-docs/design-docs/-');
+    // A page without routes names the view in the draft; it wins over the page route.
+    act(() => {
+      requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: 'Review dd_2', view: ' dd_2 ' }, title: 'Doc' });
+    });
+    expect(screen.getByTestId('agent-composer').getAttribute('data-binding')).toBe('design-docs/design-docs/dd_2');
+    fireEvent.click(screen.getByTestId('agent-composer'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('t-new');
+    view.unmount();
+    // Another project's tab starts without that panel.
+    view = mount('p2');
+    expect(screen.queryByTestId('agent-composer')).toBeNull();
+    view.unmount();
+    desktop.api = null;
+  });
+
+  it('refuses an empty or oversized draft', () => {
+    expect(requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: '   ' } })).toBe(false);
+    expect(requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: 'x'.repeat(20_001) } })).toBe(false);
+    expect(requestPluginPanelAgent({ pluginId: 'design-docs', draft: 'text' })).toBe(false);
+  });
+
+  it('keeps a draft but drops a view it cannot record', () => {
+    expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: 'v'.repeat(257) } })).toEqual({ draft: 'p' });
+    expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: 42 } })).toEqual({ draft: 'p' });
+    expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: '  ' } })).toEqual({ draft: 'p' });
+    expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: 'dd_1/a.md' } })).toEqual({ draft: 'p', view: 'dd_1/a.md' });
   });
 });

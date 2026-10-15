@@ -47,6 +47,12 @@ describe('PanelAgentTab', () => {
     expect(onCreated).toHaveBeenCalledWith('t-new');
   });
 
+  it('seeds the composer with a page draft and leaves the harness to the user', () => {
+    render(<PanelAgentTab pluginPanel={binding} draft="Review this doc" draftProjectId="proj-1" onCreated={vi.fn()} />);
+    expect(composerProps.last).toMatchObject({ initialText: 'Review this doc', composerProjectId: 'proj-1', pluginPanel: binding });
+    expect(composerProps.last).not.toHaveProperty('providerId');
+  });
+
   it('keeps the generic hint and skips the lookup without a plugin binding', () => {
     render(<PanelAgentTab onCreated={vi.fn()} onOpenConversation={vi.fn()} />);
     expect(screen.getByText('Ask an agent without leaving this page.')).toBeTruthy();

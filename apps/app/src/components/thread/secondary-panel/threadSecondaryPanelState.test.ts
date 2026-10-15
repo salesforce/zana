@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   addClosableTab,
+  openAgentDraft,
   closeClosableTab,
   closeSecondaryPanel,
   emptySecondaryPanelState,
@@ -442,5 +443,36 @@ describe('thread secondary panel state', () => {
     expect(localStorage.getItem(storageKeyForThread('legacy-thread'))).toContain('"isOpen":true');
     expect(emptySecondaryPanelState({ isOpen: true }).isOpen).toBe(true);
     expect(emptySecondaryPanelState().isOpen).toBe(false);
+  });
+});
+
+describe('openAgentDraft', () => {
+  it('opens a new agent tab with the draft, then re-seeds that blank composer', () => {
+    const first = openAgentDraft(emptySecondaryPanelState(), { title: 'Doc', draft: 'Review', projectId: 'p1', view: 'dd_1' });
+    expect(first.isOpen).toBe(true);
+    expect(first.tabs).toHaveLength(1);
+    const tab = first.tabs[0]!;
+    expect(tab).toMatchObject({ kind: 'agent', title: 'Doc', draft: 'Review', draftProjectId: 'p1', draftView: 'dd_1' });
+    expect(first.activeId).toBe(tab.id);
+
+    const away = selectPinnedView(first, 'info');
+    const second = openAgentDraft(away, { title: 'Agent', draft: 'Fill gaps' });
+    expect(second.tabs).toHaveLength(1);
+    expect(second.activeId).toBe(tab.id);
+    expect(second.tabs[0]).toMatchObject({ id: tab.id, title: 'Agent', draft: 'Fill gaps', draftRevision: 1 });
+    expect(second.tabs[0]!.draftProjectId).toBeUndefined();
+    expect(second.tabs[0]!.draftView).toBeUndefined();
+    expect(openAgentDraft(second, { title: 'Agent', draft: 'x' }).tabs[0]!.draftRevision).toBe(2);
+  });
+
+  it('never touches a started conversation and never persists the draft', () => {
+    const started = addClosableTab(emptySecondaryPanelState(), { kind: 'agent', title: 'Chat', threadId: 't1' });
+    const next = openAgentDraft(started, { title: 'Doc', draft: 'Review' });
+    expect(next.tabs).toHaveLength(2);
+    expect(next.tabs[0]).toMatchObject({ threadId: 't1', title: 'Chat' });
+    expect(next.tabs[0]).not.toHaveProperty('draft');
+    const restored = parseSecondaryPanelState(JSON.parse(JSON.stringify(next)));
+    expect(restored.tabs[1]).not.toHaveProperty('draft');
+    expect(restored.tabs[1]).not.toHaveProperty('draftProjectId');
   });
 });

@@ -28,6 +28,16 @@ function Parameters({ title, declared, actual, contractLabel }: { title: string;
   })}</tbody></table>}</section>;
 }
 
+type ActionTab = 'implementation' | 'parameters' | 'usage';
+
+/** Only the tabs with something to show: a Flow always has a variable contract, Apex only when this agent declares parameters for it, and a reference opened from outside the script has no call sites. */
+export function actionTabs(action: AgentAction, kind: 'apex' | 'flow' | undefined): [ActionTab, string][] {
+  const tabs: [ActionTab, string][] = [['implementation', 'Implementation']];
+  if (kind === 'flow' || action.inputs.length || action.outputs.length) tabs.push(['parameters', 'Inputs & outputs']);
+  if (!action.id.startsWith('dependency:')) tabs.push(['usage', 'Used by']);
+  return tabs;
+}
+
 export function AgentActionPanel({ pluginId, projectId, action, org, onReveal, onOpenTarget, onOriginChange, initialOrigin = 'project' }: {
   pluginId: string; projectId?: string; action: AgentAction; org: PublicOrgView | null;
   initialOrigin?: 'project' | 'org'; onOriginChange?(origin: 'project' | 'org'): void; onReveal(line: number): void; onOpenTarget(target: string, origin: 'project' | 'org'): void;
@@ -35,13 +45,15 @@ export function AgentActionPanel({ pluginId, projectId, action, org, onReveal, o
   const [origin, setOrigin] = useState(initialOrigin);
   useEffect(() => setOrigin(initialOrigin), [initialOrigin]);
   const chooseOrigin = (next: 'project' | 'org') => { setOrigin(next); setCandidate(''); onOriginChange?.(next); };
-  const [tab, setTab] = useState<'implementation' | 'parameters' | 'usage' | 'preview'>('implementation');
+  const [chosenTab, setTab] = useState<ActionTab>('implementation');
   const [raw, setRaw] = useState(false);
   const [candidate, setCandidate] = useState('');
   useEffect(() => setCandidate(''), [action.target]);
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<{ key: string; data?: ActionSource; error?: string }>({ key: '' });
   const parsed = parseActionTarget(action.target);
+  const tabs = actionTabs(action, parsed?.kind);
+  const tab = tabs.some(([id]) => id === chosenTab) ? chosenTab : 'implementation';
   const key = `${projectId}:${action.target}:${origin}:${org?.orgId}:${org?.alias}:${candidate}:${reload}`;
   const current = state.key === key ? state : undefined;
   const data = current?.data;
@@ -66,7 +78,7 @@ export function AgentActionPanel({ pluginId, projectId, action, org, onReveal, o
     <header className="af-action-heading"><div className="af-action-breadcrumb">{action.owner} <span>›</span> {action.name}</div><div className="af-action-title"><span className={`af-action-icon ${parsed?.kind ?? ''}`}>{parsed?.kind === 'apex' ? '{ }' : '⑂'}</span><h2>{parsed?.developerName ?? action.name}</h2><span className="af-action-readonly">Read only</span></div><code className="af-action-target">{action.target || 'No implementation target declared'}</code>{action.description && <p>{action.description}</p>}</header>
     <div className="af-action-sourcebar"><div role="group" aria-label="Implementation source"><button aria-pressed={origin === 'project'} onClick={() => chooseOrigin('project')}>Project</button><button aria-pressed={origin === 'org'} disabled={!org} onClick={() => chooseOrigin('org')}>Org{org ? ` · ${org.alias || org.username}` : ''}</button></div><button aria-label="Refresh implementation" onClick={() => setReload(n => n + 1)}>↻</button></div>
     <div className="af-action-provenance">{data ? <><span>{data.label}{data.version != null ? ` · v${data.version}` : ''}</span><small>{origin === 'project' ? 'Local snapshot · may differ from deployed source' : 'Org snapshot · fetched on demand'}</small></> : <span>{origin === 'project' ? 'Project source' : 'Org implementation'}</span>}</div>
-    <nav className="af-action-nav" aria-label="Action details">{([['implementation', 'Implementation'], ['parameters', 'Inputs & outputs'], ['usage', 'Used by'], ['preview', 'Last preview']] as const).map(([id, label]) => <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
+    {tabs.length > 1 && <nav className="af-action-nav" aria-label="Action details">{tabs.map(([id, label]) => <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>}
     <div className={`af-action-content${tab === 'implementation' ? ' is-implementation' : ''}`}>
       {tab === 'implementation' && <>
         {!parsed ? <p className="af-action-note">This target type has no implementation viewer yet. Its action definition and usage remain available.</p> : origin === 'org' && !org ? <p className="af-action-note">Connect an org to inspect its deployed implementation.</p> : !current ? <LoadingState compact art="code" label="Loading implementation…" /> : current.error ? <p role="alert" className="af-action-note">{current.error}</p> : <>
@@ -79,8 +91,7 @@ export function AgentActionPanel({ pluginId, projectId, action, org, onReveal, o
         </>}
       </>}
       {tab === 'parameters' && <><p className="af-action-note">Compare action declarations with {origin === 'project' ? 'this project’s implementation' : 'the selected org’s registered contract'}. Name matches do not verify type compatibility or runtime behavior.</p>{data?.contractMessage && <p className="af-action-note">{data.contractMessage}</p>}{current?.error && <p role="alert" className="af-action-note">{current.error}</p>}<Parameters title="Inputs" declared={action.inputs} actual={actualInputs} contractLabel={origin === 'project' ? 'Project implementation' : 'Org contract'} /><Parameters title="Outputs" declared={action.outputs} actual={actualOutputs} contractLabel={origin === 'project' ? 'Project implementation' : 'Org contract'} /></>}
-      {tab === 'usage' && <><p className="af-action-note">Static references in the current editor draft. Availability does not mean the action executed.</p>{!action.id.startsWith('dependency:') && <button className="af-target-link" onClick={() => onReveal(action.line)}>Go to action definition · line {action.line} ↗</button>}{action.uses.length ? action.uses.map((use, i) => <article className="af-action-use" key={i}><button onClick={() => onReveal(use.line)}>{use.kind === 'run' ? 'Explicit run' : 'Available to the model'} <span>Line {use.line} ↗</span></button><pre>{use.code}</pre></article>) : <p className="af-action-note">No direct calls or model bindings found in this scope.</p>}</>}
-      {tab === 'preview' && <div className="af-action-empty"><strong>No action trace available</strong><p>The current Preview API integration returns conversation messages and plan IDs. It does not expose verified action inputs, outputs, or execution status here.</p><p>Preview uses simulation; the conversation is not evidence that this Apex or Flow executed.</p></div>}
+      {tab === 'usage' && <><p className="af-action-note">Static references in the current editor draft. Availability does not mean the action executed.</p><button className="af-target-link" onClick={() => onReveal(action.line)}>Go to action definition · line {action.line} ↗</button>{action.uses.length ? action.uses.map((use, i) => <article className="af-action-use" key={i}><button onClick={() => onReveal(use.line)}>{use.kind === 'run' ? 'Explicit run' : 'Available to the model'} <span>Line {use.line} ↗</span></button><pre>{use.code}</pre></article>) : <p className="af-action-note">No direct calls or model bindings found in this scope.</p>}</>}
     </div>
   </section>;
 }

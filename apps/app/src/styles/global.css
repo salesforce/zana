@@ -5126,6 +5126,16 @@ body.resizing-col {
   flex: 1;
   min-height: 0;
 }
+/* The tab's page inside its agent side-panel host fills the same column. */
+.project-ext-tab .plugin-panel-host-layout > .split-plugin-main {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.project-ext-tab .plugin-panel-host-layout > .split-plugin-main > * {
+  flex: 1;
+  min-height: 0;
+}
 /* Library clips to this box and scrolls inside .explorer-md-preview. A parent
    overflow:auto would compete with that pane and, with .library-view's
    overflow:hidden, trap the wheel with nothing to scroll. */

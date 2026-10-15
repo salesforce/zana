@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_SOURCE_MAX,
   isProposalOutcome, isProposeEditInput, isStudioComment, isStudioDiagnostic, isStudioDiagnostics, isStudioViewState,
   CONTEXT_CHANGED_CHANNEL, STUDIO_CHANGED_CHANNEL, STUDIO_RPC, UI_WAKE_CHANNEL, contextOrigin
 } from '../lib/studio-contract.js';
@@ -43,7 +44,7 @@ describe('studio contract', () => {
     expect(isProposeEditInput({ ...base, content: 'x' })).toBe(true);
     expect(isProposeEditInput({ ...base, edits: [{ startLine: 1, endLine: 2, text: 't' }] })).toBe(true);
     expect(isProposeEditInput({ ...base, edits: [{ startLine: 3, endLine: 2, text: '' }] })).toBe(true); // pure insertion
-    for (const bad of [null, base, { ...base, content: 'x', edits: [] }, { ...base, content: 1 }, { ...base, content: 'x'.repeat(180_001) }, { ...base, path: '' }, { ...base, content: 'x', expectedSha256: 'short' }, { ...base, content: 'x', summary: 1 },
+    for (const bad of [null, base, { ...base, content: 'x', edits: [] }, { ...base, content: 1 }, { ...base, content: 'x'.repeat(AGENT_SOURCE_MAX + 1) }, { ...base, path: '' }, { ...base, content: 'x', expectedSha256: 'short' }, { ...base, content: 'x', summary: 1 },
       { ...base, edits: [] }, { ...base, edits: Array(51).fill({ startLine: 1, endLine: 1, text: '' }) }, { ...base, edits: [{ startLine: 0, endLine: 1, text: '' }] }, { ...base, edits: [{ startLine: 5, endLine: 2, text: '' }] }, { ...base, edits: [{ startLine: 1, endLine: 1, text: 1 }] }, { ...base, edits: 'x' }]) expect(isProposeEditInput(bad)).toBe(false);
   });
   it('validates view state', () => {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ThreadChat, useZccNavigate, type ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { ArrowLeft, AtSign, Bot, ChevronDown, ExternalLink, Sparkles, Unlink } from 'lucide-react';
-import { AGENT_ACTIONS, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
+import { AGENT_ACTIONS, agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import type { DesignDocDetail, ThreadRole } from '../shared/contract.js';
 import { errorMessage, toast, useApi } from './api.js';
 import { useProjects } from './hooks.js';
@@ -26,6 +26,30 @@ export function showDocAgent(navigate: ZccNavigate, doc: { id: string; title: st
   if (navigate.openPanelAgent?.({ threadId, title: doc.title })) return;
   navigate.openThreadPanel({ actionId: DOC_PANEL_ACTION, title: doc.title, params: { docId: doc.id }, threadId });
   navigate.toThread(threadId);
+}
+
+/**
+ * Hand a doc request to the side panel's composer, prefilled, so the user
+ * picks the harness and sends it there. False when the host has no side panel
+ * composer (or predates drafts): the caller then starts the thread itself.
+ */
+export function draftDocAgent(
+  navigate: ZccNavigate,
+  doc: { id: string; title: string },
+  request: { action?: string | null; prompt?: string; path?: string | null; projectId?: string | null }
+): boolean {
+  if (!navigate.openPanelAgent) return false;
+  const prompt = buildAgentPrompt({
+    doc,
+    action: request.action ? agentActionById(request.action) : null,
+    prompt: request.prompt,
+    path: request.path
+  });
+  return navigate.openPanelAgent({
+    // The doc id is the page's view, so the conversation joins this doc's Agents list.
+    draft: { prompt, view: doc.id, ...(request.projectId ? { projectId: request.projectId } : {}) },
+    title: doc.title
+  });
 }
 
 /**
@@ -120,9 +144,10 @@ export interface AskRequest {
 }
 
 /**
- * "Ask agent": a one-click action or a free-form request starts a new thread
- * briefed on this doc, then opens it with the doc beside the conversation so
- * the user watches the agent's edits land.
+ * "Ask agent": a one-click action or a free-form request opens the side
+ * panel's composer prefilled with a brief on this doc; the user picks the
+ * harness and sends, and watches the agent's edits land beside the chat. A
+ * host without that composer starts the thread directly instead.
  */
 export function AskAgentButton({
   doc,
@@ -173,6 +198,17 @@ export function AskAgentButton({
       toast('Add a project first: agents run inside a project.', 'error');
       return;
     }
+    const request = {
+      action,
+      prompt: action ? undefined : prompt.trim() || undefined,
+      path: focusFile ? activePath : null,
+      projectId: chosenProject || null
+    };
+    if (draftDocAgent(navigate, doc, request)) {
+      setOpen(false);
+      setPrompt('');
+      return;
+    }
     setBusy(action ?? 'custom');
     try {
       const result = await api.askAgent(doc.id, {
@@ -220,7 +256,7 @@ export function AskAgentButton({
     >
       <div className="dd-ask-head">
         <span className="dd-ask-title">Ask an agent</span>
-        <span className="dd-muted">Starts a new thread that edits this doc live</span>
+        <span className="dd-muted">Opens a briefed composer beside the doc; pick a harness and send</span>
       </div>
       <div className="dd-ask-actions" role="menu">
         {AGENT_ACTIONS.map((action) => {

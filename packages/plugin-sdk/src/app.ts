@@ -74,6 +74,7 @@ export type {
   PluginCreateProjectActionContext,
   PluginCreateProjectDialogProps,
   ZccNavigateToProjectOptions,
+  ZccPanelAgentOptions,
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSdkApp,

@@ -215,7 +215,7 @@ function useZccNavigateImpl(): ZccNavigate {
         });
       },
       openPanelAgent(options) {
-        return requestPluginPanelAgent({ pluginId, threadId: options.threadId, title: options.title });
+        return requestPluginPanelAgent({ ...options, pluginId });
       }
     };
   }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId]);

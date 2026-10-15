@@ -2,6 +2,7 @@ import {
   appendConversationThreadEvent,
   getConversationThread,
   listConversationThreadEventsWindow,
+  listConversationOpenBackgroundTaskEvents,
   listConversationThreadsForHost,
   type ConversationThreadEventRow,
   type ConversationThreadRow,
@@ -12,7 +13,9 @@ import {
   isSettledBackgroundTaskStatus,
   LOCAL_WORKFLOW_TASK_TYPE,
   threadEventBackgroundTaskItemSchema,
-  type ThreadEventBackgroundTaskItem
+  threadEventDelegationItemSchema,
+  type ThreadEventBackgroundTaskItem,
+  type ThreadEventDelegationItem
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHub } from '../../http/product-hub.js';
 
@@ -23,7 +26,7 @@ export interface OpenBackgroundTaskItem {
   threadId: string;
   environmentId: string | null;
   providerThreadId: string;
-  item: ThreadEventBackgroundTaskItem;
+  item: ThreadEventBackgroundTaskItem | ThreadEventDelegationItem;
 }
 
 interface SettleDanglingBackgroundTasksDeps {
@@ -83,6 +86,18 @@ export function listOpenBackgroundTaskItemsForThread(
       item
     });
   }
+  // Open work may have started many turns before the bounded recovery window.
+  for (const row of listConversationOpenBackgroundTaskEvents(db, thread.id)) {
+    const record = payloadRecord(row.payload);
+    const parsed = threadEventBackgroundTaskItemSchema.or(threadEventDelegationItemSchema).safeParse(record?.item);
+    if (!parsed.success) continue;
+    open.set(parsed.data.id, {
+      threadId: thread.id,
+      environmentId: thread.environmentId,
+      providerThreadId: providerThreadIdOf(row.payload, fallbackProviderThreadId),
+      item: parsed.data,
+    });
+  }
   return [...open.values()];
 }
 
@@ -99,7 +114,7 @@ export function listOpenBackgroundTaskItemsForHost(
 
 export function countActiveWorkflowsForThread(db: ZccDatabase, thread: ConversationThreadRow): number {
   return listOpenBackgroundTaskItemsForThread(db, thread).filter((row) => {
-    return row.item.taskType === LOCAL_WORKFLOW_TASK_TYPE
+    return row.item.type === 'backgroundTask' && row.item.taskType === LOCAL_WORKFLOW_TASK_TYPE
       && !isSettledBackgroundTaskStatus(row.item.taskStatus);
   }).length;
 }
@@ -120,6 +135,17 @@ function appendDanglingBackgroundTaskCompletions(
 ): ConversationThreadEventRow[] {
   const stored: ConversationThreadEventRow[] = [];
   for (const row of rows) {
+    if (row.item.type === 'delegation') {
+      const payload = {
+        type: 'item/delegation/completed' as const,
+        threadId: row.threadId,
+        providerThreadId: row.providerThreadId,
+        scope: { kind: 'thread' as const },
+        item: { ...row.item, status: 'interrupted' as const },
+      };
+      stored.push(appendConversationThreadEvent(db, { threadId: row.threadId, type: payload.type, payload }));
+      continue;
+    }
     const taskStatus = isSettledBackgroundTaskStatus(row.item.taskStatus)
       ? row.item.taskStatus
       : 'stopped';

@@ -12,6 +12,7 @@ import {
   productServerUrl,
   standalonePageUrl
 } from './src/server/pages.js';
+import { registerPanelThreadLinks } from './src/server/panel-threads.js';
 import { RenderReports } from './src/server/render-reports.js';
 import { registerRpc } from './src/server/rpc.js';
 import { createProjectNames } from './src/server/project-names.js';
@@ -32,6 +33,7 @@ export default function plugin(zcc: ZccPluginApi): void {
 
   registerDesignDocTools(zcc, { store, changed, actorFor, projects, kit, reports });
   registerAgentContext(zcc, store, (message) => zcc.log.warn(message), projects);
+  registerPanelThreadLinks(zcc, store, changed);
   const pageUrl = (docId: string, path: string) => standalonePageUrl(productServerUrl(), endpoint, docId, path);
   registerDesignDocCli(zcc, {
     store,

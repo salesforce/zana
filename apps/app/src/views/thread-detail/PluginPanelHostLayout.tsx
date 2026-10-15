@@ -20,17 +20,27 @@ export function PluginPanelHostLayout({
   pluginId,
   panelPath,
   subPath,
+  scopeId,
+  launchers = true,
   children
 }: {
   pluginId: string;
   panelPath: string;
   /** The page's own route below the panel; recorded as the agent's starting view. */
   subPath?: string;
+  /** Keeps a separate panel per scope (a project tab's project) for the same page. */
+  scopeId?: string;
+  /**
+   * The floating show-panel / ask-agent buttons. Without them the panel opens
+   * only when the page asks (`navigate.openPanelAgent`), so a page with its own
+   * right-hand chrome is left as it was.
+   */
+  launchers?: boolean;
   children: ReactNode;
 }) {
   if (getDesktopBrowserApi() === null) return children;
   return (
-    <PluginPanelBrowserHost pluginId={pluginId} panelPath={panelPath} subPath={subPath}>
+    <PluginPanelBrowserHost pluginId={pluginId} panelPath={panelPath} subPath={subPath} scopeId={scopeId} launchers={launchers}>
       {children}
     </PluginPanelBrowserHost>
   );
@@ -40,14 +50,18 @@ function PluginPanelBrowserHost({
   pluginId,
   panelPath,
   subPath,
+  scopeId,
+  launchers,
   children
 }: {
   pluginId: string;
   panelPath: string;
   subPath?: string;
+  scopeId?: string;
+  launchers: boolean;
   children: ReactNode;
 }) {
-  const ownerId = pluginPanelBrowserOwnerId(pluginId, panelPath);
+  const ownerId = pluginPanelBrowserOwnerId(pluginId, scopeId ? `${panelPath}@${scopeId}` : panelPath);
   const viewRef = useRef<HTMLDivElement>(null);
   const panel = useSecondaryPanel(ownerId, {
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
@@ -62,24 +76,33 @@ function PluginPanelBrowserHost({
     else newAgent();
   };
   // The page asked to show a conversation (`navigate.openPanelAgent`); an open
-  // tab for it is focused, not duplicated.
-  const addTab = panel.addTab;
+  // tab for it is focused, not duplicated. A draft prefills the composer so the
+  // user picks the harness before anything starts.
+  const { addTab, openAgentDraft } = panel;
   useEffect(
-    () => onPluginPanelAgentRequest(pluginId, ({ threadId, title }) => {
-      addTab({ kind: 'agent', title: title ?? 'Agent', threadId });
+    () => onPluginPanelAgentRequest(pluginId, (target) => {
+      if ('draft' in target) {
+        openAgentDraft({ title: target.title ?? 'Agent', draft: target.draft, projectId: target.projectId, view: target.view });
+      }
+      else addTab({ kind: 'agent', title: target.title ?? 'Agent', threadId: target.threadId });
     }),
-    [addTab, pluginId]
+    [addTab, openAgentDraft, pluginId]
   );
 
   let panelBody = null;
   if (closable?.kind === 'agent') {
     const tabId = closable.id;
+    // The draft names what it is about; otherwise the page's own route does.
+    const view = closable.draftView ?? subPath;
     panelBody = (
       <PanelAgentTab
-        key={tabId}
+        // A replaced draft remounts the composer so it seeds the new text.
+        key={`${tabId}:${closable.draftRevision ?? 0}`}
         threadId={closable.threadId}
-        pluginPanel={{ pluginId, panel: panelPath, ...(subPath ? { view: subPath } : {}) }}
-        onCreated={(threadId) => panel.patchTab(tabId, { threadId })}
+        draft={closable.draft}
+        draftProjectId={closable.draftProjectId}
+        pluginPanel={{ pluginId, panel: panelPath, ...(view ? { view } : {}) }}
+        onCreated={(threadId) => panel.patchTab(tabId, { threadId, draft: undefined, draftProjectId: undefined, draftView: undefined })}
         onOpenConversation={({ id, title }) => {
           // Reopening a conversation already in a tab focuses it, not a duplicate.
           const open = panel.state.tabs.find((tab) => tab.kind === 'agent' && tab.threadId === id);
@@ -112,7 +135,7 @@ function PluginPanelBrowserHost({
     >
       <div className="split-plugin-main">
         {children}
-        {panelOpen ? null : (
+        {panelOpen || !launchers ? null : (
           <div className="plugin-panel-host-launchers">
             <button
               type="button"

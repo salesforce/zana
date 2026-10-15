@@ -79,36 +79,52 @@ export class StudioLinkStore {
   }
 }
 
-export function registerStudioAssistant(studio: StudioServerContext): void {
+/**
+ * Returns `linkPanelThreads`, which registers the configure hook that links
+ * side-panel conversations; the plugin calls it after its own configure hook.
+ */
+export function registerStudioAssistant(studio: StudioServerContext): { linkPanelThreads(): void } {
   const { zcc } = studio;
   const links = new StudioLinkStore(zcc.storage.kv);
   const views = viewStoreFor(zcc);
   const projectOf = () => studio.contexts.current()?.projectId ?? '';
+  const drafts = new PendingDrafts();
   const changed = (projectId: string, path?: string) => {
     try { zcc.realtime.publish(STUDIO_CHANGED_CHANNEL, { projectId, ...(path ? { path } : {}), kind: 'threads' }); } catch { /* realtime is best effort */ }
   };
 
-  studio.registerRpc(STUDIO_RPC.askAgent, async args => {
+  /** Validates an Ask the agent request and builds its brief, shared by the spawn and the side-panel draft. */
+  const prepare = async (args: unknown) => {
     const projectId = projectOf();
-    if (!projectId) return rpcFailure('project_required', 'Choose a registered project to start an agent.');
+    if (!projectId) return { failure: rpcFailure('project_required', 'Choose a registered project to start an agent.') };
     const path = rpcString(args, 'path');
-    if (!isSafeStudioPath(path)) return rpcFailure('invalid_input', 'Choose an agent file inside this project.');
+    if (!isSafeStudioPath(path)) return { failure: rpcFailure('invalid_input', 'Choose an agent file inside this project.') };
     const actionId = rpcString(args, 'action');
     const action = actionId ? studioActionById(actionId) : null;
-    if (actionId && !action) return rpcFailure('invalid_input', `Unknown agent action ${actionId}.`);
+    if (actionId && !action) return { failure: rpcFailure('invalid_input', `Unknown agent action ${actionId}.`) };
     const prompt = rpcString(args, 'prompt');
-    if (!action && !prompt) return rpcFailure('invalid_input', 'Pick an action or write a request.');
-    if (prompt.length > MAX_STUDIO_REQUEST_LENGTH) return rpcFailure('invalid_input', `Request must be at most ${MAX_STUDIO_REQUEST_LENGTH} characters.`);
-    const providerId = rpcString(args, 'providerId');
+    if (!action && !prompt) return { failure: rpcFailure('invalid_input', 'Pick an action or write a request.') };
+    if (prompt.length > MAX_STUDIO_REQUEST_LENGTH) return { failure: rpcFailure('invalid_input', `Request must be at most ${MAX_STUDIO_REQUEST_LENGTH} characters.`) };
     const given = (args as { diagnostics?: unknown }).diagnostics;
     const view = views.get(projectId)?.state;
     const sameFile = view?.path === path ? view : undefined;
     const diagnostics = isStudioDiagnostics(given) ? given : sameFile?.diagnostics ?? [];
     const comments = action?.id === 'address-comments' || action?.id === 'review' ? await readOpenComments(zcc.storage.kv, projectId, path) : [];
-    const title = `${action ? action.label : 'Agent script'} · ${path.split('/').pop()}`.slice(0, 120);
+    return {
+      projectId, path, action,
+      title: `${action ? action.label : 'Agent script'} · ${path.split('/').pop()}`.slice(0, 120),
+      brief: buildStudioPrompt({ path, view: sameFile, action, prompt, comments, diagnostics })
+    };
+  };
+
+  studio.registerRpc(STUDIO_RPC.askAgent, async args => {
+    const request = await prepare(args);
+    if ('failure' in request) return request.failure;
+    const { projectId, path, action, title } = request;
+    const providerId = rpcString(args, 'providerId');
     const thread = await zcc.sdk.threads.spawn({
       projectId,
-      prompt: buildStudioPrompt({ path, view: sameFile, action, prompt, comments, diagnostics }),
+      prompt: request.brief,
       title,
       ...(providerId ? { providerId } : {}),
       visibility: 'visible',
@@ -117,6 +133,14 @@ export function registerStudioAssistant(studio: StudioServerContext): void {
     await links.link(projectId, { threadId: thread.id, title, role: roleForAction(action?.id), ...(action ? { action: action.id } : {}), path });
     changed(projectId, path);
     return { ok: true, threadId: thread.id };
+  });
+
+  // The brief for the side panel's composer: the user picks the harness and sends it there.
+  studio.registerRpc(STUDIO_RPC.draftAgent, async args => {
+    const request = await prepare(args);
+    if ('failure' in request) return request.failure;
+    drafts.remember(request.projectId, request.path, { title: request.title, action: request.action?.id });
+    return { ok: true, prompt: request.brief, title: request.title };
   });
 
   studio.registerRpc(STUDIO_RPC.threads, async args => {
@@ -151,4 +175,67 @@ export function registerStudioAssistant(studio: StudioServerContext): void {
     const hit = await links.remove(thread.projectId, thread.id).catch(() => null);
     if (hit) changed(thread.projectId, hit.path);
   });
+
+  // A conversation sent from the side panel beside a file joins that file's list, like a spawned one.
+  // configure() runs on every launch: link once so an Unlink sticks.
+  const seen = new BoundedSet(MAX_SEEN_PANEL_THREADS);
+  const linkPanelThreads = () => zcc.agents.configure(async ctx => {
+    const threadId = ctx.thread?.id ?? ctx.threadId;
+    const projectId = ctx.projectId ?? ctx.project?.id;
+    const path = panelAgentPath(ctx.pluginMetadata);
+    if (!threadId || !projectId || !path || seen.has(threadId)) return {};
+    seen.add(threadId);
+    const draft = drafts.take(projectId, path);
+    const title = draft?.title || ctx.thread?.title?.trim()?.slice(0, 120) || `Agent script · ${path.split('/').pop()}`;
+    try {
+      await links.link(projectId, { threadId, title, role: roleForAction(draft?.action), ...(draft?.action ? { action: draft.action } : {}), path });
+      changed(projectId, path);
+    } catch { /* the list is a convenience; never block the launch */ }
+    return {};
+  });
+  return { linkPanelThreads };
+}
+
+const MAX_SEEN_PANEL_THREADS = 1000;
+const MAX_PENDING_DRAFTS = 50;
+const DRAFT_TTL_MS = 30 * 60_000;
+
+/** The agent file a side-panel conversation was started beside: the view the Studio named in its draft. */
+export function panelAgentPath(pluginMetadata: unknown): string | null {
+  const binding = (pluginMetadata as { panelAgent?: unknown } | null | undefined)?.panelAgent;
+  if (!binding || typeof binding !== 'object' || Array.isArray(binding)) return null;
+  const view = (binding as { view?: unknown }).view;
+  return isSafeStudioPath(view) ? view : null;
+}
+
+/** Insertion-ordered set that forgets its oldest entries past `max`. */
+export class BoundedSet {
+  private readonly items = new Set<string>();
+  constructor(private readonly max: number) {}
+  has(value: string) { return this.items.has(value); }
+  add(value: string) {
+    this.items.add(value);
+    while (this.items.size > this.max) this.items.delete(this.items.values().next().value as string);
+  }
+}
+
+/**
+ * The last draft handed to the side panel per file, so the conversation the user
+ * sends from it keeps the action's title and role. Capped and short-lived.
+ */
+export class PendingDrafts {
+  private readonly items = new Map<string, { title: string; action?: string; at: number }>();
+  constructor(private readonly now: () => number = Date.now) {}
+  remember(projectId: string, path: string, draft: { title: string; action?: string }) {
+    const key = `${projectId}\0${path}`;
+    this.items.delete(key);
+    this.items.set(key, { ...draft, at: this.now() });
+    while (this.items.size > MAX_PENDING_DRAFTS) this.items.delete(this.items.keys().next().value as string);
+  }
+  take(projectId: string, path: string): { title: string; action?: string } | null {
+    const key = `${projectId}\0${path}`;
+    const hit = this.items.get(key);
+    this.items.delete(key);
+    return hit && this.now() - hit.at <= DRAFT_TTL_MS ? { title: hit.title, ...(hit.action ? { action: hit.action } : {}) } : null;
+  }
 }

@@ -1,14 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Download, Plus, RefreshCw, Search } from 'lucide-react';
+import { Bot, Download, Plus, RefreshCw, Rocket, Search } from 'lucide-react';
 import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
-import type { OrgAgentCatalog, OrgAgentRetrieval, RetrievedOrgAgent } from '../../lib/org-agent-contract.js';
+import type { OrgAgent, OrgAgentCatalog, OrgAgentRetrieval, RetrievedOrgAgent } from '../../lib/org-agent-contract.js';
 import { EmptyState, LoadingState, SalesforceState } from './components/SalesforceState.js';
 import { useContextChangeRelay } from './context-sync.js';
+
+const label = (name: string) => name.replace(/_/g, ' ');
+
+/** The newest change across an agent's versions, as a short date (the year only when it is not this year). */
+export function lastChanged(agent: OrgAgent, now = new Date()): { label: string; iso: string } | null {
+  const latest = agent.versions.map(version => version.modifiedAt ? Date.parse(version.modifiedAt) : NaN).filter(Number.isFinite).sort((a, b) => b - a)[0];
+  if (latest === undefined) return null;
+  const date = new Date(latest);
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', ...(date.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) };
+  return { label: date.toLocaleDateString(undefined, options), iso: date.toISOString() };
+}
 
 export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOpen, onNew, localFiles = [], onLocalOpen, onPublish, focus, onFocusHandled }: {
   pluginId: string; projectId?: string; visible: boolean; editorReady: boolean;
   onNew?(): void;
-  localFiles?: Array<{ path: string; apiName: string }>;
+  /** The project's agents: listed first, opened in place, and left out of the org list so they are not retrieved again. */
+  localFiles?: Array<{ path: string; apiName: string; publishable?: boolean }>;
   onLocalOpen?(path: string): void;
   onPublish?(path: string): void;
   onOpen(file: RetrievedOrgAgent, isCurrent: () => boolean): Promise<void>;
@@ -148,33 +160,54 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
     }
   }
 
-  const agents = catalog?.agents.filter(agent => `${agent.name} ${agent.versions.map(version => version.fullName).join(' ')}`.toLowerCase().includes(query.toLowerCase())) ?? [];
+  const needle = query.toLowerCase();
+  const localNames = new Set(localFiles.map(file => file.apiName));
+  const locals = localFiles.filter(file => `${file.apiName} ${file.path}`.toLowerCase().includes(needle));
+  // Natural order, so Agent_3 sits before Agent_10.
+  const agents = (catalog?.agents.filter(agent => !localNames.has(agent.name) && `${agent.name} ${agent.versions.map(version => version.fullName).join(' ')}`.toLowerCase().includes(needle)) ?? [])
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  const total = catalog ? new Set([...localNames, ...catalog.agents.map(agent => agent.name)]).size : 0;
   return <section className="af-org-agents" aria-label="Org agents">
     <header><div><strong>Agents</strong><small>{catalog?.org.alias || 'Connected org'}</small></div>{onNew && <button type="button" className="af-secondary" disabled={!editorReady} onClick={onNew}><Plus size={13} aria-hidden="true" />New agent</button>}<button className="icon-btn" type="button" title="Refresh agents" aria-label="Refresh agents" disabled={loading || Boolean(retrieving)} onClick={() => { setLoaded(false); setRevision(value => value + 1); }}><RefreshCw size={14} aria-hidden="true" /></button></header>
-    <label className="af-agent-search"><Search size={14} aria-hidden="true" /><input ref={search} aria-label="Search org agents" placeholder="Search agents…" value={query} onChange={event => setQuery(event.target.value)} /></label>
-    {localFiles.length > 0 && <section aria-label="Local agents"><p className="af-agent-caption">Local agents</p>{localFiles.filter(file => `${file.apiName} ${file.path}`.toLowerCase().includes(query.toLowerCase())).map(file => <article className="af-agent-card" key={file.path}>
-      <div className="af-agent-name"><Bot size={17} aria-hidden="true" /><strong>{file.apiName.replace(/_/g, ' ')}</strong></div>
-      <small className="af-agent-api-name" title={file.path}>{file.path}</small>
-      <div className="af-agent-card-actions"><button type="button" className="af-secondary" disabled={!editorReady} onClick={() => onLocalOpen?.(file.path)}>Open draft</button>{onPublish && <button type="button" className="af-secondary" onClick={() => onPublish(file.path)}>Review publish…</button>}</div>
-    </article>)}</section>}
-    <p className="af-agent-caption">Choose an Agent Script source version to edit.</p>
+    <label className="af-agent-search"><Search size={14} aria-hidden="true" /><input ref={search} aria-label="Search org agents" placeholder={total ? `Search ${total.toLocaleString()} agents…` : 'Search agents…'} value={query} onChange={event => setQuery(event.target.value)} /></label>
     {loading && <LoadingState compact art="agents" label="Loading agents…" hint="Finding Agent Script sources in your org." />}
     {error && (catalog?.agents.length ? <div className="af-error" role="alert">{error}</div> : <SalesforceState compact kind="error" art="agents" title="Org agents unavailable"
       action={onNew && <button type="button" className="af-secondary" disabled={!editorReady} onClick={onNew}>Create a local agent</button>}>{error}</SalesforceState>)}
     {missing && <div className="af-error" role="alert">{missing}</div>}
     {notice && <div className="af-notice" role="status">{notice}</div>}
-    {!loading && !error && loaded && agents.length === 0 && <EmptyState compact art={query ? 'search' : 'agents'} title={query ? 'No matching agents' : 'No Agent Script sources found'}
+    {locals.length > 0 && <section className="af-agent-group" aria-label="Agents in this project">
+      <p className="af-agent-group-label">In this project<span>{locals.length}</span></p>
+      {locals.map(file => <div className="af-agent-row" key={file.path}>
+        <button type="button" className="af-agent-row-main" disabled={!editorReady} title={file.path} onClick={() => onLocalOpen?.(file.path)}>
+          <Bot size={14} aria-hidden="true" /><span className="af-agent-row-name">{label(file.apiName)}</span><span className="af-agent-open-pill">Open</span>
+        </button>
+        {file.publishable && onPublish && <button type="button" className="icon-btn af-agent-row-action" aria-label={`Review publish for ${file.apiName}`} title="Review publish…" onClick={() => onPublish(file.path)}><Rocket size={13} aria-hidden="true" /></button>}
+      </div>)}
+    </section>}
+    {!loading && !error && loaded && agents.length === 0 && locals.length === 0 && <EmptyState compact art={query ? 'search' : 'agents'} title={query ? 'No matching agents' : 'No Agent Script sources found'}
       action={!query && onNew && <button type="button" className="af-secondary" disabled={!editorReady} onClick={onNew}>Create a local agent</button>}>
       {query ? 'Try another name.' : 'Start with a local draft, or choose an org with Agent Script sources. Agents from the legacy builder do not include editable source.'}
     </EmptyState>}
-    <div className="af-agent-list">{agents.map(agent => {
-      const fullName = selected[agent.name] || agent.versions[0].fullName;
-      return <article key={agent.name} className="af-agent-card">
-        <div className="af-agent-name"><Bot size={17} aria-hidden="true" /><strong title={agent.name}>{agent.name.replace(/_/g, ' ')}</strong></div>
-        <small className="af-agent-api-name">{agent.name}</small>
-        <div className="af-agent-card-actions"><select aria-label={`Source version for ${agent.name}`} value={fullName} disabled={Boolean(retrieving)} onChange={event => setSelected(value => ({ ...value, [agent.name]: event.target.value }))}>{agent.versions.map(version => <option key={version.fullName} value={version.fullName}>{version.version === null ? 'Current source' : `Source v${version.version}`}</option>)}</select><button className="af-secondary" type="button" disabled={Boolean(retrieving) || !editorReady} onClick={() => void retrieve(fullName)}><Download size={13} aria-hidden="true" />{retrieving === fullName ? 'Retrieving…' : 'Retrieve & open'}</button></div>
-      </article>;
-    })}</div>
+    {agents.length > 0 && <section className="af-agent-group" aria-label="Agents in the org">
+      <p className="af-agent-group-label">In the org<span>{agents.length}</span></p>
+      <div className="af-agent-list">{agents.map(agent => {
+        const fullName = selected[agent.name] || agent.versions[0].fullName;
+        const changed = lastChanged(agent);
+        const busy = retrieving === fullName;
+        return <div key={agent.name} className={`af-agent-row${busy ? ' is-busy' : ''}`}>
+          <span className="af-agent-row-main" title={agent.name}><Bot size={14} aria-hidden="true" /><span className="af-agent-row-name">{label(agent.name)}</span>
+            {changed && <time className="af-agent-row-date" dateTime={changed.iso}>{changed.label}</time>}</span>
+          <span className="af-agent-row-actions">
+            {agent.versions.length > 1 && <select aria-label={`Source version for ${agent.name}`} value={fullName} disabled={Boolean(retrieving)} onChange={event => setSelected(value => ({ ...value, [agent.name]: event.target.value }))}>
+              {agent.versions.map(version => <option key={version.fullName} value={version.fullName}>{version.version === null ? 'Current' : `v${version.version}`}</option>)}
+            </select>}
+            <button className="af-secondary" type="button" aria-label={`Retrieve & open ${agent.name}`} disabled={Boolean(retrieving) || !editorReady} onClick={() => void retrieve(fullName)}>
+              <Download size={13} aria-hidden="true" />{busy ? 'Retrieving…' : 'Retrieve'}
+            </button>
+          </span>
+        </div>;
+      })}</div>
+    </section>}
     {catalog?.truncated && <p className="af-agent-caption">Showing the first 1,000 source versions returned by Salesforce.</p>}
   </section>;
 }

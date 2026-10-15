@@ -8,12 +8,13 @@ import {
   PLAYGROUND_BRIDGE_SOURCE,
   readDocumentTheme
 } from './playground-bridge.js';
+import { AGENT_SOURCE_MAX } from '../../lib/studio-contract.js';
 
 describe('playground bridge', () => {
   it('bounds graph snapshots and requires explicit visibility and theme', () => {
     const graph = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'graph', content: 'start_agent:', visible: true, theme: 'dark' };
     expect(isHostToPlayground(graph)).toBe(true);
-    for (const change of [{ content: 42 }, { content: 'x'.repeat(180_001) }, { visible: 'yes' }, { theme: 'unknown' }]) {
+    for (const change of [{ content: 42 }, { content: 'x'.repeat(AGENT_SOURCE_MAX + 1) }, { visible: 'yes' }, { theme: 'unknown' }]) {
       expect(isHostToPlayground({ ...graph, ...change })).toBe(false);
     }
   });
@@ -70,7 +71,10 @@ describe('playground bridge', () => {
   it('bounds editor snapshots and rejects malformed analysis counts', () => {
     const snapshot = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'snapshot', content: 'start_agent:', issues: 0 };
     expect(isPlaygroundToHost(snapshot)).toBe(true);
-    expect(isPlaygroundToHost({ ...snapshot, content: 'x'.repeat(180_001) })).toBe(false);
+    // A large org agent (hundreds of KB) still reaches the Studio, up to 10 MB.
+    expect(isPlaygroundToHost({ ...snapshot, content: 'x'.repeat(373_285) })).toBe(true);
+    expect(isPlaygroundToHost({ ...snapshot, content: 'x'.repeat(AGENT_SOURCE_MAX) })).toBe(true);
+    expect(isPlaygroundToHost({ ...snapshot, content: 'x'.repeat(AGENT_SOURCE_MAX + 1) })).toBe(false);
     expect(isPlaygroundToHost({ ...snapshot, issues: NaN })).toBe(false);
     expect(isPlaygroundToHost({ ...snapshot, content: null })).toBe(false);
     const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
@@ -103,7 +107,7 @@ describe('studio bridge messages', () => {
     expect(isPlaygroundToHost(m({ type: 'cursor', line: 1, column: 1 }))).toBe(true);
   });
   it('validates proposalResolved with the outcome shape', () => {
-    rejects(isPlaygroundToHost, { type: 'proposalResolved', proposalId: 'p1', outcome: 'partial', acceptedHunks: 1, rejectedHunks: 1, content: 'x', sha256: 'abc' }, [{ proposalId: '' }, { proposalId: 5 }, { outcome: 'nope' }, { acceptedHunks: -1 }, { content: 3 }, { content: 'x'.repeat(180_001) }]);
+    rejects(isPlaygroundToHost, { type: 'proposalResolved', proposalId: 'p1', outcome: 'partial', acceptedHunks: 1, rejectedHunks: 1, content: 'x', sha256: 'abc' }, [{ proposalId: '' }, { proposalId: 5 }, { outcome: 'nope' }, { acceptedHunks: -1 }, { content: 3 }, { content: 'x'.repeat(AGENT_SOURCE_MAX + 1) }]);
   });
   it('validates commentAction, askSelection and saveRequest', () => {
     rejects(isPlaygroundToHost, { type: 'commentAction', kind: 'add', line: 1, endLine: 2, quote: 'q' }, [{ kind: 'delete' }, { line: 0 }, { endLine: 0 }, { quote: 1 }, { quote: 'x'.repeat(2001) }]);
@@ -111,7 +115,7 @@ describe('studio bridge messages', () => {
     expect(isPlaygroundToHost(m({ type: 'saveRequest' }))).toBe(true);
   });
   it('validates host messages for proposals, comments, hits and layout', () => {
-    rejects(isHostToPlayground, { type: 'proposeEdit', proposalId: 'p', content: 'c', summary: 's', actor: 'a' }, [{ proposalId: '' }, { content: 1 }, { content: 'x'.repeat(180_001) }, { summary: 'x'.repeat(1001) }, { actor: 3 }]);
+    rejects(isHostToPlayground, { type: 'proposeEdit', proposalId: 'p', content: 'c', summary: 's', actor: 'a' }, [{ proposalId: '' }, { content: 1 }, { content: 'x'.repeat(AGENT_SOURCE_MAX + 1) }, { summary: 'x'.repeat(1001) }, { actor: 3 }]);
     rejects(isHostToPlayground, { type: 'clearProposal', proposalId: 'p' }, [{ proposalId: 1 }]);
     rejects(isHostToPlayground, { type: 'setComments', comments: [comment] }, [{ comments: [{ ...comment, line: 0 }] }, { comments: 'x' }, { comments: Array(501).fill(comment) }]);
     rejects(isHostToPlayground, { type: 'setHits', lines: [1, 2] }, [{ lines: [0] }, { lines: 'x' }, { lines: Array(1001).fill(1) }]);

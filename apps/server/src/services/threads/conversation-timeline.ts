@@ -283,8 +283,8 @@ export function conversationTimeline(
   };
   const full = projectTimeline(ctx, thread, withBoundaryMessageContext(ctx, threadId, rows, tip), page, { includeNestedRows, turnMessageDetail });
   if (page.kind === 'latest') {
-    // Old goal/usage snapshots must not widen the history window just to keep
-    // the header current. Their projection never contributes historical rows.
+    // Old goal/usage and open activity snapshots keep the header/cards current
+    // without widening the history window or contributing transcript rows.
     const headRows = conversationTimelineHeadEvents(ctx.db, threadId);
     if (headRows.length) {
       const head = projectTimeline(ctx, thread, headRows, { kind: 'latest', segmentLimit: 1, hasOlderRows: false, olderCursor: null },
@@ -293,6 +293,17 @@ export function conversationTimeline(
       full.contextWindowUsage = head.contextWindowUsage ?? full.contextWindowUsage;
       full.pendingTodos = full.pendingTodos ?? head.pendingTodos;
       full.modelFallback = head.modelFallback ?? full.modelFallback;
+      // Preserve richer spawning-call metadata already projected in-window.
+      const current = new Map([...full.activeWorkflows, ...full.activeBackgroundCommands]
+        .map(row => [row.itemId, row]));
+      const inWindow = new Set(storedEventsToMeta(rows).flatMap(({ event }) =>
+        'item' in event && (event.item.type === 'backgroundTask' || event.item.type === 'delegation') ? [event.item.id] : []));
+      // The normal projection knows which in-window tasks are nested under an
+      // already represented agent. Backfill only activity absent from history.
+      full.activeWorkflows = head.activeWorkflows.filter(row => !inWindow.has(row.itemId) || current.has(row.itemId))
+        .map(row => current.get(row.itemId) ?? row);
+      full.activeBackgroundCommands = head.activeBackgroundCommands.filter(row => !inWindow.has(row.itemId) || current.has(row.itemId))
+        .map(row => current.get(row.itemId) ?? row);
     }
   }
   const content = pageTimelineRows(full.rows, cursor?.beforeLeaf);

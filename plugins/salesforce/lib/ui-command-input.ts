@@ -1,4 +1,4 @@
-import { isProposeEditInput, STUDIO_ENGINES, type StudioEngine } from './studio-contract.js';
+import { AGENT_SOURCE_MAX_LABEL, isProposeEditInput, PREVIEW_ENGINES, type StudioEngine } from './studio-contract.js';
 
 /** Isomorphic input validation for the Studio UI verbs (server request() and the renderer executor share it). */
 export const STUDIO_UI_COMMANDS = ['editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set'] as const;
@@ -11,13 +11,13 @@ const unknownKeys = (input: Record<string, unknown>, allowed: string[]) => Objec
 export function validateUiCommandInput(command: string, input: Record<string, unknown>): string | undefined {
   switch (command) {
     case 'editor.proposeEdit':
-      return isProposeEditInput(input) ? undefined : 'Provide path, a 64-hex expectedSha256, a summary, and exactly one of content (<=180k chars) or 1-50 edits.';
+      return isProposeEditInput(input) ? undefined : `Provide path, a 64-hex expectedSha256, a summary, and exactly one of content (at most ${AGENT_SOURCE_MAX_LABEL}) or 1-50 edits.`;
     case 'preview.start':
       if (unknownKeys(input, ['engine'])) return 'preview.start accepts only engine.';
-      return input.engine === undefined || STUDIO_ENGINES.includes(input.engine as StudioEngine) ? undefined : 'engine must be rehearse, simulate or live.';
+      return input.engine === undefined || PREVIEW_ENGINES.includes(input.engine as StudioEngine) ? undefined : 'engine must be simulate or live.';
     case 'preview.send':
       if (unknownKeys(input, ['text', 'engine'])) return 'preview.send accepts only text and engine.';
-      if (input.engine !== undefined && !STUDIO_ENGINES.includes(input.engine as StudioEngine)) return 'engine must be rehearse, simulate or live.';
+      if (input.engine !== undefined && !PREVIEW_ENGINES.includes(input.engine as StudioEngine)) return 'engine must be simulate or live.';
       return typeof input.text === 'string' && input.text.trim() && input.text.length <= PREVIEW_TEXT_MAX ? undefined : `Provide text (1-${PREVIEW_TEXT_MAX} characters).`;
     case 'trace.focus':
       if (unknownKeys(input, ['runId', 'turn', 'step'])) return 'trace.focus accepts runId, turn and step.';

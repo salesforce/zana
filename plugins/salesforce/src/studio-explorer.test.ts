@@ -41,6 +41,11 @@ describe('buildLocalExplorer', () => {
     const result = buildLocalExplorer(project(), createNodeDeps());
     const byKind = (kind: string) => result.nodes.filter(node => node.kind === kind);
     expect(byKind('agent').map(node => node.apiName)).toEqual(['Other', 'Support']);
+    // Each scanned agent lists what it references, deduplicated, in source order.
+    expect(byKind('agent').find(node => node.apiName === 'Support')!.uses).toEqual([
+      { kind: 'apex', apiName: 'OrderLookup' }, { kind: 'flow', apiName: 'CheckReturn' }, { kind: 'prompt', apiName: 'Summarize' }, { kind: 'apex', apiName: 'Missing' }
+    ]);
+    expect(byKind('agent').find(node => node.apiName === 'Other')!.uses).toEqual([{ kind: 'apex', apiName: 'OrderLookup' }]);
     expect(byKind('apex')).toEqual([
       { kind: 'apex', apiName: 'Missing', usedBy: ['force-app/main/default/aiAuthoringBundles/Support/Support.agent'] },
       { kind: 'apex', apiName: 'OrderLookup', path: 'force-app/main/default/classes/OrderLookup.cls', usedBy: ['force-app/main/default/aiAuthoringBundles/Other/Other.agent', 'force-app/main/default/aiAuthoringBundles/Support/Support.agent'] }
@@ -69,6 +74,19 @@ describe('buildLocalExplorer', () => {
     const result = buildLocalExplorer(project(extra), createNodeDeps());
     expect(result.truncated).toBe(true);
     expect(result.nodes.filter(node => node.kind === 'scenario')).toHaveLength(EXPLORER_LIMITS.scenarios);
+    // Agents past the scan limit carry no `uses`: the UI says they were not indexed instead of showing an empty list.
+    const agentRows = result.nodes.filter(node => node.kind === 'agent');
+    expect(agentRows.filter(node => node.uses).length).toBe(EXPLORER_LIMITS.scanAgents);
+  });
+  it('scans the focused agent first, past the scan limit, and ignores a path the listing does not return', () => {
+    const extra: Record<string, string> = {};
+    for (let i = 0; i < EXPLORER_LIMITS.scanAgents + 5; i++) extra[`agents/A${String(i).padStart(3, '0')}.agent`] = `x: apex://C${i}`;
+    const root = project(extra);
+    const last = `agents/A${String(EXPLORER_LIMITS.scanAgents + 4).padStart(3, '0')}.agent`;
+    const usesOf = (focus?: string) => buildLocalExplorer(root, createNodeDeps(), focus).nodes.find(node => node.kind === 'agent' && node.path === last)?.uses;
+    expect(usesOf()).toBeUndefined();
+    expect(usesOf(last)).toEqual([{ kind: 'apex', apiName: `C${EXPLORER_LIMITS.scanAgents + 4}` }]);
+    expect(usesOf('../outside.agent')).toBeUndefined();
   });
   it('locates a target without reading its source', () => {
     const root = project({ 'force-app/main/default/classes/Big.cls': 'x'.repeat(800_000), 'agents/Big.agent': 'x: apex://Big' });
@@ -116,7 +134,7 @@ describe('studio.explorer RPC', () => {
       deps
     } as unknown as StudioServerContext;
     registerStudioExplorer(studio);
-    return { call: () => handlers.get('studio.explorer')!({}) as Promise<any>, dispose, deps };
+    return { call: (args: unknown = {}) => handlers.get('studio.explorer')!(args) as Promise<any>, dispose, deps };
   }
   it('refuses without a project folder', async () => {
     expect(await setup({}).call()).toMatchObject({ ok: false, code: 'not_configured' });
@@ -128,6 +146,24 @@ describe('studio.explorer RPC', () => {
     expect(result.nodes.some((node: any) => node.kind === 'agent')).toBe(true);
     expect(execSf).not.toHaveBeenCalled();
   });
+  it('passes the open agent through as the scan focus', async () => {
+    const extra: Record<string, string> = {};
+    for (let i = 0; i < EXPLORER_LIMITS.scanAgents + 2; i++) extra[`agents/A${String(i).padStart(3, '0')}.agent`] = `x: flow://F${i}`;
+    const last = `agents/A${String(EXPLORER_LIMITS.scanAgents + 1).padStart(3, '0')}.agent`;
+    const result = await setup({ root: project(extra) }).call({ focus: last });
+    expect(result.nodes.find((node: any) => node.path === last).uses).toEqual([{ kind: 'flow', apiName: `F${EXPLORER_LIMITS.scanAgents + 1}` }]);
+  });
+  it('flags an org listing past the explorer cap so the count reads as a floor', async () => {
+    const many = JSON.stringify({ status: 0, result: Array.from({ length: EXPLORER_LIMITS.orgAgents + 1 }, (_, i) => ({ fullName: `Bot${i}_v1` })) });
+    const result = await setup({ root: project(), org: 'dev', execSf: vi.fn(async () => ({ code: 0, stdout: many, stderr: '' })) }).call();
+    expect(result.nodes.filter((node: any) => node.kind === 'org-agent')).toHaveLength(EXPLORER_LIMITS.orgAgents);
+    expect(result.orgAgentsTruncated).toBe(true);
+    // The count covers the whole org, not the capped rows; the project's own agents are left out.
+    const localAgents = result.nodes.filter((node: any) => node.kind === 'agent').length;
+    expect(result.orgAgentsNotLocal).toBe(EXPLORER_LIMITS.orgAgents + 1);
+    expect(localAgents).toBeGreaterThan(0);
+    expect(result.truncated).toBe(true);
+  });
   it('adds org agents when an org is selected and degrades when listing fails', async () => {
     const list = JSON.stringify({ status: 0, result: [{ fullName: 'Support_v1', lastModifiedDate: '2025-01-01T00:00:00.000Z' }, { fullName: 'Billing_v2' }] });
     const execSf = vi.fn(async () => ({ code: 0, stdout: list, stderr: '' }));
@@ -135,6 +171,9 @@ describe('studio.explorer RPC', () => {
     const result = await ok.call();
     expect(result.orgError).toBeUndefined();
     expect(result.nodes.filter((node: any) => node.kind === 'org-agent').map((node: any) => node.apiName)).toEqual(['Billing', 'Support']);
+    expect(result.orgAgentsTruncated).toBe(false);
+    // Support is on disk, so only Billing counts.
+    expect(result.orgAgentsNotLocal).toBe(1);
     ok.dispose.forEach(hook => hook());
     const failing = setup({ root: project(), org: 'dev', execSf: vi.fn(async () => { throw Error('org offline'); }) });
     const failed = await failing.call();

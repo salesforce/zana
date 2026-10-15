@@ -53,7 +53,7 @@ No credentials or model keys are entered in the renderer.
   SHA-256 identifies the exact editor snapshot, including whitespace.
 - At most 12 sessions/start operations exist. Per-session calls are serialized,
   AI calls capped at 50, automated turns at 8, manual turns at 20, source at
-  180,000 characters and each agent reply at 32,000 characters. End/dispose
+  10 MB (`AGENT_SOURCE_MAX`) and each agent reply at 32,000 characters. End/dispose
   aborts pending requests. Sessions expire lazily after 30 idle minutes.
 - The server owns the transcript used by the customer/evaluator. Renderer-sent
   transcripts are ignored. Missing/malformed/failed output marks the run
@@ -221,7 +221,8 @@ Agent collaboration:
 - **Shared view.** The panel publishes path, SHA, cursor, selection, tool, last run and up to 50 diagnostics (`studio.view.publish`). Agents read it with `sf_workbench view.state` only while sharing is on.
 - **Proposals.** `editor.proposeEdit` is rejected if the open file or its SHA differs. The editor shows a diff; the user resolves hunks. A newer proposal, a file switch or closing the editor settles pending ones as rejected with a note.
 - **Comments.** `comments.list/add/resolve` (`studio.comments.*`) store anchored review items; changes broadcast on `sf.studio.changed`.
-- **Preview commands.** `preview.start` and `preview.send` reach `PreviewWorkbench` through a controlled `command` prop (`{ seq, type, text?, engine? }`). Each `seq` runs once, after the selected engine matches; `send` starts a session first if none is running. Failures show in the workbench error banner.
+- **Preview commands.** `preview.start` and `preview.send` reach `PreviewWorkbench` through a controlled `command` prop (`{ seq, type, text?, engine? }`). Each `seq` runs once, after the selected engine matches; `send` starts a session first if none is running. Failures show in the workbench error banner. Preview offers Simulate and Live only (`PREVIEW_ENGINES`); Rehearse is hidden for now, so `engine: 'rehearse'` is rejected and a stale Rehearse selection runs Simulate. The lab rehearsal engine and the Tests role-play still use it.
+- **Start is the approval.** A click on Start or Send in Preview sends `startedByUser: true`, which approves that run on any org without asking in a thread. Host commands (`preview.start`/`preview.send` from an agent) never set it, and `sf_workbench` strips it from agent input, so an agent-driven run still asks in its thread.
 - **Graph bridge.** The host to playground `graph` message carries `content`, `visible`, `theme` plus optional `compact`, `focus` (node id or label, at most 200 characters) and `focusSeq` (integer; bump it to re-focus the same node). The validator rejects other types.
 - **Trace.** `agentLab.trace {id, planId}` reads `GET .../preview/sessions/{sid}/plans/{planId}` for Simulate sessions only. Rehearsal returns an approximation notice, Live and expired runs return `available: false` with a reason; nothing is fabricated. Results are cached per session and bounded to 200 steps. Live (CLI) trace remains unverified against a real org.
 - **Suites.** `tests/<Agent>.scenario.json` (see the README for the format); `studio.suites.run` runs cases sequentially under the lab's AI budget and compares runs by `runId`.
@@ -244,6 +245,7 @@ The Salesforce tab is `detachable`: **Open in new window** in its toolbar moves 
 
 - **Chat cards.** `::sf-preview` reopens the stored run read-only in Preview (`agentLab.get`).
 - **Compile.** The Compile button compiles in place (`agentScript.compile`) instead of handing off to chat. The result shows under Problems, and a failed compile becomes a row at the line the compiler names. The `sf agent validate` fallback passes the org read gate, so a headless compile on a production or unknown org is refused.
+- **Open in Agentforce Builder.** The toolbar's external-link button runs `sf org open agent --authoring-bundle <apiName> --browser chrome` (`agentBuilder.open`) on the saved file, behind the same org read gate. The CLI's frontdoor URL carries a session, so it never leaves the plugin and is redacted from error text.
 - **Eval specs.** YAML eval specs count their cases (`testCases`, `tests` or `utterances`, block or flow lists). The CLI still parses the spec.
 - **Deactivate.** `sf_agent lifecycle.deactivate` (`apiName`) confirms on every org kind and fails closed without a thread. The Release tool has the button.
 - **Gates and threads.** `agentLab.*` passes the production/unknown-org gate, and side panels pass their `threadId`.

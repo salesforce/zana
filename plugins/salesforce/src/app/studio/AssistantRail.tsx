@@ -107,16 +107,30 @@ export function AssistantRail({ pluginId, projectId, path, view, compact = false
     if (!path) return;
     if (onAskAgent) { onAskAgent(action ?? '', text); return; }
     setBusy(true); setError(null);
+    const request = {
+      projectId, path, ...(action ? { action } : {}), ...(text ? { prompt: text } : {}),
+      ...(action === 'fix-problems' ? { diagnostics: view.diagnostics } : {})
+    };
     try {
-      const result = await callPluginRpc(pluginId, STUDIO_RPC.askAgent, {
-        projectId, path, ...(action ? { action } : {}), ...(text ? { prompt: text } : {}),
-        ...(action === 'fix-problems' ? { diagnostics: view.diagnostics } : {})
-      }) as { threadId?: string };
+      // The side panel's composer takes the brief so the user picks the harness and sends it;
+      // a host without one (the detached window, older hosts) gets the thread started here.
+      if (navigate.openPanelAgent) {
+        const draft = await callPluginRpc(pluginId, STUDIO_RPC.draftAgent, request) as { prompt?: string; title?: string };
+        const message = failure(draft, 'Could not prepare the request.');
+        if (message) { setError(message); return; }
+        if (draft?.prompt && navigate.openPanelAgent({ draft: { prompt: draft.prompt, view: path, ...(projectId ? { projectId } : {}) }, ...(draft.title ? { title: draft.title } : {}) })) return;
+      }
+      const result = await callPluginRpc(pluginId, STUDIO_RPC.askAgent, request) as { threadId?: string };
       const message = failure(result, 'Could not start the agent.');
       if (message) setError(message);
-      else if (result?.threadId) { setChatId(result.threadId); void reload(); }
+      else if (result?.threadId) { showThread(result.threadId); void reload(); }
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : 'Could not start the agent.'); }
     finally { if (alive.current) setBusy(false); }
+  };
+
+  /** A thread opens in the page's side panel, or embedded in this rail when there is none. */
+  const showThread = (threadId: string, title?: string) => {
+    if (!navigate.openPanelAgent?.({ threadId, ...(title ? { title } : {}) })) setChatId(threadId);
   };
 
   const unlink = async (threadId: string) => {
@@ -165,7 +179,7 @@ export function AssistantRail({ pluginId, projectId, path, view, compact = false
           ? <p className="sf-asst-empty">No agents yet. Pick an action above to start one; threads that work on this file show up here.</p>
           : <ul className="sf-asst-threads">
             {threads.map(thread => <li key={thread.threadId} className="sf-asst-thread">
-              <button type="button" className="sf-asst-thread-open" title="Open chat beside the editor" onClick={() => setChatId(thread.threadId)}>
+              <button type="button" className="sf-asst-thread-open" title="Open chat beside the editor" onClick={() => showThread(thread.threadId, thread.title)}>
                 <Bot size={14} aria-hidden="true" />
                 <span className="sf-asst-thread-main">
                   <span className="sf-asst-thread-title">{thread.title}</span>

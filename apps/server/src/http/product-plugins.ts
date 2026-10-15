@@ -29,6 +29,7 @@ import {
   updateConversationPluginMetadata
 } from '../services/threads/conversation-plugin-metadata.js';
 import { listThreadProviders } from '../services/threads/thread-provider-catalog.js';
+import { defaultSpawnProviderId } from '../services/threads/default-spawn-provider.js';
 import type { ProductHttpContext } from './product-context.js';
 import { conversationThreadOutput } from '../plugins/thread-events.js';
 import { readHostFile } from './files-via-host.js';
@@ -356,10 +357,7 @@ export function createAttachedProductPluginService(
     }) => {
       const providers = listThreadProviders();
       if (providerId && !providers.some((row) => row.id === providerId)) throw new Error(`unknown thread provider: ${providerId}`);
-      const resolvedProvider = providerId
-        && providers.some((row) => row.id === providerId)
-        ? providerId
-        : providers[0]?.id;
+      const resolvedProvider = providerId || defaultSpawnProviderId(providers, ctx.config.getConfig().defaultHarness);
       if (!resolvedProvider) throw new Error('no thread provider is registered');
       const thread = await createConversationFromRequest(ctx, {
         projectId,

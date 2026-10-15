@@ -2,6 +2,7 @@ import type { AgentScriptDialect } from '../../lib/types.js';
 
 const STORAGE = 'salesforce.agent-drafts.v1';
 const SELECTIONS = 'salesforce.agent-selections.v1';
+// Recovery lives in localStorage (a few MB per origin), so it stays well below AGENT_SOURCE_MAX.
 export const MAX_AGENT_DRAFT = 180_000;
 export type AgentDraft = { key: string; content: string; baseSha?: string; dialect: AgentScriptDialect };
 // The shared origin lets the iframe save synchronously on each edit, including
