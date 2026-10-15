@@ -33,15 +33,9 @@ export async function historyQueryWorker<T>(file: string, sql: string, params: u
     try { worker = new Worker(source, { eval: true, workerData: { ...sqliteWorkerConfiguration(), file, sql, params }, resourceLimits: { maxOldGenerationSizeMb: 64 } }); }
     catch (error) { releaseSlot(); reject(error); return; }
     let settled = false;
-    let released = false;
-    const release = () => {
-      if (released) return;
-      released = true;
-      releaseSlot();
-    };
     const settle = (error?: Error, rows?: T[]) => {
       if (settled) return; settled = true; clearTimeout(timer);
-      release();
+      releaseSlot();
       if (error) reject(error); else resolve(rows ?? []);
       void worker.terminate();
     };
