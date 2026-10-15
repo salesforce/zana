@@ -258,22 +258,55 @@ export function peerUnpackCommand(serverHost: string): string {
   ].join('\n');
 }
 
-/** Never signal a PID file alone: it can outlive the process it named. */
+/**
+ * Stop every daemon this install replaces: the PID file plus any process running
+ * this runtime or this host id, whichever Node started it. Never signal a PID
+ * alone: it can outlive the process it named.
+ */
 export function safeStopStandaloneDaemonLines(): string[] {
   return [
-    'if [ -f "$data_dir/host-daemon.pid" ]; then',
-    '  old_pid=$(cat "$data_dir/host-daemon.pid")',
-    '  case "$old_pid" in ""|*[!0-9]*|0|1) old_pid= ;; esac',
-    '  old_command=""; old_started=""',
-    '  if [ -n "$old_pid" ]; then old_command=$(ps -p "$old_pid" -o command= 2>/dev/null || true); old_started=$(ps -p "$old_pid" -o lstart= 2>/dev/null || true); fi',
-    '  case "$old_command" in "$node_bin $join_bin join "*|"$node_bin $package_dir/join.cjs join "*)',
-    '    if [ -n "$old_started" ] && [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ] && [ "$(ps -p "$old_pid" -o command= 2>/dev/null || true)" = "$old_command" ]; then',
-    '      kill "$old_pid" 2>/dev/null || true',
-    '      i=0; while [ "$i" -lt 10 ] && [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ]; do i=$((i + 1)); sleep 1; done',
-    '      if [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ] && [ "$(ps -p "$old_pid" -o command= 2>/dev/null || true)" = "$old_command" ]; then kill -9 "$old_pid" 2>/dev/null || true; fi',
-    '    fi ;;',
+    'host_match=" --host-id ${host_id:-<none>} "',
+    'replaced_daemon() {',
+    '  case " $1 " in',
+    '    *" $package_dir/join.mjs join "*|*" $package_dir/join.cjs join "*|*" ${join_bin:-<none>} join "*) return 0 ;;',
+    '    *"/join.mjs join"*"$host_match"*|*"/join.cjs join"*"$host_match"*) return 0 ;;',
     '  esac',
-    '  rm -f "$data_dir/host-daemon.pid"',
+    '  return 1',
+    '}',
+    'old_pids=""',
+    'if [ -f "$data_dir/host-daemon.pid" ]; then old_pids=$(cat "$data_dir/host-daemon.pid"); fi',
+    'old_pids="$old_pids $(ps -eo pid= -o command= 2>/dev/null | while read -r old_pid old_command; do if replaced_daemon "$old_command"; then echo "$old_pid"; fi; done)"',
+    'for old_pid in $old_pids; do',
+    '  case "$old_pid" in ""|*[!0-9]*|0|1) continue ;; esac',
+    '  [ "$old_pid" != "$$" ] || continue',
+    '  old_command=$(ps -p "$old_pid" -o command= 2>/dev/null || true); old_started=$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)',
+    '  [ -n "$old_started" ] && replaced_daemon "$old_command" || continue',
+    '  kill "$old_pid" 2>/dev/null || true',
+    '  i=0; while [ "$i" -lt 10 ] && [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ]; do i=$((i + 1)); sleep 1; done',
+    '  if [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ] && [ "$(ps -p "$old_pid" -o command= 2>/dev/null || true)" = "$old_command" ]; then kill -9 "$old_pid" 2>/dev/null || true; fi',
+    'done',
+    'rm -f "$data_dir/host-daemon.pid"'
+  ];
+}
+
+/** A host id runs once per machine: retire services that run it for another server address. */
+export function retireDuplicateHostServiceLines(): string[] {
+  return [
+    'if [ "$(uname -s)" = Darwin ]; then',
+    '  for old_unit in "$HOME"/Library/LaunchAgents/ai.zana.zcc-host-daemon.*.plist; do',
+    '    [ -f "$old_unit" ] && grep -qF "<string>${host_id:-<none>}</string>" "$old_unit" && ! grep -qF "<string>$package_dir/" "$old_unit" || continue',
+    '    launchctl bootout "gui/$(id -u)/$(basename "$old_unit" .plist)" 2>/dev/null || true',
+    '    mv -f "$old_unit" "$old_unit.retired" 2>/dev/null || true',
+    '    echo "Retired $(basename "$old_unit" .plist): it ran this machine for another server address."',
+    '  done',
+    'else',
+    '  for old_unit in "$HOME"/.config/systemd/user/zcc-host-daemon-*.service; do',
+    '    [ -f "$old_unit" ] && grep -qF -- "--host-id ${host_id:-<none>} " "$old_unit" && ! grep -qF -- "$package_dir/" "$old_unit" || continue',
+    '    systemctl --user disable --now "$(basename "$old_unit")" 2>/dev/null || true',
+    '    mv -f "$old_unit" "$old_unit.retired" 2>/dev/null || true',
+    '    systemctl --user daemon-reload 2>/dev/null || true',
+    '    echo "Retired $(basename "$old_unit"): it ran this machine for another server address."',
+    '  done',
     'fi'
   ];
 }
@@ -298,14 +331,15 @@ export function peerInstallServiceCommand(input: {
     ...peerNodeSelectionLines(),
     'export PATH="$(dirname "$node_bin"):$PATH"',
     '[ -f "$join_bin" ] || { echo "join CLI missing from artifact" >&2; exit 1; }',
-    // Stop the service first so it cannot race the replacement background daemon.
+    `host_id=${shQuote(input.hostId)}`,
+    // Stop the services first so they cannot race the replacement background daemon.
     `if [ "$(uname -s)" = Darwin ]; then launchctl bootout "gui/$(id -u)/${label}" 2>/dev/null || true; elif command -v systemctl >/dev/null 2>&1; then systemctl --user stop ${shQuote(unit)} 2>/dev/null || true; fi`,
+    ...retireDuplicateHostServiceLines(),
     ...safeStopStandaloneDaemonLines(),
     'if [ -f "$port_file" ]; then port=$(cat "$port_file"); else port=38888; while [ -e "$port_dir/$port" ]; do port=$((port + 1)); done; fi',
     'printf "%s\\n" "$port" > "$port_file"',
     'printf "%s\\n" "$data_dir" > "$port_dir/$port"',
     `join_code=${shQuote(input.joinCode)}`,
-    `host_id=${shQuote(input.hostId)}`,
     `server_url=${shQuote(input.serverUrl)}`,
     'if [ -f "$data_dir/host.id" ]; then existing_id=$(tr -d "[:space:]" < "$data_dir/host.id"); if [ "$existing_id" != "$host_id" ]; then rm -f "$data_dir/host.id" "$data_dir/auth.json"; fi; fi',
     'export ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url"',

@@ -546,7 +546,7 @@ describe('bootstrap and repair routing', () => {
     const stages = events.filter((event) => event.type === 'stage');
     expect(stages).toEqual([
       { type: 'stage', stage: 'ssh', status: 'running', limitMs: 180_000 },
-      { type: 'stage', stage: 'tunnel', status: 'running', limitMs: 30_000 },
+      { type: 'stage', stage: 'tunnel', status: 'running', limitMs: 35_000 },
       { type: 'stage', stage: 'install', status: 'running', limitMs: 240_000 },
       { type: 'stage', stage: 'ssh', status: 'passed' },
       { type: 'stage', stage: 'tunnel', status: 'passed' },
@@ -558,6 +558,48 @@ describe('bootstrap and repair routing', () => {
       { type: 'stage', stage: 'connected', status: 'running' },
       { type: 'stage', stage: 'connected', status: 'passed' }
     ]);
+  });
+
+  it('passes SSH and the tunnel once a slow install outlives the tunnel open limit', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    cleanup.push(() => vi.useRealTimers());
+    const f = flow('offline');
+    let finish!: (value: unknown) => void;
+    f.install.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const seen: HostBootstrapEvent[] = [];
+    const run = bootstrapHostForProject(f.ctx, 'project', (event) => seen.push(event));
+    await vi.waitFor(() => expect(f.install).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(stagesOf(seen)).toEqual(['ssh:running', 'tunnel:running', 'install:running']);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(stagesOf(seen)).toEqual(['ssh:running', 'tunnel:running', 'install:running', 'ssh:passed', 'tunnel:passed']);
+    finish({ ok: true, log: '' });
+    const events = await run;
+    expect(events.at(-1)).toMatchObject({ type: 'done' });
+    expect(stagesOf(events).filter((stage) => /^(ssh|tunnel):/.test(stage))).toEqual(['ssh:running', 'tunnel:running', 'ssh:passed', 'tunnel:passed']);
+  });
+
+  it('does not confirm the tunnel for a direct install or after the install settles', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    cleanup.push(() => vi.useRealTimers());
+    const direct = flow('direct');
+    let finish!: (value: unknown) => void;
+    direct.install.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const seen: HostBootstrapEvent[] = [];
+    const run = bootstrapHostForProject(direct.ctx, 'project', (event) => seen.push(event));
+    await vi.waitFor(() => expect(direct.install).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(stagesOf(seen)).toEqual(['ssh:running', 'install:running']);
+    finish({ ok: true, log: '' });
+    await run;
+
+    const failed = flow('offline');
+    failed.install.mockRejectedValueOnce(new Error('zcc-install: failed step=unpack rc=2'));
+    const events = await bootstrapHostForProject(failed.ctx, 'project');
+    const settled = events.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events).toHaveLength(settled);
+    expect(stagesOf(events)).toContain('install:failed:Install step unpack failed (exit 2)');
   });
 
   it('reports a registration refusal after the last join attempt instead of a silent daemon', async () => {

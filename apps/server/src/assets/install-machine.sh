@@ -203,26 +203,49 @@ systemd_user_available() {
 }
 
 # Stop the existing owner before starting a replacement. Never signal a saved
-# PID until both executable and process start time match this installation.
+# PID until both its command and process start time still match this install.
 if [ "$(uname -s)" = Darwin ]; then
   launchctl bootout "gui/$(id -u)/ai.zana.zcc-host-daemon.$server_host" 2>/dev/null || true
 elif command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop "zcc-host-daemon-$server_host.service" 2>/dev/null || true
 fi
-if [ -f "$data_dir/host-daemon.pid" ]; then
-  old_pid=$(cat "$data_dir/host-daemon.pid")
-  case "$old_pid" in ""|*[!0-9]*|0|1) old_pid= ;; esac
-  old_command=""; old_started=""
-  if [ -n "$old_pid" ]; then old_command=$(ps -p "$old_pid" -o command= 2>/dev/null || true); old_started=$(ps -p "$old_pid" -o lstart= 2>/dev/null || true); fi
-  case "$old_command" in "$NODE_BIN $join_bin join "*|"$NODE_BIN $package_dir/join.cjs join "*)
-    if [ -n "$old_started" ] && [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ] && [ "$(ps -p "$old_pid" -o command= 2>/dev/null || true)" = "$old_command" ]; then
-      kill "$old_pid" 2>/dev/null || true
-      i=0; while [ "$i" -lt 10 ] && [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ]; do i=$((i + 1)); sleep 1; done
-      if [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ] && [ "$(ps -p "$old_pid" -o command= 2>/dev/null || true)" = "$old_command" ]; then kill -9 "$old_pid" 2>/dev/null || true; fi
-    fi ;;
-  esac
-  rm -f "$data_dir/host-daemon.pid"
+if [ "$(uname -s)" = Darwin ]; then
+  for old_unit in "$HOME"/Library/LaunchAgents/ai.zana.zcc-host-daemon.*.plist; do
+    [ -f "$old_unit" ] && grep -qF "<string>${host_id:-<none>}</string>" "$old_unit" && ! grep -qF "<string>$package_dir/" "$old_unit" || continue
+    launchctl bootout "gui/$(id -u)/$(basename "$old_unit" .plist)" 2>/dev/null || true
+    mv -f "$old_unit" "$old_unit.retired" 2>/dev/null || true
+    echo "Retired $(basename "$old_unit" .plist): it ran this machine for another server address."
+  done
+else
+  for old_unit in "$HOME"/.config/systemd/user/zcc-host-daemon-*.service; do
+    [ -f "$old_unit" ] && grep -qF -- "--host-id ${host_id:-<none>} " "$old_unit" && ! grep -qF -- "$package_dir/" "$old_unit" || continue
+    systemctl --user disable --now "$(basename "$old_unit")" 2>/dev/null || true
+    mv -f "$old_unit" "$old_unit.retired" 2>/dev/null || true
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo "Retired $(basename "$old_unit"): it ran this machine for another server address."
+  done
 fi
+host_match=" --host-id ${host_id:-<none>} "
+replaced_daemon() {
+  case " $1 " in
+    *" $package_dir/join.mjs join "*|*" $package_dir/join.cjs join "*|*" ${join_bin:-<none>} join "*) return 0 ;;
+    *"/join.mjs join"*"$host_match"*|*"/join.cjs join"*"$host_match"*) return 0 ;;
+  esac
+  return 1
+}
+old_pids=""
+if [ -f "$data_dir/host-daemon.pid" ]; then old_pids=$(cat "$data_dir/host-daemon.pid"); fi
+old_pids="$old_pids $(ps -eo pid= -o command= 2>/dev/null | while read -r old_pid old_command; do if replaced_daemon "$old_command"; then echo "$old_pid"; fi; done)"
+for old_pid in $old_pids; do
+  case "$old_pid" in ""|*[!0-9]*|0|1) continue ;; esac
+  [ "$old_pid" != "$$" ] || continue
+  old_command=$(ps -p "$old_pid" -o command= 2>/dev/null || true); old_started=$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)
+  [ -n "$old_started" ] && replaced_daemon "$old_command" || continue
+  kill "$old_pid" 2>/dev/null || true
+  i=0; while [ "$i" -lt 10 ] && [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ]; do i=$((i + 1)); sleep 1; done
+  if [ "$(ps -p "$old_pid" -o lstart= 2>/dev/null || true)" = "$old_started" ] && [ "$(ps -p "$old_pid" -o command= 2>/dev/null || true)" = "$old_command" ]; then kill -9 "$old_pid" 2>/dev/null || true; fi
+done
+rm -f "$data_dir/host-daemon.pid"
 
 step=join
 echo "Enrolling host daemon…"

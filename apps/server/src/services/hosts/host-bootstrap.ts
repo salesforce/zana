@@ -35,6 +35,8 @@ const CONNECT_WAIT_MS = 90_000;
 const SSH_TIMEOUT_MS = 180_000;
 /** How long the primary waits for its tunnel SSH to confirm forwarding (host-daemon peer-tunnels). */
 const TUNNEL_OPEN_TIMEOUT_MS = 30_000;
+/** Slack for RPC dispatch before the primary starts its tunnel timer. */
+const TUNNEL_CONFIRM_GRACE_MS = 5_000;
 const TUNNEL_PORT_MIN = 20_000;
 const TUNNEL_PORT_MAX = 60_000;
 const TUNNEL_PORT_ATTEMPTS = 5;
@@ -597,8 +599,13 @@ async function installPeer(
   const { stages, emit } = input;
   emit({ type: 'log', text: 'Installing host daemon over SSH…' });
   stages.start('ssh', SSH_TIMEOUT_MS);
-  if (input.sshTunnel) stages.start('tunnel', TUNNEL_OPEN_TIMEOUT_MS);
+  if (input.sshTunnel) stages.start('tunnel', TUNNEL_OPEN_TIMEOUT_MS + TUNNEL_CONFIRM_GRACE_MS);
   stages.start('install', PEER_RPC_TIMEOUT_MS);
+  // The primary opens the tunnel before installing and fails the RPC when the tunnel
+  // does not open in time, so an install still running past that limit has its tunnel.
+  const tunnelConfirmed = input.sshTunnel
+    ? setTimeout(() => { stages.pass('ssh'); stages.pass('tunnel'); }, TUNNEL_OPEN_TIMEOUT_MS + TUNNEL_CONFIRM_GRACE_MS / 2)
+    : undefined;
   let result: { ok: true; log: string };
   try {
     result = await ctx.hostHub.callHostOnlineRpc<{ ok: true; log: string }>({
@@ -625,6 +632,8 @@ async function installPeer(
     }
     emitLogLines(emit, errorText(error));
     throw installRpcFailure(error, input);
+  } finally {
+    clearTimeout(tunnelConfirmed);
   }
   if (result.log.trim()) emitLogLines(emit, result.log.trim());
   stages.pass('ssh');
