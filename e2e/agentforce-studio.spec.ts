@@ -391,14 +391,88 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(orgPreview.getByRole('log', { name: 'Org preview conversation' })).toBeVisible();
   await orgPreview.getByTestId('salesforce-agentforce-preview-start').click();
   await expect(orgPreview.getByText('Simulate preview started.')).toBeVisible();
-  await orgPreview.getByTestId('salesforce-agentforce-preview-input').fill('A full response please');
+  await orgPreview.getByTestId('salesforce-agentforce-preview-input').fill('Long response');
   await orgPreview.getByTestId('salesforce-agentforce-preview-send').click();
-  await expect(orgPreview.getByRole('log')).toContainText('CLI_END_OF_RESPONSE');
+  await expect(orgPreview.getByRole('log')).toContainText('END_OF_RESPONSE');
   await orgPreview.getByTestId('salesforce-agentforce-preview-end').click();
   await expect(orgPreview.getByText('Preview ended.')).toBeVisible();
   await studio.getByRole('button', { name: 'Close Org preview', exact: true }).click();
   await expect(frame.locator('.view-lines')).toBeVisible();
   await expect(studio).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('Org preview: searchable agent picker, employee-agent simulation and an unclipped composer', async ({ app, home }, testInfo) => {
+  const employeeSource = AGENT_SCRIPT_EXAMPLES[0].source.replace('config:\n', 'config:\n    agent_type: "AgentforceEmployeeAgent"\n');
+  writeFileSync(join(home, 'dx', toolbarFile), employeeSource);
+  const page = app.window;
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = page.getByTestId('salesforce-agent-script-panel');
+  await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
+  await openTool(studio, 'Org preview');
+  const preview = page.getByTestId('salesforce-agentforce-preview');
+  const picker = preview.getByRole('button', { name: 'Agentforce preview file', exact: true });
+  await picker.click();
+  const search = page.getByRole('textbox', { name: 'Search agents…', exact: true });
+  await expect(search).toBeFocused();
+  await search.fill('no-such-agent');
+  await expect(page.getByRole('listbox', { name: 'Agentforce preview file' })).toContainText('No matching agents');
+  await search.fill('aiAuthoringBundles/Customer');
+  await expect(page.getByRole('listbox', { name: 'Agentforce preview file' }).getByRole('option')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  await expect(picker).toContainText('Customer_Service_Agent_With_A_Long_Name');
+  await expect(picker).toBeFocused();
+
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    for (const width of [1440, 1100]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(preview).toBeVisible();
+      await expect(preview.getByTestId('salesforce-agentforce-preview-send')).toBeVisible();
+      if (width === 1100) expect((await preview.boundingBox())!.width).toBeLessThanOrEqual(400);
+      for (const locator of [preview, preview.locator('.sf-as-header'), preview.locator('.af-composer')]) {
+        expect(await locator.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+      }
+      const send = preview.getByTestId('salesforce-agentforce-preview-send');
+      const fits = await send.evaluate(el => {
+        const range = document.createRange(); range.selectNodeContents(el);
+        const text = range.getBoundingClientRect(); const button = el.getBoundingClientRect();
+        return text.left >= button.left && text.right <= button.right;
+      });
+      expect(fits).toBe(true);
+      await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`org-preview-${theme}-${width}.png`));
+    }
+  }
+  await preview.getByTestId('salesforce-agentforce-preview-start').click();
+  await expect(preview.getByRole('log')).toContainText('Hello! I’m your support concierge.');
+  await expect(picker).toBeDisabled();
+  await preview.getByTestId('salesforce-agentforce-preview-input').fill('Long response');
+  await preview.getByTestId('salesforce-agentforce-preview-send').click();
+  await expect(preview.getByRole('log')).toContainText('END_OF_RESPONSE');
+  await preview.getByTestId('salesforce-agentforce-preview-end').click();
+  await expect(picker).toBeEnabled();
+  await preview.getByTestId('salesforce-agentforce-preview-start').click();
+  await expect(preview.getByRole('log')).not.toContainText('END_OF_RESPONSE');
+  await preview.getByTestId('salesforce-agentforce-preview-end').click();
+  const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, any> }>;
+  const starts = requests.filter(row => row.path.endsWith('/preview/sessions'));
+  expect(starts).toHaveLength(2);
+  expect(starts.every(row => row.body.enableSimulationMode === true && row.body.bypassUser === false)).toBe(true);
+  expect(existsSync(join(home, 'agent-cli.jsonl'))).toBe(false);
   expect(errors).toEqual([]);
 });
 

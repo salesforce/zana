@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { callPluginRpc, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
 import { AGENTFORCE_PLAYGROUND_ACTION, agentforcePanelParams, parseAgentforcePanelApiName, parseAgentforcePanelPath, parseAgentforcePanelRun } from './agentforce-panel-params.js';
 import { queueAgentScriptOpen } from './agent-script-open.js';
 import { openInStudioWindow } from './studio-window-route.js';
@@ -22,16 +23,11 @@ import { orgSessionLabel } from '../../lib/org-session.js';
 import type { PublicOrgView } from '../../lib/types.js';
 import { AGENTFORCE_STUDIO_STYLES } from './agentforce-studio-styles.js';
 import { Bot } from './components/icons.js';
+import { callOrgPreview, type PreviewResult } from './org-preview-session.js';
+import { ORG_PREVIEW_STYLES } from './org-preview-styles.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
-
-type PreviewResult = {
-  ok?: boolean;
-  error?: string;
-  code?: string;
-  data?: { sessionId?: string | null; response?: string; utterance?: string };
-};
 
 function rpcProject(projectId: string | null | undefined, extra?: Record<string, unknown>) {
   return projectId ? { projectId, ...extra } : extra ?? {};
@@ -66,9 +62,9 @@ export function AgentforcePreviewPanel(props: {
   // Another card can retarget an open panel; follow it.
   useEffect(() => { setRun(parseAgentforcePanelRun(props.params)); }, [runKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const apiName = parseAgentforcePanelApiName(props.params);
-  const targetPath = path || (apiName ? null : files[0]?.path ?? null);
+  const targetPath = path || files.find(file => file.apiName === apiName)?.path || (apiName ? null : files[0]?.path ?? null);
   const hasTarget = Boolean(targetPath || apiName);
-  const lifecycle = useRef<{ generation: number; release?: () => void }>({ generation: 0 });
+  const lifecycle = useRef<{ generation: number; simulated?: boolean; release?: () => void }>({ generation: 0 });
   useEffect(() => () => {
     lifecycle.current.generation++;
     lifecycle.current.release?.();
@@ -98,33 +94,35 @@ export function AgentforcePreviewPanel(props: {
   }, [pluginId, projectId, refreshOrg]);
 
   const callPreview = useCallback(
-    async (action: 'agentPreview.start' | 'agentPreview.send' | 'agentPreview.end', extra?: Record<string, unknown>) => {
+    async (action: 'start' | 'send' | 'end', extra?: Record<string, unknown>): Promise<PreviewResult> => {
       setBusy(true);
       setError(null);
       const generation = lifecycle.current.generation;
+      const simulated = action === 'start' ? mode === 'simulate' && Boolean(targetPath) : Boolean(lifecycle.current.simulated);
       const args = rpcProject(projectId, {
         threadId, orgAlias: org?.alias ?? pinnedOrg,
-        path: targetPath || undefined, apiName: apiName || undefined,
+        path: targetPath || undefined, apiName: targetPath ? undefined : apiName || undefined,
         live: mode === 'live', ...extra
       });
       try {
-        const result = (await callPluginRpc(
-          pluginId,
-          action,
-          args
-        )) as PreviewResult;
-        if (result?.ok && action === 'agentPreview.start' && result.data?.sessionId) {
+        const result = await callOrgPreview(pluginId, action, args, simulated, () => generation === lifecycle.current.generation);
+        if (result?.ok && action === 'start' && result.data?.sessionId) {
           const sessionId = result.data.sessionId;
-          const release = () => { void callPluginRpc(pluginId, 'agentPreview.end', { ...args, sessionId }).catch(() => undefined); };
+          const release = () => { void callOrgPreview(pluginId, 'end', { ...args, sessionId }, simulated).catch(() => undefined); };
           // A tab can close while start is in flight. Release that late session too.
           if (generation !== lifecycle.current.generation) release();
-          else lifecycle.current.release = release;
+          else { lifecycle.current.release = release; lifecycle.current.simulated = simulated; }
         }
         if (generation !== lifecycle.current.generation) return { ok: false };
-        if (result?.ok && action === 'agentPreview.end') lifecycle.current.release = undefined;
+        if (result?.ok && action === 'end') lifecycle.current.release = undefined;
         if (!result?.ok) {
           setError(previewErrorMessage(result));
           return result;
+        }
+        if (result?.ok && action === 'start' && !result.data?.sessionId) {
+          const invalid = { ok: false, error: 'The preview returned no session.' };
+          setError(invalid.error);
+          return invalid;
         }
         return result;
       } catch (err) {
@@ -140,23 +138,25 @@ export function AgentforcePreviewPanel(props: {
 
   const start = useCallback(async () => {
     setRun(null);
-    const result = await callPreview('agentPreview.start');
+    const result = await callPreview('start');
     const nextSession = result?.data?.sessionId ?? null;
     if (result?.ok && nextSession) {
       setSessionId(nextSession);
-      setTurns((current) =>
-        appendPreviewTurn(current, {
+      setTurns(() => {
+        const started = appendPreviewTurn([], {
           id: `${Date.now()}-start`,
           role: 'system',
           text: mode === 'live' ? 'Live preview started.' : 'Simulate preview started.'
-        })
-      );
+        });
+        const welcome = result.data?.response?.trim();
+        return welcome ? appendPreviewTurn(started, { id: `${Date.now()}-welcome`, role: 'agent', text: welcome }) : started;
+      });
     }
   }, [callPreview, mode]);
 
   const end = useCallback(async () => {
     if (!sessionId) return;
-    const result = await callPreview('agentPreview.end', { sessionId });
+    const result = await callPreview('end', { sessionId });
     if (result?.ok) {
       setSessionId(null);
       setTurns((current) =>
@@ -169,10 +169,10 @@ export function AgentforcePreviewPanel(props: {
     async (event?: FormEvent) => {
       event?.preventDefault();
       const text = utterance.trim();
-      if (!sessionId || !text) return;
+      if (busy || !sessionId || !text) return;
       setUtterance('');
       setTurns((current) => appendPreviewTurn(current, { id: `${Date.now()}-user`, role: 'user', text }));
-      const result = await callPreview('agentPreview.send', { sessionId, utterance: text });
+      const result = await callPreview('send', { sessionId, utterance: text });
       const response = result?.data?.response?.trim();
       if (result?.ok && response) {
         setTurns((current) =>
@@ -180,7 +180,7 @@ export function AgentforcePreviewPanel(props: {
         );
       }
     },
-    [callPreview, sessionId, utterance]
+    [busy, callPreview, sessionId, utterance]
   );
 
   const fileLabel = useMemo(() => {
@@ -189,64 +189,63 @@ export function AgentforcePreviewPanel(props: {
   }, [apiName, targetPath]);
 
   return (
-    <div className="sf-as" style={PANEL_ROOT} data-testid="salesforce-agentforce-preview">
+    <div className="sf-as sf-org-preview" style={PANEL_ROOT} data-testid="salesforce-agentforce-preview">
       <style>{AGENTFORCE_PANEL_STYLES}</style>
       <style>{AGENTFORCE_STUDIO_STYLES}</style>
+      <style>{ORG_PREVIEW_STYLES}</style>
       <header className="sf-as-header">
-        <span className="af-brand-mark"><Bot /></span><span className="sf-as-brand">Org preview</span>
-        <label className="sf-as-crumb">
-          <span className="sf-as-crumb-seg">{fileLabel}</span>
-          <select
-            aria-label="Agentforce preview file"
+        <div className="sf-org-preview-identity">
+          <span className="af-brand-mark"><Bot /></span><span className="sf-as-brand">Org preview</span>
+          <PopoverPicklist
+            ariaLabel="Agentforce preview file"
+            className="sf-org-preview-picker"
             value={targetPath ?? ''}
-            disabled={Boolean(sessionId)}
-            onChange={(event) => setPath(event.target.value || null)}
+            disabled={busy || Boolean(sessionId)}
+            placeholder={fileLabel}
+            title={targetPath ?? apiName ?? undefined}
+            searchPlaceholder="Search agents…"
+            emptyHint="No matching agents"
+            minWidth={300}
+            options={files.map(file => ({ value: file.path, label: file.apiName, description: file.path }))}
+            onChange={setPath}
+          />
+        </div>
+        <div className="sf-org-preview-controls">
+          <div className="sf-org-preview-org" data-testid="salesforce-preview-org">
+            {pinnedOrg ? <span className="sf-badge" title={orgSessionLabel(org) ?? pinnedOrg}>{pinnedOrg}</span> : <OrgPicker pluginId={pluginId} projectId={projectId} compact appearance="toolbar" disabled={busy || Boolean(sessionId)} onSelect={() => void refreshOrg()} />}
+          </div>
+          <select
+            className="sf-as-dialect"
+            aria-label="Agentforce preview mode"
+            value={mode}
+            disabled={busy || Boolean(sessionId)}
+            onChange={(event) => setMode(normalizePreviewMode(event.target.value))}
           >
-            {files.map((file) => (
-              <option key={file.path} value={file.path}>
-                {file.apiName}
-              </option>
-            ))}
+            <option value="simulate">Simulate</option>
+            <option value="live">Live</option>
           </select>
-        </label>
-        <span className="sf-as-spacer" />
-        {pinnedOrg ? <span className="sf-badge">{pinnedOrg}</span> : <OrgPicker pluginId={pluginId} projectId={projectId} compact disabled={Boolean(sessionId)} onSelect={() => void refreshOrg()} />}
-        {orgSessionLabel(org) ? (
-          <span className="sf-as-crumb-seg" data-testid="salesforce-preview-org">
-            {orgSessionLabel(org)}
-          </span>
-        ) : null}
-        <select
-          className="sf-as-dialect"
-          aria-label="Agentforce preview mode"
-          value={mode}
-          disabled={Boolean(sessionId)}
-          onChange={(event) => setMode(normalizePreviewMode(event.target.value))}
-        >
-          <option value="simulate">Simulate</option>
-          <option value="live">Live</option>
-        </select>
-        {sessionId ? (
-          <button
-            type="button"
-            className="sf-as-save"
-            data-testid="salesforce-agentforce-preview-end"
-            disabled={previewEndDisabled(busy, sessionId)}
-            onClick={() => void end()}
-          >
-            End
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="sf-as-save is-dirty"
-            data-testid="salesforce-agentforce-preview-start"
-            disabled={previewStartDisabled(busy, hasTarget, sessionId)}
-            onClick={() => void start()}
-          >
-            {busy ? 'Starting…' : 'Start'}
-          </button>
-        )}
+          {sessionId ? (
+            <button
+              type="button"
+              className="sf-as-save"
+              data-testid="salesforce-agentforce-preview-end"
+              disabled={previewEndDisabled(busy, sessionId)}
+              onClick={() => void end()}
+            >
+              End
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="sf-as-save is-dirty"
+              data-testid="salesforce-agentforce-preview-start"
+              disabled={previewStartDisabled(busy, hasTarget, sessionId)}
+              onClick={() => void start()}
+            >
+              {busy ? 'Starting…' : 'Start'}
+            </button>
+          )}
+        </div>
       </header>
       {error ? (
         <div className="sf-as-banner is-error" data-testid="salesforce-agentforce-preview-error">
