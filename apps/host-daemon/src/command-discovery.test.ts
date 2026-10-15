@@ -1206,6 +1206,16 @@ it('preserves author metadata and reports oversized manifests without returning 
  expect(diagnostics.join(' ')).toContain('Manifest too large');
 });
 
+it('reports invalid frontmatter as a single-line diagnostic and skips the skill', async () => {
+ const rootPath = path.join(tempRoot, 'broken-frontmatter');
+ await writeFileEnsuringDir(path.join(rootPath, 'valid', 'SKILL.md'), '---\nname: valid\ndescription: Fine\n---\nBody');
+ await writeFileEnsuringDir(path.join(rootPath, 'broken', 'SKILL.md'), '---\nname: broken\ndescription: Covers things. CRITICAL: this colon breaks YAML\n---\nBody');
+ const diagnostics: string[] = [];
+ const records = await scanProviderCommands({ roots: [{ rootPath, namePrefix: '', source: 'skill', origin: 'user', shape: 'skill' }], diagnostics });
+ expect(records.map((record) => record.name)).toEqual(['valid']);
+ expect(diagnostics).toEqual([expect.stringMatching(/^Invalid frontmatter in .*broken[\\/]SKILL\.md \(line 3\): bad indentation of a mapping entry$/)]);
+});
+
 it('confines resolved single directories and files through symlinked parents', async () => {
  const fixture = await makeWorkspaceFixture();
  const external = path.join(fixture.homeDir, 'external');

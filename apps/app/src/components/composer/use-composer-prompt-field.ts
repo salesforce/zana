@@ -198,10 +198,9 @@ export function useComposerPromptField({
       .catch(() => []);
     const fromNative = projectId && slashCatalog.providerId
       ? nativeCapabilities({ projectId, providerId: slashCatalog.providerId, hostId, environmentId })
-        .then(body => {
-          if (!cancelled && body.diagnostics.length) onErrorRef.current?.(body.diagnostics.join(' '));
-          return body.commands;
-        })
+        // Discovery diagnostics (e.g. a skill with broken frontmatter) are non-fatal and
+        // listed in the Skills view; only a failed discovery request is a composer error.
+        .then(body => body.commands)
         .catch(error => {
           if (!cancelled) onErrorRef.current?.(error instanceof Error ? error.message : String(error));
           return [];

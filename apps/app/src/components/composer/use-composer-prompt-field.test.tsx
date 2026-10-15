@@ -136,15 +136,15 @@ describe('useComposerPromptField', () => {
     expect(suggestionState.commands).toContainEqual(COMPOSER_TERMINAL_COMMAND);
   });
 
-  it('shows partial discovery diagnostics alongside available suggestions', async () => {
-    native.mockResolvedValue({ commands: [{ name: '/review', description: 'Review' }], skills: [], diagnostics: ['Discovery reached its limit'] });
+  it('keeps partial discovery diagnostics out of the composer error while showing suggestions', async () => {
+    native.mockResolvedValue({ commands: [{ name: '/review', description: 'Review' }], skills: [], diagnostics: ['Claude Code: Invalid frontmatter in /skills/broken/SKILL.md (line 3): bad indentation of a mapping entry'] });
     const onError = vi.fn();
     renderHook(() => useComposerPromptField({
       placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [], onError,
       slashCatalog: { kind: 'thread', providerId: 'claude-code' }, onSubmit: vi.fn()
     }));
-    await waitFor(() => expect(onError).toHaveBeenCalledWith('Discovery reached its limit'));
     await waitFor(() => expect(suggestionState.commands).toContainEqual({ name: '/review', description: 'Review' }));
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it('reports non-Error discovery failures without losing local commands', async () => {
