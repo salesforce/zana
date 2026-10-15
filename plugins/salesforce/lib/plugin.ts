@@ -63,7 +63,7 @@ import { formatDoctor } from './doctor.js';
 import { createSalesforceSdk } from './sdk.js';
 import { WorkbenchService } from './workbench-service.js';
 import { ProjectContexts, ProjectContextError } from './project-context.js';
-import type { SalesforceSdk } from './sdk-contract.js';
+import type { ExecSfOptions, SalesforceSdk } from './sdk-contract.js';
 import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-project.js';
 import { generatedProjectPath, parseGenerateInput } from './project-generate.js';
 import { connectDxProject } from './project-connect.js';
@@ -1532,6 +1532,26 @@ async function runUiCompile(
   }
 }
 
+/**
+ * The builder opens a bundle by `projectId` (AiAuthoringBundleDef, 1bY) and `projectVersionId`
+ * (AiAuthoringBundleDefVer, 1bZ); the CLI's `projectName` route does not. listMetadata gives the
+ * version id and NextGen Authoring (v66.0+) maps it to its bundle. Null lets the CLI route by name.
+ */
+async function builderProjectPath(sdk: SalesforceSdk, alias: string, apiName: string, opts: ExecSfOptions): Promise<string | null> {
+  try {
+    const listed = parseSfJson((await sdk.execSf(['org', 'list', 'metadata', '--metadata-type', 'AiAuthoringBundle', '--target-org', alias, '--json'], opts)).stdout);
+    const entries = Array.isArray(listed.result) ? listed.result as Array<{ fullName?: unknown; id?: unknown }> : [];
+    const versionId = entries.find(entry => entry.fullName === apiName)?.id;
+    if (typeof versionId !== 'string' || !/^1bZ[A-Za-z0-9]{12,15}$/.test(versionId)) return null;
+    const { response } = await sdk.request(`/nextgen-authoring/bundle-versions/${versionId}`, { method: 'GET', apiVersion: '66.0' });
+    const bundleId = response.status < 400 && response.json && typeof response.json === 'object' ? (response.json as { bundleId?: unknown }).bundleId : null;
+    if (typeof bundleId !== 'string' || !/^1bY[A-Za-z0-9]{12,15}$/.test(bundleId)) return null;
+    return `AgentAuthoring/agentAuthoringBuilder.app#/project?${new URLSearchParams({ projectId: bundleId, projectVersionId: versionId })}`;
+  } catch {
+    return null;
+  }
+}
+
 /** The Studio "Open in Agentforce Builder" button: the CLI opens the org's builder for this bundle in Chrome. */
 async function runOpenInBuilder(
   args: unknown,
@@ -1557,9 +1577,13 @@ async function runOpenInBuilder(
         ? `${org.alias} is a ${org.kind} org. Open it beside a thread to approve, or pick a sandbox.`
         : `Operator ${mediated.reason} opening Agentforce Builder.`);
     }
+    const opts = agentCliOpts(loaded.projectRoot);
+    const builderPath = await builderProjectPath(sdk, org.alias, apiName, opts);
     const result = await sdk.execSf(
-      ['org', 'open', 'agent', '--json', '--target-org', org.alias, '--authoring-bundle', apiName, '--browser', 'chrome'],
-      agentCliOpts(loaded.projectRoot)
+      builderPath
+        ? ['org', 'open', '--json', '--target-org', org.alias, '--path', builderPath, '--browser', 'chrome']
+        : ['org', 'open', 'agent', '--json', '--target-org', org.alias, '--authoring-bundle', apiName, '--browser', 'chrome'],
+      opts
     );
     const parsed = parseSfJson(result.stdout);
     // The CLI's JSON carries a frontdoor URL with a session id: it never leaves this process.

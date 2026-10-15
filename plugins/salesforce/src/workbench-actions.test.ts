@@ -167,6 +167,37 @@ it('opens the saved agent in Agentforce Builder through the CLI without returnin
   exec.mockImplementation(async (args, opts) => args[1] === 'open' ? { code: 1, stderr: '', stdout: '' } : base(args, opts));
   expect(await open()).toMatchObject({ ok: false, code: 'open_failed', error: 'Could not open Help in Agentforce Builder.' });
 });
+it('opens Agentforce Builder by project and version id, falling back to the bundle name', async () => {
+  const { action, harness, exec, request } = await fixture();
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  const open = () => harness.callRpc('agentBuilder.open', { projectId: 'p', path: draft.file.path }) as Promise<any>;
+  const lastOpen = () => exec.mock.calls.filter(([args]) => args[0] === 'org' && args[1] === 'open').at(-1)![0];
+  const base = exec.getMockImplementation()!;
+  let listed: unknown = [{ fullName: 'Help_1', id: '1bZdw0000000aaaEAA' }, { fullName: 'Help', id: '1bZdw0000000junEAA' }];
+  exec.mockImplementation(async (args, opts) => args[1] === 'list' && args.includes('AiAuthoringBundle')
+    ? { code: 0, stderr: '', stdout: JSON.stringify({ status: 0, result: listed }) }
+    : base(args, opts));
+  const baseRequest = request.getMockImplementation()!;
+  let bundle: { status: number; json: unknown } = { status: 200, json: { apiName: 'Help', bundleId: '1bYdw00000004TREAY', id: '1bZdw0000000junEAA' } };
+  request.mockImplementation(async (org, req) => req.path.startsWith('/nextgen-authoring/') ? { ...bundle, text: '{}' } : baseRequest(org, req));
+
+  expect(await open()).toMatchObject({ ok: true });
+  expect(request.mock.calls.find(([, req]) => req.path.startsWith('/nextgen-authoring/'))![1]).toMatchObject({ path: '/nextgen-authoring/bundle-versions/1bZdw0000000junEAA', apiVersion: '66.0' });
+  expect(lastOpen()).toEqual(['org', 'open', '--json', '--target-org', 'dev', '--path', 'AgentAuthoring/agentAuthoringBuilder.app#/project?projectId=1bYdw00000004TREAY&projectVersionId=1bZdw0000000junEAA', '--browser', 'chrome']);
+
+  const byName = ['org', 'open', 'agent', '--json', '--target-org', 'dev', '--authoring-bundle', 'Help', '--browser', 'chrome'];
+  bundle = { status: 404, json: [{ errorCode: 'NOT_FOUND' }] };
+  expect(await open()).toMatchObject({ ok: true }); expect(lastOpen()).toEqual(byName);
+  bundle = { status: 200, json: { bundleId: 'not-an-id' } };
+  expect(await open()).toMatchObject({ ok: true }); expect(lastOpen()).toEqual(byName);
+  listed = [{ fullName: 'Help', id: '../bad' }];
+  expect(await open()).toMatchObject({ ok: true }); expect(lastOpen()).toEqual(byName);
+  listed = null;
+  expect(await open()).toMatchObject({ ok: true }); expect(lastOpen()).toEqual(byName);
+  listed = [{ fullName: 'Help', id: '1bZdw0000000junEAA' }];
+  request.mockImplementation(async (org, req) => { if (req.path.startsWith('/nextgen-authoring/')) throw new Error('offline'); return baseRequest(org, req); });
+  expect(await open()).toMatchObject({ ok: true }); expect(lastOpen()).toEqual(byName);
+});
 it('explains a preview refused for lack of a thread instead of naming the internal reason', async () => {
   const { action, harness } = await fixture(true);
   const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
