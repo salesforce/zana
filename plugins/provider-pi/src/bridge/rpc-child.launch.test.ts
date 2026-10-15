@@ -91,6 +91,38 @@ describe("resolvePiLaunch", () => {
     expect(launch).toEqual({ command: "pi", args: [] });
     expect(stderrSpy).not.toHaveBeenCalled();
   });
+
+  it("memoizes resolution keyed by PATH within TTL", () => {
+    const npmDir = path.join(root, "npm");
+    const nodeDir = path.join(root, "node");
+    writeFile(path.join(npmDir, "pi.cmd"));
+    writeFile(path.join(nodeDir, "node.exe"));
+    const pkgDir = path.join(
+      npmDir,
+      "node_modules",
+      "@earendil-works",
+      "pi-coding-agent",
+    );
+    writeFile(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ bin: "dist/cli.js" }),
+    );
+    const cliFile = writeFile(path.join(pkgDir, "dist", "cli.js"), "// cli");
+
+    const env = { PATH: `${npmDir}${path.delimiter}${nodeDir}` };
+    const first = resolvePiLaunch(env, "win32");
+    expect(first.command).toBe(path.join(nodeDir, "node.exe"));
+
+    // If the file is deleted while cached, memoization returns the cached launch
+    rmSync(cliFile);
+    const second = resolvePiLaunch(env, "win32");
+    expect(second).toBe(first);
+
+    // After reset, it re-resolves and notices the missing file
+    resetPiLaunchReportsForTests();
+    const third = resolvePiLaunch(env, "win32");
+    expect(third).toEqual({ command: "pi", args: [] });
+  });
 });
 
 describe("withPiLaunchEnv", () => {

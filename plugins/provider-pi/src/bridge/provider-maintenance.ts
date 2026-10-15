@@ -133,6 +133,35 @@ async function piGlobalInstallCommand(
 }
 
 /**
+ * Detects whether an executable is part of a managed Pi installation (~/.pi/agent).
+ * On macOS and Linux, the install script puts the launcher at ~/.pi/agent/bin/pi.
+ */
+export async function isManagedPi(
+  executablePath: string | null,
+): Promise<boolean> {
+  if (executablePath === null) return false;
+  const managedRoot = process.env.PI_MANAGED_INSTALL_ROOT
+    ? path.resolve(process.env.PI_MANAGED_INSTALL_ROOT)
+    : path.join(os.homedir(), ".pi", "agent");
+  const normalized = path.resolve(executablePath);
+  if (pathIsInside(normalized, managedRoot)) return true;
+  const real = await realpath(normalized).catch(() => null);
+  if (real !== null && pathIsInside(real, managedRoot)) return true;
+  const delegatedTarget = await shellExecTarget(executablePath);
+  if (delegatedTarget !== null) {
+    if (pathIsInside(path.resolve(delegatedTarget), managedRoot)) return true;
+    const resolvedDelegated = await realpath(delegatedTarget).catch(() => null);
+    if (
+      resolvedDelegated !== null &&
+      pathIsInside(resolvedDelegated, managedRoot)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Pi's own installer (~/.pi/agent) updates itself; offering `npm i -g` would
  * install a second copy that the managed shim keeps shadowing, so "Update
  * available" would never clear.
@@ -152,7 +181,9 @@ async function piInstallCommand(
   launch: PiLaunchConfig,
   executablePath: string | null,
 ): Promise<ProviderInstallationCommand> {
-  return launch.installKind === "managed"
+  const isManaged =
+    launch.installKind === "managed" || (await isManagedPi(executablePath));
+  return isManaged
     ? managedSelfUpdateCommand(launch)
     : piGlobalInstallCommand(executablePath);
 }

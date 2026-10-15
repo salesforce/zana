@@ -87,23 +87,51 @@ const DEFAULT_PI_LAUNCH: PiLaunchConfig = { command: "pi", args: [] };
 /** Fallback messages already written, so repeated status polls log once. */
 const reportedWindowsFallbacks = new Set<string>();
 
+const WINDOWS_RESOLVE_TTL_MS = 10_000;
+
+interface CachedWindowsResolution {
+  expiresAt: number;
+  launch: PiLaunchConfig;
+}
+
+const windowsResolveMemo = new Map<string, CachedWindowsResolution>();
+
+export function resetPiLaunchMemoForTests(): void {
+  windowsResolveMemo.clear();
+}
+
 function resolveDefaultPiLaunch(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
 ): PiLaunchConfig {
   if (platform !== "win32") return { ...DEFAULT_PI_LAUNCH };
-  const resolution = resolveWindowsPiInstallation({
-    pathEnv: env.PATH ?? env.Path,
-  });
-  if (resolution.kind === "resolved") return resolution.launch;
-  if (isNoteworthyFallback(resolution.reason)) {
-    const message = `pi bridge: using pi shim, windows resolve skipped (${resolution.reason}): ${resolution.detail}\n`;
-    if (!reportedWindowsFallbacks.has(message)) {
-      reportedWindowsFallbacks.add(message);
-      process.stderr.write(message);
-    }
+  const pathEnv = env.PATH ?? env.Path ?? "";
+  const now = Date.now();
+  const cached = windowsResolveMemo.get(pathEnv);
+  if (cached !== undefined && cached.expiresAt > now) {
+    return cached.launch;
   }
-  return { ...DEFAULT_PI_LAUNCH };
+  const resolution = resolveWindowsPiInstallation({
+    pathEnv,
+  });
+  let launch: PiLaunchConfig;
+  if (resolution.kind === "resolved") {
+    launch = resolution.launch;
+  } else {
+    if (isNoteworthyFallback(resolution.reason)) {
+      const message = `pi bridge: using pi shim, windows resolve skipped (${resolution.reason}): ${resolution.detail}\n`;
+      if (!reportedWindowsFallbacks.has(message)) {
+        reportedWindowsFallbacks.add(message);
+        process.stderr.write(message);
+      }
+    }
+    launch = { ...DEFAULT_PI_LAUNCH };
+  }
+  windowsResolveMemo.set(pathEnv, {
+    expiresAt: now + WINDOWS_RESOLVE_TTL_MS,
+    launch,
+  });
+  return launch;
 }
 
 export function resolvePiLaunch(
@@ -142,6 +170,7 @@ export function withPiLaunchEnv(
 
 export function resetPiLaunchReportsForTests(): void {
   reportedWindowsFallbacks.clear();
+  windowsResolveMemo.clear();
 }
 
 export function buildPiChildEnv(

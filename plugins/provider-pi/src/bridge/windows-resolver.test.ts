@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   absolutePathEntries,
   isNoteworthyFallback,
@@ -39,6 +39,27 @@ function npmPrefix(name: string, bin: unknown = { pi: "dist/cli.js" }): {
 } {
   const dir = path.join(root, name);
   const packageDir = path.join(dir, ...PACKAGE_SEGMENTS);
+  writeFile(path.join(dir, "pi.cmd"), "@ECHO off\r\n");
+  writePackage(packageDir, bin, "dist/cli.js");
+  return { dir, packageDir };
+}
+
+/** `<root>/<name>/pi.cmd` with package under `global/<version>/node_modules/...`. */
+function pnpmPrefix(
+  name: string,
+  globalVersion = "5",
+  bin: unknown = { pi: "dist/cli.js" },
+): {
+  dir: string;
+  packageDir: string;
+} {
+  const dir = path.join(root, name);
+  const packageDir = path.join(
+    dir,
+    "global",
+    globalVersion,
+    ...PACKAGE_SEGMENTS,
+  );
   writeFile(path.join(dir, "pi.cmd"), "@ECHO off\r\n");
   writePackage(packageDir, bin, "dist/cli.js");
   return { dir, packageDir };
@@ -247,6 +268,25 @@ describe("resolveWindowsPiInstallation", () => {
     },
   );
 
+  it("resolves pnpm global layout under PNPM_HOME/global/<version>/node_modules", () => {
+    const pnpm = pnpmPrefix("pnpm-home", "5");
+    const node = nodeDir();
+
+    const resolution = resolveWindowsPiInstallation({
+      pathEnv: pathOf(pnpm.dir, node),
+    });
+
+    expect(resolution).toEqual({
+      kind: "resolved",
+      launch: {
+        command: path.join(node, "node.exe"),
+        args: [path.join(pnpm.packageDir, "dist", "cli.js")],
+        displayExecutablePath: path.join(pnpm.dir, "pi.cmd"),
+        installKind: "pnpm",
+      },
+    });
+  });
+
   it("falls back to the shim when no node.exe exists", () => {
     const prefix = npmPrefix("npm");
     expectFallback(resolveWindowsPiInstallation({ pathEnv: prefix.dir }), "node-not-found");
@@ -254,15 +294,19 @@ describe("resolveWindowsPiInstallation", () => {
 
   it("degrades unexpected I/O errors to a fallback", () => {
     const managed = managedInstall();
-    // A directory where the version file is expected makes readFileSync throw
-    // a plain (non-fallback) error after the layout check passed.
+    // A directory where the version file is expected passes the layout existence
+    // check but makes readFileSync throw EISDIR/EPERM, exercising the catch block.
     rmSync(path.join(managed.installRoot, "current-version"));
     mkdirSync(path.join(managed.installRoot, "current-version"));
     writeFile(path.join(managed.installRoot, "x"));
     const resolution = resolveWindowsPiInstallation({
       pathEnv: pathOf(managed.binDir, nodeDir()),
     });
-    expect(resolution.kind).toBe("fallback");
+    expect(resolution).toEqual({
+      kind: "fallback",
+      reason: "unrecognized-layout",
+      detail: expect.stringMatching(/EISDIR|EPERM|read/i),
+    });
   });
 });
 

@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -23,7 +23,7 @@ import path from "node:path";
  * Anything unrecognised falls back to the plain shim.
  */
 
-export type WindowsPiInstallKind = "managed" | "npm";
+export type WindowsPiInstallKind = "managed" | "npm" | "pnpm";
 
 export interface ResolvedWindowsPi {
   /** Absolute path to a real `node.exe`. */
@@ -212,10 +212,47 @@ function resolveManagedInstall(shimDirectory: string): ResolvedInstall {
   };
 }
 
+function resolvePnpmGlobalInstall(shimDirectory: string): ResolvedInstall | null {
+  const globalDir = path.join(shimDirectory, "global");
+  if (!isDirectory(globalDir)) return null;
+  let entries: string[];
+  try {
+    entries = readdirSync(globalDir);
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    const candidate = path.join(
+      globalDir,
+      entry,
+      "node_modules",
+      ...PI_PACKAGE_SEGMENTS,
+    );
+    if (isDirectory(candidate)) {
+      return {
+        installKind: "pnpm",
+        cliPath: resolveContainedCli(candidate),
+      };
+    }
+  }
+  const directCandidate = path.join(
+    globalDir,
+    "node_modules",
+    ...PI_PACKAGE_SEGMENTS,
+  );
+  if (isDirectory(directCandidate)) {
+    return {
+      installKind: "pnpm",
+      cliPath: resolveContainedCli(directCandidate),
+    };
+  }
+  return null;
+}
+
 function resolveInstallForShim(shimDirectory: string): ResolvedInstall {
   const isManaged =
     isFile(path.join(shimDirectory, "pi-launcher.js")) &&
-    isFile(
+    existsSync(
       path.join(path.dirname(shimDirectory), "install", "current-version"),
     );
   if (isManaged) return resolveManagedInstall(shimDirectory);
@@ -228,6 +265,10 @@ function resolveInstallForShim(shimDirectory: string): ResolvedInstall {
   if (isDirectory(npmPackageDir)) {
     return { installKind: "npm", cliPath: resolveContainedCli(npmPackageDir) };
   }
+
+  const pnpmInstall = resolvePnpmGlobalInstall(shimDirectory);
+  if (pnpmInstall !== null) return pnpmInstall;
+
   throw new FallbackError("unrecognized-layout", shimDirectory);
 }
 
