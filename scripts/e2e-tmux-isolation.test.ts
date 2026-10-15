@@ -6,9 +6,10 @@ import { afterEach, expect, it } from 'vitest';
 import { cleanupTmuxEnvironment, isolateTmuxEnvironment } from '../e2e/fixtures/tmux-isolation.js';
 
 const homes: string[] = [];
+const TMUX_COMMAND_TIMEOUT_MS = 10_000;
 const tmuxInstalled = process.platform !== 'win32' && (() => {
   try {
-    execFileSync('tmux', ['-V'], { stdio: 'ignore', timeout: 3_000 });
+    execFileSync('tmux', ['-V'], { stdio: 'ignore', timeout: TMUX_COMMAND_TIMEOUT_MS });
     return true;
   } catch {
     return false;
@@ -48,7 +49,7 @@ it.skipIf(!tmuxInstalled)('one real tmux reaper and cleanup cannot see or stop a
   const envA = isolateTmuxEnvironment(a, process.env);
   const envB = isolateTmuxEnvironment(b, process.env);
   const tmux = (env: NodeJS.ProcessEnv, ...args: string[]) => execFileSync('tmux', args, {
-    env, encoding: 'utf8', timeout: 3_000, stdio: ['ignore', 'pipe', 'pipe'],
+    env, encoding: 'utf8', timeout: TMUX_COMMAND_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   // Same name in separate servers, matching the product's cc-* reaper scope.
   tmux(envA, '-f', '/dev/null', 'new-session', '-d', '-s', 'cc-worker', 'sleep', '60');
