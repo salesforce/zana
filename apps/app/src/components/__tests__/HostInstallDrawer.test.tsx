@@ -98,6 +98,23 @@ describe('HostInstallDrawerView', () => {
     expect(screen.getByRole('alert').textContent).toBe('Permission denied');
   });
 
+  it('stays open after success while the user has the log expanded, and auto-closes again once reopened', () => {
+    vi.useFakeTimers();
+    useUi.getState().openHostInstallDrawer({ kind: 'install', target: 'remote-box' });
+    useUi.setState((s) => ({ hostInstallDrawer: { ...s.hostInstallDrawer, logs: ['connecting'], stages: [{ stage: 'ssh', status: 'running' }] } }));
+    render(<HostInstallDrawer />);
+    act(() => { screen.getByTestId('host-install-log-toggle').click(); });
+    act(() => useUi.getState().finishHostInstallDrawer({ ok: true }));
+    act(() => vi.advanceTimersByTime(HOST_INSTALL_SUCCESS_CLOSE_MS));
+    expect(screen.getByTestId('host-install-log').textContent).toContain('connecting');
+    act(() => { screen.getByTestId('host-install-log-toggle').click(); });
+    act(() => useUi.getState().setHostInstallDrawerOpen(false));
+    act(() => useUi.getState().openHostInstallDrawer({ kind: 'install', target: 'remote-box' }));
+    act(() => useUi.getState().finishHostInstallDrawer({ ok: true }));
+    act(() => vi.advanceTimersByTime(HOST_INSTALL_SUCCESS_CLOSE_MS));
+    expect(screen.queryByTestId('host-install-drawer')).toBeNull();
+  });
+
   it('cleans up the success timer if another installation starts or the panel unmounts', () => {
     vi.useFakeTimers();
     useUi.getState().openHostInstallDrawer({ kind: 'install', target: 'first' });

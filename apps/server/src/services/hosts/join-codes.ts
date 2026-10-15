@@ -16,9 +16,9 @@ interface JoinCodeRecord extends IssuedJoinCode {
 
 const HOST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export type JoinCodeRejection = 'missing' | 'expired' | 'redeemed' | 'invalidated' | 'host_mismatch';
+export type JoinCodeRejection = 'missing' | 'expired' | 'redeemed' | 'host_mismatch';
 
-/** `invalidated` is never reported: invalidation deletes the row, so it is indistinguishable from `missing`. */
+/** Invalidation deletes the row, so an invalidated code is reported as `missing`. */
 export type JoinCodeInspection =
   | { ok: true; hostId: string; expiresAt: number }
   | { ok: false; reason: JoinCodeRejection; hostId?: string };

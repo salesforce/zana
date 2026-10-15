@@ -135,6 +135,9 @@ export async function startEnrolledHostDaemon(options: {
     const instanceId = randomUUID();
     const existing = readHostAuth(options.dataDir);
     if (existing?.serverUrl && !sameEnrolledServer(existing.serverUrl, options.serverUrl)) throw new Error('Existing machine enrollment belongs to another server');
+    // Matched only through the loopback-port relaxation: the listener may be a
+    // different server, so a rejection must never re-enroll over this auth.
+    const loopbackRelaxedMatch = existing?.serverUrl !== undefined && trimUrl(existing.serverUrl) !== trimUrl(options.serverUrl);
     const existingUsable =
       existing && (!options.hostId || existing.hostId === options.hostId) && !(options.connectCredential && options.token && existing.enrollmentId !== createHash('sha256').update(options.token).digest('hex'));
     let hostId: string;
@@ -160,6 +163,7 @@ export async function startEnrolledHostDaemon(options: {
         // Transient connectivity must not consume a join code or rotate a
         // machine key. Only an explicit authentication rejection can re-enroll.
         if (!options.token || !(error instanceof HostAuthenticationError)) throw error;
+        if (loopbackRelaxedMatch) throw new Error('Existing machine enrollment belongs to another server');
         const minted = await mintCredentials({
           dataDir: options.dataDir,
           serverUrl: options.serverUrl,

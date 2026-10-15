@@ -205,8 +205,11 @@ export function updateHostSshIdentity(
   if (!existing || existing.destroyedAt) return null;
   const now = Date.now();
   // A machine's first SSH identity is the alias the user picked to pair it; name it
-  // that instead of the remote's OS hostname. Later identity changes keep the name.
-  const name = existing.sshHost ? existing.name : input.host;
+  // that instead of the remote's OS hostname. Later identity changes only rename a
+  // machine whose name was itself derived from the previous alias; a user-chosen
+  // name survives (including when a host id is reused for a new alias).
+  const nameFromAlias = !existing.sshHost || existing.name === existing.sshHost;
+  const name = nameFromAlias ? input.host : existing.name;
   db.sqlite.prepare(
     `UPDATE hosts SET name = ?, ssh_host = ?, ssh_user = ?, ssh_proxy_jump = ?, updated_at = ? WHERE id = ?`
   ).run(name, input.host, input.user ?? null, input.proxyJump ?? null, now, id);

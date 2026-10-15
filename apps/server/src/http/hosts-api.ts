@@ -248,7 +248,10 @@ export async function handleHostsApi(
     }
     emitHostsChanged(ctx);
     // A machine that just learned its SSH identity may now serve existing remote projects.
-    await reconcileRemoteProjectBindings(ctx).catch(() => 0);
+    await reconcileRemoteProjectBindings(ctx).catch((error: unknown) => {
+      console.warn(`[zcc] remote project reconcile failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return 0;
+    });
     sendJson(response, 200, toPublicHost(updated, connectedSet(ctx)));
     return true;
   }

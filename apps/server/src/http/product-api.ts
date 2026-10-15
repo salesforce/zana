@@ -545,7 +545,10 @@ export async function handleProductHttp(
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {
-      await reconcileRemoteProjectBindings(ctx).catch(() => 0);
+      await reconcileRemoteProjectBindings(ctx).catch((error: unknown) => {
+        console.warn(`[zcc] remote project reconcile failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        return 0;
+      });
       sendJson(response, 200, { projects: ctx.projects.list() });
       return true;
     }

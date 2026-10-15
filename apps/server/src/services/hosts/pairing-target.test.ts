@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PairingTargetSchema } from '@zana-ai/zcc-contracts/runtime';
 import type { PairingRelaySnapshot } from '../../http/pairing-session-url.js';
 import {
+  normalizedOrigin,
   resolvePairingTarget,
   resolvePairingTargetForContext,
   selectPairingTarget,
@@ -147,7 +148,7 @@ describe('resolvePairingTarget', () => {
 });
 
 describe('resolvePairingTargetForContext', () => {
-  it('reads the public URL from Settings and the relay from the context', async () => {
+  it('treats a Settings-only relay URL like a relay that is not configured', async () => {
     const ctx = {
       config: { getConfig: () => ({ publicAppUrl: 'https://settings.example.net/' }) },
       pairingRelay: relay()
@@ -156,12 +157,50 @@ describe('resolvePairingTargetForContext', () => {
     delete process.env.ZCC_APP_URL;
     try {
       await expect(resolvePairingTargetForContext(ctx as never)).resolves.toEqual({
-        kind: 'direct',
-        serverUrl: 'https://settings.example.net'
+        kind: 'tunnel',
+        reason: 'relay_unconfigured'
+      });
+      // Same through the explicit-source seam.
+      await expect(resolvePairingTargetForContext(ctx as never, { env: {}, bundledUrl: null })).resolves.toEqual({
+        kind: 'tunnel',
+        reason: 'relay_unconfigured'
       });
     } finally {
       if (previous !== undefined) process.env.ZCC_APP_URL = previous;
     }
+  });
+
+  it('keeps an env public URL that is not the relay as a direct target, ignoring Settings', async () => {
+    const ctx = {
+      config: { getConfig: () => ({ publicAppUrl: 'https://settings.example.net' }) },
+      pairingRelay: relay()
+    };
+    await expect(resolvePairingTargetForContext(ctx as never, {
+      env: { ZCC_APP_URL: 'https://zcc.corp.example/' },
+      bundledUrl: null
+    })).resolves.toEqual({ kind: 'direct', serverUrl: 'https://zcc.corp.example' });
+  });
+
+  it('joins through the relay when the env URL is the relay, whatever Settings says', async () => {
+    const ctx = {
+      config: { getConfig: () => ({ publicAppUrl: 'https://settings.example.net' }) },
+      pairingRelay: relay()
+    };
+    await expect(resolvePairingTargetForContext(ctx as never, {
+      env: { ZCC_APP_URL: RELAY },
+      bundledUrl: null
+    })).resolves.toEqual({ kind: 'relay', serverUrl: `${RELAY}/t/${SESSION}` });
+  });
+
+  it.each([
+    ['a loopback Settings URL', 'http://127.0.0.1:8780'],
+    ['an invalid Settings URL', 'not a url'],
+    ['a Settings URL with a path', 'https://settings.example.net/x']
+  ])('reports no public origin for %s', async (_name, publicAppUrl) => {
+    await expect(resolvePairingTargetForContext({
+      config: { getConfig: () => ({ publicAppUrl }) },
+      pairingRelay: undefined
+    } as never, { env: {}, bundledUrl: null })).resolves.toEqual({ kind: 'tunnel', reason: 'no_public_origin' });
   });
 
   it('tunnels when no public URL resolves', async () => {
@@ -175,5 +214,65 @@ describe('resolvePairingTargetForContext', () => {
     } finally {
       if (previous !== undefined) process.env.ZCC_APP_URL = previous;
     }
+  });
+});
+
+describe('normalizedOrigin', () => {
+  it.each([
+    ['userinfo', 'https://user@zcc.corp.example'],
+    ['user and password', 'https://user:pw@zcc.corp.example'],
+    ['empty userinfo', 'https://@zcc.corp.example'],
+    ['a path', 'https://zcc.corp.example/install'],
+    ['a shell-substitution path', 'https://zcc.corp.example/$(id)'],
+    ['a query', 'https://zcc.corp.example/?x=1'],
+    ['an empty query', 'https://zcc.corp.example?'],
+    ['a fragment', 'https://zcc.corp.example/#frag'],
+    ['an empty fragment', 'https://zcc.corp.example#'],
+    ['a non-http scheme', 'file:///etc/passwd'],
+    ['garbage', 'not a url']
+  ])('rejects %s', (_name, raw) => {
+    expect(normalizedOrigin(raw)).toBeNull();
+    // As a public origin it is unconfigured, never a direct target.
+    expect(selectPairingTarget(input({ publicOrigin: raw, relayOrigin: null }))).toEqual({ kind: 'tunnel', reason: 'no_public_origin' });
+  });
+
+  it.each([
+    ['https://ZCC.corp.example', 'https://zcc.corp.example'],
+    ['https://zcc.corp.example/', 'https://zcc.corp.example'],
+    ['  https://zcc.corp.example:8443  ', 'https://zcc.corp.example:8443'],
+    ['http://zcc.corp.example:80/', 'http://zcc.corp.example']
+  ])('accepts the bare origin %s', (raw, expected) => {
+    expect(normalizedOrigin(raw)).toBe(expected);
+    expect(selectPairingTarget(input({ publicOrigin: raw, relayOrigin: null }))).toEqual({ kind: 'direct', serverUrl: expected });
+  });
+
+  it('returns null for empty input', () => {
+    expect(normalizedOrigin(null)).toBeNull();
+    expect(normalizedOrigin(undefined)).toBeNull();
+    expect(normalizedOrigin('')).toBeNull();
+  });
+});
+
+describe('Settings-only origin selection', () => {
+  it.each<[string, string | null | undefined, ReturnType<typeof selectPairingTarget>]>([
+    ['a public Settings URL', 'https://settings.example.net', { kind: 'tunnel', reason: 'relay_unconfigured' }],
+    ['a loopback Settings URL', 'http://localhost:8780', { kind: 'tunnel', reason: 'no_public_origin' }],
+    ['a malformed Settings URL', 'https://x.example/?q', { kind: 'tunnel', reason: 'no_public_origin' }],
+    ['no Settings URL', null, { kind: 'tunnel', reason: 'no_public_origin' }],
+    ['an absent Settings URL', undefined, { kind: 'tunnel', reason: 'no_public_origin' }]
+  ])('without a runtime public origin, %s', (_name, settingsOrigin, expected) => {
+    expect(selectPairingTarget(input({ publicOrigin: null, settingsOrigin }))).toEqual(expected);
+  });
+
+  it('ignores Settings when a runtime public origin exists', () => {
+    expect(selectPairingTarget(input({ settingsOrigin: 'https://settings.example.net' }))).toEqual({
+      kind: 'relay',
+      serverUrl: `${RELAY}/t/${SESSION}`
+    });
+  });
+
+  it('passes the Settings origin through resolvePairingTarget', async () => {
+    await expect(resolvePairingTarget({ publicOrigin: null, settingsOrigin: 'https://settings.example.net', relay: null }))
+      .resolves.toEqual({ kind: 'tunnel', reason: 'relay_unconfigured' });
   });
 });

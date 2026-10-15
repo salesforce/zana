@@ -40,9 +40,20 @@ export function loopbackHostHeader(port: number, host = '127.0.0.1'): string {
 
 /** Flatten request header pairs into one record with Host pinned to loopback. */
 export function headerPairsToRecord(pairs: Array<[string, string]>, loopbackHost: string): Record<string, string> {
-  const headers: Record<string, string> = { host: loopbackHost };
+  // Headers named in `Connection` are hop-by-hop for this hop only (RFC 9110 7.6.1).
+  const nominated = new Set<string>();
   for (const [name, value] of pairs) {
-    if (!name || isStrippedPairingHeader(name)) continue;
+    if (name.toLowerCase() !== 'connection') continue;
+    for (const token of value.split(',')) {
+      const trimmed = token.trim().toLowerCase();
+      if (trimmed) nominated.add(trimmed);
+    }
+  }
+  // Null prototype so a header named `__proto__` cannot reach Object.prototype.
+  const headers: Record<string, string> = Object.create(null) as Record<string, string>;
+  headers.host = loopbackHost;
+  for (const [name, value] of pairs) {
+    if (!name || isStrippedPairingHeader(name) || nominated.has(name.toLowerCase())) continue;
     const existing = headers[name];
     headers[name] = existing ? `${existing}, ${value}` : value;
   }

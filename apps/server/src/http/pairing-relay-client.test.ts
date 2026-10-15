@@ -423,4 +423,17 @@ describe('pairing relay client', () => {
     expect(String(childCall?.[0])).toBe('ws://127.0.0.1:8781/internal/hosts/ws');
     expect(childCall?.[1]).toMatchObject({ followRedirects: false });
   });
+
+  it('client defaults to loopback-only headers when the request omits them', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    const { control, WsImpl } = await startDirectClient(fetchImpl as unknown as typeof fetch);
+    control.deliver(TYPE.HTTP_REQ, FLAG.META | FLAG.FIN, 1, encodeJsonPayload({ method: 'POST', url: '/internal/hosts/enroll' }));
+    await expect(control.response(1)).resolves.toMatchObject({ status: 200 });
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(init.headers).toEqual({ host: '127.0.0.1:8781' });
+    control.deliver(TYPE.WS_OPEN, FLAG.META | FLAG.FIN, 3, encodeJsonPayload({ url: '/internal/hosts/ws' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const childCall = WsImpl.mock.calls.find(([url]) => !String(url).includes('/_zcc/relay'));
+    expect(childCall?.[1]).toMatchObject({ headers: { host: '127.0.0.1:8781' } });
+  });
 });

@@ -11,7 +11,6 @@ import { sshPairingCommand } from '@zana-ai/zcc-domain/machine-pairing';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { HostUnavailableError } from '../../http/host-hub.js';
 import { isDockerDesktopGatewayHost, resolvePublicAppUrl } from '../../http/public-app-url.js';
-import { serverPortFromEnv } from '../../http/ports.js';
 import { resolveHostArtifact } from './host-artifact.js';
 import { resolvePairingTargetForContext, type PairingTarget } from './pairing-target.js';
 import type { ProjectRecord } from '../../project-store.js';
@@ -216,10 +215,16 @@ function requirePrimaryHost(ctx: ProductHttpContext): HostRow {
   return primary;
 }
 
-function pairingCommand(server: string, joinCode: string, hostId: string): string {
+/** POSIX single-quote one shell word. */
+export function shQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Every interpolated value is quoted: the server URL comes from configuration. */
+export function pairingCommand(server: string, joinCode: string, hostId: string): string {
   return (
-    `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${server}/install.sh` +
-    ` | sh -s -- --join-code ${joinCode} --host-id ${hostId} --server ${server}`
+    `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${shQuote(`${server}/install.sh`)}` +
+    ` | sh -s -- --join-code ${shQuote(joinCode)} --host-id ${shQuote(hostId)} --server ${shQuote(server)}`
   );
 }
 
@@ -254,13 +259,16 @@ export function attachSshFallbackPairingCommand(
   }
   if (error.pairingCommand && error.code !== 'daemon_unresponsive') return error;
   if (!remote) return error;
+  // No pairing forwarder: never hand out a command that would expose the full product API.
+  const listenPort = tunnelLocalPort(ctx);
+  if (listenPort === null) return error;
   try {
     const issued = hostId ? ctx.joinCodes.mintForHost(hostId) : ctx.joinCodes.mint();
     const command = sshFallbackPairingCommand({
       sshHost: remote.host,
       joinCode: issued.joinCode,
       hostId: issued.hostId,
-      listenPort: tunnelLocalPort(ctx)
+      listenPort
     });
     if (!command) return error;
     return new HostBootstrapError(error.code, error.message, command);
@@ -269,9 +277,21 @@ export function attachSshFallbackPairingCommand(
   }
 }
 
-/** The primary port an SSH tunnel forwards to: the pairing-only listener when one is running. */
-export function tunnelLocalPort(ctx: ProductHttpContext): number {
-  return ctx.origins?.pairingPort ?? ctx.origins?.serverPort ?? serverPortFromEnv();
+export const PAIRING_FORWARDER_UNAVAILABLE_ERROR =
+  'The SSH pairing listener is not running. Restart Zana, or use Connect.';
+
+/**
+ * The primary port an SSH tunnel forwards to: only the pairing allowlist
+ * listener. Null when it is not running; never the full product API port.
+ */
+export function tunnelLocalPort(ctx: ProductHttpContext): number | null {
+  return ctx.origins?.pairingPort ?? null;
+}
+
+function requireTunnelLocalPort(ctx: ProductHttpContext): number {
+  const port = tunnelLocalPort(ctx);
+  if (!port) throw new HostBootstrapError('pairing_forwarder_unavailable', PAIRING_FORWARDER_UNAVAILABLE_ERROR);
+  return port;
 }
 
 /** The last resort once the automatic tunnel failed: a command the user runs over their own SSH. */
@@ -282,13 +302,15 @@ function withManualSshCommand(
   hostId: string
 ): HostBootstrapError {
   if (error.pairingCommand) return error;
+  const listenPort = tunnelLocalPort(ctx);
+  if (listenPort === null) return error;
   try {
     const issued = ctx.joinCodes.mintForHost(hostId);
     const command = sshFallbackPairingCommand({
       sshHost: remote.host,
       joinCode: issued.joinCode,
       hostId: issued.hostId,
-      listenPort: tunnelLocalPort(ctx)
+      listenPort
     });
     return command ? new HostBootstrapError(error.code, error.message, command) : error;
   } catch {
@@ -407,6 +429,8 @@ export function registerFailureFromLog(log: string, hostId: string): string | nu
   if (start < 0) return null;
   let status: string | null = null;
   for (const line of lines.slice(start + 1)) {
+    // A later attempt (any host) starts a new run; its failures are not this one's.
+    if (/zcc-join: attempt /.test(line)) break;
     const match = /Failed to enroll daemon host: (\d{3})\b/.exec(line);
     if (match) status = match[1]!;
   }
@@ -657,8 +681,9 @@ export async function reconcileRemoteProjectBindings(ctx: ProductHttpContext): P
     try {
       await ctx.projects.bindToHost(project.id, { hostId: target.id, path: executionPath(remote, target.homeDir ?? null) });
       bound += 1;
-    } catch {
-      // Left as is; see above.
+    } catch (error) {
+      // Left as is; see above. Message only: never tokens or session ids.
+      console.warn(`[zcc] Could not bind remote project to its machine: ${errorText(error)}`);
     }
   }
   if (bound > 0) ctx.hub.emit('projects:changed', ctx.projects.list());
@@ -704,8 +729,9 @@ function rememberTunnelRoute(ctx: ProductHttpContext, hostId: string, remotePort
   try {
     if (remotePort === null) ctx.tunnelHosts?.remove(hostId);
     else ctx.tunnelHosts?.record(hostId, remotePort);
-  } catch {
-    /* The next tunnel install or primary reconnect rewrites the file. */
+  } catch (error) {
+    // The next tunnel install or primary reconnect rewrites the file.
+    console.warn(`[zcc] Could not save the SSH tunnel route: ${errorText(error)}`);
   }
 }
 
@@ -727,11 +753,12 @@ async function installTunnelPeer(
 ): Promise<TunnelPeerInstall> {
   const { hostId } = localCode;
   try {
+    const localPort = requireTunnelLocalPort(ctx);
     const { remotePort } = await openTunnelWithAutoPort(
       (port) => installPeer(ctx, {
         remote, hostId, joinCode: localCode.joinCode,
         serverUrl: `http://127.0.0.1:${port}`, serverHost: `ssh-${hostId}`, emit, stages,
-        sshTunnel: { localPort: tunnelLocalPort(ctx), remotePort: port }
+        sshTunnel: { localPort, remotePort: port }
       }),
       { onRetry: (port) => emit({ type: 'log', text: `Port ${port} is busy on the remote machine; trying another…` }) }
     );

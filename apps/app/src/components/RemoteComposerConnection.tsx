@@ -25,22 +25,28 @@ export function RemoteComposerConnection({ project, hosts, onConnected, onError 
     setBusy(true);
     onError(null);
     try {
-      const events = await runHostInstallWithDrawer({
+      await runHostInstallWithDrawer({
         kind: hostId ? 'fix' : 'install',
         target: project.remote!.host,
         startLogs: [hostId ? 'Reconnecting…' : 'Installing…'],
         run: async (onEvent) => {
           try { await product.relay.renewJoinWindow(); } catch { /* Bootstrap also renews pairing. */ }
           return hostId ? product.hosts.repair(hostId, onEvent) : product.hosts.bootstrap(project.id, onEvent);
+        },
+        // Replayed by the drawer's Retry too.
+        onSettled: async (events) => {
+          const outcome = bootstrapOutcome(events);
+          if (!outcome.ok) {
+            onError(composerBootstrapErrorMessage(outcome));
+            if (outcome.code === 'ssh_identity_required' && hostId) {
+              setSshPick({ hostId, name: hosts.find(host => host.id === hostId)?.name ?? project.remote!.host });
+            }
+          } else {
+            onError(null);
+            await onConnected();
+          }
         }
       });
-      const outcome = bootstrapOutcome(events);
-      if (!outcome.ok) {
-        onError(composerBootstrapErrorMessage(outcome));
-        if (outcome.code === 'ssh_identity_required' && hostId) {
-          setSshPick({ hostId, name: hosts.find(host => host.id === hostId)?.name ?? project.remote!.host });
-        }
-      } else await onConnected();
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Could not reconnect the remote machine');
     } finally { setBusy(false); }

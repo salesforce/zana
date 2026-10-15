@@ -134,7 +134,18 @@ async function primaryConnected(win: Page): Promise<void> {
   await expect.poll(async () => (await api<any[]>(win, '/hosts')).some(h => h.isPrimary && h.status === 'connected'), { timeout: 60_000 }).toBe(true);
 }
 
+/** An expanded install log keeps the drawer past success; close it before driving other UI. */
+async function closeInstallDrawer(win: Page): Promise<void> {
+  const drawer = win.getByTestId('host-install-drawer');
+  if (await drawer.count()) {
+    // It may auto-close between the count and the click; the end state is what matters.
+    await drawer.getByRole('button', { name: 'Close install log' }).click({ timeout: 5_000 }).catch(() => {});
+  }
+  await expect(drawer).toHaveCount(0);
+}
+
 async function openAddMachine(win: Page) {
+  await closeInstallDrawer(win);
   // Inside a project the sidebar's Settings link is the project's own settings.
   const backToProjects = win.getByRole('button', { name: 'Back to all projects' });
   if (await backToProjects.count()) await backToProjects.click();
@@ -196,13 +207,39 @@ async function composerInstall(win: Page, name: string) {
 }
 
 /** The drawer collapses its raw log behind a toggle once stages render. */
-async function drawerLog(drawer: ReturnType<Page['getByTestId']>) {
+async function drawerLog(drawer: ReturnType<Page['getByTestId']>, { expand = false } = {}) {
   const toggle = drawer.getByTestId('host-install-log-toggle');
   const log = drawer.getByTestId('host-install-log');
-  await expect(toggle.or(log).first()).toBeVisible({ timeout: 60_000 });
+  // `expand` waits for the staged view so the click pins the log open; before
+  // stages render the log shows by default and would collapse once they arrive.
+  await expect(expand ? toggle : toggle.or(log).first()).toBeVisible({ timeout: 60_000 });
   // A real click: the drawer must stay usable above the launcher's backdrop.
   if (await toggle.count() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
   return log;
+}
+
+/**
+ * A stage-less install log auto-closes shortly after success, so a fast path (the
+ * reuse bind) can unmount the drawer before a poll sees it. Record every distinct
+ * log text the drawer renders from the page itself, independent of the drawer staying mounted.
+ */
+async function captureDrawerLogs(win: Page): Promise<void> {
+  await win.evaluate(() => {
+    const w = window as unknown as { __drawerLogSeen?: string[]; __drawerLogObserver?: MutationObserver };
+    w.__drawerLogObserver?.disconnect();
+    w.__drawerLogSeen = [];
+    const record = () => {
+      const text = document.querySelector('[data-testid="host-install-log"]')?.textContent;
+      if (text && w.__drawerLogSeen!.at(-1) !== text) w.__drawerLogSeen!.push(text);
+    };
+    const observer = new MutationObserver(record);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    w.__drawerLogObserver = observer;
+  });
+}
+
+async function capturedDrawerLogs(win: Page): Promise<string> {
+  return win.evaluate(() => ((window as unknown as { __drawerLogSeen?: string[] }).__drawerLogSeen ?? []).join('\n'));
 }
 
 async function expectExplorerLists(win: Page, name: string, fileName: string): Promise<void> {
@@ -330,8 +367,9 @@ test('a taken remote forward port is retried on a new port, and a later project 
     // Scenario 8 (machine first): the project binds to the enrolled machine, no second install.
     const installsBefore = h.audit().filter(row => row.kind === 'unpack' || row.kind === 'install').length;
     await addRemoteProject(win, 'Tunnel checkout', checkout);
-    const { drawer } = await composerInstall(win, 'Tunnel checkout');
-    await expect(await drawerLog(drawer)).toContainText('Reusing the enrolled daemon for this SSH host', { timeout: 60_000 });
+    await captureDrawerLogs(win);
+    await composerInstall(win, 'Tunnel checkout');
+    await expect.poll(() => capturedDrawerLogs(win), { timeout: 60_000 }).toContain('Reusing the enrolled daemon for this SSH host');
     await expect.poll(() => projectHostId(win, 'Tunnel checkout'), { timeout: 30_000 }).toBe(machine!.id);
     expect(h.audit().filter(row => row.kind === 'unpack' || row.kind === 'install')).toHaveLength(installsBefore);
     expect(await remoteHosts(win)).toHaveLength(1);
@@ -397,8 +435,9 @@ test('a remote project with no public URL installs from the composer over the tu
     // Scenario 7.
     await addRemoteProject(win, 'Tunnel project', checkout);
     const { modal, drawer } = await composerInstall(win, 'Tunnel project');
+    // Open the log while installing: an expanded log keeps the drawer past success.
+    const drawerLogText = await drawerLog(drawer, { expand: true });
     await expectAllStagesPassed(drawer);
-    const drawerLogText = await drawerLog(drawer);
     await expect(drawerLogText).toContainText('connecting through SSH');
     await expect(drawerLogText).not.toContainText('public_url_required');
     await expect(drawerLogText).not.toContainText('relay_offline');

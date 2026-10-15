@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -668,8 +668,12 @@ describe('preferred join-code issuance', () => {
     }) as never);
     const request = (async function* () { yield Buffer.from('{}'); })() as never;
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-pref-'));
-    await handleHostsApi(request, response, { joinCodes, dataDir, origins } as never, path, 'POST', new URL('http://x/'));
-    spy.mockRestore();
+    try {
+      await handleHostsApi(request, response, { joinCodes, dataDir, origins } as never, path, 'POST', new URL('http://x/'));
+    } finally {
+      spy.mockRestore();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
     return { status, body, joinCodes, minted };
   }
   const preferred = '/api/v1/hosts/join-codes/preferred';

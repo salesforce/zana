@@ -47,6 +47,16 @@ describe('host SSH identity', () => {
     });
   });
 
+  it('renames an alias-derived name to the new alias but keeps a user-chosen name', () => {
+    const db = open();
+    const host = upsertHost(db, { name: 'pod-name', hostKeyHash: 'h'.repeat(64) });
+    updateHostSshIdentity(db, host.id, { host: 'sfw-264' });
+    expect(updateHostSshIdentity(db, host.id, { host: 'sfw-300' })?.name).toBe('sfw-300');
+    db.sqlite.prepare('UPDATE hosts SET name = ? WHERE id = ?').run('Build box', host.id);
+    const reused = upsertHost(db, { id: host.id, name: 'Build box', hostKeyHash: 'h'.repeat(64) });
+    expect(updateHostSshIdentity(db, reused.id, { host: 'sfw-400' })?.name).toBe('Build box');
+  });
+
   it('refuses a removed machine', () => {
     const db = open();
     upsertHost(db, { name: 'laptop', hostKeyHash: 'p'.repeat(64), isPrimary: true });

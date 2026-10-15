@@ -13,19 +13,34 @@ import { resolvePublicAppUrl } from '../../http/public-app-url.js';
 export type { PairingTarget } from '@zana-ai/zcc-contracts/runtime';
 
 export interface PairingTargetInput {
-  /** Resolved public app URL (`resolvePublicAppUrl`). */
+  /**
+   * Public app URL from env, build bake, or the repo file — never Settings.
+   * See {@link PairingTargetInput.settingsOrigin}.
+   */
   publicOrigin: string | null;
+  /**
+   * The Settings "Relay pairing URL". It applies only while the relay is
+   * connected, so on its own it is never a direct join target.
+   */
+  settingsOrigin?: string | null;
   /** The relay client's configured origin, independent of the token. */
   relayOrigin: string | null;
   relayTokenPresent: boolean;
   snapshot: PairingRelaySnapshot | null;
 }
 
-function normalizedOrigin(raw: string | null): string | null {
+/**
+ * A bare http(s) origin, or null. Userinfo, a path, a query, or a fragment make
+ * the value unusable: it is spliced into a shell command for the remote host.
+ */
+export function normalizedOrigin(raw: string | null | undefined): string | null {
   if (!raw) return null;
   try {
-    const url = new URL(raw);
+    const url = new URL(raw.trim());
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+    // `new URL` drops an empty `?` / `#`; refuse them in the raw text too.
+    if (/[?#@]/u.test(raw)) return null;
     return url.origin.toLowerCase();
   } catch {
     return null;
@@ -40,11 +55,17 @@ function normalizedOrigin(raw: string | null): string | null {
 export function selectPairingTarget(input: PairingTargetInput): PairingTarget {
   const publicOrigin = normalizedOrigin(input.publicOrigin);
   if (!publicOrigin || isLoopbackHttpHost(new URL(publicOrigin).hostname)) {
+    // A Settings-only relay URL means the relay is not set up: same as no token.
+    const settingsOrigin = normalizedOrigin(input.settingsOrigin);
+    if (settingsOrigin && !isLoopbackHttpHost(new URL(settingsOrigin).hostname)) {
+      return { kind: 'tunnel', reason: 'relay_unconfigured' };
+    }
     return { kind: 'tunnel', reason: 'no_public_origin' };
   }
   const relayOrigin = normalizedOrigin(input.relayOrigin);
   if (publicOrigin !== relayOrigin) {
-    return { kind: 'direct', serverUrl: input.publicOrigin!.trim().replace(/\/+$/u, '') };
+    // Bare origin only: never the raw configured text.
+    return { kind: 'direct', serverUrl: publicOrigin };
   }
   if (!input.relayTokenPresent) return { kind: 'tunnel', reason: 'relay_unconfigured' };
   const snapshot = input.snapshot;
@@ -62,6 +83,7 @@ export type PairingRelaySource = Pick<
 
 export interface ResolvePairingTargetDeps {
   publicOrigin: string | null;
+  settingsOrigin?: string | null;
   relay: PairingRelaySource | null | undefined;
   now?: () => number;
 }
@@ -74,6 +96,7 @@ export async function resolvePairingTarget(deps: ResolvePairingTargetDeps): Prom
   const relay = deps.relay ?? null;
   const base = {
     publicOrigin: deps.publicOrigin,
+    settingsOrigin: deps.settingsOrigin ?? null,
     relayOrigin: relay?.relayOrigin() ?? null,
     relayTokenPresent: relay?.tokenPresent() ?? false
   };
@@ -90,12 +113,18 @@ export async function resolvePairingTarget(deps: ResolvePairingTargetDeps): Prom
   return selectPairingTarget({ ...base, snapshot: renewed });
 }
 
-/** {@link resolvePairingTarget} with the product context's public URL and relay. */
+/**
+ * {@link resolvePairingTarget} with the product context's public URL and relay.
+ * The Settings URL is kept apart: it never becomes a direct target by itself.
+ */
 export function resolvePairingTargetForContext(
-  ctx: Pick<ProductHttpContext, 'config' | 'pairingRelay'>
+  ctx: Pick<ProductHttpContext, 'config' | 'pairingRelay'>,
+  options: { env?: NodeJS.ProcessEnv; bundledUrl?: string | null; cwd?: string } = {}
 ): Promise<PairingTarget> {
+  const configUrl = ctx.config.getConfig().publicAppUrl;
   return resolvePairingTarget({
-    publicOrigin: resolvePublicAppUrl({ configUrl: ctx.config.getConfig().publicAppUrl }) ?? null,
+    publicOrigin: resolvePublicAppUrl({ ...options, configUrl: null }) ?? null,
+    settingsOrigin: configUrl ?? null,
     relay: ctx.pairingRelay
   });
 }

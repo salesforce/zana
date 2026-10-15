@@ -32,7 +32,7 @@ function fixture() {
   const wait = vi.fn(async () => {});
   const bind = vi.fn(async () => {});
   const ctx = {
-    db, dataDir: dir, origins: { serverPort: 43210 },
+    db, dataDir: dir, origins: { serverPort: 43200, pairingPort: 43210 },
     hostHub: { ensureHostSessionReady: vi.fn(), connectedHostIds: () => [], callHostOnlineRpc: rpc, waitUntilConnected: wait },
     projects: { list: () => [project], bindToHost: bind },
     hub: { emit: vi.fn() },

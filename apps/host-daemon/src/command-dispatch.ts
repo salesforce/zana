@@ -223,7 +223,7 @@ export interface CommandRuntime {
     cwd?: string;
   }) => Promise<ProviderHealthResult>;
   homeDir?: string;
-  peerSsh?: PeerDaemonSsh;
+  peerSsh: PeerDaemonSsh;
   desktopBrowserBroker?: DesktopBrowserBroker;
   /** In-memory environment pushed by the server (host.environment.replace). */
   machineEnvironment?: MachineEnvironment;
@@ -1219,24 +1219,24 @@ export async function dispatchHostCommand(
     case 'host.install_global_skills':
       return installGlobalSkills({ skills: command.skills, homeDir: runtime.homeDir });
     case 'peer_daemon.status':
-      return peerDaemonStatus(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
+      return peerDaemonStatus(runtime.peerSsh, command.remote, command.serverHost);
     case 'peer_daemon.restart':
-      return peerDaemonRestart(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
+      return peerDaemonRestart(runtime.peerSsh, command.remote, command.serverHost);
     case 'peer_daemon.logs':
-      return peerDaemonLogs(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
+      return peerDaemonLogs(runtime.peerSsh, command.remote, command.serverHost);
     case 'peer_tunnel.open': {
-      const ssh = runtime.peerSsh ?? createSystemPeerDaemonSsh();
+      const ssh = runtime.peerSsh;
       if (!ssh.tunnel) throw new HostCommandError('unsupported', 'SSH tunnels are unavailable on this host');
       await ssh.tunnel(command.remote, command.localPort, command.remotePort);
       return { ok: true as const };
     }
     case 'peer_tunnel.close': {
-      const ssh = runtime.peerSsh ?? createSystemPeerDaemonSsh();
+      const ssh = runtime.peerSsh;
       return { ok: true as const, closed: ssh.untunnelAll?.(command.remote) ?? false };
     }
     case 'peer_daemon.install': {
       if ('connect' in command) {
-        return peerDaemonConnectInstall(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command);
+        return peerDaemonConnectInstall(runtime.peerSsh, command);
       }
       let serverHost: string;
       try {
@@ -1244,7 +1244,7 @@ export async function dispatchHostCommand(
       } catch {
         throw new HostCommandError('invalid_server_url', 'server URL is invalid');
       }
-      return peerDaemonInstall(runtime.peerSsh ?? createSystemPeerDaemonSsh(), {
+      return peerDaemonInstall(runtime.peerSsh, {
         remote: command.remote,
         joinCode: command.joinCode,
         hostId: command.hostId,

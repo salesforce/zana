@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -288,6 +288,41 @@ describe('startStaticHost', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('pairing forwarder failed to start: bind failed'));
     await expect(fetch(`${host.url}api/v1/health`).then((response) => response.status)).resolves.toBe(200);
     warn.mockRestore();
+    product.hostHub.close();
+    product.db.close();
+  });
+
+  const hasIpv6Loopback = Object.values(networkInterfaces()).flat().some((entry) => entry?.address === '::1');
+  it.skipIf(!hasIpv6Loopback)('stringifies non-Error forwarder failures and binds the forwarder to ::1 for an IPv6 host', async () => {
+    vi.mocked(startPairingForwarder).mockRejectedValueOnce('plain failure');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    const { createProductHttpContext } = await import('./http/product-context.js');
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-static-product-'));
+    const product = createProductHttpContext({ dataDir, origins: { serverPort: 0 } });
+    host = await startStaticHost({ rootDir: root, product, host: '::1' });
+
+    expect(vi.mocked(startPairingForwarder).mock.calls.at(-1)?.[1]).toEqual({ productHost: '::1' });
+    expect(warn).toHaveBeenCalledWith('[zcc] pairing forwarder failed to start: plain failure');
+    warn.mockRestore();
+    product.hostHub.close();
+    product.db.close();
+  });
+
+  it('keeps a pairing port it does not own when closing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    const { createProductHttpContext } = await import('./http/product-context.js');
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-static-product-'));
+    const product = createProductHttpContext({ dataDir, origins: { serverPort: 0 } });
+    host = await startStaticHost({ rootDir: root, product });
+    const ownPort = product.origins.pairingPort;
+    product.origins.pairingPort = 1;
+    await host.close();
+    host = null;
+    expect(product.origins.pairingPort).toBe(1);
+    expect(ownPort).not.toBe(1);
     product.hostHub.close();
     product.db.close();
   });

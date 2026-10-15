@@ -287,8 +287,9 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       let value: unknown = { kind: 'tunnel', reason: 'relay_offline' };
       try {
         if (productContext) value = await resolvePairingTargetForContext(productContext);
-      } catch {
-        // keep the tunnel fallback
+      } catch (error) {
+        // Keep the tunnel fallback. Message only: never tokens or session ids.
+        console.warn(`[zcc] pairing target unavailable: ${error instanceof Error ? error.message : String(error)}`);
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
     }

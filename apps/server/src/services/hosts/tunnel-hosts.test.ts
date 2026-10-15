@@ -10,6 +10,7 @@ import {
   createDbTunnelHostStore,
   createTunnelHostReopener,
   createTunnelHostStore,
+  MAX_TUNNEL_HOST_ENTRIES,
   reopenTunnelHosts,
   tunnelHostsFile,
   type TunnelHostStore
@@ -41,9 +42,9 @@ function fixture() {
   const store = createDbTunnelHostStore(ctx);
   const repair = vi.fn(async (_hostId: string): Promise<HostBootstrapEvent[]> => [{ type: 'done', hostId: _hostId }]);
   const log = vi.fn();
-  let localPort = 43210;
+  let localPort: number | null = 43210;
   const deps = { store, localPort: () => localPort, repair, log };
-  return { db, dataDir, ctx, primary, addRemote, rpc, store, repair, log, deps, setLocalPort: (port: number) => { localPort = port; } };
+  return { db, dataDir, ctx, primary, addRemote, rpc, store, repair, log, deps, setLocalPort: (port: number | null) => { localPort = port; } };
 }
 
 describe('tunnel host store', () => {
@@ -86,9 +87,19 @@ describe('tunnel host store', () => {
   it('rejects invalid ports and bounds how many machines it keeps', () => {
     const store = createTunnelHostStore(join(tempDir(), 'tunnel-hosts.json'), () => true);
     for (const port of [0, 65536, 1.5, NaN]) expect(() => store.record('h', port)).toThrow('Invalid tunnel port');
-    for (let index = 0; index < 260; index++) store.record(`h${index}`, 20000 + index);
-    expect(store.list()).toHaveLength(256);
-    expect(store.get('h259')).toBeNull();
+    for (let index = 0; index < MAX_TUNNEL_HOST_ENTRIES; index++) store.record(`h${index}`, 20000 + index);
+    expect(store.list()).toHaveLength(MAX_TUNNEL_HOST_ENTRIES);
+    // A new machine past the cap is refused loudly, never silently dropped.
+    expect(() => store.record('h-over', 30000)).toThrow(`Too many SSH tunnel hosts (limit ${MAX_TUNNEL_HOST_ENTRIES})`);
+    expect(store.get('h-over')).toBeNull();
+    // Updating a machine already stored still works at the cap.
+    store.record('h0', 30001);
+    expect(store.get('h0')).toEqual({ hostId: 'h0', remotePort: 30001 });
+    // A file written past the cap is truncated on read.
+    const big = Object.fromEntries(Array.from({ length: MAX_TUNNEL_HOST_ENTRIES + 4 }, (_, i) => [`x${i}`, { remotePort: 20000 + i }]));
+    const file = join(tempDir(), 'tunnel-hosts.json');
+    writeFileSync(file, JSON.stringify({ version: 1, hosts: big }));
+    expect(createTunnelHostStore(file, () => true).list()).toHaveLength(MAX_TUNNEL_HOST_ENTRIES);
   });
 
   it('cleans its temp file when a write fails', () => {
@@ -187,6 +198,7 @@ describe('reopening tunnels', () => {
     f.repair.mockRejectedValueOnce(new Error('boom'));
     await reopenTunnelHosts(f.ctx, f.deps);
     expect(f.store.list()).toHaveLength(2);
+    expect(f.log).toHaveBeenCalledWith('Reinstall for two threw: boom');
     expect(f.log).toHaveBeenCalledWith('Reinstalling one over SSH failed');
     expect(f.log).toHaveBeenCalledWith('Reinstalling two over SSH failed');
   });
@@ -203,7 +215,8 @@ describe('reopening tunnels', () => {
     expect(f.rpc).toHaveBeenCalledTimes(2);
     expect(f.repair).not.toHaveBeenCalled();
     expect(f.store.list()).toHaveLength(2);
-    expect(f.log).toHaveBeenCalledWith('SSH tunnel for one did not reopen; it will retry when the primary reconnects');
+    expect(f.log).toHaveBeenCalledWith('SSH tunnel for one did not reopen; it will retry when the primary reconnects (ssh: connect refused)');
+    expect(f.log).toHaveBeenCalledWith('SSH tunnel for two did not reopen; it will retry when the primary reconnects (opaque)');
   });
 
   it('stops between machines and after a failure once cancelled', async () => {
@@ -217,6 +230,75 @@ describe('reopening tunnels', () => {
     expect(f.repair).not.toHaveBeenCalled();
     await reopenTunnelHosts(f.ctx, f.deps, () => true);
     expect(f.rpc).toHaveBeenCalledOnce();
+  });
+});
+
+describe('reopening tunnels without a pairing listener', () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('fails closed: skips every reopen, keeps the stored routes, and warns once', async () => {
+    const f = fixture();
+    const one = f.addRemote('one', { host: 'one' });
+    f.store.record(one.id, 28888);
+    f.setLocalPort(null);
+    await reopenTunnelHosts(f.ctx, f.deps);
+    expect(f.rpc).not.toHaveBeenCalled();
+    expect(f.repair).not.toHaveBeenCalled();
+    expect(f.store.get(one.id)).toEqual({ hostId: one.id, remotePort: 28888 });
+    expect(f.log).toHaveBeenCalledTimes(1);
+    expect(f.log).toHaveBeenCalledWith('SSH tunnels not reopened: the pairing listener is not running');
+  });
+
+  it('stays quiet when nothing is stored', async () => {
+    const f = fixture();
+    f.setLocalPort(null);
+    await reopenTunnelHosts(f.ctx, f.deps);
+    expect(f.log).not.toHaveBeenCalled();
+  });
+
+  it('reopens on a later connect once the listener is back', async () => {
+    const f = fixture();
+    const one = f.addRemote('one', { host: 'one' });
+    f.store.record(one.id, 28888);
+    f.setLocalPort(null);
+    const reopener = createTunnelHostReopener(() => f.ctx, f.deps);
+    reopener.hostConnected(f.primary.id);
+    await flush();
+    expect(f.rpc).not.toHaveBeenCalled();
+    f.setLocalPort(40404);
+    reopener.hostConnected(f.primary.id);
+    await flush();
+    expect(f.rpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({ type: 'peer_tunnel.open', localPort: 40404, remotePort: 28888 })
+    }));
+    reopener.dispose();
+  });
+});
+
+describe('reopening tunnels with an unwritable store', () => {
+  const brokenRemove = (store: TunnelHostStore): TunnelHostStore => ({
+    ...store,
+    remove: () => { throw new Error('read-only'); }
+  });
+
+  it('logs and continues when forgetting a machine without an SSH identity fails', async () => {
+    const f = fixture();
+    const anonymous = f.addRemote('anonymous');
+    const two = f.addRemote('two', { host: 'two' });
+    f.store.record(anonymous.id, 28889);
+    f.store.record(two.id, 29999);
+    await reopenTunnelHosts(f.ctx, { ...f.deps, store: brokenRemove(f.store) });
+    expect(f.log).toHaveBeenCalledWith('Could not forget the SSH tunnel route: read-only');
+    expect(f.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs when forgetting a port the reinstall abandoned fails', async () => {
+    const f = fixture();
+    const remote = f.addRemote('one', { host: 'one' });
+    f.store.record(remote.id, 28888);
+    f.rpc.mockRejectedValueOnce(portTaken());
+    await expect(reopenTunnelHosts(f.ctx, { ...f.deps, store: brokenRemove(f.store) })).resolves.toBeUndefined();
+    expect(f.log).toHaveBeenCalledWith('Could not forget the SSH tunnel route: read-only');
   });
 });
 
@@ -269,7 +351,7 @@ describe('primary connect reopener', () => {
     const reopener = createTunnelHostReopener(() => f.ctx, { ...f.deps, store });
     reopener.hostConnected(f.primary.id);
     await flush();
-    expect(f.log).toHaveBeenCalledWith('Reopening SSH tunnels failed');
+    expect(f.log).toHaveBeenCalledWith('Reopening SSH tunnels failed: disk');
     reopener.hostConnected(f.primary.id);
     await flush();
     expect(f.log).toHaveBeenCalledTimes(2);
@@ -300,7 +382,7 @@ describe('closing a removed machine tunnel', () => {
     f.rpc.mockRejectedValueOnce(new Error('host offline'));
     await closeTunnelHost({ ...f.ctx, tunnelHosts: f.store } as ProductHttpContext, getHost(f.db, remote.id)!, f.log);
     expect(f.store.get(remote.id)).toBeNull();
-    expect(f.log).toHaveBeenCalledWith(expect.stringContaining('did not close'));
+    expect(f.log).toHaveBeenCalledWith("SSH tunnel for one did not close; it stops when this app's machine restarts (host offline)");
   });
 
   it('skips the primary call without a stored tunnel, an SSH identity or a store', async () => {
@@ -327,5 +409,7 @@ describe('closing a removed machine tunnel', () => {
     };
     await expect(closeTunnelHost({ ...f.ctx, tunnelHosts: broken } as ProductHttpContext, getHost(f.db, remote.id)!)).resolves.toBeUndefined();
     expect(f.rpc).not.toHaveBeenCalled();
+    await closeTunnelHost({ ...f.ctx, tunnelHosts: broken } as ProductHttpContext, getHost(f.db, remote.id)!, f.log);
+    expect(f.log).toHaveBeenCalledWith('Could not forget the SSH tunnel route: write');
   });
 });

@@ -84,8 +84,8 @@ export async function startProductServer(options: StartProductServerOptions): Pr
   const boundPort = address.port;
   ctx.origins.serverPort = boundPort;
   const pairingRelay = attachPairingRelay(ctx, boundPort);
-  // SSH reverse tunnels target this allowlist-only port. Without it, callers
-  // fall back to serverPort.
+  // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
+  // installs and reopens fail closed; they never expose serverPort.
   let pairingForwarder: PairingForwarder | undefined;
   try {
     pairingForwarder = await startPairingForwarder(boundPort, {

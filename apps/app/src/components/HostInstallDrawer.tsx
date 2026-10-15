@@ -27,12 +27,14 @@ export function HostInstallDrawerView({
   pairingCommand,
   onClose,
   onCopyPairing,
-  onRetry
+  onRetry,
+  onLogOpenChange
 }: Pick<HostInstallDrawerState, 'busy' | 'kind' | 'target' | 'logs' | 'error' | 'pairingCommand'> & {
   stages?: HostInstallDrawerState['stages'];
   onClose: () => void;
   onCopyPairing?: () => void;
   onRetry?: () => void;
+  onLogOpenChange?: (open: boolean) => void;
 }) {
   const hasStages = stages.length > 0;
   const [logOpen, setLogOpen] = useState<boolean | null>(null);
@@ -89,7 +91,10 @@ export function HostInstallDrawerView({
             className="host-install-log-toggle"
             data-testid="host-install-log-toggle"
             aria-expanded={showLog}
-            onClick={() => setLogOpen(!showLog)}
+            onClick={() => {
+              setLogOpen(!showLog);
+              onLogOpenChange?.(!showLog);
+            }}
           >
             {showLog ? 'Hide log' : 'Show log'}
           </button>
@@ -127,17 +132,23 @@ export function HostInstallDrawer() {
   const state = useUi((s) => s.hostInstallDrawer);
   const setOpen = useUi((s) => s.setHostInstallDrawerOpen);
   const closeAfterSuccessRef = useRef(false);
+  // A user reading the log keeps the panel; success must not yank it away.
+  const logOpenRef = useRef(false);
 
   useEffect(() => {
     if (state.busy) closeAfterSuccessRef.current = true;
   }, [state.busy]);
 
   useEffect(() => {
+    if (!state.open) logOpenRef.current = false;
+  }, [state.open]);
+
+  useEffect(() => {
     if (!hostInstallDrawerShouldAutoClose(state) || !closeAfterSuccessRef.current) return;
     closeAfterSuccessRef.current = false;
     const timer = window.setTimeout(() => {
       const current = useUi.getState().hostInstallDrawer;
-      if (!hostInstallDrawerShouldAutoClose(current)) return;
+      if (!hostInstallDrawerShouldAutoClose(current) || logOpenRef.current) return;
       setOpen(false);
     }, HOST_INSTALL_SUCCESS_CLOSE_MS);
     return () => window.clearTimeout(timer);
@@ -155,6 +166,7 @@ export function HostInstallDrawer() {
       pairingCommand={state.pairingCommand}
       onClose={() => setOpen(false)}
       onRetry={() => void retryLastHostInstall().catch(() => {})}
+      onLogOpenChange={(open) => { logOpenRef.current = open; }}
       onCopyPairing={state.pairingCommand
         ? () => void copyText(state.pairingCommand!)
         : undefined}

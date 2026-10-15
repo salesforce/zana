@@ -341,8 +341,8 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
       /* keep the configured port */
     }
     pairingRelay = attachPairingRelay(options.product, address.port);
-    // SSH reverse tunnels target this allowlist-only port. Without it, callers
-    // fall back to serverPort.
+    // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
+    // installs and reopens fail closed; they never expose serverPort.
     try {
       pairingForwarder = await startPairingForwarder(address.port, {
         productHost: hostName === '::1' ? '::1' : '127.0.0.1'

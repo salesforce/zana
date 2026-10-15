@@ -8,6 +8,13 @@ export interface HostInstallRunInput {
   target: string;
   startLogs?: string[];
   run: (onEvent: (event: HostBootstrapEvent) => void) => Promise<HostBootstrapEvent[]>;
+  /**
+   * Caller post-processing of the final events (set host, reload projects, surface errors).
+   * Lives on the input so the drawer's Retry replays it, not just `run`. Awaited after the
+   * drawer is finished, for both ok and failed outcomes. NOT called when `run` throws; the
+   * thrown error propagates to the caller (and a retry that throws reaches the drawer caller).
+   */
+  onSettled?: (events: HostBootstrapEvent[]) => void | Promise<void>;
 }
 
 let lastRun: HostInstallRunInput | null = null;
@@ -23,8 +30,9 @@ export async function runHostInstallWithDrawer(input: HostInstallRunInput): Prom
   const ui = useUi.getState();
   ui.openHostInstallDrawer({ kind: input.kind, target: input.target });
   if (input.startLogs?.length) ui.appendHostInstallLogs(input.startLogs);
+  let events: HostBootstrapEvent[];
   try {
-    const events = await input.run((event) => ui.applyHostInstallEvent(event));
+    events = await input.run((event) => ui.applyHostInstallEvent(event));
     const outcome = bootstrapOutcome(events);
     if (!outcome.ok) {
       ui.finishHostInstallDrawer({
@@ -35,10 +43,11 @@ export async function runHostInstallWithDrawer(input: HostInstallRunInput): Prom
     } else {
       ui.finishHostInstallDrawer({ ok: true });
     }
-    return events;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Host install failed';
     ui.finishHostInstallDrawer({ ok: false, message });
     throw error;
   }
+  await input.onSettled?.(events);
+  return events;
 }

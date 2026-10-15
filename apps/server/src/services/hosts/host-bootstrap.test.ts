@@ -30,7 +30,11 @@ import {
   reuseRemoteHostId,
   sshFallbackPairingCommand,
   sshRemoteFromProject,
-  waitForPeerConnect
+  waitForPeerConnect,
+  pairingCommand,
+  shQuote,
+  tunnelLocalPort,
+  PAIRING_FORWARDER_UNAVAILABLE_ERROR
 } from './host-bootstrap.js';
 import { createJoinCodeStore } from './join-codes.js';
 
@@ -159,9 +163,9 @@ describe('host bootstrap helpers', () => {
     await expect(resolveBootstrapTarget(ctx as never)).resolves.toEqual({ kind: 'direct', serverUrl: 'https://machine.example.com' });
   });
 
-  it('reads Settings when env and bake are empty', async () => {
+  it('treats a Settings-only relay URL as relay not configured, never a direct target', async () => {
     const ctx = { config: { getConfig: () => ({ publicAppUrl: 'https://machine.example.com' }) }, pairingRelay: undefined };
-    await expect(resolveBootstrapTarget(ctx as never)).resolves.toEqual({ kind: 'direct', serverUrl: 'https://machine.example.com' });
+    await expect(resolveBootstrapTarget(ctx as never)).resolves.toEqual({ kind: 'tunnel', reason: 'relay_unconfigured' });
   });
 
   it('joins through the relay session when the relay is connected', async () => {
@@ -210,8 +214,18 @@ describe('host bootstrap helpers', () => {
     })).toBeUndefined();
   });
 
+  it('attaches no command when the pairing forwarder is not running', () => {
+    const ctx = { joinCodes: createJoinCodeStore(), origins: { serverPort: 8780 } };
+    const error = new HostBootstrapError('join_expired', PAIRING_DOOR_ERROR);
+    const attached = attachSshFallbackPairingCommand(error, ctx as never, { host: 'limited-pony' });
+    expect(attached).toBe(error);
+    expect(attached.pairingCommand).toBeUndefined();
+    expect(tunnelLocalPort(ctx as never)).toBeNull();
+    expect(tunnelLocalPort({} as never)).toBeNull();
+  });
+
   it('attaches a reverse-tunnel command on pairing-door errors', () => {
-    const ctx = { joinCodes: createJoinCodeStore() };
+    const ctx = { joinCodes: createJoinCodeStore(), origins: { serverPort: 8780, pairingPort: 8790 } };
     const attached = attachSshFallbackPairingCommand(
       new HostBootstrapError('join_expired', PAIRING_DOOR_ERROR),
       ctx as never,
@@ -359,7 +373,7 @@ function flow(target: keyof typeof TARGETS = 'offline') {
     db,
     config: { getConfig: () => ({}) },
     pairingRelay,
-    origins: { serverPort: 43210 },
+    origins: { serverPort: 43200, pairingPort: 43210 },
     hostHub: {
       ensureHostSessionReady: vi.fn(),
       connectedHostIds: () => [...connected],
@@ -423,6 +437,25 @@ describe('bootstrap and repair routing', () => {
       expect(events.some((event) => event.type === 'error')).toBe(false);
       expect(f.status).not.toHaveBeenCalled();
       expect(f.install.mock.calls[0]![0]).toMatchObject({ hostId: remote.id, sshTunnel: { localPort: 43210 } });
+    }
+  );
+
+  it.each(['bootstrap', 'repair', 'machine'] as const)(
+    'fails closed on %s when the pairing forwarder is not running, never tunnelling the product port', async (entry) => {
+      const f = flow('offline');
+      delete (f.ctx.origins as { pairingPort?: number }).pairingPort;
+      const events = entry === 'bootstrap'
+        ? await bootstrapHostForProject(f.ctx, 'project')
+        : entry === 'repair'
+          ? await repairHost(f.ctx, f.addRemote().id)
+          : await bootstrapHostBySsh(f.ctx, { host: 'fresh-box' });
+      expect(events.at(-1)).toEqual({
+        type: 'error',
+        code: 'pairing_forwarder_unavailable',
+        message: PAIRING_FORWARDER_UNAVAILABLE_ERROR
+      });
+      expect(f.install).not.toHaveBeenCalled();
+      expect(JSON.stringify(events)).not.toContain('43200');
     }
   );
 
@@ -693,6 +726,18 @@ describe('reconcileRemoteProjectBindings', () => {
     expect(f.bind).toHaveBeenCalledWith('p', { hostId: readded.id, path: '/srv/p' });
   });
 
+  it('warns with the message only when a bind fails, and keeps going', async () => {
+    const f = flow('offline');
+    f.addRemote();
+    f.bind.mockRejectedValueOnce(new Error('path not found'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await reconcileRemoteProjectBindings(f.ctx)).toBe(0);
+    expect(warn).toHaveBeenCalledWith('[zcc] Could not bind remote project to its machine: path not found');
+    f.bind.mockRejectedValueOnce('opaque');
+    expect(await reconcileRemoteProjectBindings(f.ctx)).toBe(0);
+    expect(warn).toHaveBeenCalledWith('[zcc] Could not bind remote project to its machine: opaque');
+  });
+
   it('keeps a binding to a known offline host when no connected twin exists', async () => {
     const f = flow('offline');
     const remote = f.addRemote();
@@ -800,6 +845,19 @@ describe('stage reasons', () => {
     expect(registerFailureFromLog(`zcc-join: attempt t host=${id}\r\nFailed to enroll daemon host: 502`, id)).toBe('Machine could not register (HTTP 502)');
   });
 
+  it('stops at the next join attempt marker, so another run\'s failure is not this host\'s', () => {
+    const id = '028c8627-a6d8-4c62-964e-8f6b35cb2335';
+    const other = '11111111-2222-4333-8444-555555555555';
+    expect(registerFailureFromLog(
+      `zcc-join: attempt t host=${id}\nok\nzcc-join: attempt t host=${other}\nFailed to enroll daemon host: 503`,
+      id
+    )).toBeNull();
+    expect(registerFailureFromLog(
+      `zcc-join: attempt t host=${id}\nFailed to enroll daemon host: 409\nzcc-join: attempt t host=${other}\nFailed to enroll daemon host: 503`,
+      id
+    )).toBe('Machine could not register (HTTP 409)');
+  });
+
   it('emits each stage transition once and bounds the reason to one line', () => {
     const events: HostBootstrapEvent[] = [];
     const stages = createStageTracker((event) => events.push(event));
@@ -837,8 +895,10 @@ describe('tunnel route memory', () => {
   it('keeps a connected tunnel install when its port cannot be written', async () => {
     const f = flow('offline');
     withStore(f).record.mockImplementation(() => { throw new Error('EACCES'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const events = await bootstrapHostForProject(f.ctx, 'project');
     expect(events.at(-1)).toMatchObject({ type: 'done' });
+    expect(warn).toHaveBeenCalledWith('[zcc] Could not save the SSH tunnel route: EACCES');
   });
 
   it('forgets the tunnel once a machine installs over another route', async () => {
@@ -863,5 +923,34 @@ describe('tunnel route memory', () => {
     const events = await repairHost(reinstalled.ctx, second.id);
     expect(events.at(-1)).toEqual({ type: 'done', hostId: second.id });
     expect(reinstallStore.remove).toHaveBeenCalledWith(second.id);
+  });
+});
+
+describe('pairing command quoting', () => {
+  it.each([
+    ['plain', 'abc', "'abc'"],
+    ['empty', '', "''"],
+    ['single quote', "a'b", "'a'\\''b'"],
+    ['substitution', '$(id)', "'$(id)'"],
+    ['separators', 'a;b && c | d', "'a;b && c | d'"]
+  ])('shQuote quotes %s', (_name, value, expected) => {
+    expect(shQuote(value)).toBe(expected);
+  });
+
+  it('quotes every interpolated value in the curl install command', () => {
+    expect(pairingCommand('https://zcc.corp.example', 'zcde_abc', '028c8627-a6d8-4c62-964e-8f6b35cb2335')).toBe(
+      "curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 'https://zcc.corp.example/install.sh'" +
+      " | sh -s -- --join-code 'zcde_abc' --host-id '028c8627-a6d8-4c62-964e-8f6b35cb2335' --server 'https://zcc.corp.example'"
+    );
+  });
+
+  it.each([
+    "https://a;id",
+    "https://x.example'$(touch /tmp/p)'",
+    'https://x.example`id`'
+  ])('keeps a hostile server value inside one shell word: %s', (server) => {
+    const command = pairingCommand(server, 'zcde_abc', 'h');
+    expect(command).toContain(`--server ${shQuote(server)}`);
+    expect(command).toContain(`${shQuote(`${server}/install.sh`)} | sh`);
   });
 });

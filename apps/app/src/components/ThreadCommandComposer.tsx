@@ -504,7 +504,7 @@ export function ThreadCommandComposer({
       : (hosts.find((row) => row.id === targetHostId)?.name ?? 'remote machine');
     try {
       if (kind === 'install' || kind === 'fix') setHostBusy('Renewing pairing…');
-      const events = await runHostInstallWithDrawer({
+      await runHostInstallWithDrawer({
         kind,
         target,
         startLogs: ['Renewing pairing…'],
@@ -522,20 +522,25 @@ export function ThreadCommandComposer({
           useUi.getState().appendHostInstallLogs(['Reconnecting…']);
           setHostBusy('Reconnecting…');
           return product.hosts.repair(targetHostId!, onEvent);
+        },
+        // Replayed by the drawer's Retry too, so a retried success still binds the host.
+        onSettled: async (events) => {
+          const outcome = bootstrapOutcome(events);
+          if (!outcome.ok) {
+            setError(composerBootstrapErrorMessage(outcome));
+            if (outcome.pairingCommand) setPairingCommand(outcome.pairingCommand);
+            if (outcome.code === 'ssh_identity_required' && targetHostId) {
+              const host = hosts.find((row) => row.id === targetHostId);
+              setSshPick({ hostId: targetHostId, name: host?.name ?? 'machine' });
+            }
+            return;
+          }
+          setError(null);
+          setPairingCommand(null);
+          setHostId(outcome.hostId);
+          await loadProjects();
         }
       });
-      const outcome = bootstrapOutcome(events);
-      if (!outcome.ok) {
-        setError(composerBootstrapErrorMessage(outcome));
-        if (outcome.pairingCommand) setPairingCommand(outcome.pairingCommand);
-        if (outcome.code === 'ssh_identity_required' && targetHostId) {
-          const host = hosts.find((row) => row.id === targetHostId);
-          setSshPick({ hostId: targetHostId, name: host?.name ?? 'machine' });
-        }
-        return;
-      }
-      setHostId(outcome.hostId);
-      await loadProjects();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not update host daemon');
     } finally {

@@ -1,5 +1,6 @@
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type Server } from 'node:http';
 import { Server as NetServer, connect, type AddressInfo } from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
 import { startPairingForwarder, type PairingForwarder } from './pairing-forwarder.js';
@@ -413,12 +414,23 @@ describe('startPairingForwarder', () => {
     await expect(send(port, { path: '/install.sh' })).rejects.toThrow(/ECONNREFUSED/);
   });
 
-  it('honors an IPv6 loopback product host in the pinned Host header', async () => {
-    forwarder = await startPairingForwarder(productPort, { productHost: '::1' });
-    // Nothing listens on ::1 here, so the request fails upstream; the point is
-    // that the forwarder still binds and answers on 127.0.0.1.
-    const reply = await send(forwarder.port, { path: '/install.sh' });
-    expect([200, 502]).toContain(reply.status);
+  const hasIpv6Loopback = Object.values(networkInterfaces()).flat().some((entry) => entry?.address === '::1');
+  it.skipIf(!hasIpv6Loopback)('forwards to an IPv6 loopback product host with a bracketed pinned Host header', async () => {
+    let upstreamHost: string | undefined;
+    const upstream = createServer((request, response) => {
+      upstreamHost = request.headers.host;
+      response.writeHead(200).end('ok');
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '::1', resolve));
+    const upstreamPort = (upstream.address() as AddressInfo).port;
+    try {
+      forwarder = await startPairingForwarder(upstreamPort, { productHost: '::1' });
+      const reply = await send(forwarder.port, { path: '/install.sh' });
+      expect(reply.status).toBe(200);
+      expect(upstreamHost).toBe(`[::1]:${upstreamPort}`);
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
   });
 });
 

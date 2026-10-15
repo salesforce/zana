@@ -486,7 +486,10 @@ describe('AddMachineDialog Connect', () => {
     api.bridge = false;
     api.hosts.createJoinCode.mockResolvedValue({ ok: false, error: 'relay_unavailable', reason: 'offline' });
     open();
-    await screen.findByTestId('add-machine-relay-unavailable');
+    const box = await screen.findByTestId('add-machine-relay-unavailable');
+    expect(box.textContent).not.toContain('Connect via SSH');
+    expect(box.textContent).toContain('public URL');
+    expect(box.textContent).toContain('relay');
     expect(screen.queryByText('Waiting for the machine to connect…')).toBeNull();
   });
 

@@ -152,3 +152,9 @@ it('exposes squad worktree, resume and inbox host-action channels with coerced r
   await api.inbox.hostActions.readDecisionArtifact('entry', '.zana/x.md');
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.inbox.hostActions.readDecisionArtifact, 'entry', '.zana/x.md');
 });
+
+it('serves host bootstrapBySsh over product HTTP with an empty local result', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  await expect(api.hosts.bootstrapBySsh()).resolves.toEqual([]);
+});

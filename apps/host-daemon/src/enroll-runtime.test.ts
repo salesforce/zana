@@ -176,6 +176,26 @@ describe('enrollment across tunnel restarts', () => {
     await daemon.close();
   });
 
+  it('never re-enrolls over stored auth when another loopback port rejects the stored key', async () => {
+    vi.clearAllMocks();
+    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000' });
+    startEnrolledHostConnection.mockImplementation(() => closedConnection());
+    await expect(start('http://127.0.0.1:38892')).rejects.toThrow('Existing machine enrollment belongs to another server');
+    expect(enrollDaemonHost).not.toHaveBeenCalled();
+    expect(writeHostAuth).not.toHaveBeenCalled();
+  });
+
+  it('still re-enrolls on an auth rejection from the exact enrolled URL', async () => {
+    vi.clearAllMocks();
+    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000/' });
+    enrollDaemonHost.mockResolvedValue({ protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId, hostKey: 'fresh' });
+    startEnrolledHostConnection.mockImplementationOnce(() => closedConnection()).mockImplementationOnce(() => openConnection());
+    const daemon = await start('http://127.0.0.1:41000');
+    expect(enrollDaemonHost).toHaveBeenCalledOnce();
+    expect(writeHostAuth).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ hostKey: 'fresh' }));
+    await daemon.close();
+  });
+
   it('still refuses an enrollment that belongs to a different server', async () => {
     vi.clearAllMocks();
     readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'https://other.example' });

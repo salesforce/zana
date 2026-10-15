@@ -67,6 +67,8 @@ export const createHostJoinCodeResponseSchema = z.object({
   expiresAt: z.number().int().positive(),
   /** Preferred route only: the URL this code redeems against, bound to the same relay session. */
   pairingServerUrl: z.string().min(1).optional(),
+  /** Preferred route only: `tunnel` when the code redeems through the SSH reverse-tunnel forwarder instead of the relay. */
+  pairingMode: z.enum(['relay', 'tunnel']).optional(),
 });
 export type CreateHostJoinCodeResponse = z.infer<
   typeof createHostJoinCodeResponseSchema

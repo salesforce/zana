@@ -616,6 +616,32 @@ describe('host bootstrap wiring', () => {
     await settle();
   });
 
+  it('resolves the local host id through dev-attach call sites', async () => {
+    const prev = process.env.ELECTRON_RENDERER_URL;
+    process.env.ELECTRON_RENDERER_URL = 'http://localhost:5173';
+    try {
+      // Dev attach with no supervisor reads the persisted host id (none on disk -> undefined).
+      expect(ctx().projectPathToOptions(project.path)).toBeDefined();
+      // Feed store keys cache by `project.hostId ?? primaryHostId()`.
+      await ctx().feedStore.list(project.id).catch(() => undefined);
+      // Catalogue sources consult primaryHostId only for projects pinned to a host.
+      const spy = vi.spyOn(store, 'listProjects').mockReturnValue([{ ...project, hostId: 'other-host' } as never]);
+      try { for (const s of [ctx().personas, ctx().teams, ctx().templates]) { s.refresh(); s.list(); } } finally { spy.mockRestore(); }
+      // Background launches run the host guard for the resolved local host.
+      const principal = { kind: 'automation', id: 'automation:bg' };
+      await expect(h.goalDeps.launchTerminal({ projectId: 'no-such-project', profile: 'shell', cols: 1, rows: 1 }, principal)).rejects.toThrow();
+      await h.goalDeps.launchTerminal({ projectId: project.id, profile: 'shell', cols: 80, rows: 24 }, principal).catch(() => undefined);
+      // Triggered squads run the team host guard before the orchestrator check.
+      vi.spyOn(ctx().teams, 'list').mockReturnValue([{ id: 'tm1' }] as never);
+      await expect(h.goalDeps.launchSquad({
+        goal: { id: 'g', title: 'G', statement: 's', assignment: { teamId: 'tm1' } }, project: { id: project.id }, iterationId: 'i'
+      })).rejects.toThrow(/orchestrator/);
+      vi.mocked(ctx().teams.list).mockRestore();
+    } finally {
+      if (prev === undefined) delete process.env.ELECTRON_RENDERER_URL; else process.env.ELECTRON_RENDERER_URL = prev;
+    }
+  });
+
   it('flushes blocker notices at boot and isolates later failures', async () => {
     const flushBlockerNotices = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('offline'));
     const logError = vi.fn();

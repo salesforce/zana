@@ -118,6 +118,7 @@ function PairingSshHostGroup({
 }
 
 const RELAY_UNAVAILABLE_MESSAGE = 'Relay unavailable — use Connect via SSH';
+const RELAY_UNAVAILABLE_NO_SSH_MESSAGE = 'Relay unavailable — set a public URL or relay, or add this machine from the desktop app';
 
 export type PairingMethod = 'ssh' | 'command';
 
@@ -134,6 +135,7 @@ export function AddMachineDialogView({
   pairingMethod = 'command',
   relayUnavailable = false,
   showMethodToggle = false,
+  canConnectViaSsh = true,
   sshHost,
   sshHosts,
   pairedName,
@@ -176,6 +178,8 @@ export function AddMachineDialogView({
   /** Relay refused to mint a code: Copy stays disabled, Connect is unaffected. */
   relayUnavailable?: boolean;
   showMethodToggle?: boolean;
+  /** Desktop bridge present and not a repair command: the SSH path actually exists. */
+  canConnectViaSsh?: boolean;
   sshHost: string;
   sshHosts: PairingSshHostOption[];
   pairedName: string | null;
@@ -222,7 +226,7 @@ export function AddMachineDialogView({
     <>
       {relayUnavailable ? (
         <div className="add-machine-error" data-testid="add-machine-relay-unavailable">
-          <p className="modal-error" role="alert">{RELAY_UNAVAILABLE_MESSAGE}</p>
+          <p className="modal-error" role="alert">{canConnectViaSsh ? RELAY_UNAVAILABLE_MESSAGE : RELAY_UNAVAILABLE_NO_SSH_MESSAGE}</p>
           <div className="add-machine-copy-row">
             <button type="button" className="settings-btn" disabled>
               Copy
@@ -747,7 +751,8 @@ function AddMachineDialogContent({
     : null;
   const expired = (!join?.installCommand && joinWindowClosed) || (remaining !== null && remaining <= 0);
 
-  const connectMode = pairingMethod === 'ssh' && hasDesktopBridge() && !join?.installCommand;
+  const canConnectViaSsh = hasDesktopBridge() && !join?.installCommand;
+  const connectMode = pairingMethod === 'ssh' && canConnectViaSsh;
 
   const copy = async () => {
     if (!command) return;
@@ -843,7 +848,8 @@ function AddMachineDialogContent({
       tunnelIssued={tunnelIssued}
       pairingMethod={pairingMethod}
       relayUnavailable={relayUnavailable}
-      showMethodToggle={hasDesktopBridge() && !join?.installCommand}
+      showMethodToggle={canConnectViaSsh}
+      canConnectViaSsh={canConnectViaSsh}
       sshHost={sshHost}
       sshHosts={sshOptions}
       pairedName={paired?.name ?? null}
