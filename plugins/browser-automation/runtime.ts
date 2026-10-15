@@ -15,6 +15,7 @@ import { outputSchema, type RunOutput } from "./contracts.js";
 import { createPreview, type PreviewSource } from "./preview.js";
 import { execute, supervise } from "./process.js";
 import type { ResolvedRuntime } from "./runtime-pin.js";
+import { reuseInitialPage } from "./initial-page.js";
 
 const frameSchema = z.discriminatedUnion("type", [
   z.object({
@@ -278,6 +279,7 @@ export async function createRuntime(args: {
     processes.push(supervise(binary, ["daemon"], env));
     await waitForFile(join(home, "daemon.pid"), "DevBrowser daemon readiness");
     const url = connectionUrl;
+    let initialPageId: string | undefined;
     const run = (
       script: string,
       timeoutMs: number,
@@ -303,7 +305,7 @@ export async function createRuntime(args: {
               String(Math.ceil(timeoutMs / 1000)),
               "--quiet-page",
               "-e",
-              script,
+              initialPageId === undefined ? script : reuseInitialPage(script, initialPageId),
             ],
             env,
             deadline,
@@ -327,7 +329,10 @@ export async function createRuntime(args: {
       );
       return result;
     };
-    await run("await browser.listPages()", 30_000, startup);
+    const initial = await run("JSON.stringify(await browser.listPages())", 30_000, startup);
+    if (initial.exitCode !== 0) throw new Error(`Browser page discovery failed: ${initial.text}`);
+    const pages = z.array(z.object({ id: z.string().regex(/^[a-fA-F0-9]{32}$/) })).parse(JSON.parse(initial.text));
+    if (pages.length === 1) initialPageId = pages[0]!.id;
     if (args.connectionUrl === undefined) preview = createPreview(url);
     return { run, preview, stop: close, close };
   } catch (error) {

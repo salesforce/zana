@@ -19,12 +19,60 @@ vi.mock('electron', () => ({
     });
     open: any;
     setBounds = vi.fn(); setVisible = vi.fn();
-    constructor() { views.push(this); }
+    constructor(options: any = {}) { if (options.webContents) this.webContents = options.webContents; views.push(this); }
   }
 }));
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
 
-it('only forwards allowed popups from visible pages and retains the rate limit', () => {
+it('notifies the owning renderer once when a native tab closes, without touching other tabs', () => {
+  const hostWindow = { isDestroyed: () => false, getContentBounds: () => ({ width: 800, height: 600 }), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: { id: 100, isDestroyed: () => false, send: vi.fn() } };
+  const manager = createDesktopBrowserViewManager();
+  try {
+    const tab = manager.createTab({ hostWindow, tabId: 'owned', threadId: 'thread', url: 'about:blank', profile: { kind: 'automation', id: 'run' }, viewport: { width: 800, height: 600 } });
+    manager.createTab({ hostWindow, tabId: 'other', threadId: 'thread', url: 'about:blank', profile: { kind: 'personal' }, viewport: { width: 800, height: 600 } });
+    manager.closeTab({ hostWebContentsId: 100, threadId: 'thread', tabId: 'owned', generation: 'stale' });
+    expect(hostWindow.webContents.send).not.toHaveBeenCalledWith(IPC.browser.closed, expect.anything());
+    manager.closeTab({ hostWebContentsId: 100, threadId: 'thread', tabId: 'owned', generation: tab.generation });
+    manager.closeTab({ hostWebContentsId: 100, threadId: 'thread', tabId: 'owned', generation: tab.generation });
+    expect(hostWindow.webContents.send.mock.calls.filter(([channel]) => channel === IPC.browser.closed)).toEqual([[IPC.browser.closed, { tabId: 'owned' }]]);
+    expect(manager.listTabs({ hostWebContentsId: 100, threadId: 'thread' }).map(tab => tab.tabId)).toEqual(['other']);
+    expect(manager.getClosedTabs(100)).toEqual([{ tabId: 'owned' }]);
+    expect(manager.getClosedTabs(999)).toEqual([]);
+    const createdViews = views.length;
+    manager.attach({ hostWindow, request: { tabId: 'owned', threadId: 'thread', url: 'https://example.test', visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } } });
+    expect(views).toHaveLength(createdViews);
+    expect(hostWindow.webContents.send).toHaveBeenLastCalledWith(IPC.browser.closed, { tabId: 'owned' });
+    manager.createTab({ hostWindow, tabId: 'owned', threadId: 'thread', url: 'about:blank', profile: { kind: 'automation', id: 'new-run' }, viewport: { width: 800, height: 600 } });
+    expect(manager.listTabs({ hostWebContentsId: 100, threadId: 'thread' })).toHaveLength(2);
+    const reopened = manager.listTabs({ hostWebContentsId: 100, threadId: 'thread' }).find(tab => tab.tabId === 'owned')!;
+    manager.closeTab({ hostWebContentsId: 100, threadId: 'thread', tabId: reopened.tabId, generation: reopened.generation });
+    expect(manager.getClosedTabs(100)).toEqual([{ tabId: 'owned' }]);
+    manager.releaseWindow(100);
+    expect(manager.getClosedTabs(100)).toEqual([]);
+    manager.attach({ hostWindow, request: { tabId: 'owned', threadId: 'thread', url: '', visible: false, bounds: { x: 0, y: 0, width: 0, height: 0 } } });
+    expect(views).toHaveLength(createdViews + 2);
+  } finally { manager.destroyAll(); views.length = 0; }
+});
+
+it('bounds remembered closed IDs so repeated sessions cannot grow the history indefinitely', () => {
+  const hostWindow = { isDestroyed: () => false, getContentBounds: () => ({ width: 800, height: 600 }), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: { id: 101, isDestroyed: () => false, send: vi.fn() } };
+  const manager = createDesktopBrowserViewManager();
+  try {
+    for (let index = 0; index < 4097; index++) {
+      const tab = manager.createTab({ hostWindow, tabId: `tab-${index}`, threadId: 'thread', url: 'about:blank', profile: { kind: 'automation', id: 'run' }, viewport: { width: 800, height: 600 } });
+      manager.closeTab({ hostWebContentsId: 101, threadId: 'thread', tabId: tab.tabId, generation: tab.generation });
+    }
+    const count = views.length;
+    const attach = (tabId: string) => manager.attach({ hostWindow, request: { tabId, threadId: 'thread', url: '', visible: false, bounds: { x: 0, y: 0, width: 0, height: 0 } } });
+    attach('tab-4096');
+    expect(manager.getClosedTabs(101)).toHaveLength(4096);
+    expect(views).toHaveLength(count);
+    attach('tab-0');
+    expect(views).toHaveLength(count + 1);
+  } finally { manager.destroyAll(); views.length = 0; }
+});
+
+it('only creates allowed popups from visible pages and retains the rate limit and profile', () => {
   const hostWindow = {
     isDestroyed: () => false, getContentBounds: () => ({ width: 800, height: 600 }),
     contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
@@ -37,16 +85,76 @@ it('only forwards allowed popups from visible pages and retains the rate limit',
     expect(view.open({ url: 'https://example.test/hidden' })).toEqual({ action: 'deny' });
     expect(hostWindow.webContents.send).not.toHaveBeenCalled();
     manager.setVisibleWithoutFocus({ hostWindow, request: { tabId: 'tab', visible: true } });
-    view.open({ url: 'https://example.test/visible' });
-    expect(hostWindow.webContents.send).toHaveBeenCalledWith(IPC.browser.scopedOpenTab, { tabId: 'tab', url: 'https://example.test/visible' });
+    const allowed = view.open({ url: 'https://example.test/visible' });
+    expect(allowed.action).toBe('allow');
+    expect(allowed.overrideBrowserWindowOptions.webPreferences).toEqual(expect.objectContaining({ sandbox: true, nodeIntegration: false, contextIsolation: true, webSecurity: true }));
+    expect(hostWindow.webContents.send).not.toHaveBeenCalled();
+    const child = allowed.createWindow({});
+    expect(child.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.test/visible');
+    const popup = manager.listTabs({ hostWebContentsId: 1, threadId: 'thread' }).find(tab => tab.tabId !== 'tab')!;
+    expect(popup.profile).toEqual({ kind: 'automation', id: 'run' });
+    expect(hostWindow.webContents.send).toHaveBeenCalledWith(IPC.browser.scopedOpenTab, { tabId: 'tab', url: 'https://example.test/visible', openedTabId: popup.tabId });
     expect(hostWindow.webContents.send).toHaveBeenCalledWith(IPC.browser.openTab, { url: 'https://example.test/visible' });
     hostWindow.webContents.send.mockClear();
-    view.open({ url: 'file:///etc/passwd' });
+    expect(view.open({ url: 'file:///etc/passwd' })).toEqual({ action: 'deny' });
     expect(hostWindow.webContents.send).not.toHaveBeenCalled();
-    view.open({ url: 'https://example.test/third' });
+    expect(view.open({ url: 'https://example.test/third' }).action).toBe('allow');
     hostWindow.webContents.send.mockClear();
-    view.open({ url: 'https://example.test/limited' });
+    expect(view.open({ url: 'https://example.test/limited' })).toEqual({ action: 'deny' });
     expect(hostWindow.webContents.send).not.toHaveBeenCalled();
+  } finally { manager.destroyAll(); views.length = 0; }
+});
+
+it('adopts the real blank popup without reloading it and cleans up a scripted native close', () => {
+  const hostWindow = { isDestroyed: () => false, getContentBounds: () => ({ width: 800, height: 600 }), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: { id: 111, isDestroyed: () => false, send: vi.fn() } };
+  const manager = createDesktopBrowserViewManager();
+  try {
+    manager.createTab({ hostWindow, tabId: 'login', threadId: 'thread', url: 'about:blank', profile: { kind: 'personal' }, viewport: { width: 800, height: 600 } });
+    manager.setVisibleWithoutFocus({ hostWindow, request: { tabId: 'login', visible: true } });
+    const source = views.at(-1);
+    const provisional = new source.constructor();
+    const nativePopup = provisional.webContents;
+    const result = source.open({ url: 'about:blank' });
+    expect(result.createWindow({ webContents: nativePopup })).toBe(nativePopup);
+    expect(views.at(-1).webContents).toBe(nativePopup);
+    expect(nativePopup.loadURL).not.toHaveBeenCalled();
+    const popup = manager.listTabs({ hostWebContentsId: 111, threadId: 'thread' }).find(tab => tab.tabId !== 'login')!;
+    expect(popup.profile).toEqual({ kind: 'personal' });
+    const popupView = views.at(-1);
+    Object.defineProperty(popupView, 'webContents', { get() { throw new Error('Native view has been disposed'); } });
+    hostWindow.contentView.removeChildView.mockImplementationOnce(() => { throw new Error('Native view has been disposed'); });
+    nativePopup.destroyed = true;
+    expect(() => nativePopup.emit('destroyed')).not.toThrow();
+    expect(manager.listTabs({ hostWebContentsId: 111, threadId: 'thread' }).map(tab => tab.tabId)).toEqual(['login']);
+    expect(hostWindow.webContents.send).toHaveBeenCalledWith(IPC.browser.closed, { tabId: popup.tabId });
+    expect(hostWindow.contentView.removeChildView.mock.calls[0]?.[0] === popupView).toBe(true);
+    expect(nativePopup.close).not.toHaveBeenCalled();
+  } finally { manager.destroyAll(); views.length = 0; }
+});
+
+it('exempts only live managed browser contents from the app navigation guard and revokes them on teardown', () => {
+  const hostWindow = { isDestroyed: () => false, getContentBounds: () => ({ width: 800, height: 600 }), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: { id: 112, isDestroyed: () => false, send: vi.fn() } };
+  const manager = createDesktopBrowserViewManager();
+  try {
+    const tab = manager.createTab({ hostWindow, tabId: 'page', threadId: 'thread', url: 'about:blank', profile: { kind: 'personal' }, viewport: { width: 800, height: 600 } });
+    const contents = views.at(-1).webContents;
+    expect(manager.allowsNavigation(contents, 'https://example.test/login')).toBe(true);
+    expect(manager.allowsNavigation(contents, 'about:blank')).toBe(true);
+    for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'data:text/html,unsafe']) expect(manager.allowsNavigation(contents, url)).toBe(false);
+    expect(manager.allowsNavigation({ ...contents } as any, 'https://example.test')).toBe(false);
+    contents.destroyed = true;
+    expect(manager.allowsNavigation(contents, 'https://example.test')).toBe(false);
+    contents.destroyed = false;
+    manager.closeTab({ hostWebContentsId: 112, threadId: 'thread', tabId: 'page', generation: tab.generation });
+    expect(manager.allowsNavigation(contents, 'https://example.test')).toBe(false);
+    manager.createTab({ hostWindow, tabId: 'window-page', threadId: 'thread', url: 'about:blank', profile: { kind: 'personal' }, viewport: { width: 800, height: 600 } });
+    const windowPage = views.at(-1).webContents;
+    manager.releaseWindow(112);
+    expect(manager.allowsNavigation(windowPage, 'https://example.test')).toBe(false);
+    manager.createTab({ hostWindow, tabId: 'final-page', threadId: 'thread', url: 'about:blank', profile: { kind: 'personal' }, viewport: { width: 800, height: 600 } });
+    const finalPage = views.at(-1).webContents;
+    manager.destroyAll();
+    expect(manager.allowsNavigation(finalPage, 'https://example.test')).toBe(false);
   } finally { manager.destroyAll(); views.length = 0; }
 });
 

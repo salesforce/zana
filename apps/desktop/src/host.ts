@@ -250,6 +250,7 @@ import { registerPluginViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { createPluginApprovalHandler } from './ipc/plugin-approvals.js';
 import { listPluginAppsFromProductServer } from './ipc/plugin-apps-loopback.js';
+import { createLoopbackPluginCommands } from './control/plugin-commands-loopback.js';
 import type { LibraryDoc, LibraryAddInput, LibraryScope } from '@zana-ai/zcc-domain/product';
 import { startMcpServer, type McpServerHandle } from '@zana-ai/zcc-server/services/mcp/mcp-server';
 import { MobileGatewayManager } from '@zana-ai/zcc-server/mobile/manager';
@@ -9025,6 +9026,9 @@ async function bootstrapNormal() {
       }
     },
     teamOps: createMainTeamProductOps(),
+    pluginCommands: process.env.ELECTRON_RENDERER_URL
+      ? createLoopbackPluginCommands(productServerUrl())
+      : undefined,
     pluginHost: runtimeSupervisor
       ? {
           install: (source) => runtimeSupervisor!.installPlugin(source),
@@ -9231,7 +9235,7 @@ app.on('web-contents-created', (_e, contents) => {
     }
   };
   const preventExternalNavigation = (event: Electron.Event, url: string) => {
-    if (!isTrustedRendererUrl(url) && !allowsSharedNavigation(contents, url)) event.preventDefault();
+    if (!isTrustedRendererUrl(url) && !allowsSharedNavigation(contents, url) && !desktopBrowserViewManager.allowsNavigation(contents, url)) event.preventDefault();
   };
   contents.on('will-navigate', preventExternalNavigation);
   contents.on('will-redirect', preventExternalNavigation);

@@ -158,8 +158,11 @@ export interface DesktopBrowserOpenTabRequest {
 }
 
 export interface DesktopBrowserScopedOpenTabRequest {
+  /** Source tab identifying the owning panel. */
   tabId: string;
   url: string;
+  /** Existing native popup to adopt without navigating it again. */
+  openedTabId?: string;
 }
 
 export interface DesktopBrowserSnapshot {
@@ -367,11 +370,12 @@ export function parseDesktopBrowserOpenTabRequest(value: unknown): ParseResult<D
 export function parseDesktopBrowserScopedOpenTabRequest(
   value: unknown
 ): ParseResult<DesktopBrowserScopedOpenTabRequest> {
-  if (!isRecord(value) || extraKeys(value, ['tabId', 'url'])) return { success: false };
+  if (!isRecord(value) || extraKeys(value, ['tabId', 'url', 'openedTabId'])) return { success: false };
   const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
   const url = parseBoundedString(value.url, DESKTOP_BROWSER_MAX_URL_LENGTH, 1);
-  if (tabId === null || url === null) return { success: false };
-  return { success: true, data: { tabId, url } };
+  const openedTabId = value.openedTabId === undefined ? undefined : parseBoundedString(value.openedTabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  if (tabId === null || url === null || openedTabId === null) return { success: false };
+  return { success: true, data: { tabId, url, ...(openedTabId === undefined ? {} : { openedTabId }) } };
 }
 
 export function parseDesktopBrowserSnapshot(value: unknown): ParseResult<DesktopBrowserSnapshot> {
@@ -503,6 +507,8 @@ export interface DesktopBrowserApi {
   onAppCommand?(listener: (command: string) => void): DesktopBrowserUnsubscribe;
   getControl?(tabId: string): Promise<DesktopBrowserControlState | null>;
   onState(listener: (state: DesktopBrowserState) => void): DesktopBrowserUnsubscribe;
+  onClosed?(listener: (tab: DesktopBrowserTabRef) => void): DesktopBrowserUnsubscribe;
+  getClosedTabs?(): Promise<DesktopBrowserTabRef[]>;
   onOpenTab(listener: (request: DesktopBrowserOpenTabRequest) => void): DesktopBrowserUnsubscribe;
   onScopedOpenTab?(
     listener: (request: DesktopBrowserScopedOpenTabRequest) => void

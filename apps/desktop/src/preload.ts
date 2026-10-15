@@ -11,6 +11,7 @@ import type {
   DesktopBrowserScopedOpenTabRequest,
   DesktopBrowserSnapshot,
   DesktopBrowserState,
+  DesktopBrowserTabRef,
   DesktopBrowserViewBounds,
   PluginApprovalSheetRequest,
   PluginViewTarget
@@ -23,7 +24,8 @@ import {
   parseDesktopBrowserRevealRequest,
   parseDesktopBrowserScopedOpenTabRequest,
   parseDesktopBrowserSnapshot,
-  parseDesktopBrowserState
+  parseDesktopBrowserState,
+  parseDesktopBrowserTabRef
 } from '@zana-ai/zcc-desktop-contract';
 
 // `ipcRenderer` is a single process-wide EventEmitter shared by every subscriber
@@ -71,6 +73,7 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 
 const browserStateListeners = new Set<(state: DesktopBrowserState) => void>();
+const browserClosedListeners = new Set<(tab: DesktopBrowserTabRef) => void>();
 const browserOpenTabListeners = new Set<(request: DesktopBrowserOpenTabRequest) => void>();
 const browserScopedOpenTabListeners = new Set<(request: DesktopBrowserScopedOpenTabRequest) => void>();
 const browserSnapshotListeners = new Set<(snapshot: DesktopBrowserSnapshot) => void>();
@@ -161,6 +164,13 @@ function createDesktopBrowserApi(): DesktopBrowserApi {
         browserStateListeners.delete(listener);
       };
     },
+    onClosed(listener) {
+      browserClosedListeners.add(listener);
+      return () => { browserClosedListeners.delete(listener); };
+    },
+    getClosedTabs() {
+      return ipcRenderer.invoke(IPC.browser.getClosedTabs);
+    },
     onOpenTab(listener) {
       browserOpenTabListeners.add(listener);
       return () => {
@@ -225,6 +235,11 @@ ipcRenderer.on(IPC.browser.state, (_event, payload: unknown) => {
   const parsed = parseDesktopBrowserState(payload);
   if (!parsed.success) return;
   for (const listener of browserStateListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.closed, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserTabRef(payload);
+  if (!parsed.success) return;
+  for (const listener of browserClosedListeners) listener(parsed.data);
 });
 ipcRenderer.on(IPC.browser.openTab, (_event, payload: unknown) => {
   const parsed = parseDesktopBrowserOpenTabRequest(payload);

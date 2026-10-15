@@ -12,6 +12,7 @@ import type { ClosableSecondaryTab } from './threadSecondaryPanelState.js';
 interface PanelCommands {
   state: { tabs: readonly ClosableSecondaryTab[] };
   addTab: (tab: Omit<ClosableSecondaryTab, 'id'> & { id?: string }) => void;
+  closeTab: (tabId: string) => void;
 }
 
 export function useInAppBrowserPanel(ownerId: string, panel: PanelCommands): void {
@@ -19,6 +20,8 @@ export function useInAppBrowserPanel(ownerId: string, panel: PanelCommands): voi
   addTabRef.current = panel.addTab;
   const tabsRef = useRef(panel.state.tabs);
   tabsRef.current = panel.state.tabs;
+  const closeTabRef = useRef(panel.closeTab);
+  closeTabRef.current = panel.closeTab;
 
   useEffect(() => {
     const api = getDesktopBrowserApi();
@@ -40,7 +43,10 @@ export function useInAppBrowserPanel(ownerId: string, panel: PanelCommands): voi
       // Native popup events reach every pane; their source tab identifies the
       // owning panel. An unrelated thread must not open a copy of the page.
       if (!tabsRef.current.some((tab) => tab.kind === 'browser' && tab.id === request.tabId)) return;
-      openUrl(request.url);
+      // Adopt the actual popup without reloading its initial URL: it may already
+      // have navigated from about:blank while this event crossed IPC.
+      if (request.openedTabId) openUrl('', { id: request.openedTabId });
+      else openUrl(request.url);
     });
     const unsubOpen = unsubScoped ? null : api.onOpenTab((request) => {
       openUrl(request.url);
@@ -49,10 +55,22 @@ export function useInAppBrowserPanel(ownerId: string, panel: PanelCommands): voi
       if (request.threadId !== ownerId) return;
       openUrl(request.url, { id: request.tabId, automationTargetId: request.targetId });
     });
+    const removeClosed = ({ tabId }: { tabId: string }) => {
+      if (tabsRef.current.some((tab) => tab.kind === 'browser' && tab.id === tabId)) {
+        closeTabRef.current(tabId);
+      }
+    };
+    const unsubClosed = api.onClosed?.(removeClosed);
+    let disposed = false;
+    void api.getClosedTabs?.().then((tabs) => {
+      if (!disposed) for (const tab of tabs) removeClosed(tab);
+    }).catch(() => { /* A disconnected desktop can reconcile on the next mount. */ });
     return () => {
+      disposed = true;
       unsubScoped?.();
       unsubOpen?.();
       unsubAuto?.();
+      unsubClosed?.();
     };
   }, [ownerId]);
 

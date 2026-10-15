@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH,
   DESKTOP_BROWSER_MAX_URL_LENGTH,
+  DESKTOP_BROWSER_MAX_TITLE_LENGTH,
   clampDesktopBrowserViewBounds,
   parseDesktopBrowserAttachRequest,
   parseDesktopBrowserAutomationOpenRequest,
   parseDesktopBrowserFindInPageRequest,
   parseDesktopBrowserFindResult,
   parseDesktopBrowserSetBoundsRequest,
+  parseDesktopBrowserScopedOpenTabRequest,
   parseDesktopBrowserState,
   parseDesktopBrowserStopFindInPageRequest,
   type DesktopBrowserViewBounds,
@@ -204,5 +206,22 @@ describe('desktop browser cookie-import copy', () => {
     expect(isRetryableDesktopBrowserImportReason('needsFullDiskAccess')).toBe(true);
     expect(isRetryableDesktopBrowserImportReason('notInstalled')).toBe(false);
     expect(isRetryableDesktopBrowserImportReason('unknownSource')).toBe(false);
+  });
+});
+
+describe('native popup adoption requests', () => {
+  it('accepts existing URL-only requests and the bounded native child ID', () => {
+    const request = { tabId: 'source', url: 'about:blank' };
+    expect(parseDesktopBrowserScopedOpenTabRequest(request)).toEqual({ success: true, data: request });
+    const adopted = { ...request, openedTabId: 'browser:popup-child' };
+    expect(parseDesktopBrowserScopedOpenTabRequest(adopted)).toEqual({ success: true, data: adopted });
+  });
+  it.each([null, '', 12, 'a'.repeat(DESKTOP_BROWSER_MAX_TITLE_LENGTH + 1)])('rejects an invalid opened tab ID: %s', (openedTabId) => {
+    expect(parseDesktopBrowserScopedOpenTabRequest({ tabId: 'source', url: 'about:blank', openedTabId }).success).toBe(false);
+  });
+  it('rejects malformed requests and extra keys', () => {
+    for (const request of [null, {}, { tabId: '', url: 'about:blank' }, { tabId: 'source', url: '' }, { tabId: 'source', url: 'about:blank', windowId: 1 }]) {
+      expect(parseDesktopBrowserScopedOpenTabRequest(request).success).toBe(false);
+    }
   });
 });

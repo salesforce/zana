@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import plugin from "./server.js";
 import { rpcContract } from "./contracts.js";
 
-async function setup(initial?: Map<string, unknown>) {
+async function setup(initial?: Map<string, unknown>, asynchronousClient = false) {
   const worker = vi.fn(
     async ({ method }: { method: string; timeoutMs?: number }): Promise<unknown> =>
       method === "run"
@@ -23,7 +23,10 @@ async function setup(initial?: Map<string, unknown>) {
   const subscriptions: any[] = [];
   let workerExit: (event: { hostId: string }) => void | Promise<void> = async () => {};
   const client = host.bb.host.experimental_client.bind(host.bb.host);
-  host.bb.host.experimental_client = options => ({ ...client(options), experimental_onWorkerExit: callback => { workerExit = callback; return () => {}; } });
+  host.bb.host.experimental_client = (options => {
+    const value = { ...client(options), experimental_onWorkerExit: (callback: typeof workerExit) => { workerExit = callback; return () => {}; } };
+    return asynchronousClient ? Promise.resolve(value) : value;
+  }) as typeof host.bb.host.experimental_client;
   host.harness.sdk.stub("threads.get", async () =>
     makeThreadResponse({ id: "thread-test" }),
   );
@@ -117,6 +120,98 @@ async function setup(initial?: Map<string, unknown>) {
 }
 
 describe("server session ownership", () => {
+  it.each([false, true])("cleans an asynchronous desktop subscription when control is revoked early: %s", async revoke => {
+    const h = await setup();
+    const dispose = vi.fn();
+    let resolve!: (value: { dispose(): void }) => void;
+    let onChange!: (value: { tabs: [] }) => void;
+    h.harness.sdk.stub("experimental_desktopBrowsers.subscribe", input => {
+      onChange = (input as { onChange(value: { tabs: [] }): void }).onChange;
+      return new Promise(done => { resolve = done; });
+    });
+    try {
+      const opening = h.open();
+      // Attach a rejection handler before exercising a revoke during open.
+      const outcome = opening.then(session => ({ session }), error => ({ error }));
+      await vi.waitFor(() => expect(resolve).toBeTypeOf("function"));
+      if (revoke) {
+        onChange({ tabs: [] });
+        await vi.waitFor(async () => expect(await h.harness.behavior.callRpc("list", { threadId: "thread-test" })).toMatchObject([{ state: "stopped" }]));
+      }
+      resolve({ dispose });
+      const result = await outcome;
+      if ("error" in result) expect(result.error.message).toContain("control was released");
+      else {
+        expect(revoke).toBe(false);
+        await h.harness.behavior.callRpc("close", { threadId: "thread-test", sessionId: result.session.id });
+      }
+      expect(dispose).toHaveBeenCalledTimes(1);
+    } finally {
+      await h.harness.lifecycle.dispose();
+    }
+  });
+
+  it("keeps host contracts local and rejects malformed worker output before admitting a session", async () => {
+    const h = await setup();
+    try {
+      h.worker.mockImplementation(async ({ method }) => method === "prepare" ? { status: "ready", version: "test", source: "release" } : method === "open" ? { unexpected: true } : null);
+      await expect(h.open()).rejects.toThrow();
+      expect(h.harness.sdk.callsTo("experimental_desktopBrowsers.releaseControl")).toHaveLength(1);
+      expect(h.harness.sdk.callsTo("experimental_desktopBrowsers.closeTab")).toHaveLength(1);
+      expect(await h.harness.behavior.callRpc("list", { threadId: "thread-test" })).toMatchObject([{ state: "closed" }]);
+    } finally {
+      await h.harness.lifecycle.dispose();
+    }
+  });
+
+  it("loads when the desktop worker bridge resolves the host client asynchronously", async () => {
+    const h = await setup(undefined, true);
+    try {
+      const session = await h.open();
+      expect(session.state).toBe("ready");
+      await h.workerExit("desktop-host");
+      expect(await h.harness.behavior.callRpc("list", { threadId: "thread-test" })).toMatchObject([{ state: "closed" }]);
+    } finally {
+      await h.harness.lifecycle.dispose();
+    }
+  });
+
+  it("serves command help without a thread or opening a worker", async () => {
+    const h = await setup();
+    try {
+      const result = await h.harness.behavior.runCli(["run", "--help"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("--timeout <duration>");
+      expect(result.stdout).toContain("500 KB");
+      expect(h.worker).not.toHaveBeenCalled();
+      const invalid = await h.harness.behavior.runCli(["list", "--headless", "--json"], { threadId: "thread-test" });
+      expect(invalid.exitCode).toBe(1);
+      expect(JSON.parse(invalid.stdout!)).toMatchObject({ ok: false, error: { code: "command_failed" } });
+      const missing = await h.harness.behavior.runCli(["run", "00000000-0000-4000-8000-000000000001", "--script", "1", "--timeout", "90s", "--json"], { threadId: "thread-test" });
+      expect(missing.exitCode).toBe(1);
+      expect(JSON.parse(missing.stdout!)).toMatchObject({ ok: false, error: { code: "session_unavailable" } });
+      expect(h.worker).not.toHaveBeenCalled();
+    } finally {
+      await h.harness.lifecycle.dispose();
+    }
+  });
+
+  it("passes duration timeouts to the worker and exposes session recovery errors", async () => {
+    const h = await setup();
+    try {
+      const session = await h.open();
+      const result = await h.harness.behavior.runCli(["run", session.id, "--script", "1", "--timeout", "90s", "--json"], { threadId: "thread-test" });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(h.worker).toHaveBeenCalledWith(expect.objectContaining({ method: "run", input: expect.objectContaining({ timeoutMs: 90_000 }) }));
+      await h.harness.behavior.runCli(["stop", session.id], { threadId: "thread-test" });
+      const stopped = await h.harness.behavior.runCli(["run", session.id, "--script", "1", "--json"], { threadId: "thread-test" });
+      expect(stopped.exitCode).toBe(1);
+      expect(JSON.parse(stopped.stdout!)).toMatchObject({ ok: false, error: { code: "session_unavailable", hint: expect.stringContaining("new browser session") } });
+    } finally {
+      await h.harness.lifecycle.dispose();
+    }
+  });
+
   it.each([
     ["local", "Lab workstation", "local-host"],
     ["desktop", "Lab desktop", "desktop-host"],
@@ -469,6 +564,7 @@ describe('browser cleanup and recovery paths', () => {
       await expect(localOpen(h)).rejects.toThrow('session limit');
       vi.setSystemTime(Date.now() + 5 * 60_000); await vi.advanceTimersByTimeAsync(1000);
       expect((await h.harness.behavior.callRpc('list', { threadId: 'thread-test' }) as { state: string }[]).every(s => s.state === 'closed')).toBe(true);
+      await vi.waitFor(() => expect([...h.harness.kv.values()].every(value => !(value as { cleanupPending: boolean }).cleanupPending)).toBe(true));
       const session = await localOpen(h); let release!: (value: unknown) => void;
       h.worker.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
       const running = h.harness.behavior.callRpc('run', { threadId: 'thread-test', sessionId: session.id, script: '1' });

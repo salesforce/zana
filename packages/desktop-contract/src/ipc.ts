@@ -831,6 +831,8 @@ export const IPC = {
     findResult: 'desktop:browser:find-result',
     appCommand: 'desktop:browser:app-command',
     state: 'desktop:browser:state',
+    closed: 'desktop:browser:closed',
+    getClosedTabs: 'desktop:browser:get-closed-tabs',
     openTab: 'desktop:browser:open-tab',
     scopedOpenTab: 'desktop:browser:scoped-open-tab',
     snapshot: 'desktop:browser:snapshot',

@@ -26,6 +26,7 @@ test('Browser Automation resolves machine names through the production plugin SD
   if (await trust.isVisible().catch(() => false)) await trust.click();
   await expect.poll(() => window.evaluate(async () => {
     const plugin = (await window.cc.pluginApps.list()).find((entry) => entry.id === 'browser-automation');
+    if (plugin?.status === 'degraded') throw new Error(JSON.stringify(plugin));
     return `${plugin?.enabled}:${plugin?.status}`;
   }), { timeout: 30_000 }).toBe('true:running');
   const results = await window.evaluate(async (threadId) => {
@@ -42,11 +43,31 @@ test('Browser Automation resolves machine names through the production plugin SD
       if (!response.ok) throw new Error(await response.text());
       return response.json();
     };
-    return { byName: await open(host.name), byId: await open(host.id), missing: await open('missing-machine-e2e') };
+    const cli = async (argv: string[], withThread = true) => {
+      const response = await fetch('/api/v1/plugins/browser-automation/cli', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...(withThread ? { threadId } : {}), argv })
+      });
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    };
+    return {
+      byName: await open(host.name), byId: await open(host.id), missing: await open('missing-machine-e2e'),
+      help: await cli(['run', '--help'], false),
+      timeout: await cli(['run', '00000000-0000-4000-8000-000000000001', '--script', '1', '--timeout', '90s', '--json']),
+      invalidTimeout: await cli(['run', '00000000-0000-4000-8000-000000000001', '--script', '1', '--timeout', '121s', '--json'])
+    };
   }, threadId);
   // Both selectors reached the actual desktop broker, which rejects our
   // deliberately absent instance without creating a browser or lease.
   expect(results.byName).toMatchObject({ exitCode: 1, stderr: 'Selected desktop is unavailable; choose a connected instance explicitly' });
   expect(results.byId).toEqual(results.byName);
   expect(results.missing).toMatchObject({ exitCode: 1, stderr: "Machine 'missing-machine-e2e' was not found" });
+  expect(results.help.exitCode).toBe(0);
+  expect(results.help.stdout).toContain('--timeout <duration>');
+  expect(results.help.stdout).toContain('500 KB');
+  expect(results.timeout.exitCode).toBe(1);
+  expect(JSON.parse(results.timeout.stdout)).toMatchObject({ ok: false, error: { code: 'session_unavailable' } });
+  expect(results.invalidTimeout.exitCode).toBe(1);
+  expect(JSON.parse(results.invalidTimeout.stdout)).toMatchObject({ ok: false, error: { code: 'command_failed', message: expect.stringContaining('between 1000 and 120000') } });
 });

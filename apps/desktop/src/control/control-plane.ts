@@ -70,6 +70,8 @@ import { scheduleDefinitionPatchSchema } from '@zana-ai/zcc-server/services/sche
 const MAX_REQUEST_BYTES = 256 * 1024;
 /** Slow-loris guard: a client that connects and dribbles is dropped. */
 const REQUEST_TIMEOUT_MS = 10_000;
+/** Authenticated plugin scripts/install preparation may take several minutes. */
+const PLUGIN_CLI_TIMEOUT_MS = 300_000;
 /**
  * Ceiling on simultaneous in-flight connections (CLAUDE.md #5 — bound unbounded
  * work on the main event loop). The CLI is one-request-per-connection and short;
@@ -238,6 +240,8 @@ export interface ControlPlaneDeps {
     ): Promise<unknown>;
     logs(id: string, n?: number): Promise<unknown>;
   };
+  /** Dev's separately running product server owns SDK-backed CLI commands. */
+  pluginCommands?: Pick<NonNullable<ControlPlaneDeps['pluginHost']>, 'cliContributions' | 'runCliCommand'>;
   log?: (msg: string) => void;
 }
 
@@ -863,7 +867,7 @@ export async function dispatchOp(
           return { ok: true, value: await (host?.removeMarketplace(url) ?? (await ensureFallbackPluginService()).removeMarketplace(url)) };
         }
         if (op === 'plugin.contributions') {
-          return { ok: true, value: await (host?.cliContributions() ?? (await ensureFallbackPluginService()).cliContributions()) };
+          return { ok: true, value: await ((deps.pluginCommands ?? host)?.cliContributions() ?? (await ensureFallbackPluginService()).cliContributions()) };
         }
         if (op === 'plugin.cli') {
           const id = str(args.id);
@@ -876,7 +880,7 @@ export async function dispatchOp(
           };
           return {
             ok: true,
-            value: await (host?.runCliCommand(id, argv, context) ?? (await ensureFallbackPluginService()).runCliCommand(id, argv, context))
+            value: await ((deps.pluginCommands ?? host)?.runCliCommand(id, argv, context) ?? (await ensureFallbackPluginService()).runCliCommand(id, argv, context))
           };
         }
       } catch (error) {
@@ -1025,7 +1029,7 @@ async function handleConnection(
     }
   };
 
-  const timer = setTimeout(() => {
+  let timer = setTimeout(() => {
     finish({ ok: false, code: 'TIMEOUT', message: 'request timed out' });
   }, REQUEST_TIMEOUT_MS);
 
@@ -1050,6 +1054,7 @@ async function handleConnection(
     takeLine(buf.subarray(0, nl).toString('utf8'));
   });
   socket.on('error', () => finish({ ok: false, code: 'SOCKET_ERR', message: 'socket error' }));
+  socket.on('close', () => { done = true; clearTimeout(timer); });
   socket.on('end', () => {
     // No newline arrived but the client half-closed — treat the whole buffer as
     // the request line. Guarded by lineTaken so it never double-dispatches.
@@ -1075,6 +1080,10 @@ async function handleConnection(
       log(`[control] refused ${String(parsed.op)}: ${authd.code}`);
       finish(authd);
       return;
+    }
+    if (authd.op === 'plugin.cli') {
+      clearTimeout(timer);
+      timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT', message: 'plugin command timed out' }), PLUGIN_CLI_TIMEOUT_MS);
     }
     try {
       if (

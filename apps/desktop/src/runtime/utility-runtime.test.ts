@@ -10,6 +10,19 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 describe('utility process lifecycle', () => {
+  it('allows bounded long plugin CLI work while ordinary requests retain their short deadline', async () => {
+    vi.useFakeTimers(); const { child, runtime } = fixture();
+    const pending = runtime.request('plugins-cli-run', 'plugin', ['open'], { threadId: 'thread' });
+    const message = child.postMessage.mock.calls[0]![0];
+    expect(Date.parse(message.deadlineAt) - Date.now()).toBe(300_000);
+    await vi.advanceTimersByTimeAsync(25_000);
+    child.emit('message', { type: 'result', protocolVersion, id: message.id, value: { exitCode: 0 } });
+    expect(await pending).toEqual({ exitCode: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+    const timeout = expect(runtime.request('plugins-cli-run', 'plugin', ['hang'])).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(300_000); await timeout;
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('rejects pending and future calls immediately after a crash', async () => {
     vi.useFakeTimers(); const { child, runtime, gone } = fixture();
     const first = runtime.request('projects-list');

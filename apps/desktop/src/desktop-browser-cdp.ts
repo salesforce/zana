@@ -23,6 +23,8 @@ export interface DesktopBrowserCdpScope {
 
 export interface DesktopBrowserCdpPage {
   tabId: string;
+  /** Native CDP target ID, matching the page's main frame when available. */
+  targetId?: string;
   url: string;
   title: string;
   attach(): void;
@@ -77,6 +79,14 @@ const filterSchema = z.array(
 );
 type TargetFilter = z.infer<typeof filterSchema>;
 
+// Chromium's default TargetFilter excludes browser and virtual tab targets.
+// Clients such as Puppeteer can explicitly include tabs for tab-to-page attach.
+const defaultTargetFilter: TargetFilter = [
+  { type: "browser", exclude: true },
+  { type: "tab", exclude: true },
+  { exclude: false },
+];
+
 function matchesFilter(type: string, filter: TargetFilter): boolean {
   return !(
     filter.find((entry) => entry.type === undefined || entry.type === type)
@@ -121,8 +131,9 @@ function buildTargetInfo(
   page: DesktopBrowserCdpPage,
   scope: DesktopBrowserCdpScope,
   type: "page" | "tab",
+  browserContextId: string,
 ): CdpObject {
-  const targetId = desktopBrowserCdpTargetId(scope, page.tabId);
+  const targetId = page.targetId ?? desktopBrowserCdpTargetId(scope, page.tabId);
   return {
     targetId: type === "tab" ? `tab:${targetId}` : targetId,
     type,
@@ -130,7 +141,7 @@ function buildTargetInfo(
     url: page.url,
     attached: false,
     canAccessOpener: false,
-    browserContextId: "",
+    browserContextId,
   };
 }
 
@@ -151,10 +162,12 @@ function createConnection(
   const controller = new AbortController();
   const deadlines = new Set<ReturnType<typeof setTimeout>>();
   let discover = false;
-  let discoveryFilter: TargetFilter = [{ exclude: false }];
+  let discoveryFilter: TargetFilter = defaultTargetFilter;
   const autoAttachments = new Map<string | undefined, TargetFilter>();
   let disposed = false;
   const browserTargetId = randomUUID();
+  // Expose an opaque default context for this scope, never Electron's other jars.
+  const defaultBrowserContextId = `context:${desktopBrowserCdpTargetId(scope, "")}`;
   const browserInfo: CdpObject = {
     targetId: browserTargetId,
     type: "browser",
@@ -169,7 +182,7 @@ function createConnection(
     type: "page" | "tab" = "page",
   ) {
     return {
-      ...buildTargetInfo(page, scope, type),
+      ...buildTargetInfo(page, scope, type, defaultBrowserContextId),
       attached: [...sessions.values()].some(
         (session) => session.tabId === page.tabId && session.kind === type,
       ),
@@ -177,7 +190,8 @@ function createConnection(
   }
 
   function targetIdFor(tabId: string) {
-    return desktopBrowserCdpTargetId(scope, tabId);
+    const page = attached.get(tabId)?.page ?? adapter.listTabs(scope).find((page) => page.tabId === tabId);
+    return page?.targetId ?? desktopBrowserCdpTargetId(scope, tabId);
   }
 
   function send(message: CdpObject) {
@@ -209,7 +223,9 @@ function createConnection(
   function getTarget(targetId: string) {
     const page = adapter
       .listTabs(scope)
-      .find((candidate) => targetIdFor(candidate.tabId) === targetId);
+      .find((candidate) =>
+        (candidate.targetId ?? desktopBrowserCdpTargetId(scope, candidate.tabId)) === targetId,
+      );
     if (!page) throw new Error("Target is not available to this connection");
     return page;
   }
@@ -538,27 +554,21 @@ function createConnection(
           jsVersion: process.versions.v8,
         };
       case "Target.getBrowserContexts":
-        return { browserContextIds: [] };
-      case "Target.getTargets":
+        return { browserContextIds: [], defaultBrowserContextId };
+      case "Target.getTargets": {
+        const filter =
+          params.filter === undefined
+            ? (discover ? discoveryFilter : defaultTargetFilter)
+            : filterSchema.parse(params.filter);
         return {
-          targetInfos:
-            params.filter === undefined
-              ? adapter.listTabs(scope).map((page) => targetInfo(page))
-              : [
-                  browserInfo,
-                  ...adapter
-                    .listTabs(scope)
-                    .flatMap((page) => [
-                      targetInfo(page, "tab"),
-                      targetInfo(page),
-                    ]),
-                ].filter((info) =>
-                  matchesFilter(
-                    readString(info, "type"),
-                    filterSchema.parse(params.filter),
-                  ),
-                ),
+          targetInfos: [
+            browserInfo,
+            ...adapter
+              .listTabs(scope)
+              .flatMap((page) => [targetInfo(page, "tab"), targetInfo(page)]),
+          ].filter((info) => matchesFilter(readString(info, "type"), filter)),
         };
+      }
       case "Target.getTargetInfo": {
         if (
           params.targetId === undefined ||
@@ -576,7 +586,7 @@ function createConnection(
         discover = z.boolean().parse(params.discover);
         discoveryFilter =
           params.filter === undefined
-            ? [{ exclude: false }]
+            ? defaultTargetFilter
             : filterSchema.parse(params.filter);
         knownTargets.clear();
         announceTargets();
@@ -588,7 +598,7 @@ function createConnection(
           autoAttachments.set(
             command.sessionId,
             params.filter === undefined
-              ? [{ exclude: false }]
+              ? defaultTargetFilter
               : filterSchema.parse(params.filter),
           );
         } else {
@@ -622,7 +632,8 @@ function createConnection(
       case "Target.createTarget": {
         if (
           params.browserContextId !== undefined &&
-          params.browserContextId !== ""
+          params.browserContextId !== "" &&
+          params.browserContextId !== defaultBrowserContextId
         ) {
           throw new Error(
             "Browser contexts cannot be selected through this connection",

@@ -740,14 +740,15 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
+      const timeoutMs = operation === 'plugins-cli-run' ? 300_000 : 20_000;
       return new Promise<unknown>((resolveResult, rejectResult) => {
         const timer = setTimeout(() => {
           pending.delete(id);
           rejectResult(new Error(`server ${operation} request timed out`));
-        }, 20_000);
+        }, timeoutMs);
         pending.set(id, { resolve: resolveResult, reject: rejectResult, timer });
         try { runtime.child.postMessage({
-          type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id, operation, deadlineAt: new Date(Date.now() + 20_000).toISOString(),
+          type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id, operation, deadlineAt: new Date(Date.now() + timeoutMs).toISOString(),
           ...(operation === 'project-catalogs' ? { request: args[0] as ProjectCatalogRequest } : {}),
           ...(operation === 'project-feed' ? { request: args[0] as ProjectFeedRequest } : {}),
           ...(operation === 'cli-discovery' ? { request: args[0] as CliDiscoveryRequest } : {}),
