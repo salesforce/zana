@@ -12631,9 +12631,10 @@ body.resizing-col .explorer-resizer::after {
   min-width: 0;
 }
 
-/* Always visible — grouping / mark-read / clear live in this overflow. */
+/* Always visible — Refresh, then the overflow holding grouping / mark-read / clear. */
 .inbox-actions-more {
   display: flex;
+  gap: 2px;
   position: relative;
   flex: 0 0 auto;
   align-self: center;

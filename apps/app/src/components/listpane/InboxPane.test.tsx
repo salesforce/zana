@@ -14,6 +14,7 @@ const setInboxTab = vi.fn();
 const setInboxGrouping = vi.fn();
 const markAllRead = vi.fn();
 const setManyCollapsed = vi.fn();
+const reloadInbox = vi.fn(async (_opts?: { notify?: boolean }) => true);
 
 vi.mock('../../store.js', () => ({
   INBOX_LIST_MIN: 345,
@@ -32,6 +33,7 @@ vi.mock('../../store.js', () => ({
     selector({ byKey: {}, setMany: setManyCollapsed }),
   useInboxScopeProjectId: () => null,
   clearInbox: vi.fn(),
+  reloadInbox: (opts?: { notify?: boolean }) => reloadInbox(opts),
   useSaved: (selector: (state: { records: { id: string; projectId: string }[] }) => unknown) =>
     selector({ records: [{ id: 's1', projectId: 'p1' }] }),
   useUi: (selector: (state: {
@@ -144,6 +146,30 @@ describe('InboxPane compact chrome contract', () => {
 });
 
 
+describe('Inbox refresh', () => {
+  it('reloads the feed from the icon beside Inbox actions and ignores clicks while loading', async () => {
+    let finish!: (ok: boolean) => void;
+    reloadInbox.mockImplementationOnce(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    render(<InboxPane />);
+    const refresh = screen.getByRole('button', { name: 'Refresh inbox' });
+    expect(refresh.nextElementSibling?.getAttribute('aria-label')).toBe('Inbox actions');
+    fireEvent.click(refresh);
+    expect(reloadInbox).toHaveBeenCalledExactlyOnceWith({ notify: true });
+    expect(refresh.getAttribute('aria-busy')).toBe('true');
+    expect(refresh.querySelector('svg')?.getAttribute('class')).toContain('spin');
+    fireEvent.click(refresh);
+    expect(reloadInbox).toHaveBeenCalledOnce();
+    finish(true);
+    await vi.waitFor(() => expect(refresh.getAttribute('aria-busy')).toBe('false'));
+    expect(refresh.querySelector('svg')?.getAttribute('class')).not.toContain('spin');
+  });
+  it('does not duplicate Refresh inside the desktop ⋯ menu', () => {
+    render(<InboxPane />);
+    fireEvent.click(screen.getByRole('button', { name: 'Inbox actions' }));
+    expect(within(screen.getByRole('menu')).queryByRole('button', { name: /Refresh inbox/ })).toBeNull();
+  });
+});
+
 describe('mobile Inbox header', () => {
   function mount(onShowOverview = vi.fn()) {
     layout.compact = true;
@@ -179,6 +205,13 @@ describe('mobile Inbox header', () => {
     expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Show all messages' }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Mark 1 as read' }));
     expect(markAllRead).toHaveBeenCalledWith(['e1', 'e2']);
+  });
+  it('offers Refresh inbox in the actions sheet', () => {
+    mount();
+    expect(screen.queryByRole('button', { name: 'Refresh inbox' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Inbox actions' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Refresh inbox' }));
+    expect(reloadInbox).toHaveBeenCalledExactlyOnceWith({ notify: true });
   });
   it('opens the overview from More and releases its header while details are active', () => {
     const overview = vi.fn();

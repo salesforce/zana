@@ -2028,6 +2028,32 @@ export async function clearInbox(projectId?: string | null): Promise<number> {
   return toRemove.length;
 }
 
+/**
+ * Reload the feed (newest 100, scoped to this window's project) plus durable
+ * read state. Used by the initial load and the Inbox refresh button. A push
+ * that lands while the read is in flight is newer than anything returned, so
+ * it is kept rather than wiped by the replace. Returns false on failure; a
+ * manual refresh (`notify`) toasts it.
+ */
+export async function reloadInbox({ notify = false }: { notify?: boolean } = {}): Promise<boolean> {
+  const scopedProjectId = getScopedProjectId();
+  try {
+    const [{ entries }] = await Promise.all([
+      product.inbox.history({ limit: 100, ...(scopedProjectId ? { projectId: scopedProjectId } : {}) }),
+      hydrateInboxReadFromProduct()
+    ]);
+    const newest = entries.reduce((max, e) => Math.max(max, e.ts), 0);
+    const ids = new Set(entries.map((e) => e.id));
+    const arrived = useInbox.getState().entries.filter((e) => !ids.has(e.id) && e.ts > newest);
+    useInbox.getState().setEntries([...arrived, ...entries]);
+    return true;
+  } catch (err) {
+    useInbox.setState({ loading: false });
+    if (notify) pushErrorToast(errorMessage(err, 'Failed to refresh inbox'));
+    return false;
+  }
+}
+
 /** Toggle the "Keep" flag on an entry (protects it from Clear inbox). */
 export function toggleInboxKeep(entryId: string): void {
   useInboxKeep.getState().toggleKeep(entryId);

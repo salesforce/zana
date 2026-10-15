@@ -1503,6 +1503,9 @@ export const product: CcApi = new Proxy({} as CcApi, {
       }
       return http;
     }
+    if (name === 'inbox' && hasDesktopBridge()) {
+      return mergeDesktopInbox((window.cc as unknown as CcApi).inbox, httpProduct().inbox);
+    }
     if (hasDesktopBridge()) {
       const desktop = (window.cc as unknown as Record<string, unknown>)[name];
       if (name === 'projects') {
@@ -1515,6 +1518,27 @@ export const product: CcApi = new Proxy({} as CcApi, {
     return impl ? withStubs(String(family), impl as object) : stubFamily(String(family));
   }
 });
+
+/**
+ * Electron main and the product server each own an InboxStore over the same
+ * JSONL, and each store only emits for its own writes. Main's IPC misses
+ * entries the server appends (thread MCP `inbox_push`, `/api/v1/inbox`), and
+ * the server's WS misses main's own pushes, so desktop listens to both. The
+ * renderer store dedupes by id, so an entry seen twice lands once.
+ */
+function mergeDesktopInbox(desktop: CcApi['inbox'], http: CcApi['inbox']): CcApi['inbox'] {
+  const both = <T,>(desktopOn: (cb: T) => () => void, httpOn: (cb: T) => () => void) => (cb: T) => {
+    const stops = [desktopOn(cb), httpOn(cb)];
+    return () => { for (const stop of stops) stop(); };
+  };
+  return {
+    ...desktop,
+    onAppended: both(desktop.onAppended, http.onAppended),
+    onRemoved: both(desktop.onRemoved, http.onRemoved),
+    onUpdated: both(desktop.onUpdated, http.onUpdated),
+    onPruned: both(desktop.onPruned, http.onPruned)
+  };
+}
 
 function wrapDesktopProjects(desktop: CcApi['projects']): CcApi['projects'] {
   const http = httpProduct().projects;

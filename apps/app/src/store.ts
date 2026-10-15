@@ -87,8 +87,8 @@ import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import {
   findProjectIdForSession,
   hasMissingSetup,
-  hydrateInboxReadFromProduct,
   pruneInboxMarkers,
+  reloadInbox,
   useAgentMesh,
   useAgentStatus,
   useAutonomousRuns,
@@ -2455,18 +2455,7 @@ export const useData = create<DataState>((set, get) => ({
     // turn — four serial IPC round-trips collapse to one wall-clock wait. Each
     // keeps its own try/catch so one failure can't reject the batch or block the
     // others. Push-subscriptions below are synchronous and registered regardless.
-    const loadInbox = (async () => {
-      try {
-        const { entries } = await product.inbox.history({
-          limit: 100,
-          ...(scopedProjectId ? { projectId: scopedProjectId } : {})
-        });
-        useInbox.setState({ entries, loading: false });
-      } catch {
-        useInbox.setState({ loading: false });
-      }
-    })();
-    const loadInboxRead = hydrateInboxReadFromProduct();
+    const loadInbox = reloadInbox();
     const loadSuggestions = (async () => {
       try {
         const { entries } = await product.suggestions.list(scopedProjectId ?? undefined);
@@ -2494,7 +2483,7 @@ export const useData = create<DataState>((set, get) => ({
         /* mesh view is best-effort; leave empty on failure */
       }
     })();
-    await Promise.all([loadInbox, loadInboxRead, loadSuggestions, loadSaved, loadMesh]);
+    await Promise.all([loadInbox, loadSuggestions, loadSaved, loadMesh]);
     stopClientRecovery?.();
     if (!hasDesktopBridge()) stopClientRecovery = subscribeClientRecovery(product, {
       projects: projects => set({ projects }),

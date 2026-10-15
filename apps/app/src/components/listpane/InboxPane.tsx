@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, X, Check, Trash2, ChevronsDownUp, ChevronsUpDown, InboxIcon, Bookmark, FolderTree, Clock, MoreHorizontal, MailCheck, LayoutDashboard } from 'lucide-react';
-import { useInbox, useInboxRead, useInboxKeep, useInboxCollapsed, useInboxScopeProjectId, clearInbox, useSaved, useUi, INBOX_LIST_MIN } from '../../store.js';
+import { Search, X, Check, Trash2, ChevronsDownUp, ChevronsUpDown, InboxIcon, Bookmark, FolderTree, Clock, MoreHorizontal, MailCheck, LayoutDashboard, RefreshCw } from 'lucide-react';
+import { useInbox, useInboxRead, useInboxKeep, useInboxCollapsed, useInboxScopeProjectId, clearInbox, reloadInbox, useSaved, useUi, INBOX_LIST_MIN } from '../../store.js';
 import { groupByBucketThenProject, subGroupKey } from '@zana-ai/zcc-domain/inbox-grouping';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
 import { ListPaneResizer } from '../ListPaneResizer.js';
@@ -35,6 +35,7 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [reportsOnly, setReportsOnly] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [actionsMenuPos, setActionsMenuPos] = useState<CSSProperties>({});
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -98,6 +99,13 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
     if (ok) void clearInbox(scopeProjectId);
   };
 
+  const onRefresh = () => {
+    setActionsMenuOpen(false);
+    if (refreshing) return;
+    setRefreshing(true);
+    void reloadInbox({ notify: true }).finally(() => setRefreshing(false));
+  };
+
   useEffect(() => {
     if (!actionsMenuOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -123,6 +131,12 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
   }, [showingSaved]);
 
   const feedActions = <>
+    {compact && showingFeed && (
+      <button type="button" disabled={refreshing} onClick={onRefresh}>
+        <RefreshCw size={13} className={refreshing ? 'spin' : undefined} aria-hidden />
+        Refresh inbox
+      </button>
+    )}
     {showingFeed && (
       <div role={compact ? "radiogroup" : "group"} aria-label="Inbox grouping">
         <button
@@ -273,6 +287,17 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
         )}
         {!compact && !showingSaved && (
           <div className="inbox-actions-more" ref={actionsMenuRef}>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Refresh inbox"
+              title="Refresh inbox"
+              aria-busy={refreshing}
+              disabled={refreshing}
+              onClick={onRefresh}
+            >
+              <RefreshCw size={14} className={refreshing ? 'spin' : undefined} aria-hidden />
+            </button>
             <button
               type="button"
               ref={actionsTriggerRef}
