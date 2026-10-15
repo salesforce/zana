@@ -1,4 +1,5 @@
 import { test, expect, launchApp } from './fixtures/app.js';
+import { captureDrawerLogs, capturedDrawerLogs } from './fixtures/host-install-drawer.js';
 import { createServer } from 'node:https';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -69,14 +70,12 @@ if(live){
     await win.getByTestId('agents-board-new-thread').click();
     const modal = win.getByTestId('launch-modal');
     await modal.getByRole('button', { name: 'Modern', exact: true }).click();
+    // Stages collapse the raw log, and a fast install can auto-close the drawer before
+    // a Playwright click on the toggle lands; expand and record the log from the page.
+    await captureDrawerLogs(win, { expand: true });
     await modal.getByTestId('composer-host-action').click();
-    const drawer = win.getByTestId('host-install-drawer');
-    // Stages collapse the raw log; open it with a real click above the launcher.
-    const logToggle = drawer.getByTestId('host-install-log-toggle');
-    await expect(logToggle).toBeVisible({ timeout: liveHost ? 90_000 : 45_000 });
-    if (await logToggle.getAttribute('aria-expanded') === 'false') await logToggle.click();
-    await expect(drawer.getByTestId('host-install-log')).toContainText('Public HTTPS is unavailable', { timeout: liveHost ? 90_000 : 45_000 });
-    await expect(drawer.getByTestId('host-install-log')).toContainText('Host daemon connected.', { timeout: 90_000 });
+    await expect.poll(() => capturedDrawerLogs(win), { timeout: liveHost ? 90_000 : 45_000 }).toContain('Public HTTPS is unavailable');
+    await expect.poll(() => capturedDrawerLogs(win), { timeout: 90_000 }).toContain('Host daemon connected.');
     await expect.poll(async () => win.evaluate(async id => {
       const hosts = await (await fetch('/api/v1/hosts')).json(); return hosts.find((h: any) => h.id === id)?.status;
     }, remoteId)).toBe('connected');
