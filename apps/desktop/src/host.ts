@@ -5970,6 +5970,10 @@ const squadExecutionService = new SquadExecutionService({
     );
     return decision.enforced;
   }
+  , routingEnforcementRequested: (record) => {
+    const team = teams.list().find((candidate) => candidate.id === record.teamId);
+    return team?.routingEnforced ?? store.getConfig().teamRoutingEnforcementEnabled === true;
+  }
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
   , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0

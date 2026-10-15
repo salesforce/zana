@@ -555,6 +555,7 @@ describe('host bootstrap wiring', () => {
     // Startup dispatch can precede authorization. This must not memoize advisory
     // routing, or the later complete roster would never enforce.
     expect(o.routingEnforcementEnabled(routingRecord)).toBe(false);
+    expect(o.routingEnforcementRequested(routingRecord)).toBe(true);
     routingRecord.authorizationContext.slots = [
       { slotId: 'orchestrator:po' }, { slotId: 'worker-1' }
     ];
@@ -563,6 +564,7 @@ describe('host bootstrap wiring', () => {
     await o.onTerminal({ id: 'routing-test' });
     routingRecord.resolvedModels = [];
     expect(o.routingEnforcementEnabled(routingRecord)).toBe(false);
+    expect(o.routingEnforcementRequested(routingRecord)).toBe(true);
     expect(typeof o.claimRecoveryObserveEnabled()).toBe('boolean');
     expect(typeof o.claimRecoveryEnforceEnabled()).toBe('boolean');
     expect(typeof o.planStartupGraceMs()).toBe('number');

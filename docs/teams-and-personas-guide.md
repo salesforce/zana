@@ -55,9 +55,13 @@ A user file with the same id as a builtin shadows it. Project personas win over 
 
 | Id | Name | Model | Purpose |
 |----|------|-------|---------|
-| `builtin:reviewer` | Code Reviewer | opus | Reviews diffs for correctness, edge cases, clarity |
-| `builtin:software-engineer` | Software Engineer | sonnet | Generalist, ships features end to end |
-| `builtin:orchestrator` | Orchestrator | opus | Coordinates work, delegates to workers |
+| `builtin:reviewer` | Code Reviewer | high tier | Reviews diffs for correctness, edge cases, clarity |
+| `builtin:software-engineer` | Software Engineer | medium tier | Generalist, ships features end to end |
+| `builtin:orchestrator` | Orchestrator | medium tier | Coordinates work, delegates to workers |
+| `builtin:squad-worker-low` | Squad Worker (Low) | low tier | Bounded, mechanical, read-heavy squad work |
+| `builtin:squad-worker-medium` | Squad Worker (Medium) | medium tier | Normal engineering and synthesis squad work |
+| `builtin:squad-worker-high` | Squad Worker (High) | high tier | Hard reasoning and final verification squad work |
+| `builtin:architect` | Architect | high tier | Deprecated compatibility persona; use Squad Worker (High) for new squads |
 
 ### Validation
 

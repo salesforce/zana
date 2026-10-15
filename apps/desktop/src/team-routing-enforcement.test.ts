@@ -18,4 +18,9 @@ describe('decideTeamRoutingEnforcement', () => {
     expect(decideTeamRoutingEnforcement(undefined, true, [worker], [...workerSlots, '1:worker:0']))
       .toEqual({ requested: true, enforced: false, degraded: true });
   });
+
+  it('degrades rather than enforces when worker roster has not arrived', () => {
+    expect(decideTeamRoutingEnforcement({ routingEnforced: true }, false, [], []))
+      .toEqual({ requested: true, enforced: false, degraded: true });
+  });
 });

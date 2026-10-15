@@ -239,7 +239,23 @@ export function resolvePersonaLaunch(
  * disable / shadow them by dropping a file with the same id stem in their
  * own personas dir.
  */
+const SQUAD_WORKER_PROMPT = [
+  'You are a squad worker. Your role, scope, and deliverable are defined by the task you are assigned.',
+  'Stay within the stated scope. Report only what you observed; never claim a check you did not run.'
+].join('\n');
+
 const BUILTIN: Persona[] = [
+  {
+    // Compatibility alias for persisted squads. New built-in squads use the
+    // tiered worker personas rather than this legacy design-only profile.
+    id: 'builtin:architect',
+    name: 'Architect',
+    icon: 'Compass',
+    description: 'Deprecated compatibility persona for existing design squads. Prefer Squad Worker (High) for new squads.',
+    modelLevel: 'high',
+    appendSystemPrompt: SQUAD_WORKER_PROMPT,
+    initialPrompt: 'Complete the assigned design task and report observed evidence.'
+  },
   {
     id: 'builtin:reviewer',
     name: 'Code Reviewer',
@@ -312,10 +328,7 @@ const BUILTIN: Persona[] = [
     icon: 'Users',
     description: 'Low-capacity squad worker for bounded, mechanical, read-heavy work. Role and scope come from the assigned task.',
     modelLevel: 'low',
-    appendSystemPrompt: [
-      'You are a squad worker. Your role, scope, and deliverable are defined by the task you are assigned.',
-      'Stay within the stated scope. Report only what you observed; never claim a check you did not run.'
-    ].join('\n'),
+    appendSystemPrompt: SQUAD_WORKER_PROMPT,
     initialPrompt: 'Complete the assigned bounded task and report observed evidence.'
   },
   {
@@ -324,10 +337,7 @@ const BUILTIN: Persona[] = [
     icon: 'Users',
     description: 'Medium-capacity squad worker for normal engineering and synthesis. Role and scope come from the assigned task.',
     modelLevel: 'medium',
-    appendSystemPrompt: [
-      'You are a squad worker. Your role, scope, and deliverable are defined by the task you are assigned.',
-      'Stay within the stated scope. Report only what you observed; never claim a check you did not run.'
-    ].join('\n'),
+    appendSystemPrompt: SQUAD_WORKER_PROMPT,
     initialPrompt: 'Complete the assigned engineering task and report observed evidence.'
   },
   {
@@ -336,10 +346,7 @@ const BUILTIN: Persona[] = [
     icon: 'Users',
     description: 'High-capacity squad worker for hardest reasoning and final verification. Role and scope come from the assigned task.',
     modelLevel: 'high',
-    appendSystemPrompt: [
-      'You are a squad worker. Your role, scope, and deliverable are defined by the task you are assigned.',
-      'Stay within the stated scope. Report only what you observed; never claim a check you did not run.'
-    ].join('\n'),
+    appendSystemPrompt: SQUAD_WORKER_PROMPT,
     initialPrompt: 'Complete the assigned high-reasoning task and report observed evidence.'
   },
   {

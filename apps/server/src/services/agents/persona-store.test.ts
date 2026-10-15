@@ -83,6 +83,11 @@ describe('PersonaStore', () => {
     expect(personas.find((p) => p.id === 'builtin:squad-worker-medium')).toMatchObject({ modelLevel: 'medium' });
     expect(personas.find((p) => p.id === 'builtin:squad-worker-high')).toMatchObject({ modelLevel: 'high' });
 
+    expect(personas.find((p) => p.id === 'builtin:architect')).toMatchObject({
+      modelLevel: 'high',
+      description: expect.stringContaining('Deprecated compatibility')
+    });
+
     // The old per-stack engineer personas were consolidated away.
     const removed = [
       'builtin:qa-engineer',
@@ -535,7 +540,7 @@ describe('PersonaStore', () => {
   it('builtinIds lists the shipped persona ids', () => {
     const ids = store.builtinIds();
     expect(ids).toContain('builtin:reviewer');
-    expect(ids).not.toContain('builtin:architect');
+    expect(ids).toContain('builtin:architect');
   });
 
   it('revealDir creates the dir and returns the path', async () => {

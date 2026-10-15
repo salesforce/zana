@@ -248,6 +248,8 @@ export interface ExecutionServiceDeps {
   mayResumeRetainedWorktree?: (executionId: string) => boolean;
   onTerminal?: (record: ExecutionRecord) => Promise<void> | void;
   routingEnforcementEnabled?: (record: ExecutionRecord) => boolean;
+  /** True when routing was requested, even if current facts cannot enforce it yet. */
+  routingEnforcementRequested?: (record: ExecutionRecord) => boolean;
   claimRecoveryObserveEnabled?: () => boolean;
   claimRecoveryEnforceEnabled?: () => boolean;
   /** Grace (ms) a durable execution may stay planless before the watchdog fails it. `0`/absent disables. */
@@ -1643,7 +1645,7 @@ export class ExecutionService {
   }
 
   private async refreshRouteFacts(record: ExecutionRecord): Promise<ExecutionRecord> {
-    if (this.deps.routingEnforcementEnabled?.(record) !== true || !record.workUnits?.some((unit) => unit.routing)) return record;
+    if (this.deps.routingEnforcementRequested?.(record) !== true || !record.workUnits?.some((unit) => unit.routing)) return record;
     if (!this.deps.resolveTeamModelSnapshots || !routeFactsNeedRefresh(record)) return record;
     const now = this.deps.now ?? Date.now;
     const circuit = this.routeFactCircuits.get(record.id) ?? { state: 'CLOSED' as const };
