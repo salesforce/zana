@@ -35,7 +35,7 @@ vi.mock('@zana-ai/zcc-db', () => ({
   listDeferredThreadMessages: vi.fn(() => [])
 }));
 
-import { getConversationThread, getThreadExecutionState, listConversationThreadEvents, listConversationThreadEventsWindow, countConversationThreadEvents } from '@zana-ai/zcc-db';
+import { getConversationThread, getThreadExecutionState, listConversationThreadEvents, listConversationThreadEventsWindow, countConversationThreadEvents, conversationTimelineHeadEvents } from '@zana-ai/zcc-db';
 
 afterEach(() => {
   resetTimelineLatestRowsCache();
@@ -74,6 +74,19 @@ describe('storedEventsToMeta', () => {
 });
 
 describe('conversationTimeline', () => {
+  it('backfills old running agents into activity without adding them to the history page', () => {
+    const threadId = '11111111-1111-4111-8111-111111111111';
+    vi.mocked(conversationTimelineHeadEvents).mockReturnValueOnce([{
+      id: 'old-agent', threadId, sequence: 1, type: 'item/started', createdAt: 1000,
+      payload: { type: 'item/started', threadId, providerThreadId: 'p1', scope: { kind: 'turn', turnId: 'old' },
+        item: { type: 'delegation', id: 'agent', childRef: 'child', label: 'Review earlier changes', status: 'pending', background: false } },
+    }]);
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([]);
+    const timeline = conversationTimeline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, threadId);
+    expect(timeline.activeBackgroundCommands).toMatchObject([{ itemId: 'agent', description: 'Review earlier changes' }]);
+    expect(timeline.rows).toEqual([]);
+  });
+
   it('404s for an unknown thread', () => {
     vi.mocked(getConversationThread).mockReturnValueOnce(null);
     expect(() => conversationTimeline({ db: {} } as ProductHttpContext, 'missing')).toThrow(/not registered/);

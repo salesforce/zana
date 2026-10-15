@@ -10,6 +10,7 @@ import {
 } from "./background-task-projection.js";
 import { extractThreadTimelineGoal } from "./goal-snapshot-extraction.js";
 import type { ThreadEventWithMeta } from "./group-event-projection-turns.js";
+import { projectOpenDelegationActivity } from "./delegation-activity-projection.js";
 
 export const EMPTY_THREAD_ACTIVITY: ThreadActivityState = Object.freeze({
   activeWorkflowCount: 0,
@@ -20,8 +21,8 @@ export const EMPTY_THREAD_ACTIVITY: ThreadActivityState = Object.freeze({
 });
 
 /**
- * True when a stored conversation event is a background-task lifecycle
- * (Bash `run_in_background`, workflow, or background agent). Payload may be
+ * True when a stored conversation event is a task or delegation lifecycle
+ * (Bash `run_in_background`, workflow, or child agent). Payload may be
  * the full ThreadEvent (`item` nested) or the event itself.
  */
 export function isBackgroundTaskLifecyclePayload(
@@ -30,7 +31,9 @@ export function isBackgroundTaskLifecyclePayload(
 ): boolean {
   if (
     type === "item/backgroundTask/progress" ||
-    type === "item/backgroundTask/completed"
+    type === "item/backgroundTask/completed" ||
+    type === "item/delegation/progress" ||
+    type === "item/delegation/completed"
   ) {
     return true;
   }
@@ -43,7 +46,7 @@ export function isBackgroundTaskLifecyclePayload(
     record && record.item && typeof record.item === "object"
       ? record.item.type
       : record?.type;
-  return itemType === "backgroundTask";
+  return itemType === "backgroundTask" || itemType === "delegation";
 }
 
 /**
@@ -64,7 +67,10 @@ export function threadActivityFromEvents(
   let activeWorkflowCount = 0;
   let activeBackgroundAgentCount = 0;
   let activeBackgroundCommandCount = 0;
-  for (const message of state.backgroundTasksByItemId.values()) {
+  const tasks = [...state.backgroundTasksByItemId.values()];
+  const delegationActivity = projectOpenDelegationActivity(events, tasks);
+  for (const message of [...tasks, ...delegationActivity.agents]) {
+    if (delegationActivity.representedTaskIds.has(message.itemId)) continue;
     if (message.skipTranscript) continue;
     if (message.status !== "pending") continue;
     if (isBackgroundCommandTaskType(message.taskType)) {

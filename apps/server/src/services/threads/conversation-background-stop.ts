@@ -2,7 +2,9 @@ import { getConversationThread, listConversationOpenBackgroundTaskItems } from '
 import {
   isSettledBackgroundTaskStatus,
   threadEventBackgroundTaskItemSchema,
-  type ThreadEventBackgroundTaskItem
+  threadEventDelegationItemSchema,
+  type ThreadEventBackgroundTaskItem,
+  type ThreadEventDelegationItem
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
@@ -29,9 +31,9 @@ export function backgroundStopPrompt(descriptions: readonly string[]): string {
 /**
  * Stop a thread's running background tasks (all of them when `itemIds` is
  * omitted). Only items still open in this thread's event log are eligible, so
- * a caller cannot reach another thread's task. Each item is first stopped
- * through the provider; whatever the provider cannot stop is handed to the
- * agent in one follow-up message. A failed follow-up does not undo the native
+ * a caller cannot reach another thread's task. Native tasks are first stopped
+ * through the provider; delegations and tasks the provider cannot stop are
+ * handed to the agent in one follow-up message. A failed follow-up does not undo the native
  * stops, so it is reported in `fallbackError` instead of thrown.
  */
 export async function stopConversationBackgroundTasks(
@@ -43,9 +45,11 @@ export async function stopConversationBackgroundTasks(
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
-  const open = listConversationOpenBackgroundTaskItems(ctx.db, thread.id).flatMap((raw) => {
+  const open = listConversationOpenBackgroundTaskItems(ctx.db, thread.id).flatMap<ThreadEventBackgroundTaskItem | ThreadEventDelegationItem>((raw) => {
     const parsed = threadEventBackgroundTaskItemSchema.safeParse(raw);
-    return parsed.success && !isSettledBackgroundTaskStatus(parsed.data.taskStatus) ? [parsed.data] : [];
+    if (parsed.success) return !isSettledBackgroundTaskStatus(parsed.data.taskStatus) ? [parsed.data] : [];
+    const delegation = threadEventDelegationItemSchema.safeParse(raw);
+    return delegation.success && delegation.data.status === 'pending' ? [delegation.data] : [];
   });
   const wanted = itemIds ? new Set(itemIds) : null;
   const targets = wanted ? open.filter((item) => wanted.has(item.id)) : open;
@@ -53,13 +57,16 @@ export async function stopConversationBackgroundTasks(
     throw new ThreadCreateError(409, 'not-running', 'No matching background task is running in this thread');
   }
 
-  const results = await Promise.all(targets.map((item) => stopOnHost(ctx, thread.hostId, thread.id, item.id)));
+  const results = await Promise.all(targets.map((item) => item.type === 'backgroundTask'
+    ? stopOnHost(ctx, thread.hostId, thread.id, item.id) : Promise.resolve(false)));
   const stopped = targets.filter((_, index) => results[index]).map((item) => item.id);
-  const leftover: ThreadEventBackgroundTaskItem[] = targets.filter((_, index) => !results[index]);
+  const leftover = targets.filter((_, index) => !results[index]);
   if (leftover.length === 0) return { ok: true, stopped, requested: [] };
 
   const descriptions = leftover
-    .map((item) => (item.workflowName ?? item.description).trim())
+    .map((item) => item.type === 'delegation'
+      ? `${item.label || 'Agent'} (${item.childRef})`
+      : (item.workflowName ?? item.description).trim())
     .filter(Boolean);
   try {
     await sendConversationTurn(ctx, thread.id, backgroundStopPrompt(descriptions), 'auto');

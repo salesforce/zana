@@ -2,6 +2,7 @@ import type { ZccDatabase } from '../connection.js';
 import { createEventId } from '../ids.js';
 import { conversationPreviewPayloadSql, prepareConversationOutput, storeConversationOutput } from './conversation-output.js';
 import { PRUNE_CAPACITY, PRUNE_ROOT_USAGE } from './conversation-pruning-sql.js';
+import { listConversationOpenBackgroundTaskEvents } from './conversation-activity.js';
 
 export interface ConversationThreadEventRow {
   id: string;
@@ -216,6 +217,7 @@ export function conversationTimelineHeadEvents(db: ZccDatabase, threadId: string
   return ['thread/goal/updated', 'thread/goal/cleared', 'turn/plan/updated', 'provider/modelFallback']
     .flatMap(type => readEvents(db, threadId, { type, latest: true, limit: 1 }))
     .concat([...usageSequences].flatMap(sequence => readEvents(db, threadId, { afterSeq: sequence - 1, beforeSeq: sequence + 1, limit: 1 })))
+    .concat(listConversationOpenBackgroundTaskEvents(db, threadId))
     .sort((a, b) => a.sequence - b.sequence);
 }
 

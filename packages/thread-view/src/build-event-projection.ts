@@ -96,6 +96,7 @@ import {
 } from "./event-projection-state.js";
 import { buildProjectionActiveThinking } from "./reasoning-lifecycle-projection.js";
 import { projectAssistantAndReasoningEvent } from "./assistant-event-projection.js";
+import { projectOpenDelegationActivity } from "./delegation-activity-projection.js";
 
 // --- Projection state machine ---
 
@@ -305,6 +306,7 @@ function getRootSpawningCallId(
 function selectActiveBackgroundCommandMessages(
   messages: readonly EventProjectionMessage[],
   callMessageById: ReadonlyMap<string, EventProjectionCallMessage>,
+  delegationActivityIds: ReadonlySet<string>,
 ): EventProjectionWorkflowMessage[] {
   // Running non-workflow background tasks, most recently started first. Feeds
   // the background-activity prompt-box card, independent of the workflow-only
@@ -316,7 +318,7 @@ function selectActiveBackgroundCommandMessages(
       message.status === "pending" &&
       !message.skipTranscript &&
       message.parentToolCallId &&
-      isDirectBackgroundTaskForCurrentAgent(message, callMessageById)
+      (delegationActivityIds.has(message.itemId) || isDirectBackgroundTaskForCurrentAgent(message, callMessageById))
     ) {
       representedRootCallIds.add(message.parentToolCallId);
     }
@@ -325,7 +327,7 @@ function selectActiveBackgroundCommandMessages(
   for (const message of messages) {
     const isDirect =
       message.kind === "workflow" &&
-      isDirectBackgroundTaskForCurrentAgent(message, callMessageById);
+      (delegationActivityIds.has(message.itemId) || isDirectBackgroundTaskForCurrentAgent(message, callMessageById));
     const rootSpawningCallId =
       message.kind === "workflow"
         ? getRootSpawningCallId(message, callMessageById)
@@ -1080,15 +1082,24 @@ function buildFlatProjectionData(
   finalizeProjectionState({ state, options: args.options });
   const messages = sortEventProjectionMessagesBySource(state.messages);
   const callMessageById = buildCallMessageById(messages);
+  const delegationActivity = projectOpenDelegationActivity(
+    args.events, [...state.backgroundTasksByItemId.values()],
+  );
   enrichBackgroundAgentModels(messages, callMessageById);
+  enrichBackgroundAgentModels(delegationActivity.agents, callMessageById);
+  const activityMessages = [
+    ...messages.filter(message => message.kind !== "workflow" || !delegationActivity.representedTaskIds.has(message.itemId)),
+    ...delegationActivity.agents,
+  ];
   return {
     activeThinking: args.includeActiveThinking
       ? buildProjectionActiveThinking(state, args.options?.threadStatus)
       : null,
     activeWorkflows: selectActiveWorkflowMessages(messages),
     activeBackgroundCommands: selectActiveBackgroundCommandMessages(
-      messages,
+      activityMessages,
       callMessageById,
+      new Set([...delegationActivity.directTaskIds, ...delegationActivity.agents.map(message => message.itemId)]),
     ),
     messages,
   };
