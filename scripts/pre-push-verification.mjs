@@ -5,7 +5,7 @@
  * isolated clone of the exact object being pushed. CI remains merge authority.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,6 +20,8 @@ const DEFAULT_GITHUB_SSH_ALIASES = ['github.com-work-public'];
 // inert. plugins/** stays out: plugin dirs are path-installed and shipped.
 const INERT_DOC = /^(?:docs\/.+\.md|README\.md|CONTRIBUTING\.md|(?:(?:apps|packages|docs)\/(?:[^/]+\/)*)?(?:AGENTS|CLAUDE)\.md)$/;
 const UNSAFE_DOC = /(?:^|\/)(?:SKILL\.md|fixtures?\/|snapshots?\/|test(?:ing)?\/|test-data\/|assets\/|generated\/|builtin-skills\/|__tests__\/)/i;
+const DEPENDENCY_INPUT = /^(?:pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc|(?:apps|packages|plugins)\/[^/]+\/package\.json)$/;
+const TEST_RUNNER_CONFIG = /(?:^|\/)(?:vitest(?:\.[^/]+)?\.config\.[cm]?[jt]s|tsconfig(?:\.[^/]+)?\.json|vite\.config\.[cm]?[jt]s|electron\.vite\.config\.[cm]?[jt]s)$/;
 
 function git(args, { cwd = process.cwd(), encoding = 'utf8' } = {}) {
   return execFileSync('git', args, { cwd, encoding, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -149,6 +151,44 @@ export function withSnapshot({ oid, root = process.cwd(), run = spawnSync, log =
   }
 }
 
+function packageDependencyFields(packageJson) {
+  const manifest = JSON.parse(packageJson);
+  return JSON.stringify({
+    packageManager: manifest.packageManager,
+    dependencies: manifest.dependencies,
+    devDependencies: manifest.devDependencies,
+    optionalDependencies: manifest.optionalDependencies,
+    peerDependencies: manifest.peerDependencies
+  });
+}
+
+function dependencyInputsChanged(base, paths, root) {
+  if (paths.includes('package.json')) {
+    const baseManifest = gitOk(['show', `${base}:package.json`], { cwd: root });
+    try {
+      if (!baseManifest || packageDependencyFields(baseManifest) !== packageDependencyFields(readFileSync(join(root, 'package.json'), 'utf8'))) return true;
+    } catch {
+      return true;
+    }
+  }
+  return paths.some((path) => DEPENDENCY_INPUT.test(path));
+}
+
+function linkInstalledDependencies(snapshot, root) {
+  const installed = join(root, 'node_modules');
+  if (!existsSync(installed) || !existsSync(snapshot)) return false;
+  symlinkSync(installed, join(snapshot, 'node_modules'), 'dir');
+  return true;
+}
+
+function needsBroadChangedTests(paths) {
+  return paths.some((path) => TEST_RUNNER_CONFIG.test(path));
+}
+
+function testInputs(paths) {
+  return paths.filter((path) => /\.[cm]?[jt]sx?$/.test(path) && !path.endsWith('.d.ts') && !path.startsWith('e2e/'));
+}
+
 export function runFullVerification({ oid, root = process.cwd(), run = spawnSync, log = console.log }) {
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
     log('pre-push: full (est. install)');
@@ -172,20 +212,32 @@ function guardTests(snapshot, run) {
 export function runFastVerification({ oid, base, paths = [], root = process.cwd(), run = spawnSync, log = console.log }) {
   if (!base) throw new Error('no base object available for fast verification');
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
-    log('pre-push: fast (est. install)');
-    const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
-    if (install.status !== 0) throw new Error('snapshot dependency install failed');
-    // Root dependency/config changes can select Slack tests indirectly. Every
-    // isolated snapshot needs their generated assets before change-aware tests.
-    log('pre-push: fast (est. Slack runtime assets)');
-    const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
-    if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
+    const reuseInstalledDependencies = !dependencyInputsChanged(base, paths, snapshot) && linkInstalledDependencies(snapshot, root);
+    if (reuseInstalledDependencies) {
+      log('pre-push: fast (reusing installed dependencies)');
+    } else {
+      log('pre-push: fast (est. install)');
+      const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
+      if (install.status !== 0) throw new Error('snapshot dependency install failed');
+    }
+    if (paths.some((path) => path.startsWith('plugins/slack-bridge-2ff2/'))) {
+      log('pre-push: fast (est. Slack runtime assets)');
+      const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
+      if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
+    }
     log('pre-push: fast (est. typecheck)');
     const typecheck = run('pnpm', ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' });
     if (typecheck.status !== 0) throw new Error('verification failed: pnpm run typecheck');
-    log(`pre-push: fast (est. vitest --changed ${base.slice(0, 12)})`);
-    const changed = run('pnpm', ['exec', 'vitest', 'run', '--changed', base], { cwd: snapshot, stdio: 'inherit' });
-    if (changed.status !== 0) throw new Error('verification failed: vitest --changed');
+    const inputs = testInputs(paths);
+    if (needsBroadChangedTests(paths)) {
+      log(`pre-push: fast (est. vitest --changed ${base.slice(0, 12)})`);
+      const changed = run('pnpm', ['exec', 'vitest', 'run', '--changed', base], { cwd: snapshot, stdio: 'inherit' });
+      if (changed.status !== 0) throw new Error('verification failed: vitest --changed');
+    } else if (inputs.length) {
+      log(`pre-push: fast (est. vitest related ${inputs.length} input${inputs.length === 1 ? '' : 's'})`);
+      const related = run('pnpm', ['exec', 'vitest', 'related', ...inputs, '--run', '--passWithNoTests'], { cwd: snapshot, stdio: 'inherit' });
+      if (related.status !== 0) throw new Error('verification failed: vitest related');
+    }
     const guards = guardTests(snapshot, run);
     if (guards.length) {
       log(`pre-push: fast (est. ${guards.length} source-text guard tests)`);
