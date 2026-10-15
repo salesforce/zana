@@ -42,6 +42,7 @@ it("removes old orphaned folders and stale trash, and nothing else", async () =>
   expect(result.report.threadsWithStorageCount).toBe(1);
   expect(await gone(fixture, uuid(10))).toBe(true);
   expect(await gone(fixture, stale)).toBe(true);
+  await expect(settled(async () => JSON.stringify(await listRoot(fixture)) === JSON.stringify([uuid(1), uuid(11), "model-list"].sort()))).resolves.toBe(true);
   expect(await listRoot(fixture)).toEqual([uuid(1), uuid(11), "model-list"].sort());
   // The cached report no longer lists what was removed.
   expect((await storage.host({ hostId: "host_a" })).report?.orphanCount).toBe(1);
