@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { AgentActionExplorer, AgentActionPanel } from './AgentActionPanel.js';
+import { actionTabs, AgentActionExplorer, AgentActionPanel } from './AgentActionPanel.js';
 import { ActionCodePreview } from './ActionCodePreview.js';
 import { ActionFlowMap } from './ActionFlowMap.js';
 import { flowModel } from './action-flow.js';
@@ -45,8 +45,16 @@ describe('action implementation panel', () => {
     expect(screen.getByText(/set @variables.status = @outputs.status/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Go to action definition/ })); expect(props.onReveal).toHaveBeenCalledWith(actions[0].line);
     fireEvent.click(screen.getByRole('button', { name: /Explicit run/ })); expect(props.onReveal).toHaveBeenCalledWith(actions[0].uses[0].line);
-    fireEvent.click(screen.getByRole('button', { name: 'Last preview' }));
-    expect(screen.getByText('No action trace available')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Last preview' })).toBeNull();
+  });
+  it('shows only the tabs a target has content for', async () => {
+    const view = render(<AgentActionPanel {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Used by' }));
+    view.rerender(<AgentActionPanel {...props} action={{ ...actions[0], id: 'dependency:apex://OrderLookup', inputs: [], outputs: [], uses: [] }} />);
+    await screen.findByTitle('Action implementation source');
+    expect(screen.queryByRole('navigation', { name: 'Action details' })).toBeNull();
+    expect(actionTabs({ ...actions[1], id: 'dependency:flow://CheckReturn', inputs: [], outputs: [] }, 'flow').map(([, label]) => label)).toEqual(['Implementation', 'Inputs & outputs']);
+    expect(actionTabs({ ...actions[0], inputs: [], outputs: [] }, 'apex').map(([, label]) => label)).toEqual(['Implementation', 'Used by']);
   });
   it('ignores late results from an old org and refreshes the selected snapshot', async () => {
     let release!: (value: unknown) => void;

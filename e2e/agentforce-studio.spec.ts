@@ -577,8 +577,7 @@ test('Agentforce action explorer: real source RPC, Apex colors, Flow map and pre
   await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 850));
   expect(await studio.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('actions-flow-narrow-light.png'));
-  await detail.getByRole('button', { name: 'Last preview' }).click();
-  await expect(detail.getByText('No action trace available')).toBeVisible();
+  await expect(detail.getByRole('button', { name: 'Last preview' })).toHaveCount(0);
   expect(await studio.innerText()).not.toContain('PRIVATE_TOKEN');
   expect(readFileSync(join(home, 'dx', 'force-app', 'Orders.agent'), 'utf8')).toBe(ACTION_AGENT);
   expect(readFileSync(join(home, 'dx', 'force-app', 'main', 'default', 'classes', 'OrderLookup.cls'), 'utf8')).toBe(ACTION_APEX);
