@@ -352,6 +352,33 @@ describe('dispatchOp', () => {
     expect(fallback.runCliCommand).not.toHaveBeenCalled();
   });
 
+  it('retains process-local CLI fallback when no SDK host is attached', async () => {
+    const cliContributions = vi.fn(async () => [{ pluginId: 'fixture', name: 'fixture' }]);
+    const runCliCommand = vi.fn(async () => ({ exitCode: 0, stdout: 'fallback works' }));
+    vi.doMock('@zana-ai/zcc-server/plugins/plugin-service', () => ({
+      defaultPluginDataDir: () => '/isolated-plugin-fixture',
+      defaultBundledRoot: () => '/isolated-bundled-fixture',
+      createPluginService: () => ({ cliContributions, runCliCommand })
+    }));
+    try {
+      const deps = makeDeps();
+      expect(await dispatchOp('plugin.contributions', {}, deps)).toEqual({ ok: true, value: [{ pluginId: 'fixture', name: 'fixture' }] });
+      expect(await dispatchOp('plugin.cli', { id: 'fixture', argv: ['run'], threadId: 't' }, deps)).toEqual({ ok: true, value: { exitCode: 0, stdout: 'fallback works' } });
+      expect(runCliCommand).toHaveBeenCalledWith('fixture', ['run'], { threadId: 't' });
+    } finally { vi.doUnmock('@zana-ai/zcc-server/plugins/plugin-service'); }
+  });
+
+  it('returns SDK command errors without falling back to a different plugin runtime', async () => {
+    const fail = vi.fn(async () => { throw new Error('product server disconnected'); });
+    const fallback = { cliContributions: vi.fn(), runCliCommand: vi.fn() };
+    const deps = makeDeps({ pluginCommands: { cliContributions: fail, runCliCommand: fail }, pluginHost: fallback as any });
+    for (const [op, args] of [['plugin.contributions', {}], ['plugin.cli', { id: 'fixture' }]] as const) {
+      expect(await dispatchOp(op, args, deps)).toMatchObject({ ok: false, code: 'PLUGIN_ERROR', message: 'product server disconnected' });
+    }
+    expect(fallback.cliContributions).not.toHaveBeenCalled();
+    expect(fallback.runCliCommand).not.toHaveBeenCalled();
+  });
+
   it('term.close returns NOT_FOUND for an unknown session', async () => {
     const deps = makeDeps({ closeTerminal: () => false });
     const r = await dispatchOp('term.close', { sessionId: 'ghost' }, deps);
