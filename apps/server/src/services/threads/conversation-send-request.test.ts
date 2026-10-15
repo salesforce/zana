@@ -71,7 +71,8 @@ describe('shouldQueueGhostActiveSend', () => {
       hostHub: { connectedHostIds: () => [] }
     } as never;
     expect(shouldQueueGhostActiveSend(ctx, { ...idle, status: 'active' }, 'auto')).toBe(true);
-    expect(shouldQueueGhostActiveSend(ctx, { ...idle, status: 'active' }, 'steer')).toBe(false);
+    expect(shouldQueueGhostActiveSend(ctx, { ...idle, status: 'active' }, 'steer')).toBe(true);
+    expect(shouldQueueGhostActiveSend(ctx, { ...idle, status: 'active' }, 'steer-if-active')).toBe(true);
     expect(shouldQueueGhostActiveSend(ctx, idle, 'auto')).toBe(false);
   });
 });

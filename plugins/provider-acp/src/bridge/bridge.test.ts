@@ -2971,6 +2971,26 @@ describe("acp bridge", () => {
     expect(threadEventsOfType("turn/completed")).toHaveLength(1);
   });
 
+  it("accepts a steer only once its re-prompt reaches the agent", async () => {
+    const { providerThreadId } = await startThread();
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "hang", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    const steerRequestId = "creq_steer23456";
+    const steerId = sendTurnRequest("turn/steer", providerThreadId, {
+      expectedTurnId: "turn-1",
+      clientRequestId: steerRequestId,
+      input: [{ type: "text", text: "steered", mentions: [] }],
+    });
+    await waitForResponse(steerId);
+    await waitForTurnCompleted();
+    const accepted = threadEventsOfType("turn/input/accepted")
+      .filter((event) => event.clientRequestId === steerRequestId);
+    expect(accepted).toHaveLength(1);
+    expect(agentMessageTexts()).toContain("echo:steered");
+  });
+
   it("keeps partial output from the cancelled prompt then continues", async () => {
     const { bbThreadId, providerThreadId } = await startThread();
     const turnId = sendTurnRequest("turn/start", providerThreadId, {

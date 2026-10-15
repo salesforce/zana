@@ -26,10 +26,13 @@ import {
   resolveConversationForkPoint
 } from './conversation-fork-history.js';
 import {
+  awaitsSteerTarget,
   DeferredAdmissionWait,
   deferConversationSend,
   dropDeferredConversationMessages,
   flushDeferredConversationMessages,
+  flushHeldConversationSteers,
+  isSteerSendMode,
   pauseConversationQueue,
   resumeConversationQueue,
   sendDeferredConversationMessage
@@ -243,6 +246,8 @@ async function sendConversationTurnWithLease(
     || pending
     || !hostOnline
     || (mode === 'queue-if-active' && threadActive)
+    // Steering before the host has the session: hold it, then steer once it does.
+    || (isSteerSendMode(mode) && awaitsSteerTarget(ctx.db, live))
   );
   if (shouldQueue) {
     deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
@@ -781,6 +786,15 @@ export async function forkConversation(
   return forked;
 }
 
+/** Steer held sends into the live turn; ordinary follow-ups keep waiting for idle. */
+export async function flushHeldConversationSteerSends(ctx: ProductHttpContext, threadId: string): Promise<void> {
+  const flushed = await flushHeldConversationSteers(ctx, threadId, async (payload) => {
+    await sendConversationTurn(ctx, threadId, payload.input, 'steer', payload.execution, { drain: true, retainQueuedRow: true });
+  });
+  const thread = flushed > 0 ? getConversationThread(ctx.db, threadId) : null;
+  if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
+}
+
 export async function flushHeldConversationSends(
   ctx: ProductHttpContext,
   threadId: string,
@@ -788,6 +802,7 @@ export async function flushHeldConversationSends(
 ): Promise<void> {
   if (options.force) resumeConversationQueue(ctx, threadId);
   try {
+    await flushHeldConversationSteerSends(ctx, threadId);
     await flushDeferredConversationMessages(ctx, threadId, async (payload) => {
       await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, retainQueuedRow: true });
     }, options);

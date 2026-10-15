@@ -30,6 +30,7 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { HostCommandError } from './host-command-error.js';
+import { deliverSubmittedTurn } from './submitted-turn-delivery.js';
 import { syncProviderBridgeRecordDirEnv } from './provider-bridge-record-env.js';
 import type { ThreadRuntimeAdapter } from './thread-runtime-types.js';
 import type { ThreadArchiveInput, ThreadResumeInput, ThreadRewindPrepareInput, ThreadWorkInput } from './command-dispatch.js';
@@ -523,20 +524,7 @@ export function createAgentRuntimeAdapter(options: {
           clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
           options
         };
-        const mode = input.mode;
-        const activeTurnId = input.expectedTurnId
-          ?? runtime.getActiveTurnId?.(input.threadId)
-          ?? null;
-        const explicitSteer = mode === 'steer' || mode === 'steer-if-active';
-        const autoSteer = (mode == null || mode === 'auto') && Boolean(activeTurnId);
-        if ((explicitSteer || autoSteer) && activeTurnId) {
-          await runtime.steerTurn({
-            ...payload,
-            expectedTurnId: activeTurnId
-          });
-          return;
-        }
-        await runtime.runTurn(payload);
+        await deliverSubmittedTurn(runtime, payload, { mode: input.mode, expectedTurnId: input.expectedTurnId });
       });
       submitByThread.set(input.threadId, run);
       try {

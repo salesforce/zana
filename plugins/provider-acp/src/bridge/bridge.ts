@@ -194,7 +194,11 @@ interface AcpThreadSession {
    * the provider-local `"compaction"` maintenance prompt, or none.
    */
   activePromptKind: "turn" | "compaction" | null;
-  queuedInputs: PromptInput[][];
+  /** Steers waiting for the cancelled prompt to settle; accepted once re-prompted. */
+  queuedInputs: Array<{
+    input: PromptInput[];
+    clientRequestId: Extract<ThreadDelta, { kind: "input.accepted" }>["clientRequestId"];
+  }>;
   /** True while a session/prompt request is outstanding. */
   promptRequestPending: boolean;
   /** True after a steer sent session/cancel for the current prompt. */
@@ -2591,7 +2595,11 @@ function runTurn(session: AcpThreadSession, firstInput: PromptInput[]): void {
       if (!session.stopping) {
         const next = session.queuedInputs.shift();
         if (next) {
-          input = next;
+          // Accept the steer only now that it actually reaches the agent.
+          sendThreadDeltas(session.bbThreadId, [
+            { kind: "input.accepted", clientRequestId: next.clientRequestId },
+          ]);
+          input = next.input;
           continue;
         }
       }
@@ -3165,12 +3173,12 @@ async function handleRequest(
         );
         return;
       }
-      // A steer joins the active turn, so its acceptance is emitted
-      // immediately against the expected turn id.
-      sendThreadDeltas(session.bbThreadId, [
-        { kind: "input.accepted", clientRequestId: params.clientRequestId },
-      ]);
-      session.queuedInputs.push(params.input);
+      // A steer joins the active turn once the cancelled prompt settles; its
+      // acceptance is emitted when the re-prompt is sent, not before.
+      session.queuedInputs.push({
+        input: params.input,
+        clientRequestId: params.clientRequestId,
+      });
       requestSteerCancel(session);
       sendResult(request.id, { threadId: params.threadId });
       return;

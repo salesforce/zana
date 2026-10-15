@@ -3,8 +3,9 @@ import { getThreadProvider, registerThreadProvider } from './thread-provider-cat
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { archiveConversation, cancelConversationPlan, forkConversation, resumeConversation, sendConversationTurn, sendHeldConversationMessage, stopConversation, unarchiveConversation } from './conversation-lifecycle.js';
+import { archiveConversation, cancelConversationPlan, flushHeldConversationSteerSends, forkConversation, resumeConversation, sendConversationTurn, sendHeldConversationMessage, stopConversation, unarchiveConversation } from './conversation-lifecycle.js';
 import { conversationTimeline } from './conversation-timeline.js';
+import { publishConversationLifecycleOutcome } from './conversation-lifecycle-outcome.js';
 import {
   hasLatestRootTurnCompleted,
   hasTerminalClientTurnRequestEvent,
@@ -191,7 +192,8 @@ import {
   recordDispatchAdmissionWait,
   clearDispatchAdmissionGeneration,
   consumeDispatchAdmissionOverride,
-  getDeferredThreadMessage
+  getDeferredThreadMessage,
+  listDueDeferredThreadMessages
 } from '@zana-ai/zcc-db';
 
 function lifecycleCall(type: 'run.started' | 'run.failed' | 'stop.requested' | 'stop.settled' | 'run.succeeded') {
@@ -1893,6 +1895,44 @@ describe('conversation lifecycle', () => {
         permissionEscalation: 'deny'
       })
     }));
+  });
+
+  it.each([
+    ['steer', { status: 'starting' }],
+    ['steer-if-active', { status: 'starting' }],
+    ['steer', { status: 'active', providerThreadId: null }]
+  ] as const)('holds %s while the first turn is still starting instead of rejecting (%o)', async (mode, state) => {
+    vi.mocked(createDeferredThreadMessage).mockClear();
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, ...state });
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'nudge' }], mode);
+    expect(callHostOnlineRpc).not.toHaveBeenCalled();
+    expect(createDeferredThreadMessage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      payload: expect.stringContaining(`"mode":"${mode}"`)
+    }));
+  });
+
+  it.each(['flush', 'turn-live event'] as const)('steers a held message into the turn once it is live (%s)', async (via) => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
+    vi.mocked(applyConversationThreadLifecycleEvent).mockReturnValueOnce({
+      applied: false, reason: 'illegal-transition', detail: 'already active'
+    });
+    vi.mocked(listDueDeferredThreadMessages).mockReturnValueOnce([{
+      id: 'dmsg-1', threadId: thread.id, kind: 'send', status: 'queued', paused: false, sendAfter: null,
+      editHeldUntil: null, groupBoundaryId: null, createdAt: 1, updatedAt: 1,
+      payload: JSON.stringify({ kind: 'send', mode: 'steer-if-active', input: [{ type: 'text', text: 'nudge', mentions: [] }] })
+    }] as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const context = ctx(callHostOnlineRpc);
+    if (via === 'flush') await flushHeldConversationSteerSends(context, thread.id);
+    else publishConversationLifecycleOutcome(context, { threadId: thread.id, event: { type: 'run.started' } }, {
+      applied: true, thread: { ...thread, status: 'active' }
+    } as never);
+    await vi.waitFor(() => expect(callHostOnlineRpc).toHaveBeenCalled());
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({ type: 'turn.submit', mode: 'steer', input: [{ type: 'text', text: 'nudge', mentions: [] }] })
+    }));
+    expect(context.hub.emit).toHaveBeenCalledWith('threads:updated', expect.objectContaining({ id: thread.id }));
   });
 
   it('publishes a queued message held behind manual compaction', async () => {

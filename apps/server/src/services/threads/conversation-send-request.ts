@@ -64,5 +64,7 @@ export function shouldQueueGhostActiveSend(
   if (thread.status !== 'active') return false;
   const runtime = resolveConversationRuntimeState(ctx, thread);
   if (!isGhostActiveRuntimeDisplay(runtime.displayStatus)) return false;
-  return requestedMode === 'auto' || requestedMode === 'queue-if-active' || requestedMode === 'start';
+  // Steers wait too; they land on the live turn once the host is back.
+  return requestedMode === 'auto' || requestedMode === 'queue-if-active' || requestedMode === 'start'
+    || requestedMode === 'steer' || requestedMode === 'steer-if-active';
 }
