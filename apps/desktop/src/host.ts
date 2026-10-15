@@ -135,6 +135,7 @@ import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity'
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { liveScopedProviderFor } from './team-model-routing.js';
+import { decideTeamRoutingEnforcement } from './team-routing-enforcement.js';
 import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import { createExecutionConsentManagement } from '@zana-ai/zcc-host-daemon/harness/execution-consent-management';
@@ -5953,7 +5954,22 @@ const squadExecutionService = new SquadExecutionService({
         };
       })()
     : undefined
-  , routingEnforcementEnabled: () => store.getConfig().teamRoutingEnforcementEnabled === true
+  , routingEnforcementEnabled: (record) => {
+    const workerSlotIds = (record.authorizationContext?.slots ?? [])
+      .map((slot) => slot.slotId)
+      .filter((slotId) => !slotId.startsWith('orchestrator:'));
+    // Startup dispatch can run before launch authorization records its worker
+    // roster. Do not freeze advisory routing before route facts exist.
+    if (workerSlotIds.length === 0) return false;
+    const team = teams.list().find((candidate) => candidate.id === record.teamId);
+    const decision = decideTeamRoutingEnforcement(
+      team,
+      store.getConfig().teamRoutingEnforcementEnabled === true,
+      record.resolvedModels,
+      workerSlotIds
+    );
+    return decision.enforced;
+  }
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
   , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0
@@ -6046,6 +6062,8 @@ const squadExecutionService = new SquadExecutionService({
       modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
       observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
     }));
+    const workerRoutes = slotRoutes.filter((slot) => !slot.slotId.startsWith('orchestrator:'));
+    const routingRequested = team?.routingEnforced ?? config.teamRoutingEnforcementEnabled === true;
     return {
       workUnits: request.workUnits,
       requireCompletePlan: isDurableCoordination(request.coordinationMode),
@@ -6053,7 +6071,8 @@ const squadExecutionService = new SquadExecutionService({
       maxSlots: Math.min(request.policy?.maxLaunches ?? 32, 32),
       initialTasks: request.slots.map((slot) => slot.initialTask),
       sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0),
-      requiredMcpServers: personaMcpServers, requiredModels, requiredProviders, inventory, slotRoutes
+      requiredMcpServers: personaMcpServers, requiredModels, requiredProviders, inventory, slotRoutes,
+      enforceRouting: routingRequested && workerRoutes.length > 0 && workerRoutes.every((slot) => !!slot.level)
     };
   }
   , authorizePlanRegistration: (record, workUnits) => planCorrection.authorizeRegistration(record.id, workUnits)

@@ -8,7 +8,7 @@ import type { ExecutionWorkUnitInput } from './store.js';
  * portable execution plans: each machine-executable step is an H3 heading
  * carrying an `<!-- executable-step -->` marker, whose text is
  * `<stable-kebab-id>: <Title>`, followed by fixed bullet labels
- * (Depends on, Execution class, Mode, Read scope, Write scope, Excludes, Work,
+ * (Depends on, Execution class, Required role, Mode, Read scope, Write scope, Excludes, Work,
  * Verification, Completion criteria, Stop conditions, Outputs / handoff).
  *
  * This is intentionally a raw structural parser only: it maps recognised labels
@@ -150,7 +150,7 @@ function parseRequires(
 }
 
 const KNOWN_LABELS = [
-  'depends on', 'execution class', 'mode', 'read scope', 'write scope', 'excludes', 'work',
+  'depends on', 'execution class', 'required role', 'mode', 'read scope', 'write scope', 'excludes', 'work',
   'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires'
 ] as const;
 
@@ -263,6 +263,7 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
   const readOnly = /read[-\s]?only/i.test(labels.get('mode') ?? '');
   const executionClass = stripBackticks(labels.get('execution class') ?? '').toLowerCase();
   const minimumLevel = EXECUTION_CLASS_LEVEL[executionClass];
+  const requiredRole = stripBackticks(labels.get('required role') ?? '');
   const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
   if (!parsedRequires.ok) return parsedRequires;
   const requires = parsedRequires.requires;
@@ -277,7 +278,9 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
       ...(files.length ? { files } : {}),
       ...(verificationText ? { verification: [verificationText] } : {}),
       ...(readOnly ? { readOnly: true } : {}),
-      ...(minimumLevel ? { routing: { version: 1, minimumLevel } } : {}),
+      ...(minimumLevel || requiredRole
+        ? { routing: { version: 1, ...(minimumLevel ? { minimumLevel } : {}), ...(requiredRole ? { requiredRole } : {}) } }
+        : {}),
       ...(requires ? { requires } : {})
     }
   };

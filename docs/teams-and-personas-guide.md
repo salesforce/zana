@@ -45,7 +45,7 @@ A Persona is a JSON file that declares how a Claude session should be configured
 Personas are discovered and merged by id (later wins):
 
 1. **Extension** — in-memory registrations from live extensions (`ext:<moduleId>:<slug>`)
-2. **Builtin** — shipped with the app (`builtin:reviewer`, `builtin:architect`, `builtin:software-engineer`, `builtin:orchestrator`)
+2. **Builtin** — shipped with the app (`builtin:reviewer`, `builtin:software-engineer`, `builtin:orchestrator`)
 3. **User** — `~/.zcc/personas/<id>.json`
 4. **Project** — `<project-path>/.zcc/personas/<id>.json`
 
@@ -56,7 +56,6 @@ A user file with the same id as a builtin shadows it. Project personas win over 
 | Id | Name | Model | Purpose |
 |----|------|-------|---------|
 | `builtin:reviewer` | Code Reviewer | opus | Reviews diffs for correctness, edge cases, clarity |
-| `builtin:architect` | Architect | (default) | Systems design planner, proposes architectures |
 | `builtin:software-engineer` | Software Engineer | sonnet | Generalist, ships features end to end |
 | `builtin:orchestrator` | Orchestrator | opus | Coordinates work, delegates to workers |
 

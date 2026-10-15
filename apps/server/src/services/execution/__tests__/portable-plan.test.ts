@@ -98,6 +98,21 @@ describe('parsePortablePlan', () => {
     expect(() => normalizeExecutionPlan(result.units, true)).not.toThrow();
   });
 
+  it('preserves an explicit required role for tier-pinned squad work', () => {
+    const result = parsePortablePlan(`### review: Review <!-- executable-step -->
+- **Execution class:** Expert
+- **Required role:** \`builtin:squad-worker-high\`
+- **Work:** Review the completed change.
+`);
+    expect(result).toEqual({
+      ok: true,
+      units: [expect.objectContaining({
+        id: 'review',
+        routing: { version: 1, minimumLevel: 'high', requiredRole: 'builtin:squad-worker-high' }
+      })]
+    });
+  });
+
   it('parses the canonical four-step probe plan into work units', () => {
     const result = parsePortablePlan(CANONICAL);
     expect(result.ok).toBe(true);

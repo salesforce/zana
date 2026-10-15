@@ -87,4 +87,27 @@ describe('SquadEditor orchestrator toggle (edit form)', () => {
 
     expect(html).toContain('>Use default</span>');
   });
+
+  it('exposes squad routing tri-state settings with accurate help', () => {
+    const html = renderToStaticMarkup(
+      <SquadEditor team={{ ...team, routingEnforced: true }} mode="edit" onClose={vi.fn()} />
+    );
+
+    expect(html).toContain('Squad routing');
+    expect(html).toContain('aria-label="Squad routing"');
+    expect(html).toContain('>On<');
+    expect(html).toContain('Use default follows the global setting; On tier-routes work when supported; Off falls back.');
+    expect(html).toContain('Manual assignments are not checked.');
+  });
+});
+
+describe('SquadEditor builtin routing detail', () => {
+  it('shows current builtin routing setting read-only', () => {
+    const html = renderToStaticMarkup(
+      <SquadEditor team={{ ...team, routingEnforced: false }} mode="view" onClose={vi.fn()} />
+    );
+
+    expect(html).toContain('Squad routing');
+    expect(html).toContain('>Off</span>');
+  });
 });

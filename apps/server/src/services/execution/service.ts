@@ -247,7 +247,7 @@ export interface ExecutionServiceDeps {
   /** Reject retained-worktree resume while a normal follow-up agent owns it. */
   mayResumeRetainedWorktree?: (executionId: string) => boolean;
   onTerminal?: (record: ExecutionRecord) => Promise<void> | void;
-  routingEnforcementEnabled?: () => boolean;
+  routingEnforcementEnabled?: (record: ExecutionRecord) => boolean;
   claimRecoveryObserveEnabled?: () => boolean;
   claimRecoveryEnforceEnabled?: () => boolean;
   /** Grace (ms) a durable execution may stay planless before the watchdog fails it. `0`/absent disables. */
@@ -1475,7 +1475,7 @@ export class ExecutionService {
     }
     try {
       const routed = await this.refreshRouteFacts(record);
-      const { record: updated, assignments } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.() === true });
+      const { record: updated, assignments } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true });
       await this.pushAssignments(updated, assignments);
       await this.maybeAutoFinalize(updated.id);
       return { ok: true as const, value: updated };
@@ -1617,10 +1617,10 @@ export class ExecutionService {
       if (existing.resourceBlock || this.checkUsageBudget(existing)) return;
       const routed = await this.refreshRouteFacts(existing);
       const { record, assignments } = await this.deps.store.dispatchReady(routed.id, {
-        ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.() === true
+        ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true
       });
       await this.pushAssignments(record, assignments);
-      if (this.deps.routingEnforcementEnabled?.() === true) await this.maybeAutoFinalize(record.id);
+      if (this.deps.routingEnforcementEnabled?.(record) === true) await this.maybeAutoFinalize(record.id);
     } catch { /* best-effort */ }
   }
 
@@ -1643,7 +1643,7 @@ export class ExecutionService {
   }
 
   private async refreshRouteFacts(record: ExecutionRecord): Promise<ExecutionRecord> {
-    if (this.deps.routingEnforcementEnabled?.() !== true || !record.workUnits?.some((unit) => unit.routing)) return record;
+    if (this.deps.routingEnforcementEnabled?.(record) !== true || !record.workUnits?.some((unit) => unit.routing)) return record;
     if (!this.deps.resolveTeamModelSnapshots || !routeFactsNeedRefresh(record)) return record;
     const now = this.deps.now ?? Date.now;
     const circuit = this.routeFactCircuits.get(record.id) ?? { state: 'CLOSED' as const };
@@ -1724,7 +1724,7 @@ export class ExecutionService {
       const unit = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
       const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
       const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
-      if (this.deps.routingEnforcementEnabled?.() === true && unit?.routing && authorization) {
+      if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization) {
         const eligibility = evaluateSlotEligibility(unit.routing, {
           slotId: assignment.slotId, personaId: authorization.personaId, provider: model?.provider, model: model?.model,
           level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,

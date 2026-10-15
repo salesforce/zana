@@ -21,9 +21,8 @@ describe('PersonaEditor harness-neutral fields', () => {
     );
 
     expect(html).toContain('Harness profile');
-    expect(html).toContain('Claude Code');
-    expect(html).toContain('Claude only');
-    expect(html.lastIndexOf('Opening prompt')).toBeLessThan(html.indexOf('data-testid="persona-claude-options"'));
+    expect(html).not.toContain('Claude only');
+    expect(html).not.toContain('data-testid="persona-claude-options"');
     expect(html).not.toContain('Base profile');
   });
 

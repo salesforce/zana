@@ -102,14 +102,15 @@ export function sanitizeTeam(raw: unknown): Team | null {
         ? r.defaultProjectId.trim()
         : undefined,
     initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
-    worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined
+    worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined,
+    routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined
   };
 }
 
 /**
  * Built-in team catalogue. Stable IDs are prefixed with `builtin:` so a user can
  * shadow them by dropping a file with the same id stem in their own teams dir.
- * Ships one starter team composed of the built-in personas.
+ * Ships focused starter teams composed of the built-in personas.
  */
 const BUILTIN: Team[] = [
   {
@@ -117,7 +118,7 @@ const BUILTIN: Team[] = [
     name: 'Review Squad',
     icon: 'Users',
     description:
-      'An orchestrator plus a code reviewer and an architect — opens three tabs to plan, build, and review a change in parallel.',
+      'On-demand review support: delegate a focused code review when an implementation needs an independent pass.',
     orchestratorPersonaId: 'builtin:orchestrator',
     slots: [
       { personaId: 'builtin:orchestrator', quantity: 1 },
@@ -125,7 +126,54 @@ const BUILTIN: Team[] = [
       { personaId: 'builtin:reviewer', quantity: 1 }
     ],
     initialPrompt:
-      'You are the orchestrator for this team. Break the goal into tasks, delegate to the engineer and reviewer tabs, and integrate their work.'
+      'You are the orchestrator for this on-demand review team. Delegate a focused review, gather findings, and report only actionable results.'
+  },
+  {
+    id: 'builtin:research-squad',
+    name: 'Research Squad',
+    icon: 'Search',
+    description: 'Coordinator (medium) and two low-capacity investigators for code, requirements, and prior-art research.',
+    orchestratorPersonaId: 'builtin:orchestrator',
+    slots: [{ personaId: 'builtin:squad-worker-low', quantity: 2, label: 'Investigator' }],
+    initialPrompt: 'Coordinate bounded research. Produce evidence, options, and unresolved questions before proposing implementation.'
+  },
+  {
+    id: 'builtin:design-squad',
+    name: 'Design Squad',
+    icon: 'DraftingCompass',
+    description: 'Coordinator (medium), a high-capacity designer, and a high-capacity challenger for technical design.',
+    orchestratorPersonaId: 'builtin:orchestrator',
+    slots: [
+      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Designer' },
+      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Challenger' }
+    ],
+    initialPrompt: 'Coordinate design work. Produce a minimal technical plan with decisions, boundaries, and verification criteria.'
+  },
+  {
+    id: 'builtin:debug-squad',
+    name: 'Debug Squad',
+    icon: 'Bug',
+    description: 'Coordinator (medium), a low-capacity evidence collector, and a high-capacity root-cause investigator.',
+    orchestratorPersonaId: 'builtin:orchestrator',
+    routingEnforced: true,
+    slots: [
+      { personaId: 'builtin:squad-worker-low', quantity: 1, label: 'Evidence collector' },
+      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Root-cause investigator' }
+    ],
+    initialPrompt: 'Coordinate debugging. Every unit must set routing with version: 1, requiredRole, and minimumLevel matching builtin:squad-worker-low/low or builtin:squad-worker-high/high. Do not set estimatedContextBytes, capabilities, or modalities. Let dispatch assign work; do not call assign.'
+  },
+  {
+    id: 'builtin:delivery-squad',
+    name: 'Delivery Squad',
+    icon: 'Rocket',
+    description: 'Coordinator (medium), two medium-capacity engineers, and a high-capacity reviewer for bounded delivery.',
+    orchestratorPersonaId: 'builtin:orchestrator',
+    routingEnforced: true,
+    slots: [
+      { personaId: 'builtin:squad-worker-medium', quantity: 2, label: 'Engineer' },
+      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Reviewer' }
+    ],
+    initialPrompt: 'Coordinate delivery. Every unit must set routing with version: 1, requiredRole, and minimumLevel matching builtin:squad-worker-medium/medium or builtin:squad-worker-high/high. Do not set estimatedContextBytes, capabilities, or modalities. Let dispatch assign work; do not call assign.'
   }
 ];
 

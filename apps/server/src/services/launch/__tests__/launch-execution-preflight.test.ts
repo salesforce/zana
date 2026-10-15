@@ -313,6 +313,17 @@ describe('Team admission', () => {
     ]) });
   });
 
+  it('keeps routing eligibility advisory when Team enforcement is off', () => {
+    const result = evaluateTeamAdmission({
+      workUnits: [{ ...validPlan[0], routing: { version: 1, requiredRole: 'reviewer' } }], requireCompletePlan: true,
+      slotCount: 1, maxSlots: 1, initialTasks: ['worker'], enforceRouting: false,
+      slotRoutes: [{ slotId: 'slot-1', personaId: 'writer' }]
+    });
+    expect(result).toMatchObject({ ready: true, checks: expect.arrayContaining([
+      expect.objectContaining({ code: 'ROUTE_ELIGIBILITY', status: 'FAIL', required: false, subject: 'build' })
+    ]) });
+  });
+
   it('collects canonical required inventory and preserves required entries beyond source bounds', async () => {
     const requiredModel = { id: 'model-required', provider: 'provider-required' };
     const inventory = await collectTeamAdmissionInventory({

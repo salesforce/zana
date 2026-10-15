@@ -464,11 +464,13 @@ function PersonaDetail({
             <pre className="persona-detail-pre">{persona.initialPrompt}</pre>
           </div>
         )}
-        <ClaudePersonaOptions
-          allowedTools={persona.allowedTools?.join(', ') ?? ''}
-          deniedTools={persona.deniedTools?.join(', ') ?? ''}
-          addDirs={persona.addDirs?.join(', ') ?? ''}
-        />
+        {(persona.allowedTools?.length || persona.deniedTools?.length || persona.addDirs?.length) ? (
+          <ClaudePersonaOptions
+            allowedTools={persona.allowedTools?.join(', ') ?? ''}
+            deniedTools={persona.deniedTools?.join(', ') ?? ''}
+            addDirs={persona.addDirs?.join(', ') ?? ''}
+          />
+        ) : null}
       </div>
       <footer className="modal-footer">
         {isProject ? (

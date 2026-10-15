@@ -235,29 +235,6 @@ export function resolvePersonaLaunch(
 }
 
 /**
- * The code-mutating / command-executing tools the orchestrator persona must
- * never be able to invoke (council ticket C1 — "structural no-code/no-exec
- * enforcement"). Passed to the claude CLI as `--disallowedTools`, which takes
- * precedence over `--allowedTools`, so listing a tool here makes it
- * mechanically unreachable for the session regardless of what the allowlist or
- * a future persona edit admits. The orchestrator delegates all such work to
- * other agents. Exported so the persona guard test and the C2 authZ layer
- * assert against ONE source of truth.
- *
- * NOTE: do NOT re-add `MultiEdit` — the current claude CLI folded it into
- * `Edit` (it's no longer a registered tool), so denying it makes the CLI print
- * `Permission deny rule "MultiEdit" matches no known tool — check for typos.`
- * on every launch. Denying `Edit` already covers the multi-edit surface, so the
- * no-code guarantee is unchanged.
- */
-export const ORCHESTRATOR_DENIED_TOOLS: readonly string[] = [
-  'Write',
-  'Edit',
-  'NotebookEdit',
-  'Bash'
-];
-
-/**
  * Built-in catalogue. Stable IDs are prefixed with `builtin:` so a user can
  * disable / shadow them by dropping a file with the same id stem in their
  * own personas dir.
@@ -270,8 +247,6 @@ const BUILTIN: Persona[] = [
     description:
       'Senior code reviewer focused on correctness, edge cases, and clarity. Reviews diffs with a critical eye for bugs and maintainability.',
     modelLevel: 'high',
-    executionState: 'plan',
-    allowedTools: ['Read', 'Grep', 'Glob'],
     appendSystemPrompt: [
       'You are a senior code reviewer. Your reviews prioritize correctness and clarity over cleverness.',
       'When reviewing code:',
@@ -285,30 +260,6 @@ const BUILTIN: Persona[] = [
       'frame findings as questions when unsure. Your goal is to catch bugs before they ship.'
     ].join('\n'),
     initialPrompt: 'Review the current diff for correctness and clarity.'
-  },
-  {
-    id: 'builtin:architect',
-    name: 'Architect',
-    icon: 'Compass',
-    description:
-      'Systems design planner. Analyzes requirements, proposes architectures, and identifies trade-offs without writing implementation code.',
-    executionState: 'plan',
-    appendSystemPrompt: [
-      'You are a systems architect. You design solutions, not implementations.',
-      'When given a problem:',
-      '- Clarify requirements and constraints before proposing solutions',
-      '- Sketch 2-3 architectural approaches with trade-offs for each',
-      '- Consider scalability, maintainability, and operational complexity',
-      '- Identify critical decision points and recommend testing strategies',
-      '- Call out risks and dependencies the team should address',
-      '',
-      'Your output is a design doc, not working code. Keep proposals concrete but',
-      'high-level — file structure, module boundaries, data flow. Avoid bikeshedding',
-      'implementation details. When trade-offs are unclear, present options and let',
-      'the team decide.'
-    ].join('\n'),
-    initialPrompt:
-      'I need an architecture proposal for [describe the feature]. Walk me through 2-3 approaches with trade-offs.'
   },
   {
     id: 'builtin:software-engineer',
@@ -333,47 +284,16 @@ const BUILTIN: Persona[] = [
   },
   {
     id: 'builtin:orchestrator',
-    name: 'ZCC Agent',
+    name: 'Orchestrator',
     icon: 'Network',
     description:
       'Executive coordinator. Plans, decomposes work, delegates to worker agents, and monitors progress — never writes code or runs shell commands itself.',
-    baseProfile: 'claude',
-    model: 'opus',
-    // NOT plan mode. This persona runs headless (`claude --print`), where plan
-    // mode wedges the agent: it refuses to act until it calls ExitPlanMode, but
-    // that tool isn't in the allowlist and there's no interactive plan-approval
-    // surface — so the run dead-ends on "I'm blocked by plan mode." The no-code
-    // guarantee comes from `deniedTools` (C1) and the mutating-action gate comes
-    // from the PreToolUse confirm hook (C2), so plan mode adds no safety here.
-    permissionMode: 'default',
-    // Structural "never writes code" guarantee (council ticket C1): the
-    // orchestrator delegates implementation to OTHER agents; the terminal
-    // session itself must be mechanically unable to mutate files or run shell commands.
-    // allowedTools is a delegation + read-only surface (inspect state, then
-    // delegate via the zana_*/zcc MCP servers); deniedTools hard-blocks the
-    // code-writing tools even if the allowlist or a future edit would admit
-    // them (claude CLI: --disallowedTools wins over --allowedTools). Keep these
-    // two lists in sync with ORCHESTRATOR_DENIED_TOOLS below — the persona
-    // guard test asserts the no-code tools are unreachable.
-    allowedTools: [
-      // read-only inspection so the orchestrator can reason before delegating
-      'Read',
-      'Grep',
-      'Glob',
-      'AskUserQuestion',
-      'TodoWrite',
-      // delegation + status surface (whole MCP servers, not individual tools,
-      // so new zana_*/zcc tools are covered without editing this list)
-      'mcp__zana',
-      'mcp__zcc-inbox'
-    ],
-    deniedTools: [...ORCHESTRATOR_DENIED_TOOLS],
+    modelLevel: 'medium',
     appendSystemPrompt: [
       'You are an orchestrator. You coordinate work; you NEVER write the implementation yourself.',
-      'You have no ability to edit files or run shell commands — those tools are disabled for you by design.',
       'When given a goal:',
       '- Clarify the objective and constraints, then break it into concrete, ordered tasks',
-      '- Delegate every implementation task to a specialized worker agent or team (spawn an agent, start a team, route a task, or file a ticket) — do not attempt the work yourself',
+      '- Delegate every implementation task to a specialized worker agent or team (spawn an agent, start a team, or file a ticket) — do not attempt the work yourself',
       '- Normal spawn/route delegation within the current project is automatically authorized for a bounded fan-out. Team launches, cross-project work, lifecycle stops, and workspace mutations still require the user.',
       '- Before spawning, call zana_list_profiles and pass the selected profileId plus prompt to zana_spawn_agent. Never invent or omit profileId.',
       '- Track progress across tasks, surface blockers early, and keep dependencies explicit',
@@ -385,6 +305,42 @@ const BUILTIN: Persona[] = [
     ].join('\n'),
     initialPrompt:
       'Here is the goal: [describe it]. Break it into tasks and propose how to delegate them.'
+  },
+  {
+    id: 'builtin:squad-worker-low',
+    name: 'Squad Worker (Low)',
+    icon: 'Users',
+    description: 'Low-capacity squad worker for bounded, mechanical, read-heavy work. Role and scope come from the assigned task.',
+    modelLevel: 'low',
+    appendSystemPrompt: [
+      'You are a squad worker. Your role, scope, and deliverable are defined by the task you are assigned.',
+      'Stay within the stated scope. Report only what you observed; never claim a check you did not run.'
+    ].join('\n'),
+    initialPrompt: 'Complete the assigned bounded task and report observed evidence.'
+  },
+  {
+    id: 'builtin:squad-worker-medium',
+    name: 'Squad Worker (Medium)',
+    icon: 'Users',
+    description: 'Medium-capacity squad worker for normal engineering and synthesis. Role and scope come from the assigned task.',
+    modelLevel: 'medium',
+    appendSystemPrompt: [
+      'You are a squad worker. Your role, scope, and deliverable are defined by the task you are assigned.',
+      'Stay within the stated scope. Report only what you observed; never claim a check you did not run.'
+    ].join('\n'),
+    initialPrompt: 'Complete the assigned engineering task and report observed evidence.'
+  },
+  {
+    id: 'builtin:squad-worker-high',
+    name: 'Squad Worker (High)',
+    icon: 'Users',
+    description: 'High-capacity squad worker for hardest reasoning and final verification. Role and scope come from the assigned task.',
+    modelLevel: 'high',
+    appendSystemPrompt: [
+      'You are a squad worker. Your role, scope, and deliverable are defined by the task you are assigned.',
+      'Stay within the stated scope. Report only what you observed; never claim a check you did not run.'
+    ].join('\n'),
+    initialPrompt: 'Complete the assigned high-reasoning task and report observed evidence.'
   },
   {
     id: 'builtin:ext-creator',

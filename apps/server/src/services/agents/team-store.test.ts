@@ -27,6 +27,13 @@ describe('sanitizeTeam', () => {
       .toMatchObject({ worktreeIsolation: undefined });
   });
 
+  it('preserves a boolean routing enforcement override and drops invalid values', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], routingEnforced: true }))
+      .toMatchObject({ routingEnforced: true });
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], routingEnforced: 'true' }))
+      .toMatchObject({ routingEnforced: undefined });
+  });
+
   it('requires id, name, and a slots array', () => {
     expect(sanitizeTeam({ name: 'X', slots: [] })).toBeNull(); // no id
     expect(sanitizeTeam({ id: 'x', slots: [] })).toBeNull(); // no name
@@ -99,6 +106,34 @@ describe('TeamStore', () => {
     expect(t).toBeDefined();
     expect(t?.source).toBe('builtin');
     expect(t?.slots.length).toBeGreaterThan(0);
+  });
+
+  it('ships focused built-in squads with enforced routing only for debug and delivery', () => {
+    const builtins = new Map(store.list().filter((team) => team.source === 'builtin').map((team) => [team.id, team]));
+    expect(builtins.get('builtin:research-squad')).toBeDefined();
+    expect(builtins.get('builtin:design-squad')).toBeDefined();
+    expect(builtins.get('builtin:review-squad')?.orchestratorPersonaId).toBe('builtin:orchestrator');
+    expect(builtins.get('builtin:research-squad')?.orchestratorPersonaId).toBe('builtin:orchestrator');
+    expect(builtins.get('builtin:design-squad')?.orchestratorPersonaId).toBe('builtin:orchestrator');
+    expect(builtins.get('builtin:debug-squad')?.orchestratorPersonaId).toBe('builtin:orchestrator');
+    expect(builtins.get('builtin:delivery-squad')?.orchestratorPersonaId).toBe('builtin:orchestrator');
+    expect(builtins.get('builtin:debug-squad')?.routingEnforced).toBe(true);
+    expect(builtins.get('builtin:delivery-squad')?.routingEnforced).toBe(true);
+    expect(builtins.get('builtin:review-squad')?.routingEnforced).toBeUndefined();
+    expect(builtins.get('builtin:research-squad')?.slots).toEqual([
+      expect.objectContaining({ personaId: 'builtin:squad-worker-low', quantity: 2 })
+    ]);
+    expect(builtins.get('builtin:design-squad')?.slots).toEqual([
+      expect.objectContaining({ personaId: 'builtin:squad-worker-high', label: 'Designer' }),
+      expect.objectContaining({ personaId: 'builtin:squad-worker-high', label: 'Challenger' })
+    ]);
+    expect(builtins.get('builtin:debug-squad')?.slots.map((slot) => slot.personaId)).toEqual([
+      'builtin:squad-worker-low', 'builtin:squad-worker-high'
+    ]);
+    expect(builtins.get('builtin:delivery-squad')?.slots).toEqual([
+      expect.objectContaining({ personaId: 'builtin:squad-worker-medium', quantity: 2, label: 'Engineer' }),
+      expect.objectContaining({ personaId: 'builtin:squad-worker-high', label: 'Reviewer' })
+    ]);
   });
 
   it('every built-in team slot + orchestrator resolves to a built-in persona', () => {

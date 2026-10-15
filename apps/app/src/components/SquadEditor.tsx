@@ -169,6 +169,12 @@ function TeamDetail({
             <pre className="persona-detail-pre">{team.initialPrompt}</pre>
           </div>
         )}
+        {isBuiltin && (
+          <div className="persona-detail-block">
+            <span className="persona-detail-label">Squad routing</span>
+            <span>{team.routingEnforced === true ? 'On' : team.routingEnforced === false ? 'Off' : 'Use default'}</span>
+          </div>
+        )}
       </div>
       <footer className="modal-footer">
         {isExtension ? (
@@ -248,6 +254,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   );
   const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
   const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(team?.worktreeIsolation);
+  const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
   const [slots, setSlots] = useState<SlotDraft[]>(() => {
     const base = (team?.slots ?? []).map((s) => ({
       personaId: s.personaId,
@@ -330,7 +337,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       slots: cleanSlots,
       initialPrompt: initialPrompt.trim() || undefined,
       defaultProjectId: defaultProjectId || undefined,
-      worktreeIsolation
+      worktreeIsolation,
+      routingEnforced
     };
     if (keepsId && team) input.id = team.id;
 
@@ -585,6 +593,26 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
             Creates one shared branch and checkout for durable squad runs. Use default follows
             the effective project-or-global setting; On forces a shared squad worktree; Off
             disables it.
+          </p>
+        </div>
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-routing-enforced">Squad routing</label>
+          <PopoverPicklist
+            id="team-routing-enforced"
+            ariaLabel="Squad routing"
+            searchable={false}
+            value={routingEnforced === true ? 'on' : routingEnforced === false ? 'off' : 'inherit'}
+            onChange={(next) => setRoutingEnforced(next === 'on' ? true : next === 'off' ? false : undefined)}
+            options={[
+              { value: 'inherit', label: 'Use default' },
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' }
+            ]}
+          />
+          <p className="settings-help">
+            Use default follows the global setting; On tier-routes work when supported; Off falls
+            back. Manual assignments are not checked.
           </p>
         </div>
 

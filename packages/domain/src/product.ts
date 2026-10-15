@@ -4348,6 +4348,8 @@ export interface Team {
   initialPrompt?: string;
   /** Shared-worktree override for execution-backed squad runs. Absent ⇒ use the next default. */
   worktreeIsolation?: boolean;
+  /** Override global structured-work routing enforcement for this Team. */
+  routingEnforced?: boolean;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }

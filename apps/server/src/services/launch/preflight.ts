@@ -92,6 +92,8 @@ export interface TeamAdmissionInput {
   inventory?: AdmissionCapabilityInventoryV1;
   /** Main-derived pre-spawn facts for already-authorized Team slots. */
   slotRoutes?: readonly SlotRouteSnapshotV1[];
+  /** False keeps routing checks as advisory, matching a Team with enforcement off. */
+  enforceRouting?: boolean;
   now?: number;
 }
 
@@ -183,7 +185,7 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
       .map((slot) => evaluateSlotEligibility(unit.routing, slot, now));
     const status: AdmissionCheckStatus = eligible.some((result) => result.status === 'PASS') ? 'PASS'
       : eligible.some((result) => result.status === 'UNKNOWN') ? 'UNKNOWN' : 'FAIL';
-    add({ code: 'ROUTE_ELIGIBILITY', status, required: true, subject: unit.id,
+    add({ code: 'ROUTE_ELIGIBILITY', status, required: input.enforceRouting !== false, subject: unit.id,
       message: status === 'PASS' ? `work unit ${unit.id} has a qualified route`
         : status === 'UNKNOWN' ? `work unit ${unit.id} route facts are unknown` : `work unit ${unit.id} has no qualified route` });
   }

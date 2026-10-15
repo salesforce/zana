@@ -513,7 +513,7 @@ describe('host bootstrap wiring', () => {
   it('drives execution-service wiring callbacks', async () => {
     const o = h.squadOpts;
     const c = ctx();
-    vi.spyOn(c.teams, 'list').mockReturnValue([{ id: 't1', slots: [{ personaId: 'pa' }, { personaId: 'pb' }, { personaId: 'pc' }], orchestratorPersonaId: 'po' }]);
+    vi.spyOn(c.teams, 'list').mockReturnValue([{ id: 't1', routingEnforced: true, slots: [{ personaId: 'pa' }, { personaId: 'pb' }, { personaId: 'pc' }], orchestratorPersonaId: 'po' }]);
     vi.spyOn(c.personas, 'list').mockReturnValue([
       { id: 'pa', name: 'A', baseProfile: 'claude', model: 'sonnet' },
       { id: 'pb', name: 'B', baseProfile: 'opencode', model: 'prov/model-b' },
@@ -548,7 +548,21 @@ describe('host bootstrap wiring', () => {
     o.clearResumeToken(project.id, 'exec-tok');
     expect(o.preflightWorkflow('missing-team', {})).toMatchObject({ ok: false, code: 'INVALID_WORKFLOW_PROFILE' });
     expect(() => o.preflightWorkflow('t1', {})).not.toThrow();
-    expect(typeof o.routingEnforcementEnabled()).toBe('boolean');
+    const routingRecord = {
+      id: 'routing-test', teamId: 't1', resolvedModels: [],
+      authorizationContext: { slots: [] }
+    };
+    // Startup dispatch can precede authorization. This must not memoize advisory
+    // routing, or the later complete roster would never enforce.
+    expect(o.routingEnforcementEnabled(routingRecord)).toBe(false);
+    routingRecord.authorizationContext.slots = [
+      { slotId: 'orchestrator:po' }, { slotId: 'worker-1' }
+    ];
+    routingRecord.resolvedModels = [{ slotId: 'worker-1', provider: 'test', model: 'model', level: 'medium' }];
+    expect(o.routingEnforcementEnabled(routingRecord)).toBe(true);
+    await o.onTerminal({ id: 'routing-test' });
+    routingRecord.resolvedModels = [];
+    expect(o.routingEnforcementEnabled(routingRecord)).toBe(false);
     expect(typeof o.claimRecoveryObserveEnabled()).toBe('boolean');
     expect(typeof o.claimRecoveryEnforceEnabled()).toBe('boolean');
     expect(typeof o.planStartupGraceMs()).toBe('number');

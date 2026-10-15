@@ -21,7 +21,11 @@ vi.mock('../store.js', () => {
 vi.mock('./ui/PopoverPicklist.js', () => ({
   PopoverPicklist: ({ id, value, onChange, ariaLabel }: { id: string; value: string; onChange: (v: string) => void; ariaLabel: string }) => (
     <button type="button" id={id} aria-label={ariaLabel} data-value={value}
-      onClick={() => onChange(id === 'team-worktree-isolation' ? (value === 'inherit' ? 'on' : value === 'on' ? 'off' : 'inherit') : value)}>
+      onClick={() => onChange(
+        id === 'team-worktree-isolation' || id === 'team-routing-enforced'
+          ? (value === 'inherit' ? 'on' : value === 'on' ? 'off' : 'inherit')
+          : value
+      )}>
       {value}
     </button>
   )
@@ -62,5 +66,34 @@ describe('SquadEditor worktree isolation tri-state', () => {
   it('shows a stored false as off', () => {
     render(<SquadEditor team={{ ...base, worktreeIsolation: false }} mode="edit" onClose={vi.fn()} />);
     expect(screen.getByLabelText('Squad worktree isolation').getAttribute('data-value')).toBe('off');
+  });
+});
+
+async function cycleRoutingAndSave(team: Team, clicks: number) {
+  save.mockResolvedValue({ ok: true, value: { name: 'S' } });
+  render(<SquadEditor team={team} mode="edit" onClose={vi.fn()} />);
+  const picker = screen.getByLabelText('Squad routing');
+  for (let i = 0; i < clicks; i++) fireEvent.click(picker);
+  fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+  await vi.waitFor(() => expect(save).toHaveBeenCalled());
+  return save.mock.calls[0]![0] as { routingEnforced?: boolean };
+}
+
+describe('SquadEditor routing tri-state', () => {
+  it('defaults to inherit and saves undefined', async () => {
+    expect((await cycleRoutingAndSave(base, 0)).routingEnforced).toBeUndefined();
+  });
+  it('maps On to true', async () => {
+    expect((await cycleRoutingAndSave(base, 1)).routingEnforced).toBe(true);
+  });
+  it('maps Off to false', async () => {
+    expect((await cycleRoutingAndSave(base, 2)).routingEnforced).toBe(false);
+  });
+  it('maps back to inherit and preserves a stored false on load', async () => {
+    expect((await cycleRoutingAndSave({ ...base, routingEnforced: false }, 1)).routingEnforced).toBeUndefined();
+  });
+  it('shows a stored false as off', () => {
+    render(<SquadEditor team={{ ...base, routingEnforced: false }} mode="edit" onClose={vi.fn()} />);
+    expect(screen.getByLabelText('Squad routing').getAttribute('data-value')).toBe('off');
   });
 });

@@ -1971,4 +1971,41 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     ]));
     expect(new Set(assignments.map((assignment) => assignment.slotId))).toEqual(new Set(['slot-1', 'slot-2']));
   }));
+
+  it('routes Debug and Delivery units to their shipped worker-role slots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let debug = await running(store, [
+      { slotId: 'orchestrator:builtin:orchestrator', personaId: 'builtin:orchestrator', authorizationIdDigest: 'orch-d' },
+      { slotId: '0:builtin:squad-worker-low:0', personaId: 'builtin:squad-worker-low', authorizationIdDigest: 'low-d' },
+      { slotId: '1:builtin:squad-worker-high:0', personaId: 'builtin:squad-worker-high', authorizationIdDigest: 'high-d' }
+    ], [
+      { id: 'evidence', title: 'Evidence', task: 'collect', dependencies: [], files: ['evidence.txt'], routing: { version: 1, requiredRole: 'builtin:squad-worker-low', minimumLevel: 'low' } },
+      { id: 'root-cause', title: 'Root cause', task: 'investigate', dependencies: [], files: ['root-cause.txt'], routing: { version: 1, requiredRole: 'builtin:squad-worker-high', minimumLevel: 'high' } }
+    ]);
+    debug = await store.replaceResolvedModels(debug.id, [
+      { slotId: '0:builtin:squad-worker-low:0', provider: 'test', model: 'low', level: 'low' },
+      { slotId: '1:builtin:squad-worker-high:0', provider: 'test', model: 'high', level: 'high' }
+    ]);
+    expect((await store.dispatchReady(debug.id, { enforceRouting: true })).assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workUnitId: 'evidence', slotId: '0:builtin:squad-worker-low:0' }),
+      expect.objectContaining({ workUnitId: 'root-cause', slotId: '1:builtin:squad-worker-high:0' })
+    ]));
+
+    const deliveryStore = createExecutionStore({ filePath: `${filePath}.delivery`, id: () => 'execution-2' });
+    let delivery = await running(deliveryStore, [
+      { slotId: 'orchestrator:builtin:orchestrator', personaId: 'builtin:orchestrator', authorizationIdDigest: 'orch-d' },
+      { slotId: '0:builtin:squad-worker-medium:0', personaId: 'builtin:squad-worker-medium', authorizationIdDigest: 'engineer-1-d' },
+      { slotId: '0:builtin:squad-worker-medium:1', personaId: 'builtin:squad-worker-medium', authorizationIdDigest: 'engineer-2-d' },
+      { slotId: '1:builtin:squad-worker-high:0', personaId: 'builtin:squad-worker-high', authorizationIdDigest: 'reviewer-d' }
+    ], [
+      { id: 'review', title: 'Review', task: 'review', dependencies: [], files: ['review.txt'], routing: { version: 1, requiredRole: 'builtin:squad-worker-high', minimumLevel: 'high' } }
+    ]);
+    delivery = await deliveryStore.replaceResolvedModels(delivery.id, [
+      { slotId: '0:builtin:squad-worker-medium:0', provider: 'test', model: 'medium', level: 'medium' },
+      { slotId: '0:builtin:squad-worker-medium:1', provider: 'test', model: 'medium', level: 'medium' },
+      { slotId: '1:builtin:squad-worker-high:0', provider: 'test', model: 'high', level: 'high' }
+    ]);
+    expect((await deliveryStore.dispatchReady(delivery.id, { enforceRouting: true })).assignments)
+      .toEqual([expect.objectContaining({ workUnitId: 'review', slotId: '1:builtin:squad-worker-high:0' })]);
+  }));
 });
