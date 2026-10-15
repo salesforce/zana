@@ -180,11 +180,11 @@ it('keeps the existing required CI check as an always-running gate over every jo
   expect(workflow).toContain('test "$COVERAGE_RESULT" = success');
   expect(workflow).toContain('test "$BOUNDARY_RESULT" = success');
   expect(workflow).toContain('fail-fast: false');
-  expect(workflow).toContain('shard: [1, 2, 3, 4]');
-  expect(workflow).toContain('vitest run --shard=${{ matrix.shard }}/4 --coverage');
+  expect(workflow).toContain('shard: [1, 2, 3, 4, 5]');
+  expect(workflow).toContain('vitest run --shard=${{ matrix.shard }}/5 --coverage');
   expect(workflow).toContain('needs: [unit, unit-packages]');
   expect(workflow).toContain('merge-multiple: true');
-  expect(workflow).toContain('coverage/root-1/coverage-final.json coverage/root-2/coverage-final.json coverage/root-3/coverage-final.json coverage/root-4/coverage-final.json');
+  expect(workflow).toContain('coverage/root-1/coverage-final.json coverage/root-2/coverage-final.json coverage/root-3/coverage-final.json coverage/root-4/coverage-final.json coverage/root-5/coverage-final.json');
   expect(workflow).not.toContain('continue-on-error: true');
   expect(workflow).toContain('plugins/tasks/vitest.config.ts --coverage');
   expect(workflow).toContain('pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts --coverage');

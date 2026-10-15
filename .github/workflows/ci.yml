@@ -31,12 +31,12 @@ jobs:
   # bridges, shells and PTYs one at a time (vitest.serial.ts). Each shard is its
   # own VM, so that split holds within every shard.
   unit:
-    name: Unit tests (shard ${{ matrix.shard }}/4)
+    name: Unit tests (shard ${{ matrix.shard }}/5)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -75,7 +75,7 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Unit tests with coverage
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/root-${{ matrix.shard }}
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/5 --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/root-${{ matrix.shard }}
 
       - name: Upload coverage report
         if: always()
@@ -172,7 +172,7 @@ jobs:
           merge-multiple: true
 
       - name: Enforce changed-code coverage
-        run: node scripts/ci-verification.mjs --coverage coverage/root-1/coverage-final.json coverage/root-2/coverage-final.json coverage/root-3/coverage-final.json coverage/root-4/coverage-final.json coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json
+        run: node scripts/ci-verification.mjs --coverage coverage/root-1/coverage-final.json coverage/root-2/coverage-final.json coverage/root-3/coverage-final.json coverage/root-4/coverage-final.json coverage/root-5/coverage-final.json coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json
         env:
           CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

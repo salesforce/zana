@@ -13,11 +13,11 @@ describe('Release verification', () => {
     const unit = workflow.jobs.unit;
     expect(unit['runs-on']).toBe('ubuntu-latest');
     expect(unit.strategy.matrix.shard).toEqual(ci.jobs.unit.strategy.matrix.shard);
-    expect(unit.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
+    expect(unit.strategy.matrix.shard).toEqual([1, 2, 3, 4, 5]);
     expect(unit.strategy['fail-fast']).toBe(false);
     expect(unit.needs).toBeUndefined();
     const commands = unit.steps.map((step: any) => step.run).filter(Boolean);
-    expect(commands).toContain('pnpm exec vitest run --shard=${{ matrix.shard }}/4');
+    expect(commands).toContain('pnpm exec vitest run --shard=${{ matrix.shard }}/5');
     expect(commands).toContain('pnpm --filter zcc-plugin-slack-bridge-2ff2 package');
     expect(commands).toContain('pnpm --dir plugins/slack-bridge-2ff2 exec puppeteer browsers install chrome');
     expect(commands).toContain('sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0');

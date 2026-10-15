@@ -23,7 +23,6 @@ export const SERIAL_SOURCE_PATTERN = new RegExp([
   String.raw`\butilityProcess\b`,
   String.raw`\bstartRuntimeSupervisor\b`,
   String.raw`process\.chdir\(`,
-  String.raw`['"]git['"]`,
   String.raw`\besbuild\b`,
   String.raw`electron-vite`,
   // agent-runtime's fake provider is a real child process.
@@ -33,7 +32,15 @@ export const SERIAL_SOURCE_PATTERN = new RegExp([
 /** Spawn through an imported helper; the source pattern cannot see these. */
 export const SERIAL_TEST_FILES: readonly string[] = [
   // createGhRunner spawns real node children under a 150ms timeout.
-  'plugins/github/src/credentials.test.ts'
+  'plugins/github/src/credentials.test.ts',
+  // History-query workers share a module-level capacity queue across test files.
+  'apps/server/src/services/threads/history-query-worker.test.ts',
+  'apps/server/src/services/threads/history-query-worker.failure.test.ts',
+  // Real filesystem-watch teardown needs an uncontended event loop.
+  'apps/server/src/services/extensions/__tests__/local-extension-hot-reload.integration.test.ts',
+  // These fixtures create thousands of files or execute a fake SSH filesystem.
+  'apps/server/src/services/projects/__tests__/fs-scan.test.ts',
+  'apps/host-daemon/src/remote-fs.test.ts'
 ];
 
 /** Never test sources; skipping them keeps the scan fast. The projects' own

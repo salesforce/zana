@@ -36,22 +36,21 @@ it('recovers capacity when construction, worker execution or exit fails', async 
   expect(await recovered).toEqual([]);
 });
 
-it('times out searches and queued work while holding slots until worker exit', async () => {
+it('releases slots after timed-out searches settle without waiting for worker exit', async () => {
   vi.useFakeTimers();
   const first = historyQueryWorker('file', 'sql', []);
   const second = historyQueryWorker('file', 'sql', []);
   const queued = historyQueryWorker('file', 'sql', []);
   const settled = Promise.allSettled([first, second, queued]);
   await vi.advanceTimersByTimeAsync(5000);
-  const results = await settled;
-  expect(results.map(result => result.status === 'rejected' ? result.reason.message : '')).toEqual(['History search timed out', 'History search timed out', 'History search queue timed out']);
-  expect(state.workers).toHaveLength(2);
-  expect(state.workers.every(worker => worker.terminate.mock.calls.length === 1)).toBe(true);
-  const next = historyQueryWorker('file', 'sql', []);
-  expect(state.workers).toHaveLength(2);
-  state.workers[0].emit('exit', 0);
   await Promise.resolve();
   expect(state.workers).toHaveLength(3);
   state.workers[2].emit('message', { rows: [{ value: 1 }] });
-  expect(await next).toEqual([{ value: 1 }]);
+  const results = await settled;
+  expect(results.map(result => result.status === 'rejected' ? result.reason.message : '')).toEqual(['History search timed out', 'History search timed out', '']);
+  expect(state.workers.every(worker => worker.terminate.mock.calls.length === 1)).toBe(true);
+  const next = historyQueryWorker('file', 'sql', []);
+  expect(state.workers).toHaveLength(4);
+  state.workers[3].emit('message', { rows: [{ value: 2 }] });
+  expect(await next).toEqual([{ value: 2 }]);
 });

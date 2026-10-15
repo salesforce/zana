@@ -39,14 +39,14 @@ permissions:
 
 jobs:
   # Keep files serial within each VM: the suite spawns real bridges and PTYs.
-  # Match merge CI's four isolated runners instead of raising local concurrency.
+  # Match merge CI's five isolated runners instead of raising local concurrency.
   unit:
-    name: Unit tests (shard ${{ matrix.shard }}/4)
+    name: Unit tests (shard ${{ matrix.shard }}/5)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
@@ -65,7 +65,7 @@ jobs:
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Unit tests
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/5
 
   checks:
     name: Typecheck, release notes and package tests

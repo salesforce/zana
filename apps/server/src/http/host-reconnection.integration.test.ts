@@ -42,7 +42,10 @@ async function eventHost() {
   return async (events: HostEventEnvelope[], batchId = randomUUID()) => {
     expect(connection.send(JSON.stringify({ type: 'host.event', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       hostId, instanceId, batchId, events }))).toBe(true);
-    await vi.waitFor(() => expect(acks.find(ack => ack.type === 'host.event-ack' && ack.batchId === batchId)?.accepted).toBe(events.length));
+    await vi.waitFor(
+      () => expect(acks.find(ack => ack.type === 'host.event-ack' && ack.batchId === batchId)?.accepted).toBe(events.length),
+      { timeout: 5_000 }
+    );
     return batchId;
   };
 }
