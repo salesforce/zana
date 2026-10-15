@@ -22,6 +22,7 @@ import {
   requeueDeferredThreadMessagesForThread,
   resumeDeferredThreadMessagesForThread,
   updateDeferredThreadMessagePayload,
+  type ConversationThreadRow,
   type DeferredThreadMessageRow
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -30,6 +31,7 @@ import { ThreadCreateError } from '../../http/thread-create.js';
 import type { ThreadSendMode } from './conversation-dispatch-checkpoint.js';
 import { canDispatch } from './conversation-dispatch-checkpoint.js';
 import { findOpenConversationTurn } from './conversation-host-recovery.js';
+import { recoverConversationProviderThreadId } from './conversation-provider-identity.js';
 import { conversationNextTurnItemView } from './conversation-next-turn.js';
 
 export interface DeferredSendPayload {
@@ -377,6 +379,57 @@ export async function sendDeferredConversationMessage(
     markDeferredThreadMessageFailed(ctx.db, { id: itemId, threadId, reason, retryable: isRetryableDeferredFailure(error) });
     throw error instanceof ThreadCreateError ? error : new ThreadCreateError(502, 'dispatch-failed', reason);
   }
+}
+
+export function isSteerSendMode(mode: ThreadSendMode | undefined): boolean {
+  return mode === 'steer' || mode === 'steer-if-active';
+}
+
+/**
+ * Steer held sends into the live turn, ahead of ordinary queued follow-ups.
+ * A steer sent while the turn was still starting, or while the host was
+ * reconnecting, waits here until a turn is live. If it cannot land, it is
+ * demoted to an ordinary follow-up so the idle drain still delivers it.
+ */
+/** A steer has nowhere to land until the thread's first turn is starting on the host. */
+export function awaitsSteerTarget(db: ProductHttpContext['db'], thread: ConversationThreadRow): boolean {
+  if (thread.status === 'starting') return true;
+  return thread.status === 'active'
+    && thread.originKind !== 'fork'
+    && !recoverConversationProviderThreadId(db, thread).providerThreadId;
+}
+
+export async function flushHeldConversationSteers(
+  ctx: ProductHttpContext,
+  threadId: string,
+  deliver: (payload: DeferredSendPayload) => Promise<void>,
+  now = Date.now()
+): Promise<number> {
+  const live = getConversationThread(ctx.db, threadId);
+  if (!live || live.archivedAt || live.status !== 'active' || awaitsSteerTarget(ctx.db, live)) return 0;
+  if (!hostOnline(ctx, live.hostId)) return 0;
+  if (isThreadQueueAutoSendPaused(ctx.db, threadId)) return 0;
+  if (ctx.pendingInteractions.hasPendingThreadInteraction(threadId)) return 0;
+  let flushed = 0;
+  for (const row of listDueDeferredThreadMessages(ctx.db, { threadId, now })) {
+    if (row.groupBoundaryId || (row.editHeldUntil !== null && row.editHeldUntil > now)) continue;
+    const payload = parseDeferredSendPayload(row);
+    if (!isSteerSendMode(payload.mode) || payload.admission) continue;
+    if (!markDeferredThreadMessageDispatching(ctx.db, { id: row.id, threadId })) continue;
+    try {
+      await deliver(payload);
+      deleteDeferredThreadMessage(ctx.db, { id: row.id, threadId });
+      flushed += 1;
+    } catch (error) {
+      const demoted: DeferredSendPayload = error instanceof DeferredAdmissionWait
+        ? { ...payload, admission: error.admission }
+        : { ...payload, mode: 'queue-if-active' };
+      holdDeferredThreadMessage(ctx.db, { id: row.id, threadId, payload: JSON.stringify(demoted) });
+      if (error instanceof DeferredAdmissionWait) continue;
+      return flushed;
+    }
+  }
+  return flushed;
 }
 
 /**

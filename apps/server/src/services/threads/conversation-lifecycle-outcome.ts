@@ -8,6 +8,7 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import { conversationThreadView } from './conversation-thread-view.js';
 
 const idleFlushInFlight = new Set<string>();
+const steerFlushInFlight = new Set<string>();
 
 export function applyLoggedConversationLifecycleEvent(
   ctx: ProductHttpContext,
@@ -50,7 +51,21 @@ export function publishConversationLifecycleOutcome(
   }
   if (outcome.thread.status === 'idle') {
     scheduleConversationIdleFlush(ctx, outcome.thread.id);
+  } else if (outcome.thread.status === 'active') {
+    scheduleConversationSteerFlush(ctx, outcome.thread.id);
   }
+}
+
+/** A turn just went live: steer in anything held while it was starting. */
+export function scheduleConversationSteerFlush(ctx: ProductHttpContext, threadId: string): void {
+  if (steerFlushInFlight.has(threadId)) return;
+  steerFlushInFlight.add(threadId);
+  void import('./conversation-lifecycle.js')
+    .then(({ flushHeldConversationSteerSends }) => flushHeldConversationSteerSends(ctx, threadId))
+    .catch(() => undefined)
+    .finally(() => {
+      steerFlushInFlight.delete(threadId);
+    });
 }
 
 export function scheduleConversationIdleFlush(ctx: ProductHttpContext, threadId: string): void {

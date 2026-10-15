@@ -29,7 +29,7 @@ import type { EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc
 import { provisionCommandFor } from './spawn-environment-provision.js';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
-import { applyLoggedConversationLifecycleEvent } from './conversation-lifecycle-outcome.js';
+import { applyLoggedConversationLifecycleEvent, scheduleConversationSteerFlush } from './conversation-lifecycle-outcome.js';
 import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { unmanagedAttachRefusal } from './workspace-path-claims.js';
 import { managedPathOnHost } from './host-managed-path.js';
@@ -272,6 +272,8 @@ async function startConversationOnHost(
           const started = result as ThreadStartResult;
           if (!args.lease.cancelled && started?.providerThreadId) {
             setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
+            // Steers sent while the session was starting can land now.
+            scheduleConversationSteerFlush(ctx, args.thread.id);
           }
         } finally { release(); }
       },
