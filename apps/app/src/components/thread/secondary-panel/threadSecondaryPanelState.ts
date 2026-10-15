@@ -31,6 +31,17 @@ export interface ClosableSecondaryTab {
   sessionId?: string;
   /** Agent tab: the thread its composer started; absent while still composing. */
   threadId?: string;
+  /**
+   * Agent tab: text a plugin page asked to prefill the composer with. Transient
+   * like any unsent composer text, so it is never persisted.
+   */
+  draft?: string;
+  /** Agent tab: the project the draft's composer starts on. */
+  draftProjectId?: string;
+  /** Agent tab: the view the draft is about, recorded on the thread it starts. */
+  draftView?: string;
+  /** Bumped whenever `draft` is replaced, so the composer re-seeds its text. */
+  draftRevision?: number;
   moduleId?: string;
   actionId?: string;
   pluginId?: string;
@@ -384,6 +395,28 @@ export function activateClosableTab(
 ): ThreadSecondaryPanelState {
   if (!state.tabs.some((tab) => tab.id === tabId)) return state;
   return { ...state, isOpen: true, activeId: tabId };
+}
+
+/**
+ * A plugin page asked for a prefilled composer: the blank composer tab is
+ * re-seeded (not stacked), otherwise a new agent tab opens with the draft.
+ * Started conversations are never touched.
+ */
+export function openAgentDraft(
+  state: ThreadSecondaryPanelState,
+  input: { title: string; draft: string; projectId?: string; view?: string }
+): ThreadSecondaryPanelState {
+  const seeded = { title: input.title, draft: input.draft, draftProjectId: input.projectId, draftView: input.view };
+  const blank = state.tabs.find((tab) => tab.kind === 'agent' && !tab.threadId);
+  if (!blank) return addClosableTab(state, { kind: 'agent', ...seeded });
+  return {
+    ...state,
+    isOpen: true,
+    activeId: blank.id,
+    tabs: state.tabs.map((tab) => (tab.id === blank.id
+      ? { ...tab, ...seeded, draftRevision: (tab.draftRevision ?? 0) + 1 }
+      : tab))
+  };
 }
 
 export function patchClosableTab(

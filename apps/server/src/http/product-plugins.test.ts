@@ -176,6 +176,7 @@ describe('listen.ts', () => {
     expect(source).toContain('forkThread:');
     expect(source).toContain('unarchiveThread:');
     expect(source).toContain('spawnThread:');
+    expect(source).toContain('defaultSpawnProviderId(');
     expect(source).toContain('createConversationFromRequest');
     expect(source).toContain('queryConversationThreads');
     expect(source).toContain('createQueuedMessage');

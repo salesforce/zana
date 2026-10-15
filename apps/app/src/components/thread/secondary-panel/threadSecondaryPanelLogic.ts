@@ -3,6 +3,7 @@ import { imageContentTypeFromPath, imagePreviewSrc } from '../timeline/work-row-
 import {
   activateClosableTab,
   addClosableTab,
+  openAgentDraft,
   closeClosableTab,
   closeSecondaryPanel,
   openNewTab,
@@ -279,6 +280,7 @@ export function createSecondaryPanelCommands(
     addTab: (tab: Omit<ClosableSecondaryTab, 'id'> & { id?: string }) => (
       update((current) => addClosableTab(current, tab))
     ),
+    openAgentDraft: (input: { title: string; draft: string; projectId?: string; view?: string }) => update((current) => openAgentDraft(current, input)),
     closeTab: (tabId: string) => update((current) => closeClosableTab(current, tabId)),
     activateTab: (tabId: string) => update((current) => activateClosableTab(current, tabId)),
     patchTab: (tabId: string, patch: Partial<Omit<ClosableSecondaryTab, 'id' | 'kind'>>) => (

@@ -870,7 +870,7 @@ describe('agents', () => {
     expect(screen.queryByTestId('plugin-thread-chat')).toBeNull();
   });
 
-  it('starts an agent from an action or a custom request', async () => {
+  it('prefills the side panel composer so the user picks the harness', async () => {
     const harness = createHarness({ panelAgent: true });
     const doc = simpleDoc(harness);
     renderDoc(harness, doc.id, { path: 'api.md' });
@@ -882,12 +882,41 @@ describe('agents', () => {
     // Away from the entry file, the request focuses on the open file.
     expect((screen.getByRole('checkbox', { name: /Focus on/ }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole('menuitem', { name: /^Review/ }));
+    await waitFor(() => expect(screen.queryByText('Ask an agent')).toBeNull());
+    const [review] = harness.navigateCalls as Array<{ method: string; options: { draft: { prompt: string; projectId?: string }; title: string } }>;
+    // The doc id names the view, so the conversation joins this doc's Agents list.
+    expect(review).toMatchObject({ method: 'openPanelAgent', options: { draft: { projectId: 'p1', view: doc.id }, title: 'Simple' } });
+    expect(review!.options.draft.prompt).toContain(`id ${doc.id}`);
+    expect(review!.options.draft.prompt).toContain('Focus on api.md.');
+    // Nothing starts until the user sends from the composer.
+    expect(harness.spawn).not.toHaveBeenCalled();
+
+    ask();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Focus on/ }));
+    const prompt = screen.getByPlaceholderText(/^Or describe what you want/);
+    fireEvent.change(prompt, { target: { value: 'Compare caching strategies' } });
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(harness.navigateCalls).toHaveLength(2));
+    const custom = (harness.navigateCalls[1] as { options: { draft: { prompt: string } } }).options.draft.prompt;
+    expect(custom).toContain('Compare caching strategies');
+    expect(custom).not.toContain('Focus on');
+    expect(harness.spawn).not.toHaveBeenCalled();
+  });
+
+  it('starts the agent itself when the host has no side panel composer', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    renderDoc(harness, doc.id, { path: 'api.md' });
+    await findPane('api.md');
+    const ask = () => fireEvent.click(screen.getByRole('button', { name: /Ask agent/, expanded: false }));
+
+    ask();
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Review/ }));
     await waitFor(() => expect(harness.spawn).toHaveBeenCalledTimes(1));
     const [review] = harness.spawn.mock.calls[0] as unknown as [{ projectId: string; prompt: string; title: string }];
     expect(review).toMatchObject({ projectId: 'p1', title: 'Review · Simple' });
     expect(review.prompt).toContain('api.md');
-    // The agent opens in the page's side panel; the user stays on the doc.
-    expect(harness.navigateCalls).toEqual([{ method: 'openPanelAgent', options: { threadId: 'thread-1', title: 'Simple' } }]);
+    expect(harness.navigateCalls.at(-1)).toEqual({ method: 'toThread', threadId: 'thread-1' });
     expect(harness.toasts.at(-1)).toEqual({ message: 'Agent started on “Simple”. Its edits appear here live.', kind: 'info' });
     await waitFor(() => expect(screen.queryByText('Ask an agent')).toBeNull());
     expect(harness.store.get(doc.id).threads[0]).toMatchObject({ threadId: 'thread-1', role: 'reviewer' });

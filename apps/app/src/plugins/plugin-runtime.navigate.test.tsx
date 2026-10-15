@@ -48,4 +48,20 @@ describe('navigate.openPanelAgent', () => {
       offOther();
     }
   });
+
+  it('passes a well-formed draft and drops untrusted extras', () => {
+    const show = vi.fn();
+    const off = onPluginPanelAgentRequest('notes', show);
+    try {
+      const navigate = renderNavigate('notes');
+      expect(navigate.openPanelAgent({ draft: { prompt: 'Summarise', projectId: 'p1' }, title: '  Doc  ' })).toBe(true);
+      expect(show).toHaveBeenLastCalledWith({ draft: 'Summarise', projectId: 'p1', title: 'Doc' });
+      expect(navigate.openPanelAgent({ draft: { prompt: 'Again', projectId: 7 } } as never)).toBe(true);
+      expect(show).toHaveBeenLastCalledWith({ draft: 'Again' });
+      expect(navigate.openPanelAgent(null as never)).toBe(false);
+      expect(show).toHaveBeenCalledTimes(2);
+    } finally {
+      off();
+    }
+  });
 });

@@ -29,6 +29,8 @@ export interface PanelConversation {
 
 /**
  * Side-panel agent: a composer until the first send, then that thread's chat.
+ * A plugin page may prefill the composer (`draft`); the harness, model and
+ * send stay the user's, exactly as in the main composer.
  * Creation never navigates, so the page beside the panel stays in view. With
  * `pluginPanel`, the thread is bound to that plugin (main grounds it on the
  * page and the plugin can give it tools). Bound threads are hidden from the
@@ -37,11 +39,17 @@ export interface PanelConversation {
  */
 export function PanelAgentTab({
   threadId,
+  draft,
+  draftProjectId,
   pluginPanel,
   onCreated,
   onOpenConversation
 }: {
   threadId?: string;
+  /** Text the plugin page prefilled; the user still picks the harness and sends. */
+  draft?: string;
+  /** Project the prefilled composer starts on; the user can still change it. */
+  draftProjectId?: string;
   pluginPanel?: { pluginId: string; panel: string; view?: string };
   onCreated: (threadId: string) => void;
   onOpenConversation?: (conversation: PanelConversation) => void;
@@ -66,7 +74,14 @@ export function PanelAgentTab({
           ? 'Ask about this page. The agent knows which plugin it is next to.'
           : 'Ask an agent without leaving this page.'}
       </p>
-      <ThreadCommandComposer autoFocus navigateOnCreate={false} pluginPanel={pluginPanel} onCreated={onCreated} />
+      <ThreadCommandComposer
+        autoFocus
+        navigateOnCreate={false}
+        initialText={draft}
+        composerProjectId={draftProjectId}
+        pluginPanel={pluginPanel}
+        onCreated={onCreated}
+      />
     </div>
   );
 }

@@ -21,7 +21,7 @@ import {
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
-import { showDocAgent } from './Agents.js';
+import { draftDocAgent, showDocAgent } from './Agents.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
@@ -400,7 +400,7 @@ export function NewDocDialog({
       if (drafting) {
         if (!agentProject) {
           toast('Doc created. Add a project to let an agent draft it.', 'error');
-        } else {
+        } else if (!draftDocAgent(navigate, doc, { prompt: draftingPrompt(brief), projectId: agentProject })) {
           const result = await api.askAgent(doc.id, { prompt: draftingPrompt(brief), projectId: agentProject });
           showDocAgent(navigate, doc, result.threadId);
           toast(`An agent is drafting “${doc.title}”. Watch it fill in as it writes.`);
@@ -420,7 +420,7 @@ export function NewDocDialog({
       onClose={onClose}
       footer={
         <>
-          <span className="dd-muted dd-dialog-hint">{drafting ? 'An agent starts a new thread to draft it.' : 'You can ask an agent to fill it in later.'}</span>
+          <span className="dd-muted dd-dialog-hint">{drafting ? 'An agent drafts it from the brief.' : 'You can ask an agent to fill it in later.'}</span>
           <span className="dd-spacer" />
           <button type="button" className="btn" onClick={onClose}>
             Cancel

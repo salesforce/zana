@@ -15,6 +15,7 @@ import type {
   ThreadChatProps,
   ZccContext,
   ZccNavigate,
+  ZccPanelAgentOptions,
   ZccWindowTitle
 } from '../app-contract.js';
 import { collectTestPluginApp } from './app.js';
@@ -33,7 +34,7 @@ export type NavigateCall =
       method: 'openThreadPanel';
       options: { actionId: string; title?: string; params?: unknown };
     }
-  | { method: 'openPanelAgent'; options: { threadId: string; title?: string } }
+  | { method: 'openPanelAgent'; options: ZccPanelAgentOptions }
   | { method: 'openInWindow'; projectId: string; options?: { tabId?: string } };
 
 export interface RenderSlotOptions {
