@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, realpathSync, cpSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync, realpathSync, cpSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -147,6 +147,18 @@ console.log(JSON.stringify({ status:0, result }));
 test.use({ e2e: true, initialConfig: { sponsorPromptDismissed: true } });
 test.setTimeout(180_000);
 
+/** An open agent focuses the explorer on itself; widen it to every project agent before navigating elsewhere. */
+async function showAllAgents(studio: import('@playwright/test').Locator) {
+  const all = studio.getByTestId('sf-explorer-all-agents');
+  if (await all.isVisible()) await all.click();
+}
+
+/** Org row actions appear on hover or focus; reveal the row's Retrieve button, then press it. */
+async function retrieveOrgAgent(agents: import('@playwright/test').Locator, name: string) {
+  await agents.locator('.af-agent-row').filter({ has: agents.page().getByTitle(name, { exact: true }) }).hover();
+  await agents.getByRole('button', { name: `Retrieve & open ${name}`, exact: true }).click();
+}
+
 async function openTool(studio: import('@playwright/test').Locator, name: string) {
   const tab = studio.locator('.af-tools').getByRole('tab', { name, exact: true });
   if (await tab.count()) { await tab.click(); return; }
@@ -254,7 +266,10 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   // Workbench tabs, file tabs and a one-row document bar sit above the code; a wrapping bar adds a fourth row.
   expect(editorBox!.y - workbenchBox!.y).toBeLessThanOrEqual(128);
   const codeBox = await frame.locator('.monaco-editor').boundingBox();
-  expect(codeBox!.height).toBeGreaterThan(editorBox!.height - 40);
+  // The editor fills the frame apart from the playground status bar; allow a classic horizontal scrollbar's worth of slack for
+  // platforms that reserve one (the old flat 40px sat within 0.35px of Linux CI's 40.35px).
+  const statusBox = await frame.locator('.statusbar').boundingBox();
+  expect(codeBox!.height).toBeGreaterThan(editorBox!.height - statusBox!.height - 24);
   const explorerBox = await studio.getByTestId('salesforce-agent-script-explorer').boundingBox();
   expect(explorerBox!.x + explorerBox!.width).toBeLessThanOrEqual(editorBox!.x + 1);
   await studio.getByRole('button', { name: 'Add side panel tab' }).click();
@@ -278,8 +293,11 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
   await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
   await expect(frame.locator('.view-lines')).toContainText('# unsaved studio draft');
+  await expect(studio.getByTestId('sf-explorer-all-agents')).toBeVisible();
+  await showAllAgents(studio);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Orders.agent').click();
   await expect(frame.locator('.view-lines')).not.toContainText('# unsaved studio draft');
+  await showAllAgents(studio);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await expect(frame.locator('.view-lines')).toContainText('# unsaved studio draft');
   // Save as refuses a collision before publishing a complete new project file.
@@ -672,6 +690,9 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   const studio = page.getByTestId('salesforce-agent-script-panel');
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
   const types = explorer.getByTestId('sf-explorer-lightning-type');
+  // No agent is open, so the outline lists agents; the Lightning Types section lives in the all-references catalogue.
+  const allReferences = explorer.getByRole('button', { name: /^All references/ });
+  await allReferences.click();
   await expect(types.getByRole('button', { name: /Lightning Types/ })).toHaveAttribute('aria-expanded', 'true');
   await expect(types.getByRole('button', { name: /lightning__textType/ })).toContainText('std');
   await types.getByRole('button', { name: /^c__OrderRequest/ }).click();
@@ -688,6 +709,7 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   await expect(types.getByRole('button', { name: /^c__OrderRequest/ })).toHaveCount(0);
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Data', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await allReferences.click();
   await expect(types.getByRole('button', { name: /Lightning Types/ })).toHaveAttribute('aria-expanded', 'false');
   await explorer.getByLabel('Filter Agentforce files').fill('OrderRequest');
   await expect(types.getByRole('button', { name: /^c__OrderRequest/ })).toBeVisible();
@@ -702,6 +724,8 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
 
 test('Agentforce Studio: browse org source versions, retrieve and preserve local edits', async ({ app, home }, testInfo) => {
   const page = app.window;
+  // A project agent named like an org agent is listed under the project, not retrieved again; browse the org's Support versions.
+  rmSync(join(home, 'dx', 'force-app', 'Support.agent'));
   const installed = await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }));
   expect(installed).toMatchObject({ ok: true });
   const trust = page.getByRole('button', { name: 'Install with full trust' });
@@ -725,7 +749,7 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   await expect(agents.getByText('Z Last', { exact: true })).toBeVisible({ timeout: 30_000 });
   await agents.getByRole('textbox', { name: 'Search org agents' }).fill('Support');
   await agents.getByRole('combobox', { name: 'Source version for Support' }).selectOption('Support_v1');
-  await agents.getByRole('button', { name: 'Retrieve & open' }).click();
+  await retrieveOrgAgent(agents, 'Support');
   await expect(agents.getByRole('status')).toContainText('Retrieved to your project', { timeout: 30_000 });
   const imported = join(home, 'dx', 'agentforce', '00D000000000001', 'Support_v1', 'Support_v1.agent');
   expect(readFileSync(imported, 'utf8')).toContain('ORG_AGENT_SOURCE_COMPLETE');
@@ -735,7 +759,7 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   await page.keyboard.type('\n# MY_LOCAL_AGENT_EDIT');
   await studio.getByRole('button', { name: 'Save Agentforce file' }).click();
   await expect.poll(() => readFileSync(imported, 'utf8')).toContain('MY_LOCAL_AGENT_EDIT');
-  await agents.getByRole('button', { name: 'Retrieve & open' }).click();
+  await retrieveOrgAgent(agents, 'Support');
   await expect(agents.getByRole('status')).toContainText('Existing edits were preserved');
   expect(readFileSync(imported, 'utf8')).toContain('MY_LOCAL_AGENT_EDIT');
   const retrievals = readFileSync(join(home, 'agent-retrievals.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -745,7 +769,7 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   expect(existsSync(retrievals[0].cwd)).toBe(false);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('org-agent-source-browser.png'));
   await agents.getByRole('textbox', { name: 'Search org agents' }).fill('Unavailable');
-  await agents.getByRole('button', { name: 'Retrieve & open' }).click();
+  await retrieveOrgAgent(agents, 'Unavailable');
   await expect(agents.getByRole('alert')).toHaveText('Source access denied');
   expect(await studio.innerText()).not.toContain('PRIVATE_CLI_TOKEN');
   // Invalid project ids never grant a local write root.
@@ -803,10 +827,12 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
 
   // An org agent row retrieves and opens that agent rather than only showing the list.
   await openTool(studio, 'Graph view');
-  const orgAgents = explorer.getByTestId('sf-explorer-org-agent');
-  await orgAgents.getByRole('button', { name: 'Agent_0', exact: true }).click();
+  // The explorer only links to the org; the Agents panel lists org agents and retrieves them per row.
+  await expect(explorer.getByTestId('sf-explorer-org-agent')).toHaveCount(0);
+  await openTool(studio, 'Agents');
   await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
-  await expect(search).toHaveValue('Agent_0');
+  await search.fill('Agent_0');
+  await retrieveOrgAgent(studio.getByRole('region', { name: 'Org agents' }), 'Agent_0');
   await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toContainText('Retrieved to your project', { timeout: 30_000 });
   await expect(studio.locator('.af-document-name')).toHaveText('Agent_0_v1.agent');
   await expect(noFile).toBeHidden();
@@ -936,7 +962,7 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
   const studio = page.getByTestId('salesforce-agent-script-panel');
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
-  for (const folder of ['default', 'aiAuthoringBundles', 'Customer_Service_Agent_With_A_Long_Name']) await explorer.getByRole('button', { name: folder, exact: true }).click();
+  // The explorer lists project agents by name rather than as a folder tree.
   await studio.getByTestId(`salesforce-agent-script-file:${toolbarFile}`).click();
   await expect(studio.locator('.af-draft-state')).toHaveText('Saved');
   const apiName = 'Customer_Service_Agent_With_A_Long_Name';
@@ -1137,6 +1163,9 @@ test('Salesforce readiness: local authoring without CLI, project org selection a
 
 test('Salesforce illustrated states: editor and agents loading, empty results, reduced motion and narrow layout', async ({ app, home }, testInfo) => {
   const page = app.window;
+  // Project agents are listed first and suppress the empty state, so start from a project without any.
+  for (const file of ['Support.agent', 'Orders.agent']) rmSync(join(home, 'dx', 'force-app', file));
+  rmSync(join(home, 'dx', toolbarFile.split('/').slice(0, -1).join('/')), { recursive: true });
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
   const trust = page.getByRole('button', { name: 'Install with full trust' });
