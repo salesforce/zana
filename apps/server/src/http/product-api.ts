@@ -105,6 +105,7 @@ import { readLastThreadExecution } from '../services/threads/thread-last-executi
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
 import { sendVideoPreview } from './video-preview.js';
+import { sendHtmlPreview } from './html-preview.js';
 import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
 import { getConversationThreadTabs, updateConversationThreadTabs } from '../services/threads/thread-tabs.js';
 import {
@@ -513,6 +514,14 @@ export async function handleProductHttp(
     if (path === '/api/v1/file-preview/video' && (method === 'GET' || method === 'HEAD')) {
       try {
         await sendVideoPreview(request, response, ctx, requestUrl.searchParams);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+    if (path === '/api/v1/file-preview/html' && (method === 'GET' || method === 'HEAD')) {
+      try {
+        await sendHtmlPreview(request, response, ctx, requestUrl.searchParams);
       } catch (error) {
         sendHostFailure(response, error);
       }

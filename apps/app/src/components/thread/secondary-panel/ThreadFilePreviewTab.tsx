@@ -135,15 +135,31 @@ export function isHtmlPreviewPath(path: string): boolean {
   return /\.html?$/i.test(path);
 }
 
-export function ThreadHtmlPreviewFrame({ path, content }: { path: string; content: string }) {
-  // Scripts run in an opaque origin: no same-origin access to the app or its IPC.
+export function htmlPreviewUrl(
+  path: string,
+  threadId?: string,
+  storage = false,
+  projectId?: string | null,
+  revision = 0
+): string {
+  const params = new URLSearchParams({ path, source: storage ? 'thread-storage' : 'workspace' });
+  if (threadId) params.set('threadId', threadId);
+  if (projectId) params.set('projectId', projectId);
+  if (revision) params.set('rev', String(revision));
+  return `/api/v1/file-preview/html?${params}`;
+}
+
+export function ThreadHtmlPreviewFrame({ path, src }: { path: string; src: string }) {
+  // A srcdoc frame inherits the app CSP, which blocks inline and CDN scripts.
+  // The server sends the file with its own sandboxing CSP, so scripts run in an
+  // opaque origin with no same-origin access to the app or its IPC.
   return (
     <iframe
       className="thread-file-preview-html"
       data-testid="thread-file-preview-html"
       title={path}
-      sandbox="allow-scripts"
-      srcDoc={content}
+      sandbox="allow-scripts allow-forms allow-modals"
+      src={src}
     />
   );
 }
@@ -359,7 +375,10 @@ export function ThreadFilePreviewTab({
   const hostPreview = videoSrc ? (
     <ThreadVideoPreview key={`${videoSrc}:${previewRevision}`} src={videoSrc} path={path} />
   ) : htmlMode === 'preview' && content !== null ? (
-    <ThreadHtmlPreviewFrame path={path} content={content} />
+    <ThreadHtmlPreviewFrame
+      path={path}
+      src={htmlPreviewUrl(path, threadId, storage, projectId, previewRevision)}
+    />
   ) : (
     <ThreadFilePreviewView
       path={path}
