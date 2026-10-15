@@ -192,8 +192,12 @@ async function parseFrontmatter(
         ? (parsed as Record<string, unknown>)
         : {};
   } catch (error) {
+    // js-yaml's `message` embeds a multi-line source snippet; keep the reason and the
+    // file line (mark is 0-based within the block, which starts after the opening `---`).
+    const yamlError = error as Partial<yaml.YAMLException> & Error;
+    const line = yamlError.mark ? ` (line ${yamlError.mark.line + 2})` : "";
     budget.diagnostics.push(
-      `Invalid frontmatter in ${filePath}: ${(error as Error).message}`,
+      `Invalid frontmatter in ${filePath}${line}: ${yamlError.reason ?? yamlError.message}`,
     );
     return { name: null, description: null, argumentHint: null, invalid: true };
   }
