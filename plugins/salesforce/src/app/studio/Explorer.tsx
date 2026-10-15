@@ -151,7 +151,7 @@ function FocusedAgent({ agent, query, total, dirty, history, activePath, collaps
     <button type="button" className="sf-as-tree-btn sf-as-focus-back" data-testid="sf-explorer-all-agents" title={`Show all ${total.toLocaleString()} agents in this project`} onClick={onAll}>
       <ArrowLeft size={13} aria-hidden="true" /><span className="sf-as-tree-name">All agents</span><span className="sf-as-tree-meta">{total.toLocaleString()}</span>
     </button>
-    <button type="button" className="sf-as-tree-btn sf-as-agent-row is-active" data-testid={`salesforce-agent-script-file:${file.path}`} aria-current="true"
+    <button type="button" className="sf-as-tree-btn is-active" data-testid={`salesforce-agent-script-file:${file.path}`} aria-current="true"
       title={`${file.path}\n${file.lines.toLocaleString()} lines`} onClick={() => onOpenFile(file.path)}>
       <KindIcon kind="agent" />
       <span className="sf-as-tree-name">{file.apiName}</span>

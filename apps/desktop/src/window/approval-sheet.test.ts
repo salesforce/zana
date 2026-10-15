@@ -138,10 +138,10 @@ describe('showApprovalSheet', () => {
     sheet.emit('ready-to-show');
     expect(sheet.shown).toBe(true);
     const loaded = { preventDefault: vi.fn() };
-    sheet.emit('page-title-updated', loaded, APPROVAL_SHEET_TITLE);
+    sheet.webContents.emit('page-title-updated', loaded, APPROVAL_SHEET_TITLE);
     expect(loaded.preventDefault).toHaveBeenCalled();
     expect(sheet.destroyed).toBe(false);
-    sheet.emit('page-title-updated', { preventDefault: vi.fn() }, 'approve:prod');
+    sheet.webContents.emit('page-title-updated', { preventDefault: vi.fn() }, 'approve:prod');
     await expect(outcome).resolves.toEqual({ kind: 'approved', typed: 'prod' });
     expect(sheet.destroyed).toBe(true);
     expect(parent.listenerCount('closed')).toBe(0);
@@ -149,7 +149,7 @@ describe('showApprovalSheet', () => {
 
   it('cancels when the person cancels', async () => {
     const { sheet, outcome } = open();
-    sheet.emit('page-title-updated', { preventDefault: vi.fn() }, 'cancel');
+    sheet.webContents.emit('page-title-updated', { preventDefault: vi.fn() }, 'cancel');
     await expect(outcome).resolves.toEqual({ kind: 'cancelled' });
   });
 
@@ -181,7 +181,7 @@ describe('showApprovalSheet', () => {
     const { sheet, outcome } = open(1000);
     vi.advanceTimersByTime(1000);
     await expect(outcome).resolves.toEqual({ kind: 'cancelled' });
-    sheet.emit('page-title-updated', { preventDefault: vi.fn() }, 'approve:');
+    sheet.webContents.emit('page-title-updated', { preventDefault: vi.fn() }, 'approve:');
     sheet.emit('ready-to-show');
     expect(sheet.shown).toBe(false);
     await expect(outcome).resolves.toEqual({ kind: 'cancelled' });

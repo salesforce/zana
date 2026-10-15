@@ -55,7 +55,7 @@ it('loads the lane, publishes through a signed approval and refreshes', async ()
   const { call, requestApproval } = setup({}, [releaseState(), published]);
   expect(await screen.findByTestId('release-org')).toHaveProperty('textContent', 'dev (sandbox)');
   expect(call).toHaveBeenCalledWith('salesforce', 'release.state', { projectId: 'p1', path: expect.stringContaining('MyBot.agent') });
-  expect(screen.getByText('Uploads a new inactive version.')).toBeTruthy();
+  expect(screen.getByText(/Uploads a new inactive version\./)).toBeTruthy();
   expect(screen.getByText('Saved to disk.')).toBeTruthy();
   expect(screen.getByText('Not compiled yet.')).toBeTruthy();
   expect(screen.getByText('v2')).toBeTruthy();
@@ -158,6 +158,45 @@ it('shows changed-since-publish and an empty version list', async () => {
   setup({}, [releaseState({ versions: [] }, { lastPublish: { revision: 'old', at: Date.parse('2026-10-01T00:00:00Z') } })]);
   expect(await screen.findByText(/Changed since the last publish/)).toBeTruthy();
   expect(screen.getByText('No published versions yet.')).toBeTruthy();
+});
+
+it('keeps Publish available when versions fail and clears the warning after retry', async () => {
+  const { call } = setup({}, [releaseState({ versions: [], versionsError: 'The org is temporarily unavailable.' }), releaseState()]);
+  expect(await screen.findByTestId('release-versions-error')).toHaveProperty('textContent', expect.stringContaining('You can still publish this draft.'));
+  expect(button('Publish…').disabled).toBe(false);
+  expect(screen.queryByText('No published versions yet.')).toBeNull();
+  fireEvent.click(button('Retry'));
+  await screen.findByText('v2');
+  expect(screen.queryByTestId('release-versions-error')).toBeNull();
+  fireEvent.click(button('Publish…'));
+  await screen.findByText('Ran agent.publish');
+  expect(call).toHaveBeenCalledWith('salesforce', 'release.run', expect.objectContaining({ action: 'agent.publish' }));
+});
+
+it('clears a load failure after a successful retry', async () => {
+  const call = vi.fn<Call>().mockResolvedValueOnce({ ok: false, error: 'Org disconnected' }).mockResolvedValue({ ok: true, data: releaseState() });
+  setup({ call });
+  await screen.findByText('Org disconnected');
+  expect(button('Publish…').disabled).toBe(true);
+  fireEvent.click(button('Retry'));
+  await screen.findByText('v2');
+  expect(screen.queryByText('Org disconnected')).toBeNull();
+  expect(button('Publish…').disabled).toBe(false);
+});
+
+it('waits for compilation and drops a prepared approval after switching files', async () => {
+  const { props, view, call, requestApproval } = setup({ compile: { status: 'running', path: 'x' } });
+  await screen.findByText('v2');
+  expect(button('Publish…').disabled).toBe(true);
+  view.rerender(<ReleasePane {...props} compile={null} />);
+  let finish!: (value: unknown) => void;
+  call.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(button('Publish…'));
+  view.rerender(<ReleasePane {...props} compile={null} path="Other.agent" />);
+  await screen.findByText('v2');
+  await act(async () => { finish({ ok: true, data: { request: { title: 'Publish the old file' } } }); });
+  expect(requestApproval).not.toHaveBeenCalled();
+  expect(button('Publish…').disabled).toBe(false);
 });
 
 it('reports server and transport failures', async () => {

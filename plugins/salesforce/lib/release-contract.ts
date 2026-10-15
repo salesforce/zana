@@ -68,6 +68,8 @@ export interface ReleaseState {
   readUntil: number | null;
   /** Newest first. Empty until read, or when the agent was never published. */
   versions: ReleaseVersion[];
+  /** A failed version read does not block publishing the saved draft. */
+  versionsError?: string;
 }
 
 /** One org version's Agent Script, read into a temp folder and never written to the project. */

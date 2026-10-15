@@ -1,4 +1,5 @@
 import type { AgentPlan } from './agent.js';
+import { compactError } from './dx-project.js';
 import { orgReadEnvelope } from './guardrail.js';
 import { isConfirmingOrg } from './org-resolution.js';
 import {
@@ -15,7 +16,7 @@ import {
 } from './release-contract.js';
 import type { SalesforceSdk } from './sdk-contract.js';
 import { rpcString } from './studio-server-context.js';
-import type { EnvelopeKind, EvalEvidence, PublicOrgView, ToolFailure, ToolResult } from './types.js';
+import type { EnvelopeKind, EvalEvidence, PublicOrgView, SalesforceResponse, ToolFailure, ToolResult } from './types.js';
 
 const API_NAME = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
 const READ_GRANT_CAP = 64;
@@ -246,8 +247,14 @@ export function createReleaseService(options: ReleaseServiceOptions) {
       summary: `Read ${apiName} versions on ${org.alias} (${org.kind})`
     }, '');
     if (!decision.approved) return fail('read_required', `${org.alias} is a ${org.kind} org. Load its versions first.`);
-    const { response } = await sdk.request('/tooling/query', { method: 'GET', query: { q: versionsSoql(apiName) } });
-    if (response.status >= 400) return fail('api_error', `Could not read ${apiName} versions (HTTP ${response.status}).`);
+    // BotVersion is a data API object; the Tooling API rejects it with INVALID_TYPE.
+    let response: SalesforceResponse;
+    try {
+      ({ response } = await sdk.request('/query', { method: 'GET', query: { q: versionsSoql(apiName) } }));
+    } catch {
+      return fail('api_error', `Could not read ${apiName} versions. Check the org connection and refresh.`);
+    }
+    if (response.status >= 400) return fail('api_error', `Could not read ${apiName} versions: ${compactError(response.status, response.json, response.text).slice(0, 320)}`);
     const rows = parseVersions((response.json as { records?: unknown } | null)?.records);
     const versions: ReleaseVersion[] = [];
     for (const row of rows) versions.push({ ...row, evidence: (await evidenceFor(org.orgId, row))?.evidence ?? null });
@@ -283,7 +290,12 @@ export function createReleaseService(options: ReleaseServiceOptions) {
     };
     if (confirming && readUntil === null) return { ok: true, data: { ...base, needsReadApproval: true, versions: [] } };
     const versions = await listVersions(org, source.apiName);
-    if (!Array.isArray(versions)) return versions;
+    if (!Array.isArray(versions)) {
+      // Publishing does not depend on a version list. Keep the source and target
+      // available, while activation still fails closed through listVersions().
+      if (versions.code === 'read_required') return { ok: true, data: { ...base, readUntil: null, needsReadApproval: true, versions: [] } };
+      return { ok: true, data: { ...base, needsReadApproval: false, versions: [], versionsError: versions.error } };
+    }
     return { ok: true, data: { ...base, needsReadApproval: false, versions } };
   }
 

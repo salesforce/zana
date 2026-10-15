@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { callPluginRpc, experimental_requestApproval } from '@zana-ai/zcc-plugin-sdk/app';
+import { Circle, CircleAlert, CircleCheck, Cloud, CloudUpload, RefreshCw } from 'lucide-react';
 import { comparableText, diffStats, foldDiff, lineDiff } from '../../../lib/line-diff.js';
 import { RELEASE_RPC, type ReleaseAction, type ReleasePrepared, type ReleaseState, type ReleaseVersion, type ReleaseVersionSource } from '../../../lib/release-contract.js';
 import { CONTEXT_CHANGED_EVENT } from '../context-sync.js';
@@ -38,36 +39,54 @@ export type Message = { tone: 'ok' | 'muted' | 'error'; text: string; ask?: stri
 type Reply<T> = { ok: true; data: T; summary?: string } | { ok: false; code?: string; error?: string };
 
 const STYLES = `
-.sf-rl { display: flex; flex-direction: column; gap: 12px; padding: 10px; color: var(--sf-text); font-size: 12px; min-height: 0; overflow: auto; }
-.sf-rl-head { display: flex; align-items: center; gap: 8px; }
-.sf-rl-head h2 { margin: 0; font-size: 13px; }
-.sf-rl-org { color: var(--sf-muted); }
+.sf-rl { display: flex; flex: 1; flex-direction: column; gap: 16px; padding: 16px; box-sizing: border-box; color: var(--sf-text); font-size: 12px; line-height: 1.5; min-width: 0; min-height: 0; overflow: auto; }
+.sf-rl-head { display: flex; align-items: flex-start; gap: 8px; }
+.sf-rl-heading { flex: 1; min-width: 0; }
+.sf-rl-head h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.sf-rl-org { display: flex; align-items: center; gap: 5px; color: var(--sf-muted); font-size: 11px; overflow-wrap: anywhere; }
+.sf-rl-org svg { flex: none; }
 .sf-rl-org.is-risky { color: var(--sf-danger); }
 .sf-rl-spacer { flex: 1; }
-.sf-rl-btn { border: 1px solid var(--sf-border); background: transparent; color: var(--sf-text); border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
-.sf-rl-btn.is-primary { border-color: var(--sf-accent); color: var(--sf-accent); }
+.sf-rl-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; flex: none; border: 1px solid var(--sf-border); background: transparent; color: var(--sf-text); border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
+.sf-rl-btn:hover:not(:disabled) { background: var(--sf-elevated); }
+.sf-rl-btn.is-primary { border-color: var(--sf-accent); background: var(--sf-accent); color: var(--sf-on-accent); font-weight: 600; }
+.sf-rl-btn.is-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--sf-accent) 85%, var(--sf-text)); }
 .sf-rl-btn.is-danger { border-color: var(--sf-danger); color: var(--sf-danger); }
+.sf-rl-btn.is-primary.is-danger { background: var(--sf-danger); color: var(--sf-on-accent); }
+.sf-rl-btn.is-icon { width: 28px; padding: 0; border-color: transparent; color: var(--sf-muted); }
 .sf-rl-btn:disabled { opacity: 0.5; cursor: default; }
-.sf-rl-lane { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.sf-rl-step { border: 1px solid var(--sf-border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.sf-rl-step.is-done { border-color: color-mix(in srgb, var(--sf-success) 55%, var(--sf-border)); }
-.sf-rl-step.is-failed { border-color: var(--sf-danger); }
-.sf-rl-step-title { font-weight: 600; }
-.sf-rl-step-note { color: var(--sf-muted); overflow-wrap: anywhere; }
-.sf-rl-section { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--sf-muted); margin: 4px 0 0; }
-.sf-rl-versions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.sf-rl-version { display: flex; align-items: center; gap: 8px; border: 1px solid var(--sf-border); border-radius: 8px; padding: 6px 8px; }
-.sf-rl-version.is-active { border-color: var(--sf-accent); }
+.sf-rl-draft { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 12px; border: 1px solid var(--sf-border); border-radius: 10px; background: var(--sf-surface); }
+.sf-rl-draft-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.sf-rl-caption { margin: 0; color: var(--sf-muted); font-size: 11px; overflow-wrap: anywhere; }
+.sf-rl-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sf-rl-check { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; color: var(--sf-muted); }
+.sf-rl-check > svg { flex: none; }
+.sf-rl-check.is-done > svg { color: var(--sf-success); }
+.sf-rl-check.is-failed > svg { color: var(--sf-danger); }
+.sf-rl-check-note { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sf-rl-publish { min-height: 34px; width: 100%; }
+.sf-rl-section-head { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--sf-border); padding-top: 16px; }
+.sf-rl-section { font-size: 12px; font-weight: 600; margin: 0; }
+.sf-rl-count { color: var(--sf-muted); font-size: 11px; }
+.sf-rl-versions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.sf-rl-version { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border-bottom: 1px solid var(--sf-border); padding: 10px 0; }
+.sf-rl-version:first-child { padding-top: 0; }
+.sf-rl-version-info { display: flex; flex: 1 1 180px; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.sf-rl-version-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .sf-rl-vn { font-weight: 600; min-width: 28px; }
-.sf-rl-badge { border-radius: 999px; padding: 0 6px; border: 1px solid var(--sf-border); color: var(--sf-muted); font-size: 11px; }
-.sf-rl-badge.is-active { border-color: var(--sf-accent); color: var(--sf-accent); }
+.sf-rl-badge { border-radius: 4px; padding: 1px 5px; border: 1px solid var(--sf-border); color: var(--sf-muted); font-size: 10px; white-space: nowrap; }
+.sf-rl-badge.is-active { border-color: transparent; background: var(--sf-soft); color: var(--sf-accent); }
 .sf-rl-badge.is-passed { border-color: var(--sf-success); color: var(--sf-success); }
 .sf-rl-badge.is-failed { border-color: var(--sf-danger); color: var(--sf-danger); }
-.sf-rl-date { color: var(--sf-muted); }
-.sf-rl-message { border-radius: 6px; padding: 6px 8px; background: var(--sf-elevated); display: flex; gap: 8px; align-items: center; }
-.sf-rl-message.is-error { color: var(--sf-danger); }
+.sf-rl-date { flex-basis: 100%; color: var(--sf-muted); font-size: 11px; }
+.sf-rl-message { border: 1px solid var(--sf-border); border-radius: 8px; padding: 10px 12px; background: var(--sf-elevated); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; overflow-wrap: anywhere; }
+.sf-rl-message > span { flex: 1 1 160px; min-width: 0; }
+.sf-rl-message.is-error { color: var(--sf-danger); border-color: color-mix(in srgb, var(--sf-danger) 30%, var(--sf-border)); background: color-mix(in srgb, var(--sf-danger) 5%, var(--sf-surface)); }
+.sf-rl-message.is-ok { color: var(--sf-success); }
 .sf-rl-message.is-muted { color: var(--sf-muted); }
-.sf-rl-empty { color: var(--sf-muted); padding: 4px 2px; }
+.sf-rl-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; color: var(--sf-muted); padding: 12px; border: 1px dashed var(--sf-border); border-radius: 8px; overflow-wrap: anywhere; }
+.sf-rl-empty strong { font-weight: 500; color: var(--sf-text); }
+.sf-rl-empty p { margin: 0; }
 .sf-rl-viewer { border: 1px solid var(--sf-border); border-radius: 8px; display: flex; flex-direction: column; min-height: 0; }
 .sf-rl-viewer-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--sf-border); flex-wrap: wrap; }
 .sf-rl-viewer-title { font-weight: 600; }
@@ -161,6 +180,7 @@ export function ReleasePane(props: ReleasePaneProps) {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [opened, setOpened] = useState<ReleaseVersionSource | null>(null);
   const [opening, setOpening] = useState<number | null>(null);
   const [orgChange, setOrgChange] = useState(0);
@@ -179,10 +199,10 @@ export function ReleasePane(props: ReleasePaneProps) {
     try {
       const reply = await call(pluginId, RELEASE_RPC.state, args()) as Reply<ReleaseState> | null;
       if (!alive.current || seq !== sequence.current) return;
-      if (reply?.ok && reply.data) setState(reply.data);
-      else { setState(null); setMessage({ tone: 'error', text: (reply && !reply.ok && reply.error) || 'Could not read the release state.' }); }
+      if (reply?.ok && reply.data) { setState(reply.data); setLoadError(null); }
+      else { setState(null); setLoadError((reply && !reply.ok && reply.error) || 'Could not read the release state.'); }
     } catch (error) {
-      if (alive.current && seq === sequence.current) setMessage({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
+      if (alive.current && seq === sequence.current) { setState(null); setLoadError(error instanceof Error ? error.message : String(error)); }
     } finally {
       if (alive.current && seq === sequence.current) setLoading(false);
     }
@@ -193,7 +213,10 @@ export function ReleasePane(props: ReleasePaneProps) {
     sequence.current += 1;
     viewSequence.current += 1;
     setLoading(false);
+    setState(null);
+    setBusy(null);
     setMessage(null);
+    setLoadError(null);
     setOpened(null);
     setOpening(null);
   }, []);
@@ -220,6 +243,7 @@ export function ReleasePane(props: ReleasePaneProps) {
     setMessage(null);
     try {
       const prepared = await call(pluginId, RELEASE_RPC.prepare, args({ action, ...extra })) as Reply<ReleasePrepared> | null;
+      if (!live()) return;
       if (!prepared?.ok) { if (live()) setMessage({ tone: 'error', text: prepared?.error || 'Could not prepare this step.' }); return; }
       const answer = await requestApproval(pluginId, prepared.data.request);
       if (!live()) return;
@@ -232,7 +256,7 @@ export function ReleasePane(props: ReleasePaneProps) {
     } catch (error) {
       if (live()) setMessage({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
     } finally {
-      if (alive.current) setBusy(null);
+      if (live()) setBusy(null);
     }
   }, [args, call, pluginId, refresh, requestApproval]);
 
@@ -271,60 +295,73 @@ export function ReleasePane(props: ReleasePaneProps) {
   const compileFailed = compile?.status === 'failed' && !compileStale;
   const publishBlocked = dirty ? 'Save your changes first.' : state?.agent.versioned ? 'Retrieved versions cannot be published. Create a local draft from it first.' : null;
   const active = state?.versions.find(row => row.active) ?? null;
+  const name = state?.agent.apiName ?? path.split('/').pop()?.replace(/\.agent$/, '') ?? 'Current draft';
+  const SaveIcon = dirty ? Circle : CircleCheck;
+  const CompileIcon = compileDone ? CircleCheck : compileFailed ? CircleAlert : Circle;
 
   return (
     <section className="sf-rl" aria-label="Release" data-testid="studio-release-pane">
       <style>{STYLES}</style>
       <div className="sf-rl-head">
-        <h2>Release</h2>
-        {state && <span className={`sf-rl-org${risky ? ' is-risky' : ''}`} data-testid="release-org">{state.org.alias} ({state.org.kind})</span>}
-        <span className="sf-rl-spacer" />
-        <button type="button" className="sf-rl-btn" onClick={() => void refresh()} disabled={loading} aria-label="Refresh release">{loading ? 'Loading…' : 'Refresh'}</button>
+        <div className="sf-rl-heading">
+          <h2>Publish agent</h2>
+          {state && <span className={`sf-rl-org${risky ? ' is-risky' : ''}`} data-testid="release-org"><Cloud size={13} aria-hidden="true" />{state.org.alias} ({state.org.kind})</span>}
+          {loading && !state && <span className="sf-rl-caption" role="status">Loading release details…</span>}
+        </div>
+        <button type="button" className="sf-rl-btn is-icon" onClick={() => void refresh()} disabled={loading} aria-label="Refresh release" title="Refresh release"><RefreshCw size={14} aria-hidden="true" /></button>
       </div>
-      <ol className="sf-rl-lane" aria-label="Release steps">
-        <li className={`sf-rl-step${dirty ? '' : ' is-done'}`}>
-          <span className="sf-rl-step-title">1. Save</span>
-          <span className="sf-rl-step-note">{dirty ? 'Unsaved changes.' : 'Saved to disk.'}</span>
-          {dirty && <button type="button" className="sf-rl-btn is-primary" onClick={onSave}>Save</button>}
-        </li>
-        <li className={`sf-rl-step${compileDone ? ' is-done' : compileFailed ? ' is-failed' : ''}`}>
-          <span className="sf-rl-step-title">2. Compile</span>
-          <span className="sf-rl-step-note">
-            {compile?.status === 'running' ? 'Compiling…' : compileDone ? 'Compiled.' : compileFailed ? 'Failed. See Problems.' : compile ? 'Out of date.' : 'Not compiled yet.'}
-          </span>
-          <button type="button" className="sf-rl-btn" onClick={onCompile} disabled={compile?.status === 'running'}>Compile</button>
-        </li>
-        <li className={`sf-rl-step${unchanged ? ' is-done' : ''}`}>
-          <span className="sf-rl-step-title">3. Publish</span>
-          <span className="sf-rl-step-note">
-            {publishBlocked ?? (lastPublish
-              ? unchanged ? `Published ${shortDate(lastPublish.at)}. No changes since.` : `Changed since the last publish (${shortDate(lastPublish.at)}).`
-              : 'Uploads a new inactive version.')}
-          </span>
-          <button type="button" className={`sf-rl-btn is-primary${risky ? ' is-danger' : ''}`} disabled={Boolean(publishBlocked) || !state || busy !== null}
-            title={publishBlocked ?? undefined} onClick={() => void step('agent.publish')}>{busy === 'agent.publish:' ? 'Publishing…' : 'Publish…'}</button>
-        </li>
-      </ol>
+      <div className="sf-rl-draft">
+        <div>
+          <p className="sf-rl-caption">Current draft</p>
+          <div className="sf-rl-draft-name" title={name}>{name}</div>
+        </div>
+        <ul className="sf-rl-checks" aria-label="Draft status">
+          <li className={`sf-rl-check${dirty ? '' : ' is-done'}`}>
+            <SaveIcon size={14} aria-hidden="true" />
+            <span className="sf-rl-check-note">{dirty ? 'Unsaved changes.' : 'Saved to disk.'}</span>
+            {dirty && <button type="button" className="sf-rl-btn" onClick={onSave}>Save</button>}
+          </li>
+          <li className={`sf-rl-check${compileDone ? ' is-done' : compileFailed ? ' is-failed' : ''}`}>
+            <CompileIcon size={14} aria-hidden="true" />
+            <span className="sf-rl-check-note">
+              {compile?.status === 'running' ? 'Compiling…' : compileDone ? 'Compiled.' : compileFailed ? 'Failed. See Problems.' : compile ? 'Out of date.' : 'Not compiled yet.'}
+            </span>
+            <button type="button" className="sf-rl-btn" onClick={onCompile} disabled={compile?.status === 'running'}>Compile</button>
+          </li>
+        </ul>
+        {lastPublish && <p className="sf-rl-caption">{unchanged ? `Published ${shortDate(lastPublish.at)}. No changes since.` : `Changed since the last publish (${shortDate(lastPublish.at)}).`}</p>}
+        {publishBlocked && <p className="sf-rl-caption">{publishBlocked}</p>}
+        <button type="button" className={`sf-rl-btn sf-rl-publish is-primary${risky ? ' is-danger' : ''}`} disabled={Boolean(publishBlocked) || !state || busy !== null || compile?.status === 'running'}
+          title={publishBlocked ?? undefined} onClick={() => void step('agent.publish')}><CloudUpload size={15} aria-hidden="true" />{busy === 'agent.publish:' ? 'Publishing…' : 'Publish…'}</button>
+        <p className="sf-rl-caption">Uploads a new inactive version. Your draft is compiled before publishing; the active version keeps serving users.</p>
+      </div>
+      {loadError && <div className="sf-rl-message is-error" role="alert"><span>{loadError}</span><button type="button" className="sf-rl-btn" disabled={loading} onClick={() => void refresh()}>Retry</button></div>}
       {message && <div className={`sf-rl-message is-${message.tone}`} role={message.tone === 'error' ? 'alert' : 'status'}>
         <span>{message.text}</span>
         {message.ask && onAskAgent && <button type="button" className="sf-rl-btn" onClick={() => onAskAgent(message.ask!)}>Ask the agent</button>}
       </div>}
-      <h3 className="sf-rl-section">Versions{state ? ` on ${state.org.alias}` : ''}</h3>
+      <div className="sf-rl-section-head"><h3 className="sf-rl-section">Versions</h3>{state && !state.needsReadApproval && !state.versionsError && <span className="sf-rl-count">{state.versions.length}</span>}</div>
       {state?.needsReadApproval && <div className="sf-rl-empty">
         {state.org.alias} is a {state.org.kind} org. Reading its versions needs your approval.{' '}
         <button type="button" className="sf-rl-btn" disabled={busy !== null} onClick={() => void step('org.read')}>Load versions…</button>
       </div>}
-      {state && !state.needsReadApproval && state.versions.length === 0 && <div className="sf-rl-empty">No published versions yet.</div>}
+      {state?.versionsError && <div className="sf-rl-empty" role="status" data-testid="release-versions-error">
+        <strong>Versions unavailable</strong><p>{state.versionsError}</p><p>You can still publish this draft.</p>
+        <button type="button" className="sf-rl-btn" disabled={loading} onClick={() => void refresh()}>Retry</button>
+      </div>}
+      {state && !state.needsReadApproval && !state.versionsError && state.versions.length === 0 && <div className="sf-rl-empty"><CloudUpload size={20} aria-hidden="true" /><strong>No published versions yet.</strong><p>Publish your draft to create the first version.</p></div>}
       {state && state.versions.length > 0 && <ul className="sf-rl-versions" aria-label="Versions">
         {state.versions.map(version => {
           const key = `${version.active ? 'agent.deactivate' : 'agent.activate'}:${version.active ? '' : version.versionNumber}`;
           const blocked = !version.active && risky && !version.evidence?.passed;
           return <li key={version.id} className={`sf-rl-version${version.active ? ' is-active' : ''}`}>
+            <div className="sf-rl-version-info">
             <span className="sf-rl-vn">v{version.versionNumber}</span>
             {version.active ? <span className="sf-rl-badge is-active">Active</span> : <span className="sf-rl-badge">Inactive</span>}
             {evidenceBadge(version)}
             <span className="sf-rl-date">{shortDate(version.modifiedAt)}</span>
-            <span className="sf-rl-spacer" />
+            </div>
+            <div className="sf-rl-version-actions">
             <button type="button" className="sf-rl-btn" disabled={opening !== null} aria-label={`View v${version.versionNumber}`}
               aria-pressed={opened?.versionNumber === version.versionNumber}
               onClick={() => void view(version.versionNumber)}>{opening === version.versionNumber ? 'Opening…' : 'View'}</button>
@@ -333,6 +370,7 @@ export function ReleasePane(props: ReleasePaneProps) {
               : <button type="button" className={`sf-rl-btn${risky ? ' is-danger' : ''}`} disabled={busy !== null || blocked}
                 title={blocked ? `Run a passing eval for v${version.versionNumber} before activating it on ${state.org.kind}.` : undefined}
                 onClick={() => void step('agent.activate', { versionNumber: version.versionNumber })}>{busy === key ? 'Activating…' : 'Activate…'}</button>}
+            </div>
           </li>;
         })}
       </ul>}

@@ -197,8 +197,9 @@ export function showApprovalSheet(
       event.preventDefault();
       finish({ kind: 'cancelled' });
     });
-    // The window keeps its own title; the page's title is only its answer.
-    sheet.on('page-title-updated', (event, title) => {
+    // Read the page's answer directly. Native modal windows do not reliably
+    // forward title updates on macOS. Keep the native window's title unchanged.
+    sheet.webContents.on('page-title-updated', (event, title) => {
       event.preventDefault();
       const answer = sheetAnswer(title);
       if (answer) finish(answer);

@@ -1860,7 +1860,7 @@ async function runAgentList(
     (org) => `lifecycle.list BotVersion on ${org.alias} (${org.kind})`
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} lifecycle.list.`);
-  const { response } = await sdk.request('/tooling/query', { method: 'GET', query: { q: BOT_VERSION_SOQL } });
+  const { response } = await sdk.request('/query', { method: 'GET', query: { q: BOT_VERSION_SOQL } });
   if (response.status >= 400) return fail('api_error', compactError(response.status, response.json, response.text));
   const records = ((response.json as { records?: unknown[] })?.records ?? []).slice(0, 25);
   return { ok: true, summary: `${records.length} BotVersion(s)`, data: { records } };

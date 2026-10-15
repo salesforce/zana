@@ -34,7 +34,7 @@ const VERSIONS: Row[] = [
 
 /** Org authoring bundles by full name; `target` is the BotVersion the bundle published. */
 type Bundles = Record<string, { target?: string; content: string }>;
-type FakeState = { versions: Row[]; queryStatus?: number; bundles?: Bundles; retrievedIn?: string };
+type FakeState = { versions: Row[]; queryStatus?: number; queryThrows?: boolean; bundles?: Bundles; retrievedIn?: string };
 
 function fakeDeps(kind: 'sandbox' | 'production', state: FakeState) {
   const files: Record<string, string> = {
@@ -90,8 +90,9 @@ function fakeDeps(kind: 'sandbox' | 'production', state: FakeState) {
       return { code: 1, stdout: '', stderr: 'unexpected' };
     },
     request: async (_org, req: SalesforceRequest) => {
-      if (req.path.includes('tooling/query')) {
+      if (req.path === '/query') {
         queries.push(String(req.query?.q ?? ''));
+        if (state.queryThrows) throw new Error('Connection reset');
         if (state.queryStatus) return { status: state.queryStatus, json: [{ message: 'nope' }], text: 'nope' };
         return { status: 200, json: { records: state.versions }, text: '{}' };
       }
@@ -294,11 +295,40 @@ describe('release RPCs on a sandbox', () => {
     state.versions = [{ Id: '0X9b', Status: 'Inactive', VersionNumber: 2 }];
     await expect(prepare({ action: 'agent.deactivate' })).resolves.toMatchObject({ code: 'no_active_version' });
     state.queryStatus = 500;
-    await expect(call(RELEASE_RPC.state)).resolves.toMatchObject({ code: 'api_error' });
+    await expect(call(RELEASE_RPC.state)).resolves.toMatchObject({ ok: true, data: { versions: [], versionsError: expect.stringContaining('nope') } });
     await expect(prepare({ action: 'agent.deactivate' })).resolves.toMatchObject({ code: 'api_error' });
     files['/proj/force-app/main/default/agents/MyBot.bundle-meta.xml'] = '<Bot><target>MyBot.v2</target></Bot>';
     dirs['/proj/force-app/main/default/agents']!.push('MyBot.bundle-meta.xml');
     await expect(prepare({ action: 'agent.publish' })).resolves.toMatchObject({ code: 'versioned_source' });
+  });
+
+  it('keeps publishing available when reading versions fails, and recovers on refresh', async () => {
+    const { call, state, approveAndRun, sf } = await setup();
+    for (const failure of ['http', 'network']) {
+      state.queryStatus = failure === 'http' ? 400 : undefined;
+      state.queryThrows = failure === 'network';
+      await expect(call(RELEASE_RPC.state)).resolves.toMatchObject({
+        ok: true, data: { agent: { apiName: 'MyBot' }, org: { alias: 'dev' }, versions: [], versionsError: expect.stringContaining('Could not read MyBot versions') }
+      });
+      await expect(approveAndRun({ action: 'agent.publish' })).resolves.toMatchObject({ ok: true });
+      await expect(call(RELEASE_RPC.prepare, { action: 'agent.activate', versionNumber: 2 })).resolves.toMatchObject({ code: 'api_error' });
+    }
+    expect(sf.filter(args => args[1] === 'publish')).toHaveLength(2);
+    state.queryStatus = undefined;
+    state.queryThrows = false;
+    const recovered = await call(RELEASE_RPC.state);
+    expect(recovered.data.versions).toHaveLength(2);
+    expect(recovered.data.versionsError).toBeUndefined();
+  });
+
+  it('uses the data API for agent tool version lists too', async () => {
+    const { harness, queries } = await setup();
+    const agent = harness.agentTools.find(tool => tool.name === 'sf_agent')!;
+    await expect(agent.execute({ action: 'lifecycle.list' }, { threadId: 't1', projectId: 'p1' } as never)).resolves.toMatchObject({
+      ok: true, data: { records: VERSIONS }
+    });
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain('FROM BotVersion');
   });
 });
 

@@ -25,9 +25,13 @@ const test = base.extend({
       requests.push({ path, host: String(req.headers['x-fixture-host']), body });
       writeFileSync(join(home, 'sfap-requests.json'), JSON.stringify(requests));
       let result: unknown;
+      const query = new URL(path, 'http://localhost').searchParams.get('q') ?? '';
       if (path.includes('/tooling/query')) {
-        const query = new URL(path, 'http://localhost').searchParams.get('q') ?? '';
+        if (query.includes('FROM BotVersion')) { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify([{ errorCode: 'INVALID_TYPE', message: "sObject type 'BotVersion' is not supported." }])); return; }
         result = query.includes('FROM ApexClass') ? { records: [{ Body: '// Deployed org implementation\n' + ACTION_APEX + '// Deployed detail\n'.repeat(1200) + '// ORG_SOURCE_COMPLETE' }] } : { records: [{ Id: '3010001', VersionNumber: 7, Metadata: ACTION_FLOW }] };
+      } else if (path.includes('/query?') && query.includes('FROM BotVersion')) {
+        if (existsSync(join(home, 'sf-versions-unavailable'))) { res.writeHead(503, { 'content-type': 'application/json' }); res.end(JSON.stringify([{ errorCode: 'SERVER_UNAVAILABLE', message: 'Try again shortly.' }])); return; }
+        result = { totalSize: 1, done: true, records: [{ Id: '0X9000000000001', Status: 'Inactive', VersionNumber: 7, LastModifiedDate: '2026-10-01T10:00:00.000Z' }] };
       } else if (path.includes('/query?')) result = { totalSize: 1, done: true, records: [{ Id: '001000000000001', Name: 'Workbench result account' }] };
       else if (path.endsWith('/sobjects')) result = { sobjects: [{ name: 'Account', label: 'Account', queryable: true }] };
       else if (path.endsWith('/limits')) result = { DailyApiRequests: { Max: 10000, Remaining: 9999 } };
@@ -166,7 +170,7 @@ async function openTool(studio: import('@playwright/test').Locator, name: string
   await studio.locator('.af-tool-picker').getByRole('button', { name: new RegExp(`^${name}`) }).click();
 }
 
-test('Agentforce document toolbar: long paths, save state and narrow light/dark layouts', async ({ app, home }, testInfo) => {
+test('Agentforce document toolbar and focused explorer: long paths, save state and narrow light/dark layouts', async ({ app, home }, testInfo) => {
   const page = app.window;
   expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
   const trust = page.getByRole('button', { name: 'Install with full trust' });
@@ -203,7 +207,24 @@ test('Agentforce document toolbar: long paths, save state and narrow light/dark 
       const folder = studio.locator('.af-document-folder');
       await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', width < 1000 ? 'compact' : 'wide');
       if (width < 1000) await expect(folder).toBeHidden();
-      else expect((await folder.boundingBox())!.y).toBeGreaterThan((await studio.locator('.af-document-name').boundingBox())!.y);
+      else {
+        expect((await folder.boundingBox())!.y).toBeGreaterThan((await studio.locator('.af-document-name').boundingBox())!.y);
+        const agent = studio.getByTestId(`salesforce-agent-script-file:${toolbarFile}`);
+        await expect(agent).toHaveAttribute('aria-current', 'true');
+        // The focused row needs room for its selection border and a gap between its icon and name.
+        const spacing = await agent.evaluate(el => {
+          const row = el.getBoundingClientRect();
+          const icon = el.querySelector('.sf-as-kind-icon')!.getBoundingClientRect();
+          const name = el.querySelector('.sf-as-tree-name')!.getBoundingClientRect();
+          const meta = el.querySelector('.sf-as-tree-meta')!.getBoundingClientRect();
+          return { left: icon.left - row.left, gap: name.left - icon.right, right: row.right - meta.right, overflow: el.scrollWidth - el.clientWidth };
+        });
+        // Allow subpixel rounding from Electron's display scale for the 6px spacing.
+        expect(spacing.left).toBeGreaterThanOrEqual(5.5);
+        expect(spacing.gap).toBeGreaterThanOrEqual(5.5);
+        expect(spacing.right).toBeGreaterThanOrEqual(5.5);
+        expect(spacing.overflow).toBeLessThanOrEqual(1);
+      }
       await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`document-toolbar-${theme}-${width}.png`));
     }
   }
@@ -981,8 +1002,7 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
     return win ? { modal: win.isModal(), parent: win.getParentWindow()?.getTitle() ?? null } : null;
   });
   const sheetText = async () => (await sheet<string>('document.body.innerText')) ?? '';
-  // Approve arms a moment after the sheet takes focus, and each focus re-arms it,
-  // so a click can land while it is off. Press again until the sheet answers and closes.
+  // Target the current main-owned sheet, and retry if focus re-arms Approve.
   const press = (id: 'approve' | 'cancel') => expect.poll(() => sheet<boolean>(`(() => {
     const button = document.getElementById('${id}');
     if (!button.disabled) setTimeout(() => button.click(), 0);
@@ -997,6 +1017,30 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
   await expect(v7).toContainText('Inactive');
   await expect(v7).toContainText('No eval');
   await expect(release).toContainText('Uploads a new inactive version.');
+  await expect(release.getByRole('heading', { name: 'Publish agent', exact: true })).toBeVisible();
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    for (const width of [1440, 1180, 760]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(release).toBeVisible();
+      await expect(release.getByRole('button', { name: 'Publish…', exact: true })).toBeEnabled();
+      expect(await release.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+      const draft = release.locator('.sf-rl-draft');
+      expect(await draft.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+      const publish = release.getByRole('button', { name: 'Publish…', exact: true });
+      expect(await publish.evaluate(el => getComputedStyle(el).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+      await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`release-${theme}-${width}.png`));
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // A failed version read leaves the exact draft and publish approval available.
+  writeFileSync(join(home, 'sf-versions-unavailable'), '1');
+  await release.getByRole('button', { name: 'Refresh release' }).click();
+  await expect(release.getByTestId('release-versions-error')).toContainText('Try again shortly.');
+  await expect(release.getByRole('button', { name: 'Publish…', exact: true })).toBeEnabled();
+  await expect(release.getByText('No published versions yet.', { exact: true })).toHaveCount(0);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('release-versions-unavailable.png'));
 
   // A token the host did not sign never reaches the CLI.
   const runArgs = { projectId, path: toolbarFile, action: 'agent.publish' };
@@ -1016,7 +1060,7 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
   expect(await sheet('typeof window.cc + typeof require + typeof process')).toBe('undefinedundefinedundefined');
   expect(await sheetWindow()).toMatchObject({ modal: true, parent: expect.any(String) });
   await expect(release.getByRole('button', { name: 'Publishing…', exact: true })).toBeDisabled();
-  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('release-publishing.png'));
+  // Capture the modal itself; macOS can suspend captures of its blocked parent.
   const sheetPng = await app.electron.evaluate(async ({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && w.getTitle() === 'Zana approval');
     return win ? (await win.webContents.capturePage()).toPNG().toString('base64') : '';
@@ -1028,6 +1072,11 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
   await expect(release).toContainText('No changes since.');
   await expect.poll(sheetWindow).toBeNull();
   expect(cliCalls('publish')).toEqual([expect.objectContaining({ cwd: dx, args: expect.arrayContaining(['--api-name', apiName, '--target-org', 'studio']) })]);
+  await expect(release.getByTestId('release-versions-error')).toBeVisible();
+  rmSync(join(home, 'sf-versions-unavailable'));
+  await release.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(v7).toBeVisible();
+  await expect(release.getByTestId('release-versions-error')).toHaveCount(0);
 
   // Cancel changes nothing; a second request while a sheet is open is refused as busy.
   await release.getByRole('button', { name: 'Publish…', exact: true }).click();
