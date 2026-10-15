@@ -65,6 +65,8 @@ test('Playwright controls the visible scoped browser and disconnects on Take ove
     await execute({ type: 'desktop.browser.acquire_control', leaseId: 'playwright-lease', tabIds: ['playwright-page'],
       controllerLabel: 'Playwright regression', expiresAt: Date.now() + 60_000 });
     await expect(app.window.getByTestId('thread-browser-tab')).toBeVisible();
+    await expect(app.window.getByRole('link', { name: 'Share on phone…' })).toHaveCount(0);
+    await expect(app.window.locator('[data-testid="browser-tab-nav-bar"] + .thread-browser-view')).toHaveCount(1);
     const connection = await execute({ type: 'desktop.browser.open_connection', leaseId: 'playwright-lease', tabIds: ['playwright-page'] });
     // Electron owns the existing context's download and presentation policy.
     browser = await chromium.connectOverCDP(String(connection.wsEndpoint), { noDefaults: true });

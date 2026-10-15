@@ -2,6 +2,7 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import {
   DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH,
   type DesktopBrowserApi,
@@ -102,6 +103,21 @@ function createHarness() {
 }
 
 describe('BrowserTabContent chrome', () => {
+  it('keeps local previews free of the phone-sharing row', async () => {
+    const harness = createHarness();
+    vi.stubGlobal('cc', { browser: harness.api });
+    render(
+      <MemoryRouter>
+        <BrowserTabContent tabId="browser:test" initialUrl="http://localhost:5173/"
+          canShowNativeBrowserView visibilityCoordinator={null} threadId="thread-1" onUpdate={() => undefined} />
+      </MemoryRouter>
+    );
+    await act(async () => harness.emitState(browserState({ url: 'http://localhost:5173/' })));
+    expect(screen.getByTestId('thread-browser-address')).toHaveProperty('value', 'http://localhost:5173/');
+    expect(screen.queryByRole('link', { name: 'Share on phone…' })).toBeNull();
+    expect(screen.getByTestId('browser-tab-nav-bar').nextElementSibling?.className).toBe('thread-browser-view');
+  });
+
   it('loads existing browser control and ignores control belonging to another tab', async () => {
     const harness = createHarness();
     vi.stubGlobal('cc', { browser: harness.api });

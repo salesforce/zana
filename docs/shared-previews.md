@@ -1,6 +1,6 @@
 # Private shared previews
 
-Remote access can share a running HTTP development server through the same Connect account as Zana. Open **Settings → Remote access → Shared previews**, select its execution machine, enter the port, and choose **Share preview**. Copy the resulting address to a phone or another computer and sign in with the same account. Desktop **Open preview** uses the in-app browser. The browser's **Share on phone…** link pre-fills the port in Settings; review the machine before sharing.
+Remote access can share a running HTTP development server through the same Connect account as Zana. Open **Settings → Remote access → Shared previews**, select its execution machine, enter the port, and choose **Share preview**. Copy the resulting address to a phone or another computer and sign in with the same account. Desktop **Open preview** uses the in-app browser.
 
 Start the development server separately, with automatic browser opening disabled. Sharing is explicit; Zana does not scan or publish listening ports.
 

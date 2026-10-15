@@ -1,4 +1,3 @@
-import { SharePreviewLink } from './SharePreviewLink.js';
 import {
   useCallback,
   useEffect,
@@ -561,7 +560,6 @@ export function BrowserTabContent({
           if (currentUrl.length > 0) window.open(currentUrl, '_blank', 'noopener,noreferrer');
         }}
       />
-      <SharePreviewLink url={currentUrl} />
       {isFindOpen ? (
         <BrowserFindBar
           inputRef={findInputRef}

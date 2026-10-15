@@ -8,4 +8,3 @@
 .shared-previews-list code { overflow-wrap: anywhere; }
 .shared-previews-list small { color: var(--text-muted); }
 .shared-preview-browser { height: 65vh; display: flex; flex-direction: column; min-height: 350px; }
-.thread-browser-share { padding: 4px 8px; border-bottom: 1px solid var(--border); }
