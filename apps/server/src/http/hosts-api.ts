@@ -438,7 +438,7 @@ export async function handleHostsApi(
       sendJson(response, 200, result);
     } catch (error) {
       if (error instanceof HostUnavailableError) {
-        sendJson(response, 503, { error: error.message });
+        sendJson(response, 503, { error: error.message, code: error.code });
         return true;
       }
       sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) });

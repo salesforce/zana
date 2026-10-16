@@ -6,6 +6,7 @@ import { useEditor } from '@tiptap/react';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { COMPOSER_COMMANDS_RELOAD_EVENT } from '../../lib/composer-commands-reload.js';
+import { isHostUnavailableError } from '../../lib/host-unavailable.js';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { PROJECT_DRAG_MIME, projectFromDrag } from '../../lib/project-drag.js';
@@ -71,6 +72,8 @@ export interface UseComposerPromptFieldArgs {
   ariaLabel?: string;
   projectId: string;
   hostId?: string;
+  /** Host roster status; a flip back to connected reloads the native catalogue. */
+  hostConnected?: boolean;
   environmentId?: string;
   threadId?: string;
   projectRoot?: string | null;
@@ -90,6 +93,7 @@ export function useComposerPromptField({
   ariaLabel,
   projectId,
   hostId,
+  hostConnected,
   environmentId,
   threadId,
   projectRoot,
@@ -200,9 +204,10 @@ export function useComposerPromptField({
       ? nativeCapabilities({ projectId, providerId: slashCatalog.providerId, hostId, environmentId })
         // Discovery diagnostics (e.g. a skill with broken frontmatter) are non-fatal and
         // listed in the Skills view; only a failed discovery request is a composer error.
+        // An offline host is already shown by the composer and reloads on reconnect.
         .then(body => body.commands)
         .catch(error => {
-          if (!cancelled) onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+          if (!cancelled && !isHostUnavailableError(error)) onErrorRef.current?.(error instanceof Error ? error.message : String(error));
           return [];
         })
       : Promise.resolve([]);
@@ -223,6 +228,7 @@ export function useComposerPromptField({
   }, [
     commandsEpoch,
     hostId,
+    hostConnected,
     environmentId,
     projectId,
     projectRoot,

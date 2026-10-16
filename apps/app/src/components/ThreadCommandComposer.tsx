@@ -183,6 +183,7 @@ export function ThreadCommandComposer({
     ? projects.find((row) => row.id === currentThread.projectId)
     : selectedProject;
   const catalogHostId = currentThread?.hostId ?? (selectedProject?.remote ? selectedProject.hostId : hostId ?? selectedProject?.hostId);
+  const catalogHostConnected = hosts.find((row) => row.id === catalogHostId)?.status === 'connected';
   const options = useThreadComposerOptions({
     threadId,
     lockedProviderId,
@@ -326,7 +327,8 @@ export function ThreadCommandComposer({
   const providerCli = useComposerProviderCli({
     enabled: !threadId,
     hostId: providerCliHostId,
-    providerId: resolvedProviderId
+    providerId: resolvedProviderId,
+    hostConnected: hosts.find((row) => row.id === providerCliHostId)?.status === 'connected'
   });
   const providerCliBlocked = !threadId && providerCli.blocked;
   const canSend = Boolean(
@@ -386,6 +388,7 @@ export function ThreadCommandComposer({
       : 'Ask anything. @ to mention files, folders, or threads',
     testId: 'thread-command-input',
     hostId: catalogHostId,
+    hostConnected: catalogHostConnected,
     environmentId: currentThread?.environmentId ?? undefined,
     projectId: currentThread?.projectId ?? projectId,
     threadId,

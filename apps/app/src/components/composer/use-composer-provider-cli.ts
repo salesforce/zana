@@ -5,6 +5,7 @@ import type {
   ProviderCliStatus,
   ProviderCliStatusResponse
 } from '@zana-ai/zcc-contracts/host-rpc';
+import { isHostUnavailableError } from '../../lib/host-unavailable.js';
 import { product } from '../../lib/product-client.js';
 import {
   installProviderCliOnMachine,
@@ -26,6 +27,8 @@ export function useComposerProviderCli(input: {
   enabled: boolean;
   hostId: string | undefined;
   providerId: string | undefined;
+  /** Host roster status; a flip back to connected re-runs the check. */
+  hostConnected?: boolean;
 }): ComposerProviderCliState {
   const providerKey = input.providerId
     ? providerCliKeyForProviderId(input.providerId)
@@ -45,9 +48,11 @@ export function useComposerProviderCli(input: {
       setError(null);
     } catch (err) {
       setInventory(null);
-      setError(err instanceof Error ? err.message : 'Could not check provider CLI status');
+      setError(isHostUnavailableError(err)
+        ? null
+        : err instanceof Error ? err.message : 'Could not check provider CLI status');
     }
-  }, [input.enabled, input.hostId]);
+  }, [input.enabled, input.hostId, input.hostConnected]);
 
   useEffect(() => {
     void refresh();

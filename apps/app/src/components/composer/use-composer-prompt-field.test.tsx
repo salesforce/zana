@@ -136,6 +136,21 @@ describe('useComposerPromptField', () => {
     expect(suggestionState.commands).toContainEqual(COMPOSER_TERMINAL_COMMAND);
   });
 
+  it('keeps an offline host out of the composer error and reloads native commands on reconnect', async () => {
+    native.mockRejectedValueOnce(Object.assign(new Error('host h1 is not connected'), { status: 503, code: 'host-unavailable' }));
+    const onError = vi.fn();
+    const { rerender } = renderHook(({ hostConnected }) => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', hostId: 'h1', hostConnected, projects: [], onError,
+      slashCatalog: { kind: 'thread', providerId: 'claude-code' }, onSubmit: vi.fn()
+    }), { initialProps: { hostConnected: false } });
+    await waitFor(() => expect(native).toHaveBeenCalledTimes(1));
+    native.mockResolvedValue({ commands: [{ name: '/review', description: 'Review' }], skills: [], diagnostics: [] });
+    rerender({ hostConnected: true });
+    await waitFor(() => expect(suggestionState.commands).toContainEqual({ name: '/review', description: 'Review' }));
+    expect(native).toHaveBeenCalledTimes(2);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it('keeps partial discovery diagnostics out of the composer error while showing suggestions', async () => {
     native.mockResolvedValue({ commands: [{ name: '/review', description: 'Review' }], skills: [], diagnostics: ['Claude Code: Invalid frontmatter in /skills/broken/SKILL.md (line 3): bad indentation of a mapping entry'] });
     const onError = vi.fn();

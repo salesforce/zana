@@ -363,6 +363,7 @@ createServer((_req, res) => {
     expect(missing.status).toBe(404);
     const disconnected = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/provider-clis/status`);
     expect(disconnected.status).toBe(503);
+    expect(await disconnected.json()).toMatchObject({ code: 'host-unavailable' });
 
     server!.ctx.hostHub.ensureHostSessionReady = () => ({}) as never;
     server!.ctx.hostHub.callHostOnlineRpc = async (input) => {
