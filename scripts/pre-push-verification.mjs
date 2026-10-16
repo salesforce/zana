@@ -134,34 +134,18 @@ export function configuredAliases(run, configured = process.env.ZANA_GITHUB_SSH_
   return aliases;
 }
 
-/**
- * A linked worktree's `.git` is a file pointing at a per-worktree directory.
- * Cloning that directory preserves its `core.worktree` link, so checkout runs
- * against the source worktree and leaves the snapshot empty. Clone its common
- * repository instead; ordinary checkouts keep their existing root source.
- */
-export function snapshotCloneSource(root = process.cwd()) {
-  const gitFile = join(root, '.git');
-  if (!existsSync(gitFile)) return root;
-  try {
-    const gitdir = /^gitdir:\s*(.+)\s*$/m.exec(readFileSync(gitFile, 'utf8'))?.[1];
-    if (!gitdir) return root;
-    const worktreeGitDir = resolve(root, gitdir);
-    const commonDir = readFileSync(join(worktreeGitDir, 'commondir'), 'utf8').trim();
-    return commonDir ? resolve(worktreeGitDir, commonDir) : root;
-  } catch {
-    return root;
-  }
-}
-
 export function withSnapshot({ oid, root = process.cwd(), run = spawnSync, log = console.log }, verify) {
   if (!oid) throw new Error('no pushed object available for snapshot verification');
   const snapshot = mkdtempSync(join(tmpdir(), 'zana-pre-push-'));
   try {
     log(`pre-push: snapshot ${oid.slice(0, 12)} in ${snapshot}`);
-    const source = snapshotCloneSource(root);
-    const clone = run('git', ['clone', '--no-local', '--no-checkout', source, snapshot], { stdio: 'inherit' });
+    const clone = run('git', ['clone', '--no-local', '--no-checkout', root, snapshot], { stdio: 'inherit' });
     if (clone.status !== 0) throw new Error('could not create isolated push snapshot');
+    // A clone made from a linked worktree inherits `core.worktree`, which points
+    // at its source checkout. Remove it before checkout so Git writes only into
+    // this disposable snapshot.
+    const unsetWorktree = run('git', ['config', '--unset-all', 'core.worktree'], { cwd: snapshot, stdio: 'ignore' });
+    if (unsetWorktree.status !== 0 && unsetWorktree.status !== 5) throw new Error('could not isolate snapshot worktree');
     const fetch = run('git', ['fetch', '--no-tags', root, oid], { cwd: snapshot, stdio: 'inherit' });
     if (fetch.status !== 0) throw new Error(`could not fetch pushed object ${oid}`);
     const checkout = run('git', ['checkout', '--detach', oid], { cwd: snapshot, stdio: 'inherit' });

@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush, snapshotCloneSource } from './pre-push-verification.mjs';
+import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush } from './pre-push-verification.mjs';
 
 const OID = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -29,17 +29,6 @@ it('resolves only configured SSH aliases to GitHub', () => {
     : { status: 0, stdout: 'hostname git.example.test\n' });
   expect(configuredAliases(run, 'github.com-work-public,work-gh')).toEqual({ 'github.com-work-public': 'github.com', 'work-gh': 'git.example.test' });
   expect(run).toHaveBeenCalledTimes(2);
-});
-
-it('clones the common repository instead of linked worktree metadata', () => {
-  const root = mkdtempSync(join(tmpdir(), 'zana-worktree-source-'));
-  const metadata = join(root, 'metadata', 'worktrees', 'feature');
-  try {
-    mkdirSync(metadata, { recursive: true });
-    writeFileSync(join(root, '.git'), 'gitdir: metadata/worktrees/feature\n');
-    writeFileSync(join(metadata, 'commondir'), '../..\n');
-    expect(snapshotCloneSource(root)).toBe(join(root, 'metadata'));
-  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 it('parses git tuples and rejects malformed streams', () => {
@@ -132,6 +121,7 @@ it('installs dependencies and prepares Slack assets only when Slack source chang
     runFastVerification({ oid: OID, base: BASE, paths: ['plugins/slack-bridge-2ff2/src/index.ts'], root, run, log: vi.fn() });
     expect(run.mock.calls.map(([command, args]) => [command, args])).toEqual([
       ['git', ['clone', '--no-local', '--no-checkout', root, snapshots[0]]],
+      ['git', ['config', '--unset-all', 'core.worktree']],
       ['git', ['fetch', '--no-tags', root, OID]],
       ['git', ['checkout', '--detach', OID]],
       ['pnpm', ['install', '--frozen-lockfile', '--prefer-offline']],
@@ -197,10 +187,10 @@ it('uses broad changed-test selection for test and runner configuration inputs',
 });
 
 it.each([
-  ['install', 4, 'snapshot dependency install failed'],
-  ['typecheck', 5, 'verification failed: pnpm run typecheck'],
-  ['related vitest', 6, 'verification failed: vitest related'],
-  ['guard discovery', 7, 'could not list source-text guard tests'],
+  ['install', 5, 'snapshot dependency install failed'],
+  ['typecheck', 6, 'verification failed: pnpm run typecheck'],
+  ['related vitest', 7, 'verification failed: vitest related'],
+  ['guard discovery', 8, 'could not list source-text guard tests'],
 ])('fast verification fails when %s fails', (_stage, failedCall, message) => {
   const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-failure-'));
   let calls = 0;
@@ -234,6 +224,7 @@ it('creates a private detached snapshot, runs named full union, and cleans it up
     runFullVerification({ oid: OID, root, run, log: vi.fn() });
     expect(run.mock.calls.map(([command, args]) => [command, args])).toEqual([
       ['git', ['clone', '--no-local', '--no-checkout', root, snapshots[0]]],
+      ['git', ['config', '--unset-all', 'core.worktree']],
       ['git', ['fetch', '--no-tags', root, OID]],
       ['git', ['checkout', '--detach', OID]],
       ['pnpm', ['install', '--frozen-lockfile']],
