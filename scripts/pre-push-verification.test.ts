@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush } from './pre-push-verification.mjs';
+import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush, snapshotCloneSource } from './pre-push-verification.mjs';
 
 const OID = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -29,6 +29,17 @@ it('resolves only configured SSH aliases to GitHub', () => {
     : { status: 0, stdout: 'hostname git.example.test\n' });
   expect(configuredAliases(run, 'github.com-work-public,work-gh')).toEqual({ 'github.com-work-public': 'github.com', 'work-gh': 'git.example.test' });
   expect(run).toHaveBeenCalledTimes(2);
+});
+
+it('clones the common repository instead of linked worktree metadata', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-worktree-source-'));
+  const metadata = join(root, 'metadata', 'worktrees', 'feature');
+  try {
+    mkdirSync(metadata, { recursive: true });
+    writeFileSync(join(root, '.git'), 'gitdir: metadata/worktrees/feature\n');
+    writeFileSync(join(metadata, 'commondir'), '../..\n');
+    expect(snapshotCloneSource(root)).toBe(join(root, 'metadata'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 it('parses git tuples and rejects malformed streams', () => {
