@@ -221,7 +221,9 @@ function guardTests(snapshot, run) {
 export function runFastVerification({ oid, base, paths = [], root = process.cwd(), run = spawnSync, log = console.log }) {
   if (!base) throw new Error('no base object available for fast verification');
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
-    const reuseInstalledDependencies = !dependencyInputsChanged(base, paths, snapshot) && linkInstalledDependencies(snapshot, root);
+    // Slack asset packaging writes task state inside node_modules; pnpm rejects
+    // that when it is a reused symlink. Install inside every snapshot instead.
+    const reuseInstalledDependencies = false;
     if (reuseInstalledDependencies) {
       log('pre-push: fast (reusing installed dependencies)');
     } else {

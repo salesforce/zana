@@ -138,7 +138,7 @@ it('installs dependencies and prepares Slack runtime assets before snapshot test
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-it('reuses installed dependencies when manifests are unchanged and skips tests for non-code inputs', () => {
+it('installs snapshot dependencies and skips tests for non-code inputs', () => {
   const root = mkdtempSync(join(tmpdir(), 'zana-push-fast-reuse-'));
   mkdirSync(join(root, 'node_modules'));
   const run = vi.fn((command, args) => {
@@ -147,7 +147,7 @@ it('reuses installed dependencies when manifests are unchanged and skips tests f
   });
   try {
     runFastVerification({ oid: OID, base: BASE, paths: ['docs/guide.md'], root, run, log: vi.fn() });
-    expect(run).not.toHaveBeenCalledWith('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], expect.anything());
+    expect(run).toHaveBeenCalledWith('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], expect.anything());
     expect(run).not.toHaveBeenCalledWith('pnpm', expect.arrayContaining(['vitest']), expect.anything());
     expect(run).toHaveBeenCalledWith('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], expect.anything());
   } finally { rmSync(root, { recursive: true, force: true }); }
