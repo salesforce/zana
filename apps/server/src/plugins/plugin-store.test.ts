@@ -100,6 +100,19 @@ describe('plugin store strict inventory', () => {
     const store = createPluginStore({ file });
     expect(store.readStrict().status).toBe('corrupt');
   });
+
+  it('refuses writes when a known registry is missing or corrupt', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-store-'));
+    roots.push(dataDir);
+    const file = pluginStorePath(dataDir);
+    const store = createPluginStore({ file });
+    await store.upsert(row());
+    unlinkSync(file);
+    await expect(store.upsert(row({ version: '2.0.0' }))).rejects.toThrow('plugin registry missing after it existed');
+    writeFileSync(file, '{not-json');
+    await expect(store.remove('policy-plugin')).rejects.toThrow('plugin registry');
+    expect(readFileSync(file, 'utf8')).toBe('{not-json');
+  });
 });
 
 describe('classifyInstalledToolPolicy', () => {

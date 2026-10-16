@@ -273,4 +273,49 @@ describe('plugin tool policy lifecycle', () => {
       reason: 'original'
     });
   });
+
+  it('promotes a reload candidate that registers a replacement handler', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'replacement-policy'),
+      'replacement-policy',
+      `export default function plugin(zcc) {
+        zcc.hooks.onToolPolicy(() => ({ action: 'deny', reason: 'original' }));
+      }\n`,
+      { toolPolicy: true }
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    services.push(service);
+    await service.install(pluginDir);
+    writeFileSync(join(pluginDir, 'server.mjs'), `export default function plugin(zcc) {
+      zcc.hooks.onToolPolicy(() => ({ action: 'deny', reason: 'replacement' }));
+    }\n`);
+    await service.reload('replacement-policy');
+    await expect(service.decideToolPolicy(request())).resolves.toEqual({ action: 'deny', reason: 'replacement' });
+  });
+
+  it('keeps an inventory-blocked denial for repeated invocation ids', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'cache-policy'),
+      'cache-policy',
+      `export default function plugin(zcc) {
+        zcc.hooks.onToolPolicy(() => ({ action: 'allow' }));
+      }\n`,
+      { toolPolicy: true }
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    services.push(service);
+    const installing = service.install(pluginDir);
+    await expect.poll(() => service.get('cache-policy')?.toolPolicy).toBe('true');
+    await expect(service.decideToolPolicy(request())).resolves.toMatchObject({
+      action: 'deny',
+      reason: expect.stringContaining(TOOL_POLICY_NOT_READY_REASON)
+    });
+    await installing;
+    await expect(service.decideToolPolicy(request())).resolves.toMatchObject({
+      action: 'deny',
+      reason: expect.stringContaining(TOOL_POLICY_NOT_READY_REASON)
+    });
+  });
 });

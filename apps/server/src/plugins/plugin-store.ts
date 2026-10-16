@@ -66,6 +66,13 @@ export function createPluginStore(opts: { file: string; knownExisting?: boolean 
     return { version: 1, plugins: [] };
   }
 
+  function readForWrite(): PluginStoreFile {
+    const result = readStrict();
+    if (result.status === 'loaded' || result.status === 'valid-empty') return result.file;
+    if ('error' in result) throw new Error(`cannot modify plugin registry: ${result.error}`);
+    throw new Error('cannot modify plugin registry');
+  }
+
   function readStrict(): PluginStoreReadResult {
     if (!existsSync(opts.file)) {
       if (knownExisting) {
@@ -103,7 +110,7 @@ export function createPluginStore(opts: { file: string; knownExisting?: boolean 
     },
     upsert(row) {
       return queue.run(async () => {
-        const file = read();
+        const file = readForWrite();
         const next = file.plugins.filter((item) => item.id !== row.id);
         next.push(row);
         next.sort((a, b) => a.id.localeCompare(b.id));
@@ -113,7 +120,7 @@ export function createPluginStore(opts: { file: string; knownExisting?: boolean 
     },
     remove(id) {
       return queue.run(async () => {
-        const file = read();
+        const file = readForWrite();
         const existing = file.plugins.find((row) => row.id === id);
         write({ version: 1, plugins: file.plugins.filter((item) => item.id !== id) });
         return existing;

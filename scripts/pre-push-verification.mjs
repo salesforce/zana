@@ -5,7 +5,7 @@
  * isolated clone of the exact object being pushed. CI remains merge authority.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,7 +20,6 @@ const DEFAULT_GITHUB_SSH_ALIASES = ['github.com-work-public'];
 // inert. plugins/** stays out: plugin dirs are path-installed and shipped.
 const INERT_DOC = /^(?:docs\/.+\.md|README\.md|CONTRIBUTING\.md|(?:(?:apps|packages|docs)\/(?:[^/]+\/)*)?(?:AGENTS|CLAUDE)\.md)$/;
 const UNSAFE_DOC = /(?:^|\/)(?:SKILL\.md|fixtures?\/|snapshots?\/|test(?:ing)?\/|test-data\/|assets\/|generated\/|builtin-skills\/|__tests__\/)/i;
-const DEPENDENCY_INPUT = /^(?:pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc|(?:apps|packages|plugins)\/[^/]+\/package\.json)$/;
 const TEST_RUNNER_CONFIG = /(?:^|\/)(?:vitest(?:\.[^/]+)?\.config\.[cm]?[jt]s|tsconfig(?:\.[^/]+)?\.json|vite\.config\.[cm]?[jt]s|electron\.vite\.config\.[cm]?[jt]s)$/;
 
 function git(args, { cwd = process.cwd(), encoding = 'utf8' } = {}) {
@@ -160,36 +159,6 @@ export function withSnapshot({ oid, root = process.cwd(), run = spawnSync, log =
   }
 }
 
-function packageDependencyFields(packageJson) {
-  const manifest = JSON.parse(packageJson);
-  return JSON.stringify({
-    packageManager: manifest.packageManager,
-    dependencies: manifest.dependencies,
-    devDependencies: manifest.devDependencies,
-    optionalDependencies: manifest.optionalDependencies,
-    peerDependencies: manifest.peerDependencies
-  });
-}
-
-function dependencyInputsChanged(base, paths, root) {
-  if (paths.includes('package.json')) {
-    const baseManifest = gitOk(['show', `${base}:package.json`], { cwd: root });
-    try {
-      if (!baseManifest || packageDependencyFields(baseManifest) !== packageDependencyFields(readFileSync(join(root, 'package.json'), 'utf8'))) return true;
-    } catch {
-      return true;
-    }
-  }
-  return paths.some((path) => DEPENDENCY_INPUT.test(path));
-}
-
-function linkInstalledDependencies(snapshot, root) {
-  const installed = join(root, 'node_modules');
-  if (!existsSync(installed) || !existsSync(snapshot)) return false;
-  symlinkSync(installed, join(snapshot, 'node_modules'), 'dir');
-  return true;
-}
-
 function needsBroadChangedTests(paths) {
   return paths.some((path) => TEST_RUNNER_CONFIG.test(path));
 }
@@ -205,7 +174,7 @@ function isTestFile(path) {
 // Vitest's import graph can span most of the monorepo through shared helpers.
 // Pre-push stays bounded by running changed tests and direct colocated tests;
 // CI remains responsible for transitive and full-suite coverage.
-function selectedTestFiles(inputs, root) {
+export function selectedTestFiles(inputs, root) {
   const tests = new Set(inputs.filter(isTestFile));
   for (const input of inputs.filter((path) => !isTestFile(path))) {
     const name = basename(input).replace(/\.[cm]?[jt]sx?$/, '');
@@ -214,7 +183,8 @@ function selectedTestFiles(inputs, root) {
       if (!existsSync(absoluteDirectory)) continue;
       for (const entry of readdirSync(absoluteDirectory, { withFileTypes: true })) {
         if (!entry.isFile() || !isTestFile(entry.name)) continue;
-        if (entry.name === `${name}.test.ts` || entry.name === `${name}.coverage.test.ts` || entry.name === `${name}.spec.ts`) {
+        const testName = entry.name.replace(/(?:\.coverage)?\.(?:test|spec)\.[cm]?[jt]sx?$/, '');
+        if (testName === name) {
           tests.add(join(directory, entry.name));
         }
       }
@@ -246,16 +216,9 @@ function guardTests(snapshot, run) {
 export function runFastVerification({ oid, base, paths = [], root = process.cwd(), run = spawnSync, log = console.log }) {
   if (!base) throw new Error('no base object available for fast verification');
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
-    // Slack asset packaging writes task state inside node_modules; pnpm rejects
-    // that when it is a reused symlink. Install inside every snapshot instead.
-    const reuseInstalledDependencies = false;
-    if (reuseInstalledDependencies) {
-      log('pre-push: fast (reusing installed dependencies)');
-    } else {
-      log('pre-push: fast (est. install)');
-      const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
-      if (install.status !== 0) throw new Error('snapshot dependency install failed');
-    }
+    log('pre-push: fast (est. install)');
+    const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
+    if (install.status !== 0) throw new Error('snapshot dependency install failed');
     log('pre-push: fast (est. typecheck)');
     const typecheck = run('pnpm', ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' });
     if (typecheck.status !== 0) throw new Error('verification failed: pnpm run typecheck');

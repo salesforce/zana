@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush } from './pre-push-verification.mjs';
+import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush, selectedTestFiles } from './pre-push-verification.mjs';
 
 const OID = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -186,6 +186,21 @@ it('uses broad changed-test selection for test and runner configuration inputs',
   try {
     runFastVerification({ oid: OID, base: BASE, paths: ['vitest.config.ts'], root, run, log: vi.fn() });
     expect(run).toHaveBeenCalledWith('pnpm', ['exec', 'vitest', 'run', '--changed', BASE], expect.anything());
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('selects colocated test files with every supported script extension', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-test-selection-'));
+  try {
+    mkdirSync(join(root, 'apps', 'app', 'src'), { recursive: true });
+    for (const file of ['Widget.test.tsx', 'Widget.coverage.test.mts', 'Widget.spec.jsx', 'Other.test.ts']) {
+      writeFileSync(join(root, 'apps', 'app', 'src', file), '');
+    }
+    expect(selectedTestFiles(['apps/app/src/Widget.tsx'], root)).toEqual([
+      'apps/app/src/Widget.coverage.test.mts',
+      'apps/app/src/Widget.spec.jsx',
+      'apps/app/src/Widget.test.tsx'
+    ]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -662,6 +662,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     refreshToolPolicyInventory();
   }
 
+  function persistLearnedTrueDuringActivation(id: string): void {
+    if (toolPolicyPendingTrue.has(id)) return;
+    const pending = persistLearnedTrue(id)
+      .catch((error) => {
+        console.error(`[plugins] failed to persist tool policy for ${id}`, error);
+        throw error;
+      })
+      .finally(() => toolPolicyPendingTrue.delete(id));
+    // Activation awaits this promise below. Observe it immediately as well so a
+    // failed synchronous store write never becomes an unhandled rejection.
+    void pending.catch(() => undefined);
+    toolPolicyPendingTrue.set(id, pending);
+  }
+
   refreshToolPolicyInventory();
 
   const lifecycleEpoch = (id: string): number => lifecycleEpochs.get(id) ?? 0;
@@ -1191,23 +1205,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     let configurationMessage: string | null = null;
     let activationFailure: Error | null = null;
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
-      toolPolicyRegistrationAllowed: () => !toolPolicySealed.has(row.id),
-      onToolPolicyRegister: (registered) => {
-        if (declared === false) {
-          void persistLearnedTrue(row.id);
-          return;
-        }
-        if (toolPolicySealed.has(row.id) && handle.toolPolicyHandlers.length === 0) {
-          void persistLearnedTrue(row.id);
-          return;
-        }
-        void (async () => {
-          const pending = persistLearnedTrue(row.id);
-          toolPolicyPendingTrue.set(row.id, pending);
-          await pending;
-          toolPolicyPendingTrue.delete(row.id);
-          void registered;
-        })();
+      toolPolicyRegistrationAllowed: () => {
+        const active = live.get(row.id)?.handle;
+        return !toolPolicySealed.has(row.id) || !active || active !== handle;
+      },
+      onToolPolicyRegister: () => {
+        persistLearnedTrueDuringActivation(row.id);
       },
       providerUnavailableReason: hostArtifactProblem,
       requestPluginInteraction: opts.requestPluginInteraction,
@@ -2215,19 +2218,23 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const key = JSON.stringify([request.threadId, request.invocationId]);
       const stamp = currentToolPolicyStamp();
       const blocked = inventoryBlocksAllow();
-      if (blocked) return blocked;
+      if (blocked) {
+        if (toolPolicyDecisions.size >= TOOL_POLICY_DECISIONS_MAX) {
+          toolPolicyDecisions.delete(toolPolicyDecisions.keys().next().value!);
+        }
+        toolPolicyDecisions.set(key, { stamp, decision: Promise.resolve(blocked) });
+        return blocked;
+      }
       const cached = toolPolicyDecisions.get(key);
       if (cached) {
-        if (cached.decision) {
-          const resolved = await cached.decision;
-          if (resolved.action === 'deny') return resolved;
-          if (!sameToolPolicyStamp(cached.stamp, stamp)) {
-            const denied = denyCachedAllow(TOOL_POLICY_STAMP_CHANGED_REASON);
-            toolPolicyDecisions.set(key, { stamp, decision: Promise.resolve(denied) });
-            return denied;
-          }
-          return resolved;
+        const resolved = await cached.decision;
+        if (resolved.action === 'deny') return resolved;
+        if (!sameToolPolicyStamp(cached.stamp, stamp)) {
+          const denied = denyCachedAllow(TOOL_POLICY_STAMP_CHANGED_REASON);
+          toolPolicyDecisions.set(key, { stamp, decision: Promise.resolve(denied) });
+          return denied;
         }
+        return resolved;
       }
       const decision = (async () => {
         const before = currentToolPolicyStamp();

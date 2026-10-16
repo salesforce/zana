@@ -63,9 +63,7 @@ export function resolveActivatedToolPolicy(input: {
     ? 'true'
     : input.declared === true
       ? 'true'
-      : input.declared === false || input.hasServer
-        ? 'false'
-        : 'false';
+      : 'false';
   return persistKnownTrueMonotonically({
     existing: input.existing,
     next,
