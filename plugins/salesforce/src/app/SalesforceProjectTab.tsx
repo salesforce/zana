@@ -1,6 +1,6 @@
 import { useSalesforceControl } from './useSalesforceControl.js';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Settings2, Plus } from 'lucide-react';
+import { Settings2, Plus, CloudDownload } from 'lucide-react';
 import {
   Database,
   FlaskConical,
@@ -19,6 +19,7 @@ import type { DoctorReport } from "../../lib/types.js";
 import { orgReadiness } from "./org-readiness.js";
 import { SalesforceState } from "./components/SalesforceState.js";
 import { OrgPicker } from "./OrgPicker.js";
+import { OrgSyncDialog } from "./OrgSyncDialog.js";
 import { SALESFORCE_STYLES } from "./components/styles.js";
 import { requireResult, useSalesforceCall } from "./components/client.js";
 import { useResource } from "./components/use-resource.js";
@@ -112,6 +113,7 @@ export function SalesforceProjectTab(props: {
     try { localStorage.setItem(viewKey(props.projectId, studio), next); } catch { /* optional */ }
   };
   const [orgsOpen, setOrgsOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [loginRequest, setLoginRequest] = useState(0);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [checking, setChecking] = useState(false);
@@ -123,6 +125,7 @@ export function SalesforceProjectTab(props: {
     setViewState(readProjectView(props.projectId, studio));
     setAgentFocus(null);
     setOrgsOpen(false);
+    setSyncOpen(false);
     setLoginRequest(0);
   }, [props.projectId, studio]);
   const alias = chosenTarget?.projectId === props.projectId ? chosenTarget.alias : status.data?.selectedAlias || status.data?.defaultOrg || "";
@@ -240,6 +243,16 @@ export function SalesforceProjectTab(props: {
           <button
             className="icon-btn"
             type="button"
+            title={alias ? "Fetch latest from org" : "Choose an org to fetch from"}
+            aria-label="Fetch latest from org"
+            disabled={!alias}
+            onClick={() => setSyncOpen(true)}
+          >
+            <CloudDownload size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="icon-btn"
+            type="button"
             title="Connect org"
             aria-label="Connect org"
             onClick={() => setLoginRequest(value => value + 1)}
@@ -260,6 +273,14 @@ export function SalesforceProjectTab(props: {
           {props.headerActions}
         </div>
       </header>
+      {syncOpen && alias && (
+        <OrgSyncDialog
+          key={`${props.projectId}:${alias}`}
+          call={call}
+          scope={view === "agentforce" ? "agentforce" : view === "apex" ? "apex" : "all"}
+          onClose={() => setSyncOpen(false)}
+        />
+      )}
       {orgsOpen && (
         <div
           className="sf-scroll sf-content"

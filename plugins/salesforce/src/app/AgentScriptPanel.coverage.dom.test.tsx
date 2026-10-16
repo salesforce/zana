@@ -452,8 +452,11 @@ describe('AgentScriptPanel startup and focus routing', () => {
     await ready(el);
     rpc.mockClear();
     await act(async () => { realtime?.({ kind: 'comments', projectId: 'other' }); });
-    await act(async () => { realtime?.({ kind: 'files' }); });
+    await act(async () => { realtime?.({ kind: 'files', projectId: 'other' }); });
     await act(async () => { realtime?.(null); });
+    expect(rpc.mock.calls.some(c => c[1] === 'studio.comments.list' || c[1] === 'agentFiles.list')).toBe(false);
+    await act(async () => { realtime?.({ kind: 'files' }); });
+    expect(rpc.mock.calls.some(c => c[1] === 'agentFiles.list')).toBe(true);
     expect(rpc.mock.calls.some(c => c[1] === 'studio.comments.list')).toBe(false);
     await act(async () => { realtime?.({ kind: 'comments' }); });
     expect(rpc.mock.calls.some(c => c[1] === 'studio.comments.list')).toBe(true);

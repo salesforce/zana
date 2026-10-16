@@ -7,7 +7,7 @@ import { WORKBENCH_ACTIONS, actionCatalog, actionInput, actionParameters, isWork
 import { WorkbenchControl, type UiCommandSource } from './workbench-control.js';
 import { registerControlRpc, uiCommandReadsOrg } from './workbench-control-rpc.js';
 import { rpcString, type StudioServerContext } from './studio-server-context.js';
-import { CONTEXT_CHANGED_CHANNEL, contextOrigin } from './studio-contract.js';
+import { CONTEXT_CHANGED_CHANNEL, STUDIO_CHANGED_CHANNEL, contextOrigin } from './studio-contract.js';
 import { registerStudioAssistant } from './studio-threads.js';
 import { registerStudioContext } from './studio-view.js';
 import { registerStudioComments } from './studio-comments.js';
@@ -88,6 +88,8 @@ import { createNodeDeps } from './node-deps.js';
 import { formatOrgRoster, orgRosterInstructions } from './org-list.js';
 import { OrgLoginService } from './org-login-service.js';
 import { OrgAgentService } from './org-agent-service.js';
+import { OrgSyncService } from './org-sync.js';
+import { registerOrgSync } from './org-sync-rpc.js';
 import { parseOrgLoginInput } from './org-login.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
 import { SoqlExplorer } from './soql-explorer.js';
@@ -521,6 +523,17 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     orgAgents.cancel(root, rpcString(args, 'jobId'));
     return { ok: true };
   });
+  const orgSync = new OrgSyncService({
+    execSf: deps.execSf, connect: () => sdk.connect(), kv: zcc.storage.kv, key: name => contexts.key(name),
+    query: async (soql, opts) => (await sdk.query(soql, opts)),
+    queryMore: async (url, opts) => (await sdk.queryMore(url, opts)),
+  });
+  zcc.onDispose(() => orgSync.dispose());
+  registerOrgSync({
+    registerRpc, service: orgSync,
+    projectRoot: async () => (await readSettings()).projectRoot,
+    changed: () => zcc.realtime.publish(STUDIO_CHANGED_CHANNEL, { projectId: contexts.current()?.projectId, kind: 'files' }),
+  });
   registerRpc('agentFiles.list', async (args) => {
     try {
       const resolved = await resolveAgentFilesRoot(args);
@@ -711,6 +724,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         data.outputDir = (await readSettings()).projectRoot;
         if (deps.exists(join(String(data.outputDir), data.name))) throw Error('That project folder already exists.');
       }
+      // A full check of a large org exceeds the result cap; agents page with states and limit.
+      if (action === 'sync.check' && data.limit === undefined) data.limit = 1000;
       if (action === 'ui.command') control.assertTarget(ctx.projectId, String(data.viewId), (await readSettings()).defaultOrg);
       const uiReadsOrg = action === 'ui.command' && uiCommandReadsOrg(data.command, data.input as Record<string, unknown> | undefined);
       const [method, policy] = WORKBENCH_ACTIONS[action];

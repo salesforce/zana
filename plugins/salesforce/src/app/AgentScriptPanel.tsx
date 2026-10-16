@@ -491,6 +491,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const changed = payload as { projectId?: string; path?: string; kind?: string } | null;
     if (changed?.kind === 'comments' && (!changed.projectId || changed.projectId === projectId)) void loadComments();
+    // Fetch latest wrote org files into the project.
+    if (changed?.kind === 'files' && (!changed.projectId || changed.projectId === projectId)) void refreshFiles().catch(() => undefined);
   });
   useEffect(() => { if (playgroundReady) send.setComments(comments); }, [comments, playgroundReady, send]);
 
