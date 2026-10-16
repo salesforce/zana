@@ -5,9 +5,9 @@
  * isolated clone of the exact object being pushed. CI remains merge authority.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const ZERO_OID = /^0+$/;
@@ -198,6 +198,31 @@ function testInputs(paths) {
   return paths.filter((path) => /\.[cm]?[jt]sx?$/.test(path) && !path.endsWith('.d.ts') && !path.startsWith('e2e/'));
 }
 
+function isTestFile(path) {
+  return /(?:^|\.)test\.[cm]?[jt]sx?$|(?:^|\.)spec\.[cm]?[jt]sx?$/.test(path);
+}
+
+// Vitest's import graph can span most of the monorepo through shared helpers.
+// Pre-push stays bounded by running changed tests and direct colocated tests;
+// CI remains responsible for transitive and full-suite coverage.
+function selectedTestFiles(inputs, root) {
+  const tests = new Set(inputs.filter(isTestFile));
+  for (const input of inputs.filter((path) => !isTestFile(path))) {
+    const name = basename(input).replace(/\.[cm]?[jt]sx?$/, '');
+    for (const directory of [dirname(input), join(dirname(input), '__tests__')]) {
+      const absoluteDirectory = join(root, directory);
+      if (!existsSync(absoluteDirectory)) continue;
+      for (const entry of readdirSync(absoluteDirectory, { withFileTypes: true })) {
+        if (!entry.isFile() || !isTestFile(entry.name)) continue;
+        if (entry.name === `${name}.test.ts` || entry.name === `${name}.coverage.test.ts` || entry.name === `${name}.spec.ts`) {
+          tests.add(join(directory, entry.name));
+        }
+      }
+    }
+  }
+  return [...tests].sort();
+}
+
 export function runFullVerification({ oid, root = process.cwd(), run = spawnSync, log = console.log }) {
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
     log('pre-push: full (est. install)');
@@ -231,12 +256,6 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
       const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
       if (install.status !== 0) throw new Error('snapshot dependency install failed');
     }
-    // Vitest's relation graph can include Slack Mermaid tests from shared build
-    // code even when no Slack path changed. Its generated runtime asset is not
-    // committed, so prepare it before every snapshot test selection.
-    log('pre-push: fast (est. Slack runtime assets)');
-    const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
-    if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
     log('pre-push: fast (est. typecheck)');
     const typecheck = run('pnpm', ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' });
     if (typecheck.status !== 0) throw new Error('verification failed: pnpm run typecheck');
@@ -245,10 +264,13 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
       log(`pre-push: fast (est. vitest --changed ${base.slice(0, 12)})`);
       const changed = run('pnpm', ['exec', 'vitest', 'run', '--changed', base], { cwd: snapshot, stdio: 'inherit' });
       if (changed.status !== 0) throw new Error('verification failed: vitest --changed');
-    } else if (inputs.length) {
-      log(`pre-push: fast (est. vitest related ${inputs.length} input${inputs.length === 1 ? '' : 's'})`);
-      const related = run('pnpm', ['exec', 'vitest', 'related', ...inputs, '--run', '--passWithNoTests'], { cwd: snapshot, stdio: 'inherit' });
-      if (related.status !== 0) throw new Error('verification failed: vitest related');
+    } else {
+      const tests = selectedTestFiles(inputs, snapshot);
+      if (tests.length) {
+        log(`pre-push: fast (est. ${tests.length} changed or colocated test${tests.length === 1 ? '' : 's'})`);
+        const testRun = run('pnpm', ['exec', 'vitest', 'run', ...tests], { cwd: snapshot, stdio: 'inherit' });
+        if (testRun.status !== 0) throw new Error('verification failed: selected vitest tests');
+      }
     }
     const guards = guardTests(snapshot, run);
     if (guards.length) {
