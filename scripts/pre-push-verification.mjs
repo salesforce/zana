@@ -229,11 +229,12 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
       const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
       if (install.status !== 0) throw new Error('snapshot dependency install failed');
     }
-    if (paths.some((path) => path.startsWith('plugins/slack-bridge-2ff2/'))) {
-      log('pre-push: fast (est. Slack runtime assets)');
-      const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
-      if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
-    }
+    // Vitest's relation graph can include Slack Mermaid tests from shared build
+    // code even when no Slack path changed. Its generated runtime asset is not
+    // committed, so prepare it before every snapshot test selection.
+    log('pre-push: fast (est. Slack runtime assets)');
+    const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
+    if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
     log('pre-push: fast (est. typecheck)');
     const typecheck = run('pnpm', ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' });
     if (typecheck.status !== 0) throw new Error('verification failed: pnpm run typecheck');
