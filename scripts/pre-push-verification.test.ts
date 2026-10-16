@@ -131,6 +131,10 @@ it('installs dependencies and prepares Slack assets only when Slack source chang
       ['fd', ['-e', 'ts', 'guard\\.test']],
       ['pnpm', ['exec', 'vitest', 'run', 'apps/app/src/__tests__/rule6.guard.test.ts', 'scripts/install-seam.guard.test.ts']],
     ]);
+    for (const [, , options] of run.mock.calls.slice(0, 4)) {
+      expect(options.env).not.toHaveProperty('GIT_DIR');
+      expect(options.env).not.toHaveProperty('GIT_WORK_TREE');
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -137,18 +137,22 @@ export function configuredAliases(run, configured = process.env.ZANA_GITHUB_SSH_
 export function withSnapshot({ oid, root = process.cwd(), run = spawnSync, log = console.log }, verify) {
   if (!oid) throw new Error('no pushed object available for snapshot verification');
   const snapshot = mkdtempSync(join(tmpdir(), 'zana-pre-push-'));
+  // Git hooks inherit repository routing variables. Strip them before spawning
+  // snapshot Git so its cwd controls repository selection, not caller worktree.
+  const env = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX']) delete env[key];
   try {
     log(`pre-push: snapshot ${oid.slice(0, 12)} in ${snapshot}`);
-    const clone = run('git', ['clone', '--no-local', '--no-checkout', root, snapshot], { stdio: 'inherit' });
+    const clone = run('git', ['clone', '--no-local', '--no-checkout', root, snapshot], { stdio: 'inherit', env });
     if (clone.status !== 0) throw new Error('could not create isolated push snapshot');
     // A clone made from a linked worktree inherits `core.worktree`, which points
     // at its source checkout. Remove it before checkout so Git writes only into
     // this disposable snapshot.
-    const unsetWorktree = run('git', ['config', '--unset-all', 'core.worktree'], { cwd: snapshot, stdio: 'ignore' });
+    const unsetWorktree = run('git', ['config', '--unset-all', 'core.worktree'], { cwd: snapshot, stdio: 'ignore', env });
     if (unsetWorktree.status !== 0 && unsetWorktree.status !== 5) throw new Error('could not isolate snapshot worktree');
-    const fetch = run('git', ['fetch', '--no-tags', root, oid], { cwd: snapshot, stdio: 'inherit' });
+    const fetch = run('git', ['fetch', '--no-tags', root, oid], { cwd: snapshot, stdio: 'inherit', env });
     if (fetch.status !== 0) throw new Error(`could not fetch pushed object ${oid}`);
-    const checkout = run('git', ['checkout', '--detach', oid], { cwd: snapshot, stdio: 'inherit' });
+    const checkout = run('git', ['checkout', '--detach', oid], { cwd: snapshot, stdio: 'inherit', env });
     if (checkout.status !== 0) throw new Error(`could not check out pushed object ${oid}`);
     return verify(snapshot);
   } finally {
