@@ -72,11 +72,26 @@ import {
 import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
 import { readPluginLogTail } from './plugin-log.js';
 import {
+  classifyInstalledToolPolicy,
+  classifyActivatedToolPolicy,
   createPluginStore,
   pluginStorePath,
   type InstalledPluginRow,
   type PluginStore
 } from './plugin-store.js';
+import {
+  TOOL_POLICY_INVENTORY_UNAVAILABLE_REASON,
+  TOOL_POLICY_NOT_READY_REASON,
+  TOOL_POLICY_STAMP_CHANGED_REASON,
+  captureToolPolicyStamp,
+  createToolPolicyInventoryState,
+  persistKnownTrueMonotonically,
+  requiredPolicyPluginIds,
+  sameToolPolicyStamp,
+  type ToolPolicyClassification,
+  type ToolPolicyDecisionStamp,
+  type ToolPolicyInventoryEntry
+} from './plugin-tool-policy-state.js';
 import { createPluginUninstalledStore, pluginUninstalledPath } from './plugin-uninstalled.js';
 import {
   generatedSkillsRootPath,
@@ -533,8 +548,121 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const lifecycleEpochs = new Map<string, number>();
   // OBL-004: retry with the same invocationId must return the same decision rather
   // than re-invoking plugin handlers. Map insertion order supplies bounded FIFO eviction.
-  const toolPolicyDecisions = new Map<string, Promise<PluginToolPolicyDecision>>();
+  const toolPolicyDecisions = new Map<string, {
+    stamp: ToolPolicyDecisionStamp;
+    decision: Promise<PluginToolPolicyDecision>;
+  }>();
   const TOOL_POLICY_DECISIONS_MAX = 500;
+  const toolPolicyInventory = createToolPolicyInventoryState();
+  const toolPolicySealed = new Set<string>();
+  const toolPolicyPendingTrue = new Map<string, Promise<void>>();
+  const pendingToolPolicy = new Map<string, ToolPolicyClassification>();
+  let toolPolicyReadFailure: string | null = null;
+
+  function refreshToolPolicyInventory(): void {
+    const result = store.readStrict();
+    if ('error' in result) {
+      toolPolicyReadFailure = result.error;
+      toolPolicyInventory.retainAfterError(result.error);
+      return;
+    }
+    toolPolicyReadFailure = null;
+    const file = result.file;
+    const rows = new Map<string, ToolPolicyInventoryEntry>(file.plugins.map((row) => [row.id, {
+      pluginId: row.id,
+      enabled: row.enabled,
+      hasServer: Boolean(row.serverEntry),
+      toolPolicy: classifyRowToolPolicy(row)
+    }]));
+    for (const [pluginId, toolPolicy] of pendingToolPolicy) {
+      const row = rows.get(pluginId);
+      if (row) rows.set(pluginId, { ...row, toolPolicy });
+      else rows.set(pluginId, { pluginId, enabled: true, hasServer: true, toolPolicy });
+    }
+    toolPolicyInventory.replace({
+      source: result.status === 'valid-empty' ? 'valid-empty' : 'loaded',
+      entries: [...rows.values()]
+    });
+  }
+
+  function classifyRowToolPolicy(row: InstalledPluginRow, declared?: boolean): ToolPolicyClassification {
+    return classifyInstalledToolPolicy({
+      enabled: row.enabled,
+      serverEntry: row.serverEntry,
+      toolPolicy: row.toolPolicy,
+      declared
+    });
+  }
+
+  function withToolPolicy(row: InstalledPluginRow, declared?: boolean): InstalledPluginRow {
+    const stored = store.get(row.id)?.toolPolicy;
+    return {
+      ...row,
+      toolPolicy: classifyInstalledToolPolicy({
+        enabled: row.enabled,
+        serverEntry: row.serverEntry,
+        toolPolicy: stored === 'true' ? stored : row.toolPolicy,
+        declared
+      })
+    };
+  }
+
+  function currentGenerationIds(): Map<string, string | null> {
+    const ids = new Map<string, string | null>();
+    for (const [id, current] of live) {
+      const ready = Boolean(
+        current.handle
+        && toolPolicySealed.has(id)
+        && current.handle.toolPolicyHandlers.length === 1
+        && (current.row.toolPolicy === 'true' || current.row.toolPolicy === 'unknown')
+      );
+      ids.set(id, ready ? `${id}:${current.row.updatedAt}` : null);
+    }
+    return ids;
+  }
+
+  function currentToolPolicyStamp(): ToolPolicyDecisionStamp {
+    return captureToolPolicyStamp(toolPolicyInventory.snapshot(), currentGenerationIds());
+  }
+
+  function inventoryBlocksAllow(): PluginToolPolicyDecision | null {
+    if (toolPolicyReadFailure) {
+      return { action: 'deny', reason: TOOL_POLICY_INVENTORY_UNAVAILABLE_REASON };
+    }
+    const snapshot = toolPolicyInventory.snapshot();
+    for (const pluginId of requiredPolicyPluginIds(snapshot)) {
+      const current = live.get(pluginId);
+      const entry = snapshot.entries.find((item) => item.pluginId === pluginId);
+      if (!current?.handle || !toolPolicySealed.has(pluginId)) {
+        return { action: 'deny', reason: `${TOOL_POLICY_NOT_READY_REASON}: ${pluginId}` };
+      }
+      if (entry?.toolPolicy === 'true' && current.handle.toolPolicyHandlers.length !== 1) {
+        return { action: 'deny', reason: `${TOOL_POLICY_NOT_READY_REASON}: ${pluginId}` };
+      }
+    }
+    return null;
+  }
+
+  function denyCachedAllow(reason: string): PluginToolPolicyDecision {
+    return { action: 'deny', reason };
+  }
+
+  async function persistLearnedTrue(id: string): Promise<void> {
+    const row = store.get(id);
+    if (!row) return;
+    const next = persistKnownTrueMonotonically({
+      existing: row.toolPolicy,
+      next: 'true',
+      enabled: row.enabled
+    });
+    if (row.toolPolicy === next) return;
+    await store.upsert({ ...row, toolPolicy: next, updatedAt: now() });
+    const current = live.get(id);
+    if (current) current.row = { ...current.row, toolPolicy: next };
+    refreshToolPolicyInventory();
+  }
+
+  refreshToolPolicyInventory();
 
   const lifecycleEpoch = (id: string): number => lifecycleEpochs.get(id) ?? 0;
   const bumpLifecycleEpoch = (id: string): void => {
@@ -928,6 +1056,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   async function disposeOne(id: string): Promise<void> {
+    toolPolicySealed.delete(id);
+    pendingToolPolicy.delete(id);
+    refreshToolPolicyInventory();
     const current = live.get(id);
     if (!current) {
       hostArtifacts.delete(id);
@@ -945,13 +1076,29 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   async function loadOne(row: InstalledPluginRow, isActive: () => boolean = () => !stopped): Promise<void> {
+    let declared: boolean | undefined;
+    try {
+      declared = loadManifestFromDir(row.rootDir).toolPolicy;
+    } catch {
+      declared = undefined;
+    }
+    row = withToolPolicy(row, declared);
+    if (row.enabled && (row.toolPolicy === 'true' || row.toolPolicy === 'unknown')) {
+      pendingToolPolicy.set(row.id, row.toolPolicy);
+      refreshToolPolicyInventory();
+    }
+    if (!live.get(row.id) && row.enabled && (row.toolPolicy === 'true' || row.toolPolicy === 'unknown')) {
+      await store.upsert(row);
+      refreshToolPolicyInventory();
+    }
     const previous = live.get(row.id);
     const safeModeBlocked = opts.getAppConfig?.().pluginSafeMode === true && row.sourceKind !== 'builtin';
     if (!row.enabled || safeModeBlocked) {
       await disposeOne(row.id);
       const disabled = { ...row, status: 'disabled' as const, statusDetail: safeModeBlocked ? 'Suspended by plugin safe mode' : null };
       live.set(row.id, { row: disabled, handle: null, rpc: new Map() });
-      await store.upsert(disabled);
+      await store.upsert(withToolPolicy(disabled, declared));
+      refreshToolPolicyInventory();
       await applyMissingRequiredPluginStatus();
       return;
     }
@@ -961,8 +1108,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: 'plugin directory missing' };
-      live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
-      await store.upsert(degraded);
+      live.set(row.id, { row: withToolPolicy(degraded, declared), handle: null, rpc: new Map() });
+      await store.upsert(withToolPolicy(degraded, declared));
+      refreshToolPolicyInventory();
       return;
     }
     try {
@@ -980,8 +1128,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (previous?.handle && previous.row.status === 'running') throw error;
       await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: detail };
-      live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
-      await store.upsert(degraded);
+      live.set(row.id, { row: withToolPolicy(degraded, declared), handle: null, rpc: new Map() });
+      await store.upsert(withToolPolicy(degraded, declared));
+      refreshToolPolicyInventory();
       return;
     }
     let files: string[];
@@ -991,8 +1140,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (previous?.handle && previous.row.status === 'running') throw error;
       await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: error instanceof Error ? error.message : String(error) };
-      live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
-      await store.upsert(degraded);
+      live.set(row.id, { row: withToolPolicy(degraded, declared), handle: null, rpc: new Map() });
+      await store.upsert(withToolPolicy(degraded, declared));
+      refreshToolPolicyInventory();
       return;
     }
     if (containsNativeAddon(row.rootDir, files)) {
@@ -1001,8 +1151,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: 'native addons are not allowed' };
-      live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
-      await store.upsert(degraded);
+      live.set(row.id, { row: withToolPolicy(degraded, declared), handle: null, rpc: new Map() });
+      await store.upsert(withToolPolicy(degraded, declared));
+      refreshToolPolicyInventory();
       return;
     }
     let hostEntry: string | null = null;
@@ -1040,6 +1191,24 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     let configurationMessage: string | null = null;
     let activationFailure: Error | null = null;
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
+      toolPolicyRegistrationAllowed: () => !toolPolicySealed.has(row.id),
+      onToolPolicyRegister: (registered) => {
+        if (declared === false) {
+          void persistLearnedTrue(row.id);
+          return;
+        }
+        if (toolPolicySealed.has(row.id) && handle.toolPolicyHandlers.length === 0) {
+          void persistLearnedTrue(row.id);
+          return;
+        }
+        void (async () => {
+          const pending = persistLearnedTrue(row.id);
+          toolPolicyPendingTrue.set(row.id, pending);
+          await pending;
+          toolPolicyPendingTrue.delete(row.id);
+          void registered;
+        })();
+      },
       providerUnavailableReason: hostArtifactProblem,
       requestPluginInteraction: opts.requestPluginInteraction,
       interruptPluginInteractions: opts.interruptPluginInteractions,
@@ -1142,9 +1311,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
             void (async () => {
               await disposeOne(row.id);
               if (!isCurrent(row.id, epoch) || store.get(row.id)?.enabled === false) return;
-              const degraded = { ...row, status: 'degraded' as const, statusDetail: error.message };
+              const degraded = withToolPolicy({ ...row, status: 'degraded' as const, statusDetail: error.message }, declared);
               live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
               await store.upsert(degraded);
+              refreshToolPolicyInventory();
               if (!isCurrent(row.id, epoch)) return;
               if (error.message === WATCHDOG_FAILURE_MESSAGE) scheduleWatchdogRecovery(row.id);
               await emitCapabilities();
@@ -1156,16 +1326,34 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         serverRuntimes.add(runtime);
         handle.api.onDispose(() => { runtime.dispose(); serverRuntimes.delete(runtime); });
         await runtime.started;
-        if (activationFailure) throw activationFailure;
-        if (!isActive()) {
-          await handle.dispose();
-          return;
-        }
+      if (activationFailure) throw activationFailure;
+      if (!isActive()) {
+        await handle.dispose();
+        return;
+      }
       }
       if (hostArtifactProblem) throw new Error(hostArtifactProblem);
-      const running = {
+      await toolPolicyPendingTrue.get(row.id);
+      if (declared === true && handle.toolPolicyHandlers.length !== 1) {
+        throw new Error('declared tool policy is missing a handler');
+      }
+      if (declared === false && handle.toolPolicyHandlers.length > 0) {
+        await persistLearnedTrue(row.id);
+        throw new Error('plugin declared no tool policy but registered a handler');
+      }
+      const classified = {
         ...row,
         serverEntry,
+        toolPolicy: classifyActivatedToolPolicy({
+          enabled: row.enabled,
+          serverEntry,
+          toolPolicy: row.toolPolicy,
+          declared,
+          registeredHandler: handle.toolPolicyHandlers.length === 1
+        })
+      };
+      const running = {
+        ...classified,
         status: (configurationMessage ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
         statusDetail: configurationMessage
       };
@@ -1185,7 +1373,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         return;
       }
       if (activationFailure) throw activationFailure;
+      toolPolicySealed.add(row.id);
+      pendingToolPolicy.delete(row.id);
       live.set(row.id, { row: running, handle, rpc });
+      refreshToolPolicyInventory();
       cancelRecovery(row.id);
       if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
       else hostArtifacts.delete(row.id);
@@ -1195,6 +1386,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       previous?.unavailableProviders?.forEach((provider) => provider.unregister());
       await applyMissingRequiredPluginStatus();
     } catch (error) {
+      pendingToolPolicy.delete(row.id);
       await handle.dispose();
       if (!isActive()) return;
       const detail = error instanceof Error ? error.message : String(error);
@@ -1202,9 +1394,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await disposeOne(row.id);
       const unavailableProviders = handle.providerDeclarations.map((declaration) =>
         registerThreadProvider(row.id, declaration, hostEntry, detail));
-      const degraded = { ...row, status: 'degraded' as const, statusDetail: detail };
+      const degraded = withToolPolicy({ ...row, status: 'degraded' as const, statusDetail: detail }, declared);
       live.set(row.id, { row: degraded, handle: null, rpc: new Map(), unavailableProviders });
       await store.upsert(degraded);
+      refreshToolPolicyInventory();
     }
   }
 
@@ -1393,7 +1586,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     const ts = now();
     const existing = store.get(manifest.id);
-    const row: InstalledPluginRow = {
+    const row: InstalledPluginRow = withToolPolicy({
       id: manifest.id,
       version: manifest.version,
       name: manifest.name,
@@ -1415,9 +1608,16 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       catalogEntryId: materialized.catalogEntryId,
       installedAt: existing?.installedAt ?? ts,
       updatedAt: ts,
+      toolPolicy: existing?.toolPolicy,
       ...overrides
-    };
+    }, manifest.toolPolicy);
     await uninstalled.forget(manifest.id);
+    // A candidate reload must not overwrite a last-good row before it seals.
+    // The live generation remains authoritative until candidate promotion.
+    if (!existing) {
+      await store.upsert(row);
+      refreshToolPolicyInventory();
+    }
     try {
       await loadOne(row);
     } catch (error) {
@@ -1599,6 +1799,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       availableUpdates.delete(id);
       await disposeOne(id);
       const row = await store.remove(id);
+      live.delete(id);
+      refreshToolPolicyInventory();
       await uninstalled.add(id);
       if (row && row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
         rmSync(row.rootDir, { recursive: true, force: true });
@@ -1747,8 +1949,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       cancelRecovery(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
-      const next = { ...row, enabled: true, updatedAt: now() };
+      const next = withToolPolicy({ ...row, enabled: true, updatedAt: now() });
       await store.upsert(next);
+      refreshToolPolicyInventory();
       await loadOne(next);
       await emitCapabilities();
       await syncCliSkill();
@@ -1762,9 +1965,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
       await disposeOne(id);
-      const next = { ...row, enabled: false, status: 'disabled' as const, updatedAt: now() };
+      const next = withToolPolicy({ ...row, enabled: false, status: 'disabled' as const, updatedAt: now() });
       await store.upsert(next);
-      live.set(id, { row: next, handle: null, rpc: new Map() });
+      live.delete(id);
+      refreshToolPolicyInventory();
       await applyMissingRequiredPluginStatus();
       await emitCapabilities();
       await emitAppsChanged();
@@ -1777,6 +1981,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       availableUpdates.delete(id);
       await disposeOne(id);
       const row = await store.remove(id);
+      live.delete(id);
+      refreshToolPolicyInventory();
       await uninstalled.add(id);
       if (row) {
         if (isManagedGeneration(opts.dataDir, row.rootDir)) {
@@ -1918,6 +2124,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       stopped = true;
       started = false;
       lifecycleGeneration++;
+      toolPolicySealed.clear();
+      refreshToolPolicyInventory();
       for (const timer of recoveryTimers.values()) clearTimeout(timer);
       recoveryTimers.clear();
       recoveryAttempts.clear();
@@ -2005,9 +2213,26 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       // Scoped by thread: callers on different surfaces choose their own
       // invocation ids, and one must never replay a decision into another's thread.
       const key = JSON.stringify([request.threadId, request.invocationId]);
+      const stamp = currentToolPolicyStamp();
+      const blocked = inventoryBlocksAllow();
+      if (blocked) return blocked;
       const cached = toolPolicyDecisions.get(key);
-      if (cached) return cached;
+      if (cached) {
+        if (cached.decision) {
+          const resolved = await cached.decision;
+          if (resolved.action === 'deny') return resolved;
+          if (!sameToolPolicyStamp(cached.stamp, stamp)) {
+            const denied = denyCachedAllow(TOOL_POLICY_STAMP_CHANGED_REASON);
+            toolPolicyDecisions.set(key, { stamp, decision: Promise.resolve(denied) });
+            return denied;
+          }
+          return resolved;
+        }
+      }
       const decision = (async () => {
+        const before = currentToolPolicyStamp();
+        const unready = inventoryBlocksAllow();
+        if (unready) return unready;
         for (const current of live.values()) {
           for (const handler of current.handle?.toolPolicyHandlers ?? []) {
             try {
@@ -2028,12 +2253,16 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
             }
           }
         }
+        const after = currentToolPolicyStamp();
+        if (!sameToolPolicyStamp(before, after) || inventoryBlocksAllow()) {
+          return { action: 'deny', reason: TOOL_POLICY_STAMP_CHANGED_REASON } as const;
+        }
         return { action: 'allow' } as const;
       })();
       if (toolPolicyDecisions.size >= TOOL_POLICY_DECISIONS_MAX) {
         toolPolicyDecisions.delete(toolPolicyDecisions.keys().next().value!);
       }
-      toolPolicyDecisions.set(key, decision);
+      toolPolicyDecisions.set(key, { stamp, decision });
       try {
         return await decision;
       } catch (error) {

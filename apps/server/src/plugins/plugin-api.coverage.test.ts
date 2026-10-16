@@ -35,6 +35,18 @@ describe('plugin host registration contracts', () => {
     expect(() => handle.api.hooks.onToolPolicy(vi.fn())).toThrow('only one tool policy handler');
   });
 
+  it('rejects late tool-policy registration through the service callback', () => {
+    const onToolPolicyRegister = vi.fn();
+    const handle = makeApi({
+      toolPolicyRegistrationAllowed: () => false,
+      onToolPolicyRegister
+    });
+    const policy = vi.fn();
+    expect(() => handle.api.hooks.onToolPolicy(policy)).toThrow('after activation');
+    expect(onToolPolicyRegister).toHaveBeenCalledWith(policy);
+    expect(handle.toolPolicyHandlers).toEqual([]);
+  });
+
   it('keeps project tab registrations scoped and replaces matching tab IDs', () => {
     const handle = makeApi();
     expect(() => handle.api.ui.registerProjectTabAvailability({ tabId: '', evaluate: () => true })).toThrow('requires tabId and evaluate');

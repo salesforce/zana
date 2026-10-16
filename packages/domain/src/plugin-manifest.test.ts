@@ -150,4 +150,26 @@ describe('readPluginManifest', () => {
   it('rejects invalid zcc.requires entries', () => {
     expect(() => readPluginManifest(baseZcc({ requires: ['Not An Id'] }))).toThrow(/plugin ids/);
   });
+
+  it('parses optional zcc.toolPolicy', () => {
+    expect(readPluginManifest(baseZcc()).toolPolicy).toBeUndefined();
+    expect(readPluginManifest(baseZcc({ toolPolicy: true })).toolPolicy).toBe(true);
+    expect(readPluginManifest(baseZcc({ toolPolicy: false })).toolPolicy).toBe(false);
+  });
+
+  it('rejects zcc.toolPolicy true without a server', () => {
+    expect(() =>
+      readPluginManifest({
+        name: 'app-only',
+        version: '1.0.0',
+        zcc: {
+          name: 'App only',
+          description: 'no server',
+          branding: { icon: 'Box' },
+          app: './app.tsx',
+          toolPolicy: true
+        }
+      })
+    ).toThrow(/toolPolicy requires zcc.server/);
+  });
 });

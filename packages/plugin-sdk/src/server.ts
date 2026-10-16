@@ -246,7 +246,9 @@ export interface PluginHooks {
     request: PluginDispatchAdmissionRequest
   ) => import('@zana-ai/zcc-domain').DispatchAdmissionDecision | Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>): void;
   /**
-   * Register this plugin's native-tool-policy decision handler (OBL-004). Fires
+   * Register this plugin's native-tool-policy decision handler. Plugins must
+   * declare `zcc.toolPolicy: true` beside `zcc.server`, and register during
+   * activation before the host seals the active generation. Fires
    * for every native-provider (Claude/Codex) tool invocation on a thread this
    * plugin can see, before the tool's side effect starts. Only one handler per
    * plugin — same single-handler contract as {@link on}.

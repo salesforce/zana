@@ -272,6 +272,16 @@ announced -> awaiting-decision -> allowed|denied -> executing -> succeeded|faile
 A `denied` decision blocks the tool's side effect before it starts; a
 transport failure or decision timeout fails closed (denied), never open.
 
+Plugins that register `onToolPolicy` must declare `"toolPolicy": true` next
+to `zcc.server` in their manifest. An enabled declared policy plugin denies
+native tools until its active generation has registered and sealed exactly one
+handler. Legacy enabled server plugins without a declaration are conservatively
+treated as unknown during startup and degradation, so they also deny until a
+successful activation proves that no handler is registered. There is no grace
+period or automatic disable: disable or uninstall a failed plugin to release
+only that plugin's obligation. A healthy reload keeps its prior sealed handler
+authoritative until replacement succeeds.
+
 `allow` means no plugin objected; it is never an approval. The provider's own
 permission flow still decides: both PTY hooks stay silent on `allow` instead
 of auto-approving (Claude reads a hook `allow` as "skip the permission
@@ -282,7 +292,10 @@ after trimming, control characters, unpaired surrogates) is replaced, and
 reasons are capped at 1024 characters.
 
 Each `invocationId` is deduplicated at the server boundary, so a retried
-request with the same id replays the same decision rather than re-deciding.
+request with the same id replays the same decision rather than re-deciding. If
+the policy inventory or active generation changes while an `allow` is in
+flight, that invocation becomes denied instead of replaying a stale allow; a
+new invocation is needed after recovery.
 For PTY sessions the host derives it from the live session plus the
 provider's turn id (when it sends one), tool call id, tool name and input: an
 identical retry replays its decision, and different content never reuses one.

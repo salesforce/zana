@@ -341,6 +341,8 @@ export function createPluginApi(
      isAgentToolNameTaken?: (name: string) => string | undefined;
      registerPersonas?: (pluginId: string, personas: readonly import('@zana-ai/zcc-domain/product').PersonaInput[]) => void;
      registerTeams?: (pluginId: string, teams: readonly import('@zana-ai/zcc-domain/product').TeamInput[]) => void;
+    onToolPolicyRegister?: (handler: PluginHandle['toolPolicyHandlers'][number]) => void;
+    toolPolicyRegistrationAllowed?: () => boolean;
   }
 ): PluginHandle {
   mkdirSync(kvDir, { recursive: true });
@@ -597,7 +599,13 @@ export function createPluginApi(
         assertLive();
         if (typeof handler !== 'function') throw new Error('tool policy handler must be a function');
         if (toolPolicyHandlers.length > 0) throw new Error('only one tool policy handler is allowed per plugin');
+        if (options?.toolPolicyRegistrationAllowed && !options.toolPolicyRegistrationAllowed()) {
+          const error = new Error('tool policy handler cannot be registered after activation');
+          options.onToolPolicyRegister?.(handler);
+          throw error;
+        }
         toolPolicyHandlers.push(handler);
+        options?.onToolPolicyRegister?.(handler);
       }
     } satisfies PluginHooks,
     sdk: {

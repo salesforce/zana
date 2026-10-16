@@ -546,14 +546,16 @@ describe('PluginService', () => {
       'allower',
       `export default function plugin(zcc) {
         zcc.hooks.onToolPolicy(() => ({ action: 'allow' }));
-      }\n`
+      }\n`,
+      { toolPolicy: true }
     );
     const denier = writePlugin(
       join(root(), 'denier'),
       'denier',
       `export default function plugin(zcc) {
         zcc.hooks.onToolPolicy(() => ({ action: 'deny', reason: 'policy' }));
-      }\n`
+      }\n`,
+      { toolPolicy: true }
     );
     const service = createPluginService({ dataDir, bundledRoot: root() });
     await service.install(allower);
@@ -581,7 +583,8 @@ describe('PluginService', () => {
           globalThis.__callCount = (globalThis.__callCount ?? 0) + 1;
           return { action: 'allow' };
         });
-      }\n`
+      }\n`,
+      { toolPolicy: true }
     );
     const service = createPluginService({ dataDir, bundledRoot: root() });
     await service.install(pluginDir);
@@ -608,7 +611,8 @@ describe('PluginService', () => {
   ])('decideToolPolicy: denies and caches %s handler failures', async (body) => {
     const service = createPluginService({ dataDir: root(), bundledRoot: root() });
     await service.install(writePlugin(join(root(), 'broken-policy'), 'broken-policy',
-      `export default function plugin(zcc) { zcc.hooks.onToolPolicy(() => { ${body}; }); }\n`));
+      `export default function plugin(zcc) { zcc.hooks.onToolPolicy(() => { ${body}; }); }\n`,
+      { toolPolicy: true }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.useFakeTimers();
     try {

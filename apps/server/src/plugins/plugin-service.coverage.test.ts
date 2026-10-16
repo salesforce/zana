@@ -52,7 +52,7 @@ it('returns registered availability reasons and proceeds when admission plugins 
   writeFileSync(join(pluginDir, 'package.json'), JSON.stringify({
     name: 'zcc-plugin-availability', version: '0.1.0',
     engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
-    zcc: { name: 'Availability', description: 'Tab availability', branding: { icon: 'Puzzle' }, server: './server.mjs' }
+    zcc: { name: 'Availability', description: 'Tab availability', branding: { icon: 'Puzzle' }, server: './server.mjs', toolPolicy: true }
   }));
   writeFileSync(join(pluginDir, 'server.mjs'), `export default function(zcc) {
     zcc.ui.registerProjectTabAvailability({ tabId: 'main', evaluate: ({ projectId }) => ({ available: projectId === 'yes', reason: 'configured' }) });
