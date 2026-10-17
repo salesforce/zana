@@ -1243,13 +1243,9 @@ function parseTags(raw: string): string[] {
 
 function parseExcerpt(raw: string | null | undefined): CommentExcerpt | null {
   if (!raw) return null;
-  try {
-    const value = JSON.parse(raw) as { body?: unknown; author?: unknown; at?: unknown };
-    if (typeof value.body !== 'string' || typeof value.author !== 'string') return null;
-    return { body: value.body, author: parseActor(value.author), createdAt: Number(value.at) || 0 };
-  } catch {
-    return null;
-  }
+  // `raw` is built by SQLite json_object() over TEXT columns: always valid JSON with string body/author.
+  const value = JSON.parse(raw) as { body: string; author: string; at: unknown };
+  return { body: value.body, author: parseActor(value.author), createdAt: Number(value.at) || 0 };
 }
 
 function toSummary(row: DocRow): DesignDocSummary {
