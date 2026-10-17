@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { zccBrowserBootstrapPlugin } from './apps/app/vite-plugin-browser-bootstrap';
 import { pluginAssetDevProxyPlugin, productDevProxy } from './apps/app/vite-product-proxy';
 import { DEFAULT_SERVER_PORT, serverPortFromEnv } from './apps/server/src/http/ports';
-import { assertRelayBake, isReleaseBuild } from './scripts/relay-bake';
+import { isReleaseBuild, relayBakeWarning } from './scripts/relay-bake';
 
 function pairingEnvFile(): Record<string, string> {
   return loadEnv(process.env.NODE_ENV === 'production' ? 'production' : 'development', __dirname, '');
@@ -165,7 +165,8 @@ const mainOutput = {
 };
 
 export default defineConfig(({ command }) => {
-  assertRelayBake({ releaseBuild: isReleaseBuild(), appUrl: bundledAppUrl(), relayToken: bundledRelayToken() });
+  const relayWarning = relayBakeWarning({ releaseBuild: isReleaseBuild(), appUrl: bundledAppUrl(), relayToken: bundledRelayToken() });
+  if (relayWarning) console.warn(`[relay-bake] ${relayWarning}`);
   // Dev watchers and production/E2E builds must never empty each other's output.
   const out = process.env.ZCC_BUILD_OUT_DIR || resolve(__dirname, command === 'serve' ? 'out-dev' : 'out');
   return {

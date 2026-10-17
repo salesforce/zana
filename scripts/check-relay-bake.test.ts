@@ -1,30 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { assertRelayBake, isReleaseBuild } from './relay-bake';
+import { isReleaseBuild, relayBakeWarning } from './relay-bake';
 
 const URL = 'https://relay.example.com';
 
-describe('relay bake guard', () => {
-  it('throws for a release build with an origin and no token', () => {
-    expect(() => assertRelayBake({ releaseBuild: true, appUrl: URL, relayToken: '' })).toThrow(
-      /ZCC_APP_URL without ZCC_RELAY_TOKEN/
+describe('relay bake check', () => {
+  it('warns, without failing, for a release build with an origin and no token', () => {
+    expect(relayBakeWarning({ releaseBuild: true, appUrl: URL, relayToken: '' })).toMatch(
+      /ZCC_APP_URL without ZCC_RELAY_TOKEN.*SSH tunnel/
     );
-    expect(() => assertRelayBake({ releaseBuild: true, appUrl: URL, relayToken: '   ' })).toThrow();
+    expect(relayBakeWarning({ releaseBuild: true, appUrl: URL, relayToken: '   ' })).not.toBeNull();
   });
 
-  it('allows a release build with both origin and token', () => {
-    expect(() => assertRelayBake({ releaseBuild: true, appUrl: URL, relayToken: 'tok' })).not.toThrow();
+  it('is quiet for a release build with both origin and token', () => {
+    expect(relayBakeWarning({ releaseBuild: true, appUrl: URL, relayToken: 'tok' })).toBeNull();
   });
 
-  it('allows a release build with neither', () => {
-    expect(() => assertRelayBake({ releaseBuild: true, appUrl: '', relayToken: '' })).not.toThrow();
+  it('is quiet for a release build with neither', () => {
+    expect(relayBakeWarning({ releaseBuild: true, appUrl: '', relayToken: '' })).toBeNull();
   });
 
-  it('allows a release build with a token and no origin', () => {
-    expect(() => assertRelayBake({ releaseBuild: true, appUrl: '', relayToken: 'tok' })).not.toThrow();
+  it('is quiet for a release build with a token and no origin', () => {
+    expect(relayBakeWarning({ releaseBuild: true, appUrl: '', relayToken: 'tok' })).toBeNull();
   });
 
-  it('allows non-release builds with an origin and no token', () => {
-    expect(() => assertRelayBake({ releaseBuild: false, appUrl: URL, relayToken: '' })).not.toThrow();
+  it('is quiet for non-release builds with an origin and no token', () => {
+    expect(relayBakeWarning({ releaseBuild: false, appUrl: URL, relayToken: '' })).toBeNull();
   });
 
   it('detects release builds only from ZCC_RELEASE_BUILD=1', () => {
