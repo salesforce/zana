@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
   Bot,
   ChevronDown,
   CircleDot,
   DraftingCompass,
-  FileText,
   FolderOpen,
   ListTree,
   MessageSquare,
@@ -25,9 +24,10 @@ import { draftDocAgent, showDocAgent } from './Agents.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
-import { buildSections, parseCollapsed, toggleCollapsed, type ListSection } from './doc-sections.js';
+import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
+import { markSeen, parseSeen, unseenAgentEdit } from './seen.js';
 import { ContextMenu, contextMenuPoint, Dialog, IconButton, Spinner, StatusPill, TimeAgo } from './ui.js';
 
 type StatusFilter = DocStatus | 'active' | 'all';
@@ -83,11 +83,17 @@ function useDebounced<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
+/** The row's tooltip: the full title, then the summary the row no longer shows. */
+function rowTooltip(doc: DesignDocSummary): string {
+  return doc.summary ? `${doc.title}\n${doc.summary}` : doc.title;
+}
+
 function DocRow({
   doc,
   active,
   alternative = false,
   projectName,
+  unseen,
   now,
   menuOpen,
   onSelect,
@@ -98,15 +104,21 @@ function DocRow({
   /** Nested under the doc it is an alternative to. */
   alternative?: boolean;
   projectName: string | null;
+  /** An agent edited it since the user last opened it. */
+  unseen: boolean;
   now: number;
   menuOpen: boolean;
   onSelect(): void;
   onMenu(at: { x: number; y: number }): void;
 }) {
+  const excerpt = doc.lastComment;
+  // The excerpt already says there is a comment; the count adds only "more than one".
+  const comments = doc.openComments > (excerpt ? 1 : 0);
   return (
     <button
       type="button"
       className={`dd-doc-row${active ? ' on' : ''}${alternative ? ' dd-doc-row-alt' : ''}${menuOpen ? ' dd-doc-row-menu' : ''}`}
+      title={rowTooltip(doc)}
       onClick={onSelect}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -122,31 +134,37 @@ function DocRow({
             Alt
           </span>
         ) : null}
-        <StatusPill status={doc.status} compact />
-      </span>
-      {doc.summary ? <span className="dd-doc-row-summary">{doc.summary}</span> : null}
-      <span className="dd-doc-row-meta">
-        {projectName !== null ? (
-          <span className="dd-doc-row-project" title={projectName}>
-            {projectName}
-          </span>
-        ) : null}
-        <span title={`${doc.fileCount} files`}>
-          <FileText size={11} aria-hidden /> {doc.fileCount}
-        </span>
-        {doc.openComments ? (
-          <span title={`${doc.openComments} open comments`} className="dd-doc-row-comments">
-            <MessageSquare size={11} aria-hidden /> {doc.openComments}
-          </span>
-        ) : null}
-        {doc.updatedBy.kind === 'agent' ? (
-          <span title="Last edited by an agent">
-            <Bot size={11} aria-label="Last edited by an agent" />
-          </span>
-        ) : null}
-        <span className="dd-spacer" />
+        {/* Draft is the default state: only a status worth noticing gets a pill. */}
+        {doc.status !== 'draft' ? <StatusPill status={doc.status} compact /> : null}
         <TimeAgo at={doc.updatedAt} now={now} />
       </span>
+      {excerpt ? (
+        <span className="dd-doc-row-excerpt">
+          <MessageSquare size={11} aria-hidden />
+          <span className="dd-doc-row-excerpt-body">{excerpt.body.replace(/\s+/g, ' ').trim()}</span>
+          <span className="dd-doc-row-excerpt-author">{excerpt.author.label}</span>
+        </span>
+      ) : null}
+      {projectName !== null || comments || unseen ? (
+        <span className="dd-doc-row-meta">
+          {projectName !== null ? (
+            <span className="dd-doc-row-project" title={projectName}>
+              <span className="dd-swatch" style={{ background: projectSwatch(doc.projectId) }} aria-hidden />
+              <span className="dd-doc-row-project-name">{projectName}</span>
+            </span>
+          ) : null}
+          {comments ? (
+            <span title={`${doc.openComments} open comments`} className="dd-doc-row-comments">
+              <MessageSquare size={11} aria-hidden /> {doc.openComments}
+            </span>
+          ) : null}
+          {unseen ? (
+            <span className="dd-doc-row-unseen" title="Edited by an agent since you last opened it">
+              <Bot size={11} aria-hidden /> New edits
+            </span>
+          ) : null}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -159,9 +177,15 @@ function SectionHead({ section, open, onToggle }: { section: ListSection; open: 
     <button type="button" className={`dd-list-section dd-list-section-${section.kind}`} aria-expanded={open} onClick={onToggle}>
       <ChevronDown size={12} aria-hidden className="dd-list-section-caret" />
       {Glyph ? <Glyph size={11} aria-hidden /> : null}
+      {section.kind === 'project' ? <span className="dd-swatch" style={{ background: projectSwatch(section.projectId ?? null) }} aria-hidden /> : null}
       <span className="dd-list-section-label" title={section.label}>
         {section.label}
       </span>
+      {section.current ? (
+        <span className="dd-list-section-here" title="The project you are in">
+          Here
+        </span>
+      ) : null}
       <span className="dd-list-section-count">{section.count}</span>
     </button>
   );
@@ -193,7 +217,9 @@ function DocList({
   const [projectFilter, setProjectFilter] = usePersistentState<string>('list-project', '');
   const [grouped, setGrouped] = usePersistentState<boolean>('list-grouped', true);
   const [collapsedRaw, setCollapsedRaw] = usePersistentState<string>('list-collapsed', '[]');
+  const [seenRaw, setSeenRaw] = usePersistentState<string>('list-seen', '');
   const [menu, setMenu] = useState<{ doc: DesignDocSummary; at: { x: number; y: number } } | null>(null);
+  const context = useZccContext();
   const docActions = useDocActions(projects);
   const debounced = useDebounced(query.trim(), 200);
   const now = useNow();
@@ -206,10 +232,23 @@ function DocList({
   }, [docs.data, showProjects, projectFilter]);
   const filtered = status !== 'active' || (showProjects && !!projectFilter);
   const byProject = showProjects && !projectFilter && grouped;
+  const currentProjectId = showProjects ? context.projectId : null;
   const sections = useMemo(
-    () => buildSections(visible, { byProject, projectName: (id) => names.get(id) ?? 'Unknown project' }),
-    [visible, byProject, names]
+    () => buildSections(visible, { byProject, currentProjectId, projectName: (id) => names.get(id) ?? 'Unknown project' }),
+    [visible, byProject, currentProjectId, names]
   );
+  const seen = useMemo(() => parseSeen(seenRaw, Date.now()), [seenRaw]);
+  // Start tracking now, so docs edited before today are not all marked new.
+  useEffect(() => {
+    if (!seenRaw) setSeenRaw(JSON.stringify(seen));
+  }, [seenRaw, seen, setSeenRaw]);
+  const activeUpdatedAt = docs.data?.find((doc) => doc.id === activeId)?.updatedAt ?? null;
+  // The open doc is seen, including edits that land while it is open.
+  useEffect(() => {
+    if (!activeId || activeUpdatedAt === null) return;
+    const next = markSeen(seen, activeId, activeUpdatedAt);
+    if (next) setSeenRaw(JSON.stringify(next));
+  }, [activeId, activeUpdatedAt, seen, setSeenRaw]);
   // A lone timeline needs no header: the list then looks as it always did.
   const headed = !(sections.length === 1 && sections[0]?.kind === 'recent');
   // Searching shows every match, even inside collapsed sections.
@@ -226,6 +265,7 @@ function DocList({
       active={doc.id === activeId}
       alternative={alternative}
       projectName={alternative ? null : projectLabel(doc, section)}
+      unseen={doc.id !== activeId && unseenAgentEdit(doc, seen)}
       now={now}
       menuOpen={menu?.doc.id === doc.id}
       onSelect={() => onSelect(doc.id)}

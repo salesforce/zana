@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   isDocStatus,
+  type CommentExcerpt,
   type CommentStatus,
   type DesignDocComment,
   type DesignDocDetail,
@@ -133,6 +134,7 @@ interface DocRow {
   alternative_to: string | null;
   file_count?: number;
   open_comments?: number;
+  last_comment?: string | null;
 }
 
 interface FileRow {
@@ -183,9 +185,16 @@ interface ThreadRow {
 
 const ROLE_RANK: Record<ThreadRole, number> = { assistant: 1, reviewer: 2, editor: 3, author: 4 };
 
+/** Characters of the newest open comment carried in each summary. */
+const COMMENT_EXCERPT_LENGTH = 160;
+
 const SUMMARY_COLUMNS = `d.*,
   (SELECT COUNT(*) FROM doc_files f WHERE f.doc_id = d.id) AS file_count,
-  (SELECT COUNT(*) FROM doc_comments c WHERE c.doc_id = d.id AND c.status = 'open' AND c.parent_id IS NULL) AS open_comments`;
+  (SELECT COUNT(*) FROM doc_comments c WHERE c.doc_id = d.id AND c.status = 'open' AND c.parent_id IS NULL) AS open_comments,
+  (SELECT json_object('body', substr(c.body, 1, ${COMMENT_EXCERPT_LENGTH}), 'author', c.author, 'at', c.created_at)
+    FROM doc_comments c LEFT JOIN doc_comments p ON p.id = c.parent_id
+    WHERE c.doc_id = d.id AND COALESCE(p.status, c.status) = 'open'
+    ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1) AS last_comment`;
 
 export interface DesignDocStoreOptions {
   now?: () => number;
@@ -1232,6 +1241,17 @@ function parseTags(raw: string): string[] {
   }
 }
 
+function parseExcerpt(raw: string | null | undefined): CommentExcerpt | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as { body?: unknown; author?: unknown; at?: unknown };
+    if (typeof value.body !== 'string' || typeof value.author !== 'string') return null;
+    return { body: value.body, author: parseActor(value.author), createdAt: Number(value.at) || 0 };
+  } catch {
+    return null;
+  }
+}
+
 function toSummary(row: DocRow): DesignDocSummary {
   return {
     id: row.id,
@@ -1244,6 +1264,7 @@ function toSummary(row: DocRow): DesignDocSummary {
     entryPath: row.entry_path,
     fileCount: Number(row.file_count ?? 0),
     openComments: Number(row.open_comments ?? 0),
+    lastComment: parseExcerpt(row.last_comment),
     pinnedAt: row.pinned_at ?? null,
     alternativeTo: row.alternative_to ?? null,
     revision: row.revision,

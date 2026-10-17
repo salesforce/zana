@@ -29,6 +29,13 @@ export interface DocActor {
   threadId: string | null;
 }
 
+/** The newest message in a doc's open comment threads, trimmed for the doc list. */
+export interface CommentExcerpt {
+  body: string;
+  author: DocActor;
+  createdAt: number;
+}
+
 export interface DesignDocSummary {
   id: string;
   slug: string;
@@ -40,6 +47,8 @@ export interface DesignDocSummary {
   entryPath: string;
   fileCount: number;
   openComments: number;
+  /** Null when no comment thread is open. */
+  lastComment: CommentExcerpt | null;
   /** When the user pinned it to the top of the doc list; null when not pinned. */
   pinnedAt: number | null;
   /** Id of the doc this one is an alternative proposal to; it nests under it in the list. */

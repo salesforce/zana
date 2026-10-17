@@ -424,6 +424,25 @@ describe('DesignDocStore — comments and threads', () => {
     for (let index = 0; index < MAX_COMMENTS_PER_DOC; index += 1) store.addComment(doc.id, { body: `c${index}` }, user);
   });
 
+  it('carries the newest message of the open threads in the summary', () => {
+    const store = makeStore({ frozenClock: true, ids: 'descending' });
+    const doc = store.create({ title: 'Doc', template: 'blank' }, user);
+    expect(store.summary(doc.id).lastComment).toBeNull();
+
+    const first = store.addComment(doc.id, { body: 'Why?' }, user);
+    const second = store.addComment(doc.id, { body: 'x'.repeat(400) }, agent);
+    // Same millisecond, ids counting down: the later write still wins.
+    expect(store.summary(doc.id).lastComment).toEqual({ body: 'x'.repeat(160), author: agent, createdAt: second.createdAt });
+    store.addReply(doc.id, first.id, 'Because.', agent);
+    expect(store.list()[0]!.lastComment).toMatchObject({ body: 'Because.', author: agent });
+
+    // A resolved thread's messages, replies included, no longer count.
+    store.setCommentStatus(doc.id, first.id, 'resolved', user);
+    expect(store.summary(doc.id).lastComment).toMatchObject({ body: 'x'.repeat(160) });
+    store.setCommentStatus(doc.id, second.id, 'resolved', user);
+    expect(store.summary(doc.id).lastComment).toBeNull();
+  });
+
   it('counts replies toward the comment cap', () => {
     const store = makeStore();
     const doc = store.create({ title: 'Doc', template: 'blank' }, user);

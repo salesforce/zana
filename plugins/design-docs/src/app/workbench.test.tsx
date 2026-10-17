@@ -143,7 +143,8 @@ describe('doc list', () => {
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
 
     expect(await screen.findByText('Payments API')).toBeTruthy();
-    expect(screen.getByText('Charge flow')).toBeTruthy();
+    // The summary moved to the row's tooltip.
+    expect(screen.getByText('Payments API').closest('button')!.getAttribute('title')).toBe('Payments API\nCharge flow');
     expect(screen.getByText('Glossary')).toBeTruthy();
     expect(screen.getByText('Global')).toBeTruthy();
     expect(screen.queryByText('Marketing site')).toBeNull();
@@ -333,7 +334,8 @@ describe('doc list', () => {
     await screen.findByText('Payments API');
     expect(screen.getByTitle('2 docs').textContent).toBe('2');
     expect(screen.getByTitle('Global').textContent).toBe('Global');
-    expect(screen.getByTitle('Last edited by an agent')).toBeTruthy();
+    // Agent edits from before tracking started are not flagged as new.
+    expect(screen.queryByText('New edits')).toBeNull();
     fireEvent.change(screen.getByLabelText('Search design docs'), { target: { value: 'Payments' } });
     expect(await screen.findByTitle('1 doc')).toBeTruthy();
 
@@ -521,6 +523,44 @@ describe('doc list sections', () => {
     // Filtering to one project hides the grouping toggle.
     pick('project', /^Site/);
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Group by project' })).toBeNull());
+  });
+
+  it('lists the current project first in the nav panel', async () => {
+    const harness = createHarness({ context: { projectId: 'p2' } });
+    seed(harness.store, { title: 'Landing page', projectId: 'p2' });
+    seed(harness.store, { title: 'Checkout', projectId: 'p1' });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+
+    await waitFor(() => expect(sectionNames()).toEqual(['Site', 'App']));
+    expect(within(screen.getByRole('region', { name: 'Site' })).getByText('Here')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'App' })).queryByText('Here')).toBeNull();
+  });
+
+  it('quotes the waiting comment, hides Draft, and flags agent edits until the doc is opened', async () => {
+    localStorage.setItem('zcc.design-docs.list-seen', JSON.stringify(JSON.stringify({ since: 0, docs: {} })));
+    const harness = createHarness();
+    const plan = seed(harness.store, { title: 'Plan', projectId: 'p1' });
+    seed(harness.store, { title: 'Glossary', projectId: null });
+    const review = seed(harness.store, { title: 'Onboarding', projectId: 'p1' });
+    await harness.asAgent((store) => store.update(plan.id, { status: 'review' }, AGENT));
+    await harness.asAgent((store) => store.addComment(review.id, { body: 'Which\n  numbers?' }, AGENT));
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+
+    await waitFor(() => expect(sectionNames()).toEqual(['Needs me', 'Recent']));
+    const excerpt = row('Onboarding').querySelector('.dd-doc-row-excerpt')!;
+    expect(excerpt.querySelector('.dd-doc-row-excerpt-body')!.textContent).toBe('Which numbers?');
+    expect(excerpt.querySelector('.dd-doc-row-excerpt-author')!.textContent).toBe('Architect');
+    // One comment: the excerpt says it, so no separate count.
+    expect(within(row('Onboarding')).queryByTitle('1 open comments')).toBeNull();
+    expect(within(row('Plan')).getByText('In review')).toBeTruthy();
+    expect(within(row('Glossary')).queryByText('Draft')).toBeNull();
+
+    expect(within(row('Plan')).getByText('New edits')).toBeTruthy();
+    expect(within(row('Glossary')).queryByText('New edits')).toBeNull();
+    fireEvent.click(row('Plan'));
+    await waitFor(() => expect(within(row('Plan')).queryByText('New edits')).toBeNull());
+    const seen = JSON.parse(JSON.parse(localStorage.getItem('zcc.design-docs.list-seen')!)) as { docs: Record<string, number> };
+    expect(seen.docs[plan.id]).toBe(harness.store.summary(plan.id).updatedAt);
   });
 
   it('pins docs, surfaces docs with open comments, and nests alternatives', async () => {

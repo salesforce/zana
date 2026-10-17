@@ -324,10 +324,11 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  min-width: 0;
+  gap: 2px;
   width: 100%;
-  margin-bottom: 2px;
-  padding: 9px 10px;
+  margin-bottom: 1px;
+  padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
@@ -336,8 +337,15 @@ export const DESIGN_DOCS_STYLES = `
 }
 .dd-doc-row:hover { background: var(--bg-hover); }
 .dd-doc-row.on { background: var(--bg-elevated); border-color: var(--border); }
-.dd-doc-row-top { display: flex; align-items: flex-start; gap: 8px; }
-.dd-doc-row-title { flex: 1 1 auto; min-width: 0; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.dd-doc-row-top { display: flex; align-items: center; gap: 6px; }
+.dd-doc-row-title { flex: 1 1 auto; min-width: 0; overflow: hidden; font-weight: 550; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.dd-doc-row-top > .dd-time { flex: 0 0 auto; color: var(--text-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dd-doc-row-excerpt { display: flex; align-items: center; gap: 4px; min-width: 0; color: var(--text-muted); font-size: 11.5px; }
+.dd-doc-row-excerpt > svg { flex: 0 0 auto; color: var(--accent-gold); }
+.dd-doc-row-excerpt-body { flex: 0 1 auto; min-width: 3em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Agent labels can be a whole thread title: never let one crowd out the comment. */
+.dd-doc-row-excerpt-author { flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }
+.dd-doc-row-excerpt-author::before { content: '— '; }
 .dd-doc-row-summary {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -349,9 +357,12 @@ export const DESIGN_DOCS_STYLES = `
 }
 .dd-doc-row-meta { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 11.5px; }
 .dd-doc-row-meta > span { display: inline-flex; align-items: center; gap: 3px; }
-.dd-doc-row-meta > span.dd-doc-row-project { display: block; flex: 0 1 auto; min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.dd-doc-row-meta > span.dd-doc-row-project { flex: 0 1 auto; gap: 5px; min-width: 0; color: var(--text-muted); }
+.dd-doc-row-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-doc-row-unseen { flex: 0 0 auto; color: var(--accent-blue); font-weight: 600; }
+.dd-swatch { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 2px; }
 .dd-doc-row-comments { color: var(--accent-gold); }
-.dd-doc-row-alt { position: relative; width: calc(100% - 14px); margin-left: 14px; padding-top: 7px; padding-bottom: 7px; }
+.dd-doc-row-alt { position: relative; width: calc(100% - 14px); margin-left: 14px; padding-top: 4px; padding-bottom: 4px; }
 .dd-doc-row-alt::before { content: ''; position: absolute; left: -8px; top: 0; height: 50%; width: 6px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .dd-doc-row-badge { flex: 0 0 auto; margin-top: 1px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent-gold) 14%, transparent); color: var(--accent-gold); font-size: 10.5px; font-weight: 600; line-height: 16px; }
 .dd-list-group + .dd-list-group { margin-top: 4px; }
@@ -369,8 +380,6 @@ export const DESIGN_DOCS_STYLES = `
   color: var(--text-dim);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
   text-align: left;
   cursor: pointer;
 }
@@ -378,6 +387,7 @@ export const DESIGN_DOCS_STYLES = `
 .dd-list-section-caret { flex: 0 0 auto; transition: transform 120ms ease; }
 .dd-list-section[aria-expanded='false'] .dd-list-section-caret { transform: rotate(-90deg); }
 .dd-list-section-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-list-section-here { flex: 0 0 auto; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent-blue) 14%, transparent); color: var(--accent-blue); font-size: 10px; line-height: 15px; }
 .dd-list-section-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; letter-spacing: 0; }
 .dd-list-section-pinned { color: var(--accent-blue); }
 .dd-list-section-needs-me { color: var(--accent-gold); }

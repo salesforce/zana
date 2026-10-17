@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DesignDocSummary } from '../shared/contract.js';
-import { buildSections, parseCollapsed, toggleCollapsed } from './doc-sections.js';
+import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed } from './doc-sections.js';
 
 const actor = { kind: 'user' as const, label: 'You', threadId: null };
 
@@ -48,6 +48,31 @@ describe('buildSections', () => {
       ['App', 1, [['d']]],
       ['Global', 1, [['e']]]
     ]);
+  });
+
+  it('lists the current project first and marks it', () => {
+    const docs = [doc('a', { projectId: 'p2' }), doc('b', { projectId: 'p1' }), doc('c', { projectId: 'p1', openComments: 1 })];
+    const sections = buildSections(docs, { byProject: true, projectName: names, currentProjectId: 'p1' });
+    expect(shape(sections)).toEqual([
+      ['Needs me', 1, [['c']]],
+      ['App', 1, [['b']]],
+      ['Site', 1, [['a']]]
+    ]);
+    expect(sections.map((section) => [section.projectId, section.current])).toEqual([
+      [undefined, undefined],
+      ['p1', true],
+      ['p2', false]
+    ]);
+    // A current project with nothing left to list gets no empty section.
+    expect(shape(buildSections([doc('c', { projectId: 'p1', openComments: 1 })], { byProject: true, projectName: names, currentProjectId: 'p1' }))).toEqual([
+      ['Needs me', 1, [['c']]]
+    ]);
+  });
+
+  it('colors projects stably', () => {
+    expect(projectSwatch('p1')).toBe(projectSwatch('p1'));
+    expect(projectSwatch('p1')).toMatch(/^hsl\(\d+ 62% 52%\)$/);
+    expect(projectSwatch(null)).toBe('var(--text-dim)');
   });
 
   it('keeps one timeline when not grouping by project', () => {

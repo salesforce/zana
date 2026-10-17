@@ -138,7 +138,7 @@ function DocPicker({ projectId, onPick }: { projectId: string | null; onPick(doc
             <button key={doc.id} type="button" className="dd-doc-row" onClick={() => onPick(doc.id)}>
               <span className="dd-doc-row-top">
                 <span className="dd-doc-row-title">{doc.title}</span>
-                <StatusPill status={doc.status} compact />
+                {doc.status !== 'draft' ? <StatusPill status={doc.status} compact /> : null}
               </span>
               {doc.summary ? <span className="dd-doc-row-summary">{doc.summary}</span> : null}
               <span className="dd-doc-row-meta">
