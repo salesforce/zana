@@ -2340,6 +2340,12 @@ export interface AppConfig {
    */
   classicSessionViewEnabled?: boolean;
   /**
+   * Opt-in (Experimental) visibility of the core Settings > Peers page. Even when
+   * ON the page only appears while an installed, enabled plugin declares
+   * `zcc.peers`. Default OFF. Visibility only: links and their data are untouched.
+   */
+  peersSettingsEnabled?: boolean;
+  /**
    * Idle / blocked dwell (seconds) before the catch-up-summary add-on fires its
    * micro-call. On the working/blocked → idle edge (or entering 'blocked'), the
    * service arms a timer of this length; it generates ONLY if the agent is still
@@ -5373,6 +5379,8 @@ export interface PluginAppEntry {
   appUrl: string | null;
   /** Newer catalog version from the last `checkUpdates()` sweep, when any. */
   availableVersion?: string;
+  /** Plugin declares `zcc.peers: true` (it links to other installs). */
+  peers?: boolean;
   projectTab?: {
     label?: string;
     icon?: string;

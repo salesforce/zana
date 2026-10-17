@@ -869,6 +869,53 @@ export interface ZccNavigate {
   openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions): Promise<boolean>;
 }
 
+/** Why a pasted deep link was not routed. `unavailable` outside the desktop app and on older hosts. */
+export type ZccDeepLinkRejectReason =
+  | 'unavailable'
+  | 'not-a-string'
+  | 'too-long'
+  | 'control-characters'
+  | 'malformed'
+  | 'wrong-scheme'
+  | 'bad-plugin-id'
+  | 'bad-route'
+  | 'bad-query'
+  | 'bad-encoding'
+  | 'payload-too-long';
+
+export type ZccDeepLinkOpenResult =
+  | { ok: true; pluginId: string; route: string }
+  | { ok: false; reason: ZccDeepLinkRejectReason };
+
+/**
+ * Links of the form `<base>plugin/<pluginId>/<route>?d=<payload>`. A link never
+ * performs an action: the host routes `(route, payload)` to the plugin's handler
+ * and the plugin must show its own confirmation before acting. `payload` is an
+ * opaque, untrusted string (at most 4096 characters, no whitespace or control
+ * characters); treat it like any user-pasted input.
+ */
+export interface ZccDeepLinks {
+  /**
+   * The link prefix for this build: `zana://` when packaged, `zana-dev://` in
+   * `pnpm run dev`, null where links are not supported (E2E, web, older hosts).
+   * Build a link as `${base}plugin/${pluginId}/${route}?d=${encodeURIComponent(payload)}`.
+   */
+  base(): string | null;
+  /**
+   * Receive links for `route` (lowercase `[a-z0-9-]` segments joined by `/`,
+   * without leading or trailing slash). Links that arrived before a handler for
+   * the route was registered (for example the plugin view was not mounted yet)
+   * are queued by the host for a short time and delivered on registration, in
+   * order. Returns an unsubscribe function; call it on unmount.
+   */
+  on(route: string, handler: (payload: string | null) => void): () => void;
+  /**
+   * Validate and route a pasted link (any known scheme, for example from an
+   * "Open link" field). The host re-validates; the link may name any plugin.
+   */
+  open(rawLink: string): Promise<ZccDeepLinkOpenResult>;
+}
+
 /** A conversation to show, or a draft to prefill the side panel's composer with. */
 export type ZccPanelAgentOptions =
   | { threadId: string; title?: string }
@@ -960,6 +1007,8 @@ export interface PluginSdkApp {
   useSettings(): PluginSettingsState;
   useZccContext(): ZccContext;
   useZccNavigate(): ZccNavigate;
+  /** Deep links for the calling plugin. Absent on hosts that predate them. */
+  useZccDeepLinks?(): ZccDeepLinks;
   useWindowTitle(title: ZccWindowTitle | null | undefined): void;
   useComposer(): PluginComposerApi;
   useComposerView(): ComposerView;

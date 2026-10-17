@@ -79,7 +79,7 @@ describe('sheet geometry', () => {
     const base = sheetHeight(view.request);
     expect(base).toBeGreaterThanOrEqual(240);
     expect(sheetHeight({ ...view.request, binding: { ...binding, revision: 'r', confirmText: 'p' }, summary: 's'.repeat(200), details: ['d'] })).toBeGreaterThan(base);
-    expect(sheetHeight({ ...view.request, summary: 's'.repeat(600), details: Array(8).fill('d'.repeat(240)) })).toBe(640);
+    expect(sheetHeight({ ...view.request, summary: 's'.repeat(600), details: Array(8).fill('d'.repeat(240)) })).toBe(720);
   });
 
   it('opens a locked-down modal child', () => {

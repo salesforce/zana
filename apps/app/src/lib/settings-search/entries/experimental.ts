@@ -201,6 +201,25 @@ export const entries: readonly SettingsSearchEntry[] = [
     keywords: ['menubar', 'tray', 'dropdown'],
     kind: 'setting',
     value: onOff((c) => c.menubarPopoverEnabled, true)
+  },
+  {
+    id: 'experimental.peers-section',
+    section: 'experimental',
+    anchor: 'peers-visibility',
+    label: 'Peers',
+    help: 'Links to other Zana installs exist only because a plugin uses them. Off by default.',
+    keywords: ['peer', 'links', 'other installs'],
+    kind: 'subsection'
+  },
+  {
+    id: 'experimental.show-peers',
+    section: 'experimental',
+    anchor: 'peers-visibility',
+    label: 'Show Peers in Settings',
+    help: 'Adds a Peers page under Remote that lists plugin links to other installs. It appears only while an installed, enabled plugin supports peers. Hiding it never removes links.',
+    keywords: ['peer', 'peers', 'plugin links'],
+    kind: 'setting',
+    value: onOff((c) => c.peersSettingsEnabled)
   }
 ];
 

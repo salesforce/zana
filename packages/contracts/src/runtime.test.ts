@@ -12,7 +12,8 @@ import {
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   ServerRuntimeInboundSchema,
-  normalizeNativeToolPolicyReason
+  normalizeNativeToolPolicyReason,
+  PluginAppSnapshotSchema
 } from './runtime.js';
 
 const request = {
@@ -247,5 +248,19 @@ describe('native tool policy runtime contract', () => {
       { action: 'deny', reason: 'r'.repeat(NATIVE_TOOL_POLICY_REASON_MAX_CHARS + 1) },
       { action: 'allow', reason: 'x' }, [], null
     ]) expect(NativeToolPolicyDecisionSchema.safeParse(value).success).toBe(false);
+  });
+});
+
+describe('PluginAppSnapshotSchema peers flag', () => {
+  const base = {
+    id: 'sample', name: 'Sample', description: '', icon: 'Puzzle', enabled: true,
+    provenance: 'direct', status: 'running', appUrl: null
+  };
+  it('accepts an optional boolean peers flag', () => {
+    expect(PluginAppSnapshotSchema.safeParse(base).success).toBe(true);
+    expect(PluginAppSnapshotSchema.safeParse({ ...base, peers: true }).success).toBe(true);
+  });
+  it('rejects a non-boolean peers flag', () => {
+    expect(PluginAppSnapshotSchema.safeParse({ ...base, peers: 'yes' }).success).toBe(false);
   });
 });

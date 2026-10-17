@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { sqliteWorkerConfiguration } from '@zana-ai/zcc-db';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk';
-import { createPluginWorkerBridge } from './plugin-worker-bridge.js';
+import { createPluginWorkerBridge, PEER_WORKER_COMMIT_TIMEOUT_MS } from './plugin-worker-bridge.js';
 
 let active = 0;
 function workerEntry(): string {
@@ -31,7 +31,9 @@ export function createIsolatedPluginRuntime(options: {
   let bridge!: ReturnType<typeof createPluginWorkerBridge>;
   const worker = new Worker(entry, { execArgv, workerData: {}, resourceLimits: { maxOldGenerationSizeMb: 256, stackSizeMb: 4 } });
   active++;
-  bridge = createPluginWorkerBridge(worker, 'server');
+  let termination: Promise<number> | undefined;
+  const terminate = () => termination ??= worker.terminate();
+  bridge = createPluginWorkerBridge(worker, 'server', { terminate });
   let stopped = false;
   let ready = false;
   let apiWaitStarted: number | undefined;
@@ -42,15 +44,24 @@ export function createIsolatedPluginRuntime(options: {
   // Disposal can race the installer attaching its await during application shutdown.
   void started.catch(() => {});
   const startup = setTimeout(() => fail(new Error('Plugin factory timed out')), options.startupTimeoutMs ?? 10_000);
+  // A synchronous peer commit blocks worker heartbeats, so it is exempt — but only for a bounded grace. The bridge
+  // terminates a commit at PEER_WORKER_COMMIT_TIMEOUT_MS; a count that stops moving past that (e.g. a failed
+  // termination) must not disable the watchdog forever. Any change in the count is progress and restarts the grace.
+  let commitCount = 0, commitProgressAt = 0;
+  const commitGraceActive = (now: number) => {
+    const count = bridge.activeCommits;
+    if (count !== commitCount) { commitCount = count; commitProgressAt = now; }
+    return count > 0 && now - commitProgressAt < PEER_WORKER_COMMIT_TIMEOUT_MS + 5_000;
+  };
   const watchdog = setInterval(() => {
-    if (ready && !(apiWaitStarted !== undefined && Date.now() - apiWaitStarted < 10_000) && Date.now() - lastHeartbeat > (options.heartbeatTimeoutMs ?? 1500)) fail(new Error('Plugin event loop stopped responding'));
+    if (ready && !commitGraceActive(Date.now()) && !(apiWaitStarted !== undefined && Date.now() - apiWaitStarted < 10_000) && Date.now() - lastHeartbeat > (options.heartbeatTimeoutMs ?? 1500)) fail(new Error('Plugin event loop stopped responding'));
   }, 250);
   watchdog.unref();
   function dispose(error = new Error('Plugin runtime stopped')) {
     if (stopped) return;
     stopped = true; clearTimeout(startup); clearInterval(watchdog);
     bridge.dispose(error); if (!ready) rejectReady(error);
-    void worker.terminate();
+    void terminate();
   }
   function fail(error: Error) { if (stopped) return; dispose(error); options.onFailure(error); }
   worker.on('message', message => {
@@ -94,5 +105,5 @@ export function createIsolatedPluginRuntime(options: {
     }),
     entry: options.entry, generation: options.generation, databasePath: options.databasePath, sqlite: sqliteWorkerConfiguration()
   }}); } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
-  return { started, dispose };
+  return { started, dispose, get retainedFunctions() { return bridge.retainedFunctions; } };
 }

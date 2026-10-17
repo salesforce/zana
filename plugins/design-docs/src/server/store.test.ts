@@ -12,9 +12,231 @@ import {
 import { formatBytes } from '../shared/display.js';
 import { AGENT_FALLBACK_LABEL, DesignDocError, DesignDocStore, applyEdits, slugify } from './store.js';
 import { createTestDatabase } from './test-db.js';
+import { DesignDocSyncStore } from './sync-store.js';
+import { MAX_PEER_STORED_BYTES, MAX_PEER_STORED_VERSIONS } from '../shared/peer-limits.js';
 
 const user: DocActor = { kind: 'user', label: 'You', threadId: null };
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
+
+describe('DesignDocStore peer mutation boundary', () => {
+  it.each([{ status: 'approved' as const }, { title: 'Stale' }, { tags: ['stale'] }, { entryPath: 'other.md' }])(
+    'rejects stale paired metadata %j without journal or intents', (patch) => {
+      const db = createTestDatabase();
+      let sync!: DesignDocSyncStore;
+      const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+      sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+      sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+      const doc = store.create({ title: 'Reviewed', files: [{ path: 'README.md', content: 'reviewed' }, { path: 'other.md', content: 'other' }] }, user);
+      const expectedHead = sync.head('repo', doc.id)!;
+      store.writeFile(doc.id, { path: 'README.md', content: 'unreviewed replacement' }, agent);
+      const before = store.get(doc.id), operations = sync.operations('repo');
+      expectError(() => store.update(doc.id, { ...patch, expectedHead }, user), 'conflict', /head/);
+      expectError(() => store.update(doc.id, patch, user), 'conflict', /expectedHead/);
+      expect(store.get(doc.id)).toEqual(before);
+      expect(sync.operations('repo')).toEqual(operations);
+      expect(sync.readyIntents('repo')).toEqual([]);
+      store.update(doc.id, { ...patch, expectedHead: sync.head('repo', doc.id) }, user);
+      expect(sync.operations('repo')).toHaveLength(operations.length + 1);
+      expect(sync.readyIntents('repo')).toHaveLength('status' in patch ? 1 : 0);
+    }
+  );
+
+  it.each([undefined, 'README.md'])('journals nested imports with entry %s and no autosync', (entry) => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    const doc = store.create({ title: 'Import', template: 'blank' }, user);
+    const before = sync.operations('repo').length;
+    store.importFiles(doc.id, [{ path: 'README.md', content: 'imported' }], user, entry);
+    expect(sync.operations('repo')).toHaveLength(before + 1);
+    const op = sync.operations('repo').at(-1)!;
+    expect(op.origin).toBe('import');
+    expect(sync.version('repo', op.id)!.closure.files[0]!.content).toBe('imported');
+    expect(sync.readyIntents('repo')).toEqual([]);
+  });
+
+  it('rolls back nested imports when capture fails and discards failed child mutations', () => {
+    const db = createTestDatabase();
+    let fail = false;
+    const mutations: unknown[] = [];
+    const store = new DesignDocStore(db, { onMutation: (mutation) => {
+      if (fail) throw new Error('capture quota exhausted');
+      mutations.push(mutation);
+    } });
+    const doc = store.create({ title: 'Import', template: 'blank' }, user);
+    const before = store.get(doc.id), history = store.history(doc.id), file = store.readFile(doc.id, 'README.md');
+    fail = true;
+    expect(() => store.importFiles(doc.id, [{ path: 'README.md', content: 'rollback' }], user)).toThrow('capture quota exhausted');
+    expect(store.get(doc.id)).toEqual(before);
+    expect(store.history(doc.id)).toEqual(history);
+    expect(store.readFile(doc.id, 'README.md')).toEqual(file);
+    fail = false;
+    expect(() => store.importFiles(doc.id, [{ path: 'README.md', content: 'failed child' }, { path: '../bad.md', content: '' }], user)).toThrow();
+    store.importFiles(doc.id, [{ path: 'README.md', content: file.content }], user);
+    expect(mutations).toHaveLength(1);
+    store.importFiles(doc.id, [{ path: 'README.md', content: 'success' }], user);
+    expect(mutations).toHaveLength(2);
+  });
+
+  it.each(['bytes', 'versions'])('rolls back imported domain and journal state at %s quota', (cap) => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    const doc = store.create({ title: 'Quota', template: 'blank' }, user);
+    if (cap === 'bytes') db.prepare('UPDATE sync_versions SET bytes = ?').run(MAX_PEER_STORED_BYTES);
+    else db.runScript(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < ${MAX_PEER_STORED_VERSIONS - 1})
+      INSERT INTO sync_versions SELECT 'repo', 'fake-' || x, 'doc', 'hash', '{}', 0, 0 FROM n;`);
+    const before = store.get(doc.id), files = store.readAllFiles(doc.id), history = store.history(doc.id);
+    const operations = sync.operations('repo');
+    expect(() => store.importFiles(doc.id, [{ path: 'README.md', content: 'quota failure' }], user)).toThrow(/capacity/);
+    expect(store.get(doc.id)).toEqual(before);
+    expect(store.readAllFiles(doc.id)).toEqual(files);
+    expect(store.history(doc.id)).toEqual(history);
+    expect(sync.operations('repo')).toEqual(operations);
+    expect(sync.readyIntents('repo')).toEqual([]);
+  });
+
+  it('keeps unpaired metadata CAS optional, validates explicit heads, and requires paired no-head assertion', () => {
+    const db = createTestDatabase();
+    const store = new DesignDocStore(db);
+    const doc = store.create({ title: 'Unpaired', template: 'blank' }, user);
+    expect(doc.head).toBeNull();
+    store.update(doc.id, { title: 'Optional' }, user);
+    store.update(doc.id, { title: 'Explicit null', expectedHead: null }, user);
+    expectError(() => store.update(doc.id, { title: 'Bad', expectedHead: '' }, user), 'invalid', /non-empty/);
+    expectError(() => store.update(doc.id, { title: 'Stale', expectedHead: 'missing' }, user), 'conflict', /head/);
+    const sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    expectError(() => store.update(doc.id, { title: 'No head' }, user), 'conflict', /expectedHead/);
+    // Local-only navigation and empty patches replicate nothing, so they need no peer head.
+    const other = store.create({ title: 'Other', template: 'blank' }, user);
+    expect(store.update(doc.id, {}, user).title).toBe('Explicit null');
+    expect(store.update(doc.id, { alternativeTo: other.id }, user).alternativeTo).toBe(other.id);
+    expectError(() => store.update(doc.id, { alternativeTo: null, title: 'x' }, user), 'conflict', /expectedHead/);
+    expect(store.update(doc.id, { title: 'Paired null', expectedHead: null }, user).title).toBe('Paired null');
+  });
+
+  it('re-reads expected head inside the transaction, not from the pre-transaction lookup', () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    const doc = store.create({ title: 'Transaction CAS', template: 'blank' }, user);
+    const expectedHead = store.summary(doc.id).head;
+    const transaction = db.transaction.bind(db);
+    let replace = true;
+    db.transaction = (fn) => {
+      if (replace) {
+        replace = false;
+        store.writeFile(doc.id, { path: 'README.md', content: 'replacement before lock' }, user);
+      }
+      return transaction(fn);
+    };
+    expectError(() => store.update(doc.id, { status: 'approved', expectedHead }, user), 'conflict', /head changed/);
+    expect(store.summary(doc.id).status).toBe('draft');
+    expect(store.readFile(doc.id, 'README.md').content).toBe('replacement before lock');
+    expect(sync.operations('repo')).toHaveLength(2);
+    expect(sync.readyIntents('repo')).toEqual([]);
+  });
+
+  it.each(['write', 'edit', 'delete', 'rename', 'restore'])('rejects ABA replacement for %s even when revision repeats', (mode) => {
+    const db = createTestDatabase();
+    const mutations: unknown[] = [];
+    const store = new DesignDocStore(db, { onMutation: (mutation) => mutations.push(mutation) });
+    const doc = store.create({ title: 'ABA', files: [{ path: 'README.md', content: 'reviewed' }, { path: 'other.md', content: 'other' }] }, user);
+    const file = store.readFile(doc.id, 'README.md'), revision = store.history(doc.id).find((row) => row.path === file.path)!;
+    // Simulate a peer projection replacing a path while its local counter repeats.
+    db.prepare('UPDATE doc_files SET sync_id = ?, content = ? WHERE doc_id = ? AND path = ?').run('replacement-id', 'unreviewed', doc.id, file.path);
+    const options = { baseRevision: file.revision, baseFileId: file.fileId };
+    const before = store.get(doc.id), history = store.history(doc.id), count = mutations.length;
+    const mutate = () => {
+      if (mode === 'write') return store.writeFile(doc.id, { path: file.path, content: 'stale', ...options }, user);
+      if (mode === 'edit') return store.editFile(doc.id, { path: file.path, edits: [{ oldText: 'unreviewed', newText: 'stale' }], ...options }, user);
+      if (mode === 'delete') return store.deleteFile(doc.id, file.path, user, options);
+      if (mode === 'rename') return store.renameFile(doc.id, file.path, 'moved.md', user, options);
+      return store.restoreRevision(doc.id, revision.id, user, options);
+    };
+    expectError(mutate, 'conflict', /identity changed/);
+    expect(store.get(doc.id)).toEqual(before);
+    expect(store.history(doc.id)).toEqual(history);
+    expect(store.readFile(doc.id, file.path).content).toBe('unreviewed');
+    expect(mutations).toHaveLength(count);
+  });
+
+  it('exposes stable file ids, preserves rename identity, and fences recreation without history', () => {
+    const db = createTestDatabase();
+    const store = new DesignDocStore(db);
+    const doc = store.create({ title: 'Identity', files: [{ path: 'README.md', content: 'one' }, { path: 'other.md', content: 'two' }] }, user);
+    const original = store.readFile(doc.id, 'other.md');
+    expect(doc.files.find((file) => file.path === original.path)!.fileId).toBe(original.fileId);
+    expect(store.readAllFiles(doc.id).find((file) => file.path === original.path)!.fileId).toBe(original.fileId);
+    const moved = store.renameFile(doc.id, original.path, 'moved.md', user, { baseFileId: original.fileId, baseRevision: original.revision });
+    expect(moved.fileId).toBe(original.fileId);
+    store.deleteFile(doc.id, moved.path, user, { baseFileId: moved.fileId });
+    db.prepare('DELETE FROM doc_revisions WHERE doc_id = ? AND path = ?').run(doc.id, moved.path);
+    const recreated = store.writeFile(doc.id, { path: moved.path, content: 'new', baseRevision: 0, baseFileId: null }, user);
+    expect(recreated.revision).toBe(moved.revision);
+    expect(recreated.fileId).not.toBe(moved.fileId);
+    expectError(() => store.writeFile(doc.id, { path: moved.path, content: 'stale', baseRevision: moved.revision, baseFileId: moved.fileId }, user), 'conflict', /identity/);
+    expectError(() => store.writeFile(doc.id, { path: moved.path, content: 'bad', baseFileId: '' }, user), 'invalid', /non-empty/);
+    expectError(() => store.writeFile(doc.id, { path: 'absent.md', content: 'bad', baseFileId: moved.fileId }, user), 'conflict', /identity/);
+    expect(store.writeFile(doc.id, { path: moved.path, content: 'fresh', baseRevision: recreated.revision, baseFileId: recreated.fileId }, user).fileId).toBe(recreated.fileId);
+  });
+
+  it('blocks paired removal without a sync observer and rolls back failed capture', () => {
+    const db = createTestDatabase();
+    const store = new DesignDocStore(db);
+    const sync = new DesignDocSyncStore(db);
+    sync.initialize('repo', 'replica-a');
+    expect(store.isPaired()).toBe(false);
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    expect(store.isPaired()).toBe(true);
+    const doc = store.create({ title: 'Keep', template: 'blank' }, user);
+    expectError(() => store.remove(doc.id), 'conflict', /sync capture is unavailable/);
+    expect(store.find(doc.id)).not.toBeNull();
+    const failing = createTestDatabase();
+    const capture = new DesignDocStore(failing, { onMutation: (mutation) => { if (mutation.kind === 'delete-doc') throw new Error('tombstone failed'); } });
+    const kept = capture.create({ title: 'Kept on failure', template: 'blank' }, user);
+    expect(() => capture.remove(kept.id)).toThrow('tombstone failed');
+    expect(capture.find(kept.id)).not.toBeNull();
+    expect(failing.prepare('SELECT COUNT(*) AS n FROM doc_files WHERE doc_id = ?').get(kept.id)).toEqual({ n: 1 });
+    const other = createTestDatabase();
+    const observed = new DesignDocStore(other, { onMutation: () => { throw new Error('capture failed'); } });
+    expect(() => observed.create({ title: 'Rollback', status: 'approved', template: 'blank' }, user)).toThrow('capture failed');
+    expect(observed.list()).toEqual([]);
+    expect(other.prepare('SELECT * FROM doc_files').all()).toEqual([]);
+    expect(other.prepare('SELECT * FROM doc_revisions').all()).toEqual([]);
+  });
+
+  it('keeps stable file identity across rename and freezes file/comment tombstone state', () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    const repo = sync.localRepository()!.repoId;
+    const doc = store.create({ title: 'Rename', files: [{ path: 'README.md', content: 'one' }, { path: 'other.md', content: 'two' }] }, user);
+    const initial = sync.version(repo, sync.head(repo, doc.id)!)!;
+    const identity = initial.closure.files.find((file) => file.path === 'other.md')!.sync_id;
+    const comment = store.addComment(doc.id, { body: 'anchor', path: 'other.md' }, user);
+    store.renameFile(doc.id, 'other.md', 'renamed.md', user);
+    const renamed = sync.version(repo, sync.head(repo, doc.id)!)!;
+    expect(renamed.closure.files.find((file) => file.path === 'renamed.md')!.sync_id).toBe(identity);
+    expect(renamed.closure.comments[0]!.path).toBe('renamed.md');
+    store.deleteFile(doc.id, 'renamed.md', user);
+    store.deleteComment(doc.id, comment.id, user);
+    const deleted = sync.version(repo, sync.head(repo, doc.id)!)!;
+    expect(deleted.closure.files).toHaveLength(1);
+    expect(deleted.closure.comments).toHaveLength(0);
+    expect(deleted.closure.history.some((row) => row.path === 'renamed.md' && row.op === 'delete')).toBe(true);
+    expect(initial.closure.files).toHaveLength(2);
+  });
+});
 
 function makeStore(options: { maxHistoryBytes?: number; frozenClock?: boolean; ids?: 'counter' | 'descending' } = {}) {
   let clock = 1_000;

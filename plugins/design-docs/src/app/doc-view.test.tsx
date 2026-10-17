@@ -9,6 +9,8 @@ import { MAX_BINARY_FILE_BYTES } from '../shared/limits.js';
 import { DocView, type DocLayout } from './DocView.js';
 import { draftDocAgent } from './Agents.js';
 import { AGENT, createHarness, type Harness } from './test-harness.js';
+import { DocHeader } from './DocHeader.js';
+import { createApi } from './api.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
@@ -82,6 +84,87 @@ const editor = (path: string) => screen.getByRole('textbox', { name: `Edit ${pat
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('DocHeader overlays', () => {
+  it('opens and dismisses the peer conflicts dialog and the more-actions menu', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    harness.render(<DocHeader doc={doc} projects={[]} compact={false} onDeleted={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Peer conflicts' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Peer conflicts' });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Peer conflicts' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getAllByRole('menuitem').length).toBeGreaterThan(0);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryAllByRole('menuitem')).toHaveLength(0));
+  });
+});
+
+describe('metadata consent', () => {
+  it.each(['title', 'summary', 'tags', 'status'])('pins %s consent across realtime head refresh', async (field) => {
+    const harness = createHarness();
+    const doc = { ...simpleDoc(harness), head: 'reviewed-head' };
+    const view = harness.render(<DocHeader doc={doc} projects={[]} compact={false} onDeleted={() => undefined} />);
+    if (field === 'tags') fireEvent.click(screen.getByRole('button', { name: 'Tag' }));
+    else if (field === 'status') fireEvent.click(screen.getByTitle('Change status'));
+    else fireEvent.click(screen.getByTitle(`Edit ${field}`));
+    view.rerender(<DocHeader doc={{ ...doc, head: 'replacement-head' }} projects={[]} compact={false} onDeleted={() => undefined} />);
+    if (field === 'status') fireEvent.click(screen.getByRole('menuitem', { name: 'Approved' }));
+    else {
+      const input = screen.getByRole('textbox', { name: field === 'tags' ? 'Add tags' : field === 'title' ? 'Title' : 'Summary' });
+      fireEvent.change(input, { target: { value: 'Reviewed value' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+    }
+    await waitFor(() => expect(harness.toasts).toHaveLength(1));
+    expect(harness.rpcCalls.find((call) => call.method === 'update')!.input).toMatchObject({ expectedHead: 'reviewed-head' });
+  });
+
+  it('serializes file identity CAS without reading a replacement before sending', async () => {
+    const call = vi.fn(async () => ({}));
+    const api = createApi(call);
+    await api.writeFile('doc', { path: 'file.md', content: 'new', baseRevision: 3, baseFileId: 'read-id' });
+    await api.editFile('doc', { path: 'file.md', edits: [], baseRevision: 3, baseFileId: 'read-id' });
+    await api.deleteFile('doc', 'file.md', 3, 'read-id');
+    await api.renameFile('doc', 'file.md', 'moved.md', 3, 'read-id');
+    await api.restore('doc', 7, 0, null);
+    expect(call.mock.calls).toEqual([
+      ['writeFile', { doc: 'doc', path: 'file.md', content: 'new', baseRevision: 3, baseFileId: 'read-id' }],
+      ['editFile', { doc: 'doc', path: 'file.md', edits: [], baseRevision: 3, baseFileId: 'read-id' }],
+      ['deleteFile', { doc: 'doc', path: 'file.md', baseRevision: 3, baseFileId: 'read-id' }],
+      ['renameFile', { doc: 'doc', from: 'file.md', to: 'moved.md', baseRevision: 3, baseFileId: 'read-id' }],
+      ['restore', { doc: 'doc', id: 7, baseRevision: 0, baseFileId: null }]
+    ]);
+  });
+
+  it('sends displayed head for title, summary, status and tags; never retries stale approval', async () => {
+    const harness = createHarness();
+    const doc = { ...simpleDoc(harness), head: 'reviewed-head' };
+    harness.render(<DocHeader doc={doc} projects={[]} compact={false} onDeleted={() => undefined} />);
+    fireEvent.click(screen.getByTitle('Edit title'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'New title' } });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Title' }), { key: 'Enter' });
+    await waitFor(() => expect(harness.rpcCalls.some((call) => call.method === 'update')).toBe(true));
+    fireEvent.click(screen.getByTitle('Edit summary'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Summary' }), { target: { value: 'New summary' } });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Summary' }), { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: 'Tag' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Add tags' }), { target: { value: 'reviewed' } });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Add tags' }), { key: 'Enter' });
+    fireEvent.click(screen.getByTitle('Change status'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Approved' }));
+    await waitFor(() => expect(harness.toasts).toHaveLength(4));
+    expect(harness.rpcCalls.filter((call) => call.method === 'update').map((call) => call.input)).toEqual([
+      { doc: doc.id, title: 'New title', expectedHead: doc.head },
+      { doc: doc.id, summary: 'New summary', expectedHead: doc.head },
+      { doc: doc.id, tags: ['reviewed'], expectedHead: doc.head },
+      { doc: doc.id, status: 'approved', expectedHead: doc.head }
+    ]);
+    expect(harness.toasts.every((toast) => toast.kind === 'error' && /head changed/.test(toast.message))).toBe(true);
+    expect(harness.store.summary(doc.id).status).toBe('draft');
+  });
 });
 
 describe('previewing files', () => {
@@ -500,6 +583,18 @@ describe('file tree', () => {
     await waitFor(() => expect(opened.at(-1)).toEqual([null, true]));
     expect(harness.store.get(doc.id).files.map((file) => file.path)).toEqual(['README.md']);
     expect(await findPane('README.md')).toBeTruthy();
+
+    // The only file left cannot be deleted: the item is disabled and says why, and no RPC is sent.
+    const deletes = harness.rpcCalls.filter((call) => call.method === 'deleteFile').length;
+    await waitFor(() => expect(within(tree()).queryByRole('button', { name: /spec/ })).toBeNull());
+    rowMenu('README.md');
+    const last = screen.getByRole('menuitem', { name: 'Delete' }) as HTMLButtonElement;
+    expect(last.disabled).toBe(true);
+    expect(last.title).toBe('A design doc needs at least one file. Delete the doc instead.');
+    fireEvent.click(last);
+    expect(screen.queryByRole('dialog', { name: 'Delete file' })).toBeNull();
+    expect(harness.rpcCalls.filter((call) => call.method === 'deleteFile')).toHaveLength(deletes);
+    expect(harness.store.get(doc.id).files.map((file) => file.path)).toEqual(['README.md']);
   });
 
   it('warns before renaming or deleting the file with unsaved edits', async () => {
@@ -566,7 +661,7 @@ describe('file tree', () => {
 
     await waitFor(() => expect(harness.toasts.map((entry) => entry.message)).toContain('Added assets/dot.png. Reference it with ![dot.png](assets/dot.png)'));
     expect(harness.toasts).toContainEqual({ message: 'Added assets/My-Logo.svg. Reference it with ![My Logo.svg](assets/My-Logo.svg)', kind: 'info' });
-    expect(harness.toasts.find((entry) => entry.message.startsWith('huge.png is larger than'))?.kind).toBe('error');
+    await waitFor(() => expect(harness.toasts.find((entry) => entry.message.startsWith('huge.png is larger than'))?.kind).toBe('error'));
     expect(harness.store.readFile(doc.id, 'assets/My-Logo.svg').content).toBe('<svg xmlns="http://www.w3.org/2000/svg"/>');
     expect(harness.store.readFile(doc.id, 'assets/dot.png')).toMatchObject({ encoding: 'base64', content: PNG });
     await waitFor(() => expect(harness.toasts.map((entry) => entry.message)).toContain('Added data.json'));
@@ -772,6 +867,10 @@ describe('history', () => {
     await waitFor(() => expect(harness.toasts.at(-1)?.message).toMatch(/^Could not restore: README.md changed since revision 3 \(now 4/));
     await harness.emit({ docId: doc.id });
     await waitFor(() => expect(within(rail).getAllByRole('button', { name: /^Edited/ })).toHaveLength(3));
+    // A live refresh cannot grant new restore consent; reopen the revision to review the new base.
+    fireEvent.click(screen.getByRole('button', { name: 'Close revision' }));
+    fireEvent.click(within(rail).getAllByRole('button', { name: /^Edited/ })[2]!);
+    await screen.findByRole('table', { name: 'Changes in revision 2' });
     fireEvent.click(screen.getByRole('button', { name: /^Restore/ }));
     await waitFor(() => expect(harness.toasts).toContainEqual({ message: 'Restored README.md to revision 2 (now rev 5)', kind: 'info' }));
     expect(harness.store.readFile(doc.id, 'README.md').content).toBe('Line one\nLine 2');
@@ -941,6 +1040,19 @@ describe('agents', () => {
     expect(screen.getByText('Ask an agent')).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByText('Ask an agent')).toBeNull();
+  });
+
+  it('runs a global doc\'s agent in the Default Project unless another is chosen', async () => {
+    const harness = createHarness({ projects: [{ id: 'p1', name: 'App' }, { id: 'quick', name: 'Default Project', quickAgent: true }] });
+    const doc = simpleDoc(harness, 'Glossary', null);
+    renderDoc(harness, doc.id);
+    await findPane('README.md');
+    fireEvent.click(screen.getByRole('button', { name: /Ask agent/ }));
+    const runIn = await screen.findByRole('combobox');
+    await waitFor(() => expect((runIn as HTMLSelectElement).value).toBe('quick'));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Fill the gaps/ }));
+    await waitFor(() => expect(harness.spawn).toHaveBeenCalledTimes(1));
+    expect((harness.spawn.mock.calls[0] as unknown as [{ projectId: string }])[0].projectId).toBe('quick');
   });
 
   it('asks which project runs the agent for a global doc', async () => {

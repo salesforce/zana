@@ -18,14 +18,23 @@ import { environmentPullRequest } from '../services/environments/environment-act
 import { conversationHistoryAsync } from '../services/threads/conversation-history.js';
 import { threadSummary } from './thread-events.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+import { parsePluginLinkNote } from '../services/peers/plugin-link-notes.js';
+import { PEER_ID, validScope } from '../services/peers/peer-auth.js';
+import { linkCapable } from '../services/peers/scoped-link-authority.js';
+import { InvitationError, type PublicInvitationStatus } from '../services/peers/peer-invitation.js';
+import type { PeerLinkView } from '../services/peers/peer-links.js';
+import { SSH_REASONS } from '../services/peers/peer-ssh-contract.js';
 import * as jitiModule from 'jiti';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { openAsyncJsonStore } from '../services/storage/async-json-store.js';
 import { runInNewContext } from 'node:vm';
 import { dirname, join, resolve, sep } from 'node:path';
 import { applyPluginSqliteMigrations } from './plugin-database-migrations.js';
+import { backupCopyHandle, createPluginDatabaseBackup } from './plugin-database-backup.js';
 import { createRequire } from 'node:module';
-import { createSqliteDatabase, listHosts, getPrimaryHost, getConversationThread } from '@zana-ai/zcc-db';
+import { createSqliteDatabase, listHosts, listExecutionHosts, getPrimaryHost, getConversationThread, type HostRow } from '@zana-ai/zcc-db';
+import type { ProductHttpContext } from '../http/product-context.js';
 import type {
   PluginAgentConfigureContext,
   PluginProviderDeclaration,
@@ -38,6 +47,7 @@ import type {
   PluginHttpMethod,
   PluginHttpRequest,
   PluginHttpResponse,
+  PluginPeerRequest,
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginMentionProviderRegistration,
@@ -121,6 +131,15 @@ export const HOST_ZCC_VERSION = packageVersion;
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
 export const FACTORY_TIMEOUT_MS = 10_000;
 
+/**
+ * `threads.spawn({ harness })`. An unrecognised mode rejects instead of being
+ * dropped: dropping it would silently fall back to the first provider.
+ */
+export function parseSpawnHarness(value: unknown): 'project-default' {
+  if (value === 'project-default') return value;
+  throw new Error(`unknown harness mode: ${typeof value === 'string' ? value : typeof value}; expected 'project-default'`);
+}
+
 function parseLibraryScope(value: unknown): 'project' | 'global' | null {
   return value === 'project' || value === 'global' ? value : null;
 }
@@ -170,6 +189,7 @@ export interface PluginHandle {
   projectTabAvailability: Array<PluginProjectTabAvailabilityRegistration & { pluginId: string }>;
   cli: { registration: PluginCliRegistration | null };
   httpRoutes: PluginHttpRouteRecord[];
+  peerHandlers: Map<string, (request: PluginPeerRequest) => unknown | Promise<unknown>>;
   agentTools: PluginAgentToolRecord[];
   dispatchAdmissionHandlers: Array<(request: PluginDispatchAdmissionRequest) => import('@zana-ai/zcc-domain').DispatchAdmissionDecision | Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>>;
   toolPolicyHandlers: Array<(request: PluginToolPolicyRequest) => PluginToolPolicyDecision | Promise<PluginToolPolicyDecision>>;
@@ -366,8 +386,10 @@ export function createPluginApi(
   let stale = false;
   let disposal: Promise<void> | undefined;
   const assistantLifecycle = new AbortController();
+  const peerLifecycle = new AbortController();
   const cliRecord: { registration: PluginCliRegistration | null } = { registration: null };
   const httpRoutes: PluginHttpRouteRecord[] = [];
+  const peerHandlers = new Map<string, (request: PluginPeerRequest) => unknown | Promise<unknown>>();
   const agentTools: PluginAgentToolRecord[] = [];
   const dispatchAdmissionHandlers: PluginHandle['dispatchAdmissionHandlers'] = [];
   const toolPolicyHandlers: PluginHandle['toolPolicyHandlers'] = [];
@@ -377,10 +399,106 @@ export function createPluginApi(
   }> = [];
   const sqliteHandles: Array<{ close(): void }> = [];
   let sharedDatabase: PluginDatabase | null = null;
+  let sharedSqlite: ReturnType<typeof createSqliteDatabase> | null = null;
+  const storageLifecycle = new AbortController();
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
   };
   let remoteEnvironmentRegistration: { refresh(): void; dispose(): void } | null = null;
+  const peerContext = () => {
+    assertLive();
+    if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+    return options.productContext;
+  };
+  const peerArgs = (peerId: string, args: { scope: string }, allowed: readonly string[]) => {
+    if (typeof peerId !== 'string' || !PEER_ID.test(peerId) || peerId === peerContext().productInstanceId ||
+      !args || !validScope(args.scope) || Object.keys(args).some(key => !allowed.includes(key))) throw new Error('invalid peer lifecycle request');
+  };
+  // ---- Invitations: bound to this plugin id; whitelist projections so no internal field can reach a plugin ----
+  const invitationsOf = () => {
+    const ctx = peerContext();
+    if (!ctx.peerInvitations) throw new InvitationError('unavailable');
+    return ctx.peerInvitations;
+  };
+  const publicInvitation = (status: PublicInvitationStatus) => ({
+    invitationId: status.invitationId, role: status.role, scope: status.scope, state: status.state,
+    ...(status.reason ? { reason: status.reason } : {}), localFingerprint: status.localFingerprint,
+    ...(status.peer ? { peer: { instanceId: status.peer.instanceId, name: status.peer.name, fingerprint: status.peer.fingerprint } } : {}),
+    inviterDecision: status.inviterDecision, redeemerDecision: status.redeemerDecision,
+    ...(status.pairingId ? { pairingId: status.pairingId } : {}), generation: status.generation, expiresAt: status.expiresAt,
+    ...(status.consentExpiresAt !== undefined ? { consentExpiresAt: status.consentExpiresAt } : {})
+  });
+  const publicLink = (link: PeerLinkView) => ({
+    pairingId: link.pairingId, peerInstanceId: link.peerInstanceId, scope: link.scope, role: link.role, phase: link.phase, state: link.state,
+    ...(link.peerName ? { peerName: link.peerName } : {}),
+    ...(link.reason ? { reason: link.reason } : {}), ...(link.failure ? { failure: link.failure } : {}),
+    ...(link.retryInMs !== undefined ? { retryInMs: link.retryInMs } : {})
+  });
+  /**
+   * A peer's display name on this app. A plugin-link host's stored name is the Connect label
+   * (`Zana peer link: …`), so prefer the owner store's peer name; an execution host keeps its machine name.
+   */
+  const peerHostName = (ctx: ProductHttpContext, host: HostRow): string =>
+    host.purpose.kind === 'plugin-link' ? (ctx.peerLinkDirectory?.describe(host.id)?.peerName || host.name) : host.name;
+  /** A plugin link claimed only by other plugins is not this plugin's peer; unclaimed (legacy) links stay visible. */
+  const visibleToPlugin = (host: HostRow): boolean =>
+    host.purpose.kind !== 'plugin-link' || host.purpose.uses.length === 0 || host.purpose.uses.some(use => use.pluginId === pluginId);
+  const SSH_REASON_CODES: ReadonlySet<string> = new Set(SSH_REASONS);
+  /** Server-side only: name, code and top frame. The message is never logged; it may embed a token or key. */
+  const logInviteFailure = (error: unknown): void => {
+    const err = error as { name?: unknown; code?: unknown; stack?: unknown } | null;
+    const frame = typeof err?.stack === 'string' ? err.stack.split('\n').find(line => line.trimStart().startsWith('at '))?.trim() : undefined;
+    console.error(`[plugin:${pluginId}] invitation call failed (reported as unavailable): name=${typeof err?.name === 'string' ? err.name : typeof error}` +
+      `${typeof err?.code === 'string' || typeof err?.code === 'number' ? ` code=${err.code}` : ''}${frame ? ` at=${frame}` : ''}`);
+  };
+  /** Only fixed-message InvitationErrors (or caller aborts) escape; any other failure may embed a token or key. */
+  const inviteGuard = async <T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> => {
+    assertLive();
+    signal.throwIfAborted();
+    let result: T;
+    try { result = await run(); }
+    catch (error) {
+      assertLive();
+      signal.throwIfAborted();
+      if (error instanceof InvitationError && SSH_REASON_CODES.has(error.code)) {
+        // The Design Docs setup cards key their guidance on the exact ssh_* code, so the code is the message.
+        throw Object.assign(new InvitationError(error.code), { message: error.code });
+      }
+      if (error instanceof InvitationError) throw error;
+      logInviteFailure(error);
+      throw new InvitationError('unavailable');
+    }
+    assertLive();
+    signal.throwIfAborted();
+    return result;
+  };
+  const inviteArgs = (args: unknown, allowed: readonly string[]): Record<string, unknown> => {
+    if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(key => !allowed.includes(key))) throw new InvitationError('invalid_invitation');
+    return args as Record<string, unknown>;
+  };
+  const inviteId = (value: unknown): string => {
+    if (typeof value !== 'string' || !PEER_ID.test(value)) throw new InvitationError('invalid_invitation');
+    return value;
+  };
+  const ownLinks = async (peerId?: string) => {
+    const ctx = peerContext();
+    if (!ctx.peerLinks) throw new InvitationError('unavailable');
+    return (await ctx.peerLinks.links(peerId)).filter(link => link.pluginId === pluginId);
+  };
+  const peerSignal = (signal?: AbortSignal) => AbortSignal.any([peerLifecycle.signal, AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]);
+  const resolvePeerHost = async (peerId: string, signal: AbortSignal, hosts?: HostRow[]) => {
+    const ctx = peerContext();
+    signal.throwIfAborted();
+    const channel = await ctx.peerChannels.remote(peerId);
+    signal.throwIfAborted();
+    if (!channel || !linkCapable(channel.capability)) throw new Error('mutual enrollment unavailable');
+    const hostIds = (hosts ?? listHosts(ctx.db)).filter(host => host.enrollmentCapability === channel.capability && ctx.hostHub.getSession(host.id)).map(host => host.id);
+    const hostId = await ctx.peerAuthority.resolveHost(peerId, hostIds, signal);
+    assertLive();
+    signal.throwIfAborted();
+    if (!hostId) throw new Error('verified peer app unavailable');
+    return hostId;
+  };
   const resolveSdkPluginId = (requested: unknown): string => {
     const value = typeof requested === 'string' && requested.trim() ? requested.trim() : pluginId;
     const parsed = pluginIdSchema.safeParse(value);
@@ -397,6 +515,8 @@ export function createPluginApi(
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
   const kv = openAsyncJsonStore(kvPath);
   disposeHooks.push(() => kv.dispose());
+  // Plugin link notes are in memory and plugin-reported: they die with this plugin generation (stop, reload, uninstall).
+  disposeHooks.push(() => options?.productContext?.peerLinkNotes?.clearPlugin(pluginId));
   const readSettings = (): Record<string, PluginSettingValue | undefined> =>
     mergeSecretSettings(
       kvDir,
@@ -468,6 +588,18 @@ export function createPluginApi(
     ];
   }
 
+  // Backups read through the plugin's own live handle so its in-flight writes land in the copy.
+  const databaseBackup = createPluginDatabaseBackup({
+    pluginId,
+    pluginDir: kvDir,
+    lifetime: storageLifecycle.signal,
+    source: () => {
+      api.storage.database();
+      return sharedSqlite!;
+    },
+    openCopy: (file) => backupCopyHandle(createSqliteDatabase(file))
+  });
+
   const api: ZccPluginApi = {
     pluginId,
     log: {
@@ -513,6 +645,7 @@ export function createPluginApi(
         const dbPath = join(kvDir, 'data.db');
         const db = createSqliteDatabase(dbPath);
         sqliteHandles.push(db);
+        sharedSqlite = db;
         const runBatch = Reflect.get(db, 'exec') as (source: string) => unknown;
         const beginTxn = Reflect.get(db, 'transaction') as <T>(fn: () => T) => () => T;
         const runScript = (sql: string) => {
@@ -532,6 +665,10 @@ export function createPluginApi(
           transaction: <T>(fn: () => T): T => beginTxn.call(db, fn)() as T
         };
         return sharedDatabase;
+      },
+      backupDatabase: (backupOptions) => {
+        assertLive();
+        return databaseBackup(backupOptions);
       }
     },
     http: {
@@ -641,7 +778,271 @@ export function createPluginApi(
           if (!options?.productContext) {
             throw new Error('zcc.sdk is not available in this runtime');
           }
-          return listHosts(options.productContext.db).map(({ id, name }) => ({ id, name }));
+          // Execution machines only: forward-only peer links are not machines a plugin can run on.
+          return listExecutionHosts(options.productContext.db).map(({ id, name }) => ({ id, name }));
+        }
+      },
+      peers: {
+        localIdentity: async () => ({ id: peerContext().productInstanceId }),
+        storageEpoch: async () => {
+          const epochs = peerContext().pluginStorageEpochs;
+          if (!epochs) return null;
+          const epoch = await epochs.current(pluginId);
+          assertLive();
+          return epoch;
+        },
+        advanceStorageEpoch: async (expected) => {
+          const epochs = peerContext().pluginStorageEpochs;
+          if (!epochs) throw new Error('plugin storage epoch unavailable');
+          // Checked under the epoch lock: a disposed generation never advances its successor's fence.
+          return epochs.advance(pluginId, expected, () => !stale);
+        },
+        features: async () => {
+          assertLive();
+          const available = Boolean(options?.productContext?.peerAuthority);
+          return { lifecycle: available, introductions: available, installer: available && Boolean(options?.productContext?.peerInstaller), invitations: available && Boolean(options?.productContext?.peerInvitations) };
+        },
+        enrolled: async (args) => {
+          const ctx = peerContext(), signal = peerSignal(args?.signal);
+          signal.throwIfAborted();
+          const channels = await ctx.peerChannels.list();
+          const peers = [];
+          // One host snapshot for the whole listing instead of two full host scans per channel.
+          const hosts = listHosts(ctx.db);
+          for (const channel of channels) {
+            if (!linkCapable(channel.capability)) continue;
+            try {
+              const hostId = await resolvePeerHost(channel.remoteInstanceId, signal, hosts);
+              const host = hosts.find(host => host.id === hostId);
+              if (host && visibleToPlugin(host)) peers.push({ id: channel.remoteInstanceId, hostId, name: peerHostName(ctx, host), connected: true });
+            } catch (error) {
+              assertLive();
+              signal.throwIfAborted();
+              // Enrollment is not reachability; offline or mismatched apps stay hidden. Anything else is unexpected:
+              // log name/code only (messages may embed key material) and keep listing the remaining peers.
+              const message = error instanceof Error ? error.message : '';
+              if (message !== 'mutual enrollment unavailable' && message !== 'verified peer app unavailable') {
+                const err = error as { name?: unknown; code?: unknown } | null;
+                console.warn(`[plugin:${pluginId}] peer listing skipped a peer: name=${typeof err?.name === 'string' ? err.name : typeof error}` +
+                  `${typeof err?.code === 'string' || typeof err?.code === 'number' ? ` code=${err.code}` : ''}`);
+              }
+            }
+          }
+          assertLive();
+          signal.throwIfAborted();
+          return peers;
+        },
+        enable: async (peerId, args) => {
+          const ctx = peerContext();
+          peerArgs(peerId, args, ['scope', 'signal']);
+          const signal = peerSignal(args.signal);
+          signal.throwIfAborted();
+          const targetHostId = await resolvePeerHost(peerId, signal);
+          const proposal = await ctx.peerAuthority.ensureProposal({ pluginId, remoteInstanceId: peerId, targetHostId, scope: args.scope }, signal);
+          assertLive();
+          signal.throwIfAborted();
+          const existing = await ctx.peerPairs.grant(proposal.pairId);
+          const grant = existing ?? await ctx.peerAuthority.activate(proposal, signal);
+          assertLive();
+          signal.throwIfAborted();
+          return { id: grant.remoteInstanceId, pairId: grant.pairId, proposalId: grant.proposalId, scope: grant.scope, grantEpoch: grant.epoch };
+        },
+        revoke: async (peerId, args) => {
+          const ctx = peerContext();
+          peerArgs(peerId, args, ['scope']);
+          // Include tombstones so retries also finish uncertain writes, without touching other scopes/plugins.
+          const proposals = await ctx.peerAuthority.proposals(pluginId, peerId, args.scope, true);
+          assertLive();
+          for (const proposal of proposals) {
+            await ctx.peerAuthority.revoke(proposal.pairId);
+            assertLive();
+          }
+          // Release this plugin scope's binding on the invitation-founded transport link; the link itself is torn down
+          // only when no other plugin or scope still uses it (never another plugin's binding).
+          if (ctx.peerLinks) {
+            await ctx.peerLinks.release(peerId, pluginId, args.scope as string);
+            assertLive();
+          }
+          ctx.peerLinkNotes?.clear(pluginId, peerId, args.scope as string);
+        },
+        createInvitation: async (args) => {
+          const a = inviteArgs(args, ['scope', 'signal']);
+          if (typeof a.scope !== 'string' || !validScope(a.scope)) throw new InvitationError('invalid_invitation');
+          const signal = peerSignal(a.signal as AbortSignal | undefined), invitations = invitationsOf();
+          let minted: { invitationId: string } | undefined;
+          try {
+            const created = await inviteGuard(signal, async () => {
+              const value = await invitations.create({ pluginId, scope: a.scope as string });
+              minted = value;
+              return value;
+            });
+            return { invitationId: created.invitationId, token: created.token, expiresAt: created.expiresAt };
+          } catch (error) {
+            // A stale or aborted caller must not leave a live invitation whose token it never received; this covers
+            // every post-create rejection inside inviteGuard, not only aborts observed before create resolved.
+            if (minted) await invitations.cancel({ pluginId, invitationId: minted.invitationId }).catch(logInviteFailure);
+            throw error;
+          }
+        },
+        redeemInvitation: async (args) => {
+          const a = inviteArgs(args, ['token', 'signal']);
+          if (typeof a.token !== 'string' || a.token.length === 0 || a.token.length > 4096) throw new InvitationError('invalid_invitation');
+          const signal = peerSignal(a.signal as AbortSignal | undefined), invitations = invitationsOf();
+          return publicInvitation(await inviteGuard(signal, () => invitations.redeem({ pluginId, token: a.token as string })));
+        },
+        invitationStatus: async (args) => {
+          const a = inviteArgs(args, ['invitationId', 'refresh', 'signal']);
+          const invitationId = inviteId(a.invitationId), signal = peerSignal(a.signal as AbortSignal | undefined), invitations = invitationsOf();
+          return publicInvitation(await inviteGuard(signal, () => a.refresh === true
+            ? invitations.refresh({ pluginId, invitationId }) : invitations.status({ pluginId, invitationId })));
+        },
+        listInvitations: async (args) => {
+          const a = inviteArgs(args ?? {}, ['limit', 'signal']);
+          if (a.limit !== undefined && (!Number.isInteger(a.limit) || (a.limit as number) < 1)) throw new InvitationError('invalid_invitation');
+          const signal = peerSignal(a.signal as AbortSignal | undefined), invitations = invitationsOf();
+          return (await inviteGuard(signal, () => invitations.list({ pluginId, ...(a.limit !== undefined ? { limit: a.limit as number } : {}) }))).map(publicInvitation);
+        },
+        invitationApproval: async (args) => {
+          const a = inviteArgs(args, ['invitationId', 'signal']);
+          const invitationId = inviteId(a.invitationId), signal = peerSignal(a.signal as AbortSignal | undefined), invitations = invitationsOf();
+          // Title, summary and binding come from core's own record; the plugin supplies only which invitation.
+          return inviteGuard(signal, () => invitations.approvalRequest({ pluginId, invitationId }));
+        },
+        decideInvitation: async (args) => {
+          const a = inviteArgs(args, ['invitationId', 'decision', 'ownerProof', 'signal']);
+          const invitationId = inviteId(a.invitationId);
+          if (a.decision !== 'approved' && a.decision !== 'denied') throw new InvitationError('not_ready');
+          if (a.decision === 'approved' && (typeof a.ownerProof !== 'string' || a.ownerProof.length === 0 || a.ownerProof.length > 4096)) throw new InvitationError('owner_proof_required');
+          const signal = peerSignal(a.signal as AbortSignal | undefined), invitations = invitationsOf();
+          return publicInvitation(await inviteGuard(signal, () => invitations.decide({ pluginId, invitationId, decision: a.decision as 'approved' | 'denied',
+            ...(a.decision === 'approved' ? { ownerProof: a.ownerProof as string } : {}) })));
+        },
+        cancelInvitation: async (args) => {
+          const a = inviteArgs(args, ['invitationId', 'signal']);
+          const invitationId = inviteId(a.invitationId), signal = peerSignal(a.signal as AbortSignal | undefined), invitations = invitationsOf();
+          await inviteGuard(signal, () => invitations.cancel({ pluginId, invitationId }));
+        },
+        peerLinks: async (args) => {
+          const a = inviteArgs(args ?? {}, ['peerId', 'signal']);
+          const peerId = a.peerId === undefined ? undefined : inviteId(a.peerId);
+          return (await inviteGuard(peerSignal(a.signal as AbortSignal | undefined), () => ownLinks(peerId))).map(publicLink);
+        },
+        setPeerLinkNote: async (peerId, args) => {
+          const a = inviteArgs(args, ['scope', 'note', 'signal']);
+          const id = inviteId(peerId), ctx = peerContext();
+          if (typeof a.scope !== 'string' || !validScope(a.scope)) throw new InvitationError('invalid_invitation');
+          const note = a.note === null ? null : parsePluginLinkNote(a.note);
+          if (a.note !== null && !note) throw new InvitationError('invalid_invitation');
+          const scope = a.scope;
+          await inviteGuard(peerSignal(a.signal as AbortSignal | undefined), async () => {
+            // Only a live link this plugin owns in this scope may carry its note; another plugin's links read as absent.
+            if (!(await ownLinks(id)).some(link => link.scope === scope && link.phase !== 'removed')) {
+              ctx.peerLinkNotes?.clear(pluginId, id, scope);
+              throw new InvitationError('not_found');
+            }
+            if (!ctx.peerLinkNotes) throw new InvitationError('unavailable');
+            if (note === null) ctx.peerLinkNotes.clear(pluginId, id, scope);
+            else if (!ctx.peerLinkNotes.set(pluginId, id, scope, note)) throw new InvitationError('capacity');
+          });
+        },
+        reconnectPeer: async (peerId, args) => {
+          const a = inviteArgs(args ?? {}, ['signal']);
+          const id = inviteId(peerId), ctx = peerContext();
+          return (await inviteGuard(peerSignal(a.signal as AbortSignal | undefined), async () => {
+            if (!(await ownLinks(id)).some(link => link.phase === 'linked')) throw new InvitationError('not_found');
+            return (await ctx.peerLinks!.rotate(id)).filter(link => link.pluginId === pluginId);
+          })).map(publicLink);
+        },
+        introduce: async (peerId, args) => {
+          const ctx = peerContext();
+          peerArgs(peerId, args, ['scope', 'sponsorPeerId', 'signal']);
+          if (typeof args.sponsorPeerId !== 'string' || !PEER_ID.test(args.sponsorPeerId) || args.sponsorPeerId === peerId) throw new Error('invalid peer introduction');
+          const signal = peerSignal(args.signal);
+          signal.throwIfAborted();
+          const grants = await ctx.peerPairs.list(pluginId);
+          const sponsors = grants.filter(grant => grant.remoteInstanceId === args.sponsorPeerId && grant.scope === args.scope);
+          const targets = grants.filter(grant => grant.remoteInstanceId === peerId && grant.scope === args.scope);
+          if (sponsors.length !== 1 || targets.length !== 1) throw new Error('introduction scope or recipient mismatch');
+          const sponsor = sponsors[0]!, target = targets[0]!;
+          const introductionId = createHash('sha256').update(JSON.stringify(['peer-introduction-v1', pluginId, args.scope, sponsor.pairId, target.pairId])).digest('hex');
+          assertLive();
+          signal.throwIfAborted();
+          await ctx.peerAuthority.introduce({ introductionId, sponsorPairId: sponsor.pairId, targetPairId: target.pairId,
+            peerInstanceId: args.sponsorPeerId, pluginId, scope: args.scope, status: 'pending' });
+          const status = await ctx.peerAuthority.introductionStatus(introductionId);
+          assertLive();
+          signal.throwIfAborted();
+          return { introductionId, status };
+        },
+        list: async (args) => {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          if (!options?.productContext) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const ctx = options.productContext;
+          const connected = new Set(ctx.hostHub?.connectedHostIds() ?? []);
+          const hosts = new Map(listHosts(ctx.db).map(host => [host.id, peerHostName(ctx, host)]));
+          const grants = await ctx.peerPairs.list(pluginId);
+          assertLive();
+          args?.signal?.throwIfAborted();
+          return grants.map(grant => ({ id: grant.remoteInstanceId, name: hosts.get(grant.targetHostId) ?? grant.remoteInstanceId,
+            scope: grant.scope, grantEpoch: grant.epoch, connected: connected.has(grant.targetHostId) }));
+        },
+        call: async (peerId, method, body, args) => {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          if (!options?.productContext || !/^[a-z][a-z0-9-]{0,63}$/.test(method)) throw new Error('invalid peer request');
+          const ctx = options.productContext;
+          const grants = (await ctx.peerPairs.list(pluginId)).filter(grant => grant.remoteInstanceId === peerId &&
+            (args?.scope === undefined || grant.scope === args.scope));
+          if (grants.length !== 1) throw new Error('peer link is not authorized');
+          const grant = grants[0]!;
+          const encoded = JSON.stringify(body ?? {});
+          if (typeof encoded !== 'string') throw new Error('invalid peer body');
+          if (Buffer.byteLength(encoded) > 8 * 1024 * 1024) throw new Error('peer request exceeds 8 MiB');
+          const timeoutMs = args?.timeoutMs ?? 30_000;
+          if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) throw new Error('invalid peer timeout');
+          const envelope = await ctx.peerPairs.signRequest(grant.pairId, { pluginId, scope: grant.scope, method, body: Buffer.from(encoded) });
+          if (!envelope) throw new Error('peer link was revoked');
+          const lease = await ctx.peerPairs.acquireGrant(grant.pairId, envelope.epoch, pluginId, grant.scope);
+          if (!lease) throw new Error('peer link was revoked');
+          const signal = AbortSignal.any([lease.signal, AbortSignal.timeout(timeoutMs), ...(args?.signal ? [args.signal] : [])]);
+          let cancel: (() => void) | undefined;
+          try {
+            assertLive();
+            signal.throwIfAborted();
+            const operation = ctx.hostHub.callHostOnlineRpc<{ status: number; body: string }>({
+              hostId: grant.targetHostId, timeoutMs: timeoutMs + 5_000,
+              command: { type: 'peer.forward', ...envelope, method, body: encoded, timeoutMs }
+            });
+            const result = await Promise.race([operation, new Promise<never>((_resolve, reject) => {
+              cancel = () => reject(signal.reason);
+              signal.addEventListener('abort', cancel, { once: true });
+              if (signal.aborted) cancel();
+            })]);
+            assertLive();
+            signal.throwIfAborted();
+            await lease.assertActive();
+            if (Buffer.byteLength(result.body) > 8 * 1024 * 1024) throw new Error('peer response exceeds 8 MiB');
+            if (result.status < 200 || result.status >= 300) throw new Error(`peer request failed: ${result.status}`);
+            let response: { ok?: unknown; result?: unknown } | null;
+            // Never surface the parser message: it can quote fragments of the peer's body.
+            try { response = JSON.parse(result.body) as typeof response; } catch { throw new Error('invalid peer response'); }
+            if (!response || typeof response !== 'object' || response.ok !== true) throw new Error('peer request was rejected');
+            return response.result;
+          } finally {
+            if (cancel) signal.removeEventListener('abort', cancel);
+            lease.release();
+          }
+        },
+        handle: (method, handler) => {
+          assertLive();
+          if (!/^[a-z][a-z0-9-]{0,63}$/.test(method) || typeof handler !== 'function') {
+            throw new Error('invalid peer handler');
+          }
+          if (peerHandlers.has(method)) throw new Error(`peer handler already registered: ${method}`);
+          peerHandlers.set(method, handler);
         }
       },
       threads: {
@@ -667,11 +1068,14 @@ export function createPluginApi(
           const prompt = typeof args?.prompt === 'string' ? args.prompt : '';
           if (!projectId) throw new Error('projectId is required');
           if (!prompt.trim()) throw new Error('prompt is required');
+          const spawnProviderId = typeof args?.providerId === 'string' && args.providerId.trim() ? args.providerId.trim() : undefined;
+          const spawnHarness = args?.harness !== undefined && args?.harness !== null ? parseSpawnHarness(args.harness) : undefined;
           return options.spawnThread({
             pluginId,
             projectId,
             prompt,
-            ...(typeof args?.providerId === 'string' && args.providerId.trim() ? { providerId: args.providerId.trim() } : {}),
+            ...(spawnProviderId ? { providerId: spawnProviderId } : {}),
+            ...(spawnHarness ? { harness: spawnHarness } : {}),
             ...(typeof args?.parentThreadId === 'string' && args.parentThreadId.trim()
               ? { parentThreadId: args.parentThreadId.trim() }
               : {}),
@@ -1557,6 +1961,7 @@ export function createPluginApi(
     projectTabAvailability,
     cli: cliRecord,
     httpRoutes,
+    peerHandlers,
     agentTools,
     dispatchAdmissionHandlers,
     toolPolicyHandlers,
@@ -1607,6 +2012,7 @@ export function createPluginApi(
       disposal = (async () => {
       stale = true;
       assistantLifecycle.abort();
+      peerLifecycle.abort(new Error(`plugin context is stale: ${pluginId}`));
       hostWorkerExitHandlers.length = 0; hostSignalHandlers.clear();
       options?.interruptPluginInteractions?.(pluginId);
       for (const handle of sqliteHandles) {
@@ -1616,8 +2022,10 @@ export function createPluginApi(
           /* isolated */
         }
       }
+      storageLifecycle.abort();
       sqliteHandles.length = 0;
       sharedDatabase = null;
+      sharedSqlite = null;
       for (const hook of [...disposeHooks].reverse()) {
         try {
           await hook();

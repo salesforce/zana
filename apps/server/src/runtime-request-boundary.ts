@@ -1,3 +1,4 @@
+import { classifyExpectedRpcError } from '@zana-ai/zcc-contracts/rpc-error';
 import { SERVER_RUNTIME_PROTOCOL_VERSION, ServerRuntimeInboundSchema, type ServerRuntimeInbound } from '@zana-ai/zcc-contracts/runtime';
 
 /** EventEmitter does not await listeners. Always return request failures to main
@@ -22,10 +23,14 @@ export async function dispatchRuntimeMessage(
   }
   try { await handle(parsed.data); }
   catch (error) {
+    // Expected domain errors keep their `code` across the process boundary so main can tell them
+    // apart from crashes; unexpected errors carry the message only.
+    const expected = classifyExpectedRpcError(error);
     postMessage({
       type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
       ...('id' in parsed.data ? { id: parsed.data.id } : {}),
-      message: (error instanceof Error ? error.message : String(error)).slice(0, 8192)
+      message: (error instanceof Error ? error.message : String(error)).slice(0, 8192) || 'request failed',
+      ...(expected ? { code: expected.code } : {})
     });
   }
 }

@@ -34,6 +34,13 @@ describe('readPluginManifest', () => {
     expect(manifest.projectTab?.global).toBe(false);
   });
 
+  it('reads the optional peers capability flag', () => {
+    expect(readPluginManifest(baseZcc()).peers).toBe(false);
+    expect(readPluginManifest(baseZcc({ peers: false })).peers).toBe(false);
+    expect(readPluginManifest(baseZcc({ peers: true })).peers).toBe(true);
+    expect(() => readPluginManifest(baseZcc({ peers: 'yes' }))).toThrow();
+  });
+
   it('parses optional host and pty entries', () => {
     const manifest = readPluginManifest(baseZcc({ host: './host.ts', pty: './pty.ts' }));
     expect(manifest.hostEntry).toBe('./host.ts');

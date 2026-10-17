@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startProductServer } from './product-server.js';
+import { consumePeerBootKey } from '../services/peers/protected-key.js';
 import { attachProductPluginService } from './product-plugins.js';
 import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './ports.js';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
@@ -27,12 +28,22 @@ const enrollToken = process.env.ZCC_HOST_ENROLL_TOKEN && process.env.ZCC_HOST_EN
   : randomBytes(32).toString('hex');
 writeFileSync(join(dataDir, 'host-enroll.token'), enrollToken, { encoding: 'utf8', mode: 0o600 });
 
+const peerKeyProvider = consumePeerBootKey();
+const peerKey = await peerKeyProvider.getKey().catch((error: unknown) => {
+  console.warn(`[zcc] peer key unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  return null;
+});
+const peerKeyPresent = peerKey !== null;
+peerKey?.fill(0);
+process.stdout.write(`zcc-server peer key: ${peerKeyPresent ? 'present' : 'absent (peer links and invitations unavailable)'}\n`);
+
 const host = await startProductServer({
   host: '127.0.0.1',
   port,
   dataDir,
   enrollToken,
   uiSendSecret,
+  peerKeyProvider,
   origins: {
     serverPort: port,
     devAppPort,

@@ -33,4 +33,11 @@ export interface HarnessLegacyRoutingAdapter {
   resolveCompatibilityExecution?(value: unknown): LegacyExecutionSelection | undefined;
   resolveExecution?(context: LegacyRoutingContext, source: Exclude<LegacyRoutingSource, 'global'>): LegacyExecutionSelection | undefined;
   auditExecution?(selection: LegacyExecutionSelection): string | undefined;
+  /**
+   * Historical launch fields set for this harness that a launch honors but a
+   * plugin-spawned thread has no knob for, as user-facing labels naming the
+   * setting. Read only by plugin thread routing, which rejects instead of
+   * silently dropping them; CLI launches never call it.
+   */
+  threadUnmappedFields?(context: LegacyRoutingContext, options: { unrestricted: boolean }): readonly string[];
 }

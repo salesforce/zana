@@ -536,6 +536,12 @@ export const IPC = {
   commands: {
     list: 'commands:list'
   },
+  /** Plugin deep links: `config`/`open` are renderer requests (main validates); `onLink` is a main push. */
+  deepLinks: {
+    config: 'deepLinks:config',
+    open: 'deepLinks:open',
+    onLink: 'deepLinks:onLink'
+  },
   app: {
     performance: 'app:performance',
     homedir: 'app:homedir',

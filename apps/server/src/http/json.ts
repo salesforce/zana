@@ -35,6 +35,13 @@ export function sendJson(response: ServerResponse, status: number, body: unknown
   response.end(JSON.stringify(body));
 }
 
+/** Peer pairing and link management are owner gestures on this machine; the phone proxy marks its requests. */
+export function rejectMobilePeerManagement(request: IncomingMessage, response: ServerResponse): boolean {
+  if (request.headers['x-zcc-app-surface'] !== 'mobile') return false;
+  sendJson(response, 403, { error: 'peer links are managed from the desktop app' });
+  return true;
+}
+
 /**
  * A 200 JSON response whose body may take minutes (a tool waiting on a person).
  * A fast answer goes out as plain `sendJson`. Once `heartbeatMs` passes, the

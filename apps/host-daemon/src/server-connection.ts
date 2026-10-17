@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   HOST_RPC_PROTOCOL_VERSION,
   HostEventBatchMessageSchema,
+  HostRpcRequestMessageSchema,
   type HostEventEnvelope
 } from '@zana-ai/zcc-contracts/host-rpc';
 import { createEventSink, type EventSink } from './event-sink.js';
@@ -24,6 +25,8 @@ import {
 } from './interactive-request-registry.js';
 import { createHostServerSocket } from './server-socket.js';
 import { connectHostFetch } from './connect-access.js';
+import { createStoredLocalPeerAppResolver, type LocalPeerAppResolver } from './peer-forward.js';
+import { PeerControlForwarder } from './peer-control.js';
 import {
   startDesktopBrowserBroker,
   type DesktopBrowserBroker
@@ -44,15 +47,25 @@ export function startEnrolledHostConnection(options: {
   connectCredential?: string;
   hostId: string;
   hostKey: string;
+  /** Set from host-owned enrollment metadata, never an incoming RPC field. */
+  enrollmentCapability?: 'execution' | 'peer.forward';
   instanceId?: string;
   runtime?: CommandRuntime;
   dataDir?: string;
+  /** Local app authority, independent of the enrollment server and its daemon data dir. */
+  localPeerAppDataDir?: string;
+  /** Introduced link: the server must identify as this app or the connection closes before any registration. */
+  expectedRemoteInstanceId?: string;
+  resolveLocalPeerApp?: LocalPeerAppResolver;
   keepRetryingStartup?: boolean;
   onSocketClose?: (code: number) => void;
   onConnectionChange?: (connected: boolean) => void;
 }): EnrolledHostConnection {
   const instanceId = options.instanceId ?? randomUUID();
   const fetchFn = connectHostFetch(options.serverUrl, options.connectCredential);
+  let enrollmentCapability = options.enrollmentCapability ?? 'execution';
+  const peerControl = new PeerControlForwarder({ localAppDataDir: options.localPeerAppDataDir,
+    hostId: options.hostId, hostKey: options.hostKey, expectedRemoteId: options.expectedRemoteInstanceId });
 
   let socket: ReturnType<typeof createHostServerSocket> | undefined;
   let closed = false;
@@ -173,6 +186,9 @@ export function startEnrolledHostConnection(options: {
     machineEnvironment = new MachineEnvironment();
     return createCommandRuntime({
       dataDir: options.dataDir,
+      resolveLocalPeerApp: options.resolveLocalPeerApp ?? (options.localPeerAppDataDir
+        ? createStoredLocalPeerAppResolver(options.localPeerAppDataDir)
+        : undefined),
       pluginHosts,
       machineEnvironment,
       emit: (event) => sink.emit(event),
@@ -243,13 +259,27 @@ export function startEnrolledHostConnection(options: {
     connectCredential: options.connectCredential,
     instanceId,
     keepRetryingStartup: options.keepRetryingStartup,
-    getRuntimeSnapshot: () => adapter?.getRuntimeSnapshot?.() ?? { threads: [], loadedEnvironments: [] },
+    getRuntimeSnapshot: () => enrollmentCapability === 'peer.forward' ? { threads: [], loadedEnvironments: [] }
+      : adapter?.getRuntimeSnapshot?.() ?? { threads: [], loadedEnvironments: [] },
     onTerminated: () => { void stopConnection().catch(() => undefined); },
-    onHello: hello => (runtime.pluginHosts ?? pluginHosts).reconcileGenerations(hello.pluginHostGenerations),
+    onHello: async hello => {
+      if (options.expectedRemoteInstanceId !== undefined && hello.productInstanceId !== options.expectedRemoteInstanceId) {
+        void stopConnection().catch(() => undefined);
+        return;
+      }
+      enrollmentCapability = options.enrollmentCapability === 'peer.forward' || hello.enrollmentCapability === 'peer.forward'
+        ? 'peer.forward' : 'execution';
+      await peerControl.hello(hello.productInstanceId, enrollmentCapability);
+      if (enrollmentCapability === 'execution') {
+        await (runtime.pluginHosts ?? pluginHosts).reconcileGenerations(hello.pluginHostGenerations);
+      }
+    },
     onConnectionChange: connected => {
       if (!connected) {
         delivery.cancel();
         machineEnvironment?.clear();
+        runtime.peerForwarder?.cancelAll();
+        peerControl.cancelAll();
       }
       desktopBrowserBroker?.setConnected(connected);
       previewTunnel.setConnected(connected);
@@ -260,6 +290,30 @@ export function startEnrolledHostConnection(options: {
     onMessage: (parsed, reply) => {
       if (delivery.accept(parsed)) return;
       if (!parsed || typeof parsed !== 'object' || (parsed as { type?: string }).type !== 'host-rpc.request') return;
+      if ((parsed as { command?: { type?: string } }).command?.type === 'peer.control') {
+        const request = HostRpcRequestMessageSchema.safeParse(parsed);
+        if (!request.success || request.data.command.type !== 'peer.control') {
+          const requestId = (parsed as { requestId?: unknown }).requestId;
+          reply(JSON.stringify({ type: 'host-rpc.response', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+            requestId: typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128 ? requestId : 'unknown',
+            ok: false, error: { code: 'invalid_request', message: 'unknown or invalid host-rpc request' } }));
+          return;
+        }
+        void peerControl.forward(request.data.command).then(result => reply(JSON.stringify({
+          type: 'host-rpc.response', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: request.data.requestId,
+          commandType: 'peer.control', ok: true, result
+        })), () => reply(JSON.stringify({ type: 'host-rpc.response', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+          requestId: request.data.requestId, commandType: 'peer.control', ok: false,
+          error: { code: 'peer_control_failed', message: 'peer control unavailable or not authorized' } })));
+        return;
+      }
+      if (enrollmentCapability !== 'execution' &&
+        (parsed as { command?: { type?: string } }).command?.type !== 'peer.forward') {
+        reply(JSON.stringify({ type: 'host-rpc.response', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+          requestId: (parsed as { requestId?: string }).requestId ?? 'unknown', ok: false,
+          error: { code: 'capability_denied', message: 'host enrollment does not authorize command' } }));
+        return;
+      }
       void handleHostRpcRequest(runtime, parsed).then(response => reply(JSON.stringify(response)));
     }
   });
@@ -270,12 +324,15 @@ export function startEnrolledHostConnection(options: {
 
   async function disposeConnection(): Promise<void> {
     closed = true;
+    runtime.peerForwarder?.close();
+    peerControl.close();
     delivery.cancel();
     machineEnvironment?.clear();
     options.onConnectionChange?.(false);
     socket?.close();
     previewTunnel.close();
     runtime.peerSsh?.close?.();
+    await peerControl.whenIdle();
     await pluginHosts.shutdown();
     adapter?.dispose();
     enrolledPty?.dispose();

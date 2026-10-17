@@ -1,5 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createActorResolver } from './tools.js';
+import { createActorResolver, registerDesignDocTools } from './tools.js';
+import { DesignDocStore } from './store.js';
+import { createTestDatabase } from './test-db.js';
+import { DesignDocSyncStore } from './sync-store.js';
+
+it('exposes expectedHead and forwards tool CAS without stale intents', async () => {
+  const db = createTestDatabase();
+  let sync!: DesignDocSyncStore;
+  const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+  sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+  sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, joinedAt: 1, sponsorReplicaId: null })));
+  const actor = { kind: 'user' as const, label: 'You', threadId: null };
+  const doc = store.create({ title: 'Reviewed', template: 'blank' }, actor);
+  const tools: any[] = [];
+  const changed = vi.fn();
+  registerDesignDocTools({ agents: { registerTool: (tool: unknown) => tools.push(tool) } } as never,
+    { store, changed, actorFor: async () => actor });
+  const update = tools.find((tool) => tool.name === 'design_doc_update');
+  expect(update.parameters.properties.expectedHead.type).toEqual(['string', 'null']);
+  const write = tools.find((tool) => tool.name === 'design_doc_write');
+  expect(write.parameters.properties.baseFileId.type).toEqual(['string', 'null']);
+  const file = store.readFile(doc.id, 'README.md');
+  await expect(write.execute({ doc: doc.id, path: file.path, content: 'stale', baseRevision: file.revision, baseFileId: 'stale-id' }, {})).rejects.toThrow(/identity changed/);
+  const expectedHead = store.summary(doc.id).head;
+  store.writeFile(doc.id, { path: 'README.md', content: 'replacement' }, actor);
+  await expect(update.execute({ doc: doc.id, status: 'approved', expectedHead }, {})).rejects.toThrow(/head changed/);
+  expect(changed).not.toHaveBeenCalled();
+  expect(sync.readyIntents('repo')).toEqual([]);
+  await update.execute({ doc: doc.id, status: 'approved', expectedHead: store.summary(doc.id).head }, {});
+  expect(changed).toHaveBeenCalledExactlyOnceWith(doc.id);
+});
 
 describe('createActorResolver', () => {
   it('labels a thread by its title and caches it', async () => {

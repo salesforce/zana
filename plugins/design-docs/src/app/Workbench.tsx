@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useZccDeepLinks, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
   Bot,
@@ -22,12 +22,15 @@ import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } fr
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
-import { errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
+import { defaultAgentProject, errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
 import { buildSections, parseCollapsed, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
+import { SyncButton, usePeerSync, type PeerSync } from './PeerSettings.js';
+import { SettingsToggle, SettingsView } from './Settings.js';
+import type { JoinRequest } from './invite-format.js';
 import { ContextMenu, contextMenuPoint, Dialog, IconButton, Spinner, StatusPill, TimeAgo } from './ui.js';
 
 type StatusFilter = DocStatus | 'active' | 'all';
@@ -176,6 +179,8 @@ function DocList({
   onDeleted,
   onNew,
   onCollapse,
+  peerSync,
+  onOpenSettings,
   headerActions
 }: {
   projectId: string | null;
@@ -186,6 +191,8 @@ function DocList({
   onDeleted(docId: string): void;
   onNew(): void;
   onCollapse(): void;
+  peerSync: PeerSync;
+  onOpenSettings(): void;
   headerActions?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
@@ -247,7 +254,9 @@ function DocList({
           </span>
         ) : null}
         <span className="dd-spacer" />
-        <button type="button" className="btn primary dd-new" onClick={onNew}>
+        <SettingsToggle open={false} onToggle={onOpenSettings} />
+        <SyncButton peerSync={peerSync} />
+        <button type="button" className="btn primary dd-head-btn dd-new" onClick={onNew}>
           <Plus size={13} aria-hidden /> New
         </button>
         <IconButton icon={PanelLeftClose} label="Hide doc list" onClick={onCollapse} />
@@ -380,13 +389,14 @@ export function NewDocDialog({
   const [busy, setBusy] = useState(false);
   const chosen = template ?? templates.data?.[0]?.id ?? null;
   const drafting = !!brief.trim();
-  const agentProject = projectId || defaultProjectId || projects[0]?.id || '';
+  const agentProject = projectId || defaultProjectId || defaultAgentProject(projects) || '';
 
   const create = async () => {
     if (!title.trim() || busy) return;
     setBusy(true);
+    let doc;
     try {
-      const doc = await api.create({
+      doc = await api.create({
         title: title.trim(),
         ...(summary.trim() ? { summary: summary.trim() } : {}),
         ...(chosen ? { template: chosen } : {}),
@@ -396,21 +406,29 @@ export function NewDocDialog({
           .filter(Boolean),
         projectId: projectId || null
       });
-      onCreated(doc.id);
-      if (drafting) {
-        if (!agentProject) {
-          toast('Doc created. Add a project to let an agent draft it.', 'error');
-        } else if (!draftDocAgent(navigate, doc, { prompt: draftingPrompt(brief), projectId: agentProject })) {
-          const result = await api.askAgent(doc.id, { prompt: draftingPrompt(brief), projectId: agentProject });
-          showDocAgent(navigate, doc, result.threadId);
-          toast(`An agent is drafting “${doc.title}”. Watch it fill in as it writes.`);
-        }
-      }
-      onClose();
     } catch (error) {
       toast(`Could not create the doc: ${errorMessage(error)}`, 'error');
       setBusy(false);
+      return;
     }
+    onCreated(doc.id);
+    if (drafting) {
+      if (!agentProject) {
+        toast('Doc created. Add a project to let an agent draft it.', 'error');
+      } else {
+        // The doc exists either way; only the drafting agent can fail from here.
+        try {
+          if (!draftDocAgent(navigate, doc, { prompt: draftingPrompt(brief), projectId: agentProject })) {
+            const result = await api.askAgent(doc.id, { prompt: draftingPrompt(brief), projectId: agentProject });
+            showDocAgent(navigate, doc, result.threadId);
+            toast(`An agent is drafting “${doc.title}”. Watch it fill in as it writes.`);
+          }
+        } catch (error) {
+          toast(`Doc created, but the agent could not start: ${errorMessage(error)}`, 'error');
+        }
+      }
+    }
+    onClose();
   };
 
   return (
@@ -554,7 +572,38 @@ export function Workbench({
   const templates = useTemplates();
   const [creating, setCreating] = useState<{ template: string | null } | null>(null);
   const [listOpen, setListOpen] = usePersistentState<boolean>('list-open', true);
+  const [view, setView] = useState<'docs' | 'settings'>('docs');
+  const [joinRequest, setJoinRequest] = useState<JoinRequest | null>(null);
+  const deepLinks = useZccDeepLinks();
+  const deepLinksRef = useRef(deepLinks);
+  deepLinksRef.current = deepLinks;
+  // Registered while the nav panel is mounted (the host routes a received link there), so early links are delivered from the host queue.
+  // A link never joins: it opens Settings → Peers with the Join peer field prefilled.
+  useEffect(() => {
+    if (variant !== 'global') return;
+    let seq = 0;
+    return deepLinksRef.current.on('join', (payload) => { setJoinRequest({ seq: ++seq, payload }); setView('settings'); });
+  }, [variant]);
+  const peerSync = usePeerSync();
   const projectList = projects.data ?? [];
+
+  if (view === 'settings') {
+    return (
+      <div className="dd-root dd-workbench">
+        <SettingsView
+          peer={peerSync.peer}
+          joinRequest={joinRequest}
+          onJoinRequestHandled={() => setJoinRequest(null)}
+          onBack={() => {
+            setView('docs');
+            setJoinRequest(null);
+            peerSync.refresh();
+          }}
+          headerActions={headerActions}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="dd-root dd-workbench">
@@ -570,12 +619,15 @@ export function Workbench({
           }}
           onNew={() => setCreating({ template: null })}
           onCollapse={() => setListOpen(false)}
+          peerSync={peerSync}
+          onOpenSettings={() => setView('settings')}
           headerActions={headerActions}
         />
       ) : (
         <nav className="dd-list-collapsed" aria-label="Design docs">
           <IconButton icon={PanelLeftOpen} label="Show doc list" onClick={() => setListOpen(true)} />
           <IconButton icon={Plus} label="New design doc" onClick={() => setCreating({ template: null })} />
+          <SyncButton peerSync={peerSync} compact />
           {headerActions}
         </nav>
       )}

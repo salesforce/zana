@@ -18,6 +18,7 @@
     "branding": {
       "icon": "DraftingCompass"
     },
+    "peers": true,
     "server": "./server.mjs",
     "app": "./app.js",
     "skills": [

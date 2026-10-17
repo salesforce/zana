@@ -172,7 +172,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     description:
       'Change one file in a design doc. Pass exactly one of: edits (exact-match find/replace, preferred for changes), ' +
       'content (whole file; creates the file if it does not exist), delete=true, or renameTo. ' +
-      'Pass baseRevision (the revision you last read) so you never overwrite a concurrent edit by the user; ' +
+      'Pass baseRevision and baseFileId (the revision and identity you last read) so you never overwrite a concurrent edit or replacement by the user; ' +
       'on a conflict, re-read the file and reapply. Every write is kept in history and appears live in the panel. ' +
       'Writing an HTML page returns a page check: missing files and blocked resources to fix.',
     parameters: {
@@ -199,6 +199,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
         delete: { type: 'boolean' },
         renameTo: { type: 'string' },
         baseRevision: { type: 'integer', minimum: 0, description: 'Revision you read; 0 asserts the file is new.' },
+        baseFileId: { type: ['string', 'null'], description: 'File identity you read; null asserts the file is absent. Use with baseRevision.' },
         note: { type: 'string', description: 'Short change note shown in history.' }
       },
       required: ['doc', 'path'],
@@ -212,7 +213,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     name: 'design_doc_update',
     description:
       'Update design doc metadata: title, summary, status (draft → review → approved → implemented, or archived), tags, the entry file, ' +
-      'or alternativeTo (the doc this one is a competing proposal to, so it nests under it in the doc list).',
+      'or alternativeTo (the doc this one is a competing proposal to, so it nests under it in the doc list). ' +
+      'When paired, pass expectedHead from design_doc_read. On conflict, re-read and review the replacement before updating.',
     parameters: {
       type: 'object',
       properties: {
@@ -225,7 +227,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
         alternativeTo: {
           type: 'string',
           description: 'Id or slug of the doc this one is an alternative to. Empty string detaches it. One level deep: point at the original doc, not another alternative.'
-        }
+        },
+        expectedHead: { type: ['string', 'null'], description: 'Head observed by design_doc_read; null asserts no head exists. Required when paired.' }
       },
       required: ['doc'],
       additionalProperties: false

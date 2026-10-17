@@ -8,6 +8,8 @@ import {
   createAttachedProductPluginService,
   pluginAssetRootFromService,
   productListProjects,
+  productListProviders,
+  productProjectHarnessDefault,
   productPushInbox,
   productRegisterPersonas,
   productRegisterTeams,
@@ -16,8 +18,9 @@ import {
 import { createInboxStore } from '../services/inbox/inbox-store.js';
 import { createProjectStore } from '../project-store.js';
 import { startProductServer, type ProductServer } from './product-server.js';
-import { getThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import { getThreadProvider, registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 import { buildPluginHost } from '@zana-ai/zcc-plugin-build';
+import { HostUnavailableError } from './host-hub.js';
 
 let server: ProductServer | null = null;
 const dirs: string[] = [];
@@ -176,7 +179,7 @@ describe('listen.ts', () => {
     expect(source).toContain('forkThread:');
     expect(source).toContain('unarchiveThread:');
     expect(source).toContain('spawnThread:');
-    expect(source).toContain('defaultSpawnProviderId(');
+    expect(source).toContain('defaultHarness: ctx.config.getConfig().defaultHarness');
     expect(source).toContain('createConversationFromRequest');
     expect(source).toContain('queryConversationThreads');
     expect(source).toContain('createQueuedMessage');
@@ -427,4 +430,76 @@ describe('plugin persona/team registration bridge', () => {
     );
     errorSpy.mockRestore();
 });
+});
+
+describe('plugin spawn harness helpers', () => {
+  const status = (rows: Array<{ family: string; installed: boolean; enabled: boolean }>) => ({
+    providers: rows.map((row) => ({ ...row, label: row.family, binary: row.family, alwaysEnabled: false, installHint: '' }))
+  });
+  const hubWith = (call: (input: { hostId: string }) => Promise<unknown>) => ({
+    resolveHostId: (hostId?: string) => hostId ?? 'local-host',
+    callHostOnlineRpc: vi.fn(call)
+  });
+  const baseConfig = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
+
+  it('resolves the project effective default on the project host with personas from disk', async () => {
+    const dataDir = tempDir();
+    const hub = hubWith(async () => status([{ family: 'claude', installed: true, enabled: true }, { family: 'codex', installed: true, enabled: true }]));
+    const ctx = {
+      dataDir,
+      hostHub: hub,
+      config: { getConfig: () => ({ ...baseConfig, defaultHarness: 'codex', harnessCodexEnabled: true }) },
+      toProjects: () => [{ id: 'p1', name: 'P', path: '/tmp/p1', createdAt: 0, lastActiveAt: 0, hostId: 'remote-1' }]
+    } as never;
+    await expect(productProjectHarnessDefault(ctx, 'p1')).resolves.toMatchObject({ ok: true, family: 'codex' });
+    expect(hub.callHostOnlineRpc).toHaveBeenLastCalledWith({ hostId: 'remote-1', command: { type: 'provider.status' } });
+    await productProjectHarnessDefault(ctx, 'p1', 'explicit-host');
+    expect(hub.callHostOnlineRpc).toHaveBeenLastCalledWith({ hostId: 'explicit-host', command: { type: 'provider.status' } });
+    await expect(productProjectHarnessDefault(ctx, 'missing')).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
+  });
+
+  it('reports UNAVAILABLE_DEFAULT when the host is not connected', async () => {
+    const ctx = {
+      dataDir: tempDir(),
+      hostHub: hubWith(async () => { throw new HostUnavailableError(); }),
+      config: { getConfig: () => baseConfig },
+      toProjects: () => [{ id: 'p1', name: 'P', path: '/tmp/p1', createdAt: 0, lastActiveAt: 0 }]
+    } as never;
+    await expect(productProjectHarnessDefault(ctx, 'p1')).resolves.toMatchObject({ ok: false, code: 'UNAVAILABLE_DEFAULT' });
+  });
+
+  it('lists providers with availability from the host probe, or bridge state when unprobeable', async () => {
+    const declaration = (id: string) => ({
+      id,
+      displayName: id,
+      capabilities: {
+        fork: 'tip' as const,
+        supportsManualCompaction: false,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits' as const]
+      },
+      composerActions: []
+    });
+    const handles = [
+      registerThreadProvider('test-claude', declaration('claude-code')),
+      registerThreadProvider('test-codex', declaration('codex')),
+      registerThreadProvider('test-broken', declaration('acp-grok'), null, 'bridge failed')
+    ];
+    try {
+      const offline = { db: {} as never, hostHub: hubWith(async () => { throw new HostUnavailableError(); }) } as never;
+      const offlineRows = await productListProviders(offline);
+      expect(offlineRows.find((row) => row.id === 'claude-code')).toMatchObject({ available: true, capabilities: { permissionModes: ['accept-edits'] } });
+      expect(offlineRows.find((row) => row.id === 'acp-grok')?.available).toBe(false);
+      const probed = { db: {} as never, hostHub: hubWith(async () => status([
+        { family: 'claude', installed: false, enabled: true },
+        { family: 'codex', installed: true, enabled: true }
+      ])) } as never;
+      const rows = await productListProviders(probed);
+      expect(rows.find((row) => row.id === 'claude-code')?.available).toBe(false);
+      expect(rows.find((row) => row.id === 'codex')?.available).toBe(true);
+    } finally {
+      for (const handle of handles) handle.unregister();
+    }
+  });
 });

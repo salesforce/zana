@@ -26,10 +26,19 @@ import type { ProjectNames } from './project-names.js';
 import type { RenderReports } from './render-reports.js';
 import { importSkipReason, mapBounded, siteFiles } from './site-files.js';
 import { CLI_AGENT_LABEL, DesignDocError, type DesignDocStore } from './store.js';
+import type { DesignDocPairing } from './pairing.js';
+import type { DesignDocPeerService } from './peer-service.js';
+import type { PluginSdkPeers } from '@zana-ai/zcc-plugin-sdk/server';
 
 export const CLI_NAME = 'design-docs';
 
 export const CLI_COMMANDS = [
+  { name: 'peers', summary: 'Show database group, link status and pending introductions', usage: 'peers [--json]' },
+  { name: 'enable', summary: 'Enable this database with one mutually enrolled app', usage: 'enable <peer-id>' },
+  { name: 'retry-introductions', summary: 'Retry durable group setup jobs', usage: 'retry-introductions' },
+  { name: 'remove-peer', summary: 'Commit group removal and queue secure revocation', usage: 'remove-peer <replica-id>' },
+  { name: 'revoke-peer', summary: 'Disable local database links without claiming group removal', usage: 'revoke-peer <peer-id>' },
+  { name: 'sync', summary: 'Sync persisted database changes, including drafts', usage: 'sync' },
   { name: 'list', summary: 'List design docs', usage: 'list [--query <text>] [--status active|all|<status>] [--all-projects] [--json]' },
   { name: 'show', summary: 'Show a doc manifest and its entry file', usage: 'show <doc> [--all] [--json]' },
   { name: 'read', summary: 'Print one text file raw', usage: 'read <doc> <path>' },
@@ -41,19 +50,19 @@ export const CLI_COMMANDS = [
   {
     name: 'write',
     summary: 'Write a whole file (creates it if missing)',
-    usage: 'write <doc> <path> (--file <local-path> | --content <text>) [--base-revision <n>] [--note <text>]'
+    usage: 'write <doc> <path> (--file <local-path> | --content <text>) [--base-revision <n>] [--base-file-id <id|null>] [--note <text>]'
   },
   {
     name: 'edit',
     summary: 'Exact-match replace inside a file',
-    usage: 'edit <doc> <path> --old <text> --new <text> [--replace-all] [--base-revision <n>] [--note <text>]'
+    usage: 'edit <doc> <path> --old <text> --new <text> [--replace-all] [--base-revision <n>] [--base-file-id <id|null>] [--note <text>]'
   },
-  { name: 'rm', summary: 'Delete a file (kept in history)', usage: 'rm <doc> <path> [--base-revision <n>] [--note <text>]' },
-  { name: 'mv', summary: 'Rename a file', usage: 'mv <doc> <from> <to> [--base-revision <n>] [--note <text>]' },
+  { name: 'rm', summary: 'Delete a file (kept in history)', usage: 'rm <doc> <path> [--base-revision <n>] [--base-file-id <id|null>] [--note <text>]' },
+  { name: 'mv', summary: 'Rename a file', usage: 'mv <doc> <from> <to> [--base-revision <n>] [--base-file-id <id|null>] [--note <text>]' },
   {
     name: 'update',
     summary: 'Change title, summary, status, tags or entry file',
-    usage: 'update <doc> [--title <t>] [--summary <s>] [--status <status>] [--tags a,b] [--entry <path>] [--alternative-to <doc>]'
+    usage: 'update <doc> [--title <t>] [--summary <s>] [--status <status>] [--tags a,b] [--entry <path>] [--alternative-to <doc>] [--expected-head <head|null>]'
   },
   { name: 'comment', summary: 'Add a review comment', usage: 'comment <doc> <body> [--path <file>] [--quote <text>]' },
   { name: 'reply', summary: 'Reply to a comment', usage: 'reply <doc> <comment-id> <body>' },
@@ -159,6 +168,9 @@ export interface CliDeps {
   pageUrl?(docId: string, path: string): string;
   kit?: KitReader;
   reports?: RenderReports;
+  pairing?: DesignDocPairing;
+  peerSync?: DesignDocPeerService;
+  peers?: PluginSdkPeers;
 }
 
 const CLI_USER: DocActor = { kind: 'user', label: 'CLI', threadId: null };
@@ -207,10 +219,35 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
   };
   const ref = (index: number) => docRef(operation, need(positional, index, 'doc'));
   const baseRevision = stringFlag(flags, 'base-revision');
+  const baseFileId = stringFlag(flags, 'base-file-id') === 'null' ? null : stringFlag(flags, 'base-file-id');
   const note = stringFlag(flags, 'note');
   const json = flags.json === true;
 
+  // Only the owner changes database sharing: an agent thread must not enable, remove or revoke peers, or start a sync.
+  if (caller.actor.kind === 'agent' && (verb === 'enable' || verb === 'remove-peer' || verb === 'revoke-peer' || verb === 'sync')) {
+    throw new DesignDocError('invalid', `${verb} is reserved for the owner and cannot be run by an agent`);
+  }
+
   switch (verb) {
+    case 'peers':
+    case 'enable':
+    case 'retry-introductions':
+    case 'remove-peer': {
+      if (!deps.pairing) throw new DesignDocError('invalid', 'database group setup is unavailable');
+      const status = verb === 'enable' ? await deps.pairing.enable(need(positional, 0, 'peer-id'))
+        : verb === 'remove-peer' ? await deps.pairing.remove(need(positional, 0, 'replica-id'))
+        : verb === 'retry-introductions' ? (await deps.pairing.retry(true), await deps.pairing.status())
+        : await deps.pairing.status();
+      return JSON.stringify(status, null, 2);
+    }
+    case 'revoke-peer': {
+      if (!deps.pairing) throw new DesignDocError('invalid', 'database group setup is unavailable');
+      return JSON.stringify(await deps.pairing.revoke(need(positional, 0, 'peer-id')), null, 2);
+    }
+    case 'sync': {
+      if (!deps.peerSync || !deps.peers) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      return JSON.stringify(await deps.peerSync.syncNow(deps.peers), null, 2);
+    }
     case 'list': {
       const scope = flags['all-projects'] === true ? 'all' : 'project';
       if (json) {
@@ -266,7 +303,7 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
         content = file.content;
       }
       if (content === undefined) throw new DesignDocError('invalid', 'write needs --file <path> or --content <text>');
-      return writeDoc(operation, { doc: need(positional, 0, 'doc'), path, content, baseRevision, note }, caller.actor);
+      return writeDoc(operation, { doc: need(positional, 0, 'doc'), path, content, baseRevision, baseFileId, note }, caller.actor);
     }
     case 'edit': {
       const oldText = stringFlag(flags, 'old');
@@ -281,6 +318,7 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
           path: need(positional, 1, 'path'),
           edits: [{ oldText, newText, replaceAll: flags['replace-all'] === true }],
           baseRevision,
+          baseFileId,
           note
         },
         caller.actor
@@ -289,7 +327,7 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
     case 'rm':
       return writeDoc(
         operation,
-        { doc: need(positional, 0, 'doc'), path: need(positional, 1, 'path'), delete: true, baseRevision, note },
+        { doc: need(positional, 0, 'doc'), path: need(positional, 1, 'path'), delete: true, baseRevision, baseFileId, note },
         caller.actor
       );
     case 'mv':
@@ -300,6 +338,7 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
           path: need(positional, 1, 'from'),
           renameTo: need(positional, 2, 'to'),
           baseRevision,
+          baseFileId,
           note
         },
         caller.actor
@@ -314,7 +353,8 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
           status: stringFlag(flags, 'status'),
           tags: stringFlag(flags, 'tags'),
           entryPath: stringFlag(flags, 'entry'),
-          alternativeTo: stringFlag(flags, 'alternative-to')
+          alternativeTo: stringFlag(flags, 'alternative-to'),
+          expectedHead: stringFlag(flags, 'expected-head') === 'null' ? null : stringFlag(flags, 'expected-head')
         },
         caller.actor
       );
@@ -462,7 +502,7 @@ async function importFiles(
   const entry = stringFlag(flags, 'entry');
   const skippedLine = skipped.length > 0 ? [`Skipped ${skipped.length}: ${skipped.join(', ')}`] : [];
   if (!target) {
-    const detail = deps.store.create(
+    const detail = deps.store.createImported(
       {
         title: title!,
         summary: stringFlag(flags, 'summary'),
@@ -480,12 +520,12 @@ async function importFiles(
       `Preview: zcc design-docs preview ${detail.slug}`
     ].join('\n');
   }
-  const results = deps.store.writeFiles(
+  const results = deps.store.importFiles(
     target.id,
     read.map((file) => ({ ...file, note })),
-    caller.actor
+    caller.actor,
+    entry
   );
-  if (entry !== undefined) deps.store.update(target.id, { entryPath: entry }, caller.actor);
   deps.changed(target.id);
   const created = results.filter((result) => result.created).length;
   const doc = deps.store.summary(target.id);

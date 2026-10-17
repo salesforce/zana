@@ -3,6 +3,8 @@ import { RenderReports } from './render-reports.js';
 import { createRpcHandlers, registerRpc, titleFromMarkdown, UI_USER } from './rpc.js';
 import { DesignDocError, DesignDocStore } from './store.js';
 import { createTestDatabase } from './test-db.js';
+import { DesignDocSyncStore } from './sync-store.js';
+import { DesignDocPeerService } from './peer-service.js';
 
 function setup() {
   const store = new DesignDocStore(createTestDatabase());
@@ -11,7 +13,7 @@ function setup() {
   const get = vi.fn(async ({ threadId }: { threadId: string }) => ({ id: threadId, projectId: 'p1', title: 'Planner' }));
   const sdk = {
     threads: { spawn, get },
-    projects: { list: async () => [{ id: 'p1', name: 'App', path: '/secret/path' }] }
+    projects: { list: async () => [{ id: 'p1', name: 'App', path: '/secret/path' }, { id: 'q', name: 'Default Project', quickAgent: true }] }
   };
   const rpc = createRpcHandlers({ store, changed, sdk: sdk as never });
   const call = (name: string, args?: unknown) => rpc[name]!(args) as any;
@@ -19,11 +21,137 @@ function setup() {
 }
 
 describe('Design Docs RPC', () => {
+  it('bounds peer review to retained heads and attributes resolution to user without trusting renderer origin', () => {
+    const { store } = setup();
+    const doc = store.create({ title: 'Review', template: 'blank' }, UI_USER);
+    const peerSync = { conflicts: vi.fn(() => ({ remoteHeads: ['remote'], nextCursor: null })),
+      conflictReview: vi.fn(() => ({ localHead: 'local' })), conflictFile: vi.fn(() => ({ localHead: 'local' })),
+      resolveConflict: vi.fn(() => 'resolved') };
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, peerSync: peerSync as unknown as DesignDocPeerService });
+    expect(rpc.peerConflicts!({ doc: doc.slug, cursor: 'prior' })).toEqual({ remoteHeads: ['remote'], nextCursor: null });
+    expect(peerSync.conflicts).toHaveBeenCalledWith(doc.id, 'prior');
+    rpc.peerConflictReview!({ doc: doc.id, remoteHead: 'remote' });
+    expect(peerSync.conflictReview).toHaveBeenCalledWith(doc.id, 'remote');
+    rpc.peerConflictFile!({ doc: doc.id, remoteHead: 'remote', path: 'README.md' });
+    expect(peerSync.conflictFile).toHaveBeenCalledWith(doc.id, 'remote', 'README.md');
+    expect(() => rpc.resolvePeerConflict!({ doc: doc.id, remoteHead: 'remote', choice: 'merge' })).toThrow(/expectedHead/);
+    expect(() => rpc.resolvePeerConflict!({ doc: doc.id, expectedHead: 'local', remoteHead: 'remote', choice: 'force' })).toThrow(/choice/);
+    expect(rpc.resolvePeerConflict!({ doc: doc.id, expectedHead: 'local', remoteHead: 'remote', choice: 'remote', origin: 'local-authoring' })).toEqual({ head: 'resolved' });
+    expect(peerSync.resolveConflict).toHaveBeenCalledExactlyOnceWith({ docId: doc.id, expectedHead: 'local', remoteHead: 'remote', choice: 'remote' }, UI_USER);
+    const unavailable = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never });
+    expect(unavailable.peerConflicts!({ doc: doc.id })).toEqual({ remoteHeads: [], nextCursor: null });
+    for (const method of ['peerConflictReview', 'peerConflictFile', 'resolvePeerConflict']) {
+      expect(() => unavailable[method]!({ doc: doc.id })).toThrow(/unavailable/);
+    }
+  });
+  it('passes file identity CAS through write, edit, delete, rename and restore RPCs', () => {
+    const { store, call, changed } = setup();
+    const doc = store.create({ title: 'Identity', files: [{ path: 'README.md', content: 'one' }, { path: 'other.md', content: 'two' }] }, UI_USER);
+    const file = call('readFile', { doc: doc.id, path: 'other.md' });
+    const revision = store.history(doc.id).find((row) => row.path === file.path)!;
+    const options = { doc: doc.id, baseRevision: file.revision, baseFileId: 'stale-id' };
+    for (const [method, args] of [
+      ['writeFile', { path: file.path, content: 'stale' }],
+      ['editFile', { path: file.path, edits: [{ oldText: 'two', newText: 'stale' }] }],
+      ['deleteFile', { path: file.path }],
+      ['renameFile', { from: file.path, to: 'moved.md' }],
+      ['restore', { id: revision.id }]
+    ] as const) expect(() => call(method, { ...options, ...args })).toThrow(/identity changed/);
+    expect(changed).not.toHaveBeenCalled();
+    expect(call('writeFile', { ...options, baseFileId: file.fileId, path: file.path, content: 'fresh' }).fileId).toBe(file.fileId);
+    expect(call('writeFile', { doc: doc.id, path: 'new.md', content: 'new', baseRevision: 0, baseFileId: null }).fileId).toBeTruthy();
+  });
+
+  it.each([{ status: 'approved' }, { title: 'Stale' }, { tags: ['stale'] }, { entryPath: 'other.md' }])(
+    'passes expectedHead and rejects stale metadata %j without notifications or intents', async (patch) => {
+      const db = createTestDatabase();
+      let sync!: DesignDocSyncStore;
+      const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+      sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+      sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, joinedAt: 1, sponsorReplicaId: null })));
+      const changed = vi.fn();
+      const handlers = createRpcHandlers({ store, changed, sdk: { projects: { list: async () => [] } } as never });
+      const doc = store.create({ title: 'Reviewed', files: [{ path: 'README.md', content: 'reviewed' }, { path: 'other.md', content: '' }] }, UI_USER);
+      const expectedHead = (handlers.get!({ doc: doc.id }) as typeof doc).head;
+      expect(expectedHead).toBe(sync.head('repo', doc.id));
+      store.writeFile(doc.id, { path: 'README.md', content: 'replacement' }, UI_USER);
+      const before = store.get(doc.id), operations = sync.operations('repo');
+      await expect(handlers.update!({ doc: doc.id, ...patch, expectedHead })).rejects.toThrow(/head changed/);
+      await expect(handlers.update!({ doc: doc.id, ...patch })).rejects.toThrow(/expectedHead/);
+      await expect(handlers.update!({ doc: doc.id, ...patch, expectedHead: 42 })).rejects.toThrow(/string/);
+      expect(store.get(doc.id)).toEqual(before);
+      expect(sync.operations('repo')).toEqual(operations);
+      expect(sync.readyIntents('repo')).toEqual([]);
+      expect(changed).not.toHaveBeenCalled();
+      await handlers.update!({ doc: doc.id, ...patch, expectedHead: before.head });
+      expect(changed).toHaveBeenCalledExactlyOnceWith(doc.id);
+    }
+  );
+
+  it('group control accepts peer identity only, never renderer roster or arbitrary scope', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const pairing = { status: vi.fn(async () => ({ configured: false })), enable: vi.fn(async () => ({ configured: true })),
+      retry: vi.fn(async () => {}), revoke: vi.fn(async () => ({ configured: true })),
+      remove: vi.fn(async () => { throw new Error('SDK peers.revoke unavailable'); }) };
+    const handlers = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, pairing: pairing as never });
+    expect(() => handlers.enablePeer!({ peerId: 'app', members: [] })).toThrow(/only peerId/);
+    expect(() => handlers.enablePeer!({ peerId: 'app', scope: 'other' })).toThrow(/only peerId/);
+    expect(() => handlers.enablePeer!({})).toThrow(/peerId/);
+    await expect(handlers.enablePeer!({ peerId: 'app' })).resolves.toEqual({ configured: true });
+    expect(pairing.enable).toHaveBeenCalledExactlyOnceWith('app');
+    await expect(handlers.groupStatus!(undefined)).resolves.toEqual({ configured: false });
+    await handlers.retryIntroductions!(undefined); expect(pairing.retry).toHaveBeenCalledOnce();
+    await expect(handlers.removePeer!({ replicaId: 'replica' })).rejects.toThrow(/revoke unavailable/);
+    expect(() => handlers.removePeer!({ replicaId: 'replica', scope: 'other' })).toThrow(/only replicaId/);
+    expect(() => handlers.revokePeer!({ peerId: 'app', scope: 'other' })).toThrow(/only peerId/);
+    await expect(handlers.revokePeer!({ peerId: 'app' })).resolves.toEqual({ configured: true });
+    expect(pairing.revoke).toHaveBeenCalledExactlyOnceWith('app');
+    const unavailable = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never });
+    expect(() => unavailable.groupStatus!(undefined)).toThrow(/unavailable/);
+    expect(() => unavailable.enablePeer!({ peerId: 'app' })).toThrow(/unavailable/);
+    expect(() => unavailable.removePeer!({ replicaId: 'replica' })).toThrow(/unavailable/);
+    expect(() => unavailable.revokePeer!({ peerId: 'app' })).toThrow(/unavailable/);
+    await expect(unavailable.retryIntroductions!(undefined)).rejects.toThrow(/unavailable/);
+  });
+  it('peerStatus marks this computer and linked members connected, and degrades without pairing or on a failed lookup', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const members = [{ replicaId: 'r-a', machineId: 'app-a' }, { replicaId: 'r-b', machineId: 'app-b' }, { replicaId: 'r-c', machineId: 'app-c' }];
+    const peerSync = { status: () => ({ configured: true, replicaId: 'r-a', members }) };
+    const connectedMembers = vi.fn(async () => ['app-b']);
+    const withPairing = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, peerSync: peerSync as never, pairing: { connectedMembers } as never });
+    await expect(withPairing.peerStatus!(undefined)).resolves.toMatchObject({ configured: true, members: [
+      { machineId: 'app-a', connected: true }, { machineId: 'app-b', connected: true }, { machineId: 'app-c', connected: false }] });
+    const failing = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, peerSync: peerSync as never,
+      pairing: { connectedMembers: async () => { throw new Error('host down'); } } as never });
+    await expect(failing.peerStatus!(undefined)).resolves.toMatchObject({ members: [{ connected: true }, { connected: false }, { connected: false }] });
+    const bare = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, peerSync: peerSync as never });
+    await expect(bare.peerStatus!(undefined)).resolves.toMatchObject({ members: [{ connected: true }, { connected: false }, { connected: false }] });
+    const unconfigured = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, peerSync: { status: () => ({ configured: false, members: [] }) } as never });
+    await expect(unconfigured.peerStatus!(undefined)).resolves.toEqual({ configured: false, members: [] });
+    await expect(createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never }).peerStatus!(undefined)).resolves.toEqual({ configured: false, members: [] });
+  });
+
+  it('captures message import plus association as one trusted import, not milestone', async () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, joinedAt: 1, sponsorReplicaId: null })));
+    const sdk = { threads: { get: async () => ({ id: 'thread', title: 'Source', projectId: 'p1' }) }, projects: { list: async () => [] } };
+    const handlers = createRpcHandlers({ store, sdk: sdk as never, changed: vi.fn() });
+    await handlers.createFromMessage!({ threadId: 'thread', text: '# Message', origin: 'local-authoring', status: 'approved' });
+    expect(sync.operations('repo').map((op) => op.origin)).toEqual(['import']);
+    expect(sync.readyIntents('repo')).toEqual([]);
+    expect(store.get(store.list()[0]!.id).threads).toHaveLength(1);
+    await handlers.create!({ title: 'Ordinary', status: 'approved', origin: 'import' });
+    expect(sync.operations('repo').at(-1)!.origin).toBe('local-authoring');
+    expect(sync.readyIntents('repo')).toHaveLength(1);
+  });
   it('serves templates and projects without leaking paths', async () => {
     const { call } = setup();
     expect(call('templates').map((template: { id: string }) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank']);
     expect(call('templates')[0].files).toContain('README.md');
-    await expect(call('projects')).resolves.toEqual([{ id: 'p1', name: 'App' }]);
+    await expect(call('projects')).resolves.toEqual([{ id: 'p1', name: 'App' }, { id: 'q', name: 'Default Project', quickAgent: true }]);
   });
 
   it('creates, lists, gets, updates and removes docs as the user', async () => {
@@ -178,6 +306,7 @@ describe('Design Docs RPC', () => {
     const { call, spawn, store } = setup();
     const doc = await call('create', { title: 'Sync', projectId: 'p1', template: 'blank' });
 
+    // A renderer-supplied provider is ignored: agents always run on the project AI harness.
     await expect(call('askAgent', { doc: doc.id, action: 'review', path: 'README.md', providerId: 'codex' })).resolves.toEqual({
       threadId: 'thread-42',
       projectId: 'p1'
@@ -186,10 +315,11 @@ describe('Design Docs RPC', () => {
     expect(request).toMatchObject({
       projectId: 'p1',
       title: 'Review · Sync',
-      providerId: 'codex',
+      harness: 'project-default',
       visibility: 'hidden',
       pluginMetadata: { designDocId: doc.id, action: 'review', panelAgent: { panel: 'design-docs', view: doc.id } }
     });
+    expect(request).not.toHaveProperty('providerId');
     expect(request.prompt).toContain('Focus on README.md.');
     expect(request.prompt).toContain(`::design-doc{id="${doc.id}"}`);
     expect(store.get(doc.id).threads[0]).toMatchObject({ threadId: 'thread-42', role: 'reviewer' });
@@ -198,6 +328,7 @@ describe('Design Docs RPC', () => {
     const custom = (spawn.mock.calls[1] as unknown[])[0] as Record<string, any>;
     expect(custom).toMatchObject({ title: 'Design doc · Sync', pluginMetadata: { designDocId: doc.id } });
     expect(custom).not.toHaveProperty('providerId');
+    expect(custom.harness).toBe('project-default');
     expect(custom.prompt).toContain('Add a rollout section');
   });
 
@@ -248,6 +379,7 @@ describe('Design Docs RPC', () => {
     expect(request).toMatchObject({
       projectId: 'p1',
       title: 'Publish · Collab',
+      harness: 'project-default',
       visibility: 'hidden',
       pluginMetadata: { designDocId: doc.id, action: 'publish', panelAgent: { panel: 'design-docs', view: doc.id } }
     });
@@ -271,11 +403,189 @@ describe('Design Docs RPC', () => {
     expect(((spawn.mock.calls[0] as unknown[])[0] as { prompt: string }).prompt).toContain("this project's repository");
   });
 
+  it('ignores a legacy stored Agent harness setting and spawns every agent on the project harness', async () => {
+    // Earlier builds stored `agent-harness` in plugin kv ("Always use"). It is
+    // never read now, so such a value behaves as "follow the project".
+    const store = new DesignDocStore(createTestDatabase());
+    const spawn = vi.fn(async () => ({ id: 'thread-7' }));
+    const kvStore = new Map<string, unknown>([['agent-harness', {
+      mode: 'provider',
+      providerId: 'codex',
+      harnessRouting: { schemaVersion: 1, byAdapter: { codex: { compatibility: { codexSandbox: 'danger-full-access' } } } }
+    }]]);
+    const kv = { get: vi.fn(async (key: string) => kvStore.get(key)), set: vi.fn() };
+    const deps = {
+      store,
+      changed: vi.fn(),
+      sdk: { threads: { spawn, get: vi.fn() }, projects: { list: async () => [{ id: 'p1', name: 'App' }] } },
+      kv
+    };
+    const rpc = createRpcHandlers(deps as never);
+    const doc = store.create({ title: 'Site', template: 'html-design', projectId: 'p1' }, UI_USER);
+    await rpc.askAgent!({ doc: doc.id, action: 'review' });
+    await rpc.publish!({ doc: doc.id, branch: 'main' });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    for (const [request] of spawn.mock.calls as unknown as Array<[Record<string, unknown>]>) {
+      expect(request.harness).toBe('project-default');
+      expect(request).not.toHaveProperty('providerId');
+      expect(request).not.toHaveProperty('harnessRouting');
+    }
+    expect(kv.get).not.toHaveBeenCalled();
+    expect(kv.set).not.toHaveBeenCalled();
+  });
+
+  it('passes a host harness error through unchanged', async () => {
+    const { call, spawn } = setup();
+    const doc = await call('create', { title: 'Sync', projectId: 'p1', template: 'blank' });
+    const message = 'No usable AI harness: Default harness unavailable. Choose an installed, enabled harness in Settings → AI Harness.';
+    spawn.mockRejectedValueOnce(new Error(message));
+    await expect(call('askAgent', { doc: doc.id, action: 'review' })).rejects.toThrow(message);
+  });
+
   it('registers every handler as an rpc method', () => {
     const method = vi.fn();
     const { store } = setup();
     registerRpc({ rpc: { method } } as never, { store, changed: () => {}, sdk: {} as never });
     expect(method.mock.calls.map(([name]) => name)).toContain('askAgent');
-    expect(method).toHaveBeenCalledTimes(29);
+    expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining([
+      'publish', 'pin', 'peerStatus', 'groupStatus', 'enablePeer', 'retryIntroductions', 'removePeer', 'revokePeer',
+      'syncNow', 'peerConflicts', 'peerConflictReview', 'peerConflictFile', 'resolvePeerConflict', 'backupDatabase', 'backups'
+    ]));
+    expect(method.mock.calls.map(([name]) => name)).not.toContain('agentSettings');
+    expect(method.mock.calls.map(([name]) => name)).not.toContain('setAgentSettings');
+    expect(method.mock.calls.map(([name]) => name)).not.toContain('agentHarnesses');
+    expect(method).toHaveBeenCalledTimes(54);
+  });
+});
+
+describe('Design Docs invitation RPC handlers', () => {
+  const TOKEN = 'zccinv1.SECRET-TOKEN-VALUE', PROOF = 'owner-proof-SECRET';
+  function invite() {
+    const store = new DesignDocStore(createTestDatabase());
+    const pairing = {
+      inviteState: vi.fn(async () => ({ available: true, invitations: [], links: [] })),
+      createInvitation: vi.fn(async () => ({ invitationId: 'inv-1', token: TOKEN, expiresAt: 1 })),
+      openInvitation: vi.fn(async () => ({ invitationId: 'inv-1', token: TOKEN, expiresAt: 1 })),
+      redeemInvitation: vi.fn(async () => ({ invitationId: 'inv-2', state: 'redeeming' })),
+      invitationApproval: vi.fn(async () => ({ title: 'Approve' })),
+      decideInvitation: vi.fn(async () => ({ invitationId: 'inv-1', state: 'consented' })),
+      cancelInvitation: vi.fn(async () => undefined),
+      dismissInvitation: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => [{ pairingId: 'p' }]),
+      repair: vi.fn(async () => ({ outcome: 'sync-enabled', detail: null, reason: null })),
+      resetPeer: vi.fn(async () => ({ discarded: 2, status: { configured: false } })),
+      outOfSync: vi.fn(async () => true),
+      notifyStateChanged: vi.fn(async () => undefined)
+    };
+    const handlers = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, pairing: pairing as never });
+    return { handlers, pairing };
+  }
+  const message = (run: () => unknown): string => { try { run(); } catch (error) { return (error as Error).message; } return ''; };
+  const reject = async (run: () => unknown): Promise<string> => { try { await run(); } catch (error) { return (error as Error).message; } return ''; };
+
+  it('every handler fails with a clear message when pairing is unavailable', async () => {
+    const handlers = createRpcHandlers({ store: new DesignDocStore(createTestDatabase()), changed: vi.fn(), sdk: {} as never });
+    const calls: Array<[string, unknown]> = [['inviteState', undefined], ['createInvitation', undefined], ['openInvitation', undefined], ['redeemInvitation', { token: TOKEN }],
+      ['invitationApproval', { invitationId: 'i' }], ['decideInvitation', { invitationId: 'i', decision: 'denied' }], ['cancelInvitation', { invitationId: 'i' }], ['dismissInvitation', { invitationId: 'i' }],
+      ['reconnectPeer', { peerId: 'p' }], ['repairPeer', { peerId: 'p' }], ['resetPeerSync', { peerId: 'p' }], ['peersOutOfSync', undefined]];
+    for (const [name, args] of calls) expect(await reject(() => handlers[name]!(args)), name).toBe('database group setup is unavailable');
+  });
+
+  it('inviteState, createInvitation and peersOutOfSync delegate; only a boolean reaches the UI', async () => {
+    const { handlers, pairing } = invite();
+    await expect(handlers.inviteState!(undefined)).resolves.toMatchObject({ available: true });
+    await expect(handlers.createInvitation!(undefined)).resolves.toEqual({ invitationId: 'inv-1', token: TOKEN, expiresAt: 1 });
+    await expect(handlers.openInvitation!(undefined)).resolves.toEqual({ invitationId: 'inv-1', token: TOKEN, expiresAt: 1 });
+    await expect(handlers.peersOutOfSync!(undefined)).resolves.toEqual({ outOfSync: true });
+    pairing.outOfSync.mockResolvedValueOnce(false);
+    await expect(handlers.peersOutOfSync!({ extra: 1 })).resolves.toEqual({ outOfSync: false });
+    expect(pairing.inviteState).toHaveBeenCalledOnce();
+    expect(pairing.createInvitation).toHaveBeenCalledWith();
+  });
+
+  it('redeemInvitation needs only a non-blank token and rejects extra keys without echoing it', async () => {
+    const { handlers, pairing } = invite();
+    await handlers.redeemInvitation!({ token: TOKEN });
+    expect(pairing.redeemInvitation).toHaveBeenCalledExactlyOnceWith(TOKEN);
+    for (const bad of [undefined, {}, { token: '   ' }, { token: 7 }]) expect(message(() => handlers.redeemInvitation!(bad))).toBe('token is required');
+    const extra = message(() => handlers.redeemInvitation!({ token: TOKEN, scope: 'other' }));
+    expect(extra).toBe('accepts only token');
+    expect(extra).not.toContain(TOKEN);
+    expect(pairing.redeemInvitation).toHaveBeenCalledOnce();
+  });
+
+  it('invitationApproval, cancelInvitation and reconnectPeer take a single identifier', async () => {
+    const { handlers, pairing } = invite();
+    await expect(handlers.invitationApproval!({ invitationId: 'inv-1' })).resolves.toEqual({ title: 'Approve' });
+    await expect(handlers.cancelInvitation!({ invitationId: 'inv-1' })).resolves.toBeUndefined();
+    await expect(handlers.reconnectPeer!({ peerId: 'app-b' })).resolves.toEqual([{ pairingId: 'p' }]);
+    expect(pairing.invitationApproval).toHaveBeenCalledExactlyOnceWith('inv-1');
+    expect(pairing.cancelInvitation).toHaveBeenCalledExactlyOnceWith('inv-1');
+    expect(pairing.reconnect).toHaveBeenCalledExactlyOnceWith('app-b');
+    await expect(handlers.repairPeer!({ peerId: 'app-b' })).resolves.toMatchObject({ outcome: 'sync-enabled' });
+    expect(pairing.repair).toHaveBeenCalledExactlyOnceWith('app-b');
+    await expect(handlers.resetPeerSync!({ peerId: 'app-b' })).resolves.toEqual({ discarded: 2, status: { configured: false } });
+    expect(pairing.resetPeer).toHaveBeenCalledExactlyOnceWith('app-b');
+    for (const [name, key] of [['invitationApproval', 'invitationId'], ['cancelInvitation', 'invitationId'], ['reconnectPeer', 'peerId'], ['repairPeer', 'peerId'], ['resetPeerSync', 'peerId']] as const) {
+      expect(await reject(() => handlers[name]!({}))).toBe(`${key} is required`);
+      expect(await reject(() => handlers[name]!({ [key]: ' ' }))).toBe(`${key} is required`);
+      expect(await reject(() => handlers[name]!({ [key]: 'x', token: TOKEN }))).toBe(`accepts only ${key}`);
+    }
+  });
+
+  it('decideInvitation validates the decision and forwards the owner proof only when approving', async () => {
+    const { handlers, pairing } = invite();
+    await handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'approved', ownerProof: PROOF });
+    expect(pairing.decideInvitation).toHaveBeenLastCalledWith('inv-1', 'approved', PROOF);
+    await handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'denied', ownerProof: PROOF });
+    expect(pairing.decideInvitation).toHaveBeenLastCalledWith('inv-1', 'denied', undefined);
+    await handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'denied' });
+    expect(pairing.decideInvitation).toHaveBeenLastCalledWith('inv-1', 'denied', undefined);
+    pairing.decideInvitation.mockClear();
+    expect(message(() => handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'maybe', ownerProof: PROOF }))).toBe('decision must be approved or denied');
+    expect(message(() => handlers.decideInvitation!({ invitationId: 'inv-1', ownerProof: PROOF }))).toBe('decision must be approved or denied');
+    expect(message(() => handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'approved' }))).toBe('ownerProof is required');
+    expect(message(() => handlers.decideInvitation!({ invitationId: ' ', decision: 'denied' }))).toBe('invitationId is required');
+    const extra = message(() => handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'approved', ownerProof: PROOF, scope: 'x' }));
+    expect(extra).toBe('accepts only invitationId, decision, ownerProof');
+    expect(extra).not.toContain(PROOF);
+    expect(pairing.decideInvitation).not.toHaveBeenCalled();
+  });
+
+  it('propagates pairing failures unchanged and never writes the token or proof to the log', async () => {
+    const { handlers, pairing } = invite();
+    const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error'), vi.spyOn(console, 'info')].map((spy) => spy.mockImplementation(() => undefined));
+    try {
+      pairing.redeemInvitation.mockRejectedValueOnce(new Error('invalid_invitation'));
+      pairing.decideInvitation.mockRejectedValueOnce(new Error('owner_proof_required'));
+      pairing.reconnect.mockRejectedValueOnce(new Error('Pairing is not ready for that action'));
+      pairing.cancelInvitation.mockRejectedValueOnce(new Error('not_found'));
+      pairing.invitationApproval.mockRejectedValueOnce(new Error('fenced'));
+      pairing.outOfSync.mockRejectedValueOnce(new Error('peer down'));
+      expect(await reject(() => handlers.redeemInvitation!({ token: TOKEN }))).toBe('invalid_invitation');
+      expect(await reject(() => handlers.decideInvitation!({ invitationId: 'i', decision: 'approved', ownerProof: PROOF }))).toBe('owner_proof_required');
+      expect(await reject(() => handlers.reconnectPeer!({ peerId: 'p' }))).toBe('Pairing is not ready for that action');
+      expect(await reject(() => handlers.cancelInvitation!({ invitationId: 'i' }))).toBe('not_found');
+      expect(await reject(() => handlers.invitationApproval!({ invitationId: 'i' }))).toBe('fenced');
+      expect(await reject(() => handlers.peersOutOfSync!(undefined))).toBe('peer down');
+      await handlers.createInvitation!(undefined);
+      for (const spy of logs) expect(spy).not.toHaveBeenCalled();
+    } finally { for (const spy of logs) spy.mockRestore(); }
+  });
+
+  it('syncNow tells peers to re-check afterwards without failing or awaiting the sync', async () => {
+    const { pairing } = invite();
+    const peerSync = { syncNow: vi.fn(async () => ({ attempted: 1, synced: 1, blocked: 0 })) };
+    const store = new DesignDocStore(createTestDatabase());
+    const handlers = createRpcHandlers({ store, changed: vi.fn(), sdk: { peers: {} } as never, pairing: pairing as never, peerSync: peerSync as never });
+    await expect(handlers.syncNow!(undefined)).resolves.toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(pairing.notifyStateChanged).toHaveBeenCalledOnce();
+    pairing.notifyStateChanged.mockRejectedValueOnce(new Error('peer down'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(handlers.syncNow!(undefined)).resolves.toMatchObject({ synced: 1 });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('notification failed'), 'peer down'));
+    warn.mockRestore();
+    const bare = createRpcHandlers({ store, changed: vi.fn(), sdk: { peers: {} } as never, peerSync: peerSync as never });
+    await expect(bare.syncNow!(undefined)).resolves.toMatchObject({ synced: 1 });
   });
 });

@@ -210,6 +210,7 @@ export interface PluginService {
   }): Promise<import('@zana-ai/zcc-domain').ProjectTabAvailabilityContract>;
   runCliCommand(id: string, argv: string[], context?: { projectId?: string; threadId?: string; cwd?: string }): Promise<PluginCliExecutionResult>;
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
+  dispatchPeer(pluginId: string, method: string, request: import('@zana-ai/zcc-plugin-sdk/server').PluginPeerRequest): Promise<unknown>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
   admitDispatch(request: PluginDispatchAdmissionRequest): Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>;
   decideToolPolicy(request: PluginToolPolicyRequest): Promise<PluginToolPolicyDecision>;
@@ -233,6 +234,7 @@ export interface PluginUiSnapshot {
   gitResolvedCommit: string | null;
   source: string;
   projectTab: PluginManifest['projectTab'];
+  peers: boolean;
   skillNames: string[];
   mcpServers: PluginUiMcpServer[];
   extra: Record<string, unknown>;
@@ -265,6 +267,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     appUrl: row.appUrl,
     ...(row.availableVersion ? { availableVersion: row.availableVersion } : {}),
     projectTab: row.projectTab,
+    ...(row.peers ? { peers: true } : {}),
     skillNames: row.skillNames,
     mcpServers: row.mcpServers.map((server) => ({
       name: server.name,
@@ -1643,6 +1646,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       let mcpServers: PluginUiMcpServer[] = [];
       let extra: Record<string, unknown> = {};
       let projectTab: PluginManifest['projectTab'];
+      let peers = false;
       let themes: PluginThemeSnapshot[] = [];
       let name = row.name;
       let description = row.description;
@@ -1655,6 +1659,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         skillNames = manifest.skillNames;
         extra = manifest.extra;
         projectTab = manifest.projectTab;
+        peers = manifest.peers;
         mcpServers = manifest.mcpServers.map((server) => ({
           name: server.name,
           type: server.type,
@@ -1682,6 +1687,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         });
       } catch {
         projectTab = undefined;
+        peers = false;
       }
       return {
         id: row.id,
@@ -1698,6 +1704,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         gitResolvedCommit: row.gitResolvedCommit,
         source: row.source,
         projectTab,
+        peers,
         skillNames,
         mcpServers,
         extra,
@@ -2168,6 +2175,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const route = routes.find((row) => row.method === request.method && row.path === request.path);
       if (!route) throw new Error(`unknown http ${pluginId} ${request.method} ${request.path}`);
       return route.handler(request);
+    },
+    async dispatchPeer(pluginId, method, request) {
+      const handler = live.get(pluginId)?.handle?.peerHandlers.get(method);
+      if (!handler) throw new Error(`unknown peer ${pluginId} ${method}`);
+      return handler(request);
     },
     async emitHostEvent(event) {
       const artifact = hostArtifacts.get(event.pluginId);

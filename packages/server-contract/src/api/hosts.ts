@@ -74,6 +74,116 @@ export type CreateHostJoinCodeResponse = z.infer<
   typeof createHostJoinCodeResponseSchema
 >;
 
+/** A sponsor-delivered introduction awaiting this machine owner's consent. Carries no credentials or routes. */
+export const peerIntroductionSchema = z.object({
+  introductionId: z.string().min(1),
+  sponsorInstanceId: z.string().min(1),
+  peerInstanceId: z.string().min(1),
+  pluginId: z.string().min(1),
+  scope: z.string().min(1),
+  status: z.enum(["pending", "approved", "denied"]),
+  receivedAt: z.number().int().nonnegative(),
+  /** Approved without an owner decision (covered by an invitation-founded sponsor link); removable via the scoped revoke. */
+  autoApproved: z.literal(true).optional(),
+});
+export type PeerIntroduction =z.infer<typeof peerIntroductionSchema>;
+export const peerIntroductionListResponseSchema = z.object({ introductions: z.array(peerIntroductionSchema) });
+export type PeerIntroductionListResponse = z.infer<typeof peerIntroductionListResponseSchema>;
+export const peerIntroductionDecisionRequestSchema = z
+  .object({ decision: z.enum(["approved", "denied"]) })
+  .strict();
+export type PeerIntroductionDecisionRequest = z.infer<typeof peerIntroductionDecisionRequestSchema>;
+
+/** One reason a plugin link exists. `label` is the plugin's registered display name, chosen by core. */
+export const peerLinkUseSchema = z.object({
+  pluginId: z.string().min(1).max(128),
+  label: z.string().min(1).max(80),
+  scope: z.string().min(1).max(256),
+  since: z.number().int().nonnegative(),
+  /** Short status the using plugin reported for this link. Core relays it verbatim and never interprets it. */
+  note: z.object({
+    state: z.enum(["ok", "attention"]),
+    label: z.string().min(1).max(40),
+    detail: z.string().max(200).optional(),
+  }).strict().optional(),
+});
+export type PeerLinkUse = z.infer<typeof peerLinkUseSchema>;
+/** `unclaimed`: a forward-only host no owner store claims (e.g. migrated); the owner can remove it. */
+export const peerLinkStateSchema = z.enum(["pre-consent", "activating", "linked", "removed", "failed", "unclaimed"]);
+export type PeerLinkState = z.infer<typeof peerLinkStateSchema>;
+/** A forward-only plugin link. Never carries codes, keys, credentials or routes. */
+export const peerLinkSchema = z.object({
+  hostId: z.string().min(1),
+  /** Absent when no owner store describes the peer (unclaimed links). */
+  peerInstanceId: z.string().min(1).nullable(),
+  peerName: z.string().min(1),
+  state: peerLinkStateSchema,
+  /** Stated reason for `failed` links. */
+  reason: z.string().max(200).optional(),
+  connected: z.boolean(),
+  /** Owner disconnected the link: record and keys are kept, nothing connects until Reconnect. */
+  paused: z.boolean().optional(),
+  uses: z.array(peerLinkUseSchema).max(32),
+});
+export type PeerLink = z.infer<typeof peerLinkSchema>;
+export const peerLinkListResponseSchema = z.object({ links: z.array(peerLinkSchema) });
+export type PeerLinkListResponse = z.infer<typeof peerLinkListResponseSchema>;
+/** Optional `scope` narrows removal to one use; without it every scope of the plugin is removed. */
+export const removePeerLinkUseQuerySchema = z.object({ scope: z.string().min(1).max(256).optional() }).strict();
+export type RemovePeerLinkUseQuery = z.infer<typeof removePeerLinkUseQuerySchema>;
+export const removePeerLinkResponseSchema = z.object({
+  ok: z.literal(true),
+  /** True when this removal took the last use and the link itself was torn down. */
+  linkRemoved: z.boolean(),
+});
+export type RemovePeerLinkResponse = z.infer<typeof removePeerLinkResponseSchema>;
+/** Owner Disconnect / Reconnect of a link; the record survives either way. */
+export const pausePeerLinkResponseSchema = z.object({ ok: z.literal(true), paused: z.boolean() });
+export type PausePeerLinkResponse = z.infer<typeof pausePeerLinkResponseSchema>;
+
+/** Forward-only link the installer created from an approved introduction. Never carries codes, keys or routes. */
+export const peerInstallationSchema = z.object({
+  introductionId: z.string().min(1),
+  role: z.enum(["requester", "responder"]),
+  peerInstanceId: z.string().min(1),
+  sponsorInstanceId: z.string().min(1),
+  pluginId: z.string().min(1),
+  scope: z.string().min(1),
+  /** `awaiting`: this owner consented; the pair waits for the other owner. Nothing is minted while awaiting. */
+  status: z.enum(["awaiting", "pending", "enrolled", "failed"]),
+  capability: z.literal("peer.forward"),
+  expiresAt: z.number().int().nonnegative(),
+  connected: z.boolean(),
+});
+export type PeerInstallation = z.infer<typeof peerInstallationSchema>;
+export const peerInstallationListResponseSchema = z.object({ installations: z.array(peerInstallationSchema) });
+export type PeerInstallationListResponse = z.infer<typeof peerInstallationListResponseSchema>;
+/** Owner-registered fixed SSH route to a peer's loopback app server. The host key is pinned; nothing is learned. */
+export const peerSshEndpointSchema = z
+  .object({
+    peerInstanceId: z.string().min(1).max(128),
+    host: z.string().min(1).max(253),
+    port: z.number().int().min(1).max(65535),
+    user: z.string().min(1).max(32),
+    hostKey: z.string().min(1).max(4200),
+    remoteAppPort: z.number().int().min(1).max(65535),
+    identityFile: z.string().min(1).max(1024).optional(),
+  })
+  .strict();
+export type PeerSshEndpoint = z.infer<typeof peerSshEndpointSchema>;
+export const peerSshEndpointListResponseSchema = z.object({ endpoints: z.array(peerSshEndpointSchema) });
+export type PeerSshEndpointListResponse = z.infer<typeof peerSshEndpointListResponseSchema>;
+/**
+ * Owner-managed allowlist entry for advertised peer routes: an https origin, or http on loopback. No credentials,
+ * path, query, fragment or wildcard; the server canonicalizes and enforces the full rule and a cap of 32 entries.
+ */
+export const peerRouteOriginRequestSchema = z.object({ origin: z.string().min(1).max(256) }).strict();
+export type PeerRouteOriginRequest = z.infer<typeof peerRouteOriginRequestSchema>;
+export const peerRouteOriginListResponseSchema = z.object({ origins: z.array(z.string()).max(32) });
+export type PeerRouteOriginListResponse = z.infer<typeof peerRouteOriginListResponseSchema>;
+export type PeerRouteOriginAddResponse = { origin: string };
+export type PeerRouteOriginRemoveResponse = { removed: boolean };
+
 export const updateHostRequestSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),

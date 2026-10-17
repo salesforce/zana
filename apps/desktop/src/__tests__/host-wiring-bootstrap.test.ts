@@ -41,7 +41,8 @@ const h = vi.hoisted(() => {
     lifecycleIntegration: undefined as any,
     lifecycleOverride: {} as Record<string, (...a: any[]) => any>,
     controlPlaneDeps: undefined as any,
-    browserManager: undefined as any
+    browserManager: undefined as any,
+    mobileStart: vi.fn()
   };
 });
 
@@ -190,6 +191,9 @@ vi.mock('../desktop-browser-view.js', async () => {
 vi.mock('../runtime/runtime-supervisor.js', () => ({
   startRuntimeSupervisor: async () => { throw new Error('no runtime in unit test'); }
 }));
+vi.mock('@zana-ai/zcc-server/mobile/manager', () => ({
+  MobileGatewayManager: class { start() { h.mobileStart(); return Promise.reject(new Error('port held')); } close() { return Promise.resolve(); } status() { return {}; } }
+}));
 vi.mock('../updater.js', () => ({ createUpdater: () => ({ start() {}, stop() {}, checkForUpdates: async () => {} }) }));
 vi.mock('../startup-dependency-doctor.js', () => ({ runStartupDependencyDoctor: async () => ({}) }));
 vi.mock('../test-tap.js', () => ({
@@ -235,12 +239,16 @@ describe('host bootstrap wiring', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:5173');
+    const realGetConfig = store.getConfig.bind(store);
+    const configSpy = vi.spyOn(store, 'getConfig').mockImplementation(() => ({ ...realGetConfig(), mobileGatewayEnabled: true }));
     try {
       h.ready!();
       await vi.waitFor(() => expect(h.controlPlaneDeps, JSON.stringify(vi.mocked(console.error).mock.calls)).toBeDefined(), { timeout: 20000 });
       expect(h.controlPlaneDeps.pluginCommands.cliContributions).toBeTypeOf('function');
       expect(h.controlPlaneDeps.pluginCommands.runCliCommand).toBeTypeOf('function');
-    } finally { vi.unstubAllEnvs(); }
+    } finally { vi.unstubAllEnvs(); configSpy.mockRestore(); }
+    expect(h.mobileStart).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(vi.mocked(console.error).mock.calls.some(call => String(call[0]).includes('mobileGateway.start'))).toBe(true));
     expect(h.ipcCtx.createInteractiveTerminal).toBe(host.createInteractiveTerminal);
     expect(h.ipcCtx.launchAuthorizedTerminal).toBeTypeOf('function');
     expect(h.goalDeps.runEvaluator).toBeTypeOf('function');
@@ -719,6 +727,21 @@ describe('host bootstrap wiring', () => {
     const flush = await host.flushBlockerNoticesAtBoot({ flushBlockerNotices }, logError);
     flush();
     await vi.waitFor(() => expect(logError).toHaveBeenCalledWith('execution.flushBlockerNotices', expect.objectContaining({ message: 'offline' })));
+  });
+
+  it('routes OS deep links and second-instance argv to the deep link host', async () => {
+    const preventDefault = vi.fn();
+    const [openUrl] = h.appHandlers.get('open-url')!;
+    openUrl({ preventDefault }, 'zana-dev://plugin/design-docs/peer/join?d=abc');
+    openUrl({ preventDefault }, 'https://not-a-deep-link.example/');
+    expect(preventDefault).toHaveBeenCalledTimes(2);
+    const second = h.appHandlers.get('second-instance')!;
+    expect(second.length).toBeGreaterThan(0);
+    for (const handler of second) {
+      handler({}, ['app', 'zana-dev://plugin/design-docs/peer/join?d=def']);
+      handler({}, ['app', '--no-link']);
+    }
+    await settle();
   });
 
   it('quits without confirmation when configured and releases services and timers', async () => {

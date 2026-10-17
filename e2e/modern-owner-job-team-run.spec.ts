@@ -134,6 +134,16 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
       return (body.thread?.status ?? 'missing') as string;
     }, threadId), { timeout: 30_000, intervals: [500] }).toMatch(/^(starting|active|idle|stopping)$/);
 
+    // Native tool policy fails closed until every enabled server plugin has been
+    // activated and sealed (plugins start sequentially after boot, and the
+    // default-installed plugins can finish after the provider catalog and owner
+    // thread are up). Wait for activation instead of racing the denial.
+    await expect.poll(async () => window.evaluate(async () => {
+      const plugins = await window.cc.pluginApps.list();
+      return plugins.filter((plugin) => plugin.enabled && plugin.status !== 'running' && plugin.status !== 'needs-configuration')
+        .map((plugin) => `${plugin.id}:${plugin.status}`);
+    }), { timeout: 60_000, intervals: [500], message: 'enabled plugins finish activating' }).toEqual([]);
+
     // Submit the owner's execution_start through the SAME host tool-call bridge a
     // real ACP dynamic tool uses. From Node context (no browser Origin header),
     // authenticated with the daemon's own self-host credentials.

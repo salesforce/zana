@@ -14,7 +14,11 @@ import {
   harnessOptions,
   HARNESS_OPTION_ROLES,
   LEAST_CAPABLE,
-  seedPromptArgs
+  seedPromptArgs,
+  harnessFamilyOf,
+  THREAD_PROVIDER_ID_BY_HARNESS_FAMILY,
+  threadProviderIdForHarnessFamily,
+  harnessFamilyForThreadProviderId
 } from './launch-provider.js';
 import type { LaunchProfileId } from './product.js';
 
@@ -682,5 +686,36 @@ describe('launch-provider', () => {
       expect(seedPromptArgs('claude', '  hello  ')).toEqual(['hello']);
       expect(seedPromptArgs('opencode', '  hello  ')).toEqual(['--prompt', 'hello']);
     });
+  });
+});
+
+describe('harness family <-> thread provider table', () => {
+  it('round-trips every family through its thread provider id', () => {
+    for (const [family, providerId] of Object.entries(THREAD_PROVIDER_ID_BY_HARNESS_FAMILY)) {
+      expect(threadProviderIdForHarnessFamily(family)).toBe(providerId);
+      expect(harnessFamilyForThreadProviderId(providerId)).toBe(family);
+    }
+  });
+
+  it('covers every verifiable profile family', () => {
+    for (const profile of VALID_PROFILES) {
+      const family = harnessFamilyOf(profile);
+      if (family) expect(threadProviderIdForHarnessFamily(family)).not.toBeNull();
+    }
+  });
+
+  it('maps the concrete ids the app and server rely on', () => {
+    expect(threadProviderIdForHarnessFamily('claude')).toBe('claude-code');
+    expect(threadProviderIdForHarnessFamily('codex')).toBe('codex');
+    expect(threadProviderIdForHarnessFamily('opencode')).toBe('acp-opencode');
+    expect(harnessFamilyForThreadProviderId('acp-cursor')).toBe('cursor');
+  });
+
+  it('returns null for unknown families, prototype keys and non-harness providers', () => {
+    expect(threadProviderIdForHarnessFamily('shell')).toBeNull();
+    expect(threadProviderIdForHarnessFamily('toString')).toBeNull();
+    expect(threadProviderIdForHarnessFamily('')).toBeNull();
+    expect(harnessFamilyForThreadProviderId('fake')).toBeNull();
+    expect(harnessFamilyForThreadProviderId('claude')).toBeNull();
   });
 });

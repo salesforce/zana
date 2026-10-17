@@ -174,7 +174,7 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
   const detail = ctx.store.get(ref);
   if (path) {
     const file = ctx.store.readFile(detail.id, path);
-    const text = `${formatFile(file)}\n\nTo change it, call design_doc_write with doc="${detail.id}", path="${file.path}", baseRevision=${file.revision}.`;
+    const text = `${formatFile(file)}\n\nTo change it, call design_doc_write with doc="${detail.id}", path="${file.path}", baseRevision=${file.revision}, baseFileId=${JSON.stringify(file.fileId)}.`;
     const mimeType = file.encoding === 'base64' ? imageMediaTypeOf(file.path) : null;
     if (mimeType && MODEL_IMAGE_TYPES.has(mimeType)) {
       return { content: [{ type: 'text', text }, { type: 'image', data: file.content, mimeType }] };
@@ -182,12 +182,13 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
     return [text, ...pageNotes(ctx, detail, file.path)].join('\n\n');
   }
   if (input.includeAll === true || input.includeAll === 'true') {
-    return `${formatBundle(detail, ctx.store.readAllFiles(detail.id), manifestOptions(ctx, detail))}\n\n${showHint(detail)}`;
+    return `${formatBundle(detail, ctx.store.readAllFiles(detail.id), manifestOptions(ctx, detail))}\n\nMetadata CAS: expectedHead=${JSON.stringify(detail.head)}\n\n${showHint(detail)}`;
   }
   const hasEntry = detail.files.some((file) => file.path === detail.entryPath);
   const entry = hasEntry ? formatFile(ctx.store.readFile(detail.id, detail.entryPath)) : '';
   return [
     formatManifest(detail, manifestOptions(ctx, detail)),
+    `Metadata CAS: expectedHead=${JSON.stringify(detail.head)} (required when paired; re-read before updating).`,
     entry ? `## Entry file\n${entry}` : '',
     ...(hasEntry ? pageNotes(ctx, detail, detail.entryPath) : []),
     reportedPages(ctx, detail) ?? '',
@@ -200,6 +201,8 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
 
 export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor): string {
   const input = asInput(raw);
+  // Origin is trusted callsite state, never agent/renderer-controlled JSON.
+  if (input.origin !== undefined) throw new DesignDocError('invalid', 'origin is not an authoring parameter');
   const template = optionalString(input, 'template');
   if (template && !DESIGN_DOC_TEMPLATES.some((entry) => entry.id === template)) {
     throw new DesignDocError(
@@ -239,6 +242,7 @@ export function writeDoc(ctx: OperationContext, raw: unknown, actor: DocActor): 
   const ref = docRef(ctx, requiredString(input, 'doc'));
   const path = requiredString(input, 'path');
   const baseRevision = optionalInteger(input, 'baseRevision');
+  const baseFileId = input.baseFileId === null ? null : optionalString(input, 'baseFileId');
   const note = optionalString(input, 'note');
   const content = optionalString(input, 'content');
   const renameTo = optionalString(input, 'renameTo');
@@ -252,26 +256,26 @@ export function writeDoc(ctx: OperationContext, raw: unknown, actor: DocActor): 
   const doc = ctx.store.summary(ref);
 
   if (remove) {
-    ctx.store.deleteFile(doc.id, path, actor, { baseRevision, note });
+    ctx.store.deleteFile(doc.id, path, actor, { baseRevision, baseFileId, note });
     ctx.changed(doc.id);
     return `Deleted ${path} from ${doc.id}. It stays in history and can be restored from the Design Docs panel.`;
   }
   if (renameTo !== undefined) {
-    const result = ctx.store.renameFile(doc.id, path, renameTo, actor, { baseRevision, note });
+    const result = ctx.store.renameFile(doc.id, path, renameTo, actor, { baseRevision, baseFileId, note });
     ctx.changed(result.docId);
     return `Renamed ${path} to ${result.path} (rev ${result.revision}).`;
   }
   let result;
   if (edits !== undefined) {
     if (!Array.isArray(edits)) throw new DesignDocError('invalid', 'edits must be an array');
-    result = ctx.store.editFile(doc.id, { path, edits: edits as TextEdit[], baseRevision, note }, actor);
+    result = ctx.store.editFile(doc.id, { path, edits: edits as TextEdit[], baseRevision, baseFileId, note }, actor);
   } else {
     const encoding = input.encoding === 'base64' ? ('base64' as const) : undefined;
-    result = ctx.store.writeFile(doc.id, { path, content: content!, encoding, baseRevision, note }, actor);
+    result = ctx.store.writeFile(doc.id, { path, content: content!, encoding, baseRevision, baseFileId, note }, actor);
   }
   ctx.changed(result.docId);
   const verb = result.created ? 'Created' : 'Updated';
-  const done = `${verb} ${result.path} in ${result.docId} → revision ${result.revision}. Use baseRevision=${result.revision} for your next change to this file. The user sees updates live in the Design Docs panel.`;
+  const done = `${verb} ${result.path} in ${result.docId} → revision ${result.revision}. Use baseRevision=${result.revision}, baseFileId=${JSON.stringify(result.fileId)} for your next change to this file. The user sees updates live in the Design Docs panel.`;
   return [done, ...writtenPageNotes(ctx, result.docId, result.path)].join('\n\n');
 }
 
@@ -303,7 +307,8 @@ export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
       status: optionalStatus(input, 'status'),
       tags: optionalStringArray(input, 'tags'),
       entryPath: optionalString(input, 'entryPath'),
-      alternativeTo: alternativeTo === undefined ? undefined : alternativeTo.trim() ? docRef(ctx, alternativeTo) : null
+      alternativeTo: alternativeTo === undefined ? undefined : alternativeTo.trim() ? docRef(ctx, alternativeTo) : null,
+      expectedHead: input.expectedHead === null ? null : optionalString(input, 'expectedHead')
     },
     actor
   );

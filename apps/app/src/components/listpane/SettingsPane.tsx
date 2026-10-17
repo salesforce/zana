@@ -2,7 +2,8 @@ import { ArrowLeft, FolderCog, Search, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState, useId, useSyncExternalStore } from 'react';
 import { useData, useUi } from '../../store.js';
-import { SETTINGS_SECTIONS, SETTINGS_GROUPS } from '@/views/settings/settings-navigation';
+import { SETTINGS_SECTIONS, SETTINGS_GROUPS, visibleSettingsSections } from '@/views/settings/settings-navigation';
+import { hiddenSettingsSections, usePeersSettingsVisibility } from '../../lib/peers-visibility.js';
 import { SidebarResizer } from '../SidebarResizer.js';
 import { useAppSettingsRouteMemory } from '../../hooks/useAppSettingsRouteMemory.js';
 import { getSettingsTabRoutePath } from '../../lib/route-paths.js';
@@ -153,11 +154,14 @@ export function SettingsPane() {
   const listId = useId();
   const searching = query.trim().length > 0;
   const snapshot = useSettingsSnapshot(projectId, searchFocused || searching);
+  // Peers is hidden unless the Experimental opt-in AND a peer-capable plugin are both present.
+  const peers = usePeersSettingsVisibility();
+  const hiddenSections = hiddenSettingsSections(peers.visible);
   const hits = useMemo(() => {
     if (!searching) return [];
     ensureSettingsSearchProviders();
-    return searchSettings(query, snapshot);
-  }, [searching, query, snapshot, sourcesVersion]);
+    return searchSettings(query, snapshot, { hiddenSections });
+  }, [searching, query, snapshot, sourcesVersion, hiddenSections]);
   const pages = useMemo(() => groupHitsByPage(hits), [hits]);
   const flat = useMemo(() => pages.flatMap((p) => p.hits), [pages]);
   const activeHit = flat[Math.min(active, flat.length - 1)];
@@ -176,7 +180,7 @@ export function SettingsPane() {
     openSettingsHit(hit, { projectId, navigate: (path) => void navigate(path), setAnchor: setSettingsAnchor });
     dismissMobileNav?.();
   };
-  const groups = useMemo(() => settingsNavGroups(SETTINGS_GROUPS, SETTINGS_SECTIONS), []);
+  const groups = useMemo(() => settingsNavGroups(SETTINGS_GROUPS, visibleSettingsSections(hiddenSections)), [hiddenSections]);
 
   const renderRow = (section: { id: string; label: string }) => {
     const meta = SETTINGS_SECTIONS.find((row) => row.id === section.id);

@@ -5,7 +5,7 @@
  * starts Vite; the default path starts electron-vite.
  */
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -121,6 +121,35 @@ export function parseDevTarget(argv = [], env = process.env) {
   return 'isolated';
 }
 
+/** Keep in lockstep with `PEER_BOOT_KEY_ENV` in apps/server/src/services/peers/protected-key.ts. */
+const PEER_BOOT_KEY_ENV = 'ZCC_PEER_STORAGE_BOOT_KEY';
+const DEV_PEER_KEY_FILE = 'dev-peer-key';
+
+/**
+ * Dev servers run as a plain Node process, so they never see Electron's safeStorage
+ * and peer links / invitations would stay off. Supply the same boot-key seam the
+ * packaged desktop uses from a 0600 file in the (isolated, dev-only) data dir. The
+ * file holds the key in the clear: dev only, never used for the packaged target.
+ */
+export function loadOrCreateDevPeerKey(dataDir) {
+  const path = join(dataDir, DEV_PEER_KEY_FILE);
+  try {
+    // Trust an existing key only if it is a regular, single-link file no one else can read or write (lstat: never follow a link).
+    const stat = lstatSync(path);
+    const ownerOnly = process.platform === 'win32' || (stat.mode & 0o077) === 0;
+    if (stat.isFile() && stat.nlink === 1 && ownerOnly) {
+      const existing = readFileSync(path, 'utf8').trim();
+      if (/^[A-Za-z0-9_-]{43}$/.test(existing)) return existing;
+    }
+  } catch { /* first run or unreadable: mint a fresh one */ }
+  const key = randomBytes(32).toString('base64url');
+  // Replace by unlink + exclusive create so a planted symlink or hard link is never written through.
+  rmSync(path, { force: true });
+  writeFileSync(path, key, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  chmodSync(path, 0o600);
+  return key;
+}
+
 export function prepareLocalDevEnv(processEnv = process.env, options = {}) {
   const target = options.target ?? parseDevTarget(options.argv ?? [], processEnv);
   const packaged = target === 'packaged';
@@ -149,6 +178,7 @@ export function prepareLocalDevEnv(processEnv = process.env, options = {}) {
     ZCC_PRODUCT_SERVER_CREDENTIAL: processEnv.ZCC_PRODUCT_SERVER_CREDENTIAL ?? randomBytes(32).toString('hex'),
     ZCC_SERVER_URL: `http://127.0.0.1:${serverPort}/`
   };
+  if (!packaged && !processEnv[PEER_BOOT_KEY_ENV]) env[PEER_BOOT_KEY_ENV] = loadOrCreateDevPeerKey(dataDir);
   if (!processEnv.ZCC_EXTENSIONS_DIR) {
     env.ZCC_EXTENSIONS_DIR = join(dataDir, 'extensions');
   }

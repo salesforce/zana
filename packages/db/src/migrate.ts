@@ -483,6 +483,34 @@ export function migrate(database: SqliteDatabase): void {
     `CREATE INDEX IF NOT EXISTS deferred_thread_messages_edit_hold_idx
        ON deferred_thread_messages(edit_held_until) WHERE edit_held_until IS NOT NULL`
   ]);
+  if (!applied.has(33)) applyVersion(database, 33, [
+    ...(hasColumn(database, 'hosts', 'enrollment_capability')
+      ? []
+      : ["ALTER TABLE hosts ADD COLUMN enrollment_capability TEXT NOT NULL DEFAULT 'execution' CHECK (enrollment_capability IN ('execution', 'peer.forward'))"])
+  ]);
+  // Server-minted: a join code decides the capability its redeemed enrollment receives.
+  if (!applied.has(34)) applyVersion(database, 34, [
+    ...(hasColumn(database, 'host_join_codes', 'enrollment_capability')
+      ? []
+      : ["ALTER TABLE host_join_codes ADD COLUMN enrollment_capability TEXT NOT NULL DEFAULT 'execution' CHECK (enrollment_capability IN ('execution', 'peer.forward'))"])
+  ]);
+  // Host purpose. Display and listing metadata only: no authorization path reads it.
+  // Replayable like 29-33: a repaired lineage may already hold the column or table.
+  if (!applied.has(35)) applyVersion(database, 35, [
+    ...(hasColumn(database, 'hosts', 'purpose_kind')
+      ? []
+      : ["ALTER TABLE hosts ADD COLUMN purpose_kind TEXT NOT NULL DEFAULT 'execution' CHECK (purpose_kind IN ('execution', 'plugin-link'))"]),
+    "UPDATE hosts SET purpose_kind = 'plugin-link' WHERE enrollment_capability = 'peer.forward'",
+    `CREATE TABLE IF NOT EXISTS host_link_uses (
+      host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+      plugin_id TEXT NOT NULL CHECK (length(plugin_id) BETWEEN 1 AND 128),
+      scope TEXT NOT NULL CHECK (length(scope) BETWEEN 1 AND 256),
+      label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 80),
+      since INTEGER NOT NULL,
+      PRIMARY KEY (host_id, plugin_id, scope)
+    )`,
+    'CREATE INDEX IF NOT EXISTS host_link_uses_plugin ON host_link_uses(plugin_id)'
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

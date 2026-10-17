@@ -9,7 +9,7 @@ import { CliCallbackError } from '../services/launch/cli-callback-authority.js';
 vi.mock('@zana-ai/zcc-db', async original => ({ ...await original<object>(), getHost: vi.fn() }));
 const hostKey = 'fixture-host-key';
 const input = { sessionId: '11111111-1111-4111-8111-111111111111', path: '/mcp/project/session/key', headers: {}, bodyBase64: '' };
-beforeEach(() => { vi.mocked(getHost).mockReturnValue({ id: 'host', hostKeyHash: hashHostKey(hostKey) } as never); });
+beforeEach(() => { vi.mocked(getHost).mockReturnValue({ id: 'host', hostKeyHash: hashHostKey(hostKey), enrollmentCapability: 'execution' } as never); });
 function request(body: unknown = input, extra: { method?: string; headers?: Record<string, string>; raw?: string } = {}): IncomingMessage {
   return Object.assign(Readable.from([Buffer.from(extra.raw ?? JSON.stringify(body))]), { method: extra.method ?? 'POST', url: '/internal/hosts/cli-callback', headers: { host: '127.0.0.1:8780', authorization: `Bearer ${hostKey}`, 'x-zcc-host-id': 'host', ...extra.headers } }) as IncomingMessage;
 }

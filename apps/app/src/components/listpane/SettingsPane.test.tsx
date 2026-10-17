@@ -13,7 +13,8 @@ const h = vi.hoisted(() => ({
   },
   data: { projects: [{ id: 'selected', name: 'Demo' }] },
   snapshot: { config: { theme: 'Dark' } } as never,
-  snapshotEnabled: [] as boolean[]
+  snapshotEnabled: [] as boolean[],
+  peersVisible: false
 }));
 
 vi.mock('../../store.js', () => ({
@@ -33,6 +34,10 @@ vi.mock('../../lib/settings-search/snapshot.js', () => ({
     h.snapshotEnabled.push(enabled);
     return h.snapshot;
   }
+}));
+vi.mock('../../lib/peers-visibility.js', async (importActual) => ({
+  ...(await importActual<typeof import('../../lib/peers-visibility.js')>()),
+  usePeersSettingsVisibility: () => ({ visible: h.peersVisible, ready: true })
 }));
 vi.mock('../mobile-nav-context.js', () => ({ useMobileNavDismiss: () => h.dismiss }));
 
@@ -57,6 +62,7 @@ beforeEach(() => {
   h.ui.settingsTab = 'global';
   h.ui.selectedProjectId = 'selected';
   h.ui.focusedProjectId = null;
+  h.peersVisible = false;
   vi.clearAllMocks();
 });
 afterEach(cleanup);
@@ -244,5 +250,19 @@ describe('focused Settings navigation', () => {
     h.ui.selectedProjectId = null;
     mount();
     expect(screen.getByRole('link', { name: 'Project settings' }).getAttribute('href')).toBe('/settings/project');
+  });
+});
+
+describe('SettingsPane Peers gating', () => {
+  it('omits the Peers row when the page is hidden', () => {
+    mount();
+    expect(screen.queryByTestId('settings-nav-peers')).toBeNull();
+    expect(screen.getByTestId('settings-nav-machines')).toBeTruthy();
+  });
+
+  it('shows the Peers row when the page is visible', () => {
+    h.peersVisible = true;
+    mount();
+    expect(screen.getByTestId('settings-nav-peers')).toBeTruthy();
   });
 });

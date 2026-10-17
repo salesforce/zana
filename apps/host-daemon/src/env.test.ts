@@ -224,6 +224,21 @@ describe('resolveZccCliBinDir + zcc PATH wiring', () => {
     expect(segments.filter((d) => d === dir).length).toBe(1);
     expect(segments[segments.length - 1]).toBe(dir);
   }, 15_000);
+
+  // An interactive zsh ignores SIGTERM, so the 3s timeout alone never ends a
+  // wedged login shell and the caller blocks (observed: >5 min with no TTY).
+  // The query must be killed with SIGKILL and degrade to the guessed dirs.
+  it('ensureProcessPath gives up on a login shell that ignores SIGTERM', () => {
+    const dir = makeCliDir(false);
+    const shell = join(dir, 'stubborn-shell');
+    writeFileSync(shell, "#!/bin/sh\ntrap '' TERM\nexec sleep 60\n");
+    chmodSync(shell, 0o755);
+    process.env.SHELL = shell;
+    const started = Date.now();
+    ensureProcessPath();
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(process.env.PATH ?? '').not.toBe('');
+  }, 20_000);
 });
 
 describe('stripInheritedClaudeSession', () => {

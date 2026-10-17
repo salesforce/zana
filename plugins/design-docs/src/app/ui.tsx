@@ -262,7 +262,8 @@ export function MenuItem({
   hint,
   onSelect,
   danger = false,
-  checked = false
+  checked = false,
+  disabledReason
 }: {
   icon?: Icon;
   label: ReactNode;
@@ -270,12 +271,17 @@ export function MenuItem({
   onSelect(): void;
   danger?: boolean;
   checked?: boolean;
+  /** When set, the item is shown but cannot be chosen, and this explains why. */
+  disabledReason?: string;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
       className={`dd-menu-item${danger ? ' dd-menu-danger' : ''}${checked ? ' dd-menu-checked' : ''}`}
+      disabled={!!disabledReason}
+      aria-disabled={disabledReason ? true : undefined}
+      title={disabledReason}
       onClick={onSelect}
     >
       {Glyph ? <Glyph size={14} aria-hidden /> : null}

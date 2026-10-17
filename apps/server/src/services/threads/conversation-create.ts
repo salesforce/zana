@@ -10,7 +10,7 @@ import {
   getEnvironment,
   getPrimaryHost,
   getLatestConversationCheckpoint,
-  listHosts,
+  listExecutionHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   setConversationProviderThreadId,
@@ -261,7 +261,7 @@ async function startConversationOnHost(
               args.project,
               args.remoteToolProxy,
               ctx.config.getConfig().remoteDefaultPath,
-              listHosts(ctx.db).map(toRemoteStartPathHost)
+              listExecutionHosts(ctx.db).map(toRemoteStartPathHost)
             )
           ),
           remoteToolProxy: true
@@ -354,7 +354,7 @@ export async function createConversationFromRequest(
       project,
       remoteToolProxy,
       remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
-      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost),
       probeHostHome: async () => {
         const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
           hostId,

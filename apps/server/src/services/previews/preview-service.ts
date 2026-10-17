@@ -3,7 +3,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createConnection } from 'node:net';
 import { z } from 'zod';
-import { getConversationThread, getHost, getPrimaryHost, listHosts } from '@zana-ai/zcc-db';
+import { getConversationThread, getHost, getPrimaryHost, listExecutionHosts } from '@zana-ai/zcc-db';
 import { writeSecretFile } from '@zana-ai/zcc-secret-storage';
 import { PreviewInputSchema, type PreviewInput, type PreviewList, type PreviewView } from '@zana-ai/zcc-contracts/previews';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -85,7 +85,7 @@ export class PreviewService {
       return thread.hostId;
     }
     const requested = input.hostId ?? getPrimaryHost(this.ctx.db)?.id;
-    const hosts = listHosts(this.ctx.db);
+    const hosts = listExecutionHosts(this.ctx.db);
     const exact = hosts.find(host => host.id === requested);
     const matches = exact ? [exact] : hosts.filter(host => host.name === requested);
     if (matches.length !== 1) throw new Error('Choose a registered machine by its unique name or id');

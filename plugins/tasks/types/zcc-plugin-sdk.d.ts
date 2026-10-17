@@ -299,6 +299,21 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     transaction<T>(fn: () => T): T;
   }
 
+  export interface PluginDatabaseBackupOptions {
+    name: string;
+    maxBytes?: number;
+    signal?: AbortSignal;
+  }
+
+  export interface PluginDatabaseBackup {
+    backupId: string;
+    name: string;
+    path: string;
+    bytes: number;
+    sha256: string;
+    createdAt: number;
+  }
+
   export interface ZccPluginApi {
     readonly pluginId: string;
     readonly log: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void };
@@ -345,6 +360,8 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         list(prefix?: string): Promise<string[]>;
       };
       database(): PluginDatabase;
+      /** Consistent online 0600 copy of this plugin's database under its own data folder. */
+      backupDatabase(options: PluginDatabaseBackupOptions): Promise<PluginDatabaseBackup>;
     };
     readonly rpc: { method(name: string, handler: (args: unknown) => unknown | Promise<unknown>): void };
     readonly realtime: { publish(event: string, payload: unknown): void };
@@ -462,7 +479,13 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         spawn(args: {
           projectId: string;
           prompt: string;
+          /** Exact thread provider id; wins over `harness`. With neither, the host's first provider is used (legacy). */
           providerId?: string;
+          /**
+           * `'project-default'`: the project's effective AI harness and its AI-harness overrides (Settings → AI Harness).
+           * Rejects when none is usable or an override cannot apply to a thread.
+           */
+          harness?: 'project-default';
           parentThreadId?: string;
           title?: string;
           model?: string;

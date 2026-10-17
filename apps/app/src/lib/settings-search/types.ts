@@ -80,6 +80,8 @@ export interface SettingsSearchHit {
 export interface SearchSettingsOptions {
   /** Max results; clamped to `SETTINGS_SEARCH_MAX_RESULTS`. */
   limit?: number;
+  /** Sections whose pages are currently hidden; their entries are not searchable. */
+  hiddenSections?: ReadonlySet<string>;
   /** Test seams: override the static entries / providers. */
   entries?: readonly SettingsSearchEntry[];
   providers?: readonly SettingsSearchProvider[];

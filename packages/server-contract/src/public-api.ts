@@ -40,6 +40,8 @@ import {
 import type {
   EmptyInput,
   PathId,
+  PathHostId,
+  PathPeerLinkUse,
   PathProjectId,
   PathPreviewAndFilePath,
   PathThreadAndFilePath,
@@ -53,6 +55,19 @@ import type {
   ContinueAfterProviderRateLimitRequest,
   ContinueAfterProviderRateLimitResponse,
   CreateHostJoinCodeRequest,
+  PeerIntroduction,
+  PeerIntroductionDecisionRequest,
+  PeerIntroductionListResponse,
+  PeerInstallation,
+  PeerInstallationListResponse,
+  PeerLinkListResponse,
+  RemovePeerLinkResponse,
+  PeerSshEndpoint,
+  PeerSshEndpointListResponse,
+  PeerRouteOriginRequest,
+  PeerRouteOriginListResponse,
+  PeerRouteOriginAddResponse,
+  PeerRouteOriginRemoveResponse,
   CreateHostJoinCodeResponse,
   CreateTerminalRequest,
   CreateProjectRequest,
@@ -253,6 +268,9 @@ import {
   restartTerminalRequestSchema,
   createProjectRequestSchema,
   createHostJoinCodeRequestSchema,
+  peerIntroductionDecisionRequestSchema,
+  peerSshEndpointSchema,
+  peerRouteOriginRequestSchema,
   createProjectSourceRequestSchema,
   createQueuedMessageRequestSchema,
   stopBackgroundTasksRequestSchema,
@@ -624,6 +642,104 @@ export const publicApiRoutes = {
   hosts: {
     createJoinCode: defineRoute({
       path: "/hosts/join-codes",
+      method: "post",
+      request: jsonRequest<EmptyInput, CreateHostJoinCodeRequest>(
+        createHostJoinCodeRequestSchema,
+      ),
+      response: jsonResponse<CreateHostJoinCodeResponse>({ status: 201 }),
+    }),
+    /** Lists pending and decided peer introductions awaiting this owner's consent. */
+    listPeerIntroductions: defineRoute({
+      path: "/peers/introductions",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerIntroductionListResponse>(),
+    }),
+    /** Records explicit owner consent. Approval starts a bounded forward-only enrollment when the installer is available. */
+    decidePeerIntroduction: defineRoute({
+      path: "/peers/introductions/:id/decision",
+      method: "post",
+      request: jsonRequest<PathId, PeerIntroductionDecisionRequest>(
+        peerIntroductionDecisionRequestSchema,
+      ),
+      response: jsonResponse<PeerIntroduction>(),
+    }),
+    /** Retries (idempotently) the forward-only enrollment of an approved introduction. */
+    enrollPeerIntroduction: defineRoute({
+      path: "/peers/introductions/:id/enroll",
+      method: "post",
+      request: noRequest<PathId>(),
+      response: jsonResponse<PeerInstallation>(),
+    }),
+    listPeerInstallations: defineRoute({
+      path: "/peers/installations",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerInstallationListResponse>(),
+    }),
+    /** Owner-session only (never the mobile proxy): every plugin link with the uses that justify it. */
+    listPeerLinks: defineRoute({
+      path: "/peer-links",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerLinkListResponse>(),
+    }),
+    /** Owner gesture. Optional `?scope=` narrows to one use; removing the last use removes the link. */
+    removePeerLinkUse: defineRoute({
+      path: "/peer-links/:hostId/uses/:pluginId",
+      method: "delete",
+      request: noRequest<PathPeerLinkUse>(),
+      response: jsonResponse<RemovePeerLinkResponse>(),
+    }),
+    /** Owner gesture: removes the link and every use on it. */
+    removePeerLink: defineRoute({
+      path: "/peer-links/:hostId",
+      method: "delete",
+      request: noRequest<PathHostId>(),
+      response: jsonResponse<RemovePeerLinkResponse>(),
+    }),
+    listPeerSshEndpoints: defineRoute({
+      path: "/peers/ssh-endpoints",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerSshEndpointListResponse>(),
+    }),
+    /** Explicit owner registration of a pinned SSH route; never created automatically. */
+    registerPeerSshEndpoint: defineRoute({
+      path: "/peers/ssh-endpoints",
+      method: "post",
+      request: jsonRequest<EmptyInput, PeerSshEndpoint>(peerSshEndpointSchema),
+      response: jsonResponse<PeerSshEndpoint>({ status: 201 }),
+    }),
+    removePeerSshEndpoint: defineRoute({
+      path: "/peers/ssh-endpoints/:id",
+      method: "delete",
+      request: noRequest<PathId>(),
+      response: jsonResponse<{ removed: boolean }>(),
+    }),
+    /** Owner-managed allowlist of non-loopback https origins accepted as advertised peer routes. Applies live. */
+    listPeerRouteOrigins: defineRoute({
+      path: "/peers/route-origins",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerRouteOriginListResponse>(),
+    }),
+    /** Explicit owner action; idempotent. Rejects non-https (except loopback http), credentials, paths and wildcards. */
+    addPeerRouteOrigin: defineRoute({
+      path: "/peers/route-origins",
+      method: "post",
+      request: jsonRequest<EmptyInput, PeerRouteOriginRequest>(peerRouteOriginRequestSchema),
+      response: jsonResponse<PeerRouteOriginAddResponse>({ status: 201 }),
+    }),
+    removePeerRouteOrigin: defineRoute({
+      path: "/peers/route-origins",
+      method: "delete",
+      request: jsonRequest<EmptyInput, PeerRouteOriginRequest>(peerRouteOriginRequestSchema),
+      response: jsonResponse<PeerRouteOriginRemoveResponse>(),
+    }),
+    /** Mints a single-use code whose enrollment can only relay peer traffic: no execution, threads, files or host calls. */
+    createForwardJoinCode: defineRoute({
+      path: "/hosts/forward-join-codes",
       method: "post",
       request: jsonRequest<EmptyInput, CreateHostJoinCodeRequest>(
         createHostJoinCodeRequestSchema,

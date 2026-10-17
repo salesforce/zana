@@ -111,11 +111,15 @@ export function useDoc(docId: string | null): Resource<DesignDocDetail> {
   return resource;
 }
 
-/** One file's content, refetched whenever its revision moves. */
+/** Refetch on revision changes and inbound events, including same-counter identity replacement. */
 export function useFile(docId: string | null, path: string | null, revision: number | null): Resource<DesignDocFile> {
   const api = useApi();
   const key = docId && path && revision !== null ? `${docId}\u0000${path}\u0000${revision}` : null;
-  return useResource(key, () => api.readFile(docId!, path!));
+  const resource = useResource(key, () => api.readFile(docId!, path!));
+  useDocChanges((changed) => {
+    if (changed === null || changed === docId) resource.reload();
+  });
+  return resource;
 }
 
 export function useTemplates(): Resource<TemplateInfo[]> {

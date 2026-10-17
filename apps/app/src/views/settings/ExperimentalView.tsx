@@ -162,6 +162,21 @@ export function ExperimentalView({
           onChange={(v) => onUpdate({ menubarPopoverEnabled: v })}
         />
       </Section>
+
+      <Section
+        searchId="experimental.peers-section"
+        anchorId="peers-visibility"
+        title="Peers"
+        help="Links to other Zana installs exist only because a plugin uses them. Off by default."
+      >
+        <CheckboxField
+          searchId="experimental.show-peers"
+          label="Show Peers in Settings"
+          help="Adds a Peers page under Remote that lists plugin links to other installs. It appears only while an installed, enabled plugin supports peers. Hiding it never removes links."
+          checked={config.peersSettingsEnabled ?? false}
+          onChange={(v) => onUpdate({ peersSettingsEnabled: v })}
+        />
+      </Section>
     </>
   );
 }

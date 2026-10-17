@@ -15,19 +15,27 @@ import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
 import { siteFiles } from './site-files.js';
 import { DesignDocError, type DesignDocStore } from './store.js';
+import type { DesignDocPeerService } from './peer-service.js';
+import type { DesignDocPairing } from './pairing.js';
+import type { DesignDocBackups } from './backup.js';
 
 export const UI_USER: DocActor = { kind: 'user', label: 'You', threadId: null };
 
 export interface RpcDeps {
   store: DesignDocStore;
   changed(docId: string): void;
-  sdk: Pick<ZccPluginApi['sdk'], 'threads' | 'projects'>;
+  sdk: Pick<ZccPluginApi['sdk'], 'threads' | 'projects' | 'peers'>;
+  peerSync?: DesignDocPeerService;
+  pairing?: DesignDocPairing;
   /** The bundled site kit behind `zcc-kit/` paths. */
   kit?: KitReader;
   /** Absolute URL of a doc page served standalone, for "Open in browser". */
   pageUrl?(docId: string, path: string): string;
   /** Where the panel's page runs are kept for agents. */
   reports?: RenderReports;
+  /** Full-database backups and the restore evidence recorded at startup. */
+  backups?: DesignDocBackups;
+  localPeerId?(): string | null;
 }
 
 function optionalNumber(input: Record<string, unknown>, key: string): number | undefined {
@@ -60,6 +68,18 @@ export function titleFromMarkdown(text: string, fallback = 'Design doc from chat
   return line.length > 80 ? `${line.slice(0, 79).trimEnd()}…` : line;
 }
 
+function requirePairing(deps: RpcDeps): DesignDocPairing {
+  if (!deps.pairing) throw new DesignDocError('invalid', 'database group setup is unavailable');
+  return deps.pairing;
+}
+
+/** Invitation RPCs take a closed set of keys, so a renderer cannot smuggle hosts, locators or credentials. */
+function onlyKeys(raw: unknown, allowed: string[]): Record<string, unknown> {
+  const input = asInput(raw);
+  if (Object.keys(input).some((key) => !allowed.includes(key))) throw new DesignDocError('invalid', `accepts only ${allowed.join(', ')}`);
+  return input;
+}
+
 /** The methods as plain functions so tests can call them without a host. */
 export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown) => unknown> {
   const { store, changed } = deps;
@@ -71,6 +91,14 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       throw new DesignDocError('invalid', `unknown project ${projectId}`);
     }
   };
+  /**
+   * Every Design Docs agent goes through here: it always runs on the project's
+   * AI harness and that harness's overrides (`harness: 'project-default'`); the
+   * renderer cannot pick a provider.
+   */
+  const spawnAgent = async (
+    args: Omit<Parameters<RpcDeps['sdk']['threads']['spawn']>[0], 'providerId' | 'harness'>
+  ) => deps.sdk.threads.spawn({ ...args, harness: 'project-default' });
 
   return {
     templates: () => DESIGN_DOC_TEMPLATES.map(({ id, label, description, files }) => ({
@@ -80,7 +108,110 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       files: files.map((file) => file.path)
     })),
 
-    projects: async () => (await deps.sdk.projects.list()).map(({ id, name }) => ({ id, name })),
+    projects: async () => (await deps.sdk.projects.list()).map(({ id, name, quickAgent }) => ({ id, name, ...(quickAgent ? { quickAgent: true } : {}) })),
+
+    backupDatabase: async () => {
+      if (!deps.backups?.available) throw new DesignDocError('invalid', 'database backup is unavailable');
+      return deps.backups.create(deps.localPeerId?.() ?? null);
+    },
+
+    backups: () => deps.backups?.list() ?? { backups: [], restores: [] },
+
+    // `connected` is what the Sync button counts: this computer plus every member with a live link.
+    peerStatus: async () => {
+      const local = deps.peerSync?.status() ?? null;
+      if (!local?.configured) return local ?? { configured: false, members: [] };
+      const connected = new Set(await deps.pairing?.connectedMembers().catch((error: unknown) => {
+        console.warn('[design-docs] connectedMembers failed; showing members as disconnected:', error instanceof Error ? error.message : error);
+        return [] as string[];
+      }) ?? []);
+      return { ...local, members: local.members.map((member) => ({ ...member, connected: member.replicaId === local.replicaId || connected.has(member.machineId) })) };
+    },
+
+    groupStatus: () => requirePairing(deps).status(),
+
+    // Never a roster: the only accepted key is the peer id.
+    enablePeer: (raw) => requirePairing(deps).enable(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+
+    inviteState: () => requirePairing(deps).inviteState(),
+
+    createInvitation: () => requirePairing(deps).createInvitation(),
+
+    openInvitation: () => requirePairing(deps).openInvitation(),
+
+    redeemInvitation: (raw) => requirePairing(deps).redeemInvitation(requiredString(onlyKeys(raw, ['token']), 'token')),
+
+    invitationApproval: (raw) => requirePairing(deps).invitationApproval(requiredString(onlyKeys(raw, ['invitationId']), 'invitationId')),
+
+    decideInvitation: (raw) => {
+      const input = onlyKeys(raw, ['invitationId', 'decision', 'ownerProof']);
+      const decision = input.decision;
+      if (decision !== 'approved' && decision !== 'denied') throw new DesignDocError('invalid', 'decision must be approved or denied');
+      const ownerProof = decision === 'approved' ? requiredString(input, 'ownerProof') : undefined;
+      return requirePairing(deps).decideInvitation(requiredString(input, 'invitationId'), decision, ownerProof);
+    },
+
+    cancelInvitation: async (raw) => {
+      await requirePairing(deps).cancelInvitation(requiredString(onlyKeys(raw, ['invitationId']), 'invitationId'));
+    },
+
+    dismissInvitation: async (raw) => {
+      await requirePairing(deps).dismissInvitation(requiredString(onlyKeys(raw, ['invitationId']), 'invitationId'));
+    },
+
+    reconnectPeer: (raw) => requirePairing(deps).reconnect(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+
+    repairPeer: (raw) => requirePairing(deps).repair(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+
+    resetPeerSync: (raw) => requirePairing(deps).resetPeer(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+
+    peersOutOfSync: async () => ({ outOfSync: await requirePairing(deps).outOfSync() }),
+
+    retryIntroductions: async () => {
+      const pairing = requirePairing(deps);
+      await pairing.retry(true);
+      return pairing.status();
+    },
+
+    removePeer: (raw) => requirePairing(deps).remove(requiredString(onlyKeys(raw, ['replicaId']), 'replicaId')),
+
+    revokePeer: (raw) => requirePairing(deps).revoke(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+
+    syncNow: async () => {
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      const result = await deps.peerSync.syncNow(deps.sdk.peers);
+      // Peers re-check their out-of-sync notice once this side finished; not awaited, never fails the sync.
+      void deps.pairing?.notifyStateChanged().catch((error: unknown) => {
+        console.warn('[design-docs] peer state-change notification failed after sync:', error instanceof Error ? error.message : error);
+      });
+      return result;
+    },
+
+    peerConflicts: (raw) => {
+      const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
+      return deps.peerSync?.conflicts(doc.id, optionalString(input, 'cursor')) ?? { remoteHeads: [], nextCursor: null };
+    },
+
+    peerConflictReview: (raw) => {
+      const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      return deps.peerSync.conflictReview(doc.id, requiredString(input, 'remoteHead'));
+    },
+
+    peerConflictFile: (raw) => {
+      const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      return deps.peerSync.conflictFile(doc.id, requiredString(input, 'remoteHead'), requiredString(input, 'path'));
+    },
+
+    resolvePeerConflict: (raw) => {
+      const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      if (input.choice !== 'merge' && input.choice !== 'local' && input.choice !== 'remote') throw new DesignDocError('invalid', 'invalid peer resolution choice');
+      const head = deps.peerSync.resolveConflict({ docId: doc.id, expectedHead: requiredString(input, 'expectedHead'),
+        remoteHead: requiredString(input, 'remoteHead'), choice: input.choice }, UI_USER);
+      return { head };
+    },
 
     list: (raw) => {
       const input = asInput(raw);
@@ -141,6 +272,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           status,
           tags: optionalStrings(input, 'tags'),
           entryPath: optionalString(input, 'entryPath'),
+          expectedHead: input.expectedHead === null ? null : optionalString(input, 'expectedHead'),
           projectId: projectId === undefined ? undefined : projectId || null,
           alternativeTo: alternativeTo === undefined ? undefined : alternativeTo || null
         },
@@ -160,7 +292,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     remove: (raw) => {
       const doc = store.summary(requiredString(asInput(raw), 'doc'));
-      store.remove(doc.id);
+      store.remove(doc.id, UI_USER);
       changed(doc.id);
       return { ok: true };
     },
@@ -234,6 +366,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           content,
           encoding: input.encoding === 'base64' ? 'base64' : undefined,
           baseRevision: optionalNumber(input, 'baseRevision'),
+          baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId'),
           note: optionalString(input, 'note')
         },
         UI_USER
@@ -251,6 +384,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           path: requiredString(input, 'path'),
           edits: input.edits as TextEdit[],
           baseRevision: optionalNumber(input, 'baseRevision'),
+          baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId'),
           note: optionalString(input, 'note')
         },
         UI_USER
@@ -263,7 +397,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       const input = asInput(raw);
       const doc = store.summary(requiredString(input, 'doc'));
       store.deleteFile(doc.id, requiredString(input, 'path'), UI_USER, {
-        baseRevision: optionalNumber(input, 'baseRevision')
+        baseRevision: optionalNumber(input, 'baseRevision'),
+        baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId')
       });
       changed(doc.id);
       return { ok: true };
@@ -275,7 +410,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
         requiredString(input, 'doc'),
         requiredString(input, 'from'),
         requiredString(input, 'to'),
-        UI_USER
+        UI_USER,
+        { baseRevision: optionalNumber(input, 'baseRevision'), baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId') }
       );
       changed(result.docId);
       return result;
@@ -297,7 +433,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     restore: (raw) => {
       const input = asInput(raw);
       const result = store.restoreRevision(requiredString(input, 'doc'), input.id, UI_USER, {
-        baseRevision: optionalNumber(input, 'baseRevision')
+        baseRevision: optionalNumber(input, 'baseRevision'),
+        baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId')
       });
       changed(result.docId);
       return result;
@@ -355,15 +492,15 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       const text = requiredString(input, 'text');
       const thread = await deps.sdk.threads.get({ threadId });
       if (!thread) throw new Error(`Thread ${threadId} was not found.`);
-      const detail = store.create(
+      const detail = store.createImported(
         {
           title: optionalString(input, 'title')?.trim() || titleFromMarkdown(text),
           projectId: thread.projectId ?? null,
           files: [{ path: 'README.md', content: text }]
         },
-        UI_USER
+        UI_USER,
+        { id: threadId, title: thread.title?.trim() || 'Agent thread' }
       );
-      store.linkThread(detail.id, threadId, thread.title?.trim() || 'Agent thread', 'assistant');
       changed(detail.id);
       return store.summary(detail.id);
     },
@@ -386,12 +523,10 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       }
       if (!doc.projectId) await requireProject(projectId);
       const title = `${action ? action.label : 'Design doc'} · ${doc.title}`.slice(0, 120);
-      const providerId = optionalString(input, 'providerId');
-      const thread = await deps.sdk.threads.spawn({
+      const thread = await spawnAgent({
         projectId,
         prompt: buildAgentPrompt({ doc, action, prompt, path: optionalString(input, 'path') }),
         title,
-        ...(providerId ? { providerId } : {}),
         visibility: 'hidden',
         pluginMetadata: { designDocId: doc.id, ...(action ? { action: action.id } : {}), panelAgent: panelAgent(doc.id) }
       });
@@ -420,7 +555,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       }
       if (!doc.projectId) await requireProject(projectId);
       const title = `Publish · ${doc.title}`.slice(0, 120);
-      const thread = await deps.sdk.threads.spawn({
+      const thread = await spawnAgent({
         projectId,
         prompt: buildPublishPrompt({ doc, target }),
         title,

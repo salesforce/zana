@@ -5,6 +5,7 @@ import { useDocActions } from './DocActions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TAG_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
 import { ActorLabel, IconButton, MenuItem, Popover, StatusPill, TimeAgo } from './ui.js';
+import { PeerConflictView } from './PeerConflictView.js';
 
 /** Text that reads as text until clicked, then edits in place (Enter saves, Escape cancels). */
 export function EditableText({
@@ -27,6 +28,7 @@ export function EditableText({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const done = useRef(false);
+  const saveStarted = useRef(onSave);
 
   useEffect(() => {
     if (!editing) setDraft(value);
@@ -39,7 +41,7 @@ export function EditableText({
     const next = draft.trim();
     if (save && next !== value.trim()) {
       try {
-        await onSave(next);
+        await saveStarted.current(next);
       } catch {
         setDraft(value);
       }
@@ -78,6 +80,7 @@ export function EditableText({
       title={`Edit ${label.toLowerCase()}`}
       onClick={() => {
         done.current = false;
+        saveStarted.current = onSave;
         setEditing(true);
       }}
     >
@@ -89,6 +92,7 @@ export function EditableText({
 function TagEditor({ tags, onChange }: { tags: string[]; onChange(tags: string[]): void }) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState('');
+  const editStarted = useRef({ tags, onChange });
   const commit = () => {
     const next = draft
       .split(',')
@@ -96,8 +100,8 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange(tags: string[]
       .filter(Boolean);
     setDraft('');
     setAdding(false);
-    const merged = [...new Set([...tags, ...next])].slice(0, MAX_TAGS);
-    if (merged.length !== tags.length) onChange(merged);
+    const merged = [...new Set([...editStarted.current.tags, ...next])].slice(0, MAX_TAGS);
+    if (merged.length !== editStarted.current.tags.length) editStarted.current.onChange(merged);
   };
   return (
     <span className="dd-tags">
@@ -130,7 +134,10 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange(tags: string[]
           }}
         />
       ) : tags.length < MAX_TAGS ? (
-        <button type="button" className="dd-tag dd-tag-add" onClick={() => setAdding(true)}>
+        <button type="button" className="dd-tag dd-tag-add" onClick={() => {
+          editStarted.current = { tags, onChange };
+          setAdding(true);
+        }}>
           <Plus size={10} aria-hidden /> Tag
         </button>
       ) : null}
@@ -140,6 +147,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange(tags: string[]
 
 function StatusMenu({ status, onChange }: { status: DocStatus; onChange(status: DocStatus): void }) {
   const [open, setOpen] = useState(false);
+  const reviewStarted = useRef(onChange);
   return (
     <Popover
       open={open}
@@ -147,7 +155,10 @@ function StatusMenu({ status, onChange }: { status: DocStatus; onChange(status: 
       align="start"
       className="dd-menu"
       anchor={
-        <button type="button" className="dd-status-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)} title="Change status">
+        <button type="button" className="dd-status-button" aria-haspopup="menu" aria-expanded={open} onClick={() => {
+          if (!open) reviewStarted.current = onChange;
+          setOpen(!open);
+        }} title="Change status">
           <StatusPill status={status} />
         </button>
       }
@@ -160,7 +171,7 @@ function StatusMenu({ status, onChange }: { status: DocStatus; onChange(status: 
           icon={option === status ? Check : undefined}
           onSelect={() => {
             setOpen(false);
-            if (option !== status) onChange(option);
+            if (option !== status) reviewStarted.current(option);
           }}
         />
       ))}
@@ -188,12 +199,14 @@ export function DocHeader({
   const api = useApi();
   const [menu, setMenu] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [conflicts, setConflicts] = useState(false);
+  const menuDoc = useRef(doc);
   const docActions = useDocActions(projects);
   const project = doc.projectId ? projects.find((entry) => entry.id === doc.projectId) : null;
 
   const update = async (patch: UpdateArgs) => {
     try {
-      await api.update(doc.id, patch);
+      await api.update(doc.id, { ...patch, expectedHead: doc.head });
     } catch (error) {
       toast(`Could not update the doc: ${errorMessage(error)}`, 'error');
       throw error;
@@ -214,13 +227,17 @@ export function DocHeader({
         />
         <span className="dd-spacer" />
         {actions}
+        <button type="button" className="btn" onClick={() => setConflicts(true)}>Peer conflicts</button>
         <Popover
           open={menu}
           onClose={() => setMenu(false)}
           className="dd-menu"
-          anchor={<IconButton icon={MoreHorizontal} label="More actions" active={menu} onClick={() => setMenu(!menu)} />}
+          anchor={<IconButton icon={MoreHorizontal} label="More actions" active={menu} onClick={() => {
+            if (!menu) menuDoc.current = doc;
+            setMenu(!menu);
+          }} />}
         >
-          {docActions.items(doc, () => setMenu(false), onDeleted)}
+          {docActions.items(menu ? menuDoc.current : doc, () => setMenu(false), onDeleted)}
         </Popover>
       </div>
       {collapsed ? null : (
@@ -255,6 +272,7 @@ export function DocHeader({
         ) : null}
       </div>
       {docActions.dialogs}
+      {conflicts ? <PeerConflictView key={doc.id} docId={doc.id} onClose={() => setConflicts(false)} /> : null}
     </header>
   );
 }

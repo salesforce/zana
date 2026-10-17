@@ -62,7 +62,7 @@ export function approvalSheetHtml(view: ApprovalSheetView, nonce: string): strin
 :root { color-scheme: light dark; --fg: #1d1d1f; --muted: #6e6e73; --line: rgba(0,0,0,.12); --bg: #fff; --accent: #0a66d8; --danger: #c62828; }
 @media (prefers-color-scheme: dark) { :root { --fg: #f2f2f2; --muted: #a1a1a6; --line: rgba(255,255,255,.14); --bg: #1e1e20; --accent: #4c9bff; --danger: #ff5a52; } }
 * { box-sizing: border-box; }
-body { margin: 0; padding: 20px 22px 18px; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+body { margin: 0; padding: 28px 26px 26px; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
 .who { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 4px; }
 h1 { font-size: 15px; margin: 0 0 10px; }
 p.summary { margin: 0 0 12px; }
@@ -130,11 +130,11 @@ export function sheetAnswer(title: string): ApprovalSheetOutcome | null {
 
 /** A tall enough sheet for its rows; it scrolls past the cap. */
 export function sheetHeight(request: PluginApprovalRequest): number {
-  const summaryLines = request.summary ? Math.ceil(request.summary.length / 64) : 0;
-  const detailLines = (request.details ?? []).reduce((sum, line) => sum + Math.ceil(line.length / 60), 0);
+  const summaryLines = request.summary ? Math.ceil(request.summary.length / 54) : 0;
+  const detailLines = (request.details ?? []).reduce((sum, line) => sum + Math.ceil(line.length / 46), 0);
   const rows = request.binding.revision ? 4 : 3;
   const estimate = 190 + rows * 22 + summaryLines * 19 + detailLines * 19 + (request.binding.confirmText ? 64 : 0);
-  return Math.max(240, Math.min(640, estimate));
+  return Math.max(240, Math.min(720, estimate));
 }
 
 export function approvalSheetWindowOptions(parent: BrowserWindow, request: PluginApprovalRequest): BrowserWindowConstructorOptions {

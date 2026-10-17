@@ -121,8 +121,15 @@ this list fails CI):
   threadId? }` and returns `{ id, label, insertText? }[]`. `resolve` returns
   `{ context }` that the host appends as agent-only text at send.
 - `zcc.status` — `status.needsConfiguration(message)`.
-- `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId?, parentThreadId?, title?, model?, reasoningLevel?, serviceTier?, permissionMode?, visibility?, hostId?, environment?, pluginMetadata? })`
+- `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId?, harness?, parentThreadId?, title?, model?, reasoningLevel?, serviceTier?, permissionMode?, visibility?, hostId?, environment?, pluginMetadata? })`
   attributes the thread to this plugin. Hidden workers use `visibility: "hidden"`.
+  Pass `harness: "project-default"` to run the project's effective AI harness
+  (Settings → AI Harness); it rejects with an actionable message when none is
+  usable. `providerId` wins when set; with neither, the host's first provider
+  is used (legacy — prefer `harness`). A `project-default` spawn also applies
+  that harness's AI-harness overrides (Settings → AI Harness, then the
+  project's); explicit `model` / `permissionMode` win; an override a thread
+  cannot apply rejects.
   `pluginMetadata` seeds this plugin's per-thread namespace at spawn.
   `sdk.threads.getPluginMetadata({ threadId, pluginId? })` and
   `sdk.threads.updatePluginMetadata({ threadId, pluginId?, set?, remove? })`
@@ -227,7 +234,7 @@ Frontend runtime exports you may import from `@zana-ai/zcc-plugin-sdk/app`:
 `navPanelListsInExtensionsHub`,
 `useRpc`, `useRealtime`,
 `useRealtimeConnectionState`, `useSettings`, `useZccContext`,
-`useZccNavigate`, `useWindowTitle`, `useComposer`, `useComposerView`,
+`useZccNavigate`, `useZccDeepLinks`, `useWindowTitle`, `useComposer`, `useComposerView`,
 `experimental_useSidebarThreads`, `experimental_useSidebarThreadActions`,
 `experimental_useSidebarThreadPullRequest`,
 `experimental_useSidebarThreadSplit`, `ThreadChat`, `Markdown`,

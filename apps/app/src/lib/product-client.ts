@@ -6,6 +6,7 @@ import { sharedProductFamily } from './shared-product.js';
 import { sharedExtensions } from './shared-extensions.js';
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PausePeerLinkResponse, PeerLinkListResponse, RemovePeerLinkResponse } from '@zana-ai/zcc-server-contract';
 import type {
   AgentMessage,
   AgentRecord,
@@ -1380,6 +1381,26 @@ function stubFamily(family: string): unknown {
  * tab uses loopback `/api/v1` + `/ws` and never receives a `window.cc` stand-in.
  */
 let terminalAdapter: CcApi['terminals'] | undefined;
+
+/**
+ * Core Peers hub: plugin links and the uses that justify them. Owner gestures only;
+ * the server re-validates every request, so this client carries no authority.
+ */
+export const peerLinks = {
+  list: async (): Promise<PeerLinkListResponse> => apiJson<PeerLinkListResponse>('/peer-links'),
+  removeUse: async (hostId: string, pluginId: string, scope?: string): Promise<RemovePeerLinkResponse> =>
+    apiJson<RemovePeerLinkResponse>(
+      `/peer-links/${encodeURIComponent(hostId)}/uses/${encodeURIComponent(pluginId)}${scope === undefined ? '' : `?scope=${encodeURIComponent(scope)}`}`,
+      { method: 'DELETE' }
+    ),
+  removeLink: async (hostId: string): Promise<RemovePeerLinkResponse> =>
+    apiJson<RemovePeerLinkResponse>(`/peer-links/${encodeURIComponent(hostId)}`, { method: 'DELETE' }),
+  disconnect: async (hostId: string): Promise<PausePeerLinkResponse> =>
+    apiJson<PausePeerLinkResponse>(`/peer-links/${encodeURIComponent(hostId)}/disconnect`, { method: 'POST' }),
+  reconnect: async (hostId: string): Promise<PausePeerLinkResponse> =>
+    apiJson<PausePeerLinkResponse>(`/peer-links/${encodeURIComponent(hostId)}/reconnect`, { method: 'POST' })
+};
+
 export const product: CcApi = new Proxy({} as CcApi, {
   get(_target, family: string | symbol) {
     const name = String(family);

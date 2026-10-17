@@ -361,7 +361,7 @@ describe('SSH remotes', () => {
     expect(source).toContain('dropCwd');
     expect(source).toContain('resolvePersonalTargetPathOnHost');
     expect(source).not.toContain('readRemoteToolProxySetting');
-    expect(source).toContain('hosts: listHosts(ctx.db).map(toRemoteStartPathHost)');
+    expect(source).toContain('hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost)');
     expect(source).toContain('getPrimaryHost(ctx.db)');
     expect(source).toContain('threadLaunchRemote(');
   });

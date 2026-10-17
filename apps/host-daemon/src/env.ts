@@ -317,6 +317,9 @@ function loginShellPath(): string | null {
     const out = execFileSync(shell, ['-ilc', `printf '%s%s%s' '${marker}' "$PATH" '${endMarker}'`], {
       encoding: 'utf8',
       timeout: 3_000,
+      // Interactive zsh ignores the default SIGTERM, so the timeout alone
+      // would never end a shell wedged on a heavy rc file.
+      killSignal: 'SIGKILL',
       stdio: ['ignore', 'pipe', 'ignore']
     });
     const start = out.indexOf(marker);

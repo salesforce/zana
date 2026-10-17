@@ -11,7 +11,9 @@ export interface EditorState {
 
 interface Conflict {
   revision: number;
+  fileId: string | null;
   by: DesignDocFile['updatedBy'];
+  verified: boolean;
 }
 
 /**
@@ -39,46 +41,62 @@ export function FileEditor({
 }) {
   const api = useApi();
   const [draft, setDraft] = useState(file.content);
-  const [saved, setSaved] = useState({ content: file.content, revision: file.revision });
+  const [saved, setSaved] = useState({ content: file.content, revision: file.revision, fileId: file.fileId });
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const dirty = draft !== saved.content;
   const preview = useDeferredValue(draft);
   const latest = useRef({ dirty, draft, saved });
+  const awaitingRefresh = useRef<DesignDocFile | null>(null);
   latest.current = { dirty, draft, saved };
 
   // Follow remote revisions while clean; flag them while dirty.
   useEffect(() => {
-    const { dirty, draft, saved } = latest.current;
-    if (file.revision === saved.revision) return;
-    if (!dirty || file.content === draft) {
+    const { dirty, saved } = latest.current;
+    if (removed) {
+      setConflict(null);
+      return;
+    }
+    const previous = awaitingRefresh.current;
+    if (previous?.fileId === file.fileId && previous.revision === file.revision) return;
+    awaitingRefresh.current = null;
+    if (file.fileId === saved.fileId && file.revision < saved.revision) return;
+    if (file.revision === saved.revision && file.fileId === saved.fileId) return;
+    if (!dirty) {
       setDraft(file.content);
-      setSaved({ content: file.content, revision: file.revision });
+      setSaved({ content: file.content, revision: file.revision, fileId: file.fileId });
       setConflict(null);
     } else {
-      setConflict({ revision: file.revision, by: file.updatedBy });
+      setConflict({ revision: file.revision, fileId: file.fileId, by: file.updatedBy, verified: true });
     }
-  }, [file.revision, file.content, file.updatedBy]);
+  }, [file.revision, file.fileId, file.content, file.updatedBy, removed]);
 
   useEffect(() => {
     onStateChange?.({ dirty, saving });
   }, [dirty, saving, onStateChange]);
 
   const save = useCallback(
-    async (baseRevision?: number) => {
+    async (base?: { revision: number; fileId: string | null }) => {
       if (saving) return;
       setSaving(true);
       try {
         // Revision 0 recreates a removed file, unless someone already did.
-        const base = baseRevision ?? (removed ? 0 : saved.revision);
-        const result = await api.writeFile(docId, { path: file.path, content: draft, baseRevision: base });
-        setSaved({ content: draft, revision: result.revision });
+        const observed = base ?? (removed ? { revision: 0, fileId: null } : saved);
+        const result = await api.writeFile(docId, { path: file.path, content: draft, baseRevision: observed.revision, baseFileId: observed.fileId });
+        // The doc reload may still carry the pre-save sticky file until its content fetch finishes.
+        awaitingRefresh.current = file;
+        setSaved({ content: draft, revision: result.revision, fileId: result.fileId });
         setConflict(null);
         onSaved?.(result);
       } catch (error) {
         if (isConflict(error)) {
-          const latest = await api.readFile(docId, file.path).catch(() => null);
-          setConflict({ revision: latest?.revision ?? saved.revision + 1, by: latest?.updatedBy ?? file.updatedBy });
+          try {
+            const latest = await api.readFile(docId, file.path);
+            setConflict({ revision: latest.revision, fileId: latest.fileId, by: latest.updatedBy, verified: true });
+          } catch (readError) {
+            const missing = /not found/i.test(errorMessage(readError));
+            setConflict({ revision: missing ? 0 : saved.revision, fileId: missing ? null : saved.fileId, by: file.updatedBy, verified: missing });
+          }
         } else {
           toast(`Could not save ${file.path}: ${errorMessage(error)}`, 'error');
         }
@@ -86,14 +104,14 @@ export function FileEditor({
         setSaving(false);
       }
     },
-    [api, docId, draft, file.path, file.updatedBy, onSaved, removed, saved.revision, saving]
+    [api, docId, draft, file.path, file.updatedBy, onSaved, removed, saved, saving]
   );
 
   const loadLatest = async () => {
     try {
       const latest = await api.readFile(docId, file.path);
       setDraft(latest.content);
-      setSaved({ content: latest.content, revision: latest.revision });
+      setSaved({ content: latest.content, revision: latest.revision, fileId: latest.fileId });
       setConflict(null);
     } catch (error) {
       toast(`Could not reload ${file.path}: ${errorMessage(error)}`, 'error');
@@ -137,7 +155,7 @@ export function FileEditor({
           <button type="button" className="btn" onClick={() => void loadLatest()}>
             <RotateCcw size={12} aria-hidden /> Discard mine
           </button>
-          <button type="button" className="btn" onClick={() => void save(conflict.revision)}>
+          <button type="button" className="btn" disabled={saving || !conflict.verified} onClick={() => void save(conflict)}>
             Overwrite with mine
           </button>
         </div>

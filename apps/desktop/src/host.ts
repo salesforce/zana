@@ -72,7 +72,8 @@ import { onOrchestratorIdle } from './coordinator-idle.js';
 import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
-import { IPC, type PluginViewTarget } from '@zana-ai/zcc-desktop-contract';
+import { IPC, resolveDeepLinkChannel, type PluginViewTarget } from '@zana-ai/zcc-desktop-contract';
+import { createDeepLinkHost, registerDeepLinkIpc, registerDeepLinkScheme, wantsSingleInstanceLock } from './deep-link-host.js';
 import { signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
 import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
@@ -7166,6 +7167,7 @@ function registerIpc() {
   }), () => ({ approved: false as const, reason: 'unavailable' as const }));
   /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
   registerPluginViewIpc(safeHandle, pluginViews);
+  registerDeepLinkIpc(safeHandleFromWindow, deepLinks);
   safeHandleFromWindow(IPC.sharedClient.list, () => sharedClient.instances(), err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.signIn, () => sharedClient.signIn(), err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.select, (_win, id: unknown) => sharedClient.select(id), err => { throw err; });
@@ -7472,14 +7474,55 @@ function buildAppMenu() {
 // hazards (control-socket steal, rival scheduler, racing writes to the shared
 // JSON) apply to the dev session. The shipped (packaged) build KEEPS the gate,
 // so end users still get the single-owner guarantee.
-if (!app.isPackaged) {
+//
+// Deep links: a dev run that pins its own userData under ZCC_DATA_DIR (`pnpm dev`)
+// also takes the lock, so `pnpm dev:open-link` forwards its argv to the running
+// dev app instead of starting a second one. Locks are per-userData, so an
+// installed app and isolated E2E runs never see each other. See deep-link-host.ts.
+const deepLinkChannel = resolveDeepLinkChannel({ isPackaged: app.isPackaged, env: process.env });
+const deepLinks = createDeepLinkHost({
+  channel: deepLinkChannel,
+  logError: logMainError,
+  deliver: async (delivery) => {
+    if (!await ensureMainWindowReady()) throw new Error('main window did not become ready');
+    showMainWindow();
+    const win = unscopedWindow();
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) throw new Error('main window is unavailable');
+    win.webContents.send(IPC.deepLinks.onLink, delivery);
+  }
+});
+const deepLinkRegistration = registerDeepLinkScheme({
+  channel: deepLinkChannel,
+  isPackaged: app.isPackaged,
+  platform: process.platform,
+  env: process.env,
+  execPath: process.execPath,
+  appEntry: process.argv[1] ? resolve(process.argv[1]) : undefined,
+  setAsDefaultProtocolClient: (scheme, execPath, args) => app.setAsDefaultProtocolClient(scheme, execPath, args),
+  log: (message) => console.warn(`[zcc] ${message}`)
+});
+if (deepLinkRegistration === 'failed') logMainError('deepLink.register', `could not register ${deepLinkChannel.scheme}://`);
+// Subscribed once at module init, never in createWindow(). macOS delivers
+// `open-url` (possibly before ready); Windows/Linux deliver argv to the first
+// process (cold start) or to `second-instance` (lock holder).
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  deepLinks.submitOsLink(url);
+});
+deepLinks.submitArgv(process.argv.slice(1));
+if (!wantsSingleInstanceLock({ isPackaged: app.isPackaged, env: process.env })) {
+  app.on('second-instance', (_event, argv) => {
+    deepLinks.submitArgv(argv);
+    showMainWindow();
+  });
   app.whenReady().then(bootstrap);
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
     // A duplicate launch (Dock, Finder, `open -a`) just surfaces the existing
-    // window instead of spawning a rival process.
+    // window instead of spawning a rival process. A link in its argv is routed.
+    deepLinks.submitArgv(argv);
     showMainWindow();
   });
   app.whenReady().then(bootstrap);
@@ -8703,12 +8746,6 @@ async function bootstrapNormal() {
       }
     })
     .catch((err) => logMainError('startMcpServer', err));
-  // Start the Zana Mobile gateway if the user has enabled phone access. A start
-  // failure (e.g. port already held by `mobile:serve`) is recorded on the manager
-  // and surfaced through `mobile:status`; it must never abort boot.
-  if (store.getConfig().mobileGatewayEnabled === true) {
-    mobileGateway.start().catch((err) => logMainError('mobileGateway.start', err));
-  }
   // Bind the PTY/agent-status → renderer bridge ONCE for the process lifetime,
   // before the first window. Must not live in createWindow() (re-entrant on
   // macOS reactivate) or every reopen would double-send PTY output.
@@ -8742,7 +8779,18 @@ async function bootstrapNormal() {
     normalBootstrapStarted = false;
     throw error;
   }
+  // Start the Zana Mobile gateway if the user has enabled phone access. It must
+  // start only after ensureRendererStaticHost() has called
+  // setProductionRendererOrigin(): the gateway resolves its loopback upstream
+  // (productServerUrl) at start, and before that it falls back to :8780, which
+  // makes peer/phone connections close with 1011 after an app restart. A start
+  // failure (e.g. port already held by `mobile:serve`) is recorded on the manager
+  // and surfaced through `mobile:status`; it must never abort boot.
+  if (store.getConfig().mobileGatewayEnabled === true) {
+    mobileGateway.start().catch((err) => logMainError('mobileGateway.start', err));
+  }
   if (!unscopedWindow()) createWindow();
+  deepLinks.arm();
   void sharedClient.restore().catch(error => logMainError('sharedClient.restore', error));
   // Reconcile only this instance's recorded tmux sessions, never another app's
   // cc-* sessions on the shared default socket. Kill owned sessions from a

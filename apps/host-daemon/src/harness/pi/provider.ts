@@ -51,6 +51,7 @@ import type {
 import { BaseLaunchProvider } from '../base-provider.js';
 import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { piLegacyRouting } from './legacy-routing.js';
 
 const PI_EVIDENCE_VERSION = '0.52.12';
 const PI_OPENING_PROMPT_EVIDENCE = {
@@ -81,6 +82,7 @@ const PI_ADAPTER: TrustedHarnessAdapter = {
     terminatesAtDoubleDash: true
   },
   status: { mode: 'output-activity' },
+  legacyRouting: piLegacyRouting,
   evidence: [PI_OPENING_PROMPT_EVIDENCE]
 };
 

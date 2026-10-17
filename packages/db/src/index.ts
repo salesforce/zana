@@ -42,6 +42,11 @@ export {
 export {
   getHost,
   listHosts,
+  listExecutionHosts,
+  listPluginLinkHosts,
+  addHostLinkUse,
+  removeHostLinkUse,
+  HOST_LINK_USES_MAX,
   getPrimaryHost,
   upsertHost,
   markHostSeen,
@@ -53,7 +58,10 @@ export {
   markHostProtocolRejected,
   destroyHost,
   type HostRow,
-  type HostPermissionMode
+  type HostPermissionMode,
+  type HostPurpose,
+  type HostPurposeKind,
+  type HostLinkUse
 } from './data/hosts.js';
 export {
   getActiveSessionForHost,

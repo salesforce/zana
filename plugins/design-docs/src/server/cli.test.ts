@@ -18,6 +18,7 @@ import {
 import { createKitReader } from './pages.js';
 import { DesignDocStore } from './store.js';
 import { createTestDatabase } from './test-db.js';
+import { DesignDocSyncStore } from './sync-store.js';
 
 const REPO = { hostId: 'host-1', root: '/repo' };
 
@@ -55,6 +56,113 @@ describe('parseArgs', () => {
 });
 
 describe('zcc design-docs', () => {
+  it.each([['write', '--content', 'fresh'], ['edit', '--old', 'two', '--new', 'fresh'], ['rm'], ['mv', 'moved.md']])(
+    'passes --base-file-id to %s', async (verb, ...args) => {
+      const { store, run, changed } = setup();
+      const doc = store.create({ title: 'Identity', files: [{ path: 'README.md', content: 'one' }, { path: 'other.md', content: 'two' }] }, { kind: 'user', label: 'You', threadId: null });
+      const file = store.readFile(doc.id, 'other.md');
+      const argv = [verb, doc.id, file.path, ...args, '--base-revision', String(file.revision), '--base-file-id'];
+      expect(await run([...argv, 'stale-id'])).toMatchObject({ exitCode: 1, stderr: expect.stringContaining('identity changed') });
+      expect(changed).not.toHaveBeenCalled();
+      expect(await run([...argv, file.fileId])).toMatchObject({ exitCode: 0 });
+      expect(changed).toHaveBeenCalledExactlyOnceWith(doc.id);
+    }
+  );
+
+  it('passes explicit null CAS tokens without treating them as missing', async () => {
+    const { run, store } = setup();
+    await run(['create', '--title', 'Null', '--template', 'blank']);
+    const doc = store.list()[0]!;
+    expect(await run(['update', doc.id, '--title', 'Updated', '--expected-head', 'null'])).toMatchObject({ exitCode: 0 });
+    expect(await run(['write', doc.id, 'new.md', '--content', 'new', '--base-revision', '0', '--base-file-id', 'null'])).toMatchObject({ exitCode: 0 });
+  });
+
+  it('round-trips --expected-head and rejects stale approval without intents', async () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, joinedAt: 1, sponsorReplicaId: null })));
+    const actor = { kind: 'user' as const, label: 'CLI', threadId: null };
+    const changed = vi.fn();
+    const deps: CliDeps = { store, changed, caller: async () => ({ actor, projectId: null, files: null }), readLocalFile: vi.fn() };
+    const ctx = { pluginId: 'design-docs', argv: [] };
+    const doc = store.create({ title: 'Reviewed', template: 'blank' }, actor);
+    const shown = JSON.parse((await runCli(deps, ['show', doc.id, '--json'], ctx)).stdout!);
+    expect(shown.head).toBe(sync.head('repo', doc.id));
+    store.writeFile(doc.id, { path: 'README.md', content: 'replacement' }, actor);
+    const args = ['update', doc.id, '--status', 'approved'];
+    expect(await runCli(deps, args, ctx)).toMatchObject({ exitCode: 1, stderr: expect.stringContaining('expectedHead') });
+    expect(await runCli(deps, [...args, '--expected-head', shown.head], ctx)).toMatchObject({ exitCode: 1, stderr: expect.stringContaining('head changed') });
+    expect(changed).not.toHaveBeenCalled();
+    expect(sync.readyIntents('repo')).toEqual([]);
+    expect(await runCli(deps, [...args, '--expected-head', store.summary(doc.id).head!], ctx)).toMatchObject({ exitCode: 0 });
+    expect(sync.readyIntents('repo')).toHaveLength(1);
+    expect(helpText()).toContain('--expected-head <head|null>');
+  });
+
+  it('rejects agent callers for owner-only peer verbs', async () => {
+    const pairing = { enable: vi.fn(), remove: vi.fn(), revoke: vi.fn(), status: vi.fn(async () => ({ configured: false })) };
+    const syncNow = vi.fn();
+    const deps: CliDeps = { store: new DesignDocStore(createTestDatabase()), changed: vi.fn(),
+      caller: async () => ({ actor: { kind: 'agent', label: 'CLI agent', threadId: null }, projectId: null, files: null }),
+      readLocalFile: vi.fn(), pairing: pairing as never, peers: {} as never, peerSync: { syncNow } as never };
+    const ctx = { pluginId: 'design-docs', argv: [] };
+    for (const argv of [['enable', 'app'], ['remove-peer', 'r'], ['revoke-peer', 'app'], ['sync']]) {
+      expect(await runCli(deps, argv, ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('reserved for the owner') });
+    }
+    expect(pairing.enable).not.toHaveBeenCalled(); expect(pairing.remove).not.toHaveBeenCalled();
+    expect(pairing.revoke).not.toHaveBeenCalled(); expect(syncNow).not.toHaveBeenCalled();
+    expect((await runCli(deps, ['peers'], ctx)).exitCode).toBe(0);
+  });
+
+  it('exposes group status, enable, retries, removal blockers and database sync', async () => {
+    const status = { configured: false, installerAvailable: false };
+    const pairing = { status: vi.fn(async () => status), enable: vi.fn(async () => status), retry: vi.fn(async () => {}), revoke: vi.fn(async () => status),
+      remove: vi.fn(async () => { throw new Error('SDK peers.revoke unavailable'); }) };
+    const deps: CliDeps = { store: new DesignDocStore(createTestDatabase()), changed: vi.fn(),
+      caller: async () => ({ actor: { kind: 'user', label: 'CLI', threadId: null }, projectId: null, files: null }),
+      readLocalFile: vi.fn(), pairing: pairing as never,
+      peers: {} as never, peerSync: { syncNow: vi.fn(async () => ({ attempted: 1, synced: 0, blocked: 1 })) } as never };
+    const ctx = { pluginId: 'design-docs', argv: [] };
+    for (const argv of [['peers', '--json'], ['enable', 'app'], ['retry-introductions']]) {
+      expect(JSON.parse((await runCli(deps, argv, ctx)).stdout!)).toEqual(status);
+    }
+    expect(pairing.enable).toHaveBeenCalledWith('app'); expect(pairing.retry).toHaveBeenCalledOnce();
+    expect(JSON.parse((await runCli(deps, ['revoke-peer', 'app'], ctx)).stdout!)).toEqual(status);
+    expect(pairing.revoke).toHaveBeenCalledExactlyOnceWith('app');
+    expect(await runCli(deps, ['revoke-peer'], ctx)).toMatchObject({ exitCode: 2 });
+    expect(await runCli(deps, ['remove-peer', 'replica'], ctx)).toMatchObject({ exitCode: 1, stderr: 'SDK peers.revoke unavailable\n' });
+    expect(await runCli(deps, ['enable'], ctx)).toMatchObject({ exitCode: 2 });
+    expect(JSON.parse((await runCli(deps, ['sync'], ctx)).stdout!)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    delete deps.pairing; delete deps.peerSync;
+    expect(await runCli(deps, ['peers'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('unavailable') });
+    expect(await runCli(deps, ['sync'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('unavailable') });
+  });
+  it('journals trusted CLI imports as import, atomically including entry changes', async () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, joinedAt: 1, sponsorReplicaId: null })));
+    const deps: CliDeps = { store, changed: vi.fn(), caller: async () => ({ actor: { kind: 'user', label: 'CLI', threadId: null }, projectId: 'p1', files: REPO }),
+      readLocalFile: async () => ({ content: 'import bytes', encoding: 'utf8', sizeBytes: 12 }) };
+    const ctx: PluginCliContext = { pluginId: 'design-docs', argv: [], projectId: 'p1' };
+    expect(await runCli(deps, ['import', '--title', 'Imported', 'README.md'], ctx)).toMatchObject({ exitCode: 0 });
+    const doc = store.list()[0]!;
+    expect(sync.operations('repo').map((op) => op.origin)).toEqual(['import']);
+    expect(sync.readyIntents('repo')).toEqual([]);
+    store.update(doc.id, { status: 'approved', expectedHead: store.summary(doc.id).head }, { kind: 'user', label: 'You', threadId: null });
+    const before = sync.operations('repo').length;
+    expect(await runCli(deps, ['import', doc.id, 'other.md', '--entry', 'other.md'], ctx)).toMatchObject({ exitCode: 0 });
+    expect(sync.operations('repo')).toHaveLength(before + 1);
+    expect(sync.operations('repo').at(-1)!.origin).toBe('import');
+    expect(sync.readyIntents('repo')).toHaveLength(1);
+    const head = sync.head('repo', doc.id);
+    expect(await runCli(deps, ['import', doc.id, 'third.md', '--entry', 'missing.md'], ctx)).toMatchObject({ exitCode: 2 });
+    expect(sync.head('repo', doc.id)).toBe(head);
+    expect(store.get(doc.id).files.some((file) => file.path === 'third.md')).toBe(false);
+  });
   it('prints help', async () => {
     const { run } = setup();
     for (const argv of [[], ['help'], ['--help'], ['list', '--help']]) {

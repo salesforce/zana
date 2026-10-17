@@ -9,10 +9,13 @@ import {
   type HostRpcRequestMessage
 } from '@zana-ai/zcc-contracts/host-rpc';
 import {
+  destroyHost,
   getConversationThread,
+  getHost,
   listConversationThreadEvents
 } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
+import { MAX_ENROLL_RECOVERIES } from './host-internal.js';
 import type { ProductHttpContext } from './product-context.js';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
@@ -97,6 +100,15 @@ async function enrollHost(token: string, hostName: string, instanceId: string, h
   });
   expect(response.status).toBe(201);
   return await response.json() as { hostId: string; hostKey: string };
+}
+
+async function rawEnroll(token: string, headers: Record<string, string> = {}, body: Record<string, unknown> = {}) {
+  const response = await fetch(`${server!.url}internal/hosts/enroll`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...headers },
+    body: JSON.stringify({ protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostName: 'retry', instanceId: randomUUID(), ...body })
+  });
+  return { status: response.status, body: await response.json() as Record<string, unknown> };
 }
 
 function openHostSocket(
@@ -434,6 +446,78 @@ describe('host enroll hub and thread create', () => {
     ).toBe(true);
     expect(acks.find(row => row.type === 'host.hello-ok')).toMatchObject({ pluginHostGenerations: expect.arrayContaining([{ pluginId: 'machine-proof', generation: 'current-generation' }]) });
     expect(JSON.stringify(acks)).not.toContain('/private/not-sent');
+  });
+
+  it('mints forward-only enrollments server-side; execution codes never widen them and forward codes never downgrade', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    await startServer(projectRoot);
+    const minted = await fetch(`${server!.url}api/v1/hosts/forward-join-codes`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+    });
+    expect(minted.status).toBe(201);
+    const forward = await minted.json() as { joinCode: string; hostId: string; enrollmentCapability: string };
+    expect(forward.enrollmentCapability).toBe('peer.forward');
+    expect(await fetch(`${server!.url}api/v1/hosts/forward-join-codes`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"capability":"execution"}'
+    }).then((r) => r.status)).toBe(400);
+    const enrolled = await enrollHost(forward.joinCode, 'relay', randomUUID());
+    expect(enrolled.hostId).toBe(forward.hostId);
+    expect(getHost(server!.ctx.db, forward.hostId)?.enrollmentCapability).toBe('peer.forward');
+    const hostKeyHash = getHost(server!.ctx.db, forward.hostId)?.hostKeyHash;
+    // Direct (non-Connect) route: a consumed forward code is never replayable.
+    expect((await rawEnroll(forward.joinCode, {}, { hostName: 'again' })).status).toBe(401);
+    expect(getHost(server!.ctx.db, forward.hostId)).toMatchObject({ enrollmentCapability: 'peer.forward', hostKeyHash, name: 'relay' });
+    // An execution re-enrollment of the same machine keeps it forward-only.
+    const repair = server!.ctx.joinCodes.mintForHost(forward.hostId);
+    expect(repair.enrollmentCapability).toBe('execution');
+    await enrollHost(repair.joinCode, 'relay', randomUUID(), forward.hostId);
+    expect(getHost(server!.ctx.db, forward.hostId)?.enrollmentCapability).toBe('peer.forward');
+    // Reissuing for the host retires the forward code; no code is replayable off the machine class.
+    expect((await rawEnroll(forward.joinCode)).status).toBe(401);
+    expect((await rawEnroll(repair.joinCode)).status).toBe(401);
+    expect(getHost(server!.ctx.db, forward.hostId)?.enrollmentCapability).toBe('peer.forward');
+    // An ordinary code creates an execution machine, and replaying it never creates a second one.
+    const normal = server!.ctx.joinCodes.mint();
+    await enrollHost(normal.joinCode, 'worker', randomUUID());
+    expect(getHost(server!.ctx.db, normal.hostId)?.enrollmentCapability).toBe('execution');
+    expect((await rawEnroll(normal.joinCode)).status).toBe(401);
+  });
+
+  it('admits a forward-only code on the machine class, replays it idempotently and boundedly, and never widens it', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    await startServer(projectRoot);
+    const machine = (hostId: string) => ({ 'x-zcc-connect-machine-host': hostId, 'x-zcc-connect-machine-instance': server!.ctx.productInstanceId });
+    const bounded = server!.ctx.joinCodes.mintForwardOnly();
+    const first = await rawEnroll(bounded.joinCode, machine(bounded.hostId));
+    expect(first).toMatchObject({ status: 201, body: { hostId: bounded.hostId } });
+    expect(getHost(server!.ctx.db, bounded.hostId)?.enrollmentCapability).toBe('peer.forward');
+    const hostKeyHash = getHost(server!.ctx.db, bounded.hostId)?.hostKeyHash;
+    for (let i = 0; i < MAX_ENROLL_RECOVERIES; i += 1) {
+      expect(await rawEnroll(bounded.joinCode, machine(bounded.hostId))).toEqual({ status: 201, body: first.body });
+    }
+    expect(await rawEnroll(bounded.joinCode, machine(bounded.hostId))).toMatchObject({ status: 403, body: { error: 'enrollment recovery limit reached' } });
+    expect(getHost(server!.ctx.db, bounded.hostId)).toMatchObject({ enrollmentCapability: 'peer.forward', hostKeyHash });
+    // A machine header for another host never redeems or replays this code.
+    const other = server!.ctx.joinCodes.mintForwardOnly();
+    expect((await rawEnroll(other.joinCode, machine(randomUUID()))).status).toBe(403);
+    // Unauthenticated replay without machine headers finds nothing to recover.
+    expect((await rawEnroll(bounded.joinCode)).status).toBe(401);
+
+    // Removing the machine erases its codes: the replay finds nothing to recover.
+    const removed = server!.ctx.joinCodes.mintForwardOnly();
+    await rawEnroll(removed.joinCode, machine(removed.hostId));
+    // A forward-only machine is a plugin link: hosts-api is execution-only, so it is removed through peer-links.
+    expect((await fetch(`${server!.url}api/v1/hosts/${removed.hostId}`, { method: 'DELETE', headers: { 'content-type': 'application/json' } })).status).toBe(404);
+    expect((await fetch(`${server!.url}api/v1/peer-links/${removed.hostId}`, { method: 'DELETE', headers: { 'content-type': 'application/json' } })).status).toBe(200);
+    expect((await rawEnroll(removed.joinCode, machine(removed.hostId))).status).toBe(401);
+    expect(getHost(server!.ctx.db, removed.hostId)?.destroyedAt).toBeTruthy();
+
+    // A host torn down while its redeemed code is still on record is never resurrected.
+    const destroyed = server!.ctx.joinCodes.mintForwardOnly();
+    await rawEnroll(destroyed.joinCode, machine(destroyed.hostId));
+    destroyHost(server!.ctx.db, destroyed.hostId);
+    expect(await rawEnroll(destroyed.joinCode, machine(destroyed.hostId))).toMatchObject({ status: 403, body: { error: 'enrollment no longer active' } });
+    expect(getHost(server!.ctx.db, destroyed.hostId)?.destroyedAt).toBeTruthy();
   });
 
   it('rejects browser Origin on enroll and fails create when no host is connected', async () => {

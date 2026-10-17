@@ -144,6 +144,7 @@ export function RevisionView({
   const pair = useResource(`${doc.id}\u0000${revision.id}`, () => loadRevisionPair(api, doc.id, revision));
   const kind = fileKindOf(revision.path);
   const current = doc.files.find((file) => file.path === revision.path) ?? null;
+  const [observed] = useState(() => ({ revision: current?.revision ?? 0, fileId: current?.fileId ?? null }));
   const isCurrent = current?.revision === revision.revision && revision.op !== 'delete';
 
   const diff = useMemo(() => {
@@ -157,7 +158,7 @@ export function RevisionView({
     setRestoring(true);
     try {
       // Fails instead of overwriting if the file changed after this view opened.
-      const result = await api.restore(doc.id, revision.id, current?.revision ?? 0);
+      const result = await api.restore(doc.id, revision.id, observed.revision, observed.fileId);
       toast(`Restored ${result.path} to revision ${revision.revision} (now rev ${result.revision})`);
       onOpenPath(result.path);
       onClose();

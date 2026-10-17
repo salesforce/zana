@@ -98,7 +98,10 @@ Day-one host APIs that are implemented (not stubs): `settings.define` (persisted
 
 Provider bridges emit harness-native todo/plan updates as settled `planSteps` items (`item/completed` `{ type: "planSteps", steps: [{ step, status }] }` with `pending` / `active` / `completed`). Use `planStepsPresentation` from `@zana-ai/zcc-plugin-sdk/provider-bridge`. Durable thread plans stay in core — there is no `zcc.plans` plugin SDK.
 
-Product SDK delegation accepts `sdk.threads.spawn({ projectId, prompt, hostId?, environment?, serviceTier?, ... })`.
+Product SDK delegation accepts `sdk.threads.spawn({ projectId, prompt, providerId?, harness?, hostId?, environment?, serviceTier?, ... })`.
+`harness: 'project-default'` runs the project's effective AI harness (Settings → AI Harness) and rejects when none is usable;
+`providerId` wins when set. With neither, the first registered provider is used (legacy).
+A `project-default` spawn also applies that harness's Global → Project AI-harness overrides; explicit `model`/`permissionMode` win, and an override a thread cannot apply rejects.
 `sdk.threads.search({ query, archived?, limit? })` searches visible saved titles and messages,
 including older and archived threads, newest first. Results are capped at 25.
 Provider capabilities advertise `supportsServiceTier` for execution pickers.

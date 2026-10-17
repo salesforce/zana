@@ -216,6 +216,15 @@ export interface PluginViewTarget {
 export interface CcApi {
   /** Isolated in-app browser overlay. Present only in the desktop preload. */
   browser: DesktopBrowserApi;
+  /** Plugin deep links. Present only in the desktop preload. */
+  deepLinks?: {
+    /** This build's link base (`<scheme>://`) and the schemes the in-app paste path accepts. */
+    config(): Promise<import('./deep-link.js').DeepLinkConfig>;
+    /** Ask main to validate a pasted link and route it. Main re-parses; the renderer is untrusted. */
+    open(raw: string): Promise<import('./deep-link.js').DeepLinkOpenResult>;
+    /** A validated link main wants routed to a plugin. */
+    onLink(cb: (delivery: import('./deep-link.js').DeepLinkDelivery) => void): () => void;
+  };
   startup: {
     state(): Promise<{ mode: 'ready' } | { mode: 'repair-required'; reason: 'harness-routing-migration' }>;
     retry(): Promise<{ mode: 'ready' } | { mode: 'repair-required'; reason: 'harness-routing-migration' }>;

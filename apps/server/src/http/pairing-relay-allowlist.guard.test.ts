@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { PAIRING_ALLOWLIST, isAllowedHttp, isAllowedWs, resolvePairingTarget } from './pairing-allowlist.js';
+import { PAIRING_ALLOWLIST, PEER_LINK_ALLOWLIST, isAllowedHttp, isAllowedWs, resolvePairingTarget } from './pairing-allowlist.js';
 import { FLAG, TYPE, decodeFrame, encodeFrame } from './pairing-relay-protocol.js';
 
 const jsonPath = join(
@@ -96,5 +96,26 @@ describe('pairing relay protocol', () => {
     expect(js.TYPE.JOIN_RENEW).toBe(TYPE.JOIN_RENEW);
     expect(TYPE.HELLO).toBe(8);
     expect(TYPE.JOIN_RENEW).toBe(9);
+  });
+});
+
+describe('peer link allowlist', () => {
+  it('stays a strict, separate subset of the relay surface', () => {
+    expect(PEER_LINK_ALLOWLIST.http).toEqual([{ methods: ['POST'], path: '/internal/hosts/enroll' }]);
+    expect(PEER_LINK_ALLOWLIST.ws).toEqual(['/internal/hosts/ws']);
+    expect(PEER_LINK_ALLOWLIST).not.toBe(PAIRING_ALLOWLIST);
+    expect(isAllowedHttp('POST', '/internal/hosts/enroll', PEER_LINK_ALLOWLIST)).toBe(true);
+    expect(isAllowedHttp('GET', '/internal/hosts/enroll', PEER_LINK_ALLOWLIST)).toBe(false);
+    expect(isAllowedHttp('GET', '/install.sh', PEER_LINK_ALLOWLIST)).toBe(false);
+    expect(isAllowedHttp('POST', '/internal/hosts/tool-call', PEER_LINK_ALLOWLIST)).toBe(false);
+    expect(isAllowedWs('/internal/hosts/ws', PEER_LINK_ALLOWLIST)).toBe(true);
+    expect(isAllowedWs('/ws', PEER_LINK_ALLOWLIST)).toBe(false);
+  });
+
+  it('supports pattern rows in a supplied list', () => {
+    const list = { http: [{ methods: ['GET'], pathPattern: '^/x/[a-z]+$' }], ws: [] };
+    expect(isAllowedHttp('GET', '/x/abc', list)).toBe(true);
+    expect(isAllowedHttp('GET', '/x/ABC', list)).toBe(false);
+    expect(isAllowedHttp('GET', '/y', { http: [{ methods: ['GET'] }], ws: [] })).toBe(false);
   });
 });

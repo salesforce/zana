@@ -31,7 +31,7 @@ it('answers pairing-target from the utility process, falling back to the tunnel 
     expect(await ask('a')).toEqual({ kind: 'tunnel', reason: 'relay_offline' });
 
     // Context exists (boot aborts later on the stub, which leaves the context assigned).
-    h.context.mockReturnValue({ hub: { subscribe: () => () => undefined }, db: {}, origins: {} });
+    h.context.mockReturnValue({ hub: { subscribe: () => () => undefined }, db: {}, origins: {}, dispose: () => undefined });
     parent.emit('message', { data: { type: 'start', dataDir: root, rendererRoot: root } });
     await vi.waitFor(() => expect(h.context).toHaveBeenCalled());
     await vi.waitFor(() => expect(parent.postMessage.mock.calls.some(([m]) => m.type === 'error' || m.type === 'ready')).toBe(true));

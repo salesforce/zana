@@ -18,6 +18,7 @@ import {
 import { RenderReports } from './render-reports.js';
 import { DesignDocStore } from './store.js';
 import { createTestDatabase } from './test-db.js';
+import { DesignDocSyncStore } from './sync-store.js';
 
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
 const PNG = 'iVBORw0KGgo=';
@@ -41,6 +42,45 @@ describe('input helpers', () => {
 });
 
 describe('agent operations', () => {
+  it.each(['content', 'edits', 'delete', 'renameTo'])('forwards baseFileId through %s authoring', (mode) => {
+    const { ctx, store, changes } = setup();
+    const doc = store.create({ title: 'Identity', files: [{ path: 'README.md', content: 'one' }, { path: 'other.md', content: 'two' }] }, agent);
+    const file = store.readFile(doc.id, 'other.md');
+    const args = { doc: doc.id, path: file.path, baseRevision: file.revision, baseFileId: 'stale-id',
+      ...({ content: { content: 'fresh' }, edits: { edits: [{ oldText: 'two', newText: 'fresh' }] }, delete: { delete: true }, renameTo: { renameTo: 'moved.md' } }[mode]!) };
+    expect(readDoc(ctx, { doc: doc.id, path: file.path })).toContain(`baseFileId=${JSON.stringify(file.fileId)}`);
+    expect(() => writeDoc(ctx, args, agent)).toThrow(/identity changed/);
+    expect(changes).toEqual([]);
+    writeDoc(ctx, { ...args, baseFileId: file.fileId }, agent);
+    expect(changes).toEqual([doc.id]);
+  });
+
+  it('reads metadata head and forwards it without auto-refreshing stale consent', () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, joinedAt: 1, sponsorReplicaId: null })));
+    const changes: string[] = [];
+    const ctx: OperationContext = { store, changed: (id) => changes.push(id) };
+    const doc = store.create({ title: 'Reviewed', template: 'blank' }, agent);
+    const expectedHead = store.summary(doc.id).head;
+    expect(readDoc(ctx, { doc: doc.id })).toContain(`expectedHead=${JSON.stringify(expectedHead)}`);
+    expect(readDoc(ctx, { doc: doc.id, includeAll: true })).toContain(`expectedHead=${JSON.stringify(expectedHead)}`);
+    store.writeFile(doc.id, { path: 'README.md', content: 'replacement' }, agent);
+    expect(() => updateDoc(ctx, { doc: doc.id, status: 'approved', expectedHead }, agent)).toThrow(/head changed/);
+    expect(() => updateDoc(ctx, { doc: doc.id, status: 'approved' }, agent)).toThrow(/expectedHead/);
+    expect(changes).toEqual([]);
+    expect(sync.readyIntents('repo')).toEqual([]);
+    updateDoc(ctx, { doc: doc.id, status: 'approved', expectedHead: store.summary(doc.id).head }, agent);
+    expect(sync.readyIntents('repo')).toHaveLength(1);
+  });
+
+  it('rejects caller origin spoofing on ordinary authoring', () => {
+    const { ctx, store } = setup();
+    expect(() => createDoc(ctx, { title: 'Spoof', status: 'approved', origin: 'import' }, agent)).toThrow('origin is not');
+    expect(store.list()).toEqual([]);
+  });
   it('creates docs in the calling project or globally', () => {
     const { ctx, changes, store } = setup();
     const text = createDoc(ctx, { title: 'Sync', tags: 'mobile, offline', status: 'review' }, agent);
