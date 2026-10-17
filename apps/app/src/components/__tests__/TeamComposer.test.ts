@@ -21,7 +21,7 @@ describe('TeamComposer', () => {
     // Default plan mode is seeded from the persisted config (Infer/freeform out of
     // the box), lazily so the composer opens on the user's chosen default.
     expect(source).toContain("useState<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(");
-    expect(source).toContain('() => useData.getState().teamDefaultCoordinationMode');
+    expect(source).toContain('useData.getState().teamDefaultCoordinationMode');
     expect(source).toContain("{ value: 'freeform', label: 'Infer plan from goal' }");
     expect(source).toContain("{ value: 'structured', label: 'Plan provided in goal' }");
     expect(source).toContain('coordinationMode,');

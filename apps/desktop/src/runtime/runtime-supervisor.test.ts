@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { requestPairingTarget, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime-supervisor.js';
+import { createUtilityRuntime, requestPairingTarget, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime-supervisor.js';
+import { SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
 import { TERMINAL_HOST_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/terminal-execution';
 
 let runtime: RuntimeSupervisor | null = null;
@@ -38,6 +39,7 @@ describe('runtime supervisor', () => {
     // No packaged server-runtime child here ⇒ the ACP thread-liveness probe
     // safe-defaults false (never rejects), so no loopback launch can pass on it.
     await expect(runtime.isThreadLive('thread-1', 'project-1')).resolves.toBe(false);
+    await expect(runtime.queueThreadTurn('thread-1', 'project-1', 'hello')).resolves.toEqual({ ok: false, reason: 'runtime-unavailable' });
     // Without the plugin host there is no tool policy decision; main's hook route then denies.
     await expect(runtime.decideToolPolicy({
       invocationId: 'a'.repeat(64), threadId: 'thread-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash', input: {}
@@ -161,5 +163,28 @@ describe('pairing target request', () => {
   it('falls back to a tunnel when the request fails', async () => {
     await expect(requestPairingTarget(async () => { throw new Error('server pairing-target request timed out'); }))
       .resolves.toEqual({ kind: 'tunnel', reason: 'relay_offline' });
+  });
+});
+
+describe('utility runtime thread-queue-turn mapping', () => {
+  it('maps the arguments onto the request message and resolves the reply', async () => {
+    const listeners: Array<(message: unknown) => void> = [];
+    const posted: any[] = [];
+    const child = {
+      postMessage: (message: unknown) => { posted.push(message); },
+      on: (event: string, listener: (message: unknown) => void) => { if (event === 'message') listeners.push(listener); },
+      once: () => undefined,
+      kill: () => undefined
+    };
+    const utility = createUtilityRuntime({ child: child as never, url: 'http://127.0.0.1' });
+    const reply = utility.request('thread-queue-turn', 'thread-1', 'project-1', 'hello');
+    expect(posted[0]).toMatchObject({
+      type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, operation: 'thread-queue-turn',
+      threadId: 'thread-1', projectId: 'project-1', text: 'hello'
+    });
+    for (const listener of listeners) {
+      listener({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: posted[0].id, value: { ok: true, queued: true } });
+    }
+    await expect(reply).resolves.toEqual({ ok: true, queued: true });
   });
 });

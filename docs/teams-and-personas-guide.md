@@ -117,6 +117,8 @@ A Team bundles multiple personas into a single-click launch:
 | `slots` | TeamSlot[] | The worker agents to spawn |
 | `defaultProjectId` | string? | Fallback project when none supplied at launch |
 | `initialPrompt` | string? | Opening text for the orchestrator's tab |
+| `worktreeIsolation` | boolean? | Shared-worktree override for Squad runs; absent follows the Project or global default |
+| `defaultPlanning` | `"infer"` \| `"provided"`? | Planning mode preselected when the Squad is picked in the composer or proposed by an agent; absent uses the global default. Set it in Settings → Squads → Default planning |
 
 ### TeamSlot
 
@@ -290,6 +292,34 @@ From the Teams panel in ZCC, click **Launch** on "Feature Squad". For autonomous
 ```
 cc.teams.launchAutonomous("feature-squad", projectId, "Implement [feature description]")
 ```
+
+---
+
+## Start a Squad from a conversation
+
+You can design in a CLI Agent or Modern session and hand the result to a Squad
+in the same Project.
+
+1. **Say it.** In the session, say "build it with <Squad>". The agent saves the
+   design (and a plan, if it has one) to the Project library, checks the plan, and
+   prepares the launch.
+2. **Open the Inbox card.** A "Squad launch ready" card appears in the Inbox. It
+   names the Squad, the planning mode and the files. Nothing has started.
+3. **Review.** Press **Review Squad launch**. The Squad composer opens already
+   filled in: Squad, goal, planning mode and the attached files. Change anything
+   you like. Press **Dismiss** to drop the proposal.
+4. **Launch.** Press **Launch**. The files are captured at that moment, so later
+   edits are not included.
+5. **Report back.** When the Squad finishes or needs you, the session that
+   proposed it gets a short `[Squad report]`. It can tell you what happened but
+   cannot answer the Squad's questions, stop it or steer it; you stay the owner.
+   Answers go through the Inbox.
+
+Rules: the Squad always runs in the proposing session's Project, and files must be
+inside that Project. Members of a running Squad cannot propose. Proposals expire
+after 7 days. If the Squad's orchestrator cannot write files, "Infer plan from
+goal" is refused; the agent proposes a plan it has written and checked instead
+(`planning: "provided"`). Use `defaultPlanning` on the Squad to preselect a mode.
 
 ---
 

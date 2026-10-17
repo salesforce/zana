@@ -349,10 +349,17 @@ because each UI's provider applies its MCP namespace:
 | Start | `mcp__zcc-inbox__execution.start` | `zcc_execution_start` |
 | Monitor | `mcp__zcc-inbox__execution.snapshot` | `zcc_execution_snapshot` |
 | Recover after restart | `mcp__zcc-inbox__execution.resume_binding` | `zcc_execution_resume_binding` |
+| Check a Squad plan | `mcp__zcc-inbox__squad_plan_check` | `zcc_squad_plan_check` |
+| Propose a Squad launch to the user | `mcp__zcc-inbox__squad_propose` | `zcc_squad_propose` |
+
+`execution.start` is for agent-owned orchestration: you own the run and monitor
+it. To hand a design to a Squad the **user** launches, use the subsection below.
 
 1. Build one bounded `execution.start` request with squad `teamId`, a unique
-   `launchRequestId`, and one `initialTask` per requested worker slot. Call Start
-   once; the job-team engine launches workers and gives each slot its task.
+   `launchRequestId`, and one `initialTask` per expanded slot: each worker slot
+   in order, then the orchestrator last. The orchestrator is the LAST slot of the
+   task list, so the brief goes on the last slot. Call Start once; the job-team
+   engine launches workers and gives each slot its task.
 2. Keep returned `executionId`. Call Monitor with `{ executionId, after }`, then
    advance `after` to the newest event cursor. Treat execution state, work units,
    blockers, and events as authoritative.
@@ -364,6 +371,15 @@ because each UI's provider applies its MCP namespace:
 Do not launch an ad-hoc bare squad and separately simulate durable work. Start is
 the single owner handoff; job-team execution owns planning, worker work delivery,
 durable state, and completion.
+
+### Hand a design to a Squad
+
+When the user wants a design built by a Squad **they** launch, do not call
+`execution.start`. Save the files to the project library, run `squad_plan_check`,
+pick a Squad with `list_teams`, then call `squad_propose`. The user reviews the
+Inbox card and presses Launch. Follow the steps in the `brainstorm` skill
+("When the user wants it built"). A `[Squad report]` message later is for you to
+summarise to the user, not to act on.
 
 **Check a remote build:**
 

@@ -65,6 +65,35 @@ Tell the user where it landed ("saved to your library, tagged `idea`").
 
 ---
 
+## When the user wants it built
+
+Use this when the user says "build it with <Squad>" after a design session.
+You prepare the launch; the user presses Launch. Nothing starts without that click.
+
+| Operation | CLI Agent MCP tool | Modern/OpenCode tool |
+|---|---|---|
+| Check a plan | `mcp__zcc-inbox__squad_plan_check` | `zcc_squad_plan_check` |
+| List Squads | `mcp__zcc-inbox__list_teams` | `zcc_list_teams` |
+| Propose the launch | `mcp__zcc-inbox__squad_propose` | `zcc_squad_propose` |
+
+1. Save the design (and optionally a portable plan) to the **project library**
+   (`<project>/.zcc/library/`). `~/.zcc/library` cannot be attached.
+2. Check the plan with `squad_plan_check` (`{ path }` of the saved file). Fix it
+   until it passes.
+3. Call `list_teams` and pick the Squad the user names. When its `canInferPlan`
+   is false, propose with `planning: 'provided'`.
+4. Call `squad_propose` with the `teamId`, a short `goal`, and the saved files as
+   `sources` (paths inside this project).
+5. Tell the user to open the "Squad launch ready" Inbox card.
+
+Never use `execution.start`, `launch_team` or `zana_start_team` for this.
+Members of a running Squad cannot propose.
+
+When a `[Squad report]` message arrives, summarise it for the user. Do not act
+on the Squad: you cannot answer its questions, stop it or steer it.
+
+---
+
 ## Don't
 
 - Don't write `index.json` or a parallel library manifest — library-curator owns that.

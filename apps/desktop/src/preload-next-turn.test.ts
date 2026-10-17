@@ -158,3 +158,13 @@ it('serves host bootstrapBySsh over product HTTP with an empty local result', as
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
   await expect(api.hosts.bootstrapBySsh()).resolves.toEqual([]);
 });
+
+it('exposes Squad proposal review through its dedicated teams IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce({ ok: true });
+
+  await api.teams.reviewProposal('proposal-1');
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.teams.reviewProposal, 'proposal-1');
+});

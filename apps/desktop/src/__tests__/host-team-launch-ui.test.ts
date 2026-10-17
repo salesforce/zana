@@ -28,6 +28,8 @@ const h = vi.hoisted(() => {
 
 vi.stubEnv('ZCC_DATA_DIR', h.root);
 vi.stubEnv('ZCC_EXECUTION_STORE', 'json');
+// Report-back probes must never reach the developer's live app on :8780.
+vi.stubEnv('ZCC_SERVER_URL', 'http://127.0.0.1:9/');
 
 vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
   PtyManager: class {
@@ -124,7 +126,8 @@ vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
 }));
 
 
-const { startTeamJobFromUi } = await import('../host.js');
+const { startTeamJobFromUi, squadProposalService, squadProposalStore } = await import('../host.js');
+const { SquadExecutionService } = await import('@zana-ai/zcc-server/services/execution/service');
 
 const projectDir = realpathSync(mkdtempSync(join(h.root, 'proj-')));
 mkdirSync(projectDir, { recursive: true });
@@ -279,3 +282,154 @@ describe('startTeamJobFromUi shared squad worktree', () => {
   });
 });
 
+
+describe('startTeamJobFromUi proposed launches', () => {
+  const record = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, projectId: 'p1', proposer: { kind: 'thread' as const, id: 'thread-1', title: 'Design chat' }, teamId: 'team1',
+    goal: 'Ship the feature', planning: 'infer' as const, sources: [], state: 'pending' as const,
+    createdAt: Date.now(), updatedAt: Date.now(), expiresAt: Date.now() + 60_000, ...extra
+  });
+
+  it('requires a trusted window when a proposalId is present', async () => {
+    expect(await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-x' }))).toEqual({
+      ok: false, code: 'INVALID_CAPABILITY', message: 'Proposed Squad launches must be opened from the desktop app window.'
+    });
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('returns the beginLaunch error without starting anything', async () => {
+    const result = await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'missing' }), { windowId: 1 });
+    expect(result).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('passes the proposal to start() as the 4th argument, then marks the proposal launched', async () => {
+    await squadProposalStore.create(record('prop-ok') as never);
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start');
+    const markLaunched = vi.spyOn(squadProposalService, 'markLaunched');
+    try {
+      const result = await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-ok' }), { windowId: 1 });
+      expect(result.ok).toBe(true);
+      const executionId = (result as { value: { executionId: string } }).value.executionId;
+      expect(start.mock.calls[0]).toHaveLength(4);
+      expect(start.mock.calls[0]![3]).toEqual({
+        proposal: { id: 'prop-ok', proposerKind: 'thread', proposerId: 'thread-1', proposerTitle: 'Design chat' }
+      });
+      expect(markLaunched).toHaveBeenCalledWith('prop-ok', executionId);
+      expect(await squadProposalStore.get('prop-ok')).toMatchObject({ state: 'launched', executionId });
+    } finally {
+      start.mockRestore();
+      markLaunched.mockRestore();
+    }
+  });
+
+  it('does not fail a started Squad when marking the proposal launched throws', async () => {
+    await squadProposalStore.create(record('prop-throw') as never);
+    const markLaunched = vi.spyOn(squadProposalService, 'markLaunched').mockRejectedValue(new Error('disk full'));
+    try {
+      expect((await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-throw' }), { windowId: 1 })).ok).toBe(true);
+    } finally {
+      markLaunched.mockRestore();
+    }
+  });
+
+  it('refuses a second launch while the first is still starting', async () => {
+    await squadProposalStore.create(record('prop-race') as never);
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const original = SquadExecutionService.prototype.start;
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockImplementationOnce(async function (this: SquadExecutionService, ...args: Parameters<typeof original>) {
+      await gate;
+      return original.apply(this, args);
+    });
+    try {
+      const first = startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-race' }), { windowId: 1 });
+      await vi.waitFor(() => expect(start).toHaveBeenCalledOnce());
+      expect(await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-race' }), { windowId: 1 }))
+        .toMatchObject({ ok: false, code: 'NOT_PENDING', message: 'This Squad launch is already starting.' });
+      finish();
+      expect((await first).ok).toBe(true);
+    } finally {
+      start.mockRestore();
+    }
+  });
+
+  it('releases the proposal when start() throws, so the user can retry at once', async () => {
+    await squadProposalStore.create(record('prop-boom') as never);
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockRejectedValueOnce(new Error('boom'));
+    try {
+      await expect(startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-boom' }), { windowId: 1 })).rejects.toThrow('boom');
+      expect((await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-boom' }), { windowId: 1 })).ok).toBe(true);
+    } finally {
+      start.mockRestore();
+    }
+  });
+
+  it('attaches goal-named files only from inside the project for a proposed launch (D3)', async () => {
+    const fakeHome = realpathSync(mkdtempSync(join(h.root, 'home-')));
+    const secret = join(fakeHome, 'secret.md');
+    writeFileSync(secret, 'token');
+    vi.stubEnv('HOME', fakeHome);
+    await squadProposalStore.create(record('prop-home') as never);
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start');
+    try {
+      // Control: a launch the user composed still attaches a file named from HOME.
+      expect((await startTeamJobFromUi(input({ coordinationMode: 'freeform', goal: `Read ${secret}` }), { windowId: 1 })).ok).toBe(true);
+      expect((start.mock.calls[0]![2] as { sourceBundle?: unknown }).sourceBundle).toBeDefined();
+      // A proposal's agent-written goal cannot pull it in.
+      expect((await startTeamJobFromUi(input({ coordinationMode: 'freeform', goal: `Read ${secret}`, proposalId: 'prop-home' }), { windowId: 1 })).ok).toBe(true);
+      expect((start.mock.calls[1]![2] as { sourceBundle?: unknown }).sourceBundle).toBeUndefined();
+    } finally {
+      start.mockRestore();
+      vi.unstubAllEnvs();
+      vi.stubEnv('ZCC_DATA_DIR', h.root);
+      vi.stubEnv('ZCC_EXECUTION_STORE', 'json');
+      vi.stubEnv('ZCC_SERVER_URL', 'http://127.0.0.1:9/');
+    }
+  });
+
+  it('refuses a relaunch once a Squad started from the proposal, even if recording it failed', async () => {
+    await squadProposalStore.create(record('prop-heal') as never);
+    const markLaunched = vi.spyOn(squadProposalService, 'markLaunched').mockRejectedValueOnce(new Error('disk full'));
+    try {
+      const first = await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-heal' }), { windowId: 1 });
+      expect(first.ok).toBe(true);
+      // Simulate the hold being gone (expired, or the app restarted) while the record is still pending.
+      squadProposalService.releaseLaunch('prop-heal');
+      expect(await squadProposalStore.get('prop-heal')).toMatchObject({ state: 'pending' });
+      expect(await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-heal' }), { windowId: 1 }))
+        .toMatchObject({ ok: false, code: 'NOT_PENDING', message: 'A Squad was already started from this proposal.' });
+      expect(await squadProposalStore.get('prop-heal')).toMatchObject({
+        state: 'launched', executionId: (first as { value: { executionId: string } }).value.executionId
+      });
+    } finally {
+      markLaunched.mockRestore();
+    }
+  });
+
+  it('blocks a duplicate launch after one finished, and releases the proposal when start fails', async () => {
+    await squadProposalStore.create(record('prop-dup') as never);
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValueOnce({ ok: false, code: 'CONFLICT', message: 'no' } as never);
+    try {
+      const failed = await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-dup' }), { windowId: 1 });
+      expect(failed.ok).toBe(false);
+      // Released at once: the retry is not locked out and starts the real Squad.
+      const retry = await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-dup' }), { windowId: 1 });
+      expect(retry.ok).toBe(true);
+      // The proposal is now launched; a second click is refused.
+      expect(await startTeamJobFromUi(input({ coordinationMode: 'freeform', proposalId: 'prop-dup' }), { windowId: 1 })).toMatchObject({ ok: false, code: 'NOT_PENDING' });
+    } finally {
+      start.mockRestore();
+    }
+  });
+
+  it('calls start() with exactly three arguments when there is no proposalId', async () => {
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start');
+    try {
+      expect((await startTeamJobFromUi(input({ coordinationMode: 'freeform' }))).ok).toBe(true);
+      expect(start.mock.calls[0]).toHaveLength(3);
+    } finally {
+      start.mockRestore();
+    }
+  });
+});

@@ -34,6 +34,7 @@ import {
 } from '../store.js';
 import { DelayedLoading, DelayedStencilLines } from './ui/Skeleton.js';
 import { AgentLauncher } from './AgentLauncher.js';
+import type { SquadLaunchPrefill } from '@zana-ai/zcc-domain/squad-proposal';
 import { inspectAgentSession } from '../lib/inspect-session.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
 import { MarkdownContent } from './MarkdownContent.js';
@@ -168,6 +169,12 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // Open the "new agent" launcher (project mode) prefilled with this report, so
   // the user can spawn a fresh agent to act on the message.
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // Squad proposal card: the reviewed pre-fill that opens the Squad composer.
+  const [squadPrefill, setSquadPrefill] = useState<SquadLaunchPrefill | null>(null);
+  const [squadReviewBusy, setSquadReviewBusy] = useState(false);
+  const [squadReviewError, setSquadReviewError] = useState<string | null>(null);
+  const [squadDismissBusy, setSquadDismissBusy] = useState(false);
+  const [squadDismissError, setSquadDismissError] = useState<string | null>(null);
   // When we spawn a replacement agent (the originating tab was gone), point the
   // reply/question box at THAT new live session for the rest of this view, so a
   // follow-up answer lands on the agent the user just reopened.
@@ -233,6 +240,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   const hasComments = (entry.comments ?? '').trim().length > 0;
   const squadDetailsNotice = !!entry.executionId && (
     entry.squadNotice === 'worktree-lifecycle'
+    || entry.squadNotice === 'proposal-result'
     || hostAction?.kind === 'squad-worktree-lifecycle'
     || entry.decisionGuidance?.kind === 'plan-correction'
   );
@@ -255,7 +263,8 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // from the entry's own structured question field, so a user who disabled the
   // interactive picker still gets an answer box for a real question (never null).
   const answerable = questionSet.length > 0 || classifyEntry(entry) === 'question';
-  const questionFirst = answerable;
+  // A Squad proposal card is always the primary surface (never the generic reply box).
+  const questionFirst = answerable || !!entry.squadProposal;
   // Single deterministic decision for the answer surface (see resolveAnswerSurface):
   //  live   → inject into the originating/reopened pty.
   //  reopen → no live session but project survives → reopen the agent with the
@@ -525,7 +534,9 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
     <div className="inbox-reply" role="status">
       <p>{entry.decisionGuidance?.kind === 'plan-correction'
         ? 'This Squad plan needs correction. Open Squad details to retain the run context while reviewing it.'
-        : 'This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.'}</p>
+        : entry.squadNotice === 'proposal-result'
+          ? 'The full run, with its work units and results, is in Squad details.'
+          : 'This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.'}</p>
       <button type="button" className="btn inbox-reply-open-details" onClick={() => {
         setPendingSquadDetailsTarget({ projectId: entry.projectId, executionId: entry.executionId! });
         setNav('agents');
@@ -549,13 +560,78 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
       />
     )
   ) : null;
+  const reviewSquadProposal = async () => {
+    if (!entry.squadProposal || squadReviewBusy) return;
+    setSquadReviewBusy(true);
+    setSquadReviewError(null);
+    try {
+      const res = await product.teams.reviewProposal(entry.squadProposal.proposalId);
+      if (!res.ok) {
+        setSquadReviewError(res.message);
+        // An expired or already-launched proposal changes the card's host action;
+        // refresh it so the buttons give way to main's message.
+        void resolveInboxHostAction(entry);
+        return;
+      }
+      setSquadPrefill(res.value);
+      setLauncherOpen(true);
+    } catch (err) {
+      setSquadReviewError(err instanceof Error ? err.message : String(err));
+      void resolveInboxHostAction(entry);
+    } finally {
+      setSquadReviewBusy(false);
+    }
+  };
+  const dismissSquadProposal = async () => {
+    if (squadDismissBusy) return;
+    setSquadDismissBusy(true);
+    setSquadDismissError(null);
+    try {
+      const ok = await runInboxHostAction(entry.id, { optionId: 'dismiss' });
+      if (!ok) setSquadDismissError('This Squad launch could not be dismissed. Try again.');
+    } finally {
+      setSquadDismissBusy(false);
+    }
+  };
+  const closeSquadLauncher = () => {
+    setLauncherOpen(false);
+    setSquadPrefill(null);
+    // Host actions are re-resolved only on selection or after a host-action
+    // click; refresh so a launched or cancelled proposal updates the card.
+    void resolveInboxHostAction(entry);
+  };
+  // Dismiss needs main's host action. Until the first lookup lands, say so; a later
+  // re-resolve keeps the known action, and the buttons, mounted so focus survives.
+  const squadProposalSurface = !entry.squadProposal ? null : ownershipError ? (
+    <div className="inbox-reply" role="alert">
+      Couldn't check this Squad launch.
+      <button type="button" onClick={() => void resolveInboxHostAction(entry)}>Retry</button>
+    </div>
+  ) : ownershipLoading && !hostAction ? (
+    <div className="inbox-reply" role="status">Checking this Squad launch…</div>
+  ) : !hostAction || hostAction.unavailable || hostAction.status === 'done' ? (
+    <div className="inbox-reply"><div className="inbox-detail-unavailable" role="status">{hostAction?.message ?? 'This Squad launch is no longer available.'}</div></div>
+  ) : (
+      <div className="inbox-reply" data-testid="squad-proposal-surface">
+        <p>Review opens the Squad composer filled in. Nothing starts until you press Launch.</p>
+        {/* Main's reason (e.g. "This Squad launch is starting.") wins over the generic dismiss text. */}
+        {hostAction.message ? <p role="alert">{hostAction.message}</p> : squadDismissError ? <p role="alert">{squadDismissError}</p> : null}
+        {squadReviewError ? <p role="alert">{squadReviewError}</p> : null}
+        <div className="inbox-reply-actions">
+          <button type="button" className="btn primary" disabled={squadReviewBusy || squadDismissBusy || !projectAlive} onClick={() => void reviewSquadProposal()}>
+            {squadReviewBusy ? 'Opening…' : 'Review Squad launch'}
+          </button>
+          <button type="button" className="btn" disabled={squadReviewBusy || squadDismissBusy} onClick={() => void dismissSquadProposal()}>Dismiss</button>
+        </div>
+      </div>
+  );
   // Host action ownership permits only viewing its recorded origin. A fresh or
   // resumed terminal could escape the host-controlled worktree and authority.
   const ownershipPending = ownershipLoading || ownershipError;
   const canOpenHostOrigin = !!originatingThread || !!originalSession;
   const canOpen = !squadDetailsNotice && projectAlive && !ownershipPending && (!hostAction || canOpenHostOrigin);
 
-  const answerSurface = hostActionSurface ?? (
+  const answerSurface = squadProposalSurface ?? hostActionSurface ?? (
     <>
           {/* Answer surface — one deterministic decision (resolveAnswerSurface):
               • live   → the originating (or a reopened) session is alive → inject
@@ -806,7 +882,8 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
           the user sees what they're answering right above the options. Rendering
           the same `comments` here too would duplicate it, so suppress this
           standalone block for question entries. */}
-      {hasComments && questionSet.length === 0 && (
+      {/* A Squad proposal has no question to answer; its summary (Squad, planning, files) is the card body. */}
+      {hasComments && (questionSet.length === 0 || !!entry.squadProposal) && (
         <div className="inbox-detail-comments">
           <MarkdownContent text={entry.comments!} exportable />
         </div>
@@ -845,7 +922,9 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             </button>
           ) : !squadDetailsNotice && (
             <div className="inbox-detail-unavailable">
-              Project no longer exists — nowhere to open.
+              {entry.squadProposal && projectAlive
+                ? 'The conversation that prepared this launch is no longer open.'
+                : 'Project no longer exists — nowhere to open.'}
             </div>
           )}
         </div>
@@ -864,9 +943,11 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
       {launcherOpen && aliveProject && (
         <AgentLauncher
           project={aliveProject}
-          initialPrompt={buildSpawnPrompt(entry)}
+          {...(squadPrefill
+            ? { initialMode: 'team' as const, squadPrefill }
+            : { initialPrompt: buildSpawnPrompt(entry) })}
           onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}
-          onClose={() => setLauncherOpen(false)}
+          onClose={squadPrefill ? closeSquadLauncher : () => setLauncherOpen(false)}
         />
       )}
     </div>

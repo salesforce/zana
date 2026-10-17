@@ -23,6 +23,7 @@ import { defaultBundledRoot } from '@zana-ai/zcc-server/plugins/plugin-service';
 import {
   PluginAppSnapshotSchema,
   MenubarThreadOpenResultSchema,
+  ThreadQueueTurnResultSchema,
   MenubarThreadsListResultSchema,
   PairingTargetSchema,
   RuntimeOutboundSchema,
@@ -68,6 +69,11 @@ export interface RuntimeSupervisor {
    * Never rejects for a dead/unknown thread; resolves `false`.
    */
   isThreadLive(threadId: string, projectId: string): Promise<boolean>;
+  /**
+   * Queue a text turn into a live Modern thread. Never rejects for a dead
+   * thread or a missing runtime; resolves `{ ok: false, reason }`.
+   */
+  queueThreadTurn(threadId: string, projectId: string, text: string): Promise<{ ok: boolean; queued?: boolean; reason?: string }>;
   listMenubarThreads(limit?: number): Promise<{
     agents: MenubarThreadAgent[];
     needsYou: number;
@@ -231,6 +237,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     // No packaged server-runtime child in this fallback; nothing to notify.
     setMcpBaseUrl: () => {},
     isThreadLive: async () => false,
+    queueThreadTurn: async () => ({ ok: false, reason: 'runtime-unavailable' }),
     listMenubarThreads: async () => ({ agents: [], needsYou: 0, working: 0 }),
     openMenubarThread: async () => ({ ok: false, reason: 'thread service unavailable' }),
     onMenubarThreadsChanged: () => () => {},
@@ -322,6 +329,7 @@ interface UtilityRuntime {
   request(operation: 'library-document', request: LibraryDocumentRequest): Promise<unknown>;
   request(operation: 'product-event', channel: string, args: unknown[]): Promise<unknown>;
   request(operation: 'thread-live', threadId: string, projectId: string): Promise<unknown>;
+  request(operation: 'thread-queue-turn', threadId: string, projectId: string, text: string): Promise<unknown>;
   request(operation: 'menubar-threads-list', limit: number): Promise<unknown>;
   request(operation: 'menubar-thread-open', threadId: string, projectId: string): Promise<unknown>;
   request(operation: 'projects-add', path: string): Promise<unknown>;
@@ -573,6 +581,18 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     },
     isThreadLive: async (threadId, projectId) =>
       (await server.request('thread-live', threadId, projectId)) === true,
+    // Never rejects: a request timeout, a dead child or a stopped service resolve to ok:false.
+    queueThreadTurn: async (threadId, projectId, text) => {
+      try {
+        const parsed = ThreadQueueTurnResultSchema.safeParse(
+          await server.request('thread-queue-turn', threadId, projectId, text)
+        );
+        return parsed.success ? parsed.data : { ok: false, reason: 'invalid thread response' };
+      } catch (error) {
+        // server.request only rejects with Error (error reply, timeout, exited child, stopped service).
+        return { ok: false, reason: (error as Error).message };
+      }
+    },
     listMenubarThreads: async (limit = 100) => {
       const parsed = MenubarThreadsListResultSchema.safeParse(
         await server.request('menubar-threads-list', Math.max(1, Math.min(limit, 100)))
@@ -756,8 +776,8 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'pairing-target' | 'thread-live' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'plugins-tool-policy' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-       ...args: [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
+      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'pairing-target' | 'thread-live' | 'thread-queue-turn' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'plugins-tool-policy' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+       ...args: [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
@@ -781,6 +801,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
           ...(operation === 'library-document' ? { request: args[0] as LibraryDocumentRequest } : {}),
           ...(operation === 'plugins-tool-policy' ? { request: args[0] as NativeToolPolicyRequest } : {}),
           ...(operation === 'thread-live' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
+          ...(operation === 'thread-queue-turn' ? { threadId: args[0] as string, projectId: args[1] as string, text: args[2] as string } : {}),
           ...(operation === 'menubar-threads-list' ? { limit: args[0] as number } : {}),
           ...(operation === 'menubar-thread-open' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
           ...(operation === 'terminal-execute' ? { command: args[0] as TerminalRequestCommand } : {}),

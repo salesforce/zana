@@ -302,6 +302,10 @@ export interface ExecutionRecord {
   coordinatorWakeSequence?: number;
   coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
   origin?: import('@zana-ai/zcc-domain/product').LaunchOrigin;
+  /** Squad launch proposal this run was started from. Never part of the request digest. */
+  proposal?: { id: string; proposerKind: 'pty' | 'thread'; proposerId: string; proposerTitle?: string };
+  /** `attempt` whose terminal report was already sent to the proposer. */
+  proposalNoticeVersion?: number;
   createdAt: number;
   updatedAt: number;
   /** User hid terminal history from board; durable evidence remains retained. */
@@ -324,7 +328,7 @@ export interface ExecutionNativeRecoverySnapshotV1 {
 }
 
 export type ExecutionClaimInput = Omit<ExecutionRecord,
-  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers'
+  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'proposalNoticeVersion' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers'
 > & { workUnits?: ExecutionWorkUnitInput[] };
 
 export interface ExecutionRequestSnapshotV1 {
@@ -594,6 +598,8 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.coordinatorWakeSequence === undefined || Number.isInteger(record.coordinatorWakeSequence) && record.coordinatorWakeSequence >= 0)
     && (record.coordinationMode === undefined || record.coordinationMode === 'interactive-team' || record.coordinationMode === 'autonomous-team' || record.coordinationMode === 'job-team' || record.coordinationMode === 'structured' || record.coordinationMode === 'freeform')
     && (record.origin === undefined || record.origin === 'explicit' || record.origin === 'scheduled' || record.origin === 'goal')
+    && (record.proposal === undefined || validProposal(record.proposal))
+    && (record.proposalNoticeVersion === undefined || validNonNegativeInteger(record.proposalNoticeVersion))
     && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number'
     && (record.dismissedAt === undefined || typeof record.dismissedAt === 'number');
 }
@@ -781,6 +787,14 @@ function validRouting(value: unknown): value is WorkUnitRoutingV1 {
 
 function validStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.length <= MAX_UNIT_LIST && value.every((item) => validString(item));
+}
+
+function validProposal(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const proposal = value as NonNullable<ExecutionRecord['proposal']>;
+  return validString(proposal.id) && validString(proposal.proposerId)
+    && (proposal.proposerKind === 'pty' || proposal.proposerKind === 'thread')
+    && (proposal.proposerTitle === undefined || typeof proposal.proposerTitle === 'string');
 }
 
 function validNonNegativeInteger(value: unknown): boolean {
@@ -1215,7 +1229,13 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       resolvedModels: input.resolvedModels.map(normalizeModelSnapshot),
       ...(workUnits ? { workUnits, blockers: [] } : {}),
       ...(input.coordinationMode ? { coordinationMode: input.coordinationMode } : {}),
-      ...(input.origin ? { origin: input.origin } : {})
+      ...(input.origin ? { origin: input.origin } : {}),
+      ...(input.proposal ? { proposal: {
+        id: string(input.proposal.id, 'proposal id'),
+        proposerKind: input.proposal.proposerKind,
+        proposerId: string(input.proposal.proposerId, 'proposer id'),
+        ...(input.proposal.proposerTitle === undefined ? {} : { proposerTitle: string(input.proposal.proposerTitle, 'proposer title') })
+      } } : {})
     };
     return storeQueue.run(async () => {
       const snapshot = read();
@@ -1336,6 +1356,25 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (!terminalStates.has(record.state) || !record.squadWorktree) throw new Error('terminal squad worktree is unavailable');
       if (record.terminalWorktreeEffectsStateVersion === expectedStateVersion) return clone(record);
       record.terminalWorktreeEffectsStateVersion = expectedStateVersion;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /**
+   * Record that the terminal report for `attempt` reached the proposer. Idempotent;
+   * keyed on attempt (not stateVersion, which notice acks bump), so it never bumps stateVersion.
+   */
+  async function markProposalReported(executionId: string, attempt: number): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (!terminalStates.has(record.state) || !record.proposal) throw new Error('terminal proposal is unavailable');
+      if (record.attempt !== attempt) throw new Error('stale execution attempt');
+      if (record.proposalNoticeVersion === attempt) return clone(record);
+      record.proposalNoticeVersion = attempt;
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
       return clone(record);
@@ -2928,6 +2967,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     )));
   }
 
+  async function listUnreportedProposalExecutions(): Promise<ExecutionRecord[]> {
+    return storeQueue.run(async () => clone(read().state.records.filter((record) =>
+      record.proposal !== undefined && terminalStates.has(record.state) && record.proposalNoticeVersion !== record.attempt
+    )));
+  }
+
   async function listActiveClaims(after?: ActiveClaimCursor, limit = 25): Promise<ActiveClaimPage> {
     return storeQueue.run(async () => {
       const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
@@ -3012,7 +3057,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listUndisposedSquadWorktrees, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markProposalReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedProposalExecutions, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

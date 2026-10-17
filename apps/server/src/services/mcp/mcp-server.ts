@@ -75,6 +75,7 @@ import {
   registerLaunchTeamTool,
   type RegisterLaunchTeamToolOpts
 } from '../agents/launch-team-mcp-tool.js';
+import { registerSquadProposalTools, type SquadPlanCheckDep, type SquadProposeDep } from '../squad-proposals/squad-proposal-mcp-tools.js';
 import { registerExecutionTools, type RegisterExecutionToolOptions } from '../execution/execution-mcp-tool.js';
 import type { ExecutionService } from '../execution/service.js';
 import type { createExecutionHandoffStore } from '../execution/handoff-store.js';
@@ -412,6 +413,9 @@ export interface McpServerOptions {
    * tool is not registered, so the agent doesn't see it.
    */
   launchTeam?: RegisterLaunchTeamToolOpts['launchTeam'];
+  /** squad_propose / squad_plan_check deps; absent ⇒ the tools aren't registered. */
+  proposeSquad?: SquadProposeDep;
+  checkSquadPlan?: SquadPlanCheckDep;
   authorizeTeamLaunch?: RegisterLaunchTeamToolOpts['authorizeTeamLaunch'];
   evaluateTeamAdmission?: RegisterLaunchTeamToolOpts['evaluateAdmission'];
   revokeTeamAuthorizations?: RegisterLaunchTeamToolOpts['revokeTeamAuthorizations'];
@@ -591,6 +595,8 @@ function buildProjectMcpServer(opts: {
   listPersonas?: McpServerOptions['listPersonas'];
   listTeams?: McpServerOptions['listTeams'];
   launchTeam?: McpServerOptions['launchTeam'];
+  proposeSquad?: McpServerOptions['proposeSquad'];
+  checkSquadPlan?: McpServerOptions['checkSquadPlan'];
   authorizeTeamLaunch?: McpServerOptions['authorizeTeamLaunch'];
   evaluateTeamAdmission?: McpServerOptions['evaluateTeamAdmission'];
   revokeTeamAuthorizations?: McpServerOptions['revokeTeamAuthorizations'];
@@ -864,6 +870,21 @@ function buildProjectMcpServer(opts: {
         const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
         return (await gate?.(sessionId, projectId)) ?? false;
       }
+    });
+  }
+  // squad_propose / squad_plan_check: prepare a Squad launch for the user to
+  // review. Liveness accepts a PTY or a Modern thread and fails closed.
+  if (opts.sessionId && opts.proposeSquad) {
+    const routeAuthenticated = !!opts.sessionCredential
+      && verifySessionControlCredential(opts.sessionId, opts.sessionCredential);
+    registerSquadProposalTools(mcp, {
+      sessionId: opts.sessionId,
+      projectId: opts.projectId,
+      propose: opts.proposeSquad,
+      checkPlan: opts.checkSquadPlan,
+      validateRouteIdentity: async (s, p) => routeAuthenticated
+        && !!opts.validateLaunchRouteIdentity
+        && (await opts.validateLaunchRouteIdentity(s, p))
     });
   }
   // list_projects: read-only project discovery. Identity-free (no sessionId
@@ -1941,6 +1962,8 @@ async function handleRequest(
     listPersonas: opts.listPersonas,
     listTeams: opts.listTeams,
     launchTeam: opts.launchTeam,
+    proposeSquad: opts.proposeSquad,
+    checkSquadPlan: opts.checkSquadPlan,
     authorizeTeamLaunch: opts.authorizeTeamLaunch,
     evaluateTeamAdmission: opts.evaluateTeamAdmission,
     revokeTeamAuthorizations: opts.revokeTeamAuthorizations,

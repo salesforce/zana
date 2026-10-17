@@ -221,6 +221,8 @@ export interface ExecutionServiceDeps {
   deliverToWorker?: (sessionId: string, text: string) => boolean;
   triggerDeliveryDrain?: (sessionId: string) => void;
   logError?: (message: string, error: unknown) => void;
+  /** Called once when a human-audience blocker is created. Failures are logged and never fail the engine. */
+  onHumanBlocker?: (record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number]) => void | Promise<void>;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   /** Trusted host resolver; filters retained snapshots against current Team slots. */
@@ -569,7 +571,7 @@ export class ExecutionService {
     return { ...request, resolvedModels: await this.deps.resolveTeamModelSnapshots(projectId, request) };
   }
 
-  async start(callerPrincipalId: string, projectId: string, request: ExecutionRequestV1): Promise<
+  async start(callerPrincipalId: string, projectId: string, request: ExecutionRequestV1, opts?: { proposal?: ExecutionRecord['proposal'] }): Promise<
     { ok: true; value: ExecutionRecord & { resumeToken?: string; resumeTokenExpiresAt?: number } }
     | { ok: false; code: string; message: string; requirementFailure?: TeamRequirementFailure; availabilityUnknown?: TeamAvailabilityUnknown }
   > {
@@ -633,6 +635,7 @@ export class ExecutionService {
         ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), jobTitle, summary,
         ...(request.coordinationMode ? { coordinationMode: request.coordinationMode } : {}),
         ...(request.origin ? { origin: request.origin } : {}),
+        ...(opts?.proposal ? { proposal: opts.proposal } : {}),
         launchRequestId: request.launchRequestId,
         request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective, ...(request.worktree === undefined ? {} : { worktree: request.worktree }), ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }) },
         ...(request.workUnits ? { workUnits: request.workUnits } : {}),
@@ -1177,6 +1180,14 @@ export class ExecutionService {
    * quietly; a genuine persistence failure is surfaced (NOT swallowed as "skipped")
    * so a churning unit left neither reassigned nor blocked is visible.
    */
+  /** Fire-and-forget `onHumanBlocker`; a throwing or rejecting hook is logged, never propagated. */
+  private fireHumanBlocker(record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number]): void {
+    const hook = this.deps.onHumanBlocker;
+    if (!hook) return;
+    const report = (error: unknown) => (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution human blocker hook failed for ${record.id}/${blocker.id}`, error);
+    try { void Promise.resolve(hook(record, blocker)).catch(report); } catch (error) { report(error); }
+  }
+
   private async blockKickoffToHuman(reclaimed: ExecutionRecord, unit: NonNullable<ExecutionRecord['workUnits']>[number]): Promise<boolean> {
     try {
       const updated = await this.deps.store.blockKickoffFailure(reclaimed.id, unit.id);
@@ -1187,6 +1198,7 @@ export class ExecutionService {
       });
       const blocker = updated.blockers?.find((candidate) => candidate.workUnitId === unit.id && candidate.audience === 'human' && !candidate.resolved);
       if (blocker) {
+        this.fireHumanBlocker(updated, blocker);
         void this.deps.inbox?.append({
           projectId: updated.projectId,
           subject: updated.jobTitle || 'Job Execution Blocked',
@@ -1809,6 +1821,8 @@ export class ExecutionService {
         // needs to answer, plus the worker's question.
         await this.wakeCoordinator(record, { cause: 'SEMANTIC_CONFLICT', message: `SEMANTIC_CONFLICT: work unit ${workUnitId} needs a coordinator decision (blockerId=${blocker.id}). Answer with execution.work.answer. Worker asks: ${blocker.question}`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
       } else {
+        const hookBlocker = record.blockers?.find((candidate) => candidate.id === blocker.id);
+        if (hookBlocker) this.fireHumanBlocker(record, hookBlocker);
         await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
         // Human blockers must always accept a concrete typed value. Workers may
         // provide useful quick choices, but labels such as "Provide path" are
@@ -1890,12 +1904,15 @@ export class ExecutionService {
         if (!coordinatorUnavailable && now - blocker.createdAt < COORDINATOR_BLOCKER_ESCALATE_MS) continue;
         // A coordinator answer already in flight → let it land; not stuck.
         if ((record.deliveries ?? []).some((delivery) => delivery.blockerId === blocker.id && (delivery.state === 'PENDING' || delivery.state === 'LEASED'))) continue;
+        let escalated: ExecutionRecord;
         try {
-          await this.deps.store.escalateBlockerToHuman(record.id, blocker.id);
+          escalated = await this.deps.store.escalateBlockerToHuman(record.id, blocker.id);
         } catch {
           // Lost a race (resolved / escalated / answered concurrently) — skip.
           continue;
         }
+        const escalatedBlocker = escalated?.blockers?.find((candidate) => candidate.id === blocker.id);
+        if (escalatedBlocker) this.fireHumanBlocker(escalated, escalatedBlocker);
         // Human blockers always accept a concrete typed value; quick choices are
         // an optional add-on. Same shape as blockWork's human path.
         const questionData = blocker.options
@@ -2255,7 +2272,7 @@ export class ExecutionService {
       })),
       coordinationMode: reserved.coordinationMode
     };
-    const recovered = await this.start(callerPrincipalId, projectId, request);
+    const recovered = await this.start(callerPrincipalId, projectId, request, reserved.proposal ? { proposal: reserved.proposal } : undefined);
     if (!recovered.ok) return recovered;
     await this.deps.store.linkTimeoutSuccessor(source.id, clientRequestId, recovered.value.id);
     return { ok: true as const, value: recovered.value, source };

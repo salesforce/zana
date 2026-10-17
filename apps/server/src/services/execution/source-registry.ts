@@ -338,13 +338,28 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     }
   }
 
-  async function issue(input: { windowId: number; projectId: string; paths: string[] }): Promise<ExecutionSourceCapabilityView[]> {
+  /**
+   * `withinRoot` (optional) confines every source to that directory, checked against the
+   * realpath taken here. `resolve` later requires the same realpath, so a symlink swapped in
+   * after this check cannot redirect the capability outside the root.
+   */
+  async function issue(input: { windowId: number; projectId: string; paths: string[]; withinRoot?: string }): Promise<ExecutionSourceCapabilityView[]> {
     pruneCapabilities();
     if (input.paths.length > limits.maxFiles) throw new ExecutionSourceError('TOO_MANY_SOURCES', `Select at most ${limits.maxFiles} execution sources`);
+    let realRoot: string | undefined;
+    if (input.withinRoot !== undefined) {
+      try { realRoot = await realpath(input.withinRoot); } catch { throw new ExecutionSourceError('UNSUPPORTED_SOURCE', 'Execution source root is unavailable'); }
+    }
     const canonical: Array<{ exactPath: string; canonicalPath: string; representations: string[] }> = [];
     for (const exactPath of input.paths) {
       let real: string;
       try { real = await realpath(exactPath); } catch { throw new ExecutionSourceError('SOURCE_CHANGED', 'Selected execution source is unavailable'); }
+      if (realRoot !== undefined) {
+        const rel = relative(realRoot, real);
+        if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+          throw new ExecutionSourceError('UNSUPPORTED_SOURCE', 'Execution source is outside the project');
+        }
+      }
       if (canonical.some(({ canonicalPath }) => canonicalPath === real)) throw new ExecutionSourceError('DUPLICATE_SOURCE', 'Duplicate execution source selected');
       canonical.push({ exactPath, canonicalPath: real, representations: pathRepresentations(exactPath, real) });
     }

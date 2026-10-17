@@ -75,6 +75,11 @@
       "source": "./src/schedule-health.ts",
       "default": "./src/schedule-health.ts"
     },
+    "./squad-proposal": {
+      "types": "./src/squad-proposal.ts",
+      "source": "./src/squad-proposal.ts",
+      "default": "./src/squad-proposal.ts"
+    },
     "./path-encoding": {
       "types": "./src/path-encoding.ts",
       "source": "./src/path-encoding.ts",

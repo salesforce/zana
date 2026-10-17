@@ -7,6 +7,7 @@ import {
   ComposerIconButton,
   ComposerToolbar
 } from './ui/CommandComposer.js';
+import { planningToCoordinationMode, type SquadLaunchPrefill } from '@zana-ai/zcc-domain/squad-proposal';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { useData, useTeams, useUi } from '../store.js';
@@ -33,10 +34,13 @@ export function TeamComposer({
   composerProjectId,
   onComposerProjectIdChange,
   initialText,
+  prefill,
   onClose
 }: {
   project?: Project;
   initialText?: string;
+  /** A reviewed proposal from a conversation; seeds the form and tags the launch with its id. */
+  prefill?: SquadLaunchPrefill;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
   const projects = useData((s) => s.projects);
@@ -46,7 +50,7 @@ export function TeamComposer({
   const openProjectSettings = useUi((s) => s.openProjectSettings);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const lastProjectId = useData((s) => s.lastProjectId);
-  const [internalProjectId, setInternalProjectId] = useState(pinnedProject?.id ?? composerProjectId ?? '');
+  const [internalProjectId, setInternalProjectId] = useState(pinnedProject?.id ?? (composerProjectId || prefill?.projectId) ?? '');
   const projectId = pinnedProject?.id
     ?? (onComposerProjectIdChange ? (composerProjectId || internalProjectId) : internalProjectId);
   const setProjectId = (nextProjectId: string | ((current: string) => string)) => {
@@ -55,13 +59,16 @@ export function TeamComposer({
     onComposerProjectIdChange?.(resolved);
   };
   const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
-  const [teamId, setTeamId] = useState('');
+  const [teamId, setTeamId] = useState(() => prefill?.teamId ?? '');
   const [coordinationMode, setCoordinationMode] = useState<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(
-    () => useData.getState().teamDefaultCoordinationMode
+    () => prefill?.coordinationMode ?? useData.getState().teamDefaultCoordinationMode
   );
-  const [title, setTitle] = useState('');
-  const [summary, setSummary] = useState('');
-  const [jobSources, setJobSources] = useState<ExecutionSourceCapabilityView[]>([]);
+  const [title, setTitle] = useState(() => prefill?.title ?? '');
+  const [summary, setSummary] = useState(() => prefill?.summary ?? '');
+  const [jobSources, setJobSources] = useState<ExecutionSourceCapabilityView[]>(() => prefill?.sources ?? []);
+  // Pre-filled sources belong to `prefill.projectId`; keep them while the
+  // project is still resolving to it.
+  const prefillSourcesGuardRef = useRef(Boolean(prefill?.sources.length));
   const [pickingSources, setPickingSources] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +89,7 @@ export function TeamComposer({
     projectRoot: composerDropProjectRoot(project),
     projects,
     disabled: launching,
-    initialText,
+    initialText: initialText ?? prefill?.goal,
     slashCatalog: { kind: 'cli' },
     onSubmit: () => {
       launchRef.current();
@@ -95,6 +102,15 @@ export function TeamComposer({
   useEffect(() => {
     setTeamId((current) => defaultAutonomousTeamId(teams, current));
   }, [teams]);
+
+  // The auto-selected Squad's own planning default applies too, until the user
+  // picks a planning mode themselves. A reviewed proposal keeps its own mode.
+  const planningTouchedRef = useRef(false);
+  const selectedTeamPlanning = selectedTeam?.defaultPlanning;
+  useEffect(() => {
+    if (prefill || planningTouchedRef.current || !selectedTeamPlanning) return;
+    setCoordinationMode(planningToCoordinationMode(selectedTeamPlanning));
+  }, [prefill, selectedTeamPlanning]);
 
   useEffect(() => {
     if (pinnedProject) {
@@ -131,6 +147,11 @@ export function TeamComposer({
   // stale capability id from project A never rides along with a job launched
   // against project B.
   useEffect(() => {
+    if (prefillSourcesGuardRef.current) {
+      if (!project?.id) return;
+      prefillSourcesGuardRef.current = false;
+      if (project.id === prefill?.projectId) return;
+    }
     setJobSources([]);
   }, [project?.id]);
 
@@ -207,6 +228,7 @@ export function TeamComposer({
         projectId: project.id,
         goal,
         coordinationMode,
+        ...(prefill ? { proposalId: prefill.proposalId } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(summary.trim() ? { summary: summary.trim() } : {}),
         ...(jobSources.length ? { sourceCapabilityIds: jobSources.map(({ id }) => id) } : {})
@@ -306,6 +328,15 @@ export function TeamComposer({
           </details>
         </section>
       ) : null}
+      {prefill ? (
+        <section className="team-composer-origin-banner" role="note" aria-label="Prepared by a conversation">
+          <strong>Prepared by “{prefill.proposerTitle ?? 'a conversation'}”</strong>
+          <p>
+            {prefill.planStepCount != null ? `Plan checked: ${prefill.planStepCount} ${prefill.planStepCount === 1 ? 'step' : 'steps'}. ` : ''}
+            Files are captured when you press Launch, so later edits are not included. When the Squad finishes or needs you, it reports back to that conversation.
+          </p>
+        </section>
+      ) : null}
       {error ? (
         <p className="thread-command-error" data-testid="team-command-error">{error}</p>
       ) : null}
@@ -355,7 +386,12 @@ export function TeamComposer({
                       label: team.name,
                       ...(team.description ? { description: team.description } : {})
                     }))}
-                    onChange={setTeamId}
+                    onChange={(nextTeamId) => {
+                      setTeamId(nextTeamId);
+                      // A reviewed proposal already chose its planning mode; only a plain pick adopts the Squad default.
+                      const planning = prefill ? undefined : teams.find((team) => team.id === nextTeamId)?.defaultPlanning;
+                      if (planning) setCoordinationMode(planningToCoordinationMode(planning));
+                    }}
                     disabled={teams.length === 0}
                     emptyHint="No squads configured"
                   />
@@ -370,7 +406,10 @@ export function TeamComposer({
                       { value: 'freeform', label: 'Infer plan from goal' },
                       { value: 'structured', label: 'Plan provided in goal' }
                     ]}
-                    onChange={(value) => setCoordinationMode(value as typeof coordinationMode)}
+                    onChange={(value) => {
+                      planningTouchedRef.current = true;
+                      setCoordinationMode(value as typeof coordinationMode);
+                    }}
                   />
                 </div>
               </div>

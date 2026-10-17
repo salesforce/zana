@@ -34298,6 +34298,30 @@ textarea.ui-command-composer-input {
 .team-requirement-failure details dt { font-weight: 600; }
 .team-requirement-failure details dd { margin: 0; }
 
+.team-composer-origin-banner {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 45%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-blue) 7%, var(--bg-elevated));
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.team-composer-origin-banner p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+:root[data-theme='light'] .team-composer-origin-banner {
+  border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent-blue) 5%, var(--bg-elevated));
+}
+
 .thread-command-upload {
   display: flex;
   align-items: center;

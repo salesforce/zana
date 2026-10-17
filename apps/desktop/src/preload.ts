@@ -946,6 +946,7 @@ const api: CcApi = {
     launch: (teamId, projectId) => ipcRenderer.invoke(IPC.teams.launch, teamId, projectId),
     cancel: (launchRequestId) => ipcRenderer.invoke(IPC.teams.cancel, launchRequestId),
     startJob: (input: TeamJobLaunchInput) => ipcRenderer.invoke(IPC.teams.startJob, input),
+    reviewProposal: (proposalId: string) => ipcRenderer.invoke(IPC.teams.reviewProposal, proposalId),
     launchAutonomous: (teamId, projectId, goal) =>
       ipcRenderer.invoke(IPC.teams.launchAutonomous, teamId, projectId, goal),
     stopAutonomous: (runId) => ipcRenderer.invoke(IPC.teams.stopAutonomous, runId),

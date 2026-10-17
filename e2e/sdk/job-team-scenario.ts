@@ -59,7 +59,15 @@ export function createJobTeamContext(app: AppHandle, opts: { tmpPrefix: string; 
  * the UI. Sets `ctx.projectId` and returns it. Throws (with diagnostics) if the launch
  * never surfaces a session.
  */
-export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: { workerQuantity: number }): Promise<string> {
+export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
+  workerQuantity: number;
+  /** Instruction typed into the CLI Agent; the fake coordinator picks its role from it. */
+  prompt?: string;
+  /** Extra fields merged into the orchestrator persona / the team (e.g. deniedTools, defaultPlanning). */
+  orchestratorExtra?: Record<string, unknown>;
+  teamExtra?: Record<string, unknown>;
+}): Promise<string> {
+  const prompt = opts.prompt ?? 'E2E start Job Team';
   const { window, agent, projectDir, projectName, diagnostics } = ctx;
 
   await window.evaluate((bin) => window.cc.config.set({
@@ -68,18 +76,18 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: { workerQ
     claudeBinary: bin,
     defaultHarness: 'claude'
   }), agent.path);
-  await window.evaluate(() => window.cc.personas.save({
+  await window.evaluate((extra) => window.cc.personas.save({
     id: 'e2e-orchestrator', name: 'E2E Orchestrator', description: 'Durable test coordinator',
-    baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
-  }));
+    baseProfile: 'claude', permissionMode: 'default', systemPrompt: '', ...extra
+  }), opts.orchestratorExtra ?? {});
   await window.evaluate(() => window.cc.personas.save({
     id: 'e2e-worker', name: 'E2E Worker', description: 'Durable test worker',
     baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
   }));
-  await window.evaluate((quantity) => window.cc.teams.save({
+  await window.evaluate(({ quantity, extra }) => window.cc.teams.save({
     id: 'e2e-job-team', name: 'E2E Job Team', description: 'CLI owner durable team',
-    slots: [{ personaId: 'e2e-worker', quantity }], orchestratorPersonaId: 'e2e-orchestrator'
-  }), opts.workerQuantity);
+    slots: [{ personaId: 'e2e-worker', quantity }], orchestratorPersonaId: 'e2e-orchestrator', ...extra
+  }), { quantity: opts.workerQuantity, extra: opts.teamExtra ?? {} });
 
   // Refresh cached harness verification after replacing the Claude binary. The
   // renderer probes harnesses once at boot and AI Harness reuses that result
@@ -114,15 +122,15 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: { workerQ
   await provider.click();
   const instruction = modal.getByTestId('legacy-agent-command-input');
   await instruction.click();
-  await instruction.fill('E2E start Job Team');
-  await expect(instruction).toContainText('E2E start Job Team');
+  await instruction.fill(prompt);
+  await expect(instruction).toContainText(prompt);
   await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
   const send = modal.getByTestId('legacy-agent-command-send');
   await expect(send).toBeEnabled({ timeout: 15_000 });
   await send.click();
-  const launched = await expect.poll(async () => window.evaluate(async (projectId) =>
-    (await window.cc.terminals.list(projectId)).some((session) => session.title.includes('E2E start Job Team'))
-  , projectId), { timeout: 15_000, intervals: [500] }).toBe(true).then(() => true, () => false);
+  const launched = await expect.poll(async () => window.evaluate(async ({ projectId, prompt }) =>
+    (await window.cc.terminals.list(projectId)).some((session) => session.title.includes(prompt))
+  , { projectId, prompt }), { timeout: 15_000, intervals: [500] }).toBe(true).then(() => true, () => false);
   if (!launched) throw new Error(`CLI Agent did not launch\n${diagnostics.join('\n')}`);
   await expect(modal).toBeHidden();
   return projectId;

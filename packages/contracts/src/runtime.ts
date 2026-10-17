@@ -73,6 +73,11 @@ export const MenubarThreadsListResultSchema = z.object({
   working: z.number().int().nonnegative()
 }).strict();
 export const MenubarThreadOpenResultSchema = z.object({ ok: z.boolean(), reason: z.string().optional() }).strict();
+export const ThreadQueueTurnResultSchema = z.object({
+  ok: z.boolean(),
+  queued: z.boolean().optional(),
+  reason: z.string().optional()
+}).strict();
 
 export const ProjectMutationPatchSchema = z.object({
   name: ProjectNameSchema.optional(),
@@ -286,6 +291,14 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     operation: z.literal('thread-live'),
     threadId: z.string().min(1).max(256),
     projectId: ProjectIdSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // Queue a text turn into a live Modern (ACP) thread (sent now when idle,
+    // deferred behind the active turn otherwise).
+    operation: z.literal('thread-queue-turn'),
+    threadId: z.string().min(1).max(256),
+    projectId: ProjectIdSchema,
+    text: z.string().min(1).max(4096)
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-list')

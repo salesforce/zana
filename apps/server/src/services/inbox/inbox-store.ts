@@ -111,7 +111,9 @@ export interface InboxInput {
   /** Host-stamped routing fence for desktop-only action entries. */
   hostActionRequired?: true;
   /** Host-stamped Squad worktree lifecycle notice marker. */
-  squadNotice?: 'worktree-lifecycle';
+  squadNotice?: 'worktree-lifecycle' | 'proposal-result';
+  /** Host-stamped link to a pending Squad launch proposal; never agent-supplied. */
+  squadProposal?: { proposalId: string };
   /** Host-authored decision context rendered with deferred technical Details. */
   decisionGuidance?: InboxDecisionGuidance;
 }
