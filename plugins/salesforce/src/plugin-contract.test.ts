@@ -240,7 +240,10 @@ describe('salesforce plugin behavior', () => {
     expect(configured?.tools).toEqual(['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent', 'sf_workbench', 'sf_tools', 'sf_flow', 'code_analyzer', 'sf_metadata']);
     expect(configured?.skills).toEqual(['salesforce-constitution', 'salesforce-dx', 'salesforce-toolkit']);
     harness.setSettings({ defaultOrg: '', projectRoot: '/proj' });
-    expect((await harness.agentConfigurers[0]?.({}))?.instructions).toContain(CONSTITUTION_INSTRUCTIONS);
+    const unpinned = (await harness.agentConfigurers[0]?.({}))?.instructions;
+    expect(unpinned).toContain(CONSTITUTION_INSTRUCTIONS);
+    // No pinned target: the line names the CLI default the roster already looked up.
+    expect(unpinned).toContain('Salesforce project target: dev.');
   });
 
   it('runs doctor and org CLI without leaking the access token', async () => {

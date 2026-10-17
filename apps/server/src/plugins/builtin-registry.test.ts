@@ -162,6 +162,15 @@ describe('bundled plugin registry invariants', () => {
     }
   });
 
+  it('installs Design Docs and Salesforce enabled by default', () => {
+    for (const pluginId of ['design-docs', 'salesforce']) {
+      expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === pluginId)).toMatchObject({
+        autoInstall: true, defaultEnabled: true
+      });
+      expect(OFFICIAL_PLUGINS.some(plugin => plugin.pluginId === pluginId)).toBe(false);
+    }
+  });
+
   it('installs Storage & retention disabled so its cleanup stays opt-in', () => {
     expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'storage-retention')).toMatchObject({
       autoInstall: true, defaultEnabled: false

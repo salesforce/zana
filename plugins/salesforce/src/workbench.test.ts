@@ -170,6 +170,11 @@ describe("project target snapshots", () => {
     expect(await f.contexts.resolve({})).toMatchObject({
       settings: { defaultOrg: "cli-default" },
     });
+    f.fallback.mockClear();
+    expect(await f.contexts.resolve({}, { fallback: false })).toMatchObject({
+      settings: { defaultOrg: "" },
+    });
+    expect(f.fallback).not.toHaveBeenCalled();
   });
 
   it("refuses unknown/unavailable projects and invalid targets", async () => {

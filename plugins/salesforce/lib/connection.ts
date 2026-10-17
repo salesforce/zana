@@ -10,9 +10,12 @@ import {
 } from './sf-cli.js';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
+/** `sf org list` takes seconds; agent setup asks for the fallback on every launch and plugin change. */
+const CLI_DEFAULT_TTL_MS = 30 * 1000;
 
 export class ConnectionManager {
   private cache = new Map<string, { org: ResolvedOrg; at: number }>();
+  private cliDefault: { alias: Promise<string | null>; at: number } | null = null;
 
   constructor(
     private readonly deps: SalesforceDeps,
@@ -20,6 +23,7 @@ export class ConnectionManager {
   ) {}
 
   invalidate(alias?: string): void {
+    this.cliDefault = null;
     if (!alias) this.cache.clear();
     else this.cache.delete(alias);
   }
@@ -28,14 +32,23 @@ export class ConnectionManager {
     const settings = await this.getSettings();
     let cliDefault: string | null = null;
     if (!settings.defaultOrg.trim() && !envTargetOrg()) {
-      const listed = await this.listOrgs();
-      cliDefault = defaultCliAlias(listed);
+      cliDefault = await this.cliDefaultAlias();
     }
     return resolveTargetOrgAlias({
       settingAlias: settings.defaultOrg,
       envAlias: envTargetOrg(),
       cliDefaultAlias: cliDefault ?? undefined
     });
+  }
+
+  /** Concurrent and repeated callers share one `sf org list`; a failed lookup is not kept. */
+  private cliDefaultAlias(): Promise<string | null> {
+    const cached = this.cliDefault;
+    if (cached && this.deps.now() - cached.at < CLI_DEFAULT_TTL_MS) return cached.alias;
+    const entry = { alias: this.listOrgs().then(defaultCliAlias), at: this.deps.now() };
+    this.cliDefault = entry;
+    entry.alias.catch(() => { if (this.cliDefault === entry) this.cliDefault = null; });
+    return entry.alias;
   }
 
   async listOrgs() {

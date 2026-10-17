@@ -99,6 +99,20 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Agent interaction'
   },
   {
+    name: 'design-docs',
+    pluginId: 'design-docs',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Context & knowledge'
+  },
+  {
+    name: 'salesforce',
+    pluginId: 'salesforce',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Developer tools'
+  },
+  {
     name: 'custom-instructions',
     pluginId: 'custom-instructions',
     autoInstall: true,
@@ -153,13 +167,6 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
 export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
   { name: 'prompt-library', pluginId: 'prompt-library', autoInstall: false, defaultEnabled: true, category: 'Context & knowledge' },
   {
-    name: 'design-docs',
-    pluginId: 'design-docs',
-    autoInstall: false,
-    defaultEnabled: true,
-    category: 'Context & knowledge'
-  },
-  {
     name: 'provider-afcode',
     pluginId: 'provider-afcode',
     autoInstall: false,
@@ -183,13 +190,6 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
   {
     name: 'pr-monitor',
     pluginId: 'pr-monitor',
-    autoInstall: false,
-    defaultEnabled: true,
-    category: 'Developer tools'
-  },
-  {
-    name: 'salesforce',
-    pluginId: 'salesforce',
     autoInstall: false,
     defaultEnabled: true,
     category: 'Developer tools'

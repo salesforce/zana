@@ -885,11 +885,11 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     }
     const listed = await listOrgsSafe(sdk);
     return {
-      instructions: CONSTITUTION_INSTRUCTIONS + `\nSalesforce project target: ${snapshot.defaultOrg || 'not selected'}.\n` + orgRosterInstructions(listed.orgs, listed.selectedAlias) + toolkitInstructions,
+      instructions: CONSTITUTION_INSTRUCTIONS + `\nSalesforce project target: ${snapshot.defaultOrg || listed.selectedAlias || 'not selected'}.\n` + orgRosterInstructions(listed.orgs, listed.selectedAlias) + toolkitInstructions,
       tools: providerTools(provider, true),
       skills: ['salesforce-constitution', ...(provider !== 'toolkit' ? ['salesforce-dx'] : []), ...(provider !== 'builtin' ? ['salesforce-toolkit'] : [])]
     };
-  }).catch(() => ({})));
+  }, { fallback: false }).catch(() => ({})));
   // After the Salesforce brief, so a side-panel conversation's file link never precedes it.
   assistant.linkPanelThreads();
 

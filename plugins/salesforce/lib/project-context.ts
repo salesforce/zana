@@ -52,7 +52,8 @@ export class ProjectContexts {
     return this.current()?.settings ?? this.deps.settings();
   }
 
-  async resolve(input: unknown): Promise<SalesforceProjectContext> {
+  /** `fallback: false` leaves an unset target empty instead of asking the CLI (`sf org list` takes seconds). */
+  async resolve(input: unknown, opts: { fallback?: boolean } = {}): Promise<SalesforceProjectContext> {
     const settings = { ...(await this.deps.settings()) };
     const projectId = inputText(input, "projectId");
     const override = inputText(input, "orgAlias");
@@ -98,7 +99,7 @@ export class ProjectContexts {
       targetSource = "override";
     }
     // Pin a fallback once, before any asynchronous operation or approval.
-    if (!settings.defaultOrg)
+    if (!settings.defaultOrg && opts.fallback !== false)
       settings.defaultOrg =
         (await this.scope.exit(() =>
           this.deps.resolveAlias().catch(() => null),
@@ -111,8 +112,8 @@ export class ProjectContexts {
     };
   }
 
-  async run<T>(input: unknown, work: () => T | Promise<T>): Promise<T> {
-    const context = await this.resolve(input);
+  async run<T>(input: unknown, work: () => T | Promise<T>, opts: { fallback?: boolean } = {}): Promise<T> {
+    const context = await this.resolve(input, opts);
     return this.scope.run(context, work);
   }
 

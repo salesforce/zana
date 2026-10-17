@@ -108,6 +108,8 @@ them elsewhere.
 | `provider-codex` | Codex thread provider |
 | `provider-pi` | Pi thread provider |
 | `provider-acp` | ACP thread provider (Cursor and OpenCode) |
+| `design-docs` | Design Docs — specs, RFCs and ADRs with diagrams, mockups and review comments |
+| `salesforce` | Salesforce DX inner loop and platform SDK for other plugins |
 | `custom-instructions` | Project custom instructions |
 | `memory` | Durable global and project memory |
 | `ask-user-question` | Agent questions that surface in the Inbox |
@@ -121,7 +123,6 @@ or `zcc plugin install <name>`):
 | --- | --- |
 | `tasks` | Workflow / task board |
 | `github` | GitHub developer tools |
-| `salesforce` | Salesforce DX inner loop and platform SDK for other plugins |
 | `automations` | Automations |
 | `workflows` | Workflows |
 | `side-chat` | Side chat |
@@ -135,7 +136,7 @@ or `zcc plugin install <name>`):
 | `connect` | Host connect |
 
 Packages that live under repo `plugins/` today include `docs`, `memory`,
-`plugin-guide`, and `salesforce`; other official plugins may ship from the
+`plugin-guide`, `design-docs`, and `salesforce`; other official plugins may ship from the
 catalog without a tree copy.
 
 ## Official marketplace
