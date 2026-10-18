@@ -27,7 +27,7 @@ const h = vi.hoisted(() => ({
   catalog: null as unknown as ThreadModelCatalogSnapshot,
   descriptors: [] as HarnessAdapterDescriptor[], remembered: null as string | null, rememberedModel: '',
   permissionError: undefined as string | undefined, voiceState: 'idle',
-  defaultHarness: 'claude', catalogScope: vi.fn(), ensure: vi.fn(), ensureProvider: vi.fn(), reloadProvider: vi.fn(),
+  defaultHarness: 'claude', catalogScope: vi.fn(), ensure: vi.fn(), ensureProvider: vi.fn(), refresh: vi.fn(),
   effectiveDefault: vi.fn(async (): Promise<EffectiveHarnessDefaultResult> => ({ ok: true, profile: 'claude', family: 'claude', source: 'global-default' })),
   createTerminal: vi.fn(async () => ({ id: 'terminal-1' })), selectTab: vi.fn(), pushToast: vi.fn(), clear: vi.fn(),
   remember: vi.fn(), loadProjects: vi.fn(), worktreeIsolationDefault: false,
@@ -63,7 +63,7 @@ vi.mock('../hooks/useHosts.js', () => ({
 vi.mock('./thread/pickers/thread-model-catalog.js', () => ({ threadModelCatalogForHost: (hostId: string, projectId: string) => {
   h.catalogScope(hostId, projectId);
   return { subscribe: (listener: () => void) => { h.listeners.add(listener); return () => { h.listeners.delete(listener); }; },
-    getSnapshot: () => h.catalog, ensure: h.ensure, ensureProvider: h.ensureProvider, reloadProvider: h.reloadProvider };
+    getSnapshot: () => h.catalog, ensure: h.ensure, ensureProvider: h.ensureProvider, refresh: h.refresh };
 } }));
 vi.mock('./thread/pickers/composer-selection-preference.js', async importOriginal => {
   const actual = await importOriginal<typeof import('./thread/pickers/composer-selection-preference.js')>();
@@ -137,7 +137,7 @@ describe('CLI Agent project-owned discovery', () => {
     expect(h.effectiveDefault).not.toHaveBeenCalled();
     expect(h.modelProps!.providerOptions.map(row => row.value)).toEqual(['codex']);
     fireEvent.click(screen.getByRole('button', { name: 'Reload models' }));
-    expect(h.reloadProvider).toHaveBeenCalledWith('codex');
+    expect(h.refresh).toHaveBeenCalledWith('codex');
     fireEvent.click(screen.getByRole('button', { name: 'Launch agent' }));
     await waitFor(() => expect(h.createTerminal).toHaveBeenCalledWith('remote', 'codex', 80, 24, expect.objectContaining({
       hostId: 'primary-host', harnessRouting: { schemaVersion: 1, byAdapter: { codex: { modelTargetId: 'codex-live', executionState: 'accept-edits' } } }
@@ -212,7 +212,7 @@ describe('CLI Agent project-owned discovery', () => {
     await waitFor(() => expect(h.createTerminal).toHaveBeenCalledWith('local', 'codex', 80, 24, expect.objectContaining({
       harnessRouting: { schemaVersion: 1, byAdapter: { codex: { executionState: 'accept-edits' } } }
     })));
-    expect(h.reloadProvider).not.toHaveBeenCalled();
+    expect(h.refresh).not.toHaveBeenCalled();
   });
 
   it('renders project worktree override ahead of global default and reacts to setting changes', async () => {

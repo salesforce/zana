@@ -9,7 +9,8 @@ import {
   threadModelCatalogForHost,
   MODEL_CATALOG_TIMEOUT_MS,
   MODEL_CATALOG_FRESH_MS,
-  recoverStaleModelCatalogs, recoverUnavailableModelCatalogs, updateModelCatalogHosts, invalidateModelCatalogs, modelDiscoveryConfigKey,
+  MODEL_CATALOG_ROSTER_DROP_RECHECK_MS,
+  recoverModelCatalogsAfterWake, recoverStaleModelCatalogs, recoverUnavailableModelCatalogs, updateModelCatalogHosts, invalidateModelCatalogs, modelDiscoveryConfigKey,
   type ThreadExecutionOptionsFetcher
 } from './thread-model-catalog.js';
 
@@ -609,6 +610,90 @@ describe('thread model catalog', () => {
 });
 
 describe('automatic catalog recovery', () => {
+  it('picker refresh abandons a hung load, clears a roster error and re-reads the whole scope', async () => {
+    vi.useFakeTimers();
+    let mode: 'ok' | 'down' | 'hung' = 'ok';
+    const hung: AbortSignal[] = [];
+    const fetcher = vi.fn<ThreadExecutionOptionsFetcher>(async (query, options) => {
+      if (mode === 'down') throw new Error('offline');
+      if (mode === 'hung' && query?.providerId) {
+        hung.push(options!.signal);
+        return new Promise(() => undefined);
+      }
+      return optionsBody(['codex', 'pi'], query?.providerId ?? 'roster');
+    });
+    resetThreadModelCatalog(fetcher);
+    const catalog = threadModelCatalogForHost('local');
+    const unsubscribe = catalog.subscribe(() => undefined);
+    await catalog.ensure();
+    mode = 'down';
+    await catalog.reload(false);
+    expect(catalog.getSnapshot().rosterError).toBe('offline');
+    mode = 'hung';
+    void catalog.reloadProvider('codex');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hung).toHaveLength(1);
+    mode = 'ok';
+    fetcher.mockClear();
+    await catalog.refresh('codex');
+    expect(hung[0].aborted).toBe(true);
+    expect(fetcher.mock.calls.map(([query]) => query)).toEqual([
+      { hostId: 'local' },
+      { providerId: 'codex', hostId: 'local', refresh: true },
+      { providerId: 'pi', hostId: 'local' }
+    ]);
+    expect(catalog.getSnapshot()).toMatchObject({ rosterError: null, inflight: new Set() });
+    expect(catalog.getSnapshot().byProvider.codex).toMatchObject({ modelLoadError: null, models: [modelRow('codex-model')] });
+    fetcher.mockClear();
+    await catalog.ensureProvider('codex');
+    expect(fetcher).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('re-checks a roster that drops a working provider once, soon', async () => {
+    vi.useFakeTimers();
+    let roster = ['codex', 'pi'];
+    const fetcher = vi.fn<ThreadExecutionOptionsFetcher>(async (query) => optionsBody(roster, query?.providerId ?? 'roster'));
+    resetThreadModelCatalog(fetcher);
+    const catalog = threadModelCatalogForHost();
+    const unsubscribe = catalog.subscribe(() => undefined);
+    await catalog.ensure();
+    roster = ['codex'];
+    await catalog.reload(false);
+    expect(catalog.getSnapshot().providers.map((row) => row.id)).toEqual(['codex']);
+    roster = ['codex', 'pi'];
+    fetcher.mockClear();
+    await vi.advanceTimersByTimeAsync(MODEL_CATALOG_ROSTER_DROP_RECHECK_MS);
+    expect(fetcher.mock.calls.map(([query]) => query?.providerId)).toEqual([undefined, 'pi']);
+    expect(catalog.getSnapshot().byProvider.pi.models[0].model).toBe('pi-model');
+    roster = ['codex'];
+    await catalog.reload(false);
+    fetcher.mockClear();
+    roster = ['codex'];
+    await vi.advanceTimersByTimeAsync(MODEL_CATALOG_ROSTER_DROP_RECHECK_MS);
+    expect(fetcher).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(MODEL_CATALOG_ROSTER_DROP_RECHECK_MS);
+    expect(fetcher).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
+
+  it('recovers mounted scopes on wake and leaves idle scopes for their next mount', async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn<ThreadExecutionOptionsFetcher>(async (query) => optionsBody(['codex'], query?.providerId ?? 'roster'));
+    resetThreadModelCatalog(fetcher);
+    const mounted = threadModelCatalogForHost('local');
+    const idle = threadModelCatalogForHost('local', 'idle');
+    const unsubscribe = mounted.subscribe(() => undefined);
+    await Promise.all([mounted.ensure(), idle.ensure()]);
+    fetcher.mockClear();
+    recoverModelCatalogsAfterWake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher.mock.calls.map(([query]) => query)).toEqual([{ hostId: 'local' }, { hostId: 'local', providerId: 'codex' }]);
+    await idle.ensure();
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    unsubscribe();
+  });
+
   it('automatically retries a missing provider and clears its error when registration returns', async () => {
     vi.useFakeTimers();
     let missing = true;
@@ -722,27 +807,37 @@ describe('automatic catalog recovery', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('bounds automatic retries and does not poll authentication failures', async () => {
+  it('retries transient failures through the wake window, then at the freshness cadence, and does not poll authentication failures', async () => {
     vi.useFakeTimers();
     const fetcher = vi.fn(async () => { throw new Error('offline'); });
     resetThreadModelCatalog(fetcher);
     const catalog = threadModelCatalogForHost();
-    catalog.subscribe(() => undefined);
+    const unsubscribe = catalog.subscribe(() => undefined);
     await catalog.ensure();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(fetcher).toHaveBeenCalledTimes(6);
     expect(catalog.getSnapshot().rosterError).toBe('offline');
+    await vi.advanceTimersByTimeAsync(MODEL_CATALOG_FRESH_MS - 1);
+    expect(fetcher).toHaveBeenCalledTimes(6);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetcher).toHaveBeenCalledTimes(7);
+    expect(vi.getTimerCount()).toBe(1);
+    unsubscribe();
     expect(vi.getTimerCount()).toBe(0);
+    catalog.subscribe(() => undefined);
     fetcher.mockImplementation(async () => { throw Object.assign(new Error('login'), { status: 401 }); });
     await catalog.reload();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(fetcher).toHaveBeenCalledTimes(8);
+    expect(vi.getTimerCount()).toBe(0);
     recoverStaleModelCatalogs();
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(fetcher).toHaveBeenCalledTimes(9);
     recoverStaleModelCatalogs();
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(fetcher).toHaveBeenCalledTimes(9);
   });
 
   it('refreshes successful mounted catalogs after expiry and cancels work when idle', async () => {

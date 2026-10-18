@@ -40,7 +40,12 @@ export type ThreadExecutionOptionsFetcher = (
 // models while their own roles and configuration are discovered in the background.
 export const MODEL_CATALOG_TIMEOUT_MS = 60_000;
 export const MODEL_CATALOG_FRESH_MS = 5 * 60_000;
-export const MODEL_CATALOG_RETRY_DELAYS_MS = [1_000, 4_000, 15_000] as const;
+// Wake/reconnect can keep host RPCs timing out for a minute or more, so the
+// fast retries span ~2 minutes; transient failures then retry at the freshness cadence.
+export const MODEL_CATALOG_RETRY_DELAYS_MS = [1_000, 4_000, 15_000, 30_000, 60_000] as const;
+/** A healthy-looking roster that drops a working provider is re-checked once, soon. */
+export const MODEL_CATALOG_ROSTER_DROP_RECHECK_MS = 15_000;
+const TRANSIENT_MODEL_ERRORS = new Set(['failed', 'timeout', 'host_unavailable']);
 export const MODEL_CATALOG_FOCUS_COOLDOWN_MS = 60_000;
 const MAX_IDLE_HOST_CATALOGS = 8;
 const defaultFetcher = createModelDiscoveryFetcher((query, options) => product.threads.executionOptions(query, options));
@@ -78,6 +83,7 @@ function createCatalog(
   let paused = false;
   let lastRecoveryAt = -Infinity;
   let forceProviderLoads = false;
+  const forcedProviders = new Set<string>();
   const attempts = new Map<string, number>();
   const retries = new Map<string, number>();
   const controllers = new Set<AbortController>();
@@ -110,8 +116,14 @@ function createCatalog(
     if (!error) { attempts.delete(id); retries.delete(id); return; }
     const count = attempts.get(id) ?? 0;
     attempts.set(id, count + 1);
-    if (['failed', 'timeout', 'host_unavailable', 'provider_unavailable'].includes(error) && count < MODEL_CATALOG_RETRY_DELAYS_MS.length) {
+    const transient = TRANSIENT_MODEL_ERRORS.has(error);
+    // A plugin that failed to load is repaired by lifecycle pushes, not by polling.
+    const fastRetries = transient ? MODEL_CATALOG_RETRY_DELAYS_MS.length : error === 'provider_unavailable' ? 3 : 0;
+    if (count < fastRetries) {
       retries.set(id, Date.now() + MODEL_CATALOG_RETRY_DELAYS_MS[count]);
+    } else if (transient) {
+      // Keep self-healing while mounted and online; never poll auth or invalid requests.
+      retries.set(id, Date.now() + MODEL_CATALOG_FRESH_MS);
     } else retries.delete(id);
   }
 
@@ -212,7 +224,7 @@ function createCatalog(
     };
   }
 
-  function loadProvider(providerId: string, refresh = forceProviderLoads): Promise<void> {
+  function loadProvider(providerId: string, refresh = forceProviderLoads || forcedProviders.has(providerId)): Promise<void> {
     const existing = loads.get(providerId);
     if (existing) return existing;
     const epoch = catalogEpoch;
@@ -259,6 +271,12 @@ function createCatalog(
       recordOutcome('', null);
       roster = mapProviders(body.providers);
       availableProviders = new Set(body.providers.filter((row) => row.available !== false).map((row) => row.id));
+      const offered = new Set(roster.map((row) => row.id));
+      // A CLI probe that timed out reads as "not installed". Re-check soon rather
+      // than hiding a provider that just worked until the next freshness refresh.
+      if (providers.some((row) => !offered.has(row.id) && byProvider[row.id]?.lastSuccessAt != null)) {
+        retries.set('', Date.now() + MODEL_CATALOG_ROSTER_DROP_RECHECK_MS);
+      }
       applyRoster(roster);
       emit();
     } catch (error) {
@@ -308,6 +326,7 @@ function createCatalog(
       prefetchInflight = null;
       if (prefetchDirty) return prefetchThreadModelCatalog();
       forceProviderLoads = false;
+      forcedProviders.clear();
       scheduleRecovery();
     });
     prefetchInflight = pending;
@@ -325,6 +344,7 @@ function createCatalog(
     prefetchInflight = null;
     initialized = false;
     forceProviderLoads = forceServer;
+    forcedProviders.clear();
     loads.clear();
     reloads.clear();
     inherited.clear();
@@ -360,6 +380,19 @@ function createCatalog(
     const cached = byProvider[providerId];
     if (cached && !cached.modelLoadError && Date.now() - (cached.lastSuccessAt ?? 0) < MODEL_CATALOG_FRESH_MS) return Promise.resolve();
     return loadProvider(providerId);
+  }
+
+  /**
+   * The picker's reload control recovers the whole scope: abandon hung loads
+   * (they hold discovery queue slots after sleep), clear retry state and roster
+   * errors, re-read the roster, force the selected provider and re-check the rest.
+   */
+  function refreshThreadModelCatalogFromPicker(providerId: string): Promise<void> {
+    resetForRecovery(false);
+    forcedProviders.add(providerId);
+    inherited.add(providerId);
+    prefetchDirty = true;
+    return prefetchThreadModelCatalog();
   }
 
   /** A user reload must force discovery even when it arrives during prefetch. */
@@ -417,6 +450,7 @@ function createCatalog(
     reload: reloadThreadModelCatalog,
     ensureProvider: ensureThreadProviderModels,
     reloadProvider: reloadThreadProviderModels,
+    refresh: refreshThreadModelCatalogFromPicker,
     refreshProviderFromPush: (providerId: string) => {
       inherited.add(providerId);
       return loadProvider(providerId);
@@ -545,6 +579,11 @@ export function recoverStaleModelCatalogs(): void {
   // Recovery emits synchronously. Subscribers can read a catalog and move it
   // to the end of the LRU Map, so always iterate a snapshot of the roster.
   for (const catalog of [...catalogs.values()]) catalog.recover();
+}
+
+/** Sleep can strand in-flight discovery behind a dead host socket; recover every scope on wake. */
+export function recoverModelCatalogsAfterWake(): void {
+  for (const catalog of [...catalogs.values()]) catalog.recover(true);
 }
 
 /** Plugin lifecycle pushes can repair a failed provider without a host reconnect. */

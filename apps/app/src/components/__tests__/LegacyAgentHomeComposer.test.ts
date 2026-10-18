@@ -115,8 +115,8 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).not.toContain('discoveryForOpenCodePicker');
     expect(source).not.toContain('resolveOpenCodeRoleOptions');
     expect(source).not.toContain('reconcileOpenCodeRole');
-    // Refresh re-fetches the provider's catalog entry (same as Modern's refresh).
-    expect(source).toContain('hostCatalog.reloadProvider(selectedProviderId)');
+    // Refresh recovers the scope and force-refreshes the provider (same as Modern's refresh).
+    expect(source).toContain('hostCatalog.refresh(selectedProviderId)');
     // Role selection stays coherent with the loaded mode list.
     expect(source).not.toContain('setRoleTargetId(catalogEntry.acpMode.currentValue)');
     expect(source).toContain("selected?.id === 'agent' ? undefined : selected?.nativeValue");

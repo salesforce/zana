@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 
-test('Automatic retry, Settings and command palette recover project model pickers without reloading the app', async ({ app, home }) => {
+test('Automatic retry, Settings, command palette and picker reload recover project model pickers without reloading the app', async ({ app, home }) => {
   const win = app.window;
   let version = 1;
   let fail = false;
@@ -97,7 +97,18 @@ test('Automatic retry, Settings and command palette recover project model picker
     gate = undefined;
     await expect(win.getByRole('status').filter({ hasText: 'Model lists refreshed.' })).toBeVisible();
     const recovered = await openComposer();
-    await expect(recovered.getByTestId('model-reasoning-picker-trigger')).toContainText('Recovery model 3');
+    const picker = recovered.getByTestId('model-reasoning-picker-trigger');
+    await expect(picker).toContainText('Recovery model 3');
+    // The picker's own reload icon recovers its scope like Settings: it re-reads
+    // the project roster and forces discovery for the selected provider.
+    requests.length = 0;
+    version = 4;
+    await picker.click();
+    await win.getByRole('button', { name: 'Reload models', exact: true }).click();
+    await expect.poll(() => requests.some((query) => query.includes(project.id) && !query.includes('providerId'))).toBe(true);
+    await expect.poll(() => requests.some((query) => query.includes(project.id) && query.includes('refresh=1'))).toBe(true);
+    await win.keyboard.press('Escape');
+    await expect(picker).toContainText('Recovery model 4');
     expect(await win.evaluate(() => (window as unknown as { recoveryDocument: boolean }).recoveryDocument)).toBe(true);
   } finally {
     release?.();

@@ -77,7 +77,7 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('initialAcpMode');
     expect(source).toContain('requestedValid');
     expect(source).toContain('appliedRequestedAcpModeRef');
-    expect(source).toContain('hostCatalog.reloadProvider(providerId)');
+    expect(source).toContain('hostCatalog.refresh(providerId)');
     expect(source).toContain('refreshAcpModeOptions');
   });
 
@@ -304,11 +304,11 @@ describe('composer host cache subscriptions', () => {
     );
     fetcher.mockClear();
     await act(async () => local.result.current.refreshModels());
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledWith(
-      { providerId: 'codex', hostId: 'local-model', refresh: true },
-      { signal: expect.objectContaining({ aborted: false }) }
-    );
+    // The picker reload re-reads this host's roster and forces only the selected provider.
+    expect(fetcher.mock.calls.map(([query]) => query)).toEqual([
+      { hostId: 'local-model' },
+      { providerId: 'codex', hostId: 'local-model', refresh: true }
+    ]);
     expect(remote.result.current.model).toBe('remote-model');
   });
 

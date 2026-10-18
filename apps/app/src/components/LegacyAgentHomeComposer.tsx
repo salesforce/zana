@@ -807,7 +807,7 @@ export function LegacyAgentHomeComposer({
                       setRoleTargetId(selected?.id === 'agent' ? undefined : selected?.nativeValue);
                     }}
                     onRefresh={() => {
-                      if (selectedProviderId) void hostCatalog.reloadProvider(selectedProviderId);
+                      if (selectedProviderId) void hostCatalog.refresh(selectedProviderId);
                     }}
                   />
                 ) : modeChip === 'work-mode' ? (
@@ -859,7 +859,7 @@ export function LegacyAgentHomeComposer({
                   }
                   modelLoadErrorDetail={catalogEntry?.modelLoadErrorDetail ?? null}
                   onReloadModels={selectedProviderId && !nativeModelSelection
-                    ? () => hostCatalog.reloadProvider(selectedProviderId)
+                    ? () => hostCatalog.refresh(selectedProviderId)
                     : undefined}
                   onModelChange={(value) => {
                     setModelId(value);
