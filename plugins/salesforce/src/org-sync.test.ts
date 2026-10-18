@@ -350,6 +350,56 @@ describe('fetch latest', () => {
     expect(await settle(service, root, garbled.jobId)).toMatchObject({ state: 'failed', error: expect.stringContaining('incomplete output') });
   });
 
+  it('retrieves large fetches in parallel batches, each in its own temp project, and reports progress', async () => {
+    const { service, root, execSf } = fixture();
+    const keys = Array.from({ length: 1001 }, (_, index) => `ApexClass:Bulk${index}`);
+    const cwds = new Set<string>();
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let peak = 0;
+    execSf.mockImplementation(async (_args, options) => {
+      cwds.add(options!.cwd!);
+      peak = Math.max(peak, ++active);
+      await new Promise<void>(resolve => releases.push(resolve));
+      active--;
+      return ok({ success: true, done: true, files: [] });
+    });
+    const { jobId } = await service.start(root, { components: keys });
+    expect(await service.status(root, jobId)).toEqual({ state: 'running', phase: 'retrieve', done: 0, total: 1001 });
+    await vi.waitFor(() => expect(releases.length).toBe(3));
+    releases.shift()!();
+    await vi.waitFor(async () => expect(await service.status(root, jobId)).toMatchObject({ done: 250 }));
+    await vi.waitFor(async () => {
+      releases.splice(0).forEach(release => release());
+      expect((await service.status(root, jobId)).state).toBe('ready');
+    });
+    expect(await settle(service, root, jobId)).toMatchObject({ state: 'ready', missing: keys });
+    expect(peak).toBe(3);
+    expect(cwds.size).toBe(3);
+    expect(execSf).toHaveBeenCalledTimes(5);
+    for (const cwd of cwds) expect(existsSync(cwd)).toBe(true);
+    await service.cancel(root, jobId);
+    for (const cwd of cwds) expect(existsSync(cwd)).toBe(false);
+  });
+
+  it('stops the other batches and removes every temp project when one batch fails', async () => {
+    const { service, root, execSf } = fixture();
+    const keys = Array.from({ length: 600 }, (_, index) => `ApexClass:Bulk${index}`);
+    const cwds = new Set<string>();
+    const signals: AbortSignal[] = [];
+    execSf.mockImplementation(async (_args, options) => {
+      cwds.add(options!.cwd!);
+      signals.push(options!.signal!);
+      if (signals.length === 2) return { code: 1, stdout: JSON.stringify({ status: 1, message: 'REQUEST_LIMIT_EXCEEDED' }), stderr: '' };
+      await new Promise<void>((_resolve, reject) => options!.signal!.addEventListener('abort', () => reject(options!.signal!.reason)));
+      return ok({ success: true, done: true });
+    });
+    const { jobId } = await service.start(root, { components: keys });
+    expect(await settle(service, root, jobId)).toEqual({ state: 'failed', error: 'REQUEST_LIMIT_EXCEEDED' });
+    expect(signals[0]!.aborted).toBe(true);
+    for (const cwd of cwds) expect(existsSync(cwd)).toBe(false);
+  });
+
   it('expires unapplied plans and disposes running jobs', async () => {
     const { root, execSf, query, queryMore, connect, kv } = fixture();
     let now = 1_000;

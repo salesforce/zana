@@ -47,7 +47,10 @@ const SOQL: Partial<Record<SyncType, { from: string; field: string; tooling?: bo
 /** Most components one agent check names per type, so its SOQL `IN` lists stay short. */
 const AGENT_REFS = 500;
 const NAME = /^[A-Za-z][A-Za-z0-9_]{0,254}$/;
-const BATCH = 1000;
+/** Components per retrieve. Smaller batches report progress more often and run side by side. */
+const BATCH = 250;
+/** Retrieves running at once, each into its own temp project so CLI processes never share a folder. */
+const RETRIEVERS = 3;
 const LIST_ROWS = 20_000;
 const RESULT_ROWS = 10_000;
 const WALK_ENTRIES = 200_000;
@@ -68,7 +71,7 @@ type Job = {
   org: PublicOrgView;
   at: number;
   controller: AbortController;
-  temporary?: string;
+  temporary: string[];
   plan?: PlanEntry[];
   dates: Map<string, string | null>;
   result: SyncJob;
@@ -272,7 +275,7 @@ export class OrgSyncService {
     const running = [...this.jobs.values()].filter(job => job.result.state === 'running');
     if (running.length >= 2 || running.some(job => job.root === root)) throw Error('A fetch is already running. Wait for it to finish.');
     const jobId = randomUUID();
-    const job: Job = { root, org, at: (this.deps.now ?? Date.now)(), controller: new AbortController(), dates: new Map(this.checks.get(`${root}\0${org.orgId}`) ?? []), result: { state: 'running', done: 0, total: keys.length } };
+    const job: Job = { root, org, at: (this.deps.now ?? Date.now)(), controller: new AbortController(), temporary: [], dates: new Map(this.checks.get(`${root}\0${org.orgId}`) ?? []), result: { state: 'running', phase: 'retrieve', done: 0, total: keys.length } };
     this.jobs.set(jobId, job);
     void this.fetch(job, keys as string[]).then(
       result => { if (this.jobs.get(jobId) === job) job.result = result; },
@@ -340,22 +343,44 @@ export class OrgSyncService {
   }
 
   private async fetch(job: Job, keys: string[]): Promise<SyncJob> {
-    const { signal } = job.controller;
     let text: string | undefined;
     try { text = await readFile(join(job.root, 'sfdx-project.json'), 'utf8'); } catch { /* the org's version */ }
     const apiVersion = sourceApiVersion(text) ?? job.org.apiVersion;
-    const temporary = job.temporary = await tempProject(apiVersion, 'zcc-sf-sync-');
-    const files: RetrievedFile[] = [];
-    for (let index = 0; index < keys.length; index += BATCH) {
-      const batch = keys.slice(index, index + BATCH);
-      signal.throwIfAborted();
-      const result = await retrieveInto(this.deps.execSf, temporary, batch, { alias: job.org.alias, apiVersion, timeoutMs: RETRIEVE_TIMEOUT, signal });
-      files.push(...result.files);
-      for (const [key, at] of result.modified) if (at && !job.dates.get(key)) job.dates.set(key, at);
-      if (job.result.state === 'running') job.result = { ...job.result, done: Math.min(keys.length, index + batch.length) };
+    const batches: string[][] = [];
+    for (let index = 0; index < keys.length; index += BATCH) batches.push(keys.slice(index, index + BATCH));
+    // One failed retrieve stops the others instead of leaving CLI processes running.
+    const stop = new AbortController();
+    const signal = AbortSignal.any([job.controller.signal, stop.signal]);
+    const retrieved: RetrievedFile[][] = [];
+    let next = 0;
+    let done = 0;
+    let failure: unknown;
+    const retriever = async () => {
+      const temporary = await tempProject(apiVersion, 'zcc-sf-sync-');
+      job.temporary.push(temporary);
+      while (next < batches.length) {
+        signal.throwIfAborted();
+        const index = next++;
+        const batch = batches[index]!;
+        const result = await retrieveInto(this.deps.execSf, temporary, batch, { alias: job.org.alias, apiVersion, timeoutMs: RETRIEVE_TIMEOUT, signal });
+        retrieved[index] = result.files;
+        for (const [key, at] of result.modified) if (at && !job.dates.get(key)) job.dates.set(key, at);
+        done += batch.length;
+        if (job.result.state === 'running') job.result = { ...job.result, done };
+      }
+    };
+    // Every retriever settles before a failure surfaces, so cleanup never races a CLI still writing.
+    await Promise.all(Array.from({ length: Math.min(RETRIEVERS, batches.length) }, () => retriever().catch(error => {
+      failure ??= error;
+      stop.abort();
+    })));
+    if (failure !== undefined) {
+      await this.clean(job);
+      throw failure;
     }
-    const plan = await this.plan(job, new Set(keys), files);
-    signal.throwIfAborted();
+    if (job.result.state === 'running') job.result = { ...job.result, phase: 'compare' };
+    const plan = await this.plan(job, new Set(keys), retrieved.flat());
+    job.controller.signal.throwIfAborted();
     job.plan = plan;
     const found = new Set(plan.map(file => file.key));
     return {
@@ -524,10 +549,9 @@ export class OrgSyncService {
   }
 
   private async clean(job: Job) {
-    const temporary = job.temporary;
-    job.temporary = undefined;
+    const temporary = job.temporary.splice(0);
     job.plan = undefined;
-    await removeTemp(temporary);
+    await Promise.all(temporary.map(removeTemp));
   }
 }
 
