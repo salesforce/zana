@@ -1,1 +1,0 @@
-../../../.agents/skills/sync-internal-repo/SKILL.md
