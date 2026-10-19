@@ -152,5 +152,21 @@ describe('host SSH identity', () => {
       expect(getHost(re, host.id)).toMatchObject({ name: 'Custom', nameUserSet: null });
       re.close();
     });
+
+    it('repairs a database that recorded v33 without adding name provenance', () => {
+      const first = open();
+      const host = upsertHost(first, { name: 'Custom', hostKeyHash: 'h'.repeat(64) });
+      const file = join(dir!, 'zcc.sqlite');
+      first.sqlite.exec('ALTER TABLE hosts DROP COLUMN name_user_set; DELETE FROM runtime_schema_migrations WHERE version = 34');
+      first.close();
+
+      const re = openDatabase(file);
+      expect(updateHostSshIdentity(re, host.id, { host: 'sfw-264' })).toMatchObject({
+        name: 'sfw-264',
+        sshHost: 'sfw-264',
+        nameUserSet: false
+      });
+      re.close();
+    });
   });
 });
