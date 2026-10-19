@@ -19,6 +19,8 @@ const nav = (page: Page, title: string) => page.getByTestId(`nav-${title.toLower
 test.use({ e2e: true, initialConfig: { sponsorPromptDismissed: true } });
 
 test('project splits: drag views and agents in focused and dedicated project windows', async ({ app }) => {
+  // Two windows' worth of 12-step drags outlasts the default budget on CI runners.
+  test.setTimeout(180_000);
   const { window: page, home, electron } = app;
   const projectName = 'Split Project';
   const path = join(home, projectName);
