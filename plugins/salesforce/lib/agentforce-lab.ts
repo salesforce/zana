@@ -107,7 +107,8 @@ export class AgentforceLab {
         // v0 is the fresh-preview sentinel; no publication or activation is involved.
         definition.agentVersion = { ...labRecord(definition.agentVersion), developerName: 'v0' };
         const started = await this.transport.request(token, PREVIEW, {
-          agentDefinition: definition, enableSimulationMode: true, externalSessionKey: s.id,
+          // `live` (Org preview Live) runs real actions; every other preview simulates them.
+          agentDefinition: definition, enableSimulationMode: raw.live !== true, externalSessionKey: s.id,
           instanceConfig: { endpoint: org.instanceUrl }, variables: [], parameters: {},
           streamingCapabilities: { chunkTypes: ['Text'] }, richContentCapabilities: {},
           bypassUser: false, executionHistory: [], conversationContext: []

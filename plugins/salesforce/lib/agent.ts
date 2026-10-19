@@ -496,6 +496,11 @@ export function agentCliOpts(projectRoot?: string | null): ExecSfOptions {
   };
 }
 
+/** `sf agent preview` crashes on an authoring bundle without default_agent_user (common for employee agents and new drafts). */
+export function lacksDefaultAgentUser(source: string): boolean {
+  return !/^\s*default_agent_user\s*:\s*["']?[^\s"'#]/m.test(source);
+}
+
 export function previewArgs(
   verb: 'start' | 'send' | 'end',
   plan: Pick<AgentPlan, 'sessionId' | 'utterance' | 'live'>,

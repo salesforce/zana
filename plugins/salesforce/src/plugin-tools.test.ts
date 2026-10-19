@@ -30,7 +30,7 @@ function baseFs() {
     '/proj/force-app/main/default/lwc/hello/hello.js': 'import { api } from "lwc"; export default class Hello { @api name; }',
     '/proj/force-app/main/default/lwc/hello/hello.html': '<template></template>',
     '/proj/force-app/main/default/classes/Widget.cls': 'public class Widget {}',
-    '/proj/force-app/main/default/agents/MyBot.agent': 'config {\n  name: "MyBot"\n}\nstart_agent {\n}\n',
+    '/proj/force-app/main/default/agents/MyBot.agent': 'config {\n  name: "MyBot"\n  default_agent_user: "bot@example.com"\n}\nstart_agent {\n}\n',
     '/proj/evals/spec.json': JSON.stringify({ tests: [{ utterance: 'hello' }] }),
     '/proj/evals/spec.yaml': 'subjectType: AGENT\ntests:\n  - utterance: hello\n',
     '/proj/evals/spec.yaml': 'subjectName: MyBot\ntests:\n  - utterance: hello\n',

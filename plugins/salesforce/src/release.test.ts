@@ -71,6 +71,7 @@ function fakeDeps(kind: 'sandbox' | 'production', state: FakeState) {
       sf.push(args);
       if (args[0] === 'agent' && args[1] === 'validate') return { code: 0, stdout: JSON.stringify({ status: 0, result: { success: true } }), stderr: '' };
       if (args[0] === 'agent') return { code: 0, stdout: JSON.stringify({ status: 0, result: { success: true } }), stderr: '' };
+      if (args[0] === 'org' && args[1] === 'open') return { code: 0, stdout: JSON.stringify({ status: 0, result: {} }), stderr: '' };
       if (args[0] === 'org' && args[2] === 'metadata') {
         return { code: 0, stdout: JSON.stringify({ status: 0, result: Object.keys(state.bundles ?? {}).map(fullName => ({ fullName })) }), stderr: '' };
       }
@@ -408,6 +409,9 @@ describe('release RPCs on production', () => {
     await expect(call('agentScript.compile', { path: PATH })).resolves.toMatchObject({ ok: false, code: 'refused' });
     // A click on Compile is its own approval, so it reads without asking anywhere.
     await expect(call('agentScript.compile', { path: PATH, startedByUser: true })).resolves.toMatchObject({ ok: true });
+    // So is a click on Open in Builder.
+    await expect(call('agentBuilder.open', { path: PATH })).resolves.toMatchObject({ ok: false, code: 'refused' });
+    await expect(call('agentBuilder.open', { path: PATH, startedByUser: true })).resolves.toMatchObject({ ok: true });
     const read = await prepare({ action: 'org.read' });
     expect(read.binding).toEqual({ action: 'org.read', target: ORG_ID, targetLabel: 'dev (production)', subject: 'MyBot versions' });
     await expect(approveAndRun({ action: 'org.read' })).resolves.toMatchObject({ ok: true, data: { readUntil: expect.any(Number) } });
