@@ -123,7 +123,9 @@ export function assertEnrollmentSafe(options: {
   dataDir: string; serverUrl: string; hostId?: string; replaceEnrollment?: boolean;
 }): void {
   const access = readConnectHostAccess(options.dataDir, options.serverUrl);
-  if (access && options.hostId && access.hostId !== options.hostId) throw new Error('Machine access host mismatch');
+  if (!options.replaceEnrollment && access && options.hostId && access.hostId !== options.hostId) {
+    throw new Error('Machine access host mismatch');
+  }
   const existing = readHostAuth(options.dataDir);
   if (!existing || options.replaceEnrollment) return;
   if (!existing.serverUrl || !sameEnrolledServer(existing.serverUrl, options.serverUrl, existing.provenance)) {
@@ -154,8 +156,9 @@ export async function startEnrolledHostDaemon(options: {
   assertEnrollmentSafe(options);
   const releaseLock = acquireDaemonLock(options.dataDir, { steal: options.stealLock === true });
   try {
-    const access = readConnectHostAccess(options.dataDir, options.serverUrl);
-    if (access && options.hostId && access.hostId !== options.hostId) throw new Error('Machine access host mismatch');
+    // Explicit Repair replaces stale Connect access rather than inheriting its
+    // host id or credential into the replacement enrollment.
+    const access = options.replaceEnrollment ? undefined : readConnectHostAccess(options.dataDir, options.serverUrl);
     options = { ...options, connectCredential: options.connectCredential ?? access?.credential, hostId: options.hostId ?? access?.hostId };
     const instanceId = randomUUID();
     const existing = readHostAuth(options.dataDir);
@@ -249,8 +252,8 @@ export async function startEnrolledHostDaemon(options: {
     try {
       options.signal?.throwIfAborted();
       if (pendingAuth) {
-        persistHostId(options.dataDir, pendingAuth.hostId);
         writeHostAuth(options.dataDir, pendingAuth);
+        persistHostId(options.dataDir, pendingAuth.hostId);
       }
     } catch (error) { await connection.close(); throw error; }
     let closeTask: Promise<void> | undefined;

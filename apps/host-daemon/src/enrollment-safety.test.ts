@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -91,6 +91,21 @@ it('explicit replacement uses only new credentials and commits after hello', asy
   expect(deps.connect).toHaveBeenCalledWith(expect.objectContaining({ hostKey: 'new-key' }));
   expect(readHostAuth(f.dataDir)).toMatchObject({ hostId: newId, provenance: 'non-tunnel' });
   expect(readFileSync(join(f.dataDir, 'host.id'), 'utf8').trim()).toBe(newId); await daemon.close();
+});
+it('explicit replacement ignores stale Connect access for the requested server', async () => {
+  const f = fixture();
+  writeFileSync(join(f.dataDir, 'connect-access.json'), JSON.stringify({
+    serverUrl: 'https://different.example',
+    serverId: oldId,
+    instanceId: oldId,
+    hostId: oldId,
+    machineId: oldId,
+    credential: 'c'.repeat(43)
+  }));
+  const daemon = await startEnrolledHostDaemon({ dataDir: f.dataDir, serverUrl: 'https://different.example', token, hostId: newId,
+    provenance: 'non-tunnel', replaceEnrollment: true });
+  expect(deps.connect).toHaveBeenCalledWith(expect.objectContaining({ hostId: newId, connectCredential: undefined }));
+  await daemon.close();
 });
 it('requires a token for explicit replacement without probing old credentials', async () => {
   const f = fixture();

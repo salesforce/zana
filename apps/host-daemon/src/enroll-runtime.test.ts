@@ -106,6 +106,18 @@ describe('startEnrolledHostDaemon', () => {
     );
     await daemon.close();
   });
+
+  it('does not replace host.id when saving replacement auth fails', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-enroll-persist-'));
+    readHostAuth.mockReturnValue({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'stale-key', hostName: 'test-host' });
+    enrollDaemonHost.mockResolvedValue({ protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId: '22222222-2222-4222-8222-222222222222', hostKey: 'fresh-key' });
+    startEnrolledHostConnection.mockImplementation(() => openConnection());
+    writeHostAuth.mockImplementationOnce(() => { throw new Error('disk full'); });
+
+    await expect(startEnrolledHostDaemon({ dataDir, serverUrl: 'https://zcc.example/', token: 'enroll-token-enroll-token-enroll',
+      replaceEnrollment: true, hostId: '22222222-2222-4222-8222-222222222222' })).rejects.toThrow('disk full');
+    expect(persistHostId).not.toHaveBeenCalled();
+  });
 });
 
 it('consumes a Connect repair before reusing auth, then recovers a completed enrollment without rotating again', async () => {

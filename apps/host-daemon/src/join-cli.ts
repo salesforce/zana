@@ -132,8 +132,13 @@ if (launchedDirectly && process.argv.includes('--check-protocol')) {
 if (launchedDirectly && process.argv.includes('join')) {
   const options = parseJoinArgv(process.argv.slice(2));
   if (process.argv.includes('--check-enrollment')) {
-    checkEnrollmentOnly(options);
-    process.exit(0);
+    try {
+      checkEnrollmentOnly(options);
+      process.exit(0);
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+    }
   }
   installRuntimeLog(options.dataDir, 'host-daemon', import.meta.url);
   // A standalone self-restart has a new PID; never leave the installer's old record behind.
