@@ -76,10 +76,12 @@ describe('action implementation panel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'two/A.cls →' }));
     await screen.findByText('classes/OrderLookup.cls');
     expect(rpc.mock.calls.some(call => call[2].candidate === 'two/A.cls')).toBe(true);
-    rpc.mockResolvedValueOnce({ ok: false, error: 'Forbidden' });
+    rpc.mockImplementation((_plugin, _method, args: { origin: string }) =>
+      Promise.resolve(args.origin === 'project' ? { ok: false, error: 'Forbidden' } : ok()));
     fireEvent.click(screen.getByRole('button', { name: 'Refresh implementation' }));
     await screen.findByRole('alert'); expect(screen.queryByTitle('Action implementation source')).toBeNull();
-    rpc.mockRejectedValueOnce(new Error('Network down'));
+    rpc.mockImplementation((_plugin, _method, args: { origin: string }) =>
+      args.origin === 'project' ? Promise.reject(new Error('Network down')) : Promise.resolve(ok()));
     fireEvent.click(screen.getByRole('button', { name: 'Refresh implementation' }));
     await screen.findByText('Network down');
     fireEvent.click(screen.getByRole('button', { name: 'Contract' })); expect(screen.getByRole('alert')).toBeTruthy();
