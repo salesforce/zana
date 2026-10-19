@@ -17,10 +17,10 @@ async function beginDrag(page: Page, source: Locator, target: Locator, x = 0.9, 
 const nav = (page: Page, title: string) => page.getByTestId(`nav-${title.toLowerCase()}`);
 
 test.use({ e2e: true, initialConfig: { sponsorPromptDismissed: true } });
+// Each 12-step drag takes seconds on CI runners; both flows outlast the default budget there.
+test.setTimeout(180_000);
 
 test('project splits: drag views and agents in focused and dedicated project windows', async ({ app }) => {
-  // Two windows' worth of 12-step drags outlasts the default budget on CI runners.
-  test.setTimeout(180_000);
   const { window: page, home, electron } = app;
   const projectName = 'Split Project';
   const path = join(home, projectName);
