@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy } from 'lucide-react';
+import { copyText } from '../../../lib/copy-text.js';
 import type { PeerConnection } from '@zana-ai/zcc-server-contract';
 import { buildPeerJoinLink } from '../../../lib/peers-join-link.js';
 import { peerConnections } from '../../../lib/product-client.js';
@@ -61,7 +62,7 @@ export function AddComputer({ connections, onChange, onClose }: AddComputerProps
   const copy = async () => {
     if (phase.kind !== 'ready') return;
     try {
-      await navigator.clipboard.writeText(phase.token);
+      await copyText(phase.token);
       setCopied(true);
     } catch (failure) {
       setActionError(errorText(failure));
@@ -80,7 +81,7 @@ export function AddComputer({ connections, onChange, onClose }: AddComputerProps
     try {
       const next = link ?? await buildPeerJoinLink(phase.token);
       if (!next) return;
-      await navigator.clipboard.writeText(next);
+      await copyText(next);
       setCopiedLink(true);
     } catch (failure) {
       setActionError(errorText(failure));

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * `pnpm dev:register-link` / `pnpm dev:unregister-link` — macOS-only setup that lets
- * clicking a `zana-dev://plugin/...` link (Slack, browser, ...) reach `pnpm run dev`.
+ * clicking a `zana-dev://plugin/...` or `zana-dev://peers/join?...` link reach `pnpm run dev`.
  *
  * macOS routes a URL scheme only to an app whose Info.plist declares it, and the
  * unpackaged dev Electron does not. This script generates a tiny background helper
@@ -48,11 +48,11 @@ const LSREGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
 
 // Mirrors packages/desktop-contract/src/deep-link.ts (TS, not importable from a plain
-// node script): visible ASCII only, `<scheme>://plugin/<id>[/<route>][?<query>]`.
+// node script): visible ASCII only, plugin routes or the core `peers/join` route.
 // The helper additionally restricts the scheme to exactly `zana-dev` and the
 // character set to what a base64url payload with %XX escapes needs, so the string
 // is inert even if it ever reached a shell.
-const LINK_PATTERN = /^zana-dev:\/\/plugin\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/?(?:\?[A-Za-z0-9._~:/?=&%+-]*)?$/i;
+const LINK_PATTERN = /^zana-dev:\/(?:\/plugin\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/?(?:\?[A-Za-z0-9._~:/?=&%+-]*)?|\/peers\/join\?d=[A-Za-z0-9._~:/?=&%+-]+)$/i;
 export const APPLESCRIPT_ALLOWED_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?=&%+';
 
 /** Returns null when `link` may be forwarded, else a human-readable reason. */
@@ -60,7 +60,7 @@ export function validateDevLink(link) {
   if (typeof link !== 'string' || link.length === 0) return 'empty link';
   if (link.length > MAX_LINK_LENGTH) return 'link is too long';
   if (/\s|[\u0000-\u001f\u007f-\u009f]/.test(link)) return 'link contains whitespace or control characters';
-  if (!LINK_PATTERN.test(link)) return `link must look like ${DEV_SCHEME}://plugin/<pluginId>/<route>?d=<payload>`;
+  if (!LINK_PATTERN.test(link)) return `link must look like ${DEV_SCHEME}://plugin/<pluginId>/<route>?d=<payload> or ${DEV_SCHEME}://peers/join?d=<invitation>`;
   return null;
 }
 
@@ -90,8 +90,8 @@ end run
 
 on open location theURL
 	set theURL to theURL as text
-	if (length of theURL) > ${MAX_LINK_LENGTH} or theURL does not start with "${DEV_SCHEME}://plugin/" then
-		display notification "Ignored a link that is not a ${DEV_SCHEME}://plugin/ link." with title "Zana Dev Link"
+	if (length of theURL) > ${MAX_LINK_LENGTH} or (theURL does not start with "${DEV_SCHEME}://plugin/" and theURL does not start with "${DEV_SCHEME}://peers/join?d=") then
+		display notification "Ignored a link that is not a ${DEV_SCHEME} plugin or peer invitation link." with title "Zana Dev Link"
 		return
 	end if
 	repeat with c in (characters of theURL)

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * `pnpm dev:open-link "<url>"` — deliver a plugin deep link to the running dev app.
+ * `pnpm dev:open-link "<url>"` — deliver a plugin or core deep link to the running dev app.
  *
  *   pnpm dev:open-link "zana-dev://plugin/<pluginId>/<route>?d=<payload>"
+ *   pnpm dev:open-link "zana-dev://peers/join?d=<invitation>"
  *
  * Launches the dev Electron build (`out-dev/main/index.js`, produced by
  * `pnpm run dev`) with the link as an argument and the same isolated data dir as
@@ -32,8 +33,8 @@ export function validateLinkArg(link) {
   if (link.length > MAX_LINK_LENGTH) return 'link is too long';
   // eslint-disable-next-line no-control-regex
   if (/[\u0000- \u007f-\u009f]/.test(link)) return 'link contains whitespace or control characters';
-  const match = /^([a-z][a-z0-9+.-]*):\/\/plugin\//i.exec(link);
-  if (!match) return 'link must look like <scheme>://plugin/<pluginId>/<route>';
+  const match = /^([a-z][a-z0-9+.-]*):\/\/(?:plugin\/|peers\/join\?d=)/i.exec(link);
+  if (!match) return 'link must look like <scheme>://plugin/<pluginId>/<route> or <scheme>://peers/join?d=<invitation>';
   if (!LINK_SCHEMES.includes(match[1].toLowerCase())) return `unknown scheme "${match[1]}" (expected ${LINK_SCHEMES.join(' or ')})`;
   return null;
 }
