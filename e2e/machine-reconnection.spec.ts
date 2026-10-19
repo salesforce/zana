@@ -1,7 +1,7 @@
 import { test, expect, launchApp } from './fixtures/app.js';
 import { createServer, request as httpRequest } from 'node:http';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 import { peerRestartCommand } from '../apps/host-daemon/src/peer-daemon.js';
@@ -164,9 +164,16 @@ test('Machines recover failed upgrades, missing hello and heartbeat replies with
     // is refused, and the app's repair path recovers it with one-join consent.
     const holder = Number(readFileSync(join(dataDir, 'host-daemon.pid'), 'utf8'));
     for (const pid of new Set([holder, replacementPid!])) {
-      try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch {} }
+      try { process.kill(-pid, 'SIGTERM'); } catch {}
+      // A restarted install can leave its entry-process PID separate from the
+      // daemon's process group. Signal both identities before repairing.
+      try { process.kill(pid, 'SIGTERM'); } catch {}
     }
-    await expect.poll(async () => { try { process.kill(holder, 0); return 'alive'; } catch { return 'gone'; } }, { timeout: 30000 }).toBe('gone');
+    // Linux keeps an exited detached child as a zombie until its original
+    // parent reaps it, so `kill(pid, 0)` can remain true after it no longer
+    // owns the enrollment. Wait for the product's observable disconnect.
+    await expect.poll(online, { timeout: 30000 }).toBe('disconnected');
+    await expect.poll(() => existsSync(join(dataDir, 'daemon.lock')), { timeout: 30000 }).toBe(false);
     const legacy = JSON.parse(readFileSync(join(dataDir, 'auth.json'), 'utf8'));
     delete legacy.provenance; legacy.serverUrl = 'http://127.0.0.1:1/';
     writeFileSync(join(dataDir, 'auth.json'), JSON.stringify(legacy), { mode: 0o600 });

@@ -41,6 +41,30 @@ describe('join CLI flags', () => {
     expect(writeError).toHaveBeenCalledWith('use --replace-enrollment\n');
   });
 
+  it('prints non-Error enrollment refusals and missing data-dir errors', () => {
+    const writeError = vi.fn();
+    const exit = vi.fn((code: number): never => { throw new Error(`exit ${code}`); });
+    expect(() => runEnrollmentCheck({ dataDir: '/tmp/machine' } as any, () => { throw 'unsafe enrollment'; }, writeError, exit))
+      .toThrow('exit 1');
+    expect(writeError).toHaveBeenLastCalledWith('unsafe enrollment\n');
+    expect(() => runEnrollmentCheck({} as any, undefined, writeError, exit)).toThrow('exit 1');
+    expect(writeError).toHaveBeenLastCalledWith('ZCC_DATA_DIR is required for an isolated machine install\n');
+  });
+
+  it('uses default shell output and exit hooks', () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
+    try {
+      expect(() => runEnrollmentCheck({} as any, undefined, undefined, code => { throw new Error(`exit ${code}`); })).toThrow('exit 1');
+      expect(stderr).toHaveBeenLastCalledWith('ZCC_DATA_DIR is required for an isolated machine install\n');
+      expect(() => runEnrollmentCheck({ dataDir: '/tmp/machine' } as any)).toThrow('exit 0');
+      expect(exit).toHaveBeenLastCalledWith(0);
+    } finally {
+      stderr.mockRestore();
+      exit.mockRestore();
+    }
+  });
+
   it('exits zero when enrollment is safe', () => {
     const exit = vi.fn((code: number): never => { throw new Error(`exit ${code}`); });
     expect(() => runEnrollmentCheck({ dataDir: '/tmp/machine' } as any, () => undefined, vi.fn(), exit)).toThrow('exit 0');
