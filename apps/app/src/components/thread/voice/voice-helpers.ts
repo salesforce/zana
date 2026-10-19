@@ -31,10 +31,25 @@ export function resolveRecordingErrorMessage(error: unknown, hasPreferredAudioIn
   return 'Voice input failed';
 }
 
-export function voiceStartBlockReason(isSupported: boolean, available: boolean): string | null {
+export type VoiceUnavailableReason = 'disabled' | 'no_host' | 'ambiguous_host' | 'auth_missing';
+
+export interface VoiceAvailability {
+  state: 'unknown' | 'ready' | 'unavailable';
+  reason: VoiceUnavailableReason | null;
+}
+
+export function voiceStartBlockReason(isSupported: boolean, availability: VoiceAvailability): string | null {
   if (!isSupported) return 'Voice input is not supported in this browser';
-  if (!available) return 'Host daemon is not connected';
-  return null;
+  if (availability.state === 'unknown') return 'Checking voice input…';
+  if (availability.state === 'ready') return null;
+  if (availability.reason === 'auth_missing') {
+    return 'Sign in to Codex on the connected computer (codex login) or set OPENAI_API_KEY there';
+  }
+  if (availability.reason === 'disabled') return 'Voice input is turned off in Settings → Experimental';
+  if (availability.reason === 'ambiguous_host') {
+    return 'Several computers are connected; disconnect all but one to use voice input';
+  }
+  return 'Host daemon is not connected';
 }
 
 export function resolvePreferredAudioMimeType(): string | null {

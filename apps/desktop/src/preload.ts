@@ -968,7 +968,6 @@ const api: CcApi = {
   },
   voice: {
     transcribe: (audio, mimeType) => ipcRenderer.invoke(IPC.voice.transcribe, audio, mimeType),
-    hasApiKey: () => ipcRenderer.invoke(IPC.voice.hasApiKey),
     ensureMicAccess: () => ipcRenderer.invoke(IPC.voice.ensureMicAccess)
   },
   library: {

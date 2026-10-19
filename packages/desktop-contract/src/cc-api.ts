@@ -1993,8 +1993,6 @@ export interface CcApi {
   };
   voice: {
     transcribe(audio: string, mimeType: string): Promise<VoiceTranscribeResult>;
-    /** Whether the host can transcribe (a host daemon is connected). */
-    hasApiKey(): Promise<boolean>;
     /** Ensure the OS-level (macOS TCC) microphone permission is granted.
      *  Resolves true if access is available, false if the user denied it.
      *  A no-op that resolves true on non-macOS platforms. */

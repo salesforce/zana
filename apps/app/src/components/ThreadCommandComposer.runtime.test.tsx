@@ -8,6 +8,8 @@ import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCommandComposer, type ThreadCommandComposerProps } from './ThreadCommandComposer.js';
 import { bootstrapOutcome, composerBootstrapErrorMessage } from './composer-host-status.js';
 import { consumeVoiceDraft, voiceDraft } from './thread/voice/voice-drafts.js';
+import { composerSession, resetComposerSessions } from './composer/composer-session.js';
+import { ComposerDraftProvider } from './composer/ComposerDraft.js';
 
 const h = vi.hoisted(() => {
   const provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
@@ -25,11 +27,13 @@ const h = vi.hoisted(() => {
     options: {
       providerId: 'codex', provider, providers: [provider], registeredProviderIds: ['codex'],
       providerOptions: [], model: 'model-a', reasoningLevel: 'high', acpMode: undefined as string | undefined,
+      selectionError: undefined as string | undefined, catalogSettled: true,
       rosterReady: true, serviceTierOptions: undefined as undefined | Array<{ id: string; label: string }>,
       acpModeOptions: [], modelOptions: [], moreModelOptions: [], reasoningOptions: [], modelIsLoading: false,
       setProviderId: vi.fn(), setModel: vi.fn(), setReasoningLevel: vi.fn(), setAcpMode: vi.fn(),
       refreshAcpModeOptions: vi.fn(), refreshModels: vi.fn()
     },
+    permissionError: undefined as string | undefined, rememberSendMode: vi.fn(),
     clear: vi.fn(), insertText: vi.fn(), removeAttachment: vi.fn(),
     send: vi.fn(async () => undefined),
     create: vi.fn(async (): Promise<{ ok: boolean; value: { id: string }; message?: string }> => ({ ok: true, value: { id: 'created' } })),
@@ -47,7 +51,7 @@ const h = vi.hoisted(() => {
 vi.mock('../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({ projects: [h.project], lastProjectId: 'p1',
     loadProjects: h.loadProjects, defaultHarness: 'codex', composerSendMode: 'queue-if-active',
-    setComposerSendMode: vi.fn(), nativeAgentDiscoveryEnabled: false }),
+    setComposerSendMode: h.rememberSendMode, nativeAgentDiscoveryEnabled: false }),
   useUi: Object.assign((select: (state: unknown) => unknown) => select({ selectedProjectId: 'p1' }),
     { getState: () => ({ appendHostInstallLogs: h.appendLogs, setHostInstallDrawerOpen: h.setDrawerOpen }) })
 }));
@@ -70,7 +74,7 @@ vi.mock('./composer-host-status.js', () => ({
   bootstrapOutcome: vi.fn(), composerBootstrapErrorMessage: vi.fn()
 }));
 vi.mock('./thread/pickers/useThreadComposerOptions.js', () => ({ useThreadComposerOptions: () => h.options }));
-vi.mock('./thread/pickers/useThreadPermissionMode.js', () => ({ useThreadPermissionMode: () => ({ permissionMode: 'full', setPermissionMode: vi.fn() }) }));
+vi.mock('./thread/pickers/useThreadPermissionMode.js', () => ({ useThreadPermissionMode: () => ({ permissionMode: 'full', setPermissionMode: vi.fn(), selectionError: h.permissionError }) }));
 vi.mock('./composer/use-composer-provider-cli.js', () => ({ useComposerProviderCli: () => ({ blocked: h.cliBlocked }) }));
 vi.mock('./composer/useMobileComposerExpansion.js', () => ({ useMobileComposerExpansion: () => undefined }));
 vi.mock('./composer/use-composer-prompt-field.js', () => ({
@@ -78,6 +82,10 @@ vi.mock('./composer/use-composer-prompt-field.js', () => ({
     h.fieldArgs = args;
     return { editor: h.editor, text: h.text, images: h.images, restoredAttachments: h.attachments,
       serialize: () => ({ text: h.text, mentions: [] }), clear: h.clear, insertText: h.insertText,
+      captureRevision: () => JSON.stringify([h.text, h.images, h.attachments]),
+      clearIfRevision: (revision: string) => {
+        if (revision === JSON.stringify([h.text, h.images, h.attachments])) h.clear();
+      },
       removeRestoredAttachment: h.removeAttachment, setText: vi.fn(), replacePrompt: vi.fn(), focus: vi.fn(),
       markRestoreFocus: vi.fn(), handleChromeKeyDown: vi.fn(), dropHandlers: {},
       suggestions: [], typeaheadOpen: false, canAttach: false };
@@ -100,17 +108,22 @@ vi.mock('./ComposerRemoteHostBadge.js', () => ({ ComposerRemoteHostBadge: () => 
 vi.mock('./ComposerProjectPicker.js', () => ({ ComposerProjectPicker: () => null }));
 vi.mock('./thread/ThreadContextMeter.js', () => ({ ThreadContextMeter: () => null }));
 vi.mock('./ui/PopoverPicklist.js', () => ({ PopoverPicklist: () => null }));
-vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: ({ onChange }: { onChange: (mode: string) => void }) =>
-  <button onClick={() => onChange('plan')}>Plan mode</button> }));
+vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: ({ onChange, value }: { onChange: (mode: string) => void; value: string }) =>
+  <button data-mode={value} onClick={() => onChange('plan')}>Plan mode</button> }));
 vi.mock('./thread/pickers/ModelReasoningPicker.js', () => ({ ModelReasoningPicker: ({ onReloadModels }: { onReloadModels: () => void }) =>
   <button onClick={onReloadModels}>Reload models</button> }));
 vi.mock('./thread/pickers/ReasoningEffortPicker.js', () => ({ ReasoningEffortPicker: () => null }));
-vi.mock('./thread/pickers/ComposerSendModePicker.js', () => ({ ComposerSendModePicker: () => null }));
+vi.mock('./thread/pickers/ComposerSendModePicker.js', () => ({ ComposerSendModePicker: ({ onChange, value }: { onChange: (mode: string) => void; value: string }) =>
+  <button data-send-mode={value} onClick={() => onChange('steer')}>Send mode</button> }));
 
 beforeEach(() => {
+  resetComposerSessions();
   vi.clearAllMocks();
   h.text = 'Draft'; h.images = []; h.attachments = []; h.editor.isDestroyed = false;
   h.voice.state = 'idle'; h.voice.canRetry = false; h.frozenSend = null;
+  h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
+  h.options.providers = [h.options.provider];
+  h.permissionError = undefined; h.options.selectionError = undefined; h.options.catalogSettled = true;
   h.options.rosterReady = true; h.options.serviceTierOptions = undefined; h.options.registeredProviderIds = ['codex'];
   h.navigateOnCreate = false; h.hostBlocked = false; h.cliBlocked = false;
   h.threads = [{ id: 't1', hostId: 'host1', projectId: 'p1' }];
@@ -132,6 +145,14 @@ async function transcribeAndSend(text = 'Spoken words') {
 }
 
 describe('Modern composer submission contracts', () => {
+  it('keeps a failed submission intact and reports its error', async () => {
+    h.send.mockRejectedValueOnce(new Error('Send rejected'));
+    render(composer());
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toBe('Send rejected'));
+    expect(h.clear).not.toHaveBeenCalled();
+    expect(h.text).toBe('Draft');
+  });
   it.each([undefined, 'default', 'priority', 'unsupported'])('normalizes service tier %s against the live provider and sends restored attachments', async tier => {
     h.text = '';
     h.attachments = [{ type: 'localImage', path: '/tmp/restored.png' }];
@@ -262,7 +283,7 @@ describe('Modern composer voice submission', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe(expected));
   });
 
-  it('does not clear or navigate a different thread after a delayed recording submission', async () => {
+  it('clears the submitted session after navigation without navigating its replacement', async () => {
     h.voice.state = 'recording';
     const onCreated = vi.fn();
     const view = render(composer({ threadId: undefined, onCreated }));
@@ -272,7 +293,7 @@ describe('Modern composer voice submission', () => {
     await act(async () => { await frozen('Spoken words'); });
     expect(h.upsert).toHaveBeenCalledWith({ id: 'created' });
     expect(onCreated).not.toHaveBeenCalled();
-    expect(h.clear).not.toHaveBeenCalled();
+    expect(h.clear).toHaveBeenCalledOnce();
   });
 
   it('keeps a failed voice submission retryable without inserting a duplicate transcript', async () => {
@@ -429,5 +450,134 @@ describe('Peer daemon install and repair from the composer', () => {
     view.rerender(composer({ project: { ...remote, hostId: 'hRebound' } as Project }));
     view.rerender(composer({ project: { ...remote, hostId: undefined } as Project }));
     expect(screen.getByTestId('host-action')).toBeTruthy();
+  });
+});
+
+describe('Modern composer retained-draft guards', () => {
+  const sendButton = () => screen.getByRole('button', { name: 'Send' });
+
+  it.each([
+    ['provider selection', (message: string) => { h.options.selectionError = message; }],
+    ['permission selection', (message: string) => { h.permissionError = message; }]
+  ])('refuses to send while the restored %s is unavailable, and says why', async (_name, arm) => {
+    arm('Saved choice is unavailable.');
+    render(composer());
+    expect(screen.getByRole('status').textContent).toBe('Saved choice is unavailable.');
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toBe('Saved choice is unavailable.'));
+    expect(h.send).not.toHaveBeenCalled();
+    expect(h.clear).not.toHaveBeenCalled();
+    // The status line yields to the (identical) error rather than showing twice.
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('blocks a send when the saved composer mode is gone once the catalogue settled', async () => {
+    const view = render(composer({ threadId: undefined }));
+    fireEvent.click(screen.getByRole('button', { name: 'Plan mode' }));
+    h.options.provider = { ...h.options.provider, composerActions: [] };
+    h.options.catalogSettled = false;
+    view.rerender(composer({ threadId: undefined }));
+    // While the catalogue is still loading the saved mode is not judged.
+    expect(screen.queryByRole('status')).toBeNull();
+    h.options.catalogSettled = true;
+    view.rerender(composer({ threadId: undefined }));
+    expect(screen.getByRole('status').textContent).toBe('The saved composer mode is unavailable. Choose an available mode before sending.');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toContain('saved composer mode'));
+    expect(h.create).not.toHaveBeenCalled();
+  });
+
+  it('does not start a voice send while a saved choice is unavailable', () => {
+    h.voice.state = 'recording';
+    h.permissionError = 'Saved permission mode is unavailable.';
+    render(composer());
+    fireEvent.click(screen.getByRole('button', { name: 'Transcribe and send recording' }));
+    expect(h.voice.stop).not.toHaveBeenCalled();
+    expect(screen.getByTestId('thread-command-error').textContent).toBe('Saved permission mode is unavailable.');
+  });
+
+  it.each([
+    ['provider selection', () => { h.options.selectionError = 'Provider gone.'; }, 'Provider gone.'],
+    ['composer mode', () => { /* arranged below */ }, 'saved composer mode']
+  ])('does not start a voice send for an unavailable %s', (name, arm, expected) => {
+    arm();
+    const view = render(composer({ threadId: undefined }));
+    if (name === 'composer mode') {
+      fireEvent.click(screen.getByRole('button', { name: 'Plan mode' }));
+      h.options.provider = { ...h.options.provider, composerActions: [] };
+    }
+    h.voice.state = 'recording';
+    view.rerender(composer({ threadId: undefined }));
+    fireEvent.click(screen.getByRole('button', { name: 'Transcribe and send recording' }));
+    expect(h.voice.stop).not.toHaveBeenCalled();
+    expect(screen.getByTestId('thread-command-error').textContent).toContain(expected);
+  });
+
+});
+
+describe('Modern composer draft session', () => {
+  it('uses the surrounding draft session for new threads so the surface retains its choices', () => {
+    render(<MemoryRouter><ComposerDraftProvider sessionKey="surface:a"><ThreadCommandComposer project={h.project} /></ComposerDraftProvider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Plan mode' }));
+    expect(composerSession('surface:a').getSnapshot().settings['modern.composerMode']).toBe('plan');
+  });
+
+  it('keys an existing thread to its own draft even inside another surface', () => {
+    render(<MemoryRouter><ComposerDraftProvider sessionKey="surface:a"><ThreadCommandComposer project={h.project} threadId="t1" /></ComposerDraftProvider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Plan mode' }));
+    expect(composerSession(JSON.stringify(['thread', 't1'])).getSnapshot().settings['modern.composerMode']).toBe('plan');
+    expect(composerSession('surface:a').getSnapshot().settings['modern.composerMode']).toBeUndefined();
+  });
+
+  it('keeps a picked send mode in the draft and remembers it as the new default', () => {
+    render(<MemoryRouter><ComposerDraftProvider sessionKey="surface:b"><ThreadCommandComposer project={h.project} /></ComposerDraftProvider></MemoryRouter>);
+    expect(screen.getByRole('button', { name: 'Send mode' }).getAttribute('data-send-mode')).toBe('queue-if-active');
+    fireEvent.click(screen.getByRole('button', { name: 'Send mode' }));
+    expect(h.rememberSendMode).toHaveBeenCalledWith('steer');
+    expect(screen.getByRole('button', { name: 'Send mode' }).getAttribute('data-send-mode')).toBe('steer');
+  });
+
+  it('falls back to the default mode when a hydrated thread mode stops being offered', () => {
+    h.options.acpMode = 'plan';
+    const view = render(composer());
+    expect(document.querySelector('[data-mode]')?.getAttribute('data-mode')).toBe('plan');
+    h.options.provider = { ...h.options.provider, composerActions: [] };
+    view.rerender(composer());
+    expect(document.querySelector('[data-mode]')?.getAttribute('data-mode')).toBe('agent');
+    h.options.acpMode = undefined;
+  });
+});
+
+describe('Modern composer terminal command and navigation', () => {
+  it('runs a /terminal command through the host and clears the draft', async () => {
+    h.text = '/terminal ls -la';
+    const onRunTerminal = vi.fn(async () => undefined);
+    render(composer({ onRunTerminal }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run terminal' }));
+    await waitFor(() => expect(onRunTerminal).toHaveBeenCalledWith('ls -la'));
+    expect(h.clear).toHaveBeenCalledOnce();
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it('keeps the draft and reports why a terminal command could not run', async () => {
+    h.text = '/terminal ls';
+    const onRunTerminal = vi.fn(async () => { throw new Error('No shell'); });
+    render(composer({ onRunTerminal }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run terminal' }));
+    await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toBe('No shell'));
+    expect(h.clear).not.toHaveBeenCalled();
+  });
+
+  it('does not report a created thread to a surface the user already left', async () => {
+    let release!: (value: { ok: true; value: { id: string } }) => void;
+    h.create.mockImplementationOnce(() => new Promise(resolve => { release = resolve as typeof release; }));
+    const onCreated = vi.fn();
+    const view = render(composer({ threadId: undefined, onCreated }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+    view.rerender(composer({ threadId: 't2', onCreated }));
+    await act(async () => { release({ ok: true, value: { id: 'created' } }); });
+    expect(h.upsert).toHaveBeenCalledWith({ id: 'created' });
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });

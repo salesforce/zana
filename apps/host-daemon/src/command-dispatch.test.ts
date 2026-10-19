@@ -10,6 +10,7 @@ import { MachineEnvironment } from './machine-environment.js';
 import { handleHostRpcRequest } from './command-router.js';
 import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
+import { hostDaemonOnlineRpcResponseMessageSchema, parseHostDaemonCommandResultForCommand } from '@zana-ai/zcc-host-daemon-contract';
 
 function prompt(...chunks: string[]): PromptInput[] {
   return chunks.map((text) => ({ type: 'text' as const, text, mentions: [] }));
@@ -329,6 +330,40 @@ describe('host command dispatch', () => {
       root,
       relPath: '../secret'
     })).rejects.toBeInstanceOf(HostCommandError);
+  });
+
+  it('answers codex.voice.status through the router and both result schemas', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'zcc-voice-status-dispatch-'));
+    onTestFinished(() => rmSync(codexHome, { recursive: true, force: true }));
+    vi.stubEnv('CODEX_HOME', codexHome);
+    onTestFinished(() => { vi.unstubAllEnvs(); });
+    const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude });
+    const ask = (requestId: string) => handleHostRpcRequest(runtime, {
+      type: 'host-rpc.request',
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      requestId,
+      command: { type: 'codex.voice.status' }
+    });
+
+    vi.stubEnv('OPENAI_API_KEY', '');
+    const missing = await ask('missing');
+    expect(missing).toMatchObject({ ok: true, commandType: 'codex.voice.status', result: { state: 'missing' } });
+
+    vi.stubEnv('OPENAI_API_KEY', 'sk-test');
+    const ready = await ask('ready');
+    expect(ready).toMatchObject({ ok: true, commandType: 'codex.voice.status', result: { state: 'ready' } });
+    // The same result must satisfy the daemon-protocol session union.
+    const sessionMessage = (result: unknown) => hostDaemonOnlineRpcResponseMessageSchema.safeParse({
+      type: 'host-rpc.response', requestId: 'ready', commandType: 'codex.voice.status', ok: true, result
+    }).success;
+    expect(sessionMessage(ready.ok ? ready.result : null)).toBe(true);
+    expect(sessionMessage({ state: 'bogus' })).toBe(false);
+
+    // The daemon-protocol result union must accept exactly what the router emits.
+    for (const state of ['ready', 'missing', 'unverified']) {
+      expect(parseHostDaemonCommandResultForCommand({ type: 'codex.voice.status' }, { state })).toEqual({ state });
+    }
+    expect(() => parseHostDaemonCommandResultForCommand({ type: 'codex.voice.status' }, { state: 'bogus' })).toThrow();
   });
 
   it('rejects an unknown command type before dispatch', async () => {

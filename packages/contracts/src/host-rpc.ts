@@ -169,6 +169,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'project.clone',
   'project.clone_default_path',
   'codex.voice.transcribe',
+  'codex.voice.status',
   'codex.inference.complete',
   'interactive.resolve',
   'provider.cli_status',
@@ -763,6 +764,11 @@ export const CodexVoiceTranscribeCommandSchema = z.object({
 }).strict();
 export type CodexVoiceTranscribeCommand = z.infer<typeof CodexVoiceTranscribeCommandSchema>;
 
+export const CodexVoiceStatusCommandSchema = z.object({
+  type: z.literal('codex.voice.status')
+}).strict();
+export type CodexVoiceStatusCommand = z.infer<typeof CodexVoiceStatusCommandSchema>;
+
 export const CodexInferenceCompleteCommandSchema = z.object({
   type: z.literal('codex.inference.complete'),
   model: z.string().min(1).max(120),
@@ -1031,6 +1037,7 @@ export const HostRpcCommandSchema = z.union([
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema,
   CodexVoiceTranscribeCommandSchema,
+  CodexVoiceStatusCommandSchema,
   CodexInferenceCompleteCommandSchema,
   InteractiveResolveCommandSchema,
   ProviderCliStatusCommandSchema,
@@ -1433,6 +1440,10 @@ export const CodexVoiceTranscribeResultSchema = z.object({
   text: z.string()
 }).strict();
 export type CodexVoiceTranscribeResult = z.infer<typeof CodexVoiceTranscribeResultSchema>;
+export const CodexVoiceStatusResultSchema = z.object({
+  state: z.enum(['ready', 'unverified', 'missing'])
+}).strict();
+export type CodexVoiceStatusResult = z.infer<typeof CodexVoiceStatusResultSchema>;
 
 export const CodexInferenceCompleteResultSchema = z.object({
   model: z.string().min(1),
@@ -1577,6 +1588,7 @@ export const HostRpcResultSchemaByType = {
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
   'codex.voice.transcribe': CodexVoiceTranscribeResultSchema,
+  'codex.voice.status': CodexVoiceStatusResultSchema,
   'codex.inference.complete': CodexInferenceCompleteResultSchema,
   'interactive.resolve': InteractiveResolveResultSchema,
   'provider.cli_status': ProviderCliStatusResultSchema,

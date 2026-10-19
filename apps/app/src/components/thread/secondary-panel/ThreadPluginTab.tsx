@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PluginThreadPanelScope } from '@zana-ai/zcc-plugin-sdk';
 import { ProjectExtensionTab } from '../../../views/project/ProjectExtensionTab.js';
 import { useData } from '../../../store.js';
 import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
@@ -15,7 +16,9 @@ export function ThreadPluginTab({
   threadId,
   actionId,
   params,
-  layout
+  layout,
+  surface,
+  tabId
 }: {
   moduleId: string;
   projectId: string | null;
@@ -23,6 +26,10 @@ export function ThreadPluginTab({
   actionId?: string;
   params?: JsonValue | null;
   layout?: 'padded' | 'flush';
+  /** Which side panel shows the tab; forwarded to the plugin's component. */
+  surface?: PluginThreadPanelScope;
+  /** The side-panel tab showing the component; forwarded to it. */
+  tabId?: string;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
   const threadActions = useSyncExternalStore(
@@ -61,6 +68,8 @@ export function ThreadPluginTab({
               projectId={projectId ?? undefined}
               threadId={threadId ?? ''}
               params={params ?? null}
+              {...(surface ? { surface } : {})}
+              {...(tabId ? { tabId } : {})}
             />
           ) : ComposePanel ? (
             <ComposePanel

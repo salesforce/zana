@@ -1,6 +1,7 @@
 import { useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Bot, Cloud, Code, FlaskConical, Files, MessageSquare, Network, PanelRight, Play, Rocket, Search, Sparkles, Zap } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Bot, Cloud, Code, FlaskConical, Files, MessageSquare, Network, PanelRight, Play, Rocket, Search, Zap } from 'lucide-react';
 import { callPluginRpc, useRealtime, useSettings, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { type AgentScriptDialect, type PublicOrgView } from '../../lib/types.js';
 import {
@@ -58,8 +59,8 @@ import { SaveAgentDialog } from './SaveAgentDialog.js';
 import { EmptyState, LoadingState, SalesforceState } from './components/SalesforceState.js';
 import { PreviewWorkbench, type PreviewCommand } from './preview/PreviewWorkbench.js';
 import { OperationsPanel } from './panels/OperationsPanel.js';
-import { AssistantRail } from './studio/AssistantRail.js';
-import { ContextStrip } from './studio/ContextStrip.js';
+import { AskAgentButton } from './studio/AskAgentButton.js';
+import { isPanelTool, panelToolActionId, useStudioRegistration, useStudioToolSlots, type PanelTool } from './studio/studio-tool-bridge.js';
 import { CommentsPane } from './studio/CommentsPane.js';
 import { useStudioView } from './studio/useStudioView.js';
 import { StudioShell } from './studio/StudioShell.js';
@@ -128,16 +129,17 @@ const TOOL_ICON: Record<CompactTool, ReactNode> = {
   code: <Code size={16} aria-hidden="true" />, agents: <Bot size={16} aria-hidden="true" />, files: <Files size={16} aria-hidden="true" />,
   graph: <Network size={16} aria-hidden="true" />, preview: <Play size={16} aria-hidden="true" />, test: <FlaskConical size={16} aria-hidden="true" />,
   release: <Rocket size={16} aria-hidden="true" />,
-  actions: <Zap size={16} aria-hidden="true" />, 'org-preview': <Cloud size={16} aria-hidden="true" />,
-  assistant: <Sparkles size={16} aria-hidden="true" />, comments: <MessageSquare size={16} aria-hidden="true" />
+  actions: <Zap size={16} aria-hidden="true" />, 'org-preview': <Cloud size={16} aria-hidden="true" />, comments: <MessageSquare size={16} aria-hidden="true" />
 };
 const TOOL_TITLE: Record<CompactTool, string> = {
   code: 'Code', agents: 'Agents', files: 'Files', graph: 'Graph', preview: 'Preview', test: 'Tests', release: 'Release', actions: 'Actions',
-  'org-preview': 'Org preview', assistant: 'Assistant', comments: 'Comments'
+  'org-preview': 'Org preview', comments: 'Comments'
 };
-/** Tools offered by the compact strip, in order. Files (QuickOpen) and Assistant (ContextStrip) are intentionally absent. */
+/** Tools offered by the compact strip, in order. Files (QuickOpen) is intentionally absent. */
 const COMPACT_TOOLS: readonly CompactTool[] = ['code', 'agents', 'graph', 'preview', 'test', 'release', 'actions', 'comments', 'org-preview'];
-const HIDDEN_COMPACT: readonly AgentScriptTool[] = ['files', 'assistant'];
+/** Studio can open the host side panel's tabs but not close them; the user closes them there. */
+const HOST_PANEL_CLOSE = 'Studio tools are in the ZCC side panel; close or hide them from the panel.';
+const HIDDEN_COMPACT: readonly AgentScriptTool[] = ['files'];
 const HIDDEN_WIDE: readonly AgentScriptTool[] = ['files'];
 const NO_HIDDEN: readonly AgentScriptTool[] = [];
 const stripItem = (id: CompactTool, badge?: number): StripItem => ({ id, title: TOOL_TITLE[id], icon: TOOL_ICON[id], ...(badge ? { badge } : {}) });
@@ -183,6 +185,9 @@ export function AgentScriptPanel(props: AgentScriptPanelProps) {
 }
 function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const navigate = useZccNavigate();
+  // Callbacks read the latest host navigate without changing identity with it.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
   const pluginId = props.pluginId || PLUGIN_ID;
   const context = useZccContext();
   const projectId = props.projectId ?? context.projectId ?? undefined;
@@ -232,6 +237,24 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const layout = layoutForTier(tier);
   const compact = layout === 'compact';
   const wide = layout === 'wide';
+  // Beside the Salesforce tab the host side panel shows the tools (studio-tool-bridge); Studio still renders them.
+  // A host that turns a tool down (an older or partial host) leaves Studio on its own panel.
+  // Not the width: a narrow window's panel covers Studio (0 px, 'legacy'), and its tabs still need Studio.
+  const [hostRefused, setHostRefused] = useState(false);
+  const hostPanel = !hostRefused && context.sidePanel === true && typeof navigate.openPanelTool === 'function';
+  const toolScope = projectId ?? '';
+  useStudioRegistration(toolScope, hostPanel);
+  const hostSlots = useStudioToolSlots(hostPanel ? toolScope : null);
+  const hostTool = hostSlots.find(slot => slot.attached)?.tool ?? null;
+  // "Show side panel" reopens the tool last shown there; the panel's New Tab lists the rest.
+  const lastHostTool = useRef<PanelTool>('preview');
+  if (hostTool) lastHostTool.current = hostTool;
+  // A tool the host agreed to show, until its tab attaches: commands report it right away.
+  const requestedHostTool = useRef<PanelTool | null>(null);
+  const seenHostTool = useRef(hostTool);
+  if (seenHostTool.current !== hostTool) { seenHostTool.current = hostTool; requestedHostTool.current = null; }
+  // Without a host panel the compact layout swaps the editor for one tool at a time.
+  const swapCompact = compact && !hostPanel;
   const studioLayout = useStudioLayout(draftScope);
   const { state: studio, patch, openTab, selectTab, closeTab, closeTabs } = studioLayout;
   const [quickOpen, setQuickOpen] = useState(false);
@@ -279,9 +302,11 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   sourceRef.current = source;
 
   // Compact shows exactly one tool; hidden tools fall back to the editor.
-  const compactTool: CompactTool = HIDDEN_COMPACT.includes(studio.tool as AgentScriptTool) ? 'code' : studio.tool;
+  const compactTool: CompactTool = hostPanel || HIDDEN_COMPACT.includes(studio.tool as AgentScriptTool) ? 'code' : studio.tool;
   const hiddenTools = compact ? HIDDEN_COMPACT : wide ? HIDDEN_WIDE : NO_HIDDEN;
-  const currentTool: CompactTool = compact
+  const currentTool: CompactTool = hostPanel
+    ? hostTool ?? 'code'
+    : compact
     ? compactTool
     : tools.state.open && tools.state.active !== 'new' && !hiddenTools.includes(tools.state.active) ? tools.state.active : 'code';
 
@@ -291,21 +316,39 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       else patch({ tool: 'code' });
       return;
     }
+    if (hostPanel && isPanelTool(id)) {
+      if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(id) })) {
+        if (id !== hostTool) requestedHostTool.current = id;
+        return;
+      }
+      setHostRefused(true);
+    }
     tools.openTool(id);
     patch({ tool: id });
-  }, [layout, patch, tools.openTool]);
+  }, [hostPanel, hostTool, layout, patch, tools.openTool]);
+  const panelShown = hostPanel ? hostTool !== null : tools.state.open;
+  const showPanel = useCallback(() => {
+    if (hostPanel) openTool(lastHostTool.current);
+    else tools.toggle();
+  }, [hostPanel, openTool, tools.toggle]);
   const closeTool = useCallback((id: AgentScriptTool) => {
+    if (hostPanel && isPanelTool(id)) throw Error(HOST_PANEL_CLOSE);
     tools.close(id);
     if (studio.tool === id) patch({ tool: 'code' });
-  }, [patch, studio.tool, tools.close]);
+  }, [hostPanel, patch, studio.tool, tools.close]);
   const setToolsOpen = useCallback((open: boolean) => {
+    if (hostPanel) {
+      if (!open) throw Error(HOST_PANEL_CLOSE);
+      openTool(lastHostTool.current);
+      return;
+    }
     tools.setOpen(open);
-    if (compact) patch({ tool: open && tools.state.active !== 'new' && !HIDDEN_COMPACT.includes(tools.state.active) ? tools.state.active : 'code' });
-  }, [compact, patch, tools.setOpen, tools.state.active]);
+    if (swapCompact) patch({ tool: open && tools.state.active !== 'new' && !HIDDEN_COMPACT.includes(tools.state.active) ? tools.state.active : 'code' });
+  }, [hostPanel, openTool, swapCompact, patch, tools.setOpen, tools.state.active]);
   // The compact strip drives the shared tool state so each tool keeps its own panel.
   useEffect(() => {
-    if (compact && compactTool !== 'code' && tools.state.active !== compactTool) tools.openTool(compactTool);
-  }, [compact, compactTool, tools.state.active, tools.openTool]);
+    if (swapCompact && compactTool !== 'code' && tools.state.active !== compactTool) tools.openTool(compactTool);
+  }, [swapCompact, compactTool, tools.state.active, tools.openTool]);
 
   // Every "browse org agents" entry point lands in the Agents tool with its search focused;
   // naming an agent (explorer row) also retrieves and opens it. The panel takes each request once.
@@ -547,9 +590,17 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const askAgent = useCallback(async (action?: string, extra?: Record<string, unknown>) => {
     const path = activePathRef.current;
     if (!path) return;
-    const result = (await callPluginRpc(pluginId, STUDIO_RPC.askAgent, { ...rpcArgs({ path, ...(action ? { action } : {}), ...extra }) })) as { ok?: boolean; error?: string } | null;
+    const request = rpcArgs({ path, ...(action ? { action } : {}), ...extra });
+    // Like the Ask agent menu: the side panel's composer takes the brief so the user picks the harness.
+    const { openPanelAgent } = navigateRef.current;
+    if (openPanelAgent) {
+      const draft = (await callPluginRpc(pluginId, STUDIO_RPC.draftAgent, request)) as { ok?: boolean; error?: string; prompt?: string; title?: string } | null;
+      if (draft?.ok === false) throw new Error(draft.error || 'Could not prepare the request.');
+      if (draft?.prompt && openPanelAgent({ draft: { prompt: draft.prompt, view: path, ...(projectId ? { projectId } : {}) }, ...(draft.title ? { title: draft.title } : {}) })) return;
+    }
+    const result = (await callPluginRpc(pluginId, STUDIO_RPC.askAgent, request)) as { ok?: boolean; error?: string } | null;
     if (result?.ok === false) throw new Error(result.error || 'Could not start the agent.');
-  }, [pluginId, rpcArgs]);
+  }, [pluginId, projectId, rpcArgs]);
   // The last Compile answer, shown only for the file it was run on; a failed compile joins the problems.
   const [compileState, setCompileState] = useState<CompileState | null>(null);
   const compiled = compileState?.path === activePath ? compileState : null;
@@ -706,7 +757,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
 
   useSalesforceControl({ pluginId, projectId, orgAlias: org?.alias, threadId, surface: 'agentforce', enabled: playgroundReady,
     commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set'],
-    state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id), follow: followPaused ? 'paused' : 'on', ...(heldReveal ? { heldReveal: heldReveal.command.command } : {}) }),
+    state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: hostPanel ? { host: true, tabs: hostSlots.map(slot => slot.tool), active: requestedHostTool.current ?? hostTool, open: (requestedHostTool.current ?? hostTool) !== null } : tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id), follow: followPaused ? 'paused' : 'on', ...(heldReveal ? { heldReveal: heldReveal.command.command } : {}) }),
     execute: followCommand,
   });
 
@@ -799,13 +850,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     return () => frame.removeEventListener('error', onError);
   }, []);
 
-  // The wide rail starts with the Assistant, once per project.
-  useEffect(() => {
-    if (!wide || studio.railSeeded) return;
-    patch({ railSeeded: true });
-    if (!tools.state.tabs.includes('assistant')) tools.openTool('assistant');
-  }, [wide, studio.railSeeded, patch, tools.state.tabs, tools.openTool]);
-
   const { view, setShare } = useStudioView({
     pluginId, projectId, threadId: threadId ?? null,
     input: {
@@ -849,14 +893,15 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const stripOwnsWorkspace = layout !== 'legacy' && studio.tabs.length > 0;
   const followChip = layout !== 'legacy' && (driver || threadId || followPaused) ? <FollowChip driver={driver ?? (threadId ? 'this thread' : undefined)} paused={followPaused} onToggle={() => setFollowPaused(paused => !paused)} /> : undefined;
   const orgPicker = props.orgPicker !== false && <OrgPicker pluginId={pluginId} projectId={projectId} compact appearance="toolbar" />;
+  const askAgentMenu = <AskAgentButton pluginId={pluginId} projectId={projectId} path={activePath} view={view} onShareChange={setShare} />;
   const activeBundle = bundleName(activePath);
   const documentBar = (
       <AgentScriptDocumentBar path={activePath} dirty={dirty} busy={busy} issues={issues}
-        saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={tools.state.open}
-        {...(stripOwnsWorkspace ? {} : { headerActions: props.headerActions, follow: followChip, orgPicker })}
+        saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={panelShown}
+        {...(stripOwnsWorkspace ? {} : { headerActions: <>{askAgentMenu}{props.headerActions}</>, follow: followChip, orgPicker })}
         onBrowse={() => browseAgents()} onSave={() => void save()}
         onPreview={() => openTool('preview')}
-        onSaveAs={() => { setError(null); setSaveAsOpen(true); }} onShowPanel={tools.toggle}
+        onSaveAs={() => { setError(null); setSaveAsOpen(true); }} onShowPanel={showPanel}
         {...(layout === 'legacy' ? {} : {
           shortcutHint: wide, hidePanelToggle: compact || stripOwnsWorkspace,
           ...(stripOwnsWorkspace ? {} : { onQuickOpen: () => setQuickOpen(true) }),
@@ -868,10 +913,11 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   );
   const workspaceActions = stripOwnsWorkspace ? <>
     {followChip}
+    {askAgentMenu}
     {props.headerActions}
     <button type="button" className="icon-btn" title="Go to file (⌘P)" aria-label="Go to file" onClick={() => setQuickOpen(true)}><Search size={15} aria-hidden="true" /></button>
     {orgPicker && <div className="af-document-org">{orgPicker}</div>}
-    {!tools.state.open && !compact && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={tools.toggle}><PanelRight size={15} aria-hidden="true" /></button>}
+    {!panelShown && !compact && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={showPanel}><PanelRight size={15} aria-hidden="true" /></button>}
   </> : undefined;
 
   const showTargetTab = layout !== 'legacy' && activeEditorTab !== null && activeEditorTab.kind !== 'agent';
@@ -929,9 +975,10 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
 
   const top = compact ? (
     <>
-      <ToolStrip orientation="horizontal" label="Studio tools" iconsOnly={tier === 0} active={compactTool}
-        items={COMPACT_TOOLS.map(id => stripItem(id, id === 'code' ? problemsCount : undefined))} onSelect={id => { patch({ tool: id as CompactTool }); }} />
-      <ContextStrip view={view} compact onShareChange={setShare} />
+      <ToolStrip orientation="horizontal" label="Studio tools" iconsOnly={tier === 0} active={hostPanel ? currentTool : compactTool}
+        items={COMPACT_TOOLS.map(id => stripItem(id, id === 'code' ? problemsCount : undefined))} onSelect={id => {
+          if (hostPanel) { if (id !== 'code') openTool(id as AgentScriptTool); } else patch({ tool: id as CompactTool });
+        }} />
     </>
   ) : false;
   const activity = wide ? (
@@ -940,8 +987,37 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       onSelect={id => { if (id === 'files') patch({ explorerOpen: !studio.explorerOpen }); else if (id === 'agents') browseAgents(); else setQuickOpen(true); }} />
   ) : false;
 
-  const splitMode = compact ? (compactTool === 'code' ? 'editor' : 'panel') : 'split';
-  const splitOpen = compact ? compactTool !== 'code' : tools.state.open;
+  const splitMode = hostPanel ? 'editor' : swapCompact ? (compactTool === 'code' ? 'editor' : 'panel') : 'split';
+  const splitOpen = hostPanel ? false : swapCompact ? compactTool !== 'code' : tools.state.open;
+
+  const renderTool = (id: AgentScriptTool, visible: boolean): ReactNode => {
+    if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => !file.path.startsWith('.zcc/')).map(file => ({ ...file, publishable: file.path.includes('aiAuthoringBundles/') }))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
+    if (id === 'files') return layout === 'legacy' ? explorerNode : null;
+    if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}
+      onReveal={revealLine}
+      onResolve={(commentId, note) => { void Promise.resolve(callPluginRpc(pluginId, STUDIO_RPC.commentResolve, { projectId, id: commentId, note })).then(() => loadComments()).catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }}
+      onAddressWithAgent={() => { void askAgent('address-comments').catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }} />;
+    if (id === 'graph') return <AgentScriptGraphPanel source={source} visible={visible} compact={compact} focusNode={graphFocus.node} focusSeq={graphFocus.seq} onOpenAction={id => { const action = actions.find(row => row.id === id); if (action) openAction(action); }} />;
+    if (id === 'preview') return <PreviewWorkbench pluginId={pluginId} projectId={projectId} source={source} fileLabel={activePath?.split('/').pop() ?? 'Draft'}
+      engine={previewEngine} onEngineChange={setPreviewEngine} path={activePath ?? undefined} orgAlias={org?.alias} threadId={threadId}
+      onRunChange={setLastRun} command={previewCommand} onCommandHandled={previewCommandHandled} dirty={dirty}
+      onRevealSource={(path, line) => { if (path === activePathRef.current) revealLine(line); else void openFile(path).then(opened => { if (opened) revealLine(line); }); }} />;
+    if (id === 'test') return <TestsPane pluginId={pluginId} projectId={projectId} threadId={threadId} path={activePath} source={source} visible={visible} dirty={dirty}
+      proposalSource={proposalSource} onAskAgent={composeFor}
+      roleplay={<AgentforceLabPanel pluginId={pluginId} projectId={projectId} threadId={threadId} source={source} mode="test" fileLabel={activePath?.split('/').pop() ?? 'Draft'} />} />;
+    if (id === 'org-preview') return <AgentforcePreviewPanel pluginId={pluginId} projectId={projectId} />;
+    if (id === 'release') return <ReleasePane pluginId={pluginId} projectId={projectId} path={activePath} visible={visible} dirty={dirty} sha256={sha256} source={source}
+      compile={compiled} compileStale={Boolean(compiled && (dirty || compiled.sha !== (sha256 || undefined)))}
+      onSave={() => void save()} onCompile={() => void compile()} onAskAgent={composeFor} />;
+    return <div className="af-action-workspace">
+      {actionTabs.length > 0 && <div className="af-related-tabs" aria-label="Open agent files">
+        <div className={`af-related-tab${!selectedActionId ? ' is-active' : ''}`}><button aria-pressed={!selectedActionId} onClick={() => setSelectedActionId(null)}>All actions</button></div>
+        {actionTabs.map(tab => <div className={`af-related-tab${selectedActionId === tab.action.id ? ' is-active' : ''}`} key={tab.action.id}><button title={`${tab.action.owner} · ${tab.action.target}`} aria-pressed={selectedActionId === tab.action.id} onClick={() => setSelectedActionId(tab.action.id)}>{tab.action.name}</button><button aria-label={`Close ${tab.action.name}`} onClick={() => { setActionTabs(tabs => tabs.filter(t => t.action.id !== tab.action.id)); if (selectedActionId === tab.action.id) setSelectedActionId(null); }}>×</button></div>)}
+      </div>}
+      {!selectedAction && <div className="af-actions-list"><h2>Actions</h2><p>Explore implementations and references in the current script.</p><AgentActionExplorer actions={actions} selected={selectedActionId ?? undefined} onOpen={openAction} />{actions.length === 0 && <EmptyState compact art="code" title="No actions in this script yet.">Add an Apex or Flow action to explore its implementation here.</EmptyState>}</div>}
+      {selectedAction && <AgentActionPanel key={`${projectId}:${activePath}:${selectedAction.id}`} pluginId={pluginId} projectId={projectId} org={org} action={selectedAction} initialOrigin={selectedTab?.origin} onOriginChange={origin => { chooseActionOrigin(origin); setActionTabs(tabs => tabs.map(tab => tab.action.id === selectedActionId ? { ...tab, origin } : tab)); }} onReveal={revealLine} onOpenTarget={(target, origin) => openAction(targetAction(target, `Referenced by ${selectedAction.name}`), origin)} />}
+    </div>;
+  };
 
   return (
     <div className="sf-as" ref={tierRef} style={PANEL_ROOT} data-testid="salesforce-agent-script-panel">
@@ -1008,40 +1084,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           </div>
         )}
         </div>}>
-          <AgentScriptTools tools={tools} hiddenTools={hiddenTools} chrome={!compact} open={compact ? splitOpen : undefined} render={(id, visible) => {
-            if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => !file.path.startsWith('.zcc/')).map(file => ({ ...file, publishable: file.path.includes('aiAuthoringBundles/') }))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
-            if (id === 'files') return layout === 'legacy' ? explorerNode : null;
-            if (id === 'assistant') return compact ? null : <AssistantRail pluginId={pluginId} projectId={projectId} path={activePath} view={view} onShareChange={setShare} />;
-            if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}
-              onReveal={revealLine}
-              onResolve={(commentId, note) => { void Promise.resolve(callPluginRpc(pluginId, STUDIO_RPC.commentResolve, { projectId, id: commentId, note })).then(() => loadComments()).catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }}
-              onAddressWithAgent={() => { void askAgent('address-comments').catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }} />;
-            if (id === 'graph') return <AgentScriptGraphPanel source={source} visible={visible} compact={compact} focusNode={graphFocus.node} focusSeq={graphFocus.seq} onOpenAction={id => { const action = actions.find(row => row.id === id); if (action) openAction(action); }} />;
-            if (id === 'preview') return <PreviewWorkbench pluginId={pluginId} projectId={projectId} source={source} fileLabel={activePath?.split('/').pop() ?? 'Draft'}
-              engine={previewEngine} onEngineChange={setPreviewEngine} path={activePath ?? undefined} orgAlias={org?.alias} threadId={threadId}
-              onRunChange={setLastRun} command={previewCommand} onCommandHandled={previewCommandHandled} dirty={dirty}
-              onRevealSource={(path, line) => { if (path === activePathRef.current) revealLine(line); else void openFile(path).then(opened => { if (opened) revealLine(line); }); }} />;
-            if (id === 'test') return <TestsPane pluginId={pluginId} projectId={projectId} threadId={threadId} path={activePath} source={source} visible={visible} dirty={dirty}
-              proposalSource={proposalSource} onAskAgent={composeFor}
-              roleplay={<AgentforceLabPanel pluginId={pluginId} projectId={projectId} threadId={threadId} source={source} mode="test" fileLabel={activePath?.split('/').pop() ?? 'Draft'} />} />;
-            if (id === 'org-preview') return <AgentforcePreviewPanel pluginId={pluginId} projectId={projectId} />;
-            if (id === 'release') return <ReleasePane pluginId={pluginId} projectId={projectId} path={activePath} visible={visible} dirty={dirty} sha256={sha256} source={source}
-              compile={compiled} compileStale={Boolean(compiled && (dirty || compiled.sha !== (sha256 || undefined)))}
-              onSave={() => void save()} onCompile={() => void compile()} onAskAgent={composeFor} />;
-            return <div className="af-action-workspace">
-          {actionTabs.length > 0 && <div className="af-related-tabs" aria-label="Open agent files">
-            <div className={`af-related-tab${!selectedActionId ? ' is-active' : ''}`}><button aria-pressed={!selectedActionId} onClick={() => setSelectedActionId(null)}>All actions</button></div>
-            {actionTabs.map(tab => <div className={`af-related-tab${selectedActionId === tab.action.id ? ' is-active' : ''}`} key={tab.action.id}><button title={`${tab.action.owner} · ${tab.action.target}`} aria-pressed={selectedActionId === tab.action.id} onClick={() => setSelectedActionId(tab.action.id)}>{tab.action.name}</button><button aria-label={`Close ${tab.action.name}`} onClick={() => { setActionTabs(tabs => tabs.filter(t => t.action.id !== tab.action.id)); if (selectedActionId === tab.action.id) setSelectedActionId(null); }}>×</button></div>)}
-          </div>}
-
-              {!selectedAction && <div className="af-actions-list"><h2>Actions</h2><p>Explore implementations and references in the current script.</p><AgentActionExplorer actions={actions} selected={selectedActionId ?? undefined} onOpen={openAction} />{actions.length === 0 && <EmptyState compact art="code" title="No actions in this script yet.">Add an Apex or Flow action to explore its implementation here.</EmptyState>}</div>}
-          {selectedAction && <AgentActionPanel key={`${projectId}:${activePath}:${selectedAction.id}`} pluginId={pluginId} projectId={projectId} org={org} action={selectedAction} initialOrigin={selectedTab?.origin} onOriginChange={origin => { chooseActionOrigin(origin); setActionTabs(tabs => tabs.map(tab => tab.action.id === selectedActionId ? { ...tab, origin } : tab)); }} onReveal={revealLine} onOpenTarget={(target, origin) => openAction(targetAction(target, `Referenced by ${selectedAction.name}`), origin)} />}
-            </div>;
-          }} />
+          {hostPanel ? null : <AgentScriptTools tools={tools} hiddenTools={hiddenTools} chrome={!swapCompact} open={swapCompact ? splitOpen : undefined} render={renderTool} />}
         </AgentforceStudioSplit>
         {bottom}
         </div>
       </StudioShell>
+      {/* Keyed by tab: switching tabs keeps a tool's state, a reopened tab starts it fresh. */}
+      {hostSlots.map(slot => createPortal(<div key={slot.tabId ?? ''} className="af-tool-content">{renderTool(slot.tool, slot.attached)}</div>, slot.node, slot.tool))}
     </div>
   );
 }

@@ -186,11 +186,31 @@ async function retrieveOrgAgent(agents: import('@playwright/test').Locator, name
   await agents.getByRole('button', { name: `Retrieve & open ${name}`, exact: true }).click();
 }
 
-async function openTool(studio: import('@playwright/test').Locator, name: string) {
-  const tab = studio.locator('.af-tools').getByRole('tab', { name, exact: true });
+type Page = import('@playwright/test').Page;
+type Locator = import('@playwright/test').Locator;
+
+/** Studio itself, without the tools it shows in the host side panel. */
+const studioPanel = (page: Page) => page.getByTestId('salesforce-agent-script-panel');
+/** Studio plus the tool it renders into the host side panel beside the Salesforce tab. */
+const studioIn = (page: Page) => studioPanel(page).or(page.locator('.sf-panel-tool'));
+/** The host side panel beside the Salesforce tab. */
+const sidePanel = (page: Page) => page.getByTestId('plugin-panel-host-layout').getByTestId('thread-secondary-panel');
+const sidePanelTab = (page: Page, name: string) => sidePanel(page).locator('.thread-secondary-tabs').getByRole('button', { name, exact: true });
+const activeSidePanelTab = (page: Page) => sidePanel(page).locator('.thread-secondary-tab.is-active .thread-secondary-tab-label');
+const TOOL_IDS: Record<string, string> = { Agents: 'agents', 'Graph view': 'graph', Preview: 'preview', Tests: 'test', Release: 'release', Actions: 'actions', 'Org preview': 'org-preview', Comments: 'comments' };
+
+/** Opens a Studio tool in the host side panel: its tab when open, else from the panel's New Tab page. */
+async function openTool(studio: Locator, name: string) {
+  const page = studio.page();
+  if (!(await sidePanel(page).isVisible())) {
+    await studioPanel(page).getByRole('button', { name: 'Show side panel', exact: true }).first().click();
+    await expect(sidePanel(page)).toBeVisible();
+  }
+  const tab = sidePanelTab(page, name);
   if (await tab.count()) { await tab.click(); return; }
-  await studio.getByRole('button', { name: 'Add side panel tab', exact: true }).click();
-  await studio.locator('.af-tool-picker').getByRole('button', { name: new RegExp(`^${name}`) }).click();
+  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${TOOL_IDS[name]}`).click();
+  await expect(activeSidePanelTab(page)).toHaveText(name);
 }
 
 test('Agentforce document toolbar and focused explorer: long paths, save state and narrow light/dark layouts', async ({ app, home }, testInfo) => {
@@ -208,7 +228,7 @@ test('Agentforce document toolbar and focused explorer: long paths, save state a
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(frame.getByTestId('agent-script-ide')).toBeVisible();
   await studio.getByTestId(`salesforce-agent-script-file:${toolbarFile}`).click();
@@ -216,7 +236,8 @@ test('Agentforce document toolbar and focused explorer: long paths, save state a
   await expect(studio.getByLabel('Agentforce file', { exact: true })).toHaveAttribute('title', toolbarFile);
   await expect(studio.locator('.af-draft-state')).toHaveText('Saved');
   await expect(studio.locator('.af-document-bar').getByText('Saved', { exact: true })).toHaveCount(1);
-  await studio.locator('.af-tools').getByRole('button', { name: 'Hide side panel' }).click();
+  // Studio tools open in the host side panel, so Studio keeps no panel of its own.
+  await expect(studio.locator('.af-tools')).toHaveCount(0);
   for (const theme of ['dark', 'light']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
     for (const width of [1440, 760]) {
@@ -285,8 +306,8 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   const workbench = page.getByTestId('salesforce-workbench');
   await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
-  await expect(studio).toBeVisible();
+  const studio = studioIn(page);
+  await expect(studioPanel(page)).toBeVisible();
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(frame.getByTestId('agent-script-ide')).toBeVisible();
   // No example opens by default; the studio asks for a project agent.
@@ -316,18 +337,32 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   expect(codeBox!.height).toBeGreaterThan(editorBox!.height - statusBox!.height - 24);
   const explorerBox = await studio.getByTestId('salesforce-agent-script-explorer').boundingBox();
   expect(explorerBox!.x + explorerBox!.width).toBeLessThanOrEqual(editorBox!.x + 1);
-  await studio.getByRole('button', { name: 'Add side panel tab' }).click();
+  // "Show side panel" opens the host side panel beside the tab; its New Tab page lists only Studio's tools.
+  await studioPanel(page).getByRole('button', { name: 'Show side panel', exact: true }).first().click();
+  await expect(sidePanel(page)).toBeVisible();
+  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toBeVisible();
+  await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-playground')).toHaveCount(0);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-add-tools.png'));
-  await studio.getByRole('button', { name: /^Graph view/ }).click();
+  await sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-graph').click();
   const graph = page.frameLocator('iframe[title="AgentScript graph"]');
   await expect(graph.getByText('Conversation map')).toBeVisible();
   await expect(frame.locator('.view-lines')).toBeVisible();
+  // The tool renders inside the host panel, not inside Studio.
+  await expect(sidePanel(page).locator('.sf-panel-tool[data-studio-tool="graph"]')).toBeVisible();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-editor-graph-dark.png'));
-  await studio.locator('.af-tools').getByRole('button', { name: 'Hide side panel' }).click();
-  await expect(studio.locator('.af-tools')).toBeHidden();
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  await expect(sidePanel(page)).toBeHidden();
   await expect(frame.locator('.view-lines')).toBeVisible();
-  await studio.getByRole('button', { name: 'Show side panel' }).click();
-  await studio.getByRole('button', { name: 'Close Graph view' }).click();
+  // Showing it again reopens the last tool.
+  await studioPanel(page).getByRole('button', { name: 'Show side panel', exact: true }).first().click();
+  await expect(activeSidePanelTab(page)).toHaveText('Graph view');
+  await expect(graph.getByText('Conversation map')).toBeVisible();
+  await sidePanel(page).getByRole('button', { name: 'Close Graph view', exact: true }).click();
+  // The remaining tab takes over; hiding the panel gives Studio its wide layout back.
+  await expect(activeSidePanelTab(page)).toHaveText('Preview');
+  await expect(sidePanel(page).locator('.sf-panel-tool[data-studio-tool="preview"]')).toBeVisible();
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
   await expect(studio.getByTestId('salesforce-agent-script-explorer')).toBeVisible();
   // Edit the real Monaco model through normal keyboard input.
   await frame.locator('.monaco-editor').click({ position: { x: 120, y: 45 } });
@@ -372,20 +407,18 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await studio.getByTestId('salesforce-agent-script-save').click();
   await expect(studio.getByRole('alert')).toContainText('changed on disk');
   expect(readFileSync(join(home, 'dx/DraftCopy.afscript'), 'utf8')).toBe(externalSource);
-  await studio.getByRole('button', { name: 'Preview', exact: true }).click();
+  await studioPanel(page).locator('.af-document-bar').getByRole('button', { name: 'Preview', exact: true }).click();
   const preview = studio.getByTestId('preview-workbench');
-  const divider = studio.getByRole('separator', { name: 'Resize editor and side panel' });
-  expect(await divider.evaluate(el => parseFloat(getComputedStyle(el).width))).toBeCloseTo(1, 1);
-  expect(await divider.evaluate(el => parseFloat(getComputedStyle(el, '::after').width))).toBeCloseTo(11, 1);
+  await expect(sidePanel(page).getByTestId('preview-workbench')).toBeVisible();
+  // The host panel's divider resizes the tool beside the editor.
+  const divider = sidePanel(page).getByRole('separator', { name: 'Resize right panel' });
   const beforeResize = (await preview.boundingBox())!.width;
   const handleBox = (await divider.boundingBox())!;
-  // Grab the invisible hit area outside the visible 1px rule.
-  await page.mouse.move(handleBox.x + 4, handleBox.y + 120);
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 120);
   await page.mouse.down();
   await page.mouse.move(handleBox.x - 180, handleBox.y + 120, { steps: 8 });
   await page.mouse.up();
   await expect.poll(async () => (await preview.boundingBox())!.width).toBeGreaterThan(beforeResize + 100);
-  await expect(studio.locator('.af-workspace')).toHaveAttribute('data-resizing', 'false');
   await preview.getByRole('group', { name: 'Preview engine' }).getByRole('button', { name: 'Simulate' }).click();
   await preview.getByTestId('pw-start').click();
   await expect(preview.getByRole('button', { name: 'End', exact: true })).toBeVisible({ timeout: 30_000 });
@@ -437,20 +470,28 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(lab.getByText('Stopped · partial conversation')).toBeVisible();
   await expect(lab.getByText('Criteria met')).toHaveCount(0);
   await page.setViewportSize({ width: 760, height: 900 });
+  // A narrow window's side panel covers the page; its tools keep running while Studio is out of sight.
+  await expect(sidePanel(page).locator('.sf-panel-tool[data-studio-tool="test"]')).toBeVisible();
+  await expect(sidePanel(page).getByText('Tests needs Agent Script Studio')).toHaveCount(0);
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  await expect(sidePanel(page)).toBeHidden();
   // Narrow studios show one tool at a time instead of squeezing the editor beside the panel.
   await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', 'compact');
-  await expect(studio.getByRole('tablist', { name: 'Studio tools' })).toBeVisible();
-  await expect(frame.locator('.view-lines')).toBeHidden();
-  await studio.getByRole('tablist', { name: 'Studio tools' }).getByRole('tab', { name: 'Code', exact: true }).click();
+  // The compact strip launches tools in the host panel and the editor stays put.
+  const strip = studioPanel(page).getByRole('tablist', { name: 'Studio tools' });
+  await expect(strip).toBeVisible();
   await expect(frame.locator('.view-lines')).toBeVisible();
-  await studio.getByRole('button', { name: 'Preview', exact: true }).click();
-  await expect(preview).toBeVisible();
-  expect(await studio.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-narrow-light.png'));
+  await strip.getByRole('tab', { name: 'Preview', exact: true }).click();
+  await expect(activeSidePanelTab(page)).toHaveText('Preview');
+  await expect(preview).toBeVisible();
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  await expect(frame.locator('.view-lines')).toBeVisible();
   const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, any> }>;
   expect(requests.find(r => r.path.endsWith('/authoring/scripts'))?.body.assets[0].content).toContain('# unsaved studio draft');
   expect(requests.filter(r => r.path.endsWith('/preview/sessions')).every(r => r.body.enableSimulationMode === true)).toBe(true);
-  expect(await studio.innerText()).not.toMatch(/PRIVATE_CLI_TOKEN|PRIVATE_NAMED_JWT/);
+  expect(await page.getByTestId('plugin-panel-host-layout').innerText()).not.toMatch(/PRIVATE_CLI_TOKEN|PRIVATE_NAMED_JWT/);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await openTool(studio, 'Org preview');
   const orgPreview = page.getByTestId('salesforce-agentforce-preview');
@@ -463,9 +504,9 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(orgPreview.getByRole('log')).toContainText('END_OF_RESPONSE');
   await orgPreview.getByTestId('salesforce-agentforce-preview-end').click();
   await expect(orgPreview.getByText('Preview ended.')).toBeVisible();
-  await studio.getByRole('button', { name: 'Close Org preview', exact: true }).click();
+  await sidePanel(page).getByRole('button', { name: 'Close Org preview', exact: true }).click();
   await expect(frame.locator('.view-lines')).toBeVisible();
-  await expect(studio).toBeVisible();
+  await expect(studioPanel(page)).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -488,7 +529,7 @@ test('Org preview: searchable agent picker, employee-agent simulation and an unc
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   await openTool(studio, 'Org preview');
   const preview = page.getByTestId('salesforce-agentforce-preview');
@@ -510,7 +551,8 @@ test('Org preview: searchable agent picker, employee-agent simulation and an unc
       await page.setViewportSize({ width, height: 900 });
       await expect(preview).toBeVisible();
       await expect(preview.getByTestId('salesforce-agentforce-preview-send')).toBeVisible();
-      if (width === 1100) expect((await preview.boundingBox())!.width).toBeLessThanOrEqual(400);
+      // The preview fills the host side panel without spilling past it.
+      expect((await preview.boundingBox())!.width).toBeLessThanOrEqual((await sidePanel(page).boundingBox())!.width);
       for (const locator of [preview, preview.locator('.sf-as-header'), preview.locator('.af-composer')]) {
         expect(await locator.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
       }
@@ -560,9 +602,11 @@ test('Agentforce action explorer: real source RPC, Apex colors, Flow map and pre
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   const agent = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(agent.getByTestId('agent-script-ide')).toBeVisible();
+  // Wide enough that Studio keeps its full layout beside the host side panel.
+  await page.setViewportSize({ width: 1800, height: 1000 });
   await studio.getByTestId('salesforce-agent-script-file:force-app/Orders.agent').click();
   await openTool(studio, 'Actions');
   await expect(studio.getByRole('button', { name: 'Inspect lookup in start_agent.orders' })).toBeVisible();
@@ -642,10 +686,10 @@ test('Agentforce action explorer: real source RPC, Apex colors, Flow map and pre
   const retrievals = readFileSync(join(home, 'source-retrievals.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(retrievals.every(row => row.args.includes('--manifest') && !row.cwd.startsWith(join(home, 'dx')))).toBe(true);
   await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 850));
-  expect(await studio.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('actions-flow-narrow-light.png'));
   await expect(detail.getByRole('button', { name: 'Last preview' })).toHaveCount(0);
-  expect(await studio.innerText()).not.toContain('PRIVATE_TOKEN');
+  expect(await page.getByTestId('plugin-panel-host-layout').innerText()).not.toContain('PRIVATE_TOKEN');
   // Editor tabs: right-click offers bulk close; Close others keeps only the clicked tab.
   await showAllAgents(studio);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
@@ -683,7 +727,7 @@ test('Salesforce Flow visualizer: official canvas, branches, details, themes and
   await page.evaluate(id => { history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate')); }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   await studio.getByTestId('salesforce-agent-script-file:force-app/Orders.agent').click();
   await openTool(studio, 'Actions');
@@ -714,7 +758,7 @@ test('Salesforce Flow visualizer: official canvas, branches, details, themes and
   await expect(flow.getByText('Each order item', { exact: true })).toBeVisible();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('flow-official-light.png'));
   await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 850));
-  expect(await studio.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await expect(flow.getByRole('button', { name: 'Collapse All', exact: true })).toBeVisible();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('flow-official-narrow-light.png'));
   // Focus a control inside the sandbox: Escape must cross the frame boundary.
@@ -751,7 +795,7 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   await page.evaluate(id => { history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate')); }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
   const types = explorer.getByTestId('sf-explorer-lightning-type');
   // No agent is open, so the outline lists agents; the Lightning Types section lives in the all-references catalogue.
@@ -804,7 +848,7 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   const editor = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(studio.getByTestId('salesforce-agent-script-no-file')).toBeVisible();
   await studio.getByRole('button', { name: 'Browse org agents', exact: true }).click();
@@ -835,7 +879,7 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   await agents.getByRole('textbox', { name: 'Search org agents' }).fill('Unavailable');
   await retrieveOrgAgent(agents, 'Unavailable');
   await expect(agents.getByRole('alert')).toHaveText('Source access denied');
-  expect(await studio.innerText()).not.toContain('PRIVATE_CLI_TOKEN');
+  expect(await page.getByTestId('plugin-panel-host-layout').innerText()).not.toContain('PRIVATE_CLI_TOKEN');
   // Invalid project ids never grant a local write root.
   const refused = await page.evaluate(async () => window.cc.pluginApps.callRpc('salesforce', 'agents.retrieve.start', { projectId: 'missing', orgId: '00D000000000001', fullName: 'Support_v2', projectRoot: '/tmp' }));
   expect(refused).toMatchObject({ ok: false, code: 'invalid_context' });
@@ -850,14 +894,15 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
   const projectId = await page.evaluate(async path => { const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id; }, join(home, 'dx'));
   await page.evaluate(async id => { await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' }); history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate')); }, projectId);
-  await page.setViewportSize({ width: 1600, height: 1000 });
+  // Wide enough that Studio keeps its explorer beside the host side panel.
+  await page.setViewportSize({ width: 1800, height: 1000 });
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', 'wide');
   const noFile = studio.getByTestId('salesforce-agent-script-no-file');
   await expect(noFile).toBeVisible({ timeout: 30_000 });
-  const agentsTab = studio.locator('.af-tools').getByRole('tab', { name: 'Agents', exact: true });
+  const agentsTab = sidePanelTab(page, 'Agents');
   const search = studio.getByRole('region', { name: 'Org agents' }).getByRole('textbox', { name: 'Search org agents' });
 
   // The empty state's actions sit with its message instead of floating far below it.
@@ -865,7 +910,7 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   const openOrgAgents = noFile.getByRole('button', { name: 'Open org agents', exact: true });
   expect((await openOrgAgents.boundingBox())!.y - (message!.y + message!.height)).toBeLessThan(48);
   await openOrgAgents.click();
-  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(activeSidePanelTab(page)).toHaveText('Agents');
   await expect(search).toBeFocused();
 
   // An empty graph is a single readable hint, not one row per text run and code chip.
@@ -882,7 +927,7 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   await explorer.getByRole('textbox', { name: 'Filter Agentforce files' }).fill('Agent_0');
   const browse = explorer.getByRole('button', { name: 'Browse agents in your org', exact: true });
   await browse.click();
-  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(activeSidePanelTab(page)).toHaveText('Agents');
   await expect(search).toBeFocused();
   await search.blur();
   await expect(search).not.toBeFocused();
@@ -894,7 +939,7 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   // The explorer only links to the org; the Agents panel lists org agents and retrieves them per row.
   await expect(explorer.getByTestId('sf-explorer-org-agent')).toHaveCount(0);
   await openTool(studio, 'Agents');
-  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(activeSidePanelTab(page)).toHaveText('Agents');
   await search.fill('Agent_0');
   await retrieveOrgAgent(studio.getByRole('region', { name: 'Org agents' }), 'Agent_0');
   await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toContainText('Retrieved to your project', { timeout: 30_000 });
@@ -905,10 +950,9 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('explorer-org-agent-opened.png'));
 
   // Reopening a closed Agents tab starts clean instead of replaying the last request.
-  const sidePanel = studio.locator('.af-tools');
-  await sidePanel.getByRole('button', { name: 'Close Agents', exact: true }).click();
-  await sidePanel.getByRole('button', { name: 'Add side panel tab', exact: true }).click();
-  await sidePanel.getByRole('button', { name: /^Agents/ }).click();
+  await sidePanel(page).getByRole('button', { name: 'Close Agents', exact: true }).click();
+  await expect(agentsTab).toHaveCount(0);
+  await openTool(studio, 'Agents');
   await expect(studio.getByRole('region', { name: 'Org agents' }).getByText('Z Last', { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(search).toHaveValue('');
   await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toHaveCount(0);
@@ -930,7 +974,7 @@ test('Agentforce Studio: create local agents and control the visible workbench t
   await page.getByRole('navigation', { name: 'new-agents navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   const workbench = page.getByTestId('salesforce-workbench');
   await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   const editor = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(studio.getByTestId('salesforce-agent-script-no-file')).toBeVisible();
   await studio.getByRole('button', { name: 'Browse org agents', exact: true }).click();
@@ -990,7 +1034,7 @@ test('Agentforce Studio: create local agents and control the visible workbench t
   expect(await command(agentView, 'file.open', { path: created.file.path })).toMatchObject({ ok: true, viewState: { path: created.file.path } });
   await expect(editor.locator('.view-lines')).toContainText('Billing');
   expect(await command(agentView, 'panel.open', { tool: 'graph' })).toMatchObject({ ok: true, viewState: { panels: { active: 'graph' } } });
-  await expect(studio.getByRole('tab', { name: 'Graph view', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(activeSidePanelTab(page)).toHaveText('Graph view');
   await editor.locator('.monaco-editor').click({ position: { x: 180, y: 50 } });
   await page.keyboard.press('ControlOrMeta+End'); await page.keyboard.type('\n# HUMAN_EDIT');
   await expect(studio.getByRole('button', { name: 'Save Agentforce file' })).toContainText('Save');
@@ -999,6 +1043,11 @@ test('Agentforce Studio: create local agents and control the visible workbench t
   await expect.poll(() => readFileSync(join(projectRoot, created.file.path), 'utf8')).toContain('HUMAN_EDIT');
   expect(await command(agentView, 'file.open', { path: draftPath })).toMatchObject({ ok: true });
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('new-agent-controlled-graph.png'));
+  // The Data view checks its full-width results table, so put the side panel away.
+  // Studio opens host tabs but leaves closing them to the panel.
+  expect(await command(agentView, 'panel.hide')).toMatchObject({ ok: false, error: expect.stringContaining('ZCC side panel') });
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  await expect(sidePanel(page)).toBeHidden();
   const query = await action('query.execute', { query: 'SELECT Id, Name FROM Account LIMIT 1' });
   expect(query).toMatchObject({ ok: true, resultId: expect.any(String) });
   expect(await command(await view('workbench'), 'view.open', { view: 'data' })).toMatchObject({ ok: true, viewState: { view: 'data' } });
@@ -1023,7 +1072,7 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
   // The explorer lists project agents by name rather than as a folder tree.
@@ -1203,7 +1252,7 @@ test('Salesforce readiness: local authoring without CLI, project org selection a
   await expect(workbench.getByText('Salesforce CLI (sf) was not found on PATH. Install it, then check again.', { exact: true })).toBeVisible();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-local-ready-without-cli.png'));
   await workbench.getByRole('button', { name: /Build an agent/ }).click();
-  const studio = page.getByTestId('salesforce-agent-script-panel');
+  const studio = studioIn(page);
   const editor = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(studio.getByTestId('salesforce-agent-script-no-file')).toBeVisible();
   await studio.getByRole('button', { name: 'Browse org agents', exact: true }).click();
@@ -1213,6 +1262,8 @@ test('Salesforce readiness: local authoring without CLI, project org selection a
   await dialog.getByRole('button', { name: 'Create agent', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(editor.locator('.view-lines')).toContainText('Offline_support');
+  // The org agents opened in the host side panel; hide it to check the workbench on its own.
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
   expect(existsSync(join(projectRoot, 'agentforce-drafts/force-app/main/default/aiAuthoringBundles/Offline_support/Offline_support.agent'))).toBe(true);
   await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
   await expect(workbench.getByRole('button', { name: 'Sign in to an org' })).toBeVisible();
@@ -1283,7 +1334,7 @@ test('Salesforce illustrated states: editor and agents loading, empty results, r
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-editor-loading.png'));
     releaseEditor();
     await expect(editorLoading).toHaveCount(0);
-    const studio = page.getByTestId('salesforce-agent-script-panel');
+    const studio = studioIn(page);
     await studio.getByRole('button', { name: 'Browse org agents' }).click();
     const loading = studio.getByRole('status').filter({ hasText: 'Loading agents…' });
     await expect(loading).toBeVisible();
@@ -1308,6 +1359,8 @@ test('Salesforce illustrated states: editor and agents loading, empty results, r
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-agents-unavailable-narrow-light.png'));
     const state = studio.locator('.sf-state[data-kind=error]');
     expect(await state.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    // The narrow window's side panel covers the page until it is closed.
+    await sidePanel(page).getByTestId('thread-secondary-hide').click();
     await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Run a query to see records.' })).toBeVisible();
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-data-empty-light.png'));

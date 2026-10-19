@@ -24,6 +24,19 @@ const slots = vi.hoisted(() => ({
       title: 'Live board',
       layout: 'padded' as const,
       scopes: ['agent-session'] as const
+    },
+    {
+      pluginId: 'tasks',
+      id: 'page-tool',
+      title: 'Page tool',
+      scopes: ['plugin-page'] as const
+    },
+    {
+      pluginId: 'tasks',
+      id: 'board-tool',
+      title: 'Board tool',
+      scopes: ['plugin-page'] as const,
+      pages: ['board']
     }
   ] as Omit<PluginThreadPanelActionRegistration, 'generation' | 'component'>[],
   compose: [{ pluginId: 'tasks', id: 'compose', title: 'Compose tasks' }] as Omit<PluginNewThreadPanelActionRegistration, 'generation' | 'component'>[]
@@ -223,6 +236,27 @@ describe('ThreadNewTabPage', () => {
     expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-live"');
     expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-board"');
     expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-compose"');
+  });
+
+  it('lists only the page owner\'s plugin-page actions beside a plugin page', () => {
+    const html = (page: { pluginId: string; page: string }) => renderToStaticMarkup(
+      <ThreadNewTabPage
+        projectId="p1"
+        cwd={null}
+        panelScope="plugin-page"
+        page={page}
+        onOpenFile={() => undefined}
+        onOpenBrowser={() => undefined}
+        onOpenPlugin={() => undefined}
+      />
+    );
+    const list = html({ pluginId: 'tasks', page: 'list' });
+    expect(list).toContain('data-testid="thread-new-tab-plugin-tasks-page-tool"');
+    expect(list).not.toContain('data-testid="thread-new-tab-plugin-tasks-board-tool"');
+    expect(list).not.toContain('data-testid="thread-new-tab-plugin-tasks-board"');
+    expect(list).not.toContain('data-testid="thread-new-tab-plugin-tasks-compose"');
+    expect(html({ pluginId: 'tasks', page: 'board' })).toContain('data-testid="thread-new-tab-plugin-tasks-board-tool"');
+    expect(html({ pluginId: 'gus', page: 'board' })).not.toContain('thread-new-tab-plugin-tasks-');
   });
 
   it('invokes threadPanelAction.run before opening a tab', async () => {

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 
 const desktop = vi.hoisted(() => ({
   api: null as object | null
 }));
 const emptyActions = vi.hoisted(() => [] as never[]);
+const pageActions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
 vi.mock('../../lib/desktop-browser.js', () => ({
   getDesktopBrowserApi: () => desktop.api
@@ -19,7 +20,7 @@ vi.mock('../../store.js', () => ({
 }));
 vi.mock('../../plugins/plugin-slots.js', () => ({
   subscribePluginSlots: () => () => undefined,
-  listThreadPanelActions: () => emptyActions,
+  listThreadPanelActions: () => pageActions,
   listNewThreadPanelActions: () => emptyActions
 }));
 vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
@@ -49,6 +50,27 @@ vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
       )
   )
 }));
+vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
+  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId }: {
+    moduleId: string;
+    actionId?: string;
+    params?: unknown;
+    layout?: string;
+    surface?: string;
+    projectId: string | null;
+    tabId?: string;
+  }) => (
+    <div
+      data-testid="plugin-tool"
+      data-tool={`${moduleId}/${actionId}`}
+      data-params={JSON.stringify(params ?? null)}
+      data-layout={layout ?? ''}
+      data-surface={surface ?? ''}
+      data-project={projectId ?? ''}
+      data-tab={tabId ?? ''}
+    />
+  )
+}));
 vi.mock('../../lib/app-surface.js', () => ({
   hasDesktopBridge: () => desktop.api !== null,
   getAppSurface: () => 'desktop'
@@ -56,6 +78,7 @@ vi.mock('../../lib/app-surface.js', () => ({
 
 import { pluginPanelBrowserOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
 import { parsePanelAgentTarget, requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
+import { requestPluginPanelTool, usePluginPagePanel } from '../../plugins/plugin-page-panel.js';
 
 beforeEach(() => {
   class ResizeObserverStub {
@@ -69,6 +92,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
+  pageActions.length = 0;
 });
 
 const desktopApi = () => ({
@@ -303,6 +327,102 @@ describe('PluginPanelHostLayout', () => {
     expect(screen.queryByTestId('agent-composer')).toBeNull();
     view.unmount();
     desktop.api = null;
+  });
+
+  it('opens the page\'s own tools from the page and from the New Tab page', () => {
+    desktop.api = desktopApi();
+    pageActions.push(
+      { pluginId: 'salesforce', id: 'studio-graph', title: 'Graph view', scopes: ['plugin-page'], pages: ['salesforce'], layout: 'flush' },
+      { pluginId: 'salesforce', id: 'studio-test', title: 'Test', scopes: ['plugin-page'] },
+      { pluginId: 'salesforce', id: 'thread-only', title: 'Thread tool' },
+      { pluginId: 'gus', id: 'gus-tool', title: 'Gus tool', scopes: ['plugin-page'] }
+    );
+    function Page() {
+      return <div data-testid="page-panel">{JSON.stringify(usePluginPagePanel())}</div>;
+    }
+    const view = render(
+      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1" launchers={false}>
+        <Page />
+      </PluginPanelHostLayout>
+    );
+    expect(JSON.parse(screen.getByTestId('page-panel').textContent!)).toEqual({ pluginId: 'salesforce', page: 'salesforce' });
+    expect(requestPluginPanelTool('salesforce', { actionId: 'thread-only' })).toBe(false);
+    expect(requestPluginPanelTool('gus', { actionId: 'gus-tool' })).toBe(false);
+    expect(screen.queryByTestId('plugin-tool')).toBeNull();
+
+    let shown = false;
+    act(() => {
+      shown = requestPluginPanelTool('salesforce', { actionId: 'studio-graph', params: { node: 'n1' } });
+    });
+    expect(shown).toBe(true);
+    const tool = () => screen.getByTestId('plugin-tool');
+    expect(tool().dataset).toMatchObject({ tool: 'salesforce/studio-graph', params: '{"node":"n1"}', layout: 'flush', surface: 'plugin-page', project: 'p1' });
+    // Asking again focuses the same tab with the new params.
+    act(() => {
+      requestPluginPanelTool('salesforce', { actionId: 'studio-graph', params: { node: 'n2' } });
+    });
+    expect(tabLabels()).toEqual(['Close Graph view']);
+    expect(tool().dataset.params).toBe('{"node":"n2"}');
+
+    // The New Tab page lists only this page's tools.
+    fireEvent.click(screen.getByTestId('thread-secondary-new-tab'));
+    expect(screen.getByTestId('thread-new-tab-plugin-salesforce-studio-test')).toBeTruthy();
+    expect(screen.queryByTestId('thread-new-tab-plugin-salesforce-thread-only')).toBeNull();
+    expect(screen.queryByTestId('thread-new-tab-plugin-gus-gus-tool')).toBeNull();
+    fireEvent.click(screen.getByTestId('thread-new-tab-plugin-salesforce-studio-test'));
+    expect(tool().dataset.tool).toBe('salesforce/studio-test');
+    expect(tabLabels()).toEqual(['Close Graph view', 'Close Test']);
+
+    // Closing the shown tab shows the last one left (this panel has no Info pin to fall back to).
+    fireEvent.click(screen.getByRole('button', { name: 'Close Test' }));
+    expect(tabLabels()).toEqual(['Close Graph view']);
+    expect(tool().dataset.tool).toBe('salesforce/studio-graph');
+    expect(tool().dataset.tab).toMatch(/\S/);
+
+    view.unmount();
+    expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph' })).toBe(false);
+    desktop.api = null;
+  });
+
+  it('answers only its own page in split panes', () => {
+    desktop.api = desktopApi();
+    pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph view', scopes: ['plugin-page'] });
+    const asks: Record<string, () => void> = {};
+    function Page({ name }: { name: string }) {
+      const sidePanel = usePluginPagePanel() ?? undefined;
+      asks[name] = () => {
+        requestPluginPanelTool('salesforce', { actionId: 'studio-graph' }, sidePanel);
+        requestPluginPanelAgent({ pluginId: 'salesforce', threadId: `t-${name}` }, sidePanel);
+      };
+      return null;
+    }
+    const view = render(<>
+      <div data-testid="pane-a"><PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="pa" launchers={false}><Page name="a" /></PluginPanelHostLayout></div>
+      <div data-testid="pane-b"><PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="pb" launchers={false}><Page name="b" /></PluginPanelHostLayout></div>
+    </>);
+    act(() => asks.b());
+    const paneA = screen.getByTestId('pane-a');
+    const paneB = screen.getByTestId('pane-b');
+    expect(paneA.querySelector('[data-testid="agent-chat"], [data-testid="plugin-tool"]')).toBeNull();
+    expect(paneB.querySelector('[data-testid="agent-chat"]')?.textContent).toBe('t-b');
+    expect(within(paneB).getAllByRole('button', { name: /^Close / }).map((button) => button.getAttribute('aria-label'))).toEqual(['Close Graph view', 'Close Agent']);
+    view.unmount();
+    desktop.api = null;
+  });
+
+  it('gives a page without a host panel no side-panel context', () => {
+    desktop.api = null;
+    function Page() {
+      return <div data-testid="page-panel">{String(usePluginPagePanel())}</div>;
+    }
+    render(
+      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce">
+        <Page />
+      </PluginPanelHostLayout>
+    );
+    expect(screen.getByTestId('page-panel').textContent).toBe('null');
+    pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph', scopes: ['plugin-page'] });
+    expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph' })).toBe(false);
   });
 
   it('refuses an empty or oversized draft', () => {

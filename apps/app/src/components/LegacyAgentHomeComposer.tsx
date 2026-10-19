@@ -1,7 +1,7 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUp, Folder, Loader2, Mic, Paperclip } from 'lucide-react';
+import { ArrowUp, Folder, Loader2, Paperclip } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
 import type {
   EffectiveHarnessDefaultResult,
@@ -21,6 +21,7 @@ import {
 } from './ui/CommandComposer.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
+import { VoiceMicButton } from './thread/voice/VoiceMicButton.js';
 import { useData, usePersonas, useUi } from '../store.js';
 import { inspectAgentSession } from '../lib/inspect-session.js';
 import { useShallow } from 'zustand/react/shallow';
@@ -46,6 +47,7 @@ import {
 } from '../plugins/plugin-composer-api.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
+import { useComposerSession, useComposerSetting } from './composer/ComposerDraft.js';
 import {
   composerProvidersFromCatalog,
   fallbackModelsForProvider,
@@ -122,6 +124,7 @@ export function LegacyAgentHomeComposer({
   onLaunched?: (session: TerminalSession, projectId: string) => void;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
+  const session = useComposerSession();
   const navigate = useNavigate();
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
@@ -141,7 +144,7 @@ export function LegacyAgentHomeComposer({
   const pushToast = useUi((s) => s.pushToast);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const lastProjectId = useData((s) => s.lastProjectId);
-  const [internalProjectId, setInternalProjectId] = useState(
+  const [internalProjectId, setInternalProjectId] = useComposerSetting(session, 'projectId',
     pinnedProject?.id ?? composerProjectId ?? ''
   );
   const projectId = pinnedProject?.id
@@ -152,33 +155,34 @@ export function LegacyAgentHomeComposer({
     onComposerProjectIdChange?.(resolved);
   };
   const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
-  const [familyId, setFamilyId] = useState<HarnessFamily | ''>(
+  const [familyId, setFamilyId] = useComposerSetting<HarnessFamily | ''>(session, 'cli.family',
     () => familyForThreadProviderId(rememberedProviderId() ?? '') ?? ''
   );
-  const [automaticProfile, setAutomaticProfile] = useState<LaunchProfileId | null>(null);
+  const [automaticProfile, setAutomaticProfile] = useComposerSetting<LaunchProfileId | null>(session, 'cli.automaticProfile', null);
   const [selectionState, setSelectionState] = useState<'loading' | 'resolved' | 'unavailable'>('loading');
   const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(null);
   const [selectionMessage, setSelectionMessage] = useState<string | null>(null);
-  const [selectionProvenance, setSelectionProvenance] = useState<'automatic' | 'explicit'>('automatic');
-  const [modelId, setModelId] = useState(() => {
+  const [selectionProvenance, setSelectionProvenance] = useComposerSetting<'automatic' | 'explicit'>(session, 'cli.provenance', 'automatic');
+  const [modelId, setModelId] = useComposerSetting(session, 'cli.model', () => {
     const providerId = rememberedProviderId();
     return providerId ? rememberedSelectionFor(providerId)?.model ?? '' : '';
   });
+  const [explicitModel, setExplicitModel] = useComposerSetting(session, 'cli.modelExplicit', false);
   // OpenCode native-role selection (`--agent <role>`). Roles come from the SAME
   // ACP session-mode list the Modern composer uses (`catalogEntry.acpMode`), so
   // both surfaces show an identical, plain-named list. Non-opencode harnesses
   // have no role axis.
-  const [roleTargetId, setRoleTargetId] = useState<string | undefined>(undefined);
+  const [roleTargetId, setRoleTargetId] = useComposerSetting<string | undefined>(session, 'cli.role', undefined);
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
+  const [workspace, setWorkspace] = useComposerSetting<WorkspacePickerValue>(session, `cli.workspace.${projectId}`, () => defaultWorkspaceChoice(false));
   const [projectWorktreeIsolation, setProjectWorktreeIsolation] = useState<boolean | undefined>(undefined);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [extraArgs, setExtraArgs] = useState<string[]>([]);
-  const [personaId, setPersonaId] = useState('');
-  const [workMode, setWorkMode] = useState<ComposerWorkMode>('agent');
+  const [extraArgs, setExtraArgs] = useComposerSetting<string[]>(session, `cli.extraArgs.${familyId}`, () => readCliExtraArgs(familyId));
+  const [personaId, setPersonaId] = useComposerSetting(session, 'cli.persona', '');
+  const [workMode, setWorkMode] = useComposerSetting<ComposerWorkMode>(session, `cli.workMode.${familyId}`, 'agent');
   const launchPatch = useSyncExternalStore(
     subscribeLaunchPatches,
     getMergedLaunchPatch,
@@ -200,10 +204,6 @@ export function LegacyAgentHomeComposer({
   const selectedHarness = descriptors.find((descriptor) => descriptor.id === familyId);
   const unrestrictedId = unrestrictedProfileId(selectedHarness?.profiles);
 
-  useEffect(() => {
-    setExtraArgs(readCliExtraArgs(familyId));
-    setWorkMode('agent');
-  }, [familyId]);
   const catalogHostId = catalogScope.hostId;
   const hostCatalog = threadModelCatalogForHost(catalogHostId, catalogScope.projectId);
   const catalog = useSyncExternalStore(hostCatalog.subscribe, hostCatalog.getSnapshot, hostCatalog.getSnapshot);
@@ -222,7 +222,7 @@ export function LegacyAgentHomeComposer({
     [catalogPermissionModes, unrestrictedId]
   );
   const permissionOptions = permissionModeOptionsFor(permissionModeIds);
-  const { permissionMode, setPermissionMode } = useThreadPermissionMode({ supportedModes: permissionModeIds });
+  const { permissionMode, setPermissionMode, selectionError: permissionSelectionError } = useThreadPermissionMode({ supportedModes: permissionModeIds, session, settingKey: 'cli.permissionMode' });
   // CLI Agents and Modern threads share the project's live model catalog.
   const preferHostModels = true;
   const nativeModelSelection = selectedHarness?.modelSelection === 'native-only';
@@ -331,10 +331,8 @@ export function LegacyAgentHomeComposer({
       if (roleTargetId) setRoleTargetId(undefined);
       return;
     }
-    if (roleTargetId && !openCodeModeEntries.some((entry) => entry.nativeValue === roleTargetId)) {
-      setRoleTargetId(undefined);
-    }
-  }, [familyId, openCodeModeEntries, roleTargetId]);
+    // Retain unavailable roles; authoritative launch preflight rejects them.
+  }, [catalogEntry, familyId, openCodeModeEntries, roleTargetId]);
 
   useEffect(() => {
     const generation = ++descriptorGeneration.current;
@@ -403,15 +401,16 @@ export function LegacyAgentHomeComposer({
   // Project id the user explicitly picked a workspace for. The async settings
   // load must not overwrite that pick with the (late-arriving) default.
   const workspacePickedForRef = useRef<string | null>(null);
+  const [workspaceExplicit, setWorkspaceExplicit] = useComposerSetting(session, `cli.workspaceExplicit.${projectId}`, false);
   useEffect(() => {
     if (!project) return;
     if (project.quickAgent || project.remote) {
       setWorkspace({ kind: 'personal' });
       return;
     }
-    if (workspacePickedForRef.current === project.id) return;
+    if (workspacePickedForRef.current === project.id || workspaceExplicit) return;
     setWorkspace(defaultWorkspaceChoice(worktreeIsolation));
-  }, [project?.id, project?.quickAgent, project?.remote, worktreeIsolation]);
+  }, [workspaceExplicit, project?.id, project?.quickAgent, project?.remote, worktreeIsolation]);
 
   // Resolve a concrete model like the Modern composer instead of resting on
   const fallbackModel = defaultOfferedComposerModel(
@@ -423,6 +422,7 @@ export function LegacyAgentHomeComposer({
   // missing (do not wait on inflight — first paint has not started the fetch).
   // Persist last-used only after a live/fallback reconcile, never a loading snap.
   useEffect(() => {
+    if (explicitModel) return;
     if (nativeModelSelection) {
       if (modelId) setModelId('');
       if (selectedProviderId && rememberedProviderId() !== selectedProviderId) {
@@ -433,7 +433,7 @@ export function LegacyAgentHomeComposer({
     if (familyId === 'opencode' && roleTargetId) return;
     const loading = Boolean(preferHostModels && selectedProviderId && !catalogEntry);
     const next = preferredComposerModel({
-      rememberedModel: selectedProviderId ? rememberedSelectionFor(selectedProviderId)?.model : undefined,
+      rememberedModel: modelId || (selectedProviderId ? rememberedSelectionFor(selectedProviderId)?.model : undefined),
       currentModel: modelId,
       persistRemembered: true,
       offeredModels: offeredModelIds,
@@ -446,6 +446,7 @@ export function LegacyAgentHomeComposer({
       rememberComposerSelection({ providerId: selectedProviderId, model: next });
     }
   }, [
+    explicitModel,
     catalogEntry,
     fallbackModel,
     familyId,
@@ -596,6 +597,11 @@ export function LegacyAgentHomeComposer({
   );
 
   const launch = async () => {
+    if (permissionSelectionError) { setError(permissionSelectionError); return; }
+    if (explicitModel && catalogEntry && !nativeModelSelection && !roleTargetId && modelId && !offeredModelIds.includes(modelId)) {
+      setError('The saved model is unavailable. Choose an available model before launching.');
+      return;
+    }
     if (!project || !familyId || launching || !remoteHarnessReady || selectionState !== 'resolved' || resolvedProjectId !== projectId) return;
     // An absolute path after whitespace is syntactically a slash-command query.
     // When it matches nothing, the menu shows "No matching commands"; do not let
@@ -615,6 +621,7 @@ export function LegacyAgentHomeComposer({
     }
     setError(null);
     setLaunching(true);
+    const revision = field.captureRevision();
     try {
       const serialized = field.serialize();
       let promptText = serialized.text;
@@ -713,7 +720,7 @@ export function LegacyAgentHomeComposer({
         onError: setError
       });
       if (!session) return;
-      field.clear();
+      field.clearIfRevision(revision);
       if (onLaunched) {
         onLaunched(session, project.id);
       } else {
@@ -825,9 +832,9 @@ export function LegacyAgentHomeComposer({
                     setAutomaticProfile(null);
                     const restored = rememberedSelectionFor(nextProviderId)?.model ?? '';
                     setModelId(restored);
+                    setExplicitModel(false);
                     rememberComposerSelection({ providerId: nextProviderId, model: restored });
                     setRoleTargetId(undefined);
-                    setWorkMode('agent');
                     setSelectionProvenance('explicit');
                     setSelectionState('resolved');
                     setResolvedProjectId(projectId);
@@ -856,6 +863,7 @@ export function LegacyAgentHomeComposer({
                     : undefined}
                   onModelChange={(value) => {
                     setModelId(value);
+                    setExplicitModel(true);
                     if (selectedProviderId && value) {
                       rememberComposerSelection({ providerId: selectedProviderId, model: value });
                     }
@@ -872,28 +880,7 @@ export function LegacyAgentHomeComposer({
                     <Paperclip size={14} aria-hidden="true" />
                   </ComposerIconButton>
                 </span>
-                <span className="composer-control-tooltip" data-tooltip={
-                    !voice.isSupported
-                      ? 'Voice input is not supported in this browser'
-                      : !voice.available
-                        ? 'Host daemon is not connected'
-                        : 'Start voice input'
-                  }>
-                  <ComposerIconButton
-                    className="voice-input-btn voice-input-btn--icon"
-                    aria-label={
-                      !voice.isSupported
-                        ? 'Voice input is not supported in this browser'
-                        : !voice.available
-                          ? 'Host daemon is not connected'
-                          : 'Start voice input'
-                    }
-                    disabled={!voice.canStart}
-                    onClick={() => void voice.start()}
-                  >
-                    <Mic size={14} />
-                  </ComposerIconButton>
-                </span>
+                <VoiceMicButton voice={voice} />
                 <ComposerIconButton
                     className={`thread-command-send${launching ? ' is-sending' : ''}`}
                     aria-label={launching ? 'Launching agent' : 'Launch agent'}
@@ -950,6 +937,7 @@ export function LegacyAgentHomeComposer({
               value={workspace}
               onChange={(next) => {
                 workspacePickedForRef.current = project.id;
+                setWorkspaceExplicit(true);
                 setWorkspace(next);
               }}
               allowPersonal={Boolean(project.quickAgent)}

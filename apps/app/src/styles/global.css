@@ -5126,13 +5126,15 @@ body.resizing-col {
   flex: 1;
   min-height: 0;
 }
-/* The tab's page inside its agent side-panel host fills the same column. */
-.project-ext-tab .plugin-panel-host-layout > .split-plugin-main {
+/* The tab's page inside its side-panel host (main or its own window) fills the same column. */
+.project-ext-tab .plugin-panel-host-layout > .split-plugin-main,
+.plugin-view-body .plugin-panel-host-layout > .split-plugin-main {
   display: flex;
   flex-direction: column;
   overflow: auto;
 }
-.project-ext-tab .plugin-panel-host-layout > .split-plugin-main > * {
+.project-ext-tab .plugin-panel-host-layout > .split-plugin-main > *,
+.plugin-view-body .plugin-panel-host-layout > .split-plugin-main > * {
   flex: 1;
   min-height: 0;
 }

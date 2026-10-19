@@ -779,7 +779,6 @@ export const IPC = {
   },
   voice: {
     transcribe: 'voice:transcribe',
-    hasApiKey: 'voice:hasApiKey',
     ensureMicAccess: 'voice:ensureMicAccess'
   },
   /**

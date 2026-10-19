@@ -127,6 +127,8 @@ export type SystemVoiceTranscriptionResponse = z.infer<
 
 export const systemVoiceStatusResponseSchema = z.object({
   enabled: z.boolean(),
+  /** Why voice is unavailable; null/absent when enabled. */
+  reason: z.enum(["disabled", "no_host", "ambiguous_host", "auth_missing"]).nullable().optional(),
 });
 export type SystemVoiceStatusResponse = z.infer<
   typeof systemVoiceStatusResponseSchema

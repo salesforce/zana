@@ -89,7 +89,8 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           '`header: "custom"` removes that title row; render the supplied `headerActions` in your toolbar to retain split-pane controls.',
           '`global: false` hides the global sidebar entry.',
           '`detachable: true` adds Open in new window (desktop). One window per project owns the tab; other windows show `detachedPlaceholder` (`focusWindow()`, `bringBack()`) or a host card. In that window `useZccContext().surface` is `"plugin-view"`.',
-          '`useWindowTitle({ title, detail, badge, tone })` titles that window while mounted, e.g. a `danger` "Production" badge; elsewhere it does nothing.'
+          '`useWindowTitle({ title, detail, badge, tone })` titles that window while mounted, e.g. a `danger` "Production" badge; elsewhere it does nothing.',
+          'Sits beside the host side panel, also in its own window (`useZccContext().sidePanel`). `openPanelAgent` shows a conversation or prefills a composer there; `openPanelTool` opens one of your `"plugin-page"` thread-panel tabs. Both return false without a side panel, so keep a fallback.'
         ],
         apiSymbols: ['PluginAppSlots.projectTab', 'PluginProjectTabRegistration', 'PluginDetachedTabProps', 'useWindowTitle', 'ZccWindowTitle'],
         firstParty: ['Library', 'Salesforce']
@@ -207,7 +208,10 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'Render the tab and receive the thread id (or CLI-agent session id when scoped).',
           'Open from a message action, the + / New Tab list, or `openPanel`.',
           'Omit `run` to open immediately. `layout` is `padded` or `flush`.',
-          '`scopes` default to `["thread"]`. Include `"agent-session"` for the CLI-agent inspector.'
+          '`scopes` default to `["thread"]`. Include `"agent-session"` for the CLI-agent inspector.',
+          'Include `"plugin-page"` to list the tab beside your own pages; `pages` narrows it to some `navPanel` / `projectTab` ids. Open it from the page with `useZccNavigate().openPanelTool`.',
+          'The `surface` prop says which side panel shows the tab; `threadId` is empty beside a plugin page.',
+          '`tabId` is stable across tab switches and new when a closed tab reopens, so state can reset there.'
         ],
         firstParty: ['Tasks', 'Side chat', 'Workflows']
       },

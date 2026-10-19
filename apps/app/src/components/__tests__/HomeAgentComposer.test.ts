@@ -122,8 +122,8 @@ describe('ThreadCommandComposer initial text', () => {
     expect(source).toContain('initialText?: string');
     expect(source).toContain('initialText,');
     expect(source).toContain('useComposerPromptField');
-    expect(field).toContain('seededInitialText');
-    expect(field).toContain('editor.chain().insertContent(initialText)');
+    expect(field).toContain('seededFor');
+    expect(field).toContain('editor.chain().clearContent().insertContent(initialText)');
     expect(field).toContain('if (autoFocus) chain.focus()');
   });
 
@@ -228,16 +228,15 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('searchable={false}');
     expect(source).toContain("tone: row.tone");
     expect(source).toContain('VoiceRecordingBar');
-    expect(source).toContain('Start voice input');
+    expect(source).toContain('<VoiceMicButton voice={voice}');
     expect(source).toContain('className="composer-control-tooltip"');
     expect(source).toContain('field.canAttach');
-    expect(source).toContain('!voice.isSupported');
     expect(source).toContain('expandTestId="thread-command-expand"');
     expect(source).toContain('<ThreadContextMeter');
     expect(source).toContain('contextWindowUsage');
     expect(source).toContain('onCompact=');
     expect(source.indexOf('Attach files')).toBeLessThan(source.indexOf('<ThreadContextMeter'));
-    expect(source.indexOf('<ThreadContextMeter')).toBeLessThan(source.indexOf('Start voice input'));
+    expect(source.indexOf('<ThreadContextMeter')).toBeLessThan(source.indexOf('<VoiceMicButton'));
     expect(source).not.toContain('thread-command-context-group');
     expect(source).toContain('onTranscript');
     expect(source).not.toContain('Queue if active');
@@ -250,7 +249,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).not.toContain('showLegacyAgent');
     expect(source).not.toContain('onSelectLegacyAgent');
     expect(source).toContain('reasoningLevel: options.reasoningLevel');
-    expect(source).not.toContain('options.acpModeOptions.length > 0');
+    expect(source).toContain('const composerModeError = hasComposerMode');
     expect(source).not.toContain('<NativeRolePicker');
     expect(source).not.toContain('ariaLabel="Execution mode"');
     expect(source).toContain('<ComposerSendModePicker');
@@ -266,7 +265,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("selectedComposerMode?.usesSlashPlan ? 'plan' : 'agent'");
     expect(source).toContain('executionModeRequested');
     expect(source).toContain('entry.id === next || entry.nativeValue === next');
-    expect(source).toContain('setComposerMode(matched.id)');
+    expect(source).toContain('setDefaultComposerMode(matched.id)');
+    expect(source).toContain('if (!threadId || hasComposerMode) return;');
     expect(source).toContain('composerModeEntries');
     expect(source).toContain('visibleAcpModeOptions');
     expect(source).toContain('initialAcpMode: executionModeRequested');

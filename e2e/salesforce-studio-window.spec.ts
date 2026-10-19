@@ -129,6 +129,20 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
   await expect(title).toHaveText('Agentforce · Help — dx · studio');
   await expect(studio).toHaveTitle(/^Agentforce · Help — dx · studio — /);
 
+  // The window keeps the host side panel beside the tab, so Studio's tools open there too.
+  const studioPanel = studio.getByTestId('salesforce-agent-script-panel');
+  const sidePanel = studio.getByTestId('plugin-panel-host-layout').getByTestId('thread-secondary-panel');
+  await expect(studio.getByTestId('plugin-panel-agent-show')).toHaveCount(0);
+  await expect(studioPanel.locator('.af-tools')).toHaveCount(0);
+  await studioPanel.locator('.af-document-bar').getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(sidePanel).toBeVisible();
+  await expect(sidePanel.locator('.thread-secondary-tab.is-active')).toContainText('Preview');
+  await expect(sidePanel.locator('.sf-panel-tool[data-studio-tool="preview"]').getByTestId('preview-workbench')).toBeVisible();
+  await sidePanel.getByTestId('thread-secondary-new-tab').click();
+  await expect(sidePanel.getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toBeVisible();
+  await sidePanel.getByTestId('thread-secondary-hide').click();
+  await expect(sidePanel).toBeHidden();
+
   // An org chosen in the Studio window reaches the main card without a reload.
   const picker = workbench.getByTestId('salesforce-org-picker');
   await expect(picker).toBeEnabled();

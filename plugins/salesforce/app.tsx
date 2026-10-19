@@ -11,6 +11,14 @@ import { SalesforceOrgsPanel } from './src/app/SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './src/app/SalesforceProjectTab.js';
 import { SalesforceStudioDetachedCard } from './src/app/SalesforceStudioDetachedCard.js';
 import { openAgentforcePlayground, openAgentforcePreview } from './src/app/agentforce-panel-params.js';
+import { AGENT_SCRIPT_TOOLS } from './src/app/AgentScriptTools.js';
+import { studioPanelTool } from './src/app/studio/StudioPanelTool.js';
+import { isPanelTool, panelToolActionId } from './src/app/studio/studio-tool-bridge.js';
+
+const STUDIO_TOOL_ICONS: Record<string, string> = {
+  agents: 'Bot', graph: 'Network', preview: 'Play', test: 'FlaskConical', release: 'Rocket',
+  actions: 'Zap', comments: 'MessageSquare', 'org-preview': 'Cloud'
+};
 
 function hostReact() {
   return (globalThis as { __ZCC_HOST_REACT__?: typeof import('react') }).__ZCC_HOST_REACT__;
@@ -193,6 +201,20 @@ export default definePluginApp((app) => {
     scopes: ['thread', 'agent-session'],
     component: AgentforcePreviewPanel
   });
+  // Studio's tools in the side panel beside the Salesforce tab; Studio renders them (studio-tool-bridge).
+  for (const tool of AGENT_SCRIPT_TOOLS) {
+    if (!isPanelTool(tool.id)) continue;
+    app.slots.threadPanelAction({
+      id: panelToolActionId(tool.id),
+      title: tool.title,
+      category: 'Agent Script Studio',
+      icon: STUDIO_TOOL_ICONS[tool.id],
+      layout: 'flush',
+      scopes: ['plugin-page'],
+      pages: ['salesforce'],
+      component: studioPanelTool(tool.id, tool.title)
+    });
+  }
   app.slots.experimental_createProjectAction({
     id: 'dx-project',
     title: 'Salesforce project',

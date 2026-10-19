@@ -117,6 +117,13 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      # The public feed is served live from main, so a merged entry must be
+      # schema-valid and its committed catalogs regenerated.
+      - name: Marketplace catalog check
+        run: |
+          node marketplace/scripts/build.mjs --check
+          npm test --prefix marketplace
+
       - name: Tasks tests with package configuration and coverage
         run: pnpm exec vitest run --config plugins/tasks/vitest.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory="$GITHUB_WORKSPACE/coverage/tasks"
 

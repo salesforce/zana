@@ -172,7 +172,7 @@ import {
 import {
   transcribeVoiceOnHost,
   VoiceTranscriptionError,
-  voiceTranscriptionEnabled
+  voiceTranscriptionStatus
 } from '../services/threads/voice-transcription.js';
 import { cliSkillsStatus, installCliSkills } from '../services/skills/cli-skills.js';
 import { toPluginAppSnapshot } from '../plugins/plugin-service.js';
@@ -3701,12 +3701,18 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/system/voice-status' && method === 'GET') {
-      sendJson(response, 200, { enabled: voiceTranscriptionEnabled(ctx) });
+      sendJson(response, 200, await voiceTranscriptionStatus(ctx));
       return true;
     }
 
     if (path === '/api/v1/system/voice-transcription' && method === 'POST') {
       const contentType = headerValue(request.headers, 'content-type') ?? '';
+      // Gate before buffering: with dictation off, a client must not make the
+      // server read and parse up to 25MB just to receive a 403.
+      if (!ctx.config.getConfig().voiceInputEnabled) {
+        sendJson(response, 403, { error: 'voice_disabled', message: 'Voice input is turned off in Settings → Experimental' });
+        return true;
+      }
       if (!contentType.toLowerCase().startsWith('multipart/form-data')) {
         sendJson(response, 415, { error: 'content-type must be multipart/form-data' });
         return true;

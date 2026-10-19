@@ -105,21 +105,21 @@ export function ExperimentalView({
         searchId="experimental.voice-input"
         anchorId="voice-input"
         title="Voice input (dictation)"
-        help="Push-to-talk dictation. Audio is transcribed through Codex ChatGPT login on this machine (`codex login`). An OpenAI API key is only an optional fallback."
+        help="Push-to-talk dictation. Audio is transcribed through the Codex ChatGPT login on the connected computer (`codex login`). An OPENAI_API_KEY set on that computer is only an optional fallback."
       >
         <CheckboxField
           searchId="experimental.voice-input-enabled"
           label="Enable voice input (dictation)"
-          help="Shows the mic button in the prompt composer so you can dictate instead of type. The agent composer already includes a mic."
+          help="Shows the mic button in every composer so you can dictate instead of type. It stays disabled, with the reason on hover, until the connected computer has a Codex login or OPENAI_API_KEY."
           checked={config.voiceInputEnabled ?? false}
           onChange={(v) => onUpdate({ voiceInputEnabled: v })}
         />
         {config.voiceInputEnabled && (
           <>
             <p className="settings-note">
-              Voice uses Codex credentials from <strong>~/.codex/auth.json</strong> when present.
-              If Codex is not signed in, it can fall back to <strong>OPENAI_API_KEY</strong> or the
-              OpenAI key under Settings → LLM Providers.
+              Voice uses Codex credentials from <strong>~/.codex/auth.json</strong> on the connected computer when present.
+              If Codex is not signed in there, it can fall back to an <strong>OPENAI_API_KEY</strong> in that
+              computer&apos;s environment.
             </p>
             <Field searchId="experimental.voice-model" label="Fallback transcription model">
               <PopoverPicklist

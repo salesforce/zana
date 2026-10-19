@@ -1,5 +1,5 @@
 import { product } from '../lib/product-client.js';
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { Terminal as TerminalIcon } from 'lucide-react';
@@ -13,7 +13,8 @@ import { TeamComposer } from './TeamComposer.js';
 import { ThreadCommandComposer } from './ThreadCommandComposer.js';
 import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
 import { LaunchModeSegmented } from './LaunchModeSegmented.js';
-import { ComposerDraftProvider } from './composer/ComposerDraft.js';
+import { ComposerDraftProvider, useComposerSetting } from './composer/ComposerDraft.js';
+import { composerSession } from './composer/composer-session.js';
 import {
   resolveAvailableLaunchMode,
   visibleComposerLaunchModes,
@@ -102,6 +103,8 @@ export const AgentLauncher = memo(function AgentLauncher({
   onLaunched,
   initialPrompt
 }: Props) {
+  const sessionKey = JSON.stringify(['launcher', project?.id ?? null]);
+  const session = useMemo(() => composerSession(sessionKey), [sessionKey]);
   const restoreTerminal = useData((s) => s.restoreTerminal);
   const loadProjects = useData((s) => s.loadProjects);
   // PERF FIX: wrap array selectors in useShallow to prevent re-renders on every
@@ -119,13 +122,14 @@ export const AgentLauncher = memo(function AgentLauncher({
   // Target project for a SCRATCH-mode launch. `null` = the built-in scratch
   // workspace (the default). Unused in project mode (the target is fixed).
   const [targetProjectId] = useState<string | null>(null);
-  const [composerProjectId, setComposerProjectId] = useState(project?.id ?? '');
+  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? '');
   useEffect(() => {
     if (project?.id) setComposerProjectId(project.id);
   }, [project?.id]);
   // Launch mode: Modern thread (HTTP), CLI Agent (PTY spawn), or an autonomous
   // team run. Each mode mounts its own composer below. Last-used is the default.
   const [storedMode, setStoredMode] = useLaunchModePreference();
+  const [sessionMode, setSessionMode] = useComposerSetting(session, 'launchMode', storedMode);
   const teams = useTeams(useShallow((s) => s.teams));
   const composerShowCliAgent = useData((s) => s.composerShowCliAgent);
   const composerShowModern = useData((s) => s.composerShowModern);
@@ -136,7 +140,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     showModern: composerShowModern,
     showTeam: composerShowAutonomousTeam || teamJobLaunchEnabled
   }, { hasTeams: teams.length > 0 });
-  const mode = resolveAvailableLaunchMode(storedMode, available);
+  const mode = resolveAvailableLaunchMode(sessionMode, available);
   const showLaunchSwitcher = visibleLaunchModeCount(available) > 1;
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -239,7 +243,7 @@ export const AgentLauncher = memo(function AgentLauncher({
           <div className="launch-row">
             <LaunchModeSegmented
               value={mode}
-              onChange={setStoredMode}
+              onChange={mode => { setSessionMode(mode); setStoredMode(mode); }}
               showCliAgent={available.showCliAgent}
               showModern={available.showModern}
               showTeam={available.showTeam}
@@ -315,7 +319,7 @@ export const AgentLauncher = memo(function AgentLauncher({
 
   return createPortal(
     <div className="palette-backdrop" onMouseDown={onClose}>
-      <ComposerDraftProvider>{content}</ComposerDraftProvider>
+      <ComposerDraftProvider sessionKey={sessionKey} session={session}>{content}</ComposerDraftProvider>
     </div>,
     document.body
   );

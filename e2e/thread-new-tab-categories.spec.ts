@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test as base, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { createPluginStore, pluginStorePath } from '../apps/server/src/plugins/plugin-store.js';
 
 const test = base.extend({
@@ -10,7 +11,7 @@ const test = base.extend({
     writeFileSync(join(source, 'package.json'), JSON.stringify({
       name: '@zcc-ext/launcher-fixture', version: '0.1.0', type: 'module',
       engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
-      zcc: { name: 'Example tools', description: 'Launcher category fixture', app: './app.js' }
+      zcc: { name: 'Example tools', description: 'Launcher category fixture', branding: { icon: 'Puzzle' }, app: './app.js' }
     }));
     writeFileSync(join(source, 'app.js'), `export default {
       __zccPluginApp: true,
@@ -63,7 +64,7 @@ test('New Tab groups installed plugin tools, searches collapsed categories, and 
   await search.fill('');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await toggle.click();
-  await window.screenshot({ path: testInfo.outputPath('new-tab-categories.png') });
+  await captureElectronScreenshot(app.electron, window, testInfo.outputPath('new-tab-categories.png'));
   await search.fill('documents');
   await expect(launcher.getByRole('button', { name: 'Report', exact: true })).toBeVisible();
   await expect(launcher.getByRole('button', { name: 'Draft document', exact: true })).toBeVisible();

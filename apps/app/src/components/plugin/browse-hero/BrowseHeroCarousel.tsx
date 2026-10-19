@@ -64,6 +64,7 @@ export function BrowseHeroCarousel({
       {composing ? (
         <div className="ext-browse-hero-composer">
           <HomeAgentComposer
+            draftScope="plugin-browse"
             key={prompt}
             initialText={prompt || CREATE_PLUGIN_PROMPT}
             autoFocus={composing}

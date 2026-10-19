@@ -43,6 +43,17 @@ describe('ThreadPluginTab', () => {
     expect(html).not.toContain('Project is unavailable');
   });
 
+  it('tells the panel which side panel and tab show it, only when known', () => {
+    projects.actions = [{
+      pluginId: 'example', id: 'inspect', title: 'Inspect', generation: 1,
+      component: (props) => <output>{JSON.stringify(props)}</output>
+    }];
+    expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" surface="plugin-page" />)).toContain('&quot;surface&quot;:&quot;plugin-page&quot;');
+    expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" />)).not.toContain('surface');
+    expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" tabId="plugin-1" />)).toContain('&quot;tabId&quot;:&quot;plugin-1&quot;');
+    expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" />)).not.toContain('tabId');
+  });
+
   it('keeps unavailable project context optional for native panels', () => {
     projects.actions = [{
       pluginId: 'example', id: 'inspect', title: 'Inspect', generation: 1,

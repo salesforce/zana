@@ -33,6 +33,7 @@ vi.mock('../../store.js', () => ({
 
 vi.mock('../composer/use-composer-prompt-field.js', () => ({
   useComposerPromptField: () => ({
+    captureRevision: () => 0, clearIfRevision: vi.fn(),
     text: 'do the thing', images: [], editor: null, dropOver: false, dropHandlers: {}, canAttach: false,
     attachPickedFiles: vi.fn(), menuOpen: false, suggestions: [], highlighted: 0, triggerKind: null,
     applySuggestion: vi.fn(), handleChromeKeyDown: vi.fn(), typeaheadOpen: false,

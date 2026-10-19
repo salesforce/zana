@@ -55,6 +55,7 @@ import { registrationFor, invalidateHarnessModelCatalog } from './harness/regist
 import { HostCommandError } from './host-command-error.js';
 import { readConfinedFileRange } from './read-file-range.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
+import { probeCodexVoiceStatus } from './codex-voice-status.js';
 import { completeCodexInference } from './codex-inference-complete.js';
 import { getProviderCliStatus, runProviderCliInstall } from './provider-cli-health.js';
 import { installGlobalSkills, readGlobalSkillsStatus } from './global-skills.js';
@@ -1180,6 +1181,8 @@ export async function dispatchHostCommand(
       return completeCodexInference(command);
     case 'codex.voice.transcribe':
       return transcribeCodexVoice(command);
+    case 'codex.voice.status':
+      return probeCodexVoiceStatus();
     case 'interactive.resolve': {
       try {
         if (!runtime.deliverInteractiveResolve) {
