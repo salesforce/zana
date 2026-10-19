@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({ checkRemoteLogin: vi.fn(), join: vi.fn() }));
 vi.mock('../../../lib/product-client.js', () => ({ peerConnections: api }));
 
-import { JoinComputer } from './JoinComputer';
+import { invitationTokenFrom, JoinComputer } from './JoinComputer';
 
 const ID = '22222222-2222-4222-8222-222222222222';
 const base = { invitationId: ID, role: 'redeemer', state: 'redeeming', expiresAt: 1, awaitingApproval: false };
@@ -14,6 +14,13 @@ beforeEach(() => { api.checkRemoteLogin.mockReset(); api.join.mockReset().mockRe
 afterEach(cleanup);
 
 describe('JoinComputer', () => {
+  it('extracts an invitation token from a core peer link', () => {
+    expect(invitationTokenFrom(' zana-dev://peers/join?d=tok%2B1 ')).toBe('tok+1');
+    expect(invitationTokenFrom('zana://peers/join?d=tok')).toBe('tok');
+    expect(invitationTokenFrom('zccinv.token')).toBe('zccinv.token');
+    expect(invitationTokenFrom('https://example.test/?d=token')).toBe('https://example.test/?d=token');
+  });
+
   it('trims the pasted token, joins, and never checks Remote Login', async () => {
     const onChange = vi.fn();
     render(<JoinComputer connections={[]} onChange={onChange} />);
@@ -34,6 +41,13 @@ describe('JoinComputer', () => {
     expect(api.join).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
     await waitFor(() => expect(api.join).toHaveBeenCalledWith('tok-link'));
+  });
+
+  it('accepts a pasted core peer link', async () => {
+    render(<JoinComputer connections={[]} />);
+    fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'zana-dev://peers/join?d=tok%2B1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
+    await waitFor(() => expect(api.join).toHaveBeenCalledWith('tok+1'));
   });
 
   it('shows the pairing code large with the connects-out note', async () => {
@@ -69,9 +83,17 @@ describe('JoinComputer', () => {
     render(<JoinComputer connections={[]} onClose={onClose} />);
     fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'tok' } });
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
-    expect(await screen.findByText('expired')).toBeTruthy();
+    expect(await screen.findByText('This invitation expired. Create a new invitation on the other computer.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('explains that an already-redeemed invitation did not complete the connection', async () => {
+    api.join.mockResolvedValue({ ...base, state: 'failed', reason: 'already_redeemed' });
+    render(<JoinComputer connections={[]} />);
+    fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'tok' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
+    expect(await screen.findByText('A previous attempt already used this invitation but did not connect. Create a new invitation on the other computer and try again.')).toBeTruthy();
   });
 
   it('surfaces join errors', async () => {
