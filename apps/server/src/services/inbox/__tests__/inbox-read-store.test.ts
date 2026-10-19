@@ -177,4 +177,19 @@ describe('InboxReadStore', () => {
     const raw = JSON.parse(await readFile(readPath, 'utf-8')) as { readIds: Record<string, true> };
     expect(raw.readIds.orphan).toBeUndefined();
   });
+  it('accepts entries another process appended to the shared JSONL', async () => {
+    const [own] = await seed(1);
+    // Prime this process's id caches before the other process writes.
+    await store.markRead(own!);
+    const otherInbox = createInboxStore({ filePath: entriesPath, maxEntries: 50, quietMaxEntries: 0 });
+    const foreign = await otherInbox.append({ projectId: 'p1', comments: 'from server' });
+    expect(await inbox.hasId(foreign.id)).toBe(true);
+    const state = await store.markRead(foreign.id);
+    expect(state.readIds).toEqual({ [own!]: true, [foreign.id]: true });
+    await expect(store.getReadState()).resolves.toMatchObject({
+      readIds: { [own!]: true, [foreign.id]: true }
+    });
+    await otherInbox.delete(foreign.id);
+    await expect(store.getReadState()).resolves.toMatchObject({ readIds: { [own!]: true } });
+  });
 });

@@ -62,6 +62,8 @@ function mapHostError(error: unknown): never {
   throw error;
 }
 
+const WINDOWS_ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+
 /**
  * Map a renderer-supplied absolute path onto one registered local project.
  * Longest matching root wins. Lexical only — the host still realpath-confines.
@@ -70,17 +72,25 @@ export function authorizeProjectRelPath(
   projects: Project[],
   candidate: string
 ): { root: string; relPath: string; hostId?: string } | null {
-  if (typeof candidate !== 'string' || !isAbsolute(candidate)) return null;
+  // `isAbsolute` follows this server's OS; a Windows host's paths must still
+  // pass when the server runs on POSIX. Local projects re-check below.
+  if (typeof candidate !== 'string' || !(isAbsolute(candidate) || WINDOWS_ABSOLUTE_PATH.test(candidate))) return null;
   let best: { root: string; relPath: string; hostId?: string; len: number } | null = null;
   const matchingHosts = new Set<string | undefined>();
   for (const project of projects) {
     if (project.remote || !project.path) continue;
     if (project.hostId) {
-      const root = project.path.replace(/\/+$/, '') || '/';
-      const path = candidate.replace(/\/+$/, '') || '/';
+      // A Windows checkout's paths arrive with `\` separators and any letter
+      // case; only then fold them. On POSIX hosts `\` is a filename character.
+      const windowsRoot = WINDOWS_ABSOLUTE_PATH.test(project.path);
+      const normalize = (value: string) =>
+        (windowsRoot ? value.replace(/\\/g, '/') : value).replace(/\/+$/, '') || '/';
+      const fold = (value: string) => (windowsRoot ? value.toLowerCase() : value);
+      const root = normalize(project.path);
+      const path = normalize(candidate);
       let relPath: string | null = null;
-      if (path === root) relPath = '';
-      else if (path.startsWith(`${root}/`)) relPath = path.slice(root.length + 1);
+      if (fold(path) === fold(root)) relPath = '';
+      else if (fold(path).startsWith(`${fold(root)}/`)) relPath = path.slice(root.length + 1);
       if (relPath === null) continue;
       matchingHosts.add(project.hostId);
       if (!best || root.length > best.len) {
@@ -88,6 +98,7 @@ export function authorizeProjectRelPath(
       }
       continue;
     }
+    if (!isAbsolute(candidate)) continue;
     const resolved = resolve(candidate);
     const root = resolve(project.path);
     const rel = relative(root, resolved);

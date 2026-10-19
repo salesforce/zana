@@ -52,6 +52,9 @@ export default function plugin(zcc: ZccPluginApi) {
     id: "claude-code",
     displayName: "Claude Code",
     icon: "./icons/claude-code.svg",
+    // The daemon scrubs inherited variables before spawning the bridge; the
+    // executable override must be declared to reach `resolveClaudeCodeExecutable`.
+    env: { passthrough: ["ZCC_CLAUDE_CODE_EXECUTABLE", "BB_CLAUDE_CODE_EXECUTABLE"] },
     capabilities: {
       supportsServiceTier: false,
       supportsNativeUserQuestion: true,

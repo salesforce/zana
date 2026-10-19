@@ -402,6 +402,9 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
   let lineCountHint: number | null = null;
   let byteCountHint: number | null = null;
   let liveIds: Set<string> | null = null;
+  // Another process (desktop main vs. server) may append to the same JSONL, so
+  // the id cache is only trusted while the file's size/mtime are unchanged.
+  let liveIdsStamp: string | null = null;
 
   // In-process mutex. Every file-mutating critical section (append+compaction,
   // delete, deleteMany) appends itself to this promise chain so they run
@@ -707,7 +710,9 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
   }
 
   async function loadLiveIds(): Promise<Set<string>> {
-    if (liveIds) return liveIds;
+    const stamp = await stat(filePath).then((s) => `${s.size}:${s.mtimeMs}`, () => 'missing');
+    if (liveIds && liveIdsStamp === stamp) return liveIds;
+    liveIdsStamp = stamp;
     let raw: string;
     try {
       raw = await readFile(filePath, 'utf-8');

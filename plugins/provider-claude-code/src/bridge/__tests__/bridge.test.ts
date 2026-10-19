@@ -547,10 +547,13 @@ function createAssistantToolUseMessage(
   };
 }
 
+// Windows discovery only accepts a spawnable PE image, never a bare shim.
+const CLAUDE_EXECUTABLE_NAME = process.platform === "win32" ? "claude.exe" : "claude";
+
 function createTempClaudeExecutable(): TempClaudeExecutable {
   const binDir = mkdtempSync(join(tmpdir(), "bb-claude-path-"));
   tempDirs.push(binDir);
-  const executablePath = join(binDir, "claude");
+  const executablePath = join(binDir, CLAUDE_EXECUTABLE_NAME);
   writeFileSync(executablePath, "#!/bin/sh\nexit 0\n");
   chmodSync(executablePath, 0o755);
   return { binDir, executablePath };
@@ -1063,7 +1066,7 @@ describe("bridge", () => {
     tempDirs.push(homeDir);
     const localBinDir = join(homeDir, ".local", "bin");
     mkdirSync(localBinDir, { recursive: true });
-    const executablePath = join(localBinDir, "claude");
+    const executablePath = join(localBinDir, CLAUDE_EXECUTABLE_NAME);
     writeFileSync(executablePath, "#!/bin/sh\nexit 0\n");
     chmodSync(executablePath, 0o755);
 

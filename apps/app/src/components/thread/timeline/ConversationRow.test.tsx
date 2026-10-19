@@ -378,7 +378,7 @@ describe('ConversationRow mobile previews', () => {
     layout.compact = true;
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(72);
     vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(200);
-    const text = 'A long user message. '.repeat(150) + 'Last instruction.';
+    const text = 'A long user message. '.repeat(220) + 'Last instruction.';
     const onCopy = vi.fn();
     const onMessageExpand = vi.fn();
     render(<ConversationRow row={{ ...userRow, text }} threadId="t1" threadIdle onCopy={onCopy} onMessageExpand={onMessageExpand} />);
@@ -394,19 +394,54 @@ describe('ConversationRow mobile previews', () => {
     expect((screen.getByLabelText('Edit message') as HTMLTextAreaElement).value).toBe(text);
   });
 
-  it('reveals a mobile search result and preserves the desktop and assistant overflow controls', () => {
-    const text = 'Long message. '.repeat(180) + 'Hidden search match.';
+  it('reveals a mobile search result, never collapses assistant replies, and caps huge desktop prompts', () => {
+    const text = 'Long message. '.repeat(320) + 'Hidden search match.';
     layout.compact = true;
     const { container, rerender } = render(<ConversationRow row={{ ...userRow, text }} forceExpanded />);
     expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy();
     expect(screen.getByText(/Hidden search match/)).toBeTruthy();
     rerender(<ConversationRow key="assistant" row={{ ...assistantRow, text }} />);
     expect(container.querySelector('.mobile-message-preview')).toBeNull();
-    expect(screen.getByTestId('thread-message-overflow').textContent).toBe('Show more');
+    expect(screen.queryByTestId('thread-message-overflow')).toBeNull();
+    expect(screen.getByText(/Hidden search match/)).toBeTruthy();
     layout.compact = false;
     rerender(<ConversationRow key="desktop" row={{ ...userRow, text }} />);
     expect(container.querySelector('.mobile-message-preview')).toBeNull();
+    expect(screen.queryByText(/Hidden search match/)).toBeNull();
     fireEvent.click(screen.getByTestId('thread-message-overflow'));
     expect(screen.getByText(/Hidden search match/)).toBeTruthy();
+    expect(screen.getByTestId('thread-message-overflow').getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
+describe('ConversationRow desktop prompt collapse', () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it('shows the toggle only when the rendered prompt is taller than the clamp', () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(100);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(100);
+    const { container, unmount } = render(<ConversationRow row={{ ...userRow, text: 'A short prompt.' }} />);
+    expect(screen.queryByTestId('thread-message-overflow')).toBeNull();
+    expect(container.querySelector('.thread-message-collapsible')?.getAttribute('data-collapsed')).toBe('true');
+    unmount();
+    height.mockReturnValue(400);
+    const view = render(<ConversationRow row={{ ...userRow, text: 'Line\n'.repeat(40) }} />);
+    const toggle = screen.getByTestId('thread-message-overflow');
+    expect(toggle.textContent).toBe('Show more');
+    expect(view.container.querySelector('.thread-message-collapsible')?.getAttribute('data-overflowing')).toBe('true');
+    fireEvent.click(toggle);
+    expect(toggle.textContent).toBe('Show less');
+    expect(view.container.querySelector('.thread-message-collapsible')?.hasAttribute('data-collapsed')).toBe(false);
+    expect(screen.getByTestId('thread-message-overflow')).toBe(toggle);
+    fireEvent.click(screen.getByTestId('thread-message-overflow'));
+    expect(screen.getByTestId('thread-message-overflow').textContent).toBe('Show more');
+  });
+
+  it('does not clamp assistant replies however tall they render', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(4000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(100);
+    const { container } = render(<ConversationRow row={{ ...assistantRow, text: 'Paragraph.\n\n'.repeat(80) }} />);
+    expect(screen.queryByTestId('thread-message-overflow')).toBeNull();
+    expect(container.querySelector('.thread-message-collapsible')).toBeNull();
   });
 });
