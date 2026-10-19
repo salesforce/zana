@@ -84,14 +84,14 @@ describe('Use for Design Docs', () => {
     fakePolling();
     mount({ connections: async () => [state], useConnection: use });
     fireEvent.click(await screen.findByRole('button', { name: 'Use for Design Docs' }));
-    expect(await screen.findByText('Waiting for approval on both computers')).toBeTruthy();
+    expect(await screen.findByText('Requesting approval on both computers')).toBeTruthy();
     expect(use).toHaveBeenCalledExactlyOnceWith({ computerId: 'app-b' });
     await waitFor(() => expect((screen.getByRole('button', { name: 'Use for Design Docs' }) as HTMLButtonElement).disabled).toBe(true));
     // Core's sheet approves it; the next fast poll shows the computer as used.
     state = used();
     await tick(PEER_PENDING_POLL_MS);
     expect(await screen.findByRole('button', { name: 'Stop using' })).toBeTruthy();
-    expect(screen.queryByText('Waiting for approval on both computers')).toBeNull();
+    expect(screen.queryByText('Requesting approval on both computers')).toBeNull();
   });
 
   it('polls slowly until a row is pending', async () => {
@@ -114,7 +114,7 @@ describe('Use for Design Docs', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Use was denied. You can ask again.');
     state = conn({ use: 'pending' });
     fireEvent.click(screen.getByRole('button', { name: 'Use for Design Docs' }));
-    await screen.findByText('Waiting for approval on both computers');
+    await screen.findByText('Requesting approval on both computers');
     expect(screen.queryByText(/Use was denied/)).toBeNull();
     cleanup();
     mount({ connections: async () => [conn({ use: 'denied' })] });
@@ -159,6 +159,16 @@ describe('Repair and unsynced', () => {
     await waitFor(() => expect(repair).toHaveBeenCalledExactlyOnceWith({ peerId: 'app-b' }));
     await waitFor(() => expect(screen.getByTestId('repair-note').textContent).toBe('Sync set up'));
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('shows active setup instead of offering a second repair', async () => {
+    const status = { ...EMPTY, setup: { peerId: 'app-b', repoId: 'database', state: 'pending' as const, error: null } };
+    mount({ connections: async () => [used({ syncing: false })], groupStatus: async () => status });
+    const card = await screen.findByRole('listitem');
+    expect(within(card).getByText('Setting up sync')).toBeTruthy();
+    expect(within(card).getByText('Waiting for the other computer to finish setup.')).toBeTruthy();
+    expect(within(card).queryByRole('button', { name: 'Repair' })).toBeNull();
+    expect(within(card).getByRole('button', { name: 'Stop using' })).toHaveProperty('disabled', true);
   });
 
   it('an unused computer or a syncing one has no Repair', async () => {

@@ -144,7 +144,7 @@ export function AddComputer({ connections, onChange, onClose }: AddComputerProps
           ) : (
             <p className="peers-loading" role="status">{mine && mine.state !== 'open' ? `Status: ${mine.state}` : 'Waiting for the other computer to join…'}</p>
           )}
-          {onClose && <div className="peers-dialog-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button></div>}
+          {onClose && <div className="peers-dialog-actions"><button type="button" className="btn" onClick={onClose}>Close</button></div>}
         </>
       )}
     </div>

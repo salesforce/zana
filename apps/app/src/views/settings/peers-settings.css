@@ -47,7 +47,8 @@
 .peers-approve p { margin: 0; font-size: 13px; }
 .peers-approve-fingerprint code { overflow-wrap: anywhere; }
 .peers-approve-label { display: grid; gap: 4px; font-size: 13px; }
-.peers-approve-input { font-family: var(--font-mono, monospace); letter-spacing: 0.08em; }
+.peers-approve-input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input, var(--bg-base)); color: var(--text-primary); font-family: var(--font-mono, monospace); letter-spacing: 0.08em; }
+.peers-approve-input:focus { outline: none; border-color: var(--accent-blue); box-shadow: 0 0 0 1px var(--accent-blue); }
 .peers-approve-hint { color: var(--text-muted); font-size: 12px; }
 .peers-link-entry { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .peers-link-header-empty { display: none; }

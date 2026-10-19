@@ -118,10 +118,13 @@ export function labelsOf(connections: readonly ConnectionView[]): Map<string, st
 }
 
 /** A computer row's status badge (dot + short label) and, when there is more to say, one detail line. */
-interface ComputerBadge { state: 'unsynced' | 'connected' | 'reconnecting' | 'disconnected' | 'removing'; label: string; detail?: string }
+interface ComputerBadge { state: 'setting-up' | 'unsynced' | 'connected' | 'reconnecting' | 'disconnected' | 'removing'; label: string; detail?: string }
 
 function computerStatus(c: ConnectionView, status: GroupStatus | null): ComputerBadge {
   if (c.retiring) return { state: 'removing', label: 'Being removed', detail: 'Waiting for committed frontier; data sync disabled' };
+  if (c.usedByThisPlugin && status?.setup?.peerId === c.computerId) {
+    return { state: 'setting-up', label: 'Setting up sync', detail: 'Waiting for the other computer to finish setup.' };
+  }
   // Core shows this connection as Connected; say database sync is missing unless this computer actually syncs with it.
   if (c.usedByThisPlugin && c.state === 'connected' && !c.syncing) {
     return { state: 'unsynced', label: 'Connected, sync not set up',
@@ -143,6 +146,7 @@ function ComputerRow({ c, label, status, busy, note, denied, onUse, onStop, onRe
 }) {
   const badge = computerStatus(c, status);
   const pending = c.use === 'pending';
+  const settingUp = badge.state === 'setting-up';
   return (
     <li className="dd-peers-card" data-state={c.state}>
       <div className="dd-peers-card-head">
@@ -152,14 +156,14 @@ function ComputerRow({ c, label, status, busy, note, denied, onUse, onStop, onRe
           {badge.state === 'unsynced' ? <button type="button" className="btn dd-btn-secondary" disabled={busy} onClick={onRepair}
             title="Retry Design Docs sync setup. Reconnect the computer from Settings → Peers if its connection needs repair.">Repair</button> : null}
           {c.usedByThisPlugin ? (
-            <button type="button" className="btn" disabled={busy} onClick={onStop}>Stop using</button>
+            <button type="button" className="btn" disabled={busy || settingUp} onClick={onStop}>Stop using</button>
           ) : (
             <button type="button" className="btn primary" disabled={busy || pending} onClick={onUse}>Use for Design Docs</button>
           )}
         </span>
       </div>
       {badge.detail ? <p className="dd-peers-hint dd-peers-status">{badge.detail}</p> : null}
-      {!c.usedByThisPlugin && pending ? <p role="status" className="dd-peers-hint dd-peers-status">Waiting for approval on both computers</p> : null}
+      {!c.usedByThisPlugin && pending ? <p role="status" className="dd-peers-hint dd-peers-status">Requesting approval on both computers</p> : null}
       {!c.usedByThisPlugin && !pending && (denied || c.use === 'denied') ? <p role="alert" className="dd-peers-hint dd-peers-status">Use was denied. You can ask again.</p> : null}
       {note ? <p className="dd-peers-hint dd-peers-status dd-peers-note" data-ok={note.ok} data-testid="repair-note">{note.text}</p> : null}
     </li>

@@ -166,7 +166,7 @@ export const DESIGN_DOCS_STYLES = `
 .dd-peers-badge { --dd-dot: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; font-size: 11px; line-height: 1.4; color: var(--text-muted); cursor: default; user-select: none; }
 .dd-peers-badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--dd-dot); flex: none; }
 .dd-peers-badge[data-state='connected'] { --dd-dot: var(--success); color: var(--success); }
-.dd-peers-badge[data-state='unsynced'], .dd-peers-badge[data-state='reconnecting'], .dd-peers-badge[data-state='paused'], .dd-peers-badge[data-state='removing'] { --dd-dot: var(--warning, #b7791f); color: var(--warning, #b7791f); }
+.dd-peers-badge[data-state='setting-up'], .dd-peers-badge[data-state='unsynced'], .dd-peers-badge[data-state='reconnecting'], .dd-peers-badge[data-state='paused'], .dd-peers-badge[data-state='removing'] { --dd-dot: var(--warning, #b7791f); color: var(--warning, #b7791f); }
 .dd-peers-badge[data-state='disconnected'], .dd-peers-badge[data-state='not-syncing'] { --dd-dot: var(--danger, #d33); color: var(--danger, #d33); }
 .dd-peers-card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; margin-left: auto; padding-left: 12px; border-left: 1px solid var(--border); }
 .dd-btn-remove.btn { color: var(--danger, #d33); border-color: var(--danger, #d33); background: transparent; font-weight: 500; }

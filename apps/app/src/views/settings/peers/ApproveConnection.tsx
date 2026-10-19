@@ -59,7 +59,7 @@ export function ApproveConnection({ hostname, fingerprint, onApprove, onDeny, bu
       </label>
       {error && <p className="peers-error" role="alert">{error}</p>}
       <div className="peers-actions">
-        <button type="button" className="btn" disabled={!code || disabled} onClick={() => void submit()}>Approve</button>
+        <button type="button" className="btn primary" disabled={!code || disabled} onClick={() => void submit()}>Approve</button>
         <button type="button" className="btn peers-btn-remove" disabled={disabled} onClick={onDeny}>Deny</button>
       </div>
     </div>
