@@ -48,10 +48,29 @@ describe('ThreadPluginTab', () => {
       pluginId: 'example', id: 'inspect', title: 'Inspect', generation: 1,
       component: (props) => <output>{JSON.stringify(props)}</output>
     }];
-    expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" surface="plugin-page" />)).toContain('&quot;surface&quot;:&quot;plugin-page&quot;');
+    expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" surface="thread" />)).toContain('&quot;surface&quot;:&quot;thread&quot;');
     expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" />)).not.toContain('surface');
     expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" tabId="plugin-1" />)).toContain('&quot;tabId&quot;:&quot;plugin-1&quot;');
     expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" />)).not.toContain('tabId');
+  });
+
+  it('shows a tool only in the side panels it opens in', () => {
+    projects.current = [{ id: 'p1', name: 'Alpha', path: '/tmp/alpha' }];
+    projects.actions = [{
+      pluginId: 'example', id: 'graph', title: 'Graph', generation: 1, scopes: ['plugin-page'], pages: ['studio'],
+      component: (props) => <output>{JSON.stringify(props)}</output>
+    }];
+    const page = { pluginId: 'example', page: 'studio' };
+    expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="graph" projectId="p1" surface="plugin-page" page={page} />)).toContain('&quot;surface&quot;:&quot;plugin-page&quot;');
+    // In a thread, or beside another page, it is not the plugin's whole project tab either.
+    for (const html of [
+      renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="graph" projectId="p1" threadId="t1" surface="thread" />),
+      renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="graph" projectId="p1" surface="plugin-page" page={{ pluginId: 'example', page: 'orgs' }} />)
+    ]) {
+      expect(html).toContain('Graph is not available in this panel.');
+      expect(html).not.toContain('<output>');
+      expect(html).not.toContain('plugin</div>');
+    }
   });
 
   it('keeps unavailable project context optional for native panels', () => {
