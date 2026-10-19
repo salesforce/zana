@@ -4,6 +4,7 @@ import {
   activateClosableTab,
   addClosableTab,
   openAgentDraft,
+  openPluginTool,
   closeClosableTab,
   closeSecondaryPanel,
   openNewTab,
@@ -281,6 +282,7 @@ export function createSecondaryPanelCommands(
       update((current) => addClosableTab(current, tab))
     ),
     openAgentDraft: (input: { title: string; draft: string; projectId?: string; view?: string }) => update((current) => openAgentDraft(current, input)),
+    openPluginTool: (input: Parameters<typeof openPluginTool>[1]) => update((current) => openPluginTool(current, input)),
     closeTab: (tabId: string) => update((current) => closeClosableTab(current, tabId)),
     activateTab: (tabId: string) => update((current) => activateClosableTab(current, tabId)),
     patchTab: (tabId: string, patch: Partial<Omit<ClosableSecondaryTab, 'id' | 'kind'>>) => (

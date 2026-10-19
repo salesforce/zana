@@ -30,6 +30,7 @@ import { installPluginRuntime } from './plugin-runtime.js';
 import { PluginRuntimeContext } from './PluginSlotBoundary.js';
 import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
 import { getPluginViewTitle } from './plugin-view-title.js';
+import { PluginPagePanelProvider } from './plugin-page-panel.js';
 
 const studio = { pluginId: 'sales', tabId: 'studio', projectId: 'p-1' };
 
@@ -44,7 +45,7 @@ function registerTabs() {
   );
 }
 
-function renderRuntime(path = '/') {
+function renderRuntime(path = '/', sidePanel = false) {
   installPluginRuntime();
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: PluginSdkApp }).__ZCC_PLUGIN_RUNTIME__!;
   const out = { navigate: null as ZccNavigate | null, context: null as ZccContext | null, path: '' };
@@ -57,9 +58,11 @@ function renderRuntime(path = '/') {
   }
   render(
     <MemoryRouter initialEntries={[path]}>
-      <PluginRuntimeContext.Provider value={{ pluginId: 'sales', generation: 0 }}>
-        <Probe />
-      </PluginRuntimeContext.Provider>
+      <PluginPagePanelProvider page={{ pluginId: sidePanel ? 'sales' : 'other', page: 'studio' }}>
+        <PluginRuntimeContext.Provider value={{ pluginId: 'sales', generation: 0 }}>
+          <Probe />
+        </PluginRuntimeContext.Provider>
+      </PluginPagePanelProvider>
     </MemoryRouter>
   );
   return out;
@@ -91,6 +94,11 @@ describe('plugin context surface', () => {
   it('reports a plugin view window and its project, with no thread', () => {
     h.view = studio;
     expect(renderRuntime('/threads/t-1').context).toEqual({ projectId: 'p-1', threadId: null, surface: 'plugin-view' });
+  });
+
+  it('reports the side panel beside a detached tab', () => {
+    h.view = studio;
+    expect(renderRuntime('/', true).context).toEqual({ projectId: 'p-1', threadId: null, surface: 'plugin-view', sidePanel: true });
   });
 });
 

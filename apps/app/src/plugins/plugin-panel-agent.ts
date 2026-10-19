@@ -20,6 +20,8 @@ export type PanelAgentTarget =
 export interface PluginPanelAgentRequest {
   pluginId: string;
   target: PanelAgentTarget;
+  /** The layout enclosing the asking page (its `PluginPagePanelProvider` value); only that one answers. */
+  page?: object;
   /** Set by the layout that showed the conversation. */
   handled: boolean;
 }
@@ -44,11 +46,11 @@ export function parsePanelAgentTarget(options: unknown): PanelAgentTarget | null
   return null;
 }
 
-export function requestPluginPanelAgent(args: { pluginId: string } & Record<string, unknown>): boolean {
+export function requestPluginPanelAgent(args: { pluginId: string } & Record<string, unknown>, page?: object): boolean {
   const { pluginId, ...options } = args;
   const target = parsePanelAgentTarget(options);
   if (!target) return false;
-  const detail: PluginPanelAgentRequest = { pluginId, target, handled: false };
+  const detail: PluginPanelAgentRequest = { pluginId, target, handled: false, ...(page ? { page } : {}) };
   window.dispatchEvent(new CustomEvent(PLUGIN_PANEL_AGENT_EVENT, { detail }));
   return detail.handled;
 }
@@ -56,11 +58,13 @@ export function requestPluginPanelAgent(args: { pluginId: string } & Record<stri
 /** Subscribe a plugin page's layout; returns the unsubscribe. */
 export function onPluginPanelAgentRequest(
   pluginId: string,
-  show: (target: PanelAgentTarget) => void
+  show: (target: PanelAgentTarget) => void,
+  page?: object
 ): () => void {
   const listener = (event: Event) => {
     const detail = (event as CustomEvent<PluginPanelAgentRequest>).detail;
     if (!detail || detail.handled || detail.pluginId !== pluginId) return;
+    if (detail.page && detail.page !== page) return;
     detail.handled = true;
     show(detail.target);
   };

@@ -16,6 +16,7 @@ import type {
   ZccContext,
   ZccNavigate,
   ZccPanelAgentOptions,
+  ZccPanelToolOptions,
   ZccWindowTitle
 } from '../app-contract.js';
 import { collectTestPluginApp } from './app.js';
@@ -35,6 +36,7 @@ export type NavigateCall =
       options: { actionId: string; title?: string; params?: unknown };
     }
   | { method: 'openPanelAgent'; options: ZccPanelAgentOptions }
+  | { method: 'openPanelTool'; options: ZccPanelToolOptions }
   | { method: 'openInWindow'; projectId: string; options?: { tabId?: string } };
 
 export interface RenderSlotOptions {
@@ -45,6 +47,11 @@ export interface RenderSlotOptions {
   realtimeConnectionState?: 'connecting' | 'connected' | 'reconnecting';
   /** Whether the page has a side panel to show agents in (`navigate.openPanelAgent`). Defaults to false. */
   panelAgent?: boolean;
+  /**
+   * Whether the page has a side panel for its tools (`navigate.openPanelTool`,
+   * `useZccContext().sidePanel`). Defaults to false.
+   */
+  panelTools?: boolean;
 }
 
 export interface RenderedSlot extends RenderResult {
@@ -104,7 +111,10 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
   const context: ZccContext = {
     projectId: options.context?.projectId ?? null,
     threadId: options.context?.threadId ?? null,
-    ...(options.context?.surface !== undefined ? { surface: options.context.surface } : {})
+    ...(options.context?.surface !== undefined ? { surface: options.context.surface } : {}),
+    ...(options.panelTools === true || options.context?.sidePanel !== undefined
+      ? { sidePanel: options.context?.sidePanel ?? true }
+      : {})
   };
   let composerText = options.composer?.text ?? '';
   const composerScope = options.composer?.scope ?? defaultComposerScope(context);
@@ -156,6 +166,10 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     openPanelAgent(agentOptions) {
       navigateCalls.push({ method: 'openPanelAgent', options: agentOptions });
       return options.panelAgent === true;
+    },
+    openPanelTool(toolOptions) {
+      navigateCalls.push({ method: 'openPanelTool', options: toolOptions });
+      return options.panelTools === true;
     },
     openInWindow(projectId, windowOptions) {
       navigateCalls.push({

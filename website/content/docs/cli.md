@@ -52,7 +52,7 @@ spawns. Throughout this doc, `zcc` means either form.
 
 | | Offline / file | Product HTTP | Control plane |
 |---|---|---|---|
-| Commands | `guide`; `plugin new` / `types` / `build`; `inbox` / `followup` / `personas ls` / `schedule ls` | `status`, `thread *`, `machine *`, `project *` / `projects ls`, `skill *`, `settings *`, `terminal *`, `environment *` | `plugin` install/dev/…, `marketplace *`, `agent ls`, `team ls`, `term reply` / `close-summary`, `schedule run-now` / enable / disable |
+| Commands | `guide`; `plugin new` / `types` / `build`; `inbox` / `followup` / `personas ls` / `schedule ls` | `status`, `thread *`, `machine *`, `project *` / `projects ls`, `skill *`, `settings *`, `terminal *`, `environment *` | `plugin` install/dev/…, `marketplace *`, `agent ls`, `team ls`, `term reply` / `close-summary`, `schedule runs` / retry / dismiss, `schedule run-now` / enable / disable |
 | App must be running? | **No** (`guide` and file reads) | **Yes** | **Yes** |
 | Override | — | `ZCC_SERVER_URL` | `~/.zcc/control.sock` + token |
 
@@ -83,15 +83,16 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
                            [--acp-mode <mode>] [--reasoning-level <level>] [--permission-mode <mode>]
                            [--title] [--wait]
   thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
-  thread background list|stop <id>
+  thread background list|stop <id> [itemId...]
   thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
+  thread notifications <id> [inherit|all|input-only|muted]
   machine list|show|join-code|rename|remove|provider-cli
   project list|show|create|files|content|skills|processes
   projects ls              Alias of project list
   skill list|show|files|cli-skills-status|install-cli-skills
   settings show|general|experiment|appearance
   terminal list|create|show|output|wait|send|close
-  team launch --team <id> --project <id> --goal "..." [--mode structured|freeform]
+  team launch --team <id> --project <id> --goal "..." [--mode freeform|structured]
   team status|wait|answer|stop <id>
   environment status|diff|diff-files|pull-request|processes <id>
   browser instances|tabs|create|acquire|connection|release|reveal|capture|close|watch|import-sources|import-cookies
@@ -123,6 +124,10 @@ LIVE CONTROL PLANE (app must be running):
   term reply <sessionId> <message>
   term close-summary <projectId> <sessionId...>
   schedule run-now|enable|disable <id>
+  schedule runs [--open|--problems|--all] [--outcome a,b] [--reason a,b]
+       [--since 24h|7d|ISO] [--project ID] [--schedule ID] [--limit N]
+  schedule retry <scheduleId:runId>... | --open [--dry-run]
+  schedule dismiss <scheduleId:runId>...
 ```
 
 ### Product verbs (preferred)
@@ -133,7 +138,7 @@ zcc thread spawn --project <id> --prompt "…" [--provider <id>] [--model <id>] 
 zcc thread list|show|tell|wait|stop
 zcc agent launch --project <id> --prompt "…" [--wait]
 zcc agent wait|reply|stop <id>
-zcc thread background list|stop <id>
+zcc thread background list|stop <id> [itemId...]
 zcc machine list
 zcc project list
 zcc skill install-cli-skills
@@ -270,11 +275,11 @@ zcc team ls --json
 
 ### `team launch|status|wait|answer|stop`
 
-Start and watch one durable Team execution. `--mode freeform` asks the coordinator to infer a plan; `--mode structured` (default) says the goal contains the plan. **Product API — needs the app running.**
+Start and watch one durable Team execution. `--mode freeform` (default) asks the coordinator to infer a plan from the goal. `--mode structured` says the goal itself contains a complete portable plan; a prose goal with `--mode structured` is refused with `INVALID_PLAN` (headless launches raise an Inbox notice instead of parking for correction). **Product API — needs the app running.**
 Launch, answer, and stop are operator-only.
 
 ```bash
-zcc team launch --team <id> --project <id> --goal "ship it" [--mode structured|freeform] [--wait]
+zcc team launch --team <id> --project <id> --goal "ship it" [--mode freeform|structured] [--wait]
 zcc team status <executionId>
 zcc team wait <id> [--timeout 5m]
 zcc team answer <id> --text "yes" [--blocker <blockerId>]
@@ -465,7 +470,8 @@ with `zcc project processes <id>` and stop selected pids with
 Stop leftover Bash:
 
 ```bash
-zcc thread background stop <id>          # tell the agent to KillShell
+zcc thread background stop <id> [itemId...]  # provider stops each task; the
+                                         # agent is asked for the rest
 zcc thread background stop <id> --force  # thread.stop (children usually die;
                                          # fully detached processes can leak)
 ```
@@ -567,6 +573,53 @@ zcc schedule disable 9f8e7d6c
 ```
 
 A missing schedule id is exit `2` for all three `schedule` live verbs.
+
+### `schedule runs`
+
+List scheduled runs across Projects: failed, skipped and missed runs that need
+attention. **Live tier — read** (also available inside agent terminals).
+
+```bash
+zcc schedule runs                       # open problems (default)
+zcc schedule runs --problems --since 7d
+zcc schedule runs --all --outcome error,missed --reason timeout,exit-nonzero
+zcc schedule runs --project 3c1f --schedule 9f8e7d6c --limit 20 --json
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--open` / `--problems` / `--all` | State filter, one of: unresolved problems from the last 7 days (default), every problem, or every run |
+| `--outcome a,b` | `success`, `error`, `skipped`, `incomplete`, `missed` |
+| `--reason a,b` | Reason codes, e.g. `exit-nonzero`, `timeout`, `concurrency-cap`, `missed-asleep`, `missed-app-closed` |
+| `--since <v>` | `30m`, `24h`, `7d`, `2w`, or an ISO time |
+| `--project <id>` / `--schedule <id>` | Narrow to a Project / a schedule (`--schedule` repeats, max 50) |
+| `--limit N` | 1-500 (default 100) |
+
+The table columns are WHEN (local time), SCHEDULE, OUTCOME, REASON, ATTEMPT and
+REF (`scheduleId:runId`, the handle for `retry` / `dismiss`). When the list is cut
+short a footer reads `N of TOTAL`. Bad flags are exit `2`.
+
+### `schedule retry`
+
+Retry problem runs, or run a missed time. **Live tier — mutating** (operator only;
+refused inside agent terminals). Up to 50 refs per call.
+
+```bash
+zcc schedule retry 9f8e7d6c:3a4b5c6d 1a2b3c4d:5e6f7a8b
+zcc schedule retry --open --dry-run     # list what would be retried
+zcc schedule retry --open               # retry every open retryable problem (up to 50)
+```
+
+One line per ref: `started`, `queued`, or `error  <ref>  <reason>`. The command exits `1` when any ref errored (output is still complete). `--dry-run` needs `--open` and changes nothing.
+
+### `schedule dismiss`
+
+Dismiss problem runs so they leave the open list (the run record is kept).
+**Live tier — mutating** (operator only). Up to 200 refs per call.
+
+```bash
+zcc schedule dismiss 9f8e7d6c:3a4b5c6d
+```
 
 ### `plugin` / `marketplace`
 

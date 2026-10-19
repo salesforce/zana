@@ -5126,13 +5126,15 @@ body.resizing-col {
   flex: 1;
   min-height: 0;
 }
-/* The tab's page inside its agent side-panel host fills the same column. */
-.project-ext-tab .plugin-panel-host-layout > .split-plugin-main {
+/* The tab's page inside its side-panel host (main or its own window) fills the same column. */
+.project-ext-tab .plugin-panel-host-layout > .split-plugin-main,
+.plugin-view-body .plugin-panel-host-layout > .split-plugin-main {
   display: flex;
   flex-direction: column;
   overflow: auto;
 }
-.project-ext-tab .plugin-panel-host-layout > .split-plugin-main > * {
+.project-ext-tab .plugin-panel-host-layout > .split-plugin-main > *,
+.plugin-view-body .plugin-panel-host-layout > .split-plugin-main > * {
   flex: 1;
   min-height: 0;
 }
@@ -36462,6 +36464,22 @@ body.split-frame-guard webview {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* A collapsed desktop prompt shows at most 15 lines; font metrics match the
+ * .inbox-md body so `lh` is one rendered line. */
+.thread-message-collapsible {
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.thread-message-collapsible[data-collapsed='true'] {
+  max-height: 15lh;
+  overflow: hidden;
+}
+
+.thread-message-collapsible[data-overflowing='true'] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2lh), transparent);
 }
 
 .thread-message-overflow-row {

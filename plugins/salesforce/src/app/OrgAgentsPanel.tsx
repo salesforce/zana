@@ -50,9 +50,10 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
   // A named request waiting for the inventory; `refreshed` once a miss has reloaded it.
   const pendingOpen = useRef<{ name: string; refreshed: boolean } | null>(null);
 
-  // Only a new request (seq) refocuses; the name travels with it.
+  // Only a new request (seq) refocuses; the name travels with it. A hidden panel (a host
+  // side-panel tab not attached yet) keeps the request until it shows, so the focus lands.
   useEffect(() => {
-    if (!focus) return;
+    if (!focus || !visible) return;
     setMissing(null);
     if (focus.name) {
       setQuery(focus.name);
@@ -65,7 +66,7 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
     if (!focus.name) search.current?.select();
     onFocusHandled?.(focus.seq);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus?.seq]);
+  }, [focus?.seq, visible]);
 
   // A named request opens that agent once the inventory and editor are ready.
   useEffect(() => {

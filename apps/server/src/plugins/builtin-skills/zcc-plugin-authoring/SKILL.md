@@ -214,8 +214,8 @@ export default definePluginApp((app) => {
 `isPluginAppDefinition` is the loader's type guard.
 `collectPluginApp` / `emptyRegistrationSet` collect registrations in tests.
 `threadPanelActionMatchesScope` (with `PLUGIN_THREAD_PANEL_SCOPES` /
-`DEFAULT_PLUGIN_THREAD_PANEL_SCOPES`) filters New Tab rows by `"thread"` or
-`"agent-session"`.
+`DEFAULT_PLUGIN_THREAD_PANEL_SCOPES`) filters New Tab rows by `"thread"`,
+`"agent-session"` or `"plugin-page"` (pass the page for the last).
 
 Frontend runtime exports you may import from `@zana-ai/zcc-plugin-sdk/app`:
 `definePluginApp`, `isPluginAppDefinition`, `callPluginRpc`,
@@ -286,9 +286,18 @@ app.slots.projectStatusbarItem({
   `zcc.ui.requestInput`. Component props: `interaction`, `submit`, `cancel`.
 - `threadPanelAction` — a closable tab in the thread right-hand side panel.
   Registration: `id`, `title`, `icon`, `component`, `layout` (`padded` | `flush`),
-  `scopes` (`"thread"` | `"agent-session"`, default `["thread"]`), `run`.
-  Props: `pluginId`, `threadId`, `params`. `threadId` is the thread, or the
-  CLI-agent session id when opened from an agent-session side panel.
+  `scopes` (`"thread"` | `"agent-session"` | `"plugin-page"`, default
+  `["thread"]`), `pages` (with `"plugin-page"`: the `navPanel` / `projectTab`
+  ids that list it; omit for all of this plugin's pages), `run`.
+  Props: `pluginId`, `projectId`, `threadId`, `params`, `surface`, `tabId`. `threadId` is
+  the thread, the CLI-agent session id when opened from an agent-session side
+  panel, or empty beside a plugin page. `tabId` stays the same while the user
+  switches tabs and changes when a closed tab is opened again (start fresh then).
+  `"plugin-page"` lists the tab in the side panel beside your own pages (never
+  another plugin's). Open it from the page with
+  `useZccNavigate().openPanelTool?.({ actionId, title?, params? })`; it returns
+  false when `useZccContext().sidePanel` is not true, so keep an in-page
+  fallback. `openPanelAgent` shows a conversation or prefills a composer there.
   Listed in + / New Tab. Omit `run` to open immediately; otherwise
   `run({ threadId, openPanel })` may call `openPanel({ title?, params? })`.
   Message actions and the command palette also receive `openPanel`.

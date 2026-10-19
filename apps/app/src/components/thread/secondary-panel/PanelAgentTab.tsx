@@ -4,6 +4,8 @@ import { ExternalLink, MessageSquare } from 'lucide-react';
 import { ThreadCommandComposer } from '../../ThreadCommandComposer.js';
 import { product } from '../../../lib/product-client.js';
 import { getThreadRoutePath } from '../../../lib/route-paths.js';
+import { getPluginViewTarget } from '../../../lib/pluginViewSurface.js';
+import { showInMainWindow } from '../../../plugins/plugin-view-windows.js';
 
 const ThreadDetailLazy = lazy(async () => {
   const mod = await import('../../../views/threads/ThreadDetailView.js');
@@ -150,7 +152,11 @@ function OpenAsThreadBar({ threadId }: { threadId: string }) {
           setBusy(true);
           setError(null);
           void product.threads.openAsThread(threadId)
-            .then(() => navigate(getThreadRoutePath(threadId)))
+            .then(() => {
+              // A plugin view window has no routes: the thread opens in the main window.
+              if (getPluginViewTarget()) void showInMainWindow(getThreadRoutePath(threadId));
+              else void navigate(getThreadRoutePath(threadId));
+            })
             .catch((err: unknown) => {
               setError(err instanceof Error ? err.message : 'Could not open as thread');
               setBusy(false);

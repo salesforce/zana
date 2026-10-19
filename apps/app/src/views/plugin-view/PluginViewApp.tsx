@@ -7,6 +7,7 @@ import { HostDialogs } from '@/components/HostDialogs';
 import { Toaster } from '@/components/Toaster';
 import { PluginThemesHost } from '@/plugins/PluginThemesHost';
 import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
+import { PluginPanelHostLayout } from '@/views/thread-detail/PluginPanelHostLayout';
 import { initPluginApps, reconcilePluginApps } from '@/plugins/plugin-app-loader';
 import { listProjectTabs, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { hrefForPluginProjectTab } from '@/plugins/plugin-nav-href';
@@ -133,12 +134,15 @@ export function PluginViewApp({ target }: { target: PluginViewSurfaceTarget }) {
             <button type="button" className="btn" onClick={bringBack}>Show in main window</button>
           </PaneEmptyState>
         ) : (
-          <PluginSlotBoundary pluginId={state.tab.pluginId} generation={state.tab.generation}>
-            {(() => {
-              const Component = state.tab.component;
-              return <Component pluginId={state.tab.pluginId} projectId={target.projectId} />;
-            })()}
-          </PluginSlotBoundary>
+          // The same side panel as in the main window, so agents and page tools open beside the tab here too.
+          <PluginPanelHostLayout pluginId={state.tab.pluginId} panelPath={state.tab.id} scopeId={target.projectId} launchers={false}>
+            <PluginSlotBoundary pluginId={state.tab.pluginId} generation={state.tab.generation}>
+              {(() => {
+                const Component = state.tab.component;
+                return <Component pluginId={state.tab.pluginId} projectId={target.projectId} />;
+              })()}
+            </PluginSlotBoundary>
+          </PluginPanelHostLayout>
         )}
       </main>
       <PluginThemesHost />

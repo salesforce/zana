@@ -75,7 +75,7 @@ describe('studio.askAgent', () => {
     viewStoreFor(h.zcc).publish('p1', { surface: 'studio', path: 'force-app/Help.agent', dirty: false, tool: 'code', diagnostics: [{ line: 4, column: 1, endLine: 4, endColumn: 3, severity: 'error', message: 'unknown topic' }], share: true, at: 1 });
     h.kv.set('studio:comments:p1', [{ id: 'c1', path: 'force-app/Help.agent', line: 1, endLine: 1, quote: 'q', body: 'tighten this', author: { kind: 'user', name: 'u' }, createdAt: 1 }]);
     const result = await h.call(STUDIO_RPC.askAgent, { path: 'force-app/Help.agent', action: 'review', providerId: 'prov' });
-    expect(result).toEqual({ ok: true, threadId: 't1' });
+    expect(result).toEqual({ ok: true, threadId: 't1', title: 'Review · Help.agent' });
     const spawned = h.spawn.mock.calls[0][0];
     expect(spawned).toMatchObject({ projectId: 'p1', visibility: 'visible', providerId: 'prov', pluginMetadata: { sfAgentPath: 'force-app/Help.agent', action: 'review' } });
     expect(spawned.title).toBe('Review · Help.agent');

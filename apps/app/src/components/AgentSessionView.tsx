@@ -336,6 +336,8 @@ function DesktopAgentSessionView({
         actionId={closable.actionId}
         params={closable.params}
         layout={closable.layout}
+        surface="agent-session"
+        tabId={closable.id}
       />
     );
   } else if (closable?.kind === 'explorer') {

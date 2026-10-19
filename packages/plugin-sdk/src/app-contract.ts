@@ -228,16 +228,32 @@ export interface PluginPendingInteractionRegistration extends PluginSlotBase {
   questionForm?: (interaction: PluginPendingInteractionView) => PluginQuestionForm;
 }
 
-export const PLUGIN_THREAD_PANEL_SCOPES = ['thread', 'agent-session'] as const;
+export const PLUGIN_THREAD_PANEL_SCOPES = ['thread', 'agent-session', 'plugin-page'] as const;
 export type PluginThreadPanelScope = (typeof PLUGIN_THREAD_PANEL_SCOPES)[number];
 export const DEFAULT_PLUGIN_THREAD_PANEL_SCOPES: readonly PluginThreadPanelScope[] = ['thread'];
 
+/** The plugin page whose side panel lists actions (`'plugin-page'` scope): its owner and page id. */
+export interface PluginThreadPanelPage {
+  pluginId: string;
+  /** The page's `projectTab` or `navPanel` id. */
+  page: string;
+}
+
+/**
+ * Whether a New Tab launcher lists an action. A plugin page's side panel lists
+ * only its owner's `'plugin-page'` actions, narrowed by `pages` when set; a
+ * `'plugin-page'` check without the page matches nothing.
+ */
 export function threadPanelActionMatchesScope(
-  action: { scopes?: readonly PluginThreadPanelScope[] },
-  scope: PluginThreadPanelScope
+  action: { pluginId?: string; scopes?: readonly PluginThreadPanelScope[]; pages?: readonly string[] },
+  scope: PluginThreadPanelScope,
+  page?: PluginThreadPanelPage
 ): boolean {
   const scopes = action.scopes ?? DEFAULT_PLUGIN_THREAD_PANEL_SCOPES;
-  return scopes.includes(scope);
+  if (!scopes.includes(scope)) return false;
+  if (scope !== 'plugin-page') return true;
+  if (!page || action.pluginId !== page.pluginId) return false;
+  return !action.pages || action.pages.includes(page.page);
 }
 
 export interface PluginThreadPanelProps {
@@ -246,10 +262,20 @@ export interface PluginThreadPanelProps {
   projectId?: string;
   /**
    * The thread id, or the CLI-agent session id when this tab was opened from
-   * an agent-session side panel (`scopes` includes `"agent-session"`).
+   * an agent-session side panel (`scopes` includes `"agent-session"`). Empty
+   * in a plugin page's side panel, which no conversation owns.
    */
   threadId: string;
   params: JsonValue | null;
+  /** Which side panel shows the tab. Absent on hosts before `'plugin-page'`; treat that as `'thread'`. */
+  surface?: PluginThreadPanelScope;
+  /**
+   * The side-panel tab showing the component. It stays the same while the user
+   * switches tabs and differs once the tab is closed and opened again, so a
+   * component can keep state across switches and start fresh in a new tab.
+   * Absent on older hosts.
+   */
+  tabId?: string;
 }
 
 export interface PluginThreadPanelActionContext {
@@ -268,9 +294,15 @@ export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
   /**
    * New Tab launchers that list this action. Default `['thread']` — thread
    * workbench only. Include `'agent-session'` to also list it on the CLI-agent
-   * inspector side panel.
+   * inspector side panel, and `'plugin-page'` to list it in the side panel of
+   * this plugin's own pages (never another plugin's).
    */
   scopes?: readonly PluginThreadPanelScope[];
+  /**
+   * With `'plugin-page'`: the `projectTab` / `navPanel` ids whose side panel
+   * lists this action. Omit to list it beside every page of this plugin.
+   */
+  pages?: readonly string[];
   run?(context: PluginThreadPanelActionContext): void | Promise<void>;
 }
 
@@ -815,6 +847,12 @@ export interface ZccContext {
   threadId: string | null;
   /** Absent on hosts that predate detachable tabs. */
   surface?: ZccSurface;
+  /**
+   * True when this page sits beside a host side panel, so `openPanelAgent`
+   * and `openPanelTool` can show tabs there. Absent or false elsewhere
+   * (thread-panel tabs, older hosts): keep any in-page fallback.
+   */
+  sidePanel?: boolean;
 }
 
 /** How much a window badge should stand out: `danger` for work that could hurt, `warning` for the unknown. */
@@ -862,11 +900,28 @@ export interface ZccNavigate {
    */
   openPanelAgent(options: ZccPanelAgentOptions): boolean;
   /**
+   * Open one of this plugin's `threadPanelAction` tabs in this page's side
+   * panel; the action must list `'plugin-page'` in `scopes` (and this page in
+   * `pages`, when set). An open tab for the same action is focused and given
+   * the new `params` instead of duplicated. False when the page has no side
+   * panel (`useZccContext().sidePanel` is not true) or the action does not
+   * match. Absent on older hosts.
+   */
+  openPanelTool?(options: ZccPanelToolOptions): boolean;
+  /**
    * Open one of this plugin's `detachable` project tabs in its own window, or
    * focus that window when it is already open. Resolves `false` outside the
    * desktop app or when the tab is not detachable. Absent on older hosts.
    */
   openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions): Promise<boolean>;
+}
+
+/** A `'plugin-page'` thread-panel action to show in the page's side panel. */
+export interface ZccPanelToolOptions {
+  actionId: string;
+  /** Tab label. Defaults to the action's title. */
+  title?: string;
+  params?: JsonValue;
 }
 
 /** A conversation to show, or a draft to prefill the side panel's composer with. */
@@ -1056,20 +1111,35 @@ function requireLayout(kind: string, value: unknown): 'padded' | 'flush' | undef
   return value;
 }
 
+function requireThreadPanelPages(
+  kind: string,
+  value: unknown,
+  scopes: readonly PluginThreadPanelScope[] | undefined
+): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!scopes?.includes('plugin-page')) {
+    throw new Error(`${kind}: "pages" needs "plugin-page" in "scopes"`);
+  }
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== 'string' || !item.trim())) {
+    throw new Error(`${kind}: "pages" must be a non-empty array of page ids`);
+  }
+  return [...new Set(value.map((item: string) => item.trim()))];
+}
+
 function requireThreadPanelScopes(
   kind: string,
   value: unknown
 ): readonly PluginThreadPanelScope[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${kind}: "scopes" must be a non-empty array of "thread" | "agent-session"`);
+    throw new Error(`${kind}: "scopes" must be a non-empty array of "thread" | "agent-session" | "plugin-page"`);
   }
   const allowed = new Set<string>(PLUGIN_THREAD_PANEL_SCOPES);
   const out: PluginThreadPanelScope[] = [];
   const seen = new Set<string>();
   for (const item of value) {
     if (typeof item !== 'string' || !allowed.has(item)) {
-      throw new Error(`${kind}: "scopes" must be a non-empty array of "thread" | "agent-session"`);
+      throw new Error(`${kind}: "scopes" must be a non-empty array of "thread" | "agent-session" | "plugin-page"`);
     }
     if (seen.has(item)) continue;
     seen.add(item);
@@ -1321,6 +1391,7 @@ export function collectPluginApp(
           throw new Error(`${kind}: "run" must be a function when set`);
         }
         const scopes = requireThreadPanelScopes(kind, registration.scopes);
+        const pages = requireThreadPanelPages(kind, registration.pages, scopes);
         const category = requireOptionalString(kind, 'category', registration.category)?.trim();
         set.threadPanelActions.push(
           stamp({
@@ -1335,6 +1406,7 @@ export function collectPluginApp(
               ? { layout: registration.layout }
               : {}),
             ...(scopes !== undefined ? { scopes } : {}),
+            ...(pages !== undefined ? { pages } : {}),
             ...(registration.run !== undefined ? { run: registration.run } : {})
           })
         );

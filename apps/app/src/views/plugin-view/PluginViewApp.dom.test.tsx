@@ -21,6 +21,11 @@ vi.mock('@/store', () => ({ useData: (select: (state: typeof h.state) => unknown
 vi.mock('@/components/HostDialogs', () => ({ HostDialogs: () => null }));
 vi.mock('@/components/Toaster', () => ({ Toaster: () => null }));
 vi.mock('@/plugins/PluginThemesHost', () => ({ PluginThemesHost: () => null }));
+vi.mock('@/views/thread-detail/PluginPanelHostLayout', () => ({
+  PluginPanelHostLayout: ({ pluginId, panelPath, scopeId, launchers, children }: { pluginId: string; panelPath: string; scopeId?: string; launchers?: boolean; children: ReactNode }) => (
+    <div data-testid="plugin-view-side-panel" data-page={`${pluginId}/${panelPath}`} data-scope={scopeId} data-launchers={String(launchers)}>{children}</div>
+  )
+}));
 vi.mock('@/plugins/PluginSlotBoundary', () => ({ PluginSlotBoundary: ({ children }: { children: ReactNode }) => children }));
 vi.mock('@/plugins/plugin-app-loader', () => ({
   initPluginApps: () => new Promise<void>((resolve) => { h.appsDone = resolve; }),
@@ -86,6 +91,8 @@ it('shows the detached tab under its own title strip and reconciles plugin app c
   h.title = { title: 'MyBot', detail: 'dev org', badge: 'Production', tone: 'danger' };
   const view = await mount();
   expect(screen.getByText('studio for p-1')).toBeTruthy();
+  // The detached tab keeps its side panel, opened by the page rather than launchers.
+  expect(screen.getByTestId('plugin-view-side-panel').dataset).toMatchObject({ page: 'salesforce/studio', scope: 'p-1', launchers: 'false' });
   expect(screen.getByTestId('plugin-view-title').textContent).toBe('MyBot — Acme · dev org');
   const badge = screen.getByTestId('plugin-view-title-badge');
   expect(badge.textContent).toBe('Production');

@@ -179,6 +179,39 @@ describe('definePluginApp', () => {
     expect(threadPanelActionMatchesScope({ scopes: ['thread', 'agent-session'] }, 'agent-session')).toBe(true);
   });
 
+  it('matches plugin-page actions only beside their own plugin\'s pages', () => {
+    const page = { pluginId: 'salesforce', page: 'salesforce' };
+    const any = { pluginId: 'salesforce', scopes: ['plugin-page'] as const };
+    expect(threadPanelActionMatchesScope(any, 'plugin-page', page)).toBe(true);
+    // Without the page nothing matches; another plugin's page never lists it.
+    expect(threadPanelActionMatchesScope(any, 'plugin-page')).toBe(false);
+    expect(threadPanelActionMatchesScope(any, 'plugin-page', { pluginId: 'gus', page: 'salesforce' })).toBe(false);
+    expect(threadPanelActionMatchesScope(any, 'thread', page)).toBe(false);
+    const narrowed = { ...any, pages: ['studio'] };
+    expect(threadPanelActionMatchesScope(narrowed, 'plugin-page', page)).toBe(false);
+    expect(threadPanelActionMatchesScope(narrowed, 'plugin-page', { pluginId: 'salesforce', page: 'studio' })).toBe(true);
+  });
+
+  it('collects plugin-page scopes with deduplicated pages and rejects bad pages', () => {
+    const collect = (registration: Record<string, unknown>) =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.threadPanelAction({ id: 'tool', title: 'Tool', component: () => null, ...registration });
+        })
+      ).threadPanelActions[0];
+    const action = collect({ scopes: ['plugin-page'], pages: [' studio ', 'studio', 'org'] });
+    expect(action?.scopes).toEqual(['plugin-page']);
+    expect(action?.pages).toEqual(['studio', 'org']);
+    expect(collect({ scopes: ['plugin-page'] })?.pages).toBeUndefined();
+    expect(() => collect({ pages: ['studio'] })).toThrow(/"pages" needs "plugin-page"/);
+    expect(() => collect({ scopes: ['thread'], pages: ['studio'] })).toThrow(/"pages" needs "plugin-page"/);
+    expect(() => collect({ scopes: ['plugin-page'], pages: [] })).toThrow(/non-empty array of page ids/);
+    expect(() => collect({ scopes: ['plugin-page'], pages: ['  '] })).toThrow(/non-empty array of page ids/);
+    expect(() => collect({ scopes: ['plugin-page'], pages: 'studio' })).toThrow(/non-empty array of page ids/);
+  });
+
   it('collects commandPaletteAction and rejects a missing run', () => {
     const def = definePluginApp((app) => {
       app.slots.commandPaletteAction({

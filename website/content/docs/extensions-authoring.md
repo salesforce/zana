@@ -54,7 +54,7 @@ failures with `zcc plugin logs <id> -n 50`.
 
 The plugin id is derived from the package name (`zcc-plugin-tasks` → `tasks`).
 
-Skills, MCP, and extra notes live in the same `zcc` block (`zcc.skills`):
+Skills, MCP, and extra notes live in the same `zcc` block (BB’s `bb.skills` shape):
 
 ```json
 {

@@ -9,7 +9,7 @@ import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 const control: { options?: any } = {};
 vi.mock('./useSalesforceControl.js', () => ({ useSalesforceControl: (options: unknown) => { control.options = options; } }));
 vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: () => <div data-testid="stub-preview" /> }));
-vi.mock('./studio/AssistantRail.js', () => ({ AssistantRail: () => <div data-testid="stub-assistant" /> }));
+vi.mock('./studio/AskAgentButton.js', () => ({ AskAgentButton: () => <div data-testid="stub-ask-agent" /> }));
 vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: () => <div data-testid="stub-graph" /> }));
 vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: () => <div data-testid="stub-agents" /> }));
 vi.mock('./AgentforceLabPanel.js', () => ({ AgentforceLabPanel: () => <div data-testid="stub-lab" /> }));

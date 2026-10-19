@@ -10,7 +10,7 @@ const test = base.extend({
     writeFileSync(join(source, 'package.json'), JSON.stringify({
       name: '@zcc-ext/launcher-fixture', version: '0.1.0', type: 'module',
       engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
-      zcc: { name: 'Example tools', description: 'Launcher category fixture', app: './app.js' }
+      zcc: { name: 'Example tools', description: 'Launcher category fixture', branding: { icon: 'Puzzle' }, app: './app.js' }
     }));
     writeFileSync(join(source, 'app.js'), `export default {
       __zccPluginApp: true,
