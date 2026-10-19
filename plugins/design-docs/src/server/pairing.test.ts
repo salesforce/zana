@@ -488,6 +488,9 @@ describe('DD lifecycle setup', () => {
     expect(b.group.roster()!.members).toHaveLength(2);
     expect(b.scopes.get('c')!.has(b.group.roster()!.repoId)).toBe(false);
     expect(b.group.jobs().some((job) => job.kind === 'local-revoke' && job.state !== 'done')).toBe(false);
+    // Delivery to a removed computer whose link is gone ends instead of showing as blocked forever.
+    await b.pairing.retry(true);
+    expect(b.group.jobs().some((job) => job.peerId === 'c' && (job.kind === 'roster' || job.kind === 'retire') && job.state !== 'done')).toBe(false);
   });
 
   it('stale donor capacity refusal refreshes governance and permits later donor retry', async () => {

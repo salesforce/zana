@@ -928,6 +928,13 @@ export class DesignDocPairing {
       if (this.abort.signal.aborted) return;
       try {
         const local = this.group.sync.localRepository()!, roster = this.group.roster();
+        // Work for a computer that is no longer a member and whose link is gone can never be delivered; ending it keeps a
+        // removed computer from showing as blocked forever.
+        if ((job.kind === 'retire' || job.kind === 'roster') && !roster?.members.some((member) => member.machineId === job.peerId) &&
+          !(await this.peers.list({ signal: this.abort.signal })).some((grant) => grant.id === job.peerId)) {
+          this.group.supersedeJob(job.id, 'the link to that computer was removed');
+          continue;
+        }
         if (job.kind === 'retire') {
           const input = retirementJobSchema.parse(job.payload);
           if (!roster || input.scope !== roster.repoId) throw new PeerProtocolError('invalid', 'retirement job scope mismatch');
