@@ -10,7 +10,7 @@ import {
   MOBILE_BRIDGE_VERSION
 } from '../packages/mobile-bridge/src/index.js';
 
-test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { voiceInputEnabled: true } });
 test('Mobile pairs to built Electron, uses phone navigation, reads and sends a live thread', async ({
   app
 }, testInfo) => {
@@ -139,7 +139,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
         usedTokens: 47_000, modelContextWindow: 100_000, estimated: false
       } } });
     });
-    await phone.route('**/api/v1/system/voice-status', (route) => route.fulfill({ json: { enabled: true } }));
+    await phone.route('**/api/v1/system/voice-status', (route) => route.fulfill({ json: { enabled: true, reason: null } }));
     const wsConnected = phone.waitForEvent('websocket', {
       predicate: (socket) => socket.url().endsWith('/ws')
     });
