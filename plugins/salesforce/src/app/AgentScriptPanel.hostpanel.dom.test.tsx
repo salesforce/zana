@@ -110,13 +110,14 @@ describe('AgentScriptPanel beside the host side panel', () => {
     const preview = tab.el.querySelector('[data-testid="stub-preview"]')!;
     expect(preview).toBeTruthy();
     expect(el.querySelector('[data-testid="stub-preview"]')).toBeNull();
-    expect(control.options.state()).toMatchObject({ tool: 'preview', panels: { host: true, tabs: ['preview'], active: 'preview', open: true } });
+    expect(control.options.state()).toMatchObject({ tool: 'preview', panels: { host: true, tabs: ['preview'], kept: [], active: 'preview', open: true } });
     // Commands reach the tool in the host panel.
     await act(async () => { await exec('preview.send', { text: 'hi', engine: 'live' }); });
     await flush();
     expect(JSON.parse(tab.el.querySelector('[data-testid="stub-preview"]')!.getAttribute('data-command')!)).toMatchObject({ type: 'send', text: 'hi' });
     await tab.unmount();
-    expect(control.options.state()).toMatchObject({ tool: 'code', panels: { host: true, tabs: ['preview'], active: null, open: false } });
+    // A tab switched away or closed is not reported as shown; Studio keeps the tool running.
+    expect(control.options.state()).toMatchObject({ tool: 'code', panels: { host: true, tabs: [], kept: ['preview'], active: null, open: false } });
     const again = await hostTab('preview');
     expect(again.el.querySelector('[data-testid="stub-preview"]')).toBe(preview);
     expect(el.querySelector('[aria-label="Show side panel"]')).toBeNull();
@@ -215,6 +216,26 @@ describe('AgentScriptPanel beside the host side panel', () => {
     await flush();
     expect(navigate.openPanelTool).toHaveBeenCalled();
     expect(el.querySelector('[data-testid="stub-preview"]')).toBeTruthy();
+  });
+
+  it('goes back to the host panel once the host takes a later tool', async () => {
+    navigate.openPanelTool = vi.fn(() => false);
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await act(async () => { await exec('panel.open', { tool: 'preview' }); });
+    await flush();
+    expect(el.querySelector('.af-tools')).toBeTruthy();
+    expect(control.options.state().panels).not.toHaveProperty('host');
+    // The host is ready now (its listener subscribed late): the next open asks it again.
+    navigate.openPanelTool.mockReturnValue(true);
+    await act(async () => { await exec('panel.open', { tool: 'graph' }); });
+    await flush();
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-graph' });
+    expect(el.querySelector('.af-tools')).toBeNull();
+    const graph = await hostTab('graph');
+    expect(graph.el.querySelector('[data-testid="stub-graph"]')).toBeTruthy();
+    expect(control.options.state()).toMatchObject({ panels: { host: true, tabs: ['graph'], active: 'graph' } });
+    await graph.unmount();
   });
 
   it('keeps its own panel without a host side panel', async () => {

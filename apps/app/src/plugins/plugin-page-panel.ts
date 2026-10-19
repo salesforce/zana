@@ -11,6 +11,9 @@ import { listThreadPanelActions } from './plugin-slots.js';
 
 export const PLUGIN_PANEL_TOOL_EVENT = 'zcc:plugin-panel-tool-open';
 
+/** Side-panel owner ids of plugin pages start with this; thread and agent-session ids never do. */
+export const PLUGIN_PAGE_PANEL_OWNER_PREFIX = 'plugin-panel:';
+
 /** Bounds a tab label a page can set; the action's own title is used when absent. */
 export const PANEL_TOOL_TITLE_MAX_LENGTH = 120;
 

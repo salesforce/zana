@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
-import type { PluginThreadPanelScope } from '@zana-ai/zcc-plugin-sdk';
+import { threadPanelActionMatchesScope, type PluginThreadPanelPage, type PluginThreadPanelScope } from '@zana-ai/zcc-plugin-sdk';
 import { ProjectExtensionTab } from '../../../views/project/ProjectExtensionTab.js';
 import { useData } from '../../../store.js';
 import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
@@ -18,6 +18,7 @@ export function ThreadPluginTab({
   params,
   layout,
   surface,
+  page,
   tabId
 }: {
   moduleId: string;
@@ -28,6 +29,8 @@ export function ThreadPluginTab({
   layout?: 'padded' | 'flush';
   /** Which side panel shows the tab; forwarded to the plugin's component. */
   surface?: PluginThreadPanelScope;
+  /** With `surface="plugin-page"`: the page beside the panel. */
+  page?: PluginThreadPanelPage;
   /** The side-panel tab showing the component; forwarded to it. */
   tabId?: string;
 }) {
@@ -49,6 +52,10 @@ export function ThreadPluginTab({
     ? newThreadActions.find((row) => row.pluginId === moduleId && row.id === actionId)
     : undefined;
   const action = threadAction ?? composeAction;
+  // A stored or by-id tab whose tool does not open here (a plugin page's own tool in a thread).
+  if (threadAction && surface && !threadPanelActionMatchesScope(threadAction, surface, page)) {
+    return <p className="thread-detail-empty" data-testid="thread-plugin-tab-unavailable">{threadAction.title} is not available in this panel.</p>;
+  }
 
   if (threadAction || composeAction) {
     const action = threadAction ?? composeAction!;

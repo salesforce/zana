@@ -238,10 +238,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const compact = layout === 'compact';
   const wide = layout === 'wide';
   // Beside the Salesforce tab the host side panel shows the tools (studio-tool-bridge); Studio still renders them.
-  // A host that turns a tool down (an older or partial host) leaves Studio on its own panel.
+  // A host that turns a tool down (an older or partial host) leaves Studio on its own panel
+  // until the host takes the next one: each open asks the host again.
   // Not the width: a narrow window's panel covers Studio (0 px, 'legacy'), and its tabs still need Studio.
   const [hostRefused, setHostRefused] = useState(false);
-  const hostPanel = !hostRefused && context.sidePanel === true && typeof navigate.openPanelTool === 'function';
+  const hostCapable = context.sidePanel === true && typeof navigate.openPanelTool === 'function';
+  const hostPanel = !hostRefused && hostCapable;
   const toolScope = projectId ?? '';
   useStudioRegistration(toolScope, hostPanel);
   const hostSlots = useStudioToolSlots(hostPanel ? toolScope : null);
@@ -316,16 +318,17 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       else patch({ tool: 'code' });
       return;
     }
-    if (hostPanel && isPanelTool(id)) {
+    if (hostCapable && isPanelTool(id)) {
       if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(id) })) {
         if (id !== hostTool) requestedHostTool.current = id;
+        setHostRefused(false);
         return;
       }
       setHostRefused(true);
     }
     tools.openTool(id);
     patch({ tool: id });
-  }, [hostPanel, hostTool, layout, patch, tools.openTool]);
+  }, [hostCapable, hostTool, layout, patch, tools.openTool]);
   const panelShown = hostPanel ? hostTool !== null : tools.state.open;
   const showPanel = useCallback(() => {
     if (hostPanel) openTool(lastHostTool.current);
@@ -757,7 +760,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
 
   useSalesforceControl({ pluginId, projectId, orgAlias: org?.alias, threadId, surface: 'agentforce', enabled: playgroundReady,
     commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set'],
-    state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: hostPanel ? { host: true, tabs: hostSlots.map(slot => slot.tool), active: requestedHostTool.current ?? hostTool, open: (requestedHostTool.current ?? hostTool) !== null } : tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id), follow: followPaused ? 'paused' : 'on', ...(heldReveal ? { heldReveal: heldReveal.command.command } : {}) }),
+    state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: hostPanel ? { host: true, tabs: hostSlots.filter(slot => slot.attached).map(slot => slot.tool), kept: hostSlots.filter(slot => !slot.attached).map(slot => slot.tool), active: requestedHostTool.current ?? hostTool, open: (requestedHostTool.current ?? hostTool) !== null } : tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id), follow: followPaused ? 'paused' : 'on', ...(heldReveal ? { heldReveal: heldReveal.command.command } : {}) }),
     execute: followCommand,
   });
 
