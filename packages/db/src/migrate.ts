@@ -490,6 +490,11 @@ export function migrate(database: SqliteDatabase): void {
   // this repair separate so opening those databases restores the missing column.
   if (!applied.has(34)) applyVersion(database, 34,
     hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
+  // Other pre-release builds subsequently reused v34 and v35. Migration
+  // history alone cannot establish the column, so v36 repairs every lineage
+  // that predates this version.
+  if (!applied.has(36)) applyVersion(database, 36,
+    hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

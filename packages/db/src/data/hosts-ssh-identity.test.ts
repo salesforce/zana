@@ -153,11 +153,13 @@ describe('host SSH identity', () => {
       re.close();
     });
 
-    it('repairs a database that recorded v33 without adding name provenance', () => {
+    it('repairs a database that recorded v33 through v35 without adding name provenance', () => {
       const first = open();
       const host = upsertHost(first, { name: 'Custom', hostKeyHash: 'h'.repeat(64) });
       const file = join(dir!, 'zcc.sqlite');
-      first.sqlite.exec('ALTER TABLE hosts DROP COLUMN name_user_set; DELETE FROM runtime_schema_migrations WHERE version = 34');
+      first.sqlite.exec(`ALTER TABLE hosts DROP COLUMN name_user_set;
+        DELETE FROM runtime_schema_migrations WHERE version = 36;
+        INSERT OR IGNORE INTO runtime_schema_migrations (version, applied_at) VALUES (35, 1);`);
       first.close();
 
       const re = openDatabase(file);
