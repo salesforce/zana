@@ -143,7 +143,12 @@ describe('DD lifecycle setup', () => {
     const original = b.group.admit(frozen, 'c'); b.group.remove(b.group.sync.localRepository()!.replicaId);
     const call = b.peers.call;
     b.peers.call = vi.fn(async (...args) => { if (args[0] === 'c' && args[1] === 'group-roster') throw new Error('delivery held'); return call(...args); });
+    // Link revocation never waits on delivery; hold b's local teardown so c's receipt recovery runs over the still-existing grant.
+    const revoke = b.peers.revoke; let teardownHeld = true;
+    b.peers.revoke = vi.fn(async (...args: Parameters<typeof revoke>) => { if (teardownHeld) throw new Error('teardown offline'); return revoke(...args); });
     await b.pairing.retry(true); expect(c.group.roster()).toBeNull();
+    expect(b.group.jobs().some((job) => job.kind === 'local-revoke' && /waiting for/.test(job.error ?? ''))).toBe(false);
+    expect(b.group.jobs().some((job) => job.kind === 'local-revoke' && job.error === 'teardown offline')).toBe(true);
     const jobs = b.group.jobs(), enableCalls = c.peers.enable.mock.calls.length;
     await c.pairing.retry(true);
     expect(c.group.roster()!.members.map((member) => member.machineId).sort()).toEqual(['a', 'c']);
@@ -151,6 +156,9 @@ describe('DD lifecycle setup', () => {
     expect(b.group.admit(frozen, 'c')).toEqual(original); expect(b.group.jobs()).toEqual(jobs);
     expect(c.peers.enable.mock.calls).toHaveLength(enableCalls);
     expect(c.peers.call).toHaveBeenCalledWith('b', 'group-join-receipt', frozen, expect.anything());
+    // Once teardown can run, b drops its link to c even though the removal roster to c is still held.
+    teardownHeld = false; await b.pairing.retry(true);
+    expect(b.scopes.get('c')?.size ?? 0).toBe(0);
   });
 
   it('receipt recovery rejects altered immutable payload, unknown peer, wrong scope and revoked fence without writes', async () => {
@@ -200,7 +208,10 @@ describe('DD lifecycle setup', () => {
       expect(target.group.roster()!.members).toEqual([]); expect(target.group.roster()!.removals).toHaveLength(3);
       expect(target.group.sync.localRepository()!.groupId).toBeNull();
       expect(target.group.jobs().some((job) => job.kind === 'retire' && job.state !== 'done')).toBe(false);
-      expect(target.group.jobs().filter((job) => job.kind === 'roster' && job.state !== 'done').map((job) => ({ peer: target.peerId, to: job.peerId, error: job.error }))).toEqual([]);
+      // Link teardown no longer waits on delivery, so a best-effort roster job may outlive the link it needed.
+      expect(target.group.jobs().filter((job) => job.kind === 'roster' && job.state !== 'done' && !/pair unavailable|not pair authorized/.test(job.error ?? ''))
+        .map((job) => ({ peer: target.peerId, to: job.peerId, error: job.error }))).toEqual([]);
+      expect(target.group.jobs().some((job) => job.kind === 'local-revoke' && /waiting for/.test(job.error ?? ''))).toBe(false);
     }
     expect(a.group.roster()).toEqual(b.group.roster()); expect(b.group.roster()).toEqual(c.group.roster());
     expect(a.group.jobs().some((job) => job.kind === 'local-revoke' && job.error === 'teardown offline')).toBe(true);
@@ -467,19 +478,16 @@ describe('DD lifecycle setup', () => {
     expect(a.group.roster()).toEqual(roster);
   });
 
-  it('removal propagation keeps removed-member link until tombstone ACK; lost roster ACK stays pending', async () => {
+  it('removal never waits on an unreachable removed computer: link drops and undeliverable roster work ends', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'), c = net.app('c'); await net.found(a, b);
     net.link(b, c); await b.pairing.enable('c'); await c.pairing.enable('b');
     await b.pairing.retry(true); await a.pairing.retry(true);
     const removed = c.group.sync.localRepository()!.replicaId;
-    await b.pairing.remove(removed);
-    net.lost.add('c:group-roster'); await b.pairing.retry(true);
-    expect(b.group.roster()!.members).toHaveLength(2);
-    expect(b.scopes.get('c')!.has(b.group.roster()!.repoId)).toBe(true);
-    expect(b.group.jobs().some((job) => job.kind === 'local-revoke' && job.error?.includes('waiting for removal roster delivery'))).toBe(true);
+    net.lost.add('c:group-roster'); await b.pairing.remove(removed);
     await b.pairing.retry(true);
+    expect(b.group.roster()!.members).toHaveLength(2);
     expect(b.scopes.get('c')!.has(b.group.roster()!.repoId)).toBe(false);
-    expect(c.group.sync.localRepository()!.groupId).toBeNull();
+    expect(b.group.jobs().some((job) => job.kind === 'local-revoke' && job.state !== 'done')).toBe(false);
   });
 
   it('stale donor capacity refusal refreshes governance and permits later donor retry', async () => {
@@ -531,9 +539,13 @@ describe('DD lifecycle setup', () => {
     const net = network(), a = net.app('a'), b = net.app('b'), c = net.app('c'); await net.found(a, b);
     net.link(b, c); await b.pairing.enable('c'); await c.pairing.enable('b'); await b.pairing.retry(true);
     net.lost.add('a:group-roster');
+    // Link revocation never waits on delivery; hold b's local teardown so the ACK retry runs over the still-existing grant.
+    const revoke = b.peers.revoke; let teardownHeld = true;
+    b.peers.revoke = vi.fn(async (...args: Parameters<typeof revoke>) => { if (teardownHeld) throw new Error('teardown offline'); return revoke(...args); });
     await b.pairing.remove(b.group.sync.localRepository()!.replicaId);
     expect(a.group.roster()!.members.some((member) => member.machineId === 'b')).toBe(false);
     expect(b.group.removalDeliveryPending('a')).toBe(true);
+    expect(b.group.jobs().some((job) => job.kind === 'local-revoke' && /waiting for/.test(job.error ?? ''))).toBe(false);
     const before = a.group.roster(), jobs = a.group.jobs();
     a.db.runScript("CREATE TRIGGER no_ack_write BEFORE UPDATE ON sync_group_control BEGIN SELECT RAISE(ABORT, 'read-only ACK'); END;");
     const ack = await b.peers.call('a', 'group-roster', b.group.roster(), { scope: before!.repoId });
@@ -542,7 +554,7 @@ describe('DD lifecycle setup', () => {
       ownerReplicaId: a.group.sync.localRepository()!.replicaId, requestId: 'forged',
       member: { replicaId: 'unknown-d', machineId: 'unknown-d', joinedAt: 1, sponsorReplicaId: a.group.sync.localRepository()!.replicaId } });
     await expect(b.peers.call('a', 'group-roster', forged, { scope: before!.repoId })).rejects.toThrow(/sender|covered/);
-    await b.pairing.retry(true);
+    teardownHeld = false; await b.pairing.retry(true);
     expect(b.group.removalDeliveryPending('a')).toBe(false);
     expect(b.scopes.get('a')?.size).toBe(0); expect(b.scopes.get('c')?.size).toBe(0);
   });
@@ -1598,7 +1610,8 @@ describe('DD invitation pairing', () => {
         expect(left.group.rejoinState(stayed.peerId).kind).toBe('blocked');
         left.peers.call = call;
         const reset = await left.pairing.resetPeer(stayed.peerId);
-        expect(reset.discarded).toBeGreaterThanOrEqual(2);
+        // Only the owed roster delivery is left to discard: the link revocation no longer waits behind it.
+        expect(reset.discarded).toBeGreaterThanOrEqual(1);
         // Another computer's owed work stays; documents and history are untouched.
         expect(left.group.jobs().some((job) => job.peerId === 'c' && job.kind === 'roster')).toBe(true);
         expect(left.group.jobs().some((job) => job.state !== 'done' && (job.peerId === stayed.peerId || (job.payload as { peerId?: string }).peerId === stayed.peerId))).toBe(false);

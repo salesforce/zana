@@ -95,14 +95,21 @@ it('real SDK lost admission ACK then sponsor self-leave recovers immutable recei
   sdk.call = async (...args) => { if (args[0] === c.id && args[1] === 'group-roster') throw new Error('delivery held'); return call(...args); };
   await c.pairing.enable(b.id); expect(c.group.roster()).toBeNull();
   const frozen = c.group.consent()!.request!, immutable = b.group.admit(frozen, c.id);
+  // Link revocation never waits on delivery; hold b's local teardown so c's receipt recovery runs over the still-existing grant.
+  const revoke = sdk.revoke; let teardownHeld = true;
+  sdk.revoke = async (...args) => { if (teardownHeld) throw new Error('teardown offline'); return revoke(...args); };
   await b.pairing.remove(b.group.sync.localRepository()!.replicaId);
   expect(c.group.roster()).toBeNull(); expect(b.group.removalDeliveryPending(c.id)).toBe(true);
+  expect(b.group.jobs().some((job) => job.kind === 'local-revoke' && /waiting for/.test(job.error ?? ''))).toBe(false);
   const jobs = b.group.jobs(), enable = vi.spyOn(c.handle.api.sdk.peers, 'enable');
   await c.pairing.retry(true);
   expect(c.group.roster()!.members.some((member) => member.machineId === b.id)).toBe(false);
   expect(c.group.roster()!.members.some((member) => member.machineId === c.id)).toBe(true);
   expect(b.group.admit(frozen, c.id)).toEqual(immutable); expect(b.group.jobs()).toEqual(jobs); expect(enable).not.toHaveBeenCalled();
   expect(c.group.hasCapacity()).toBe(true);
+  // Once teardown can run, b drops its link to c even though the removal roster to c is still held.
+  teardownHeld = false; await b.pairing.retry(true);
+  expect((await sdk.list()).some((peer) => peer.id === c.id)).toBe(false);
   await c.pairing.enable(d.id); await d.pairing.enable(c.id);
   expect(d.group.roster()!.members.some((member) => member.machineId === d.id)).toBe(true);
   expect(d.group.roster()!.members.some((member) => member.machineId === b.id)).toBe(false);
@@ -128,7 +135,11 @@ it('real SDK cyclic retirements converge after lost seal ACK and restart; failed
     expect(target.group.roster()!.members).toEqual([]); expect(target.group.roster()!.removals).toHaveLength(3);
     expect(target.group.sync.localRepository()!.groupId).toBeNull();
     expect(target.group.jobs().some((job) => job.kind === 'retire' && job.state !== 'done')).toBe(false);
-    expect(target.group.jobs().some((job) => job.kind === 'roster' && job.state !== 'done')).toBe(false);
+    // Link teardown no longer waits on delivery, so a best-effort roster job may outlive the link it needed
+    // (the remote has already dropped its side, so core answers 401).
+    expect(target.group.jobs().filter((job) => job.kind === 'roster' && job.state !== 'done' && !/pair unavailable|not (pair )?authorized|peer request failed: 401/.test(job.error ?? ''))
+      .map((job) => job.error)).toEqual([]);
+    expect(target.group.jobs().some((job) => job.kind === 'local-revoke' && /waiting for/.test(job.error ?? ''))).toBe(false);
   }
   expect(a.group.roster()).toEqual(b.group.roster()); expect(b.group.roster()).toEqual(c.group.roster());
   expect(a.group.jobs().some((job) => job.kind === 'local-revoke' && job.error === 'teardown offline')).toBe(true);
@@ -181,13 +192,17 @@ it('real SDK rejects remote localOnly and ACKs self-leave retries without histor
     if (!lost) { lost = true; throw new Error('lost ACK after real SDK commit'); }
     return result;
   });
+  // Link revocation never waits on delivery; hold a's local teardown so the ACK retry runs over the still-existing grant.
+  const sdk = a.handle.api.sdk.peers, revoke = sdk.revoke; let teardownHeld = true;
+  sdk.revoke = async (...args) => { if (teardownHeld) throw new Error('teardown offline'); return revoke(...args); };
   await a.pairing.remove(a.group.sync.localRepository()!.replicaId);
   expect(a.group.removalDeliveryPending(b.id)).toBe(true);
+  expect(a.group.jobs().some((job) => job.kind === 'local-revoke' && /waiting for/.test(job.error ?? ''))).toBe(false);
   expect(b.group.roster()!.members.some((member) => member.machineId === a.id)).toBe(false);
   const prior = b.group.roster(), jobs = b.group.jobs();
   const ack = await a.handle.api.sdk.peers.call(b.id, 'group-roster', a.group.roster(), { scope });
   expect(ack).toEqual({ roster: prior }); expect(b.group.jobs()).toEqual(jobs);
-  await a.pairing.retry(true);
+  teardownHeld = false; await a.pairing.retry(true);
   expect(a.group.removalDeliveryPending(b.id)).toBe(false);
   expect(await a.handle.api.sdk.peers.list()).toEqual([]);
   expect(a.group.sync.localRepository()!.groupId).toBeNull();

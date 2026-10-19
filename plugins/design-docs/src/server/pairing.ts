@@ -961,13 +961,8 @@ export class DesignDocPairing {
         } else if (job.kind === 'local-revoke') {
           const input = localRevokeSchema.parse(job.payload);
           if (!input.localOnly && local.groupId && roster?.members.some((member) => member.machineId === input.peerId)) throw new PeerProtocolError('invalid', 'member still in roster');
-          if (!input.localOnly && this.group.removalDeliveryPending(input.peerId)) {
-            throw new PeerProtocolError('invalid', 'waiting for removal roster delivery before link revocation');
-          }
-          if (!input.localOnly && roster && (roster.retirements.some((event) => !roster.removals.some((removal) => removal.replicaId === event.replicaId)) ||
-            (!local.groupId && this.group.jobs().some((pending) => pending.kind === 'roster' && pending.state !== 'done' && pending.state !== 'failed')))) {
-            throw new PeerProtocolError('invalid', 'waiting for authorized retirement evidence delivery before link revocation');
-          }
+          // Dropping our own link never waits on another computer: it may be offline forever or may already have dropped
+          // its side, which makes delivery impossible. Delivery is best effort and ends with the link.
           await this.peers.revoke(input.peerId, { scope: input.scope });
           await this.peers.revoke(input.peerId, { scope: bootstrapScope(job.peerId, input.peerId) });
           await this.revokeInviteLinks(input.peerId, [input.scope, bootstrapScope(job.peerId, input.peerId)]);
