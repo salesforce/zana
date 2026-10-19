@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseJoinArgv } from './join-argv.js';
+import { runEnrollmentCheck } from './join-cli.js';
 
 it('requires explicit provenance and replacement flags, never infers from loopback or join code', () => {
   expect(parseJoinArgv(['join', '--server-url', 'http://127.0.0.1:1', '--join-code', 'code'], {})).toMatchObject({ provenance: 'non-tunnel', replaceEnrollment: false });
@@ -30,5 +31,18 @@ describe('join CLI flags', () => {
 
   it('rejects a missing server URL', () => {
     expect(() => parseJoinArgv(['join'], {})).toThrow(/server-url/);
+  });
+
+  it('prints only the enrollment refusal before exiting nonzero', () => {
+    const writeError = vi.fn();
+    const exit = vi.fn((code: number): never => { throw new Error(`exit ${code}`); });
+    expect(() => runEnrollmentCheck({ dataDir: '/tmp/machine' } as any, () => { throw new Error('use --replace-enrollment'); }, writeError, exit))
+      .toThrow('exit 1');
+    expect(writeError).toHaveBeenCalledWith('use --replace-enrollment\n');
+  });
+
+  it('exits zero when enrollment is safe', () => {
+    const exit = vi.fn((code: number): never => { throw new Error(`exit ${code}`); });
+    expect(() => runEnrollmentCheck({ dataDir: '/tmp/machine' } as any, () => undefined, vi.fn(), exit)).toThrow('exit 0');
   });
 });

@@ -117,6 +117,22 @@ export function checkEnrollmentOnly(options: JoinCliOptions, assertSafe: typeof 
   assertSafe(options);
 }
 
+/** Run installer pre-flight without leaking a Node stack trace to shell users. */
+export function runEnrollmentCheck(
+  options: JoinCliOptions,
+  assertSafe: typeof assertEnrollmentSafe = assertEnrollmentSafe,
+  writeError: (message: string) => void = message => process.stderr.write(message),
+  exit: (code: number) => never = code => process.exit(code)
+): void {
+  try {
+    checkEnrollmentOnly(options, assertSafe);
+  } catch (error) {
+    writeError(`${error instanceof Error ? error.message : String(error)}\n`);
+    exit(1);
+  }
+  exit(0);
+}
+
 const entry = process.argv[1] ?? '';
 const launchedDirectly = /(?:join-cli\.[tj]s|join\.[cm]js)$/.test(entry);
 if (launchedDirectly && process.argv[2] === 'restart') {
@@ -132,13 +148,7 @@ if (launchedDirectly && process.argv.includes('--check-protocol')) {
 if (launchedDirectly && process.argv.includes('join')) {
   const options = parseJoinArgv(process.argv.slice(2));
   if (process.argv.includes('--check-enrollment')) {
-    try {
-      checkEnrollmentOnly(options);
-      process.exit(0);
-    } catch (error) {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exit(1);
-    }
+    runEnrollmentCheck(options);
   }
   installRuntimeLog(options.dataDir, 'host-daemon', import.meta.url);
   // A standalone self-restart has a new PID; never leave the installer's old record behind.

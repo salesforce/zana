@@ -163,7 +163,9 @@ test('Machines recover failed upgrades, missing hello and heartbeat replies with
     // A legacy enrollment (no provenance) whose forwarded loopback port changed
     // is refused, and the app's repair path recovers it with one-join consent.
     const holder = Number(readFileSync(join(dataDir, 'host-daemon.pid'), 'utf8'));
-    for (const pid of new Set([holder, replacementPid!])) { try { process.kill(pid, 'SIGTERM'); } catch {} }
+    for (const pid of new Set([holder, replacementPid!])) {
+      try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch {} }
+    }
     await expect.poll(async () => { try { process.kill(holder, 0); return 'alive'; } catch { return 'gone'; } }, { timeout: 30000 }).toBe('gone');
     const legacy = JSON.parse(readFileSync(join(dataDir, 'auth.json'), 'utf8'));
     delete legacy.provenance; legacy.serverUrl = 'http://127.0.0.1:1/';
