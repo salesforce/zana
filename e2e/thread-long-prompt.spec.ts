@@ -2,6 +2,7 @@ import { mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Locator } from '@playwright/test';
 import { test, expect, type AppHandle } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, isolateBundledCatalog: true });
 
@@ -59,7 +60,7 @@ test('an expanded long prompt cannot cover the completed agent reply (#201)', as
   await user.getByRole('button', { name: 'Show more', exact: true }).click();
   await expect(user).toContainText(prompt);
   await expectReplyUncovered(timeline);
-  await detail.screenshot({ path: testInfo.outputPath('expanded-prompt-reply.png') });
+  await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('expanded-prompt-reply.png'), detail);
   await user.getByRole('button', { name: 'Show less', exact: true }).click();
   await expect(user.getByRole('button', { name: 'Show more', exact: true })).toBeVisible();
   await expectReplyUncovered(timeline);
