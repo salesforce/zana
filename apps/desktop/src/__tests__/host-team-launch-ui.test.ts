@@ -278,4 +278,3 @@ describe('startTeamJobFromUi shared squad worktree', () => {
     for (const create of h.creates) expect(String(create.cwd)).not.toContain('.worktrees');
   });
 });
-

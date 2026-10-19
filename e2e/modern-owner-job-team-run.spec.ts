@@ -104,6 +104,9 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
       const body = await response.json();
       return body.providers.map((provider: { id: string }) => provider.id);
     }), { timeout: 30_000, intervals: [500] }).toContain('acp-opencode');
+    await expect.poll(() => window.evaluate(async () =>
+      (await window.cc.pluginApps.list()).find((plugin) => plugin.id === 'harness-mastracode')?.status
+    ), { timeout: 30_000, intervals: [500] }).toBe('running');
 
     // Create a REAL ACP (Modern) conversation thread as the owner. `plan` is a
     // generic ACP session mode; `fake/default` is the fake agent's own model.
@@ -139,42 +142,50 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
     // authenticated with the daemon's own self-host credentials.
     const rendererOrigin = new URL(window.url()).origin;
     const auth = JSON.parse(readFileSync(join(home, '.zcc', 'auth.json'), 'utf8')) as { hostId: string; hostKey: string };
-    const toolCall = await fetch(`${rendererOrigin}/internal/hosts/tool-call`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${auth.hostKey}`,
-        'x-zcc-host-id': auth.hostId
-      },
-      body: JSON.stringify({
-        sessionId: threadId,
-        threadId,
-        providerThreadId: threadId,
-        turnId: 'e2e-modern-turn-1',
-        callId: 'e2e-modern-call-1',
-        tool: 'execution_start',
-        arguments: {
-          version: 1,
-          teamId: 'e2e-job-team',
-          launchRequestId: `e2e-modern-owner-job-${Date.now()}`,
-          jobTitle: 'Modern durable job',
-          summary: 'Full Job Team route started by a Modern owner.',
-          workUnits: PLAN,
-          slots: [
-            { initialTask: 'Coordinate the durable execution.' },
-            { initialTask: 'Run assigned work from the durable execution.' },
-            { initialTask: 'Run assigned work from the durable execution.' }
-          ]
-        }
-      })
-    });
-    const toolBody = await toolCall.json() as { success?: boolean; contentItems?: Array<{ text?: string }> };
-    const toolText = (toolBody.contentItems ?? []).map((item) => item.text ?? '').join('\n');
+    const callTool = async () => {
+      const toolCall = await fetch(`${rendererOrigin}/internal/hosts/tool-call`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${auth.hostKey}`,
+          'x-zcc-host-id': auth.hostId
+        },
+        body: JSON.stringify({
+          sessionId: threadId,
+          threadId,
+          providerThreadId: threadId,
+          turnId: 'e2e-modern-turn-1',
+          callId: 'e2e-modern-call-1',
+          tool: 'execution_start',
+          arguments: {
+            version: 1,
+            teamId: 'e2e-job-team',
+            launchRequestId: `e2e-modern-owner-job-${Date.now()}`,
+            jobTitle: 'Modern durable job',
+            summary: 'Full Job Team route started by a Modern owner.',
+            workUnits: PLAN,
+            slots: [
+              { initialTask: 'Coordinate the durable execution.' },
+              { initialTask: 'Run assigned work from the durable execution.' },
+              { initialTask: 'Run assigned work from the durable execution.' }
+            ]
+          }
+        })
+      });
+      const toolBody = await toolCall.json() as { success?: boolean; contentItems?: Array<{ text?: string }> };
+      return { status: toolCall.status, toolBody, toolText: (toolBody.contentItems ?? []).map((item) => item.text ?? '').join('\n') };
+    };
+    let tool = await callTool();
+    const policyDeadline = Date.now() + 30_000;
+    while (tool.toolText.includes('plugin tool policy not ready') && Date.now() < policyDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      tool = await callTool();
+    }
     // The regression gate: a "session MCP is not authorized for this live session"
     // failure surfaces here as HTTP 200 with success:false (or a non-200 identity
     // rejection). Either fails this assertion with the underlying message.
-    expect(toolCall.status, `tool-call HTTP ${toolCall.status}: ${toolText}`).toBe(200);
-    expect(toolBody.success, `execution_start failed: ${toolText}\n${diagnostics.join('\n')}`).toBe(true);
+    expect(tool.status, `tool-call HTTP ${tool.status}: ${tool.toolText}`).toBe(200);
+    expect(tool.toolBody.success, `execution_start failed: ${tool.toolText}\n${diagnostics.join('\n')}`).toBe(true);
 
     await expect.poll(async () => window.evaluate(async (projectId) => {
       const page = await window.cc.executionBoard.listProject(projectId);
