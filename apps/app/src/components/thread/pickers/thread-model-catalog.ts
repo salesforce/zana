@@ -24,6 +24,8 @@ export type ThreadModelCatalogSnapshot = {
   providers: ThreadComposerProviderOption[];
   byProvider: Readonly<Record<string, ThreadModelCatalogEntry>>;
   inflight: ReadonlySet<string>;
+  /** Warm rows inherited from another project on the same host; not authoritative yet. */
+  provisionalProviders: ReadonlySet<string>;
   rosterError?: string | null;
 };
 
@@ -138,6 +140,7 @@ function createCatalog(
       providers,
       byProvider,
       inflight,
+      provisionalProviders: new Set(inherited),
       hostId: catalogHostId,
       projectId: catalogProjectId,
       rosterError

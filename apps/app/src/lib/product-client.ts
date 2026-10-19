@@ -4,6 +4,7 @@ import { machineTerminals } from './machine-terminals.js';
 import { SHARED_PRODUCT_FAMILIES } from '@zana-ai/zcc-contracts/shared-product';
 import { sharedProductFamily } from './shared-product.js';
 import { sharedExtensions } from './shared-extensions.js';
+import type { SystemVoiceStatusResponse } from '@zana-ai/zcc-server-contract';
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PausePeerLinkResponse, PeerLinkListResponse, RemovePeerLinkResponse } from '@zana-ai/zcc-server-contract';
@@ -49,6 +50,11 @@ export interface PreferredJoinCode {
 export type PreferredJoinCodeResult =
   | { ok: true; join: PreferredJoinCode }
   | { ok: false; error: 'pairing_unavailable' };
+
+/** Voice readiness incl. why it is unavailable. */
+export function fetchVoiceStatus(): Promise<SystemVoiceStatusResponse> {
+  return apiJson<SystemVoiceStatusResponse>('/system/voice-status');
+}
 
 /** Mint a join code; a 409 pairing refusal comes back as a typed result instead of an opaque throw. */
 export async function requestPreferredJoinCode(): Promise<PreferredJoinCodeResult> {
@@ -1237,10 +1243,6 @@ function httpProduct(): Pick<
       }
     } as CcApi['pluginApps'],
     voice: {
-      hasApiKey: async () => {
-        const body = await apiJson<{ enabled: boolean }>('/system/voice-status');
-        return body.enabled;
-      },
       ensureMicAccess: async () => true,
       transcribe: async (audio, mimeType) => {
         const started = Date.now();
@@ -1485,7 +1487,6 @@ export const product: CcApi = new Proxy({} as CcApi, {
         const desktop = (window.cc as unknown as CcApi).voice;
         return {
           transcribe: http.transcribe,
-          hasApiKey: http.hasApiKey,
           ensureMicAccess: desktop?.ensureMicAccess ?? http.ensureMicAccess
         };
       }

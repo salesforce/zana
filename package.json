@@ -96,6 +96,8 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.10",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "electron": "^43.4.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0-beta.1",

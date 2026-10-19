@@ -118,11 +118,21 @@ and Java are discovered at runtime; consult each action's prerequisites.
 
 ## Agentforce Studio
 
-The Salesforce AgentScript editor stays in the center. The right side panel starts
-with **File explorer**; use **+** to add **Agents**, **Graph view**, **Preview**, **Tests**,
-**Actions**, or **Org preview**. Close individual tabs, hide the panel, or resize
-it with the divider (drag, arrow keys, double-click to reset). On narrow surfaces,
-tools stack below the editor. The tab layout is remembered per project.
+The Salesforce AgentScript editor stays in the center. The Studio tools open in
+the standard ZCC side panel beside the Salesforce page, the same one Design Docs
+and other plugins use. **Show side panel** in the document bar reopens the last
+tool (Preview the first time), and the panel's **+** New Tab page lists **Agents**,
+**Graph view**, **Preview**, **Tests**, **Release**, **Actions**, **Org preview**
+and **Comments** next to agent conversations. Only this page's tools are listed
+there; they never appear beside a thread or another plugin's page. Close, hide
+and resize the panel with its own controls. A tool keeps its state (preview
+conversation, test results) while you switch to another tab; closing its tab and
+opening it again starts it fresh. The detached Studio window has the same side
+panel. When the panel leaves Studio narrow, its tool strip opens tools in the
+panel and the editor stays put; in a narrow window the panel covers the page
+until you close it. Through the CLI, `panel.open` and `panel.show` open tools in
+the side panel, while `panel.close` and `panel.hide` report that the side panel
+owns closing them.
 
 **Agents** browses Agent Script authoring bundles in the selected org. The bot
 button beside the filename opens it directly. Search for an agent, choose its
@@ -205,15 +215,15 @@ bundles and published agents. Published agents always execute live actions and
 therefore require the existing live-action confirmation, even when a caller
 omits the live flag. The Studio does not share that live-action path.
 
-### Studio layout, side-panel mode and Assistant
+### Studio layout, side-panel mode and Ask agent
 
 The Studio adapts to the width of its container, so the same component serves the full tab and the thread side panel:
 
-- **Wide (>= 620 px):** activity strip, explorer, editor tabs (agents and read-only Apex/Flow), a bottom panel (**Problems**, **Comments**, **Trace**) and a right rail (**Assistant** plus the tool tabs). Cmd/Ctrl+P opens quick open.
+- **Wide (>= 620 px):** activity strip, explorer, editor tabs (agents and read-only Apex/Flow) and a bottom panel (**Problems**, **Comments**, **Trace**); the tools are in the host side panel (above). Cmd/Ctrl+P opens quick open. Where the host gives no side panel (a thread's Playground tab, the browser surface), Studio falls back to its own tool rail.
 - **Compact / side panel (< 620 px):** one tool at a time. A tool strip switches between **Code, Preview, Tests, Graph, Actions, Data, Deploy, Comments** and **Agents**; the explorer becomes a file switcher and the bottom panel a sheet. The editor iframe stays mounted across tier changes, so drafts and cursor survive resizing. Data results become cards and Deploy a vertical stepper below about 520 px.
 - A context strip shows the active file, selection, problems and last preview run.
 
-**Assistant** is the right rail (a pane in compact mode). **Ask the agent** offers *Review, Fix problems, Address comments, Write scenarios, Explain selection, Generate action* and *Harden guardrails*, or a free request. Each action starts or reuses a linked thread with a role (author, editor, reviewer, tester, assistant); linked threads are listed and open inline. Sharing the view (`share`) lets agents read the editor context through `sf_workbench view.state`. Edits an agent makes arrive as **proposals**: a diff in the editor that you accept, reject or partly accept per hunk; a newer proposal or closing the editor settles an older one as rejected.
+**Ask agent** is a menu in the top bar. It offers *Review, Fix problems, Address comments, Write scenarios, Explain selection, Generate action* and *Harden guardrails*, or a free request, plus what the agent sees (file, selection, problems, the `share` switch) and the five most recent agents on this file, which you can reopen or unlink. A request opens in the side panel's composer prefilled with the brief, so you pick the harness and send it; existing conversations open in the side panel too. Without a host side panel, the action starts or reuses a linked thread with a role (author, editor, reviewer, tester, assistant) and goes to it. Sharing the view (`share`) lets agents read the editor context through `sf_workbench view.state`. Edits an agent makes arrive as **proposals**: a diff in the editor that you accept, reject or partly accept per hunk; a newer proposal or closing the editor settles an older one as rejected.
 
 **Comments** are anchored to line ranges with the quoted text, and can be added by you or an agent, then resolved with a note.
 

@@ -36,6 +36,7 @@ import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
 import { claimPluginViewTitle, sanitizePluginViewTitle, type PluginViewTitleSlot } from './plugin-view-title.js';
 import { requestPluginPanelAgent } from './plugin-panel-agent.js';
+import { requestPluginPanelTool, usePluginPagePanel } from './plugin-page-panel.js';
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
 import { deepLinksFor } from './plugin-deep-links.js';
@@ -114,13 +115,17 @@ function useRealtimeConnectionStateImpl() {
 
 function useZccContextImpl(): ZccContext {
   const route = useRouteState();
+  const { pluginId } = usePluginRuntimeContext();
+  // Only the page's own plugin gets its side panel; another plugin's slot nested in it does not.
+  const sidePanel = usePluginPagePanel()?.pluginId === pluginId ? { sidePanel: true } : {};
   const view = getPluginViewTarget();
   // A plugin view window shows one project tab and has no routes of its own.
-  if (view) return { projectId: view.projectId, threadId: null, surface: 'plugin-view' };
+  if (view) return { projectId: view.projectId, threadId: null, surface: 'plugin-view', ...sidePanel };
   return {
     projectId: route.focusedProjectId,
     threadId: route.threadId,
-    surface: isScopedWindow() ? 'project-window' : 'main'
+    surface: isScopedWindow() ? 'project-window' : 'main',
+    ...sidePanel
   };
 }
 
@@ -161,6 +166,9 @@ function useZccNavigateImpl(): ZccNavigate {
   const { pluginId } = usePluginRuntimeContext();
   const route = useRouteState();
   const panelOwnerId = useThreadPanelOwnerId();
+  // The side panel beside this page: requests go to it, not to another pane's.
+  const enclosing = usePluginPagePanel();
+  const sidePanel = enclosing?.pluginId === pluginId ? enclosing : undefined;
   return useMemo(() => {
     const view = getPluginViewTarget();
     // A plugin view window has no routes: send in-app navigation to the main window.
@@ -217,10 +225,13 @@ function useZccNavigateImpl(): ZccNavigate {
         });
       },
       openPanelAgent(options) {
-        return requestPluginPanelAgent({ ...options, pluginId });
+        return requestPluginPanelAgent({ ...options, pluginId }, sidePanel);
+      },
+      openPanelTool(options) {
+        return requestPluginPanelTool(pluginId, options, sidePanel);
       }
     };
-  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId]);
+  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId, sidePanel]);
 }
 
 function useZccDeepLinksImpl(): ZccDeepLinks {

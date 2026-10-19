@@ -17,7 +17,7 @@ vi.mock('./preview/PreviewWorkbench.js', () => ({
     <button data-testid="reveal-other" onClick={() => p.onRevealSource('force-app/bots/Help.agent', 4)}>other</button>
   </div>
 }));
-vi.mock('./studio/AssistantRail.js', () => ({ AssistantRail: () => <div data-testid="stub-assistant" /> }));
+vi.mock('./studio/AskAgentButton.js', () => ({ AskAgentButton: () => <div data-testid="stub-ask-agent" /> }));
 vi.mock('./AgentScriptGraphPanel.js', () => ({
   AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph"><button data-testid="graph-open" onClick={() => { p.onOpenAction('act1'); p.onOpenAction('missing'); }}>open</button></div>
 }));

@@ -5,8 +5,11 @@
  * Writes:
  *   - marketplace/marketplace.json
  *   - website/content/marketplace/marketplace.json
+ *
+ * `--check` writes nothing: it requires schema validation and fails when either
+ * committed output differs from a fresh build (CI runs this on every PR).
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -19,7 +22,7 @@ const WEBSITE_OUT = join(REPO_ROOT, 'website', 'content', 'marketplace', 'market
 const LOCAL_OUT = join(MARKETPLACE_ROOT, 'marketplace.json');
 const SCHEMA_PATH = join(MARKETPLACE_ROOT, 'schema', 'marketplace.schema.json');
 
-function validateWithAjv(index) {
+function validateWithAjv(index, { required = false } = {}) {
   let Ajv;
   let addFormats;
   try {
@@ -32,6 +35,7 @@ function validateWithAjv(index) {
       Ajv = require('ajv/dist/2020.js').default;
       addFormats = require('ajv-formats').default;
     } catch {
+      if (required) throw new Error('marketplace check: ajv is not installed; run pnpm install');
       return;
     }
   }
@@ -49,19 +53,28 @@ function validateWithAjv(index) {
 
 /**
  * @param {string} [marketplaceRoot]
- * @param {{ validate?: boolean, outputs?: string[] }} [options]
+ * @param {{ validate?: boolean, requireSchema?: boolean, outputs?: string[] }} [options]
  *   Pass `outputs: []` to validate/assemble without writing.
  */
 export function buildMarketplace(marketplaceRoot = MARKETPLACE_ROOT, options = {}) {
   const index = loadMarketplacePlugins(marketplaceRoot);
-  if (options.validate !== false) validateWithAjv(index);
+  if (options.validate !== false) validateWithAjv(index, { required: options.requireSchema === true });
   const text = `${JSON.stringify(index, null, 2)}\n`;
   const outputs = options.outputs ?? [LOCAL_OUT, WEBSITE_OUT];
   for (const out of outputs) {
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, text);
   }
-  return { index, outputs };
+  return { index, outputs, text };
+}
+
+/**
+ * Committed outputs that differ from a fresh build (missing files count as stale).
+ * @param {string} text freshly built catalog text
+ * @param {string[]} [outputs]
+ */
+export function findStaleOutputs(text, outputs = [LOCAL_OUT, WEBSITE_OUT]) {
+  return outputs.filter((out) => !existsSync(out) || readFileSync(out, 'utf8') !== text);
 }
 
 function isMain() {
@@ -76,6 +89,20 @@ function isMain() {
 
 if (isMain()) {
   try {
+    if (process.argv.includes('--check')) {
+      const { index, text } = buildMarketplace(MARKETPLACE_ROOT, { requireSchema: true, outputs: [] });
+      const stale = findStaleOutputs(text);
+      if (stale.length > 0) {
+        console.error(
+          `marketplace check: out of date: ${stale
+            .map((path) => path.replace(`${REPO_ROOT}/`, ''))
+            .join(', ')}\nRun \`node marketplace/scripts/build.mjs\` and commit the result.`
+        );
+        process.exit(1);
+      }
+      console.log(`marketplace check: ${index.plugins.length} plugins valid; committed catalogs are current`);
+      process.exit(0);
+    }
     const { index, outputs } = buildMarketplace();
     console.log(
       `marketplace build: ${index.plugins.length} plugins (${index.name}) → ${outputs

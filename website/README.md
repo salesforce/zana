@@ -134,7 +134,11 @@ fails if the synced files or `docs/extensions-sdk-reference.md` drift.
 
 `scripts/generate-marketplace.mjs` writes `content/marketplace/marketplace.json`
 from the repo `plugins/` tree (git pointers with `subdir: plugins/<id>`). The
-site serves it at `/marketplace/v1/marketplace.json`. Desktop apps seed that
+image bundles that copy, but `/marketplace/v1/marketplace.json` serves the
+catalog from `main` on GitHub (`lib/live-marketplace.ts`, 5-minute cache,
+last-good and bundled fallbacks), so merged listings go live without a
+redeploy. `MARKETPLACE_UPSTREAM_URL` overrides the source; `off` serves only the
+bundled copy. Desktop apps seed that
 HTTPS URL automatically (override with `ZCC_OFFICIAL_MARKETPLACE_URL`; `off`
 skips the seed). The seed is fail-soft if the feed is unreachable.
 

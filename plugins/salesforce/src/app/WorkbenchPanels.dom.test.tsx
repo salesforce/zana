@@ -539,6 +539,26 @@ describe("public Salesforce panels", () => {
     expect(screen.queryByRole("dialog", { name: "Fetch from org" })).toBeNull();
   });
 
+  it("scopes Fetch latest to agentforce on the Agentforce view and to everything elsewhere", async () => {
+    call.mockImplementation(async (method, args) =>
+      method === "sync.check"
+        ? { ok: true, data: { org: { alias: "dev", orgId: org.orgId }, scope: args?.scope, checkedAt: 1, components: [], counts: { changed: 0, conflict: 0, unknown: 0, new: 0, deleted: 0, current: 3 }, truncated: false } }
+        : respond(method, args),
+    );
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    await screen.findByText("Ready for your next change.");
+    fireEvent.click(screen.getByRole("tab", { name: "Agentforce" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fetch latest from org" }));
+    await screen.findByText(/3 components up to date/);
+    expect(call).toHaveBeenCalledWith("sync.check", expect.objectContaining({ scope: "agentforce" }));
+    fireEvent.click(screen.getByText("Cancel"));
+    call.mockClear();
+    fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fetch latest from org" }));
+    await screen.findByText(/3 components up to date/);
+    expect(call).toHaveBeenCalledWith("sync.check", expect.objectContaining({ scope: "all" }));
+  });
+
   it("keeps an explicit missing target visible instead of displaying another org", () => {
     const orgs = [{ ...org, isDefault: true, connectedStatus: "Connected" }];
     const { rerender } = render(

@@ -33,6 +33,7 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
       <div className="new-thread-view-inner">
         <h1 className="new-thread-view-heading">New agent</h1>
         <HomeAgentComposer
+          draftScope="new-thread"
           project={project}
           initialText={seed.initialText}
           autoFocus={seed.focusPrompt}

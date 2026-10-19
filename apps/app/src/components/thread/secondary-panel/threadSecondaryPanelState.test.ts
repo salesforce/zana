@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   addClosableTab,
   openAgentDraft,
+  openPluginTool,
   closeClosableTab,
   closeSecondaryPanel,
   emptySecondaryPanelState,
@@ -474,5 +475,31 @@ describe('openAgentDraft', () => {
     const restored = parseSecondaryPanelState(JSON.parse(JSON.stringify(next)));
     expect(restored.tabs[1]).not.toHaveProperty('draft');
     expect(restored.tabs[1]).not.toHaveProperty('draftProjectId');
+  });
+});
+
+describe('openPluginTool', () => {
+  it('opens one tab per action, then focuses it and patches only given params', () => {
+    const first = openPluginTool(emptySecondaryPanelState(), { pluginId: 'sf', actionId: 'graph', title: 'Graph', layout: 'flush' });
+    expect(first.isOpen).toBe(true);
+    expect(first.tabs).toHaveLength(1);
+    const tab = first.tabs[0]!;
+    expect(tab).toMatchObject({ kind: 'plugin', title: 'Graph', moduleId: 'sf', actionId: 'graph', params: null, layout: 'flush' });
+    expect(first.activeId).toBe(tab.id);
+
+    const other = openPluginTool(first, { pluginId: 'sf', actionId: 'test', title: 'Test' });
+    expect(other.tabs).toHaveLength(2);
+    expect(other.tabs[1]).not.toHaveProperty('layout');
+
+    const refocused = openPluginTool(closeSecondaryPanel(other), { pluginId: 'sf', actionId: 'graph', title: 'Ignored' });
+    expect(refocused.tabs).toHaveLength(2);
+    expect(refocused.isOpen).toBe(true);
+    expect(refocused.activeId).toBe(tab.id);
+    expect(refocused.tabs[0]).toMatchObject({ title: 'Graph', params: null });
+
+    const patched = openPluginTool(refocused, { pluginId: 'sf', actionId: 'graph', title: 'Graph', params: { node: 'n1' } });
+    expect(patched.tabs[0]).toMatchObject({ params: { node: 'n1' } });
+    // Another plugin's action with the same id is its own tab.
+    expect(openPluginTool(patched, { pluginId: 'gus', actionId: 'graph', title: 'Graph' }).tabs).toHaveLength(3);
   });
 });

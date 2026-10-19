@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { ThreadCommandComposer, type ThreadCommandComposerProps } from './ThreadCommandComposer.js';
 import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
 import { TeamComposer } from './TeamComposer.js';
 import { LaunchModeSegmented } from './LaunchModeSegmented.js';
-import { ComposerDraftProvider } from './composer/ComposerDraft.js';
+import { ComposerDraftProvider, useComposerSession, useComposerSetting } from './composer/ComposerDraft.js';
 import {
   resolveAvailableLaunchMode,
   visibleComposerLaunchModes,
@@ -18,14 +18,22 @@ export { parseHomeLauncherPreferences } from './home-launcher-preferences.js';
 export interface HomeAgentComposerProps extends ThreadCommandComposerProps {
   /** New Chat (`nav === 'home'`) only — New Thread stays on the HTTP thread path. */
   allowLegacyAgent?: boolean;
+  draftScope?: string;
 }
 
 /** Dashboard wrapper only — thread detail must not inherit this spacing. */
 export function HomeAgentComposer({
   allowLegacyAgent = false,
   project,
+  draftScope = 'home',
   ...props
 }: HomeAgentComposerProps) {
+  const sessionKey = JSON.stringify([draftScope, project?.id ?? null]);
+  return <ComposerDraftProvider sessionKey={sessionKey}><HomeComposerContent allowLegacyAgent={allowLegacyAgent} project={project} {...props} /></ComposerDraftProvider>;
+}
+
+function HomeComposerContent({ allowLegacyAgent = false, project, ...props }: HomeAgentComposerProps) {
+  const session = useComposerSession();
   const walkthroughHomeMode = useUi((s) => s.walkthroughHomeMode);
   const teams = useTeams(useShallow((s) => s.teams));
   const composerShowCliAgent = useData((s) => s.composerShowCliAgent);
@@ -38,22 +46,22 @@ export function HomeAgentComposer({
     showTeam: composerShowAutonomousTeam || teamJobLaunchEnabled
   }, { hasTeams: teams.length > 0 });
   const [storedMode, setStoredMode] = useLaunchModePreference();
-  const preferred = resolveAvailableLaunchMode(storedMode, available);
+  const [sessionMode, setSessionMode] = useComposerSetting(session, 'launchMode', storedMode);
+  const preferred = resolveAvailableLaunchMode(sessionMode, available);
   const kind = walkthroughHomeMode === 'thread' || walkthroughHomeMode === 'agent'
     ? walkthroughHomeMode
     : preferred;
   const showLaunchSwitcher = Boolean(walkthroughHomeMode) || visibleLaunchModeCount(available) > 1;
-  const [composerProjectId, setComposerProjectId] = useState(project?.id ?? '');
+  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? '');
   useEffect(() => {
     if (project?.id) setComposerProjectId(project.id);
   }, [project?.id]);
   return (
-    <ComposerDraftProvider>
       <div className={`home-agent-composer${walkthroughHomeMode ? ' is-walkthrough-spotlight' : ''}`}>
         {allowLegacyAgent && showLaunchSwitcher && (
           <LaunchModeSegmented
             value={kind}
-            onChange={setStoredMode}
+            onChange={mode => { setSessionMode(mode); setStoredMode(mode); }}
             showCliAgent={available.showCliAgent}
             showModern={available.showModern}
             showTeam={available.showTeam}
@@ -82,6 +90,5 @@ export function HomeAgentComposer({
           />
         )}
       </div>
-    </ComposerDraftProvider>
   );
 }

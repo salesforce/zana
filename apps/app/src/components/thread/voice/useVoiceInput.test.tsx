@@ -3,10 +3,14 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useVoiceInput } from './useVoiceInput.js';
 
+vi.mock('./voice-status-store.js', () => ({
+  useVoiceAvailability: () => ({ enabled: true, availability: { state: 'unavailable', reason: 'no_host' } }),
+  useVoiceStatus: { getState: () => ({ refresh: () => undefined }) }
+}));
+
 vi.mock('../../../lib/product-client.js', () => ({
   product: {
     voice: {
-      hasApiKey: async () => false,
       ensureMicAccess: async () => true,
       transcribe: async () => ({ ok: true, text: 'hi' })
     }
@@ -28,10 +32,11 @@ describe('useVoiceInput', () => {
     const source = readFileSync(new URL('./useVoiceInput.ts', import.meta.url), 'utf8');
     expect(source).toContain('createVoiceCapture');
     expect(source).toContain('voiceStartBlockReason');
-    expect(source).toContain('product.voice.hasApiKey');
+    expect(source).toContain('useVoiceAvailability');
     expect(source).toContain('product.voice.ensureMicAccess');
     expect(source).toContain('product.voice.transcribe');
     expect(source).toContain('showError(blocked)');
+    expect(source).not.toContain('hasApiKey');
   });
 
   it('renders idle and reports unsupported without MediaRecorder', () => {

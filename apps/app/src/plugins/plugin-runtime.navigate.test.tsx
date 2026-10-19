@@ -4,29 +4,46 @@
 import { cleanup, render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PluginSdkApp, ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import type { PluginSdkApp, ZccContext, ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import type { ReactNode } from 'react';
+
+const pageActions = vi.hoisted(() => [{ pluginId: 'notes', id: 'outline', title: 'Outline', scopes: ['plugin-page'] }]);
+vi.mock('./plugin-slots.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./plugin-slots.js')>()),
+  listThreadPanelActions: () => pageActions
+}));
+
 import { installPluginRuntime } from './plugin-runtime.js';
 import { PluginRuntimeContext } from './PluginSlotBoundary.js';
 import { onPluginPanelAgentRequest } from './plugin-panel-agent.js';
+import { onPluginPanelToolRequest, PluginPagePanelProvider } from './plugin-page-panel.js';
 
 afterEach(cleanup);
 
-function renderNavigate(pluginId: string): ZccNavigate {
+function renderRuntime(pluginId: string, wrap: (children: ReactNode) => ReactNode = (children) => children) {
   installPluginRuntime();
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: PluginSdkApp }).__ZCC_PLUGIN_RUNTIME__!;
   let navigate: ZccNavigate | null = null;
+  let context: ZccContext | null = null;
   function Probe() {
     navigate = runtime.useZccNavigate();
+    context = runtime.useZccContext();
     return null;
   }
   render(
     <MemoryRouter initialEntries={['/']}>
-      <PluginRuntimeContext.Provider value={{ pluginId, generation: 0 }}>
-        <Probe />
-      </PluginRuntimeContext.Provider>
+      {wrap(
+        <PluginRuntimeContext.Provider value={{ pluginId, generation: 0 }}>
+          <Probe />
+        </PluginRuntimeContext.Provider>
+      )}
     </MemoryRouter>
   );
-  return navigate!;
+  return { navigate: navigate!, context: context! };
+}
+
+function renderNavigate(pluginId: string): ZccNavigate {
+  return renderRuntime(pluginId).navigate;
 }
 
 describe('navigate.openPanelAgent', () => {
@@ -60,6 +77,33 @@ describe('navigate.openPanelAgent', () => {
       expect(show).toHaveBeenLastCalledWith({ draft: 'Again' });
       expect(navigate.openPanelAgent(null as never)).toBe(false);
       expect(show).toHaveBeenCalledTimes(2);
+    } finally {
+      off();
+    }
+  });
+});
+
+describe('navigate.openPanelTool', () => {
+  const page = { pluginId: 'notes', page: 'notes' };
+  const besidePage = (children: ReactNode) => <PluginPagePanelProvider page={page}>{children}</PluginPagePanelProvider>;
+
+  it('marks only the page owner as having a side panel', () => {
+    expect(renderRuntime('notes').context.sidePanel).toBeUndefined();
+    cleanup();
+    expect(renderRuntime('notes', besidePage).context.sidePanel).toBe(true);
+    cleanup();
+    expect(renderRuntime('other', besidePage).context.sidePanel).toBeUndefined();
+  });
+
+  it("asks the page's layout to open one of the plugin's own tools", () => {
+    const navigate = renderRuntime('notes', besidePage).navigate;
+    expect(navigate.openPanelTool?.({ actionId: 'outline' })).toBe(false);
+    const show = vi.fn();
+    const off = onPluginPanelToolRequest(page, show);
+    try {
+      expect(navigate.openPanelTool?.({ actionId: 'outline', params: { at: 1 } })).toBe(true);
+      expect(show).toHaveBeenCalledWith({ actionId: 'outline', title: 'Outline', params: { at: 1 } });
+      expect(renderNavigate('other').openPanelTool?.({ actionId: 'outline' })).toBe(false);
     } finally {
       off();
     }

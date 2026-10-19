@@ -3,6 +3,7 @@ import { product } from '../../../lib/product-client.js';
 import { useUi } from '../../../store.js';
 import { createVoiceCapture, type VoiceCaptureSession } from './voice-session.js';
 import { voiceStartBlockReason, type VoiceInputState } from './voice-helpers.js';
+import { useVoiceAvailability, useVoiceStatus } from './voice-status-store.js';
 
 interface CaptureEntry {
   state: VoiceInputState;
@@ -27,21 +28,15 @@ export function useVoiceInput({ onTranscript, enabled = true, ownerKey }: UseVoi
     const hasMediaDevices = typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
     return hasMediaDevices && typeof MediaRecorder !== 'undefined';
   });
-  const [available, setAvailable] = useState(false);
+  const { enabled: toggleOn, availability } = useVoiceAvailability();
+  const visible = enabled && toggleOn;
+  const available = visible && availability.state === 'ready';
   const [stream, setStream] = useState<MediaStream | null>(null);
 
   const showError = useCallback((message: string) => {
     setState('error');
     pushToast(message, 'error');
   }, [pushToast]);
-
-  useEffect(() => {
-    if (!enabled) {
-      setAvailable(false);
-      return;
-    }
-    void product.voice.hasApiKey().then(setAvailable).catch(() => setAvailable(false));
-  }, [enabled]);
 
   const uniqueId = useId();
   const key = ownerKey ?? uniqueId;
@@ -66,7 +61,11 @@ export function useVoiceInput({ onTranscript, enabled = true, ownerKey }: UseVoi
           onState: state => { next.state = state; publish(); },
           onStream: stream => { next.stream = stream; publish(); },
           onTranscript: text => next.transcript(text),
-          onError: message => pushToast(message, 'error')
+          onError: message => {
+            pushToast(message, 'error');
+            // A failed attempt may mean the host login changed; re-check so the button reflects it.
+            void useVoiceStatus.getState().refresh({ force: true });
+          }
         }
       );
       entry = next;
@@ -86,7 +85,7 @@ export function useVoiceInput({ onTranscript, enabled = true, ownerKey }: UseVoi
   }, [key, pushToast]);
 
   const start = useCallback(async () => {
-    const blocked = voiceStartBlockReason(isSupported, available);
+    const blocked = voiceStartBlockReason(isSupported, availability);
     if (blocked) {
       showError(blocked);
       return;
@@ -99,7 +98,7 @@ export function useVoiceInput({ onTranscript, enabled = true, ownerKey }: UseVoi
     }
     if (entry) entry.transcript = transcriptRef.current;
     await sessionRef.current?.start();
-  }, [available, isSupported, showError, key, pushToast]);
+  }, [availability, isSupported, showError, key, pushToast]);
 
   const stop = useCallback((onTranscript?: (text: string) => void | Promise<void>) => {
     const entry = captures.get(key);
@@ -111,11 +110,20 @@ export function useVoiceInput({ onTranscript, enabled = true, ownerKey }: UseVoi
     sessionRef.current?.cancel();
   }, []);
 
+  // Turning dictation off in Experimental must not leave a live recording behind.
+  useEffect(() => {
+    if (!visible) sessionRef.current?.cancel();
+  }, [visible]);
+
   return {
     state,
     isSupported,
     available,
-    canStart: isSupported && available && state !== 'recording' && state !== 'transcribing',
+    /** False when dictation is switched off in Settings → Experimental: render no mic at all. */
+    visible,
+    /** Why the mic is disabled, or null when it can start. Drives tooltip and aria-label. */
+    blockReason: voiceStartBlockReason(isSupported, availability),
+    canStart: visible && isSupported && available && state !== 'recording' && state !== 'transcribing',
     stream,
     start,
     stop,

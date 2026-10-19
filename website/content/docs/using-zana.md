@@ -184,6 +184,22 @@ find something worth surfacing.
   not Claude Code's `~/.claude/plugins`. See the
   [Plugins overview](/docs/extensions/).
 
+### Settings search
+
+The search box at the top of Settings finds every control on every Settings
+page, not just page names: it matches labels, help text, option names, curated
+synonyms ("dark" finds Theme) and the current value of a setting (search part of
+a path you set and the field comes up, shown as "Current: …"). Plugin-defined
+settings, keyboard shortcuts, paired machines and harness catalogues are
+included. Results are ranked, so an exact name comes before a loose match, and
+small typos still work (`tmxu` finds tmux). Pick a result to jump straight to
+that row: it scrolls into view, pulses briefly and takes focus, opening a
+collapsed Advanced block or the right Harness tab on the way. In the command
+palette (Cmd/Ctrl+P), the **Settings** scope searches the same index; in
+**All** it adds a short Settings section. Secrets are never indexed: tokens,
+passwords, API keys, connect codes and any plugin setting marked secret can't be
+found by their value, and values never leave the app.
+
 ---
 
 ## Where to go next

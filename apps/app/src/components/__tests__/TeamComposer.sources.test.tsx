@@ -61,6 +61,7 @@ vi.mock('../composer/use-composer-prompt-field.js', () => ({
     typeaheadOpen: false,
     serialize: () => ({ text: 'do the thing', mentions: [] }),
     clear: vi.fn(),
+    captureRevision: () => 0, clearIfRevision: vi.fn(),
     insertText: vi.fn(),
     setText: vi.fn(),
     focus: vi.fn()

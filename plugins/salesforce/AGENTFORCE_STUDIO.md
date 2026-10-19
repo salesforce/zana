@@ -94,8 +94,7 @@ Verified on 2026-09-20:
 - The studio spec checks actual semantic keyword colors in both themes and
   dragging across the Monaco iframe. The workbench spec covers standalone
   production-org schema, queries without LIMIT and record inspection.
-- Reviewed light, dark and narrow layouts. Screenshots are in
-  [`artifacts/agentforce-studio`](../../artifacts/agentforce-studio/).
+- Reviewed light, dark and narrow layouts.
 - Corrected all three starter scripts against the actual language service and
   fixed sibling transitions being drawn as a misleading chain in the graph.
 
@@ -177,8 +176,7 @@ Action explorer verification on 2026-09-20: the full Salesforce suite passed
 statements and 94.11% branches. The plugin build, root typecheck and playground
 typecheck pass. The final action journey passed in built Electron using a private
 copy of the production build and SQLite binary, isolating it from concurrent
-builds/native-ABI switches in this shared checkout. Screenshots are saved under
-`artifacts/agentforce-studio/actions-*.png`. The installed path plugin was reloaded
+builds/native-ABI switches in this shared checkout. The installed path plugin was reloaded
 successfully. Real org source permissions and API availability remain unverified.
 
 

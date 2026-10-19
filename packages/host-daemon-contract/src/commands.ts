@@ -531,6 +531,10 @@ const codexVoiceTranscribeCommandSchema = z
   })
   .strict();
 
+const codexVoiceStatusCommandSchema = z
+  .object({ type: z.literal("codex.voice.status") })
+  .strict();
+
 /**
  * Read a file from an absolute host path. When `rootPath` is provided, the
  * daemon enforces that the resolved file stays under that declared absolute
@@ -1515,6 +1519,9 @@ const codexVoiceTranscribeResultSchema = z.object({
   model: z.string().min(1),
   text: z.string(),
 });
+const codexVoiceStatusResultSchema = z.object({
+  state: z.enum(["ready", "unverified", "missing"]),
+});
 const environmentProvisionResultSchema =
   discoveredWorkspacePropertiesSchema.extend({
     transcript: z.array(provisioningTranscriptEntrySchema),
@@ -1819,6 +1826,15 @@ export const hostDaemonCommandRegistry = {
     type: "codex.voice.transcribe",
     schema: codexVoiceTranscribeCommandSchema,
     resultSchema: codexVoiceTranscribeResultSchema,
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "codex.voice.status": defineHostDaemonCommandDescriptor({
+    type: "codex.voice.status",
+    schema: codexVoiceStatusCommandSchema,
+    resultSchema: codexVoiceStatusResultSchema,
     transport: "settled",
     retryable: false,
     flushEventsBeforeResult: false,

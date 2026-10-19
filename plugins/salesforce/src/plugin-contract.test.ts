@@ -135,7 +135,12 @@ describe('salesforce plugin contract', () => {
     expect(set.projectTabs.map((tab) => tab.id)).toEqual(['salesforce']);
     expect(set.projectTabs[0]).toMatchObject({ label: 'Salesforce', icon: 'Cloud', global: false, detachable: true });
     expect(typeof set.projectTabs[0]?.detachedPlaceholder).toBe('function');
-    expect(set.threadPanelActions.map((row) => row.id)).toEqual(['sf-org', 'sf-soql', 'sf-object', 'sf-record', 'sf-logs', 'sf-deployments', 'sf-operations', 'playground', 'preview']);
+    expect(set.threadPanelActions.map((row) => row.id)).toEqual(['sf-org', 'sf-soql', 'sf-object', 'sf-record', 'sf-logs', 'sf-deployments', 'sf-operations', 'playground', 'preview',
+      'studio-agents', 'studio-graph', 'studio-preview', 'studio-test', 'studio-release', 'studio-actions', 'studio-org-preview', 'studio-comments']);
+    // Studio's tools are listed only beside the Salesforce tab, never in a thread or agent session.
+    for (const row of set.threadPanelActions.filter(row => row.id.startsWith('studio-'))) {
+      expect(row).toMatchObject({ scopes: ['plugin-page'], pages: ['salesforce'], layout: 'flush', category: 'Agent Script Studio' });
+    }
     expect(set.threadPanelActions.find(row => row.id === 'playground')).toMatchObject({ title: 'Playground', layout: 'flush' });
     expect(set.threadPanelActions.find(row => row.id === 'preview')).toMatchObject({ title: 'Preview', layout: 'flush' });
     expect(set.newThreadPanelActions).toEqual([]);

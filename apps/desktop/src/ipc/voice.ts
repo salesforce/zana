@@ -33,10 +33,6 @@ export function registerVoiceIpc(): void {
       return { ok: false, text: '', error: `Transcription failed: ${(err as Error).message}`, ms: 0 };
     }
   });
-  ipcMain.handle(IPC.voice.hasApiKey, async () => {
-    return (await getOpenAiKey()) != null;
-  });
-
   // Ensure the OS-level microphone permission is granted before the renderer
   // calls getUserMedia. On macOS this surfaces the system TCC prompt the first
   // time; a prior denial resolves false so the renderer can show a recovery

@@ -15,8 +15,10 @@ Handed to `export default function plugin(zcc)`.
 | `rpc.method` | Renderer/host RPC |
 | `realtime.publish` | Events |
 | `background.service` / `schedule` | Long-running work |
+| `remoteEnvironment.provide` / `refresh` | Environment variables for sessions on non-primary machines (manifest allowlist `zcc.extra.remoteEnvironment`; held in memory, never stored) |
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata` |
 | `ui.requestInput` | Host prompt |
+| `ui.experimental_consumeApproval` | Verify and burn a host-signed approval token (see `approvals`) |
 | `status.needsConfiguration` | Degraded-until-configured |
 | `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
 | `sdk.system.defaultHost()` | Primary enrolled host ID, or `null` when none is configured |
@@ -28,6 +30,20 @@ Handed to `export default function plugin(zcc)`.
 Plugins do not get `ctx.exec` permission tokens. They are full-trust in the
 server process and must not be given host-daemon tokens.
 
+`remoteEnvironment.provide(resolve)` lets a plugin contribute environment
+variables to sessions that run on other enrolled machines (never the primary
+machine). The plugin declares the exact names, or `PREFIX_*` patterns, it may
+set in `package.json` under `zcc.extra.remoteEnvironment`; names outside that
+list are dropped, and names that redirect how processes are found or loaded (`PATH`, `HOME`,
+`LD_*`, `NODE_*`, `ZCC_*`, `GIT_SSH*` and similar) are refused for every plugin. `resolve` must answer quickly
+(serve a cached value and refresh in the background); call `refresh()` when the
+values change. Entries may share a `group` (applied all or none) and list
+`requires` (only applied when those variables exist on the machine). Values live
+in the memory of the machine's daemon only: they are never written to disk, the
+database, logs or spawn-plan dumps, they are cleared when the daemon disconnects
+or the plugin is disposed, and a variable the user already set on the machine is
+never overridden.
+
 `sdk.threads.spawn` accepts `hostId`, `serviceTier: "default" | "fast"` and
 `environment: { kind: "unmanaged" | "personal" | "worktree" | "reuse", ... }`.
 The server validates environment choices and authorizes host/project access.
@@ -37,7 +53,11 @@ accepts `hostId` and returns `modelLoadError` when discovery fails.
 `sdk.files.read` and `sdk.files.write` resolve an omitted `hostId` to the
 primary host and retain the host file service's path confinement.
 `sdk.environments.pullRequest({ environmentId })` returns `pullRequest` or
-`unavailableReason`. Thread summaries include titles and update timestamps.
+`unavailableReason`. Thread summaries include titles and update timestamps,
+plus `pinnedAt` (epoch ms, or null when the thread is not pinned).
+A host entry's `experimental_paths.threadStorageRoot` is the absolute
+thread-storage directory of the daemon it runs on (null when the daemon did not
+provide one); the directory may not exist yet, so confine anything beneath it.
 Plugin HTTP bodies are capped at 25 MiB; JSON routes also receive parsed
 `body`, while attachment routes can consume the exact `rawBody` bytes.
 
@@ -72,7 +92,9 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Project shell
 
-- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry). Use `header: 'custom'` when the component supplies its own toolbar; render its `headerActions` prop there to retain the host split-pane controls without an extra title row.
+- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry). Use `header: 'custom'` when the component supplies its own toolbar; render its `headerActions` prop there to retain the host split-pane controls without an extra title row. Set `detachable: true` to offer **Open in new window** (desktop only): the tab then runs in its own OS window, one per project, and other windows show `detachedPlaceholder` (`PluginDetachedTabProps`: `focusWindow()`, `bringBack()`) or a host card instead of mounting it. Inside that window `useZccContext().surface` is `'plugin-view'` and no thread sits beside it, but the page keeps its side panel (below); `useZccNavigate().openInWindow?(projectId, { tabId })` opens or focuses it. `useWindowTitle({ title, detail?, badge?, tone? })` titles that window while the calling component is mounted: `title` replaces the tab label, `detail` follows the project name, and `badge` (tone `neutral`, `warning` or `danger`) shows as a pill and leads the OS title, e.g. `Production · Agentforce · Help — Acme · prod`. It does nothing in the main or a project window, and the host trims and caps each part. Persist edits the window must not lose (drafts) and publish cross-window state over `zcc.realtime`.
+- **Page side panel.** A `navPanel` page or `projectTab` sits beside the host side panel on desktop, also in its detached window; `useZccContext().sidePanel` is `true` there (absent or `false` elsewhere, including inside thread-panel tabs). `useZccNavigate().openPanelAgent({ threadId, title? } | { draft: { prompt, projectId?, view? }, title? })` shows a conversation, or prefills a blank composer so the user picks the harness and sends it. `openPanelTool?({ actionId, title?, params? })` opens one of the plugin's own `threadPanelAction` tabs there, provided it lists `'plugin-page'` in `scopes`; an open tab for the action is focused and given the new `params` instead of duplicated. Both return `false` when the page has no side panel or the request does not match, so keep an in-page fallback. The panel's New Tab page lists only the page owner's `'plugin-page'` actions, never another plugin's.
+- `experimental_agentsView` — add a layout after Board, List and Flow in the global and project Agents view selectors. See [Adding an Agents view](#adding-an-agents-view).
 - `experimental_agentsBoardAction` — toolbar control on the Agents board (`projectId` is `null` on the cross-project Agents nav)
 - `experimental_agentCardAction` — right-click item on an Agents board card
 - `experimental_threadCardAction` — right-click item on a Modern conversation card. `isAvailable` and `run` receive host-derived `threadId` and `projectId`
@@ -89,10 +111,10 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Thread
 
-- `threadPanelAction` — thread side-panel tabs; optional `scopes` include `"agent-session"` for the CLI-agent inspector. Both this slot and `experimental_newThreadPanelAction` accept an optional `category` label for the New Tab launcher. Omit it to group under the installed plugin’s display name. Categories are collapsible; search matches tool titles and category names across all groups. The optional `icon` is shown beside the tool.
+- `threadPanelAction` — side-panel tabs. `scopes` default to `["thread"]`; add `"agent-session"` for the CLI-agent inspector and `"plugin-page"` for the side panel beside this plugin's own pages. With `"plugin-page"`, optional `pages` (the `navPanel` / `projectTab` ids) narrows which pages list it. The component's `surface` prop says which panel shows it (absent on older hosts: treat as `"thread"`); `threadId` is empty beside a plugin page. `tabId` names the tab showing it: the same across tab switches, new when a closed tab is opened again, so a component can keep state while switched away and start fresh in a reopened tab. Both this slot and `experimental_newThreadPanelAction` accept an optional `category` label for the New Tab launcher. Omit it to group under the installed plugin’s display name. Categories are collapsible; search matches tool titles and category names across all groups. The optional `icon` is shown beside the tool.
 - `pendingInteraction` — custom in-thread prompt UI (`id` must match `zcc.ui.requestInput` `rendererId`)
 - `experimental_threadHeaderAction` — action in the thread detail header
-- `experimental_threadList` — replace the Agents list pane (exclusive; last registered wins Appearance pin)
+- `experimental_threadList` — replace the thread list in the global and project sidebars (exclusive); projects and CLI Agents remain host-owned
 - `experimental_timelineRenderer` — custom body for a timeline row kind
 - `messageDirective` — render `::name{attr}` leaves in markdown
 - `messageAction` — per-message menu item on the timeline
@@ -116,12 +138,84 @@ Headless (no pixels), plus picker chrome:
 - `settings-define` — `zcc.settings.define`
 - `background` — `zcc.background.service` / `schedule`
 - `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
+- `approvals` — host-signed approvals (experimental): `experimental_requestApproval(pluginId, { binding, title, summary?, details?, confirmLabel?, tone? })` from `@zana-ai/zcc-plugin-sdk/app` has desktop main draw its own sandboxed sheet and sign the binding it showed; the server calls `zcc.ui.experimental_consumeApproval({ token, binding })` with a binding rebuilt from its own sources before acting. One plugin, one binding (`action`, `target`, `targetLabel`, `subject`, `revision?`, `confirmText?`), one use, five minutes. `confirmText` must be typed. Web, mobile and headless return `{ approved: false, reason: 'unavailable' }`. Agent-initiated actions keep `sdk.confirm`. Tests: `harness.approve(binding)`.
 - `contentScripts` — `contentScripts.register`
 - `experimental_providerIcon` — picker glyph for a provider id
 
 Registrations replace wholesale per plugin id. Each carries a `generation` used
 as the React remount key. Wrap UI in `PluginSlotBoundary`. Live-reload with
 `zcc plugin dev`.
+
+## Adding an Agents view
+
+`app.slots.experimental_agentsView` adds a selectable Agents layout. Multiple plugins
+can contribute views; the host keeps the built-in Board, List and Flow choices.
+Agent City uses this slot for World. A view contribution does not add a sidebar
+page; its plugin remains manageable under **Plugins → Installed plugins**.
+
+```tsx
+import { definePluginApp, type PluginAgentsViewProps } from '@zana-ai/zcc-plugin-sdk/app';
+
+function WorldView({ projects, members, onInspect }: PluginAgentsViewProps) {
+  return (
+    <section aria-label="Project agents" style={{ height: '100%', overflow: 'auto' }}>
+      {projects.map((project) => (
+        <section key={project.id}>
+          <h2>{project.name}</h2>
+          {members.filter((member) => member.projectId === project.id).map((member) => (
+            <button key={member.key} onClick={() => onInspect(member.key)}>
+              {member.title} · {member.status}
+            </button>
+          ))}
+        </section>
+      ))}
+    </section>
+  );
+}
+
+export default definePluginApp((app) => {
+  app.slots.experimental_agentsView?.({
+    id: 'world',
+    title: 'World',
+    icon: 'Building2',
+    component: WorldView
+  });
+});
+```
+
+The registration is `PluginAgentsViewRegistration`: a plugin-local `id`, selector
+`title`, optional icon name, and React `component`. The host namespaces the saved
+view choice by plugin id and registration id.
+
+`PluginAgentsViewProps` provides:
+
+| Prop | Meaning |
+| --- | --- |
+| `projectId` | Current project id, or `null` for the global Agents view. |
+| `projects` | Projects in the current scope, with id, name and optional color. |
+| `members` | `PluginFleetMember` records for CLI Agents and threads, including live and exited sessions. |
+| `schedules` | `PluginFleetSchedule` plans, including enabled state, next run and whether running. |
+| `executions` | `PluginFleetExecution` team-run summaries, with state and attention flag. |
+| `population` | Optional full scoped `members`, `schedules` and `executions` before search, for stable spatial layouts and live counts. It still respects the calendar toggle. Older hosts omit it. |
+| `searchQuery`, `includeScheduled` | Current host search and calendar-toggle values; supplied fleet data already respects these filters. |
+| `onInspect(key)` | Opens the host inspector for a supplied member, schedule or execution key, including search-hidden records in `population`. Pass the opaque key unchanged; the host resolves only the current scope. |
+
+Use `member.live` for live population counts. Member statuses are `working`,
+`needs-you`, `idle`, `done`, `error` and `unknown`. `done` indicates an ended
+session, not proven task success. Schedules and executions are separate from
+member counts. The host updates these props; a visualization needs no duplicate
+polling, launch permission or server implementation.
+
+Desktop selection persists across reloads. Phones use an independent selection
+for their current app session and initially fall back to Board when the desktop
+has selected a plugin view. Disabling, removing or failing to load the selected
+plugin makes the selector fall back to Board. Reloading a plugin remounts its
+view, so components must clean up timers, observers and subscriptions.
+
+This API is experimental and requires the updated host that implements it.
+Optional chaining in the example makes registration a no-op on older hosts;
+it does not provide the view there. `experimental_threadList` replaces the sidebar's thread list and does not add a
+layout to this selector.
 
 ## Manifest
 
@@ -152,7 +246,7 @@ authority; a plugin only ever supplies identifiers and bounded JSON.
 | Surface | Purpose |
 | --- | --- |
 | `zcc.host.projectCall({ projectId, hostId?, method, input? })` | Project-bound host RPC. Main resolves `projectId` → host/root before the call reaches the host daemon; a plugin cannot forge a root path or a token. Returns `{ result }`. |
-| `zcc.ui.interactions.get/upsert/acknowledge/cancel` | Resumable, correlation-keyed interactions. `upsert({ projectId, correlationId, kind, payload })` is idempotent per correlation id. Bounded per plugin+project (100) and globally (10,000); exceeding the quota throws `INTERACTION_CAPACITY_EXCEEDED`. Ack/cancel free capacity; active rows are never evicted. Unacknowledged rows age out to `ack-timeout` after 30 days and are retained as a terminal tombstone for 7 more days. |
+| `zcc.ui.interactions.get/upsert/acknowledge/cancel` | Resumable, correlation-keyed interactions. `upsert({ projectId, correlationId, kind, payload })` is idempotent per correlation id while the row exists. Pending rows count toward per-plugin+project (100) and global (10,000) quotas; exceeding either throws `INTERACTION_CAPACITY_EXCEEDED`. Ack/cancel free capacity. Pending rows expire to `ack-timeout` 30 days after creation; acknowledgement instead starts a new 30-day resolution window (`expiresAt`), after which an unresolved row becomes `cancelled`. Generation-checked acknowledgement/resolution rejects stale or expired writes even between sweeps. Terminal rows retain their correlation key as a tombstone for 7 days after the deadline or explicit resolution/cancellation, then are deleted; the same correlation id may be reused after deletion. Cleanup runs at startup and daily (also opportunistically during service use). |
 | `zcc.hooks.on(handler)` | One message-dispatch admission handler per plugin. `handler({ dispatchId, threadId, projectId, generation })` returns `{ action: 'proceed' }`, `{ action: 'wait', reason, overrideable }`, or `{ action: 'reject', message }`. A `reject` is terminal and cannot be bypassed. A `wait` can only be overridden by an explicit, authenticated human Send-now action in the UI — a plugin, agent, or programmatic caller can never invoke the override itself. `overrideable: false` additionally blocks even the human override (force-flush included). |
 | `zcc.sdk.capabilities.forThread({ threadId })` / `forExecution({ executionId })` | Live capability descriptors (`{ id, available, reason? }`) derived from main's own registered host/provider state — never from a caller-supplied provider id, so a spoofed id cannot report a capability as available that main did not actually wire. `forExecution` always reports provider-specific descriptors (native tool hooks) as unavailable, since an execution can span more than one provider slot. |
 | `zcc.ui.registerProjectTabAvailability({ tabId, evaluate })` | `evaluate({ projectId })` returns `{ available, reason? }` for a `projectTab` registered by the same plugin. An unavailable tab stays visible, disabled, with the bounded `reason` shown to the user — it never silently disappears. A throwing/erroring `evaluate` degrades to unavailable rather than crashing the tab. |
@@ -177,10 +271,38 @@ announced -> awaiting-decision -> allowed|denied -> executing -> succeeded|faile
 ```
 
 A `denied` decision blocks the tool's side effect before it starts; a
-transport failure or decision timeout fails closed (denied), never open. Each
-`invocationId` is unique per provider turn/tool call and deduplicated at the
-server boundary, so a retried request with the same id replays the same
-decision rather than re-deciding.
+transport failure or decision timeout fails closed (denied), never open.
+
+Plugins that register `onToolPolicy` must declare `"toolPolicy": true` next
+to `zcc.server` in their manifest. An enabled declared policy plugin denies
+native tools until its active generation has registered and sealed exactly one
+handler. Legacy enabled server plugins without a declaration are conservatively
+treated as unknown during startup and degradation, so they also deny until a
+successful activation proves that no handler is registered. There is no grace
+period or automatic disable: disable or uninstall a failed plugin to release
+only that plugin's obligation. A healthy reload keeps its prior sealed handler
+authoritative until replacement succeeds.
+
+`allow` means no plugin objected; it is never an approval. The provider's own
+permission flow still decides: both PTY hooks stay silent on `allow` instead
+of auto-approving (Claude reads a hook `allow` as "skip the permission
+prompt", and Codex rejects a bare hook `allow` as invalid output).
+
+A `deny` reason is shown to the agent. A blank or ill-formed reason (empty
+after trimming, control characters, unpaired surrogates) is replaced, and
+reasons are capped at 1024 characters.
+
+Each `invocationId` is deduplicated at the server boundary, so a retried
+request with the same id replays the same decision rather than re-deciding. If
+the policy inventory or active generation changes while an `allow` is in
+flight, that invocation becomes denied instead of replaying a stale allow; a
+new invocation is needed after recovery.
+For PTY sessions the host derives it from the live session plus the
+provider's turn id (when it sends one), tool call id, tool name and input: an
+identical retry replays its decision, and different content never reuses one.
+PTY tool input over 256 KiB (counted in JSON characters of the parsed input,
+not wire bytes) is denied with an explicit reason, without calling plugins.
+The same holds in a `pnpm dev` build.
 
 | Provider | Native before/after | Delivery surface |
 | --- | --- | --- |

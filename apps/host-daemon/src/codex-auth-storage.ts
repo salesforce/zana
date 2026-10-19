@@ -88,10 +88,11 @@ function parseAuth(raw: string | null): Record<string, unknown> | null {
   throw new HostCommandError('codex_auth_invalid', 'The saved Codex login is invalid. Sign in to Codex again on the host.');
 }
 
-export async function readStoredCodexAuth(
-  codexHome: string,
-  readKeyring: CodexKeyringReader = readCodexKeyring
-): Promise<Record<string, unknown>> {
+export type CodexCredentialStoreMode = 'file' | 'keyring' | 'auto' | 'ephemeral';
+
+export async function readCodexStoreConfig(
+  codexHome: string
+): Promise<{ config: Record<string, unknown>; mode: CodexCredentialStoreMode }> {
   const configText = await readBoundedFile(join(codexHome, 'config.toml'), 1024 * 1024);
   let config: Record<string, unknown>;
   try {
@@ -103,6 +104,18 @@ export async function readStoredCodexAuth(
   if (typeof mode !== 'string' || !['file', 'keyring', 'auto', 'ephemeral'].includes(mode)) {
     throw new HostCommandError('codex_auth_invalid', 'The Codex credential storage setting on the host is invalid.');
   }
+  return { config, mode: mode as CodexCredentialStoreMode };
+}
+
+export async function codexAuthFileExists(codexHome: string): Promise<boolean> {
+  return parseAuth(await readBoundedFile(join(codexHome, 'auth.json'), AUTH_MAX_BYTES)) !== null;
+}
+
+export async function readStoredCodexAuth(
+  codexHome: string,
+  readKeyring: CodexKeyringReader = readCodexKeyring
+): Promise<Record<string, unknown>> {
+  const { config, mode } = await readCodexStoreConfig(codexHome);
   let auth: Record<string, unknown> | null = null;
   let keyringError: unknown;
   if (mode === 'keyring' || mode === 'auto') {

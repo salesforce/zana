@@ -218,6 +218,7 @@ export type {
   PluginQuestionForm,
   PluginPendingInteractionView,
   PluginThreadPanelActionRegistration,
+  PluginThreadPanelPage,
   PluginThreadPanelScope,
   PluginNewThreadPanelActionRegistration,
   PluginThreadListRegistration,

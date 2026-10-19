@@ -684,6 +684,8 @@ export function ThreadDetail({
         actionId={closable.actionId}
         params={closable.params}
         layout={closable.layout}
+        surface="thread"
+        tabId={closable.id}
       />
     );
   } else if (pin === 'diff') {

@@ -34,6 +34,9 @@ vendor/opencode
 .fastcontext/trajectory_*.jsonl
 .idea/
 .tmp/
+# build-plugin-host.test.ts fixtures live under cwd so bare @zana-ai imports
+# resolve; a killed run leaves them behind.
+.host-build-bridge-test-*/
 
 # Playwright E2E artifacts (reports, traces, screenshots) — regenerated per run.
 playwright-report

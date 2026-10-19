@@ -7,6 +7,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test scripts/build-lib.test.mjs"
+    "test": "node --test scripts/build-lib.test.mjs scripts/build.test.mjs",
+    "check": "node scripts/build.mjs --check"
   }
 }

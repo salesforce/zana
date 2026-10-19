@@ -33,9 +33,14 @@ describe('voice helpers', () => {
       .toBe('Failed to start voice recording');
     expect(resolveRecordingErrorMessage(new Error('  boom  '))).toBe('boom');
     expect(resolveRecordingErrorMessage(null)).toBe('Voice input failed');
-    expect(voiceStartBlockReason(false, true)).toBe('Voice input is not supported in this browser');
-    expect(voiceStartBlockReason(true, false)).toBe('Host daemon is not connected');
-    expect(voiceStartBlockReason(true, true)).toBeNull();
+    const ready = { state: 'ready', reason: null } as const;
+    expect(voiceStartBlockReason(false, ready)).toBe('Voice input is not supported in this browser');
+    expect(voiceStartBlockReason(true, { state: 'unavailable', reason: 'no_host' })).toBe('Host daemon is not connected');
+    expect(voiceStartBlockReason(true, { state: 'unavailable', reason: 'auth_missing' })).toContain('codex login');
+    expect(voiceStartBlockReason(true, { state: 'unavailable', reason: 'disabled' })).toContain('Experimental');
+    expect(voiceStartBlockReason(true, { state: 'unavailable', reason: 'ambiguous_host' })).toContain('Several computers');
+    expect(voiceStartBlockReason(true, { state: 'unknown', reason: null })).toBe('Checking voice input…');
+    expect(voiceStartBlockReason(true, ready)).toBeNull();
   });
 
   it('names the recording file from the mime type', () => {

@@ -84,6 +84,12 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.10
         version: 4.1.11(vitest@4.1.11)
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: 3.0.1
+        version: 3.0.1(ajv@8.20.0)
       electron:
         specifier: ^43.4.0
         version: 43.7.2(supports-color@8.1.1)
@@ -1658,9 +1664,6 @@ importers:
 
   plugins/salesforce:
     dependencies:
-      '@zana-ai/zcc-ui':
-        specifier: workspace:*
-        version: link:../../packages/ui
       '@salesforce/metadata-visualizer-web':
         specifier: 1.7.0
         version: 1.7.0(@xyflow/react@12.11.6(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(immer@11.1.21)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1679,6 +1682,9 @@ importers:
       '@xyflow/react':
         specifier: ^12.10.0
         version: 12.11.6(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(immer@11.1.21)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@zana-ai/zcc-ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       fast-xml-parser:
         specifier: 5.11.1
         version: 5.11.1

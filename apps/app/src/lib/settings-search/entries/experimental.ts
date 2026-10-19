@@ -147,7 +147,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'experimental',
     anchor: 'voice-input',
     label: 'Voice input (dictation)',
-    help: 'Push-to-talk dictation. Audio is transcribed through Codex ChatGPT login on this machine (`codex login`). An OpenAI API key is only an optional fallback.',
+    help: 'Push-to-talk dictation. Audio is transcribed through the Codex ChatGPT login on the connected computer (`codex login`). An OPENAI_API_KEY set on that computer is only an optional fallback.',
     keywords: ['microphone', 'speech', 'dictate', 'push-to-talk', 'transcription'],
     kind: 'subsection'
   },
@@ -156,7 +156,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'experimental',
     anchor: 'voice-input',
     label: 'Enable voice input (dictation)',
-    help: 'Shows the mic button in the prompt composer so you can dictate instead of type. The agent composer already includes a mic.',
+    help: 'Shows the mic button in every composer so you can dictate instead of type. It stays disabled, with the reason on hover, until the connected computer has a Codex login or OPENAI_API_KEY.',
     keywords: ['microphone', 'speech', 'mic', 'dictate'],
     kind: 'setting',
     value: onOff((c) => c.voiceInputEnabled)

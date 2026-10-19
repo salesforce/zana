@@ -509,6 +509,7 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
     model: "gpt-5",
     value: { title: "Short title" },
   },
+  "codex.voice.status": { state: "ready" },
   "codex.voice.transcribe": {
     model: "gpt-5-transcribe",
     text: "hello world",

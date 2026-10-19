@@ -37,6 +37,20 @@ function NavPanel() {
   );
 }
 
+function ToolPanel() {
+  const navigate = useZccNavigate();
+  const context = useZccContext();
+  const [shown, setShown] = useState<boolean | null>(null);
+  return (
+    <>
+      <button type="button" onClick={() => setShown(navigate.openPanelTool?.({ actionId: 'graph' }) ?? null)}>
+        Open tool
+      </button>
+      <output>{`${String(context.sidePanel)}:${shown === null ? '' : String(shown)}`}</output>
+    </>
+  );
+}
+
 function WindowPanel() {
   const navigate = useZccNavigate();
   const context = useZccContext();
@@ -152,6 +166,28 @@ describe('loadPluginApp + renderSlot', () => {
       act(() => slot.getByRole('button', { name: 'Open agent' }).click());
       expect(slot.getByRole('status').textContent).toBe(String(panelAgent === true));
       expect(slot.inspection.navigateCalls).toEqual([{ method: 'openPanelAgent', options: { threadId: 't2' } }]);
+      slot.lifecycle.unmount();
+      cleanup();
+    }
+  });
+
+  it('reports whether the page has a side panel for its tools', async () => {
+    const app = await loadPluginApp(() =>
+      Promise.resolve(
+        definePluginApp((pluginApp) => {
+          pluginApp.slots.navPanel({ id: 'main', title: 'Notes', icon: 'FileText', component: ToolPanel });
+        })
+      )
+    );
+    for (const [options, expected] of [
+      [{}, 'undefined:false'],
+      [{ panelTools: true }, 'true:true'],
+      [{ context: { projectId: null, threadId: null, sidePanel: false } }, 'false:false']
+    ] as const) {
+      const slot = renderSlot(app.navPanels[0]!, { pluginId: 'notes', subPath: '' }, options);
+      act(() => slot.getByRole('button', { name: 'Open tool' }).click());
+      expect(slot.getByRole('status').textContent).toBe(expected);
+      expect(slot.inspection.navigateCalls).toEqual([{ method: 'openPanelTool', options: { actionId: 'graph' } }]);
       slot.lifecycle.unmount();
       cleanup();
     }

@@ -419,6 +419,29 @@ export function openAgentDraft(
   };
 }
 
+/**
+ * A plugin page asked for one of its side-panel tools: one tab per action, so
+ * an open tab is focused and takes the new params rather than stacking.
+ */
+export function openPluginTool(
+  state: ThreadSecondaryPanelState,
+  input: { pluginId: string; actionId: string; title: string; params?: JsonValue | null; layout?: 'padded' | 'flush' }
+): ThreadSecondaryPanelState {
+  const open = state.tabs.find((tab) => tab.kind === 'plugin' && tab.moduleId === input.pluginId && tab.actionId === input.actionId);
+  if (!open) {
+    return addClosableTab(state, {
+      kind: 'plugin',
+      title: input.title,
+      moduleId: input.pluginId,
+      actionId: input.actionId,
+      params: input.params ?? null,
+      ...(input.layout ? { layout: input.layout } : {})
+    });
+  }
+  const focused = { ...state, isOpen: true, activeId: open.id };
+  return input.params === undefined ? focused : patchClosableTab(focused, open.id, { params: input.params });
+}
+
 export function patchClosableTab(
   state: ThreadSecondaryPanelState,
   tabId: string,

@@ -129,6 +129,19 @@ it('focuses the search on request and, given a name, filters to it and opens its
   expect(rpc.mock.calls.filter(call => call[1] === 'agents.retrieve.start')).toHaveLength(1);
 });
 
+it('keeps a focus request while hidden and focuses the search once shown', async () => {
+  const onFocusHandled = vi.fn();
+  const view = render(panel({ focus: null, onFocusHandled }));
+  await screen.findByText('Support Agent');
+  view.rerender(panel({ visible: false, focus: { seq: 1 }, onFocusHandled }));
+  const search = screen.getByLabelText('Search org agents');
+  expect(document.activeElement).not.toBe(search);
+  expect(onFocusHandled).not.toHaveBeenCalled();
+  view.rerender(panel({ focus: { seq: 1 }, onFocusHandled }));
+  expect(document.activeElement).toBe(search);
+  expect(onFocusHandled).toHaveBeenCalledWith(1);
+});
+
 it('waits for the inventory before opening a named agent and reports one without Agent Script source', async () => {
   let resolve!: (value: unknown) => void;
   rpc.mockImplementationOnce(() => new Promise(done => { resolve = done; }));

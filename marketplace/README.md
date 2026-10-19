@@ -33,7 +33,20 @@ npm run build --prefix marketplace
 - `marketplace/marketplace.json`
 - `website/content/marketplace/marketplace.json`
 
-Website `predev` / `prebuild` also run this build.
+Website `predev` / `prebuild` also run this build. CI runs
+`node marketplace/scripts/build.mjs --check`, which validates the schema and
+fails the PR when either committed catalog is stale.
+
+### When a listing goes live
+
+The website serves `/marketplace/v1/marketplace.json` (and the older
+`/plugins/index.json` alias) from
+`https://raw.githubusercontent.com/salesforce/zana/main/marketplace/marketplace.json`,
+cached for five minutes. A merge to `main` reaches users within minutes; no
+website redeploy is needed. If GitHub fails or serves an invalid catalog, the
+site keeps the last good copy, then the copy bundled in the image. Set
+`MARKETPLACE_UPSTREAM_URL` to another https URL, or `off` to serve only the
+bundled copy.
 
 ### Entry shape
 

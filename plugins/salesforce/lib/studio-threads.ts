@@ -132,7 +132,7 @@ export function registerStudioAssistant(studio: StudioServerContext): { linkPane
     });
     await links.link(projectId, { threadId: thread.id, title, role: roleForAction(action?.id), ...(action ? { action: action.id } : {}), path });
     changed(projectId, path);
-    return { ok: true, threadId: thread.id };
+    return { ok: true, threadId: thread.id, title };
   });
 
   // The brief for the side panel's composer: the user picks the harness and sends it there.
