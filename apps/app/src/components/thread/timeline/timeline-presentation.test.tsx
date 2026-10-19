@@ -397,7 +397,7 @@ describe('WorkRowBody', () => {
 });
 
 describe('conversation and banners', () => {
-  it('offers Preview next to Show more when an assistant dump starts with a file path', () => {
+  it('offers Preview without collapsing an assistant dump that starts with a file path', () => {
     const dump = `docs/architecture/high-level-architecture.md\n\n# Title\n${'x'.repeat(2100)}`;
     const html = renderToStaticMarkup(
       <ConversationRow
@@ -415,8 +415,8 @@ describe('conversation and banners', () => {
     );
     expect(html).toContain('thread-open-file-preview');
     expect(html).toContain('Preview');
-    expect(html).toContain('thread-message-overflow');
-    expect(html).toContain('Show more');
+    expect(html).not.toContain('data-testid="thread-message-overflow"');
+    expect(html).not.toContain('Show more');
   });
 
   it('turns assistant inline filenames into file-preview chips', () => {
@@ -455,7 +455,7 @@ describe('conversation and banners', () => {
       />
     );
     expect(noThread).not.toContain('thread-open-file-preview');
-    expect(noThread).toContain('Show more');
+    expect(noThread).not.toContain('Show more');
     const prose = renderToStaticMarkup(
       <ConversationRow
         threadId="t1"
