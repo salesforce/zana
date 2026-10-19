@@ -83,6 +83,8 @@ describe('playground bridge', () => {
     expect(isPlaygroundToHost({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'openAction', id: actions[0].id })).toBe(true);
     expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'reference', content: 'x', language: 'apex' })).toBe(true);
     expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'reference', content: 'x'.repeat(750001), language: 'apex' })).toBe(false);
+    expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'reference', content: 'x', language: 'agentscript', line: 4 })).toBe(true);
+    expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'reference', content: 'x', language: 'yaml' })).toBe(false);
     expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'revealLine', line: -1 })).toBe(false);
     expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'revealLine', line: 3 })).toBe(true);
   });

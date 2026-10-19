@@ -21,6 +21,10 @@ export interface PlaygroundFileRef {
   lines: number;
 }
 
+/** Languages the read-only reference editor (`?reference`) shows. */
+export const REFERENCE_LANGUAGES = ['apex', 'xml', 'json', 'agentscript'] as const;
+export type ReferenceLanguage = typeof REFERENCE_LANGUAGES[number];
+
 export type PlaygroundToHost =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'ready' }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'dirty'; dirty: boolean; draftKey?: string; baseSha?: string; persisted?: boolean }
@@ -37,7 +41,7 @@ export type PlaygroundToHost =
 export type HostToPlayground =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'graph'; content: string; visible: boolean; theme: 'light' | 'dark'; compact?: boolean; focus?: string; focusSeq?: number }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'revealLine'; line: number }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'reference'; content: string; language: 'apex' | 'xml' | 'json'; line?: number; theme: 'light' | 'dark' }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'reference'; content: string; language: ReferenceLanguage; line?: number; theme: 'light' | 'dark' }
   | {
       source: typeof PLAYGROUND_BRIDGE_SOURCE;
       type: 'init';
@@ -124,7 +128,7 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     (value.type === 'graph' && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.visible === 'boolean' && ['light', 'dark'].includes(String(value.theme)) && (value.compact === undefined || typeof value.compact === 'boolean') && (value.focus === undefined || (typeof value.focus === 'string' && value.focus.length <= 200)) && (value.focusSeq === undefined || (Number.isInteger(value.focusSeq) && Number(value.focusSeq) >= 0 && Number(value.focusSeq) <= 1_000_000_000))) ||
     value.type === 'init' ||
     (value.type === 'revealLine' && Number.isInteger(value.line) && Number(value.line) > 0) ||
-    (value.type === 'reference' && typeof value.content === 'string' && value.content.length <= 750_000 && ['apex', 'xml', 'json'].includes(String(value.language))) ||
+    (value.type === 'reference' && typeof value.content === 'string' && value.content.length <= 750_000 && REFERENCE_LANGUAGES.includes(value.language as ReferenceLanguage)) ||
     value.type === 'setFile' ||
     value.type === 'setTheme' ||
     value.type === 'setDialect' ||

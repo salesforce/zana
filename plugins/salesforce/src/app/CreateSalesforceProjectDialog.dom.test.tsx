@@ -84,7 +84,9 @@ describe('Salesforce project setup', () => {
     rpc.mockResolvedValueOnce({ ok: false, error: 'CLI unavailable' });
     await mount(); await click('Use a connected org');
     expect(ui().getByRole('alert').textContent).toContain('CLI unavailable');
+    expect(rpc).toHaveBeenLastCalledWith('salesforce', 'orgs', expect.not.objectContaining({ refresh: true }));
     await click('Refresh');
+    expect(rpc).toHaveBeenLastCalledWith('salesforce', 'orgs', expect.objectContaining({ refresh: true }));
     expect(ui().getByRole('option', { name: /dev@example/ })).toBeTruthy();
   });
   it('asks for an explicit org when login cannot identify the new connection', async () => {

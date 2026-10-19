@@ -215,6 +215,9 @@ describe('salesforce plugin behavior', () => {
     expect(harness.needsConfiguration).toBeNull();
     await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ selectedAlias: null, orgs: [], orgsError: null });
     mode = 'missing';
+    // The roster is kept until Refresh; a failed read is not, so the reads below see each CLI state.
+    await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ orgsError: null });
+    await expect(harness.callRpc('orgs', { projectId: 'p1', refresh: true })).resolves.toMatchObject({ ok: false, code: 'cli_missing' });
     await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ orgs: [], orgsError: expect.stringContaining('not found on PATH') });
     mode = 'failed';
     await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ orgsError: 'Could not read Salesforce CLI connections. Check the CLI, then try again.' });

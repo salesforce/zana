@@ -1,4 +1,4 @@
-import { DEFAULT_API_VERSION, type ResolvedOrg, type SalesforceDeps } from './types.js';
+import { DEFAULT_API_VERSION, type PublicListedOrg, type ResolvedOrg, type SalesforceDeps } from './types.js';
 import { envTargetOrg, resolveTargetOrgAlias } from './org-resolution.js';
 import { readJsonObject } from './dx-project.js';
 import {
@@ -10,20 +10,22 @@ import {
 } from './sf-cli.js';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-/** `sf org list` takes seconds; agent setup asks for the fallback on every launch and plugin change. */
-const CLI_DEFAULT_TTL_MS = 30 * 1000;
 
 export class ConnectionManager {
   private cache = new Map<string, { org: ResolvedOrg; at: number }>();
-  private cliDefault: { alias: Promise<string | null>; at: number } | null = null;
+  /**
+   * `sf org list` takes seconds and every org picker, status read and agent launch asks for it. The roster only
+   * changes when someone signs in or out, so it is kept until sign-in or an explicit Refresh drops it.
+   */
+  private orgs: Promise<PublicListedOrg[]> | null = null;
 
   constructor(
     private readonly deps: SalesforceDeps,
     private readonly getSettings: () => Promise<{ defaultOrg: string; apiVersion: string }>
   ) {}
 
+  /** Drops cached org sessions; the roster stays (see `refreshOrgs`). */
   invalidate(alias?: string): void {
-    this.cliDefault = null;
     if (!alias) this.cache.clear();
     else this.cache.delete(alias);
   }
@@ -41,17 +43,25 @@ export class ConnectionManager {
     });
   }
 
-  /** Concurrent and repeated callers share one `sf org list`; a failed lookup is not kept. */
   private cliDefaultAlias(): Promise<string | null> {
-    const cached = this.cliDefault;
-    if (cached && this.deps.now() - cached.at < CLI_DEFAULT_TTL_MS) return cached.alias;
-    const entry = { alias: this.listOrgs().then(defaultCliAlias), at: this.deps.now() };
-    this.cliDefault = entry;
-    entry.alias.catch(() => { if (this.cliDefault === entry) this.cliDefault = null; });
-    return entry.alias;
+    return this.listOrgs().then(defaultCliAlias);
   }
 
-  async listOrgs() {
+  /** Forgets the roster, so the next read runs `sf org list` again (after a sign-in, or when the user refreshes). */
+  refreshOrgs(): void {
+    this.orgs = null;
+  }
+
+  /** Concurrent and repeated callers share one `sf org list`; a failed lookup is not kept. */
+  listOrgs(): Promise<PublicListedOrg[]> {
+    if (this.orgs) return this.orgs;
+    const entry = this.readOrgs();
+    this.orgs = entry;
+    entry.catch(() => { if (this.orgs === entry) this.orgs = null; });
+    return entry;
+  }
+
+  private async readOrgs(): Promise<PublicListedOrg[]> {
     const result = await this.deps.execSf(['org', 'list', '--json']);
     if (result.code === 127) {
       throw new ConnectionError('Salesforce CLI (sf) was not found on PATH.', 'cli_missing');

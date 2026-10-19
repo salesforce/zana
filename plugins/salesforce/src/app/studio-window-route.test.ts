@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { openInStudioWindow, STUDIO_ACK_WAIT_MS, STUDIO_TAB_ID } from './studio-window-route.js';
+import { openAgentInStudioWindow, openInStudioWindow, STUDIO_ACK_WAIT_MS, STUDIO_TAB_ID } from './studio-window-route.js';
 
 const studio = { id: 'studio', surface: 'workbench', window: 'plugin-view', commands: ['state', 'view.open'] };
 const acked = { ok: true, state: 'completed' };
@@ -52,5 +52,53 @@ describe('openInStudioWindow', () => {
   it('still reports the routed open on hosts without openInWindow', async () => {
     const call = vi.fn(async (_plugin: string, method: string) => method === 'control.views' ? { ok: true, views: [studio] } : method === 'control.result' ? acked : { ok: true, commandId: 'c' });
     await expect(openInStudioWindow({ pluginId: 'salesforce', projectId: 'p', path: 'x.agent', navigate: {}, call: call as never })).resolves.toBe(true);
+  });
+});
+
+describe('openAgentInStudioWindow', () => {
+  const sleep = vi.fn(async () => undefined);
+  const run = (call: ReturnType<typeof vi.fn>, navigate: { openInWindow?: ReturnType<typeof vi.fn> }) =>
+    openAgentInStudioWindow({ pluginId: 'salesforce', projectId: 'p', path: 'a/Help.agent', navigate: navigate as never, call: call as never, startMs: 2000, pollMs: 500, sleep });
+
+  it('uses a running Studio window without opening another', async () => {
+    const { call, navigate } = setup({ ok: true, views: [studio] });
+    await expect(run(call, navigate)).resolves.toBe(true);
+    expect(navigate.openInWindow).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('salesforce', 'control.command', expect.objectContaining({ viewId: 'studio' }));
+  });
+
+  it('opens the window, then sends the agent once its lease appears', async () => {
+    let polls = 0;
+    const call = vi.fn(async (_plugin: string, method: string) => {
+      if (method === 'control.views') return { ok: true, views: ++polls >= 3 ? [studio] : [] };
+      return method === 'control.result' ? acked : { ok: true, commandId: 'c' };
+    });
+    const navigate = { openInWindow: vi.fn(async () => true) };
+    await expect(run(call, navigate)).resolves.toBe(true);
+    expect(navigate.openInWindow).toHaveBeenNthCalledWith(1, 'p', { tabId: STUDIO_TAB_ID });
+    expect(call).toHaveBeenCalledWith('salesforce', 'control.command', expect.objectContaining({ input: { view: 'agentforce', path: 'a/Help.agent' } }));
+    expect(polls).toBe(3);
+  });
+
+  it('gives up when the window never takes a lease in time', async () => {
+    const { call, navigate } = setup({ ok: true, views: [] });
+    await expect(run(call, navigate)).resolves.toBe(false);
+    expect(call.mock.calls.filter(([, method]) => method === 'control.views')).toHaveLength(5);
+  });
+
+  it('reports false when the host cannot open a window', async () => {
+    const { call } = setup({ ok: true, views: [] });
+    await expect(run(call, {})).resolves.toBe(false);
+    await expect(run(call, { openInWindow: vi.fn(async () => false) })).resolves.toBe(false);
+  });
+
+  it('waits with real timers by default', async () => {
+    vi.useFakeTimers();
+    try {
+      const { call, navigate } = setup({ ok: true, views: [] });
+      const done = openAgentInStudioWindow({ pluginId: 'salesforce', projectId: 'p', path: 'a/Help.agent', navigate, call: call as never, startMs: 500 });
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(done).resolves.toBe(false);
+    } finally { vi.useRealTimers(); }
   });
 });

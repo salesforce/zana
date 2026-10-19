@@ -36,7 +36,8 @@ export function registerOrgSync(input: {
   registerRpc(SYNC_RPC.diff, async args => ({ ok: true, data: await service.diff(await projectRoot(), text(args, 'jobId'), text(args, 'path')) }));
   registerRpc(SYNC_RPC.apply, async args => {
     const data = await service.apply(await projectRoot(), text(args, 'jobId'), args);
-    if (data.state === 'applied' && data.written > 0) input.changed();
+    // The files are already written; a failed refresh notice must not report the apply as failed.
+    if (data.state === 'applied' && data.written > 0) try { input.changed(); } catch { /* explorers refresh on their next load */ }
     return { ok: true, data };
   });
   registerRpc(SYNC_RPC.cancel, async args => {

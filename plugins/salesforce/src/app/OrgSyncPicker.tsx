@@ -104,7 +104,8 @@ export const PICKER_STYLES = `
 .sf-pick-btn { border-radius:9px; padding:9px 14px; }
 .sf-pick-btn.is-primary { background:var(--accent); border-color:var(--accent); color:var(--bg-panel); font-weight:600; min-width:190px; }
 .sf-pick-btn:disabled { opacity:.45; cursor:default; }
-.sf-pick-status { padding:40px 26px; color:var(--text-muted); }
+/* Fills the dialog while checking, so the footer stays at the bottom as it does once the lists load. */
+.sf-pick-status { flex:1; min-height:0; padding:40px 26px; color:var(--text-muted); }
 @media (prefers-reduced-motion:reduce) { .sf-pick-tw { transition:none; } }
 `;
 

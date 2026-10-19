@@ -377,8 +377,10 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     }
     return readStatus();
   });
-  registerRpc('orgs', async () => {
+  registerRpc('orgs', async (args) => {
     try {
+      // The roster is cached until sign-in; Refresh picks up orgs added or removed from a terminal.
+      if (args && typeof args === 'object' && (args as { refresh?: unknown }).refresh === true) connections.refreshOrgs();
       const orgs = await sdk.listOrgs();
       const selectedAlias = await sdk.resolveAlias();
       return { ok: true, orgs, selectedAlias, targetSource: contexts.current()?.targetSource ?? 'shared' };
@@ -391,7 +393,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const orgLogin = new OrgLoginService({
     execSf: deps.execSf,
     listOrgs: () => sdk.listOrgs(),
-    invalidate: () => connections.invalidate(),
+    invalidate: () => { connections.invalidate(); connections.refreshOrgs(); },
   });
   zcc.onDispose(() => orgLogin.dispose());
   const runOrgLogin = async (args: unknown) => {
