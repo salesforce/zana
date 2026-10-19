@@ -161,6 +161,8 @@ import { listProjectDir, listProjectPaths, readProjectFile, parseProjectFileScop
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
 import { getConversationThread, getEnvironment, getHost, getConversationThreadEventAfter, listConversationThreadEventsWindow, ConversationHistoryReadLimitError, listConversationThreadsByProject, listExecutionHosts, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
+import { handlePeerConnectionsApi } from './peer-connections-api.js';
+import { handlePeerUsesApi } from './peer-uses-api.js';
 import { handleDesktopBrowsersApi } from './desktop-browsers-api.js';
 import { handleCliAgentsApi } from './cli-agents-api.js';
 import { isThreadLiveInProject } from '../services/agents/thread-liveness.js';
@@ -548,6 +550,14 @@ export async function handleProductHttp(
     }
     if (path === '/api/v1/health' && (method === 'GET' || method === 'HEAD')) {
       sendJson(response, 200, { ok: true });
+      return true;
+    }
+
+    if (await handlePeerConnectionsApi(request, response, ctx, path, method)) {
+      return true;
+    }
+
+    if (await handlePeerUsesApi(request, response, ctx, path, method)) {
       return true;
     }
 

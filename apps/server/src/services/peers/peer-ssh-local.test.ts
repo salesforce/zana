@@ -208,3 +208,15 @@ describe('preflightPeerSsh', () => {
     expect(await reason(preflightPeerSsh('127.0.0.1', port, controller.signal, { lookup: async () => ({}) }))).toBe('ssh_unreachable');
   });
 });
+
+describe('checkRemoteLogin', () => {
+  it('reports ok, each fixed reason, and unreachable for anything else', async () => {
+    const { checkRemoteLogin } = await import('./peer-ssh-local.js');
+    const signal = new AbortController().signal;
+    expect(await checkRemoteLogin(async () => ({}), signal)).toEqual({ ok: true });
+    expect(await checkRemoteLogin(async () => { throw new Error('ssh_remote_login_off'); }, signal)).toEqual({ ok: false, reason: 'ssh_remote_login_off' });
+    expect(await checkRemoteLogin(async () => { throw new Error('ssh_auth_refused'); }, signal)).toEqual({ ok: false, reason: 'ssh_auth_refused' });
+    expect(await checkRemoteLogin(async () => { throw new Error('/etc/secret path'); }, signal)).toEqual({ ok: false, reason: 'ssh_unreachable' });
+    expect(await checkRemoteLogin(async () => { throw 'str'; }, signal)).toEqual({ ok: false, reason: 'ssh_unreachable' });
+  });
+});

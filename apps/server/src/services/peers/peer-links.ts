@@ -68,6 +68,8 @@ export const PEER_RELINK_ACCEPT_INTERVAL_MS = 10_000;
 export const PEER_LINK_ROTATION_MS = 30 * 24 * 60 * 60_000;
 /** Inviter pull pacing: the receiver's channel registration may lag its connector's hub session. */
 const PULL_DELAYS_MS = [2_000, 2_000, 5_000, 15_000];
+/** An inviter's link `authorized_keys` line lives this long past the joiner's last successful connect. */
+export const LINK_LINE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const ENROLL_BUDGET_MS = 45_000, NOTICE_MS = 5_000, REPLY_DELAY_MS = 1_000, CONTROL_MS = 16_000, ENDPOINT_MS = 30_000, TUNNEL_MS = 40_000;
 const LABEL_MAX = 80;
 
@@ -78,7 +80,7 @@ export type PeerLinkViewPhase = 'pending' | 'exchanged' | 'enrolled' | 'linked' 
 
 /** Platform-internal, secret-free view: no code, key or host key. */
 export interface PeerLinkView {
-  pairingId: string; peerInstanceId: string; pluginId: string; scope: string; role: 'inviter' | 'redeemer';
+  pairingId: string; peerInstanceId: string; pluginId?: string; scope?: string; role: 'inviter' | 'redeemer';
   phase: PeerLinkViewPhase; state: PeerLinkState; reason?: PeerLinkReason; failure?: PeerLinkFailure;
   retryInMs?: number; capability: 'peer.forward';
   /** The peer's display name learned while pairing; absent on records written before names were kept. */
@@ -89,6 +91,8 @@ type Bridge = {
   peerRotate?(hostId: string, input: { recipientInstanceId: string; hostId: string; code: string; expiresAt: number }, signal: AbortSignal): Promise<{ accepted: boolean }>;
   peerRelink?(hostId: string, input: { recipientInstanceId: string; hostId: string }, signal: AbortSignal): Promise<RelinkReply>;
   peerRemove?(hostId: string, input: { recipientInstanceId: string; pairingId: string; hostId: string }, signal: AbortSignal): Promise<{ accepted: boolean }>;
+  useRequest?(hostId: string, input: { recipientInstanceId: string; pairingId: string; pluginId: string }, signal: AbortSignal): Promise<{ accepted: boolean }>;
+  useDecision?(hostId: string, input: { recipientInstanceId: string; pairingId: string; pluginId: string; approved: boolean; revoke?: true }, signal: AbortSignal): Promise<{ accepted: boolean }>;
 };
 
 export type PeerLinksInvitations = Pick<PeerInvitations, 'fence' | 'listConsented' | 'markConnecting' | 'markReady' | 'markFailed' | 'founding' |
@@ -106,6 +110,10 @@ export interface PeerLinksOptions {
   connector?: InstallerConnector;
   /** Registry display name for a plugin's link use (never plugin input). */
   pluginLabel?(pluginId: string): string | undefined;
+  /** A peer's link was removed locally: revoke its pair grants and clear plugin link notes. */
+  onRemoved?(peerInstanceId: string): void | Promise<void>;
+  /** Owner removal is about to tear the peer's links down: lets plugins clean up first. Bounded by the caller; a failure never vetoes. */
+  onRemoving?(peerInstanceId: string): void | Promise<void>;
   onChanged?(): void;
   now?(): number;
 }
@@ -136,7 +144,9 @@ const sshSchema = z.object({
   identity: z.literal('link').optional()
 }).strict();
 const recordSchema = z.object({
-  invitationId: id, role: z.enum(['inviter', 'redeemer']), pluginId: z.string().regex(PEER_TOKEN), scope: z.string().refine(validScope),
+  invitationId: id, role: z.enum(['inviter', 'redeemer']),
+  /** Both absent on a core connection (no plugin, no scope). */
+  pluginId: z.string().regex(PEER_TOKEN).optional(), scope: z.string().refine(validScope).optional(),
   /** The other app. Redeemer: the token's inviter. Inviter: the instance its inbound session claimed at the first pull. */
   peer: id.optional(), peerName: z.string().max(256).optional(),
   phase: z.enum(['pre-consent', 'activating', 'linked', 'removed', 'failed']),
@@ -156,7 +166,7 @@ const recordSchema = z.object({
   lastRotatedAt: int.optional(),
   /** Owner Disconnect: the record and keys stay, but nothing connects, heals or rotates until Reconnect. Missing means false. */
   paused: z.boolean().optional()
-}).strict();
+}).strict().refine(rec => (rec.pluginId === undefined) === (rec.scope === undefined), { message: 'pluginId and scope go together' });
 type Rec = z.infer<typeof recordSchema>;
 const stateSchema = z.object({ version: z.literal(1), records: z.array(recordSchema).max(PEER_LINK_MAX_RECORDS) }).strict();
 type State = z.infer<typeof stateSchema>;
@@ -260,14 +270,15 @@ export class PeerLinks implements PeerLinksControlPort {
     release: async (hostId, pluginId, scope) => {
       const rec = this.byInbound(hostId);
       if (!rec || rec.phase !== 'linked' || !rec.peer) return undefined;
-      if (removeHostLinkUse(this.options.db, hostId, pluginId, scope) > 0) { this.changed(); return { linkRemoved: false }; }
-      await this.remove(rec.peer, 'revoked');
-      return { linkRemoved: true };
+      // A zero-use link is normal: dropping the last use never removes it. Only an explicit owner removal does.
+      removeHostLinkUse(this.options.db, hostId, pluginId, scope);
+      this.changed();
+      return { linkRemoved: false };
     },
-    remove: async hostId => {
+    remove: async (hostId, options) => {
       const rec = this.byInbound(hostId);
       if (!rec?.peer || TERMINAL.has(rec.phase)) return undefined;
-      await this.remove(rec.peer, 'removed');
+      await this.remove(rec.peer, 'removed', options);
       return { linkRemoved: true };
     },
     pause: async hostId => {
@@ -279,6 +290,12 @@ export class PeerLinks implements PeerLinksControlPort {
       const rec = this.byInbound(hostId);
       if (!rec?.peer || rec.phase !== 'linked') return undefined;
       return (await this.unpause(rec.peer)) ? { paused: false } : undefined;
+    },
+    repair: async hostId => {
+      const rec = this.byInbound(hostId);
+      if (!rec?.peer || rec.phase !== 'linked' || rec.paused) return undefined;
+      await this.rotate(rec.peer);
+      return { repaired: true };
     }
   };
 
@@ -414,7 +431,7 @@ export class PeerLinks implements PeerLinksControlPort {
    * the offer the token carries. Every step is undone in reverse on failure, so a failed Add peer leaves nothing
    * listening or authorized.
    */
-  private async createInvitationLink(input: { invitationId: string; pluginId: string; scope: string }): Promise<InvitationLinkMint> {
+  private async createInvitationLink(input: { invitationId: string; pluginId?: string; scope?: string }): Promise<InvitationLinkMint> {
     this.assertLive();
     const ssh = this.options.ssh;
     const linkId = input.invitationId;
@@ -426,7 +443,7 @@ export class PeerLinks implements PeerLinksControlPort {
       const listenPort = await freeLoopbackPort();
       const bootstrapSeed = generateSeed(), pub = publicKeyLine(bootstrapSeed);
       try {
-        await this.insert({ invitationId: linkId, role: 'inviter', pluginId: input.pluginId, scope: input.scope, phase: 'pre-consent',
+        await this.insert({ invitationId: linkId, role: 'inviter', ...(input.pluginId !== undefined ? { pluginId: input.pluginId, scope: input.scope } : {}), phase: 'pre-consent',
           createdAt: this.now(), updatedAt: this.now(), ssh: { side: 'server', listenPort, targetPort, throwawayPub: pub } });
       } catch (error) {
         // A duplicate id means the forwarder hold belongs to the existing link: leave it.
@@ -451,7 +468,7 @@ export class PeerLinks implements PeerLinksControlPort {
     }
   }
 
-  /** Bounded insert: ≤4 links before consent, ≤16 plugin links, one link per app pair; evicts the oldest terminal record. */
+  /** Bounded insert: ≤4 links before consent, ≤16 linked connections (each core or plugin connection counts once), one link per app pair; evicts the oldest terminal record. */
   private async insert(rec: Rec): Promise<void> {
     await this.storage.transaction(async (state, save) => {
       if (state.records.some(entry => entry.invitationId === rec.invitationId)) throw new InvitationError('already_redeemed');
@@ -478,7 +495,7 @@ export class PeerLinks implements PeerLinksControlPort {
   }
 
   /** Redeemer: open the tunnel with the token's bootstrap key, enroll forward-only into H through it and connect. */
-  private async redeemInvitationLink(input: { invitationId: string; inviterId: string; inviterName: string; pluginId: string; scope: string;
+  private async redeemInvitationLink(input: { invitationId: string; inviterId: string; inviterName: string; pluginId?: string; scope?: string;
     link: InvitationSshOffer }, signal: AbortSignal): Promise<void> {
     this.assertLive();
     const offer = input.link;
@@ -489,7 +506,7 @@ export class PeerLinks implements PeerLinksControlPort {
       if (!rec) {
         const channel = await this.options.channels.remote(input.inviterId);
         if (channel) throw new InvitationError('already_redeemed');
-        await this.insert({ invitationId: input.invitationId, role: 'redeemer', pluginId: input.pluginId, scope: input.scope,
+        await this.insert({ invitationId: input.invitationId, role: 'redeemer', ...(input.pluginId !== undefined ? { pluginId: input.pluginId, scope: input.scope } : {}),
           peer: input.inviterId, peerName: input.inviterName, phase: 'pre-consent', createdAt: this.now(), updatedAt: this.now(),
           ssh: { side: 'client', endpoint: offer.endpoint, listenPort: offer.listenPort, targetPort: offer.targetPort, bootstrapSeed: offer.bootstrapSeed },
           outbound: { hostId: offer.hostId } });
@@ -534,6 +551,11 @@ export class PeerLinks implements PeerLinksControlPort {
       // The peer's connector (re)attached: it is reachable now, so a dead own connector heals with fresh pacing.
       // A peer that just (re)started gets the same grace for its side to come up before this app asks it to relink.
       this.inboundSeen.set(rec.invitationId, this.now());
+      // The inviter's link line expires unless the joiner keeps connecting: each successful connect renews it. A lapsed line is needs-Reconnect.
+      if (rec.ssh.side === 'server' && rec.ssh.linkPub) {
+        void this.options.ssh.authorizedKeys.upsert({ linkId: rec.invitationId, kind: 'link', pub: rec.ssh.linkPub, listenPort: rec.ssh.listenPort,
+          targetPort: rec.ssh.targetPort, expiresAt: this.now() + LINK_LINE_TTL_MS }).catch(() => undefined);
+      }
       const entry = this.live.get(rec.invitationId);
       if (entry && !entry.connected) { this.relinkPace.delete(rec.invitationId); this.armHeal(rec.invitationId, PEER_RELINK_AFTER_MS, true); }
       return;
@@ -685,7 +707,7 @@ export class PeerLinks implements PeerLinksControlPort {
     }));
   }
 
-  /** PeerInvitations `onTerminated`: any non-linked link of the attempt is torn down (Connect revoke included). */
+  /** PeerInvitations `onTerminated`: any non-linked link of the attempt is torn down locally (local host, ssh lines, tunnel). */
   onTerminated(invitationId: string, _role: 'inviter' | 'redeemer', reason: InvitationReason): void {
     if (this.disposed || this.silenced.has(invitationId)) return;
     void this.track(this.lane(invitationId, async () => {
@@ -795,8 +817,11 @@ export class PeerLinks implements PeerLinksControlPort {
   /** Records the plugin use on the own inbound host, commits `linked`, then marks the invitation ready. */
   private async activate(rec: Rec, ref: PairingFence): Promise<void> {
     if (!rec.inbound) throw new Error('peer link inbound missing');
-    const label = (this.options.pluginLabel?.(rec.pluginId) || rec.pluginId).slice(0, LABEL_MAX);
-    addHostLinkUse(this.options.db, rec.inbound.hostId, { pluginId: rec.pluginId, scope: rec.scope, label });
+    // A core connection records no plugin use: it is a link nothing but core owns.
+    if (rec.pluginId !== undefined && rec.scope !== undefined) {
+      const label = (this.options.pluginLabel?.(rec.pluginId) || rec.pluginId).slice(0, LABEL_MAX);
+      addHostLinkUse(this.options.db, rec.inbound.hostId, { pluginId: rec.pluginId, scope: rec.scope, label });
+    }
     const linked = await this.update(rec.invitationId, entry => {
       entry.phase = 'linked'; delete entry.deadline;
       if (entry.inbound) entry.inbound = { hostId: entry.inbound.hostId };
@@ -829,7 +854,7 @@ export class PeerLinks implements PeerLinksControlPort {
         const linkPub = pairing.remote.sshKey;
         if (!linkPub) throw new InvitationError('fenced');
         await this.options.ssh.authorizedKeys.upsert({ linkId: rec.invitationId, kind: 'link', pub: linkPub, listenPort: rec.ssh.listenPort,
-          targetPort: rec.ssh.targetPort });
+          targetPort: rec.ssh.targetPort, expiresAt: this.now() + LINK_LINE_TTL_MS });
         await this.update(rec.invitationId, entry => { entry.ssh.linkPub = linkPub; });
         rec = await this.update(rec.invitationId, entry => { entry.phase = 'activating'; entry.deadline = this.now() + PEER_LINK_FOUNDING_MS; });
         await this.invitations().markConnecting(ref);
@@ -964,7 +989,27 @@ export class PeerLinks implements PeerLinksControlPort {
     return applied;
   }
 
-  /** Either side of `peer.remove`: the peer removed the link; drop and revoke ours too, after the reply has left. */
+  /** The linked, unpaused connection to a peer, for per-plugin use approval. */
+  useRoute(peerInstanceId: string): { pairingId: string; hostId: string; peerName: string } | undefined {
+    const rec = this.linkedFor(peerInstanceId);
+    if (!rec?.inbound || rec.paused) return undefined;
+    return { pairingId: rec.pairingId ?? rec.invitationId, hostId: rec.inbound.hostId, peerName: rec.peerName ?? 'Computer' };
+  }
+
+  /** Local revocation needs the persisted host even while a paused link cannot carry traffic. */
+  useRouteForStop(peerInstanceId: string): { pairingId: string; hostId: string; peerName: string } | undefined {
+    const rec = this.linkedFor(peerInstanceId);
+    if (!rec?.inbound) return undefined;
+    return { pairingId: rec.pairingId ?? rec.invitationId, hostId: rec.inbound.hostId, peerName: rec.peerName ?? 'Computer' };
+  }
+
+  /** Incoming `use.*`: sender, the receiving inbound host and the pairing must all name the same linked connection. */
+  useRouteFor(senderId: string, hostId: string, pairingId: string): { pairingId: string; hostId: string; peerName: string } | undefined {
+    const route = this.useRoute(senderId);
+    return route && route.hostId === hostId && route.pairingId === pairingId ? route : undefined;
+  }
+
+  /** Either side of `peer.remove`: run local cleanup, then drop and revoke after the reply has left. */
   async acceptRemoval(senderId: string, hostId: string, ref: { pairingId: string; hostId: string }): Promise<{ accepted: boolean }> {
     this.assertLive();
     const rec = [...this.mirror.values()].find(entry => !TERMINAL.has(entry.phase) && entry.peer === senderId && entry.inbound?.hostId === hostId &&
@@ -972,7 +1017,12 @@ export class PeerLinks implements PeerLinksControlPort {
     if (!rec) return { accepted: false };
     this.timer(`removal:${rec.invitationId}`, REPLY_DELAY_MS, () => this.lane(rec.invitationId, async () => {
       const current = this.get(rec.invitationId);
-      if (current && !TERMINAL.has(current.phase)) await this.removeLinked(current, 'revoked', false);
+      if (current && !TERMINAL.has(current.phase)) {
+        try { await this.options.onRemoving?.(senderId); } catch { /* cleanup never blocks removal */ }
+        await this.removeLinked(current, 'revoked', false);
+        // Peer-initiated removal must revoke local grants and forget use state too.
+        await this.options.onRemoved?.(senderId);
+      }
     }));
     return { accepted: true };
   }
@@ -997,7 +1047,7 @@ export class PeerLinks implements PeerLinksControlPort {
     return this.links(peerInstanceId);
   }
 
-  /** One plugin scope released: drops its use on the own inbound host; the last use removes the link. */
+  /** One plugin scope released: drops its use on the own inbound host. The link stays, even with no uses left. */
   async release(peerInstanceId: string, pluginId: string, scope: string): Promise<boolean> {
     this.assertLive();
     let released = false;
@@ -1012,18 +1062,29 @@ export class PeerLinks implements PeerLinksControlPort {
       const used = !!host && host.purpose.kind === 'plugin-link' && host.purpose.uses.some(use => use.pluginId === pluginId && use.scope === scope);
       if (used) {
         released = true;
-        if (removeHostLinkUse(this.options.db, rec.inbound.hostId, pluginId, scope) === 0) await this.remove(peerInstanceId, 'revoked');
+        removeHostLinkUse(this.options.db, rec.inbound.hostId, pluginId, scope);
       }
     }
     if (released) this.changed();
     return released;
   }
 
-  /** Owner removal (or revocation): tell the peer (best effort), then tear down and revoke this side. */
-  async remove(peerInstanceId: string, removal: 'removed' | 'revoked' = 'removed'): Promise<boolean> {
+  /**
+   * Owner removal (or revocation): local-first. A linked record is torn down at once, outside its lane (a long lane step must
+   * not delay it), while the peer notice is sent without being awaited. Then pair grants and plugin notes for the peer are dropped.
+   */
+  async remove(peerInstanceId: string, removal: 'removed' | 'revoked' = 'removed', options?: { hooksRan?: boolean }): Promise<boolean> {
     this.assertLive();
     const recs = this.records().filter(entry => entry.peer === peerInstanceId && !TERMINAL.has(entry.phase));
+    // `hooksRan`: the owner's removal already ran the plugin handlers and revoked the uses (Retry / Remove anyway).
+    if (!options?.hooksRan && recs.some(entry => entry.phase === 'linked')) {
+      try { await this.options.onRemoving?.(peerInstanceId); } catch { /* plugin cleanup never vetoes a removal */ }
+    }
     for (const rec of recs) {
+      if (rec.phase === 'linked') {
+        await this.removeLinked(rec, removal, true);
+        continue;
+      }
       await this.lane(rec.invitationId, async () => {
         const current = this.get(rec.invitationId);
         if (!current || TERMINAL.has(current.phase)) return;
@@ -1034,7 +1095,10 @@ export class PeerLinks implements PeerLinksControlPort {
         }
       });
     }
-    if (recs.length) this.changed();
+    if (recs.length) {
+      try { await this.options.onRemoved?.(peerInstanceId); } catch { /* grants/notes cleanup is best effort; a later revoke retries */ }
+      this.changed();
+    }
     return recs.length > 0;
   }
 
@@ -1083,11 +1147,13 @@ export class PeerLinks implements PeerLinksControlPort {
   }
 
   private async removeLinked(rec: Rec, removal: 'removed' | 'revoked', notify: boolean): Promise<void> {
+    // Local-first: the notice is initiated before the inbound host is destroyed (it travels over that host's session) but never
+    // awaited, so an offline or slow peer cannot delay teardown. A peer that misses it sees the closed connector (4003) or a lapsed link line.
     if (notify && this.options.bridge?.peerRemove && rec.inbound && rec.peer) {
       try {
-        await this.options.bridge.peerRemove(rec.inbound.hostId, { recipientInstanceId: rec.peer, pairingId: rec.pairingId ?? rec.invitationId,
-          hostId: rec.inbound.hostId }, this.signal(NOTICE_MS));
-      } catch { /* best effort: Connect revocation still stops the peer's connector */ }
+        void Promise.resolve(this.options.bridge.peerRemove(rec.inbound.hostId, { recipientInstanceId: rec.peer, pairingId: rec.pairingId ?? rec.invitationId,
+          hostId: rec.inbound.hostId }, this.signal(NOTICE_MS))).catch(() => undefined);
+      } catch { /* best effort */ }
     }
     await this.teardown(rec, { removal });
   }
@@ -1241,7 +1307,7 @@ export class PeerLinks implements PeerLinksControlPort {
 
   private project(rec: Rec): PeerLinkView {
     const phase: PeerLinkViewPhase = rec.phase === 'pre-consent' ? 'pending' : rec.phase === 'activating' ? 'enrolled' : rec.phase;
-    const base = { pairingId: rec.pairingId ?? rec.invitationId, peerInstanceId: rec.peer!, pluginId: rec.pluginId, scope: rec.scope, role: rec.role,
+    const base = { pairingId: rec.pairingId ?? rec.invitationId, peerInstanceId: rec.peer!, ...(rec.pluginId !== undefined ? { pluginId: rec.pluginId, scope: rec.scope } : {}), role: rec.role,
       phase, capability: 'peer.forward' as const, ...(rec.failure ? { failure: rec.failure } : {}),
       ...(rec.peerName ? { peerName: rec.peerName } : {}) };
     if (rec.phase === 'removed') return { ...base, state: 'disconnected', reason: 'revoked' };
@@ -1280,7 +1346,7 @@ export class PeerLinks implements PeerLinksControlPort {
     await this.open(this.get(invitationId) ?? rec);
   }
 
-  /** Startup (once, at context init): load, reconcile link uses, reopen connections and resume unfinished steps. */
+  /** Startup (once, at context init): load, reopen connections and resume unfinished steps. */
   start(): Promise<void> {
     this.assertLive();
     return this.track((async () => {
@@ -1290,10 +1356,7 @@ export class PeerLinks implements PeerLinksControlPort {
         if (this.disposed) return;
         if (TERMINAL.has(rec.phase)) continue;
         if (rec.ssh.side === 'server' && !(await this.bindForwarder(rec))) continue;
-        if (rec.phase === 'linked' && rec.inbound) {
-          const label = (this.options.pluginLabel?.(rec.pluginId) || rec.pluginId).slice(0, LABEL_MAX);
-          try { addHostLinkUse(this.options.db, rec.inbound.hostId, { pluginId: rec.pluginId, scope: rec.scope, label }); } catch { /* host gone: supervised below */ }
-        }
+        // No use is re-added here: `activate` recorded the founding use once, and a stopped use must not come back on restart.
         if (rec.outbound?.hostKey) await this.lane(rec.invitationId, () => this.resume(rec.invitationId)).catch(() => undefined);
         if (rec.inbound && this.options.hostHub.getSession(rec.inbound.hostId)) this.onInboundConnected(rec.inbound.hostId);
         if (rec.role === 'redeemer' && rec.phase === 'activating') this.kickFounding(rec.invitationId, 0);
@@ -1323,7 +1386,7 @@ export class PeerLinks implements PeerLinksControlPort {
     // Idempotent: restores the link line removed while this link was blocked and the squatter has since gone.
     if (rec.phase === 'linked' && rec.ssh.linkPub) {
       await ssh.authorizedKeys.upsert({ linkId: rec.invitationId, kind: 'link', pub: rec.ssh.linkPub, listenPort: rec.ssh.listenPort,
-        targetPort: rec.ssh.targetPort }).catch(() => undefined);
+        targetPort: rec.ssh.targetPort, expiresAt: this.now() + LINK_LINE_TTL_MS }).catch(() => undefined);
     }
     return true;
   }

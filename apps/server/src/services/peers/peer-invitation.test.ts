@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  INVITATION_LIMITS, INVITATION_REASONS, INVITATION_TOKEN_PREFIX, InvitationError, PeerInvitations,
+  CORE_APPROVAL_PRINCIPAL, INVITATION_LIMITS, INVITATION_REASONS, INVITATION_TOKEN_PREFIX, InvitationError, PeerInvitations,
   consentDigestOf, invitationFingerprint, offerDigest, parseInvitationToken, sshKeyFingerprint, terminalInvitationReason,
   type ConsentedPairing, type InvitationLinkRef, type InvitationLinks, type InvitationReason, type InvitationTransport,
   type InvitationTransportResponse, type PairingFence, type PeerInvitationsOptions, type PublicInvitationStatus
 } from './peer-invitation.js';
+import { PAIRING_CODE_MISMATCH_LIMIT, pairingCodeOf } from './pairing-code.js';
 
 const PLUGIN = 'sync-plugin';
 const SCOPE = 'repo:alpha';
@@ -1104,6 +1105,166 @@ describe('PeerInvitations v3', () => {
       expect(rows.map(r => r.invitationId)).toEqual([one.invitationId, two.invitationId].reverse());
       expect(await inv.svc.list({ pluginId: PLUGIN, limit: 1 })).toHaveLength(1);
       expect(createHash('sha256').update(JSON.stringify(rows)).digest('hex')).toHaveLength(64);
+    });
+  });
+  describe('core connection (no plugin, no scope)', () => {
+    const CORE = { pluginId: undefined } as const;
+
+    it('creates a token without plugin or scope and pairs through consent and founding', async () => {
+      const w = await world();
+      const inv = w.make('inv'), red = w.make('red');
+      const created = await inv.svc.create({});
+      expect(inv.links.create).toHaveBeenCalledWith({ invitationId: created.invitationId });
+      const payload = decodeToken(created.token);
+      expect(payload).not.toHaveProperty('plugin');
+      expect(payload).not.toHaveProperty('scope');
+      expect(parseInvitationToken(created.token)).toMatchObject({ v: 3, inviter: inv.id });
+
+      const redeemed = await red.svc.redeem({ token: created.token });
+      expect(redeemed).not.toHaveProperty('pluginId');
+      expect(redeemed).not.toHaveProperty('scope');
+      expect(red.links.redeem.mock.calls[0]![0]).not.toHaveProperty('pluginId');
+      expect(red.links.redeem.mock.calls[0]![0]).not.toHaveProperty('scope');
+      red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
+      await red.svc.nudge(created.invitationId);
+      await red.svc.poll({ invitationId: created.invitationId });
+      expect(await inv.svc.status({ invitationId: created.invitationId })).toMatchObject({ role: 'inviter', state: 'reserved' });
+
+      const request = await inv.svc.approvalRequest({ invitationId: created.invitationId });
+      expect(request.binding).toMatchObject({ subject: 'inviter:core' });
+      expect(request.summary).toContain('Computer red');
+      expect(request.summary).not.toMatch(/undefined|sync/);
+      const { pairingCode } = await red.svc.status({ invitationId: created.invitationId });
+      expect(pairingCode).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+      // A plugin-signed approval cannot stand in for the core principal.
+      expect(await code(inv.svc.decide({ invitationId: created.invitationId, decision: 'approved', pairingCode, ownerProof: w.owner.sign(PLUGIN, request.binding) }))).toBe('owner_proof_required');
+      const decided = await inv.svc.decide({ invitationId: created.invitationId, decision: 'approved', pairingCode: pairingCode!.toLowerCase().replace('-', ''),
+        ownerProof: w.owner.sign(CORE_APPROVAL_PRINCIPAL, request.binding) });
+      expect(decided.inviterDecision).toBe('approved');
+      expect(decided.state).toBe('consented');
+      await red.svc.poll({ invitationId: created.invitationId });
+
+      const [pi] = await inv.svc.listConsented();
+      const [pr] = await red.svc.listConsented();
+      expect(pi).not.toHaveProperty('pluginId');
+      expect(pi).toMatchObject({ role: 'inviter', state: 'consented', remote: { instanceId: red.id } });
+      expect(pr).toMatchObject({ role: 'redeemer', pairingId: pi!.pairingId, consentDigest: pi!.consentDigest });
+      await red.svc.founding(fenceOf(pr!), { op: 'offer' });
+      await inv.svc.markConnecting(fenceOf(pi!));
+      await red.svc.markConnecting(fenceOf(pr!));
+      await red.svc.founding(fenceOf(pr!), { op: 'ack' });
+      await inv.svc.markReady(fenceOf(pi!));
+      await red.svc.markReady(fenceOf(pr!));
+      expect((await inv.svc.status({ invitationId: created.invitationId })).state).toBe('ready');
+      expect((await red.svc.status({ invitationId: created.invitationId })).state).toBe('ready');
+      expect(inv.changed).toContain(undefined);
+    });
+
+    it('keeps core and plugin records apart and never raises wrong_plugin for a core pair', async () => {
+      const w = await world();
+      const inv = w.make('inv'), red = w.make('red'), red2 = w.make('red2');
+      const core = await inv.svc.create({});
+      const scoped = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      expect((await inv.svc.list({})).map(row => row.invitationId)).toEqual([core.invitationId]);
+      expect((await inv.svc.list({ pluginId: PLUGIN })).map(row => row.invitationId)).toEqual([scoped.invitationId]);
+      expect(await code(inv.svc.status({ pluginId: PLUGIN, invitationId: core.invitationId }))).toBe('not_found');
+      expect(await code(inv.svc.status({ invitationId: scoped.invitationId }))).toBe('not_found');
+      // A core caller cannot redeem a plugin invitation and a plugin cannot redeem a core one.
+      expect(await code(red.svc.redeem({ token: scoped.token }))).toBe('wrong_plugin');
+      expect(await code(red2.svc.redeem({ pluginId: PLUGIN, token: core.token }))).toBe('wrong_plugin');
+      expect(await code(red.svc.redeem({ token: core.token }))).toBe('resolved');
+    });
+
+    it('rejects a half-specified plugin/scope pair and tokens that carry one', async () => {
+      const w = await world();
+      const inv = w.make('inv');
+      expect(await code(inv.svc.create({ pluginId: PLUGIN }))).toBe('invalid_invitation');
+      expect(await code(inv.svc.create({ scope: SCOPE }))).toBe('invalid_invitation');
+      const { token } = await inv.svc.create({});
+      expect(() => parseInvitationToken(encodeToken({ ...decodeToken(token), plugin: PLUGIN }))).toThrow(InvitationError);
+      expect(() => parseInvitationToken(encodeToken({ ...decodeToken(token), scope: SCOPE }))).toThrow(InvitationError);
+    });
+
+    it('binds the plugin and scope into the consent digest so a core digest differs from a scoped one', () => {
+      const endpoint = (n: number) => ({ instanceId: `id${n}`, name: 'n', fingerprint: 'f'.repeat(43), ed: 'e'.repeat(43), x: 'x'.repeat(43) });
+      const base = { id: 'inv1', pairingId: 'pair1', inviter: endpoint(1), redeemer: endpoint(2) };
+      const core = consentDigestOf(base);
+      expect(consentDigestOf({ ...base, pluginId: PLUGIN, scope: SCOPE })).not.toBe(core);
+      expect(consentDigestOf({ ...base, pluginId: PLUGIN, scope: 'repo:beta' })).not.toBe(consentDigestOf({ ...base, pluginId: PLUGIN, scope: SCOPE }));
+      expect(consentDigestOf({ ...base })).toBe(core);
+    });
+
+    /** Core inviter + redeemer reserved; returns the code the redeemer shows. */
+    const reserveCore = async () => {
+      const w = await world();
+      const inv = w.make('inv'), red = w.make('red');
+      const created = await inv.svc.create({});
+      const redeemed = await red.svc.redeem({ token: created.token });
+      expect(redeemed).not.toHaveProperty('pairingCode');
+      red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
+      await red.svc.nudge(created.invitationId);
+      await red.svc.poll({ invitationId: created.invitationId });
+      const invitationId = created.invitationId;
+      const shown = (await red.svc.status({ invitationId })).pairingCode!;
+      const proof = async () => w.owner.sign(CORE_APPROVAL_PRINCIPAL, (await inv.svc.approvalRequest({ invitationId })).binding);
+      return { w, inv, red, invitationId, shown, proof };
+    };
+
+    it('shows the pairing code only to the redeemer, derived from the consent digest both sides hold', async () => {
+      const { inv, red, invitationId, shown } = await reserveCore();
+      const inviterView = await inv.svc.status({ invitationId });
+      expect(inviterView).not.toHaveProperty('pairingCode');
+      expect(shown).toBe(pairingCodeOf(Buffer.from(inviterView.consentDigest!, 'base64url')));
+      expect((await red.svc.list({}))[0]!.pairingCode).toBe(shown);
+    });
+
+    it('requires the typed code to approve, without consuming the owner proof on a wrong code', async () => {
+      const { inv, invitationId, shown, proof } = await reserveCore();
+      const token = await proof();
+      expect(await code(inv.svc.decide({ invitationId, decision: 'approved', ownerProof: token }))).toBe('identity_mismatch');
+      const wrong = shown.startsWith('0') ? '1' + shown.slice(1) : '0' + shown.slice(1);
+      expect(await code(inv.svc.decide({ invitationId, decision: 'approved', pairingCode: wrong, ownerProof: token }))).toBe('identity_mismatch');
+      expect(await code(inv.svc.decide({ invitationId, decision: 'approved', pairingCode: 'not a code', ownerProof: token }))).toBe('identity_mismatch');
+      expect((await inv.svc.status({ invitationId })).state).toBe('reserved');
+      // The same proof still works: a wrong code is refused before the single-use proof is checked.
+      const decided = await inv.svc.decide({ invitationId, decision: 'approved', pairingCode: ` ${shown.toLowerCase()} `, ownerProof: token });
+      expect(decided.inviterDecision).toBe('approved');
+    });
+
+    it('burns the invitation after the mismatch limit, independent of the redeem attempt counter', async () => {
+      const { inv, red, invitationId, shown, proof } = await reserveCore();
+      const wrong = shown.startsWith('0') ? '1' + shown.slice(1) : '0' + shown.slice(1);
+      for (let i = 1; i < PAIRING_CODE_MISMATCH_LIMIT; i++) {
+        expect(await code(inv.svc.decide({ invitationId, decision: 'approved', pairingCode: wrong, ownerProof: await proof() }))).toBe('identity_mismatch');
+      }
+      expect(await code(inv.svc.decide({ invitationId, decision: 'approved', pairingCode: wrong, ownerProof: await proof() }))).toBe('attempt_limit');
+      expect(await inv.svc.status({ invitationId })).toMatchObject({ state: 'cancelled', reason: 'attempt_limit' });
+      expect(inv.terminated).toContainEqual([invitationId, 'inviter', 'attempt_limit']);
+      // Even the right code cannot revive it, and the redeemer learns it ended.
+      expect(await code(inv.svc.decide({ invitationId, decision: 'approved', pairingCode: shown, ownerProof: 'x' }))).toBe('attempt_limit');
+      await red.svc.poll({ invitationId });
+      expect((await red.svc.status({ invitationId })).state).toBe('cancelled');
+    });
+
+    it('denies without a code and leaves plugin approvals unchanged', async () => {
+      const { inv, invitationId } = await reserveCore();
+      expect((await inv.svc.decide({ invitationId, decision: 'denied' })).state).toBe('denied');
+      const w = await world();
+      const pinv = w.make('pinv'), pred = w.make('pred');
+      const { created } = await w.reserve(pinv, pred);
+      expect((await w.approve(pinv, created.invitationId)).inviterDecision).toBe('approved');
+    });
+
+    it('a signed offer for a core invitation is refused when it names a plugin', async () => {
+      const w = await world();
+      const inv = w.make('inv'), red = w.make('red');
+      const created = await inv.svc.create({});
+      await red.svc.redeem({ token: created.token });
+      red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
+      const wire = await red.svc.redeemWire(created.invitationId);
+      // Tamper: the inviter's record is core, so any wire not built for a core offer must not pair.
+      expect(await code(inv.svc.acceptRedeem({ ...wire, sealed: 'AAAA' }, { redeemerId: red.id }))).toBe('invalid_invitation');
+      expect(await code(inv.svc.acceptRedeem(wire, { redeemerId: red.id }))).toBe('resolved');
     });
   });
 });

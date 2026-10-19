@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const api = vi.hoisted(() => ({ list: vi.fn(), removeUse: vi.fn(), removeLink: vi.fn(), disconnect: vi.fn(), reconnect: vi.fn() }));
-vi.mock('../../lib/product-client.js', () => ({ peerLinks: api }));
+const api = vi.hoisted(() => ({ activity: vi.fn(), list: vi.fn(), removeUse: vi.fn(), removeLink: vi.fn(), disconnect: vi.fn(), reconnect: vi.fn(), repair: vi.fn(), leftovers: vi.fn(), forgetLeftover: vi.fn() }));
+const conn = vi.hoisted(() => ({ list: vi.fn(), cancel: vi.fn(), checkRemoteLogin: vi.fn(), create: vi.fn(), join: vi.fn(), approve: vi.fn(), deny: vi.fn() }));
+vi.mock('../../lib/product-client.js', () => ({ peerLinks: api, peerConnections: conn, product: {
+  pluginApps: { list: vi.fn(async () => []), onChanged: () => () => {} }
+} }));
 
 import { PeersSettingsView } from './PeersSettingsView';
+import { resetPeerJoinForTests, routeCoreDeepLink } from '../../lib/peers-join-link';
 
 const link = (over: Record<string, unknown> = {}) => ({
   hostId: 'h1',
@@ -21,36 +25,42 @@ const link = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  conn.list.mockReset().mockResolvedValue({ connections: [] });
+  conn.cancel.mockReset().mockResolvedValue({});
+  api.activity.mockReset().mockResolvedValue({ active: [] });
   api.list.mockReset().mockResolvedValue({ links: [link()] });
   api.removeUse.mockReset().mockResolvedValue({ ok: true, linkRemoved: false });
   api.removeLink.mockReset().mockResolvedValue({ ok: true, linkRemoved: true });
   api.disconnect.mockReset().mockResolvedValue({ ok: true, paused: true });
   api.reconnect.mockReset().mockResolvedValue({ ok: true, paused: false });
+  api.repair.mockReset().mockResolvedValue({ ok: true });
+  api.leftovers.mockReset().mockResolvedValue({ leftovers: [] });
+  api.forgetLeftover.mockReset().mockResolvedValue({ ok: true });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); resetPeerJoinForTests(); });
 
 describe('PeersSettingsView', () => {
   it('shows the empty state', async () => {
     api.list.mockResolvedValue({ links: [] });
     render(<PeersSettingsView />);
-    expect(await screen.findByText(/No peer links yet/)).toBeTruthy();
+    expect(await screen.findByText(/No installed plugin uses peers yet.*You can add a computer now/)).toBeTruthy();
   });
 
   it('tolerates a malformed list body', async () => {
     api.list.mockResolvedValue({});
     render(<PeersSettingsView />);
-    expect(await screen.findByText(/No peer links yet/)).toBeTruthy();
+    expect(await screen.findByText(/No installed plugin uses peers yet.*You can add a computer now/)).toBeTruthy();
   });
 
   it('lists links with state, connection, reason and uses', async () => {
-    api.list.mockResolvedValue({ links: [link({ state: 'failed', reason: 'handshake refused', connected: false }), link({ hostId: 'h2', peerName: 'Bare', uses: [], state: 'unclaimed', connected: false })] });
+    api.list.mockResolvedValue({ links: [link({ state: 'failed', reason: 'handshake refused', connected: false }), link({ hostId: 'h2', peerInstanceId: 'p2', peerName: 'Bare', uses: [], state: 'unclaimed', connected: false })] });
     render(<PeersSettingsView />);
     expect(await screen.findByText('Studio laptop')).toBeTruthy();
     expect(screen.getByText('Failed')).toBeTruthy();
-    expect(screen.getByText('handshake refused')).toBeTruthy();
+    expect(screen.getByText("Pairing didn't finish on this computer.")).toBeTruthy();
     expect(screen.getByText('Alpha plugin')).toBeTruthy();
     expect(screen.getByText('Unclaimed')).toBeTruthy();
-    expect(screen.getByText('No plugin uses this link.')).toBeTruthy();
+    expect(screen.getByText('No plugin uses this computer.')).toBeTruthy();
     expect(screen.getAllByTestId('peer-link')).toHaveLength(2);
     expect(screen.queryByText('Connected')).toBeNull();
   });
@@ -63,68 +73,170 @@ describe('PeersSettingsView', () => {
     expect(screen.queryByText('Remove use')).toBeNull();
   });
 
-  it('shows Stop syncing only when the machine has more than one plugin', async () => {
+  it('offers Stop syncing even for the last use (a zero-use link stays)', async () => {
     api.list.mockResolvedValue({ links: [link({ uses: [{ pluginId: 'a', label: 'Alpha plugin', scope: 'proj-1', since: 1 }] })] });
     render(<PeersSettingsView />);
     expect(await screen.findByText('Alpha plugin')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Stop syncing/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Stop syncing Alpha plugin' })).toBeTruthy();
   });
 
-  it('puts Disconnect and Remove link in the machine header, not the card bottom', async () => {
+  it('puts connection controls in the computer header and plugin uses below it', async () => {
     render(<PeersSettingsView />);
     const header = (await screen.findByText('Studio laptop')).closest('.peers-link-header') as HTMLElement;
-    expect(within(header).getByRole('button', { name: 'Disconnect' })).toBeTruthy();
-    expect(within(header).getByRole('button', { name: 'Remove link' })).toBeTruthy();
     expect(within(header).getByText('Connected')).toBeTruthy();
     const statuses = header.querySelector('.peers-link-statuses') as HTMLElement;
-    const actions = header.querySelector('.peers-link-actions') as HTMLElement;
-    expect(within(statuses).getAllByRole('status').map((el) => el.textContent)).toEqual(['Linked', 'Connected']);
-    expect(within(statuses).getByText('Connected').classList.contains('peers-state')).toBe(true);
+    expect(within(statuses).getAllByRole('status').map((el) => el.textContent)).toEqual(['Connected']);
     expect(within(statuses).queryByRole('button')).toBeNull();
-    expect(statuses.contains(actions)).toBe(false);
-    expect(within(actions).getByRole('button', { name: 'Disconnect' }).className).toContain('peers-btn-secondary');
+    expect(screen.getByRole('heading', { name: 'Used by' })).toBeTruthy();
+    const actions = header.querySelector('.peers-link-actions') as HTMLElement;
+    expect(within(actions).getByRole('button', { name: 'Pause' }).className).toContain('peers-btn-secondary');
     expect(within(actions).getByRole('button', { name: 'Remove link' }).className).toContain('peers-btn-remove');
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
-    fireEvent.click(within(header).getByRole('button', { name: 'Disconnect' }));
+    fireEvent.click(within(actions).getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(api.disconnect).toHaveBeenCalledWith('h1'));
     await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
   });
 
-  it('shows Paused and Reconnect for a paused link, and Reconnect when the connection is down', async () => {
-    api.list.mockResolvedValue({ links: [link({ paused: true, connected: false }), link({ hostId: 'h2', peerName: 'Other', connected: false })] });
+  it('groups links of one computer and disambiguates equal names', async () => {
+    api.list.mockResolvedValue({ links: [
+      link({ hostId: 'h1', peerInstanceId: 'aaaaaaaa-1111' }),
+      link({ hostId: 'h2', peerInstanceId: 'aaaaaaaa-1111', uses: [{ pluginId: 'a', label: 'Alpha plugin', scope: 'x', since: 1 }] }),
+      link({ hostId: 'h3', peerInstanceId: undefined, uses: [] })
+    ] });
+    render(<PeersSettingsView />);
+    await screen.findAllByTestId('peer-computer');
+    expect(screen.getAllByTestId('peer-computer')).toHaveLength(2);
+    expect(screen.getAllByTestId('peer-link')).toHaveLength(3);
+    expect(screen.getByText('Studio laptop (aaaaaaaa)')).toBeTruthy();
+    expect(screen.getByText('Studio laptop (h3)')).toBeTruthy();
+    expect(screen.getByText('No plugin uses this computer.')).toBeTruthy();
+  });
+
+  it('keeps the plain name when names differ', async () => {
+    api.list.mockResolvedValue({ links: [link(), link({ hostId: 'h2', peerInstanceId: 'p2', peerName: 'Other' })] });
+    render(<PeersSettingsView />);
+    expect(await screen.findByText('Studio laptop')).toBeTruthy();
+    expect(screen.getByText('Other')).toBeTruthy();
+  });
+
+  it('shows the active-transfer confirm, then the plugin list, then removes', async () => {
+    api.activity.mockResolvedValue({ active: [{ pluginId: 'a', label: 'Alpha plugin' }] });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
+    expect(await screen.findByText('Alpha plugin is transferring with Studio laptop. Stop anyway?')).toBeTruthy();
+    expect(api.activity).toHaveBeenCalledWith('h1');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop anyway' }));
+    expect(screen.getByText(/Plugins using it: Alpha plugin, Beta plugin\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(api.removeLink).toHaveBeenCalledWith('h1'));
+  });
+
+  it('cancelling the active-transfer confirm removes nothing', async () => {
+    api.activity.mockResolvedValue({ active: [{ pluginId: 'a', label: 'Alpha plugin' }] });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep syncing' }));
+    expect(screen.getByRole('button', { name: 'Remove link' })).toBeTruthy();
+    expect(api.removeLink).not.toHaveBeenCalled();
+  });
+
+  it('skips straight to the plugin list with no activity, and when activity throws or is malformed', async () => {
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
+    expect(await screen.findByRole('button', { name: 'Remove' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
+    api.activity.mockRejectedValue(new Error('down'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove link' }));
+    expect(await screen.findByRole('button', { name: 'Remove' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
+    api.activity.mockResolvedValue({});
+    fireEvent.click(screen.getByRole('button', { name: 'Remove link' }));
+    expect(await screen.findByRole('button', { name: 'Remove' })).toBeTruthy();
+    expect(screen.queryByText(/Stop anyway/)).toBeNull();
+  });
+
+  it('offers Retry and Remove anyway after a plugin cleanup failure', async () => {
+    api.removeLink.mockResolvedValueOnce({ ok: false, hookFailures: [{ pluginId: 'a', label: 'Alpha plugin', reason: 'timeout' }] });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    expect(await screen.findByText("Alpha plugin didn't finish cleaning up (timed out).")).toBeTruthy();
+    api.removeLink.mockResolvedValueOnce({ ok: false, hookFailures: [{ pluginId: 'b', label: 'Beta plugin', reason: 'error' }] });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(api.removeLink).toHaveBeenCalledTimes(2));
+    expect(api.removeLink).toHaveBeenLastCalledWith('h1');
+    expect(await screen.findByText("Beta plugin didn't finish cleaning up (failed).")).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove anyway' }));
+    await waitFor(() => expect(api.removeLink).toHaveBeenLastCalledWith('h1', { force: true }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('can cancel the failure dialog', async () => {
+    api.removeLink.mockResolvedValueOnce({ ok: false, hookFailures: [{ pluginId: 'a', label: 'Alpha plugin', reason: 'timeout' }] });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('confirms Stop syncing only for an actively transferring plugin', async () => {
+    api.activity.mockResolvedValue({ active: [{ pluginId: 'b', label: 'Beta plugin' }] });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop syncing Beta plugin' }));
+    expect(await screen.findByText('Beta plugin is transferring with Studio laptop. Stop anyway?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep syncing' }));
+    expect(api.removeUse).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop syncing Beta plugin' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop anyway' }));
+    await waitFor(() => expect(api.removeUse).toHaveBeenCalledWith('h1', 'b', 'proj-2'));
+  });
+
+  it('stops syncing immediately when a different plugin is the active one', async () => {
+    api.activity.mockResolvedValue({ active: [{ pluginId: 'a', label: 'Alpha plugin' }] });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop syncing Beta plugin' }));
+    await waitFor(() => expect(api.removeUse).toHaveBeenCalledWith('h1', 'b', 'proj-2'));
+  });
+
+  it('shows Paused and Resume for a paused link, and a separate Reconnect repair when the connection is down', async () => {
+    api.list.mockResolvedValue({ links: [link({ paused: true, connected: false }), link({ hostId: 'h2', peerInstanceId: 'p2', peerName: 'Other', connected: false })] });
     render(<PeersSettingsView />);
     expect(await screen.findByText('Paused')).toBeTruthy();
     expect(screen.queryByText('Connected')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull();
-    const buttons = screen.getAllByRole('button', { name: 'Reconnect' });
-    expect(buttons).toHaveLength(2);
-    fireEvent.click(buttons[0]!);
+    const resume = screen.getByRole('button', { name: 'Resume' });
+    const reconnect = screen.getByRole('button', { name: 'Reconnect' });
+    expect(screen.getAllByRole('button', { name: 'Pause' })).toHaveLength(1);
+    expect(screen.getByText("Can't reach Other. Check that both computers are on and Remote Login is on.")).toBeTruthy();
+    fireEvent.click(resume);
     await waitFor(() => expect(api.reconnect).toHaveBeenCalledWith('h1'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+    await waitFor(() => expect(api.repair).toHaveBeenCalledWith('h2'));
   });
 
-  it('offers no Disconnect or Reconnect for an unclaimed link', async () => {
+  it('offers no Pause, Resume or Reconnect for an unclaimed link', async () => {
     api.list.mockResolvedValue({ links: [link({ state: 'unclaimed', connected: false, uses: [] })] });
     render(<PeersSettingsView />);
     expect(await screen.findByRole('button', { name: 'Remove link' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Disconnect|Reconnect/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Pause|Resume|Reconnect/ })).toBeNull();
   });
 
   it('surfaces a disconnect failure', async () => {
     api.disconnect.mockRejectedValueOnce(new Error('busy'));
     render(<PeersSettingsView />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
     expect((await screen.findByRole('alert')).textContent).toBe('busy');
   });
 
   it('requires confirmation before removing a link, and can back out', async () => {
     render(<PeersSettingsView />);
     fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    expect(screen.getByText(/Delete this link for all plugins and remove this machine's access/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Keep link' }));
+    expect(await screen.findByText(/Delete this connection for all plugins and remove this machine's access\? Plugins using it: Alpha plugin, Beta plugin\./)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
     expect(api.removeLink).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Remove link' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(api.removeLink).toHaveBeenCalledWith('h1'));
     await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
   });
@@ -141,8 +253,8 @@ describe('PeersSettingsView', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Stop syncing Alpha plugin' }));
     expect((await screen.findByRole('alert')).textContent).toBe('denied');
     api.removeLink.mockRejectedValueOnce('boom');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove link' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Request failed'));
   });
 
@@ -159,8 +271,178 @@ describe('PeersSettingsView', () => {
     expect(within(rows[0]!).getByText('Connected, but database sync is not set up.')).toBeTruthy();
     expect(within(rows[1]!).getByText('Synced').getAttribute('data-state')).toBe('ok');
     expect(within(rows[2]!).queryByTestId('peer-use-note')).toBeNull();
-    // The link-level badges are unchanged.
-    expect(screen.getByText('Linked')).toBeTruthy();
+    // Healthy links expose the connection state only.
     expect(screen.getByText('Connected')).toBeTruthy();
+  });
+
+  describe('stuck states', () => {
+    const stuck = (over: Record<string, unknown>) => api.list.mockResolvedValue({ links: [link({ connected: false, uses: [{ pluginId: 'a', label: 'Alpha plugin', scope: 's', since: 1 }], ...over })] });
+
+    it('shows plain text and Remove anyway for failed and unclaimed links, with no jargon', async () => {
+      stuck({ state: 'failed' });
+      const { unmount } = render(<PeersSettingsView />);
+      expect(await screen.findByText("Pairing didn't finish on this computer.")).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Remove anyway' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+      unmount();
+      stuck({ state: 'unclaimed', uses: [] });
+      render(<PeersSettingsView />);
+      expect(await screen.findByText('No plugin owns this connection and nothing uses it.')).toBeTruthy();
+    });
+
+    it('Retry on a waiting link reloads without repair', async () => {
+      stuck({ state: 'pre-consent' });
+      render(<PeersSettingsView />);
+      expect(await screen.findByText('Waiting for the other computer…')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+      expect(api.repair).not.toHaveBeenCalled();
+    });
+
+    it('Reconnect runs the repair route', async () => {
+      stuck({});
+      render(<PeersSettingsView />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+      await waitFor(() => expect(api.repair).toHaveBeenCalledWith('h1'));
+    });
+
+    it('Remove anyway works with no hook failure: confirms naming plugins, then forces', async () => {
+      stuck({});
+      render(<PeersSettingsView />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Remove anyway' }));
+      expect(screen.getByText(/Alpha plugin may keep leftover access/)).toBeTruthy();
+      expect(api.removeLink).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+      await waitFor(() => expect(api.removeLink).toHaveBeenCalledWith('h1', { force: true }));
+      await waitFor(() => expect(api.leftovers).toHaveBeenCalledTimes(2));
+    });
+
+    it('can back out of Remove anyway, and a removal failure shows an error', async () => {
+      stuck({ state: 'failed' });
+      render(<PeersSettingsView />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Remove anyway' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
+      expect(api.removeLink).not.toHaveBeenCalled();
+      api.removeLink.mockRejectedValueOnce(new Error('nope'));
+      fireEvent.click(screen.getByRole('button', { name: 'Remove anyway' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+      expect((await screen.findByRole('alert')).textContent).toBe('nope');
+    });
+
+    it('shows no stuck block for a healthy link', async () => {
+      render(<PeersSettingsView />);
+      await screen.findByText('Studio laptop');
+      expect(screen.queryByTestId('peer-stuck')).toBeNull();
+    });
+  });
+
+  describe('leftover access', () => {
+    const leftover = { computerId: 'c1', name: 'Old laptop', plugins: [{ pluginId: 'a', label: 'Alpha plugin', reason: 'timeout' }, { pluginId: 'b', label: 'Beta plugin', reason: 'error' }] };
+
+    it('is hidden when empty or malformed, and when the fetch fails', async () => {
+      api.leftovers.mockResolvedValueOnce({});
+      const { unmount } = render(<PeersSettingsView />);
+      await screen.findByText('Studio laptop');
+      expect(screen.queryByTestId('peer-leftovers')).toBeNull();
+      unmount();
+      api.leftovers.mockRejectedValue(new Error('x'));
+      render(<PeersSettingsView />);
+      await screen.findByText('Studio laptop');
+      expect(screen.queryByTestId('peer-leftovers')).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('lists records and forgets one after confirmation, then reloads', async () => {
+      api.leftovers.mockResolvedValueOnce({ leftovers: [leftover] }).mockResolvedValue({ leftovers: [] });
+      render(<PeersSettingsView />);
+      expect(await screen.findByText('Old laptop: Alpha plugin, Beta plugin may still hold access from a removal that did not finish cleaning up.')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Forget leftover access' }));
+      expect(api.forgetLeftover).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm forget' }));
+      await waitFor(() => expect(api.forgetLeftover).toHaveBeenCalledWith('c1'));
+      await waitFor(() => expect(screen.queryByTestId('peer-leftovers')).toBeNull());
+    });
+
+    it('cancel keeps the record; a failed forget shows an error and keeps the row', async () => {
+      api.leftovers.mockResolvedValue({ leftovers: [leftover] });
+      api.forgetLeftover.mockRejectedValueOnce(new Error('cannot forget'));
+      render(<PeersSettingsView />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Forget leftover access' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(api.forgetLeftover).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Forget leftover access' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm forget' }));
+      expect((await screen.findByRole('alert')).textContent).toBe('cannot forget');
+      expect(screen.getByTestId('peer-leftover')).toBeTruthy();
+    });
+  });
+
+  it('opens Add and Accept invitation panels from the section buttons', async () => {
+    conn.checkRemoteLogin.mockResolvedValue({ ok: false, reason: 'ssh_remote_login_off' });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept invitation' }));
+    expect(screen.getByTestId('join-computer')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add computer' }));
+    expect((await screen.findByRole('button', { name: 'Add computer' })).className).toContain('primary');
+    expect(await screen.findByTestId('add-computer')).toBeTruthy();
+    expect(screen.queryByTestId('join-computer')).toBeNull();
+  });
+
+  it('lists in-progress connections, cancels an open one, and polls only while active', async () => {
+    vi.useFakeTimers();
+    try {
+      const open = { invitationId: '11111111-1111-4111-8111-111111111111', role: 'inviter', state: 'open', expiresAt: 1, awaitingApproval: false };
+      conn.list.mockResolvedValue({ connections: [open] });
+      render(<PeersSettingsView />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getAllByTestId('peer-connection')).toHaveLength(1);
+      const before = conn.list.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(conn.list.mock.calls.length).toBeGreaterThan(before);
+      conn.list.mockResolvedValue({ connections: [] });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); await vi.advanceTimersByTimeAsync(0); });
+      expect(conn.cancel).toHaveBeenCalledWith(open.invitationId);
+      expect(screen.queryByTestId('peer-connection')).toBeNull();
+      const settled = conn.list.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+      expect(conn.list.mock.calls.length).toBe(settled);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reloads the link list when a connection reaches a new state', async () => {
+    vi.useFakeTimers();
+    try {
+      const id = '22222222-2222-4222-8222-222222222222';
+      const base = { invitationId: id, role: 'inviter', expiresAt: 1, awaitingApproval: false };
+      api.list.mockResolvedValue({ links: [] });
+      conn.list.mockResolvedValue({ connections: [{ ...base, state: 'reserved' }] });
+      render(<PeersSettingsView />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      const before = api.list.mock.calls.length;
+      api.list.mockResolvedValue({ links: [link({ uses: [] })] });
+      conn.list.mockResolvedValue({ connections: [{ ...base, state: 'ready' }] });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(api.list.mock.calls.length).toBeGreaterThan(before);
+      expect(screen.getByTestId('peer-link')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('opens Accept invitation prefilled from a parked peers/join link, without joining', async () => {
+    await routeCoreDeepLink({ route: 'peers/join', payload: 'tok-parked' });
+    render(<PeersSettingsView />);
+    expect((await screen.findByLabelText(/Invitation/) as HTMLTextAreaElement).value).toBe('tok-parked');
+    expect(conn.join).not.toHaveBeenCalled();
+  });
+
+  it('prefills when a link arrives while the view is mounted', async () => {
+    render(<PeersSettingsView />);
+    await screen.findByText('Studio laptop');
+    await act(async () => { await routeCoreDeepLink({ route: 'peers/join', payload: 'tok-live' }); });
+    expect((await screen.findByLabelText(/Invitation/) as HTMLTextAreaElement).value).toBe('tok-live');
+    expect(conn.join).not.toHaveBeenCalled();
   });
 });

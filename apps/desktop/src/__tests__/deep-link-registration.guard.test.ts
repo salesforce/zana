@@ -42,3 +42,18 @@ describe('deep link OS registration is unreachable under E2E', () => {
     expect(mainSource.match(/app\.on\('open-url'/g)).toHaveLength(1);
   });
 });
+
+describe('core deep links stay main-validated and on their own channel', () => {
+  it('the host only builds deliveries from parseAnyDeepLink results', () => {
+    expect(hostSource).toContain('parseAnyDeepLink(');
+    expect(hostSource).not.toMatch(/[^y]parseDeepLink\(/);
+  });
+
+  it('main sends core deliveries on onCoreLink and plugin deliveries on onLink', () => {
+    expect(mainSource).toContain("'pluginId' in delivery ? IPC.deepLinks.onLink : IPC.deepLinks.onCoreLink");
+  });
+
+  it('the contract allowlists exactly the peers/join core route', () => {
+    expect(contractSource).toContain("CORE_DEEP_LINK_ROUTES = ['peers/join'] as const");
+  });
+});

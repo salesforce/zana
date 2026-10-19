@@ -3,6 +3,8 @@ import type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult
 
 /** A host-signed approval is good for one use within this window. */
 export const PLUGIN_APPROVAL_TTL_MS = 5 * 60_000;
+/** Principal of an owner approval for a core-owned (not plugin-owned) action; no plugin id can equal it. */
+export const CORE_APPROVAL_PRINCIPAL = 'core:peer-connection';
 const MAX_USED = 1024;
 const ACTION = /^[a-z][a-z0-9._-]{0,79}$/;
 const TOKEN = /^(\d{13})\.([a-f0-9]{32})\.([a-f0-9]{64})$/;

@@ -12,6 +12,9 @@ import { linuxCiElectronArgs, linuxCiElectronEnv } from './fixtures/linux-electr
 import { cleanupTmuxEnvironment, isolateTmuxEnvironment } from './fixtures/tmux-isolation.js';
 import { getPluginBuildToolchain } from '../packages/plugin-build/src/toolchain.js';
 import { transferQuery, type PeerTransfer } from '../plugins/design-docs/src/server/peer-protocol.js';
+import { corePeerConfig, createPeerApps } from './fixtures/peer-apps.js';
+import { answerApprovalSheet, installProbePlugin, pairComputers, probeRpc, reopenCorePeers, writeProbePlugin, type ProbeConnection } from './fixtures/core-peer-use.js';
+import { startPrivateSshd } from './fixtures/sshd.js';
 
 const pluginId = 'peer-data-probe';
 const scope = 'isolated-electron-data-boundary';
@@ -311,3 +314,47 @@ test(`independent built apps ${fenced ? 'commit-fenced' : 'read-only'} pair auth
   }
 });
 }
+
+test('core-connected apps carry more than 8192 bytes of UTF-8 both ways through a plugin use, and stop after Remove', async ({ home }) => {
+  test.setTimeout(420_000);
+  const source = join(home, 'probe-plugin');
+  writeProbePlugin(source);
+  const sshd = await startPrivateSshd([join(home, 'app-a', '.ssh', 'authorized_keys'), join(home, 'app-b', '.ssh', 'authorized_keys')]);
+  const peers = createPeerApps(home);
+  const prelaunch = (isolatedHome: string) => installProbePlugin(isolatedHome, source);
+  try {
+    const a = await peers.launch('app-a', { initialConfig: corePeerConfig, prelaunch, env: { ZCC_E2E_PEER_SSH_ENDPOINT: sshd.endpoint() } });
+    const b = await peers.launch('app-b', { initialConfig: corePeerConfig, prelaunch });
+    await pairComputers(a, b);
+    const connection = async (app: AppHandle) => {
+      let found: ProbeConnection | undefined;
+      await expect.poll(async () => { found = (await probeRpc<ProbeConnection[]>(app, 'connections'))[0]; return found?.state; }, { timeout: 60_000 }).toBe('connected');
+      return found!;
+    };
+    const target = await connection(a);
+    await probeRpc(a, 'requestUse', { computerId: target.computerId });
+    await Promise.all([answerApprovalSheet(a, 'Allow a plugin to use a connection'), answerApprovalSheet(b, 'Allow a plugin to use a connection')]);
+    for (const app of [a, b]) {
+      await expect.poll(async () => (await connection(app)).usedByThisPlugin, { timeout: 90_000 }).toBe(true);
+      await probeRpc(app, 'enable', { peerId: (await connection(app)).computerId, scope: 'connection' });
+    }
+    const text = `BEGIN-${'0123456789abcdef'.repeat(2048)}-TAIL-${'\u00e9\ud83d\udd12'.repeat(512)}-END`;
+    expect(Buffer.byteLength(text)).toBeGreaterThan(8192);
+    for (const from of [a, b]) {
+      const toId = (await connection(from)).computerId;
+      await expect.poll(() => probeRpc<{ text: string }>(from, 'echo', { computerId: toId, text }).then(reply => reply.text === text, () => false), { timeout: 60_000 }).toBe(true);
+    }
+    // Remove ends the traffic: the probe is told once, and the peer is no longer addressable.
+    const { window } = await reopenCorePeers(a);
+    await window.getByTestId('peer-link').getByRole('button', { name: 'Remove link', exact: true }).click();
+    const active = window.getByRole('alertdialog', { name: /^Active transfer with / });
+    await active.waitFor({ timeout: 5_000 }).then(() => active.getByRole('button', { name: 'Stop anyway', exact: true }).click(), () => {});
+    await window.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Confirm remove', exact: true }).click();
+    await expect(window.getByTestId('peer-link')).toHaveCount(0, { timeout: 30_000 });
+    expect(await probeRpc<string[]>(a, 'removing')).toEqual([target.computerId]);
+    await expect(probeRpc(a, 'echo', { computerId: target.computerId, text })).rejects.toThrow();
+  } finally {
+    await peers.dispose();
+    await sshd.dispose();
+  }
+});

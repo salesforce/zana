@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PluginInvitationStatus, PluginPeerLink, PluginPeerRequest, PluginSdkPeers } from '@zana-ai/zcc-plugin-sdk/server';
+import type { PeerConnection, PluginPeerRequest, PluginSdkPeers } from '@zana-ai/zcc-plugin-sdk/server';
 import { z } from 'zod';
 import { PeerProtocolError } from '../shared/peer-contract.js';
-import { bootstrapScope, DesignDocPairing, INVITE_UNSUPPORTED_REASON, inviteCapability, lifecycleReasonOf, readableError } from './pairing.js';
+import { bootstrapScope, DesignDocPairing, lifecycleReasonOf, readableError } from './pairing.js';
 import { capacityRequestId, DesignDocPeerGroup, MAX_PERMANENT_JOB_ATTEMPTS } from './peer-group.js';
 import { DesignDocStore } from './store.js';
 import { createTestDatabase } from './test-db.js';
@@ -19,7 +19,7 @@ function network(options: { race?: boolean } = {}) {
   const epochs = new Map<string, number>();
   const creating = new Set<string>(), ambiguous = new Set<string>();
   const introductions = new Map<string, 'pending' | 'complete' | 'blocked'>();
-  function app(peerId: string, hooks?: ConstructorParameters<typeof DesignDocPairing>[2]) {
+  function app(peerId: string, hooks?: ConstructorParameters<typeof DesignDocPairing>[2], connections?: ConnState) {
     const db = createTestDatabase(), store = new DesignDocStore(db), group = new DesignDocPeerGroup(db);
     const handlers = new Map<string, (request: PluginPeerRequest) => unknown>(), enrollment = new Set<string>(), scopes = new Map<string, Set<string>>();
     const peers: PluginSdkPeers = {
@@ -75,6 +75,7 @@ function network(options: { race?: boolean } = {}) {
     };
     const pairing = new DesignDocPairing(group, peers, hooks);
     const result = { db, store, peerId, group, peers, pairing, handlers, scopes, enrollment }; apps.set(peerId, result);
+    if (connections) withConnections(result, connections);
     pairing.register({ onDispose: (dispose) => disposals.push(dispose) } as never);
     return result;
   }
@@ -209,7 +210,7 @@ describe('DD lifecycle setup', () => {
       expect(target.group.sync.localRepository()!.groupId).toBeNull();
       expect(target.group.jobs().some((job) => job.kind === 'retire' && job.state !== 'done')).toBe(false);
       // Link teardown no longer waits on delivery, so a best-effort roster job may outlive the link it needed.
-      expect(target.group.jobs().filter((job) => job.kind === 'roster' && job.state !== 'done' && !/pair unavailable|not pair authorized/.test(job.error ?? ''))
+      expect(target.group.jobs().filter((job) => job.kind === 'roster' && job.state !== 'done' && !/the other computer has not finished setting up|not pair authorized/.test(job.error ?? ''))
         .map((job) => ({ peer: target.peerId, to: job.peerId, error: job.error }))).toEqual([]);
       expect(target.group.jobs().some((job) => job.kind === 'local-revoke' && /waiting for/.test(job.error ?? ''))).toBe(false);
     }
@@ -282,7 +283,7 @@ describe('DD lifecycle setup', () => {
     expect((await c.pairing.status()).members.find((member) => member.machineId === 'a')).toMatchObject({ authorized: false });
     await b.pairing.retry(true);
     expect(b.peers.introduce).toHaveBeenCalled();
-    expect((await b.pairing.status()).jobs.some((job) => job.error?.includes('automatic introduction pending'))).toBe(true);
+    expect((await b.pairing.status()).jobs.some((job) => job.error?.includes('the other computer has not finished setting up the connection yet'))).toBe(true);
   });
 
   it('ordinary offline member never blocks admission; roster delivery retries across restart', async () => {
@@ -601,90 +602,82 @@ describe('DD lifecycle setup', () => {
   });
 });
 
-function invitation(overrides: Partial<PluginInvitationStatus> = {}): PluginInvitationStatus {
-  return { invitationId: 'inv-1', role: 'inviter', scope: 'repo', state: 'open', localFingerprint: 'AAAA-BBBB', inviterDecision: 'pending',
-    redeemerDecision: 'pending', generation: 1, expiresAt: 1_000, ...overrides };
-}
-function link(overrides: Partial<PluginPeerLink> = {}): PluginPeerLink {
-  return { pairingId: 'pair-1', peerInstanceId: 'b', scope: 'repo', role: 'inviter', phase: 'linked', state: 'connected', ...overrides };
-}
-type InviteApp = ReturnType<ReturnType<typeof network>['app']>;
-/** Give an app's SDK the invitation surface a current host exposes. */
-function withInvites(app: InviteApp, state: { list?: PluginInvitationStatus[]; links?: PluginPeerLink[] } = {}) {
-  const mocks = {
-    createInvitation: vi.fn(async (_args: unknown) => ({ invitationId: 'inv-new', token: 'zccinv1.secret', expiresAt: 900_000 })),
-    redeemInvitation: vi.fn(async (_args: unknown) => invitation({ role: 'redeemer', state: 'redeeming' })),
-    invitationStatus: vi.fn(async (args: { invitationId: string }) => state.list?.find((item) => item.invitationId === args.invitationId) ?? invitation()),
-    listInvitations: vi.fn(async () => state.list ?? []),
-    invitationApproval: vi.fn(async () => ({ binding: { action: 'a', target: 't', targetLabel: 'l', subject: 's' }, title: 'Approve' })),
-    decideInvitation: vi.fn(async (_args: unknown) => invitation({ state: 'consented' })),
-    cancelInvitation: vi.fn(async (_args: unknown) => undefined),
-    peerLinks: vi.fn(async (_args?: unknown) => state.links ?? []),
-    reconnectPeer: vi.fn(async (_id: string, _args?: unknown) => [link({ state: 'reconnecting' })])
+type PairApp = ReturnType<ReturnType<typeof network>['app']>;
+interface ConnState { list: PeerConnection[] }
+const conn = (computerId = 'b', overrides: Partial<PeerConnection> = {}): PeerConnection =>
+  ({ computerId, hostname: `host-${computerId}`, state: 'connected', usedByThisPlugin: true, ...overrides });
+function connectionMocks(state: ConnState) {
+  return {
+    list: vi.fn(async (_args?: unknown) => state.list),
+    requestUse: vi.fn(async (_id: string, _args?: unknown) => ({ status: 'approved' as 'pending' | 'approved' | 'denied' })),
+    stopUsing: vi.fn(async (_id: string, _args?: unknown) => undefined),
+    onChange: vi.fn((_callback: (connections: PeerConnection[]) => void) => vi.fn()),
+    onConnectionRemoving: vi.fn((_handler: (computerId: string) => Promise<void>) => vi.fn()),
+    setStatus: vi.fn((_id: string, _note: string | null) => undefined)
   };
-  Object.assign(app.peers, mocks);
-  return mocks;
 }
-const ready = (peer = 'b') => invitation({ state: 'ready', peer: { instanceId: peer, name: peer, fingerprint: 'FFFF' }, inviterDecision: 'approved', redeemerDecision: 'approved' });
+/** Give an app's SDK the core connections surface a current host exposes. */
+function withConnections(app: { peers: PluginSdkPeers }, state: ConnState = { list: [] }, _relink = true) {
+  const mocks = connectionMocks(state), reconnectPeer = vi.fn(async (_id: string, _args?: unknown) => [] as unknown[]);
+  Object.assign(app.peers, { connections: mocks });
+  return { ...mocks, reconnectPeer };
+}
+const mocksOf = (app: { peers: PluginSdkPeers }) => app.peers.connections as unknown as ReturnType<typeof connectionMocks>;
+/** The automatic setup failure after one reconcile pass. */
+const failure = async (app: PairApp) => { await app.pairing.reconcile(); return app.pairing.setupFailure(); };
 
-describe('DD invitation pairing', () => {
-  it('older hosts report one stable reason and keep existing group sync', async () => {
-    const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
-    expect(inviteCapability(a.peers)).toEqual({ available: false, reason: INVITE_UNSUPPORTED_REASON });
-    expect(inviteCapability(undefined)).toEqual({ available: false, reason: INVITE_UNSUPPORTED_REASON });
-    expect(await a.pairing.inviteState()).toEqual({ available: false, reason: 'host cannot invite peers', invitations: [], links: [], enableError: null });
-    await expect(a.pairing.createInvitation()).rejects.toThrow('host cannot invite peers');
-    await expect(a.pairing.reconnect('b')).rejects.toThrow('host cannot invite peers');
-    expect((await a.pairing.status()).configured).toBe(true);
-    await a.pairing.revoke('b');
-  });
-
+describe('DD core connection pairing', () => {
   const TRANSIENT = 'peer enrollment changed or revoked';
 
-  it('inviteState survives a transient pair-store error during auto-enable and retries on the next call', async () => {
+  it('reconcile survives a transient pair-store error during auto-enable and retries on the next call', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     const enrolled = b.peers.enrolled.bind(b.peers);
     const flaky = vi.spyOn(b.peers, 'enrolled').mockRejectedValueOnce(new Error(TRANSIENT));
-    const view = await b.pairing.inviteState();
-    expect(view).toMatchObject({ available: true, enableError: null });
-    expect(view.links).toEqual([link({ peerInstanceId: 'a' })]);
+    await expect(b.pairing.reconcile()).resolves.toBeUndefined();
+    expect(b.pairing.setupFailure()).toBeNull();
     flaky.mockImplementation(enrolled);
-    await b.pairing.inviteState();
-    expect(flaky).toHaveBeenCalledTimes(2);
+    await b.pairing.reconcile();
+    expect(flaky.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('inviteState survives a transient pair-store error while restoring grants and retries next call', async () => {
+  it('reconcile survives a transient pair-store error while restoring grants and retries next call', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
-    withInvites(a, { list: [ready('b')], links: [link()] });
+    withConnections(a, { list: [conn('b')] });
     const list = a.peers.list.getMockImplementation()!;
     a.peers.list.mockRejectedValueOnce(new Error(TRANSIENT));
-    await expect(a.pairing.inviteState()).resolves.toMatchObject({ available: true, enableError: null });
+    await expect(a.pairing.reconcile()).resolves.toBeUndefined();
+    expect(a.pairing.setupFailure()).toBeNull();
     a.peers.list.mockImplementation(list);
-    await a.pairing.inviteState();
+    await a.pairing.reconcile();
     expect(a.peers.list.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('inviteState records a non-transient setup error instead of hiding it, and clears it once setup works', async () => {
+  it('reconcile records a non-transient setup error instead of hiding it, and clears it once setup works', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     const enrolled = b.peers.enrolled.bind(b.peers);
     const broken = vi.spyOn(b.peers, 'enrolled').mockRejectedValueOnce(new Error('boom'));
-    expect((await b.pairing.inviteState()).enableError).toBe('boom');
+    expect(await failure(b)).toBe('boom');
     broken.mockImplementation(enrolled);
-    expect((await b.pairing.inviteState()).enableError).toBeNull();
+    expect(await failure(b)).toBeNull();
   });
 
-  it('inviteState returns the last good view flagged stale when listing fails transiently, and rethrows with none', async () => {
-    const net = network(), a = net.app('a');
-    const calls = withInvites(a, { list: [invitation()], links: [link()] });
-    calls.listInvitations.mockRejectedValueOnce(new Error(TRANSIENT));
-    await expect(a.pairing.inviteState()).rejects.toThrow(TRANSIENT);
-    const good = await a.pairing.inviteState();
-    expect(good.stale).toBeUndefined();
-    calls.listInvitations.mockRejectedValueOnce(new Error(TRANSIENT));
-    expect(await a.pairing.inviteState()).toEqual({ ...good, stale: TRANSIENT });
-    expect((await a.pairing.inviteState()).stale).toBeUndefined();
+  it('a failed connections read is skipped quietly and the next read recovers', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
+      const mocks = withConnections(a, { list: [conn('b')] });
+      mocks.list.mockRejectedValue(new Error('core unavailable'));
+      await expect(a.pairing.reconcile()).resolves.toBeUndefined();
+      await a.pairing.reconcile();
+      expect(a.peers.enable).not.toHaveBeenCalled();
+      expect(warn.mock.calls.filter(([text]) => String(text).includes('listing connections failed: core unavailable'))).toHaveLength(1);
+      await expect(a.pairing.connections()).rejects.toThrow('core unavailable');
+      mocks.list.mockResolvedValue([conn('b')]);
+      await a.pairing.reconcile();
+      await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalled());
+    } finally { warn.mockRestore(); }
   });
 
   it('peer handlers answer a missing local repository with a typed protocol error, not a TypeError', async () => {
@@ -696,37 +689,6 @@ describe('DD invitation pairing', () => {
       expect(error).toBeInstanceOf(PeerProtocolError);
       expect((error as Error).message).toBe('no local repository');
     }
-  });
-
-  it('projects invitations without secrets, refreshes redeemer attempts and flags the owner who must approve', async () => {
-    const net = network(), a = net.app('a');
-    const reserved = invitation({ invitationId: 'r1', role: 'redeemer', state: 'reserved', pairingId: 'pair-secret', consentExpiresAt: 5,
-      peer: { instanceId: 'b', name: 'Laptop', fingerprint: 'FFFF' } });
-    const advanced = { ...reserved, state: 'consented' as const, redeemerDecision: 'approved' as const };
-    const calls = withInvites(a, { list: [invitation(), reserved, invitation({ invitationId: 'old', role: 'redeemer', state: 'ready' })], links: [link()] });
-    calls.invitationStatus.mockImplementation(async (args: { invitationId: string }) => { if (args.invitationId === 'r1') return advanced; throw new Error('unused'); });
-    const view = await a.pairing.inviteState();
-    expect(view.available).toBe(true);
-    expect(calls.invitationStatus).toHaveBeenCalledExactlyOnceWith({ invitationId: 'r1', refresh: true, signal: expect.any(AbortSignal) });
-    expect(view.invitations.map((item) => [item.invitationId, item.state, item.awaitingMyApproval, item.myDecision])).toEqual([
-      ['inv-1', 'open', false, 'pending'], ['r1', 'consented', false, 'approved'], ['old', 'ready', false, 'pending']]);
-    expect(JSON.stringify(view)).not.toMatch(/pair-secret|zccinv1|token/);
-    expect(view.links).toEqual([link()]);
-    calls.listInvitations.mockResolvedValue([reserved]);
-    const [item] = (await a.pairing.inviteState()).invitations;
-    expect(item).toMatchObject({ awaitingMyApproval: false, state: 'consented' });
-    calls.invitationStatus.mockRejectedValue(new Error('poll failed'));
-    // A redeemer never owes an approval, even before its implicit decision is recorded.
-    expect((await a.pairing.inviteState()).invitations[0]).toMatchObject({ state: 'reserved', awaitingMyApproval: false, peer: { name: 'Laptop', fingerprint: 'FFFF' }, consentExpiresAt: 5 });
-    calls.peerLinks.mockRejectedValue(new Error('links down'));
-    const lost = await a.pairing.inviteState();
-    expect(lost.links).toEqual([link()]);
-    expect(lost.stale).toBe('links down');
-    calls.peerLinks.mockResolvedValue([link()]);
-    expect((await a.pairing.inviteState()).stale).toBeUndefined();
-    const inviter = invitation({ state: 'reserved', redeemerDecision: 'approved' });
-    calls.listInvitations.mockResolvedValue([inviter]);
-    expect((await a.pairing.inviteState()).invitations[0]).toMatchObject({ awaitingMyApproval: true, theirDecision: 'approved' });
   });
 
   it('lifecycle failure carries the real cause code and is logged with it', async () => {
@@ -749,43 +711,52 @@ describe('DD invitation pairing', () => {
     } finally { warn.mockRestore(); }
   });
 
-  it('logs an automatic enable failure once and shows it as enableError', async () => {
+  it('logs an automatic enable failure once and shows it as the setup failure', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-      withInvites(a, { list: [ready('b')], links: [link()] });
+      withConnections(a, { list: [conn('b')] });
       vi.spyOn(a.peers, 'enable').mockRejectedValue(new Error('keychain locked'));
-      await a.pairing.inviteState();
-      await vi.waitFor(async () => expect((await a.pairing.inviteState()).enableError).toBe('keychain locked'));
-      await a.pairing.inviteState();
+      await a.pairing.reconcile();
+      await vi.waitFor(async () => expect(await failure(a)).toBe('keychain locked'));
+      await a.pairing.reconcile();
       expect(warn.mock.calls.filter(([text]) => String(text).includes('automatic database sync enable failed: keychain locked'))).toHaveLength(1);
     } finally { warn.mockRestore(); }
   });
 
-  it('Dismiss hides a finished attempt for good and refuses an active one', async () => {
-    const net = network(), a = net.app('a');
-    const list = [invitation({ invitationId: 'old', state: 'cancelled', peer: null }), invitation({ invitationId: 'live', state: 'open' })];
-    withInvites(a, { list });
-    await expect(a.pairing.dismissInvitation('old')).rejects.toThrow('only a finished');
-    await a.pairing.inviteState();
-    await expect(a.pairing.dismissInvitation('live')).rejects.toThrow('only a finished');
-    await expect(a.pairing.dismissInvitation('missing')).rejects.toThrow('only a finished');
-    await a.pairing.dismissInvitation('old');
-    expect((await a.pairing.inviteState()).invitations.map((item) => item.invitationId)).toEqual(['live']);
-  });
-
   describe('repair', () => {
-    it('refuses a computer without a live linked connection and needs the invite surface', async () => {
+    it('refuses a computer core has no connection to, and a malformed id', async () => {
       const net = network(), a = net.app('a'); net.link(a, net.app('b'));
-      await expect(a.pairing.repair('b')).rejects.toThrow('host cannot invite peers');
-      withInvites(a, { links: [link({ phase: 'failed', state: 'disconnected' })] });
-      await expect(a.pairing.repair('b')).rejects.toThrow('no linked connection');
+      const calls = withConnections(a, { list: [conn('c')] });
+      await expect(a.pairing.repair('b')).rejects.toThrow('no connection to that computer; connect it in Settings first');
       await expect(a.pairing.repair('bad id')).rejects.toThrow();
+      expect(calls.reconnectPeer).not.toHaveBeenCalled();
+    });
+
+    it('on a host without core connections, failed sync directs the owner to core reconnect', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
+        vi.spyOn(a.peers, 'enable').mockRejectedValue(new Error('pair store busy'));
+        const result = await a.pairing.repair('b');
+        expect(result).toMatchObject({ outcome: 'unavailable', detail: expect.stringContaining('Reconnect the computer from Settings → Peers') });
+        expect(result.detail).toContain('pair store busy');
+      } finally { warn.mockRestore(); }
+    });
+
+    it('a connections host directs failed sync repair to core reconnect', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
+        withConnections(a, { list: [conn('b')] }, false);
+        vi.spyOn(a.peers, 'enable').mockRejectedValue(new Error('pair store busy'));
+        await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'unavailable', detail: expect.stringContaining('Reconnect the computer from Settings → Peers') });
+      } finally { warn.mockRestore(); }
     });
 
     it('re-tries enabling sync, then is idempotent', async () => {
       const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-      const calls = withInvites(a, { links: [link()] });
+      const calls = withConnections(a, { list: [conn('b')] });
       // The other computer has not enabled yet, so the peer is not in the roster: say so instead of claiming success.
       await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'pending', reason: null, detail: expect.stringMatching(/\S/) });
       expect(calls.reconnectPeer).not.toHaveBeenCalled();
@@ -794,81 +765,80 @@ describe('DD invitation pairing', () => {
       expect(calls.reconnectPeer).not.toHaveBeenCalled();
       // An established member is left alone.
       const net2 = network(), c = net2.app('c'), d = net2.app('d'); await net2.found(c, d);
-      const calls2 = withInvites(c, { links: [link({ peerInstanceId: 'd' })] });
+      const calls2 = withConnections(c, { list: [conn('d')] });
       await expect(c.pairing.repair('d')).resolves.toEqual({ outcome: 'already-synced', detail: null, reason: null });
       expect(calls2.reconnectPeer).not.toHaveBeenCalled();
     });
 
     it('linked but never enrolled in core: says to remove and pair again, without re-linking', async () => {
       const net = network(), a = net.app('a'), b = net.app('b');
-      const calls = withInvites(a, { links: [link()] });
+      const calls = withConnections(a, { list: [conn('b')] });
       void b;
-      await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'unavailable', reason: null, detail: expect.stringContaining('Add peer to pair again') });
+      await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'unavailable', reason: null, detail: expect.stringContaining('Settings → Peers') });
       expect(calls.reconnectPeer).not.toHaveBeenCalled();
       expect(a.group.consent()).toBeNull();
     });
 
     it('enrolled but offline: says the computer is offline', async () => {
       const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-      withInvites(a, { links: [link()] });
+      withConnections(a, { list: [conn('b')] });
       net.offline.add('b');
       await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'unavailable', detail: expect.stringContaining('offline') });
     });
 
     it('reports the swallowed setup error instead of claiming success', async () => {
       const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-      withInvites(a, { links: [link()] });
+      withConnections(a, { list: [conn('b')] });
       const enable = a.peers.enable as ReturnType<typeof vi.fn>, real = enable.getMockImplementation()!;
       let calls = 0;
       enable.mockImplementation(async (...args: Parameters<typeof real>) => { if (++calls === 2) throw new Error('keychain locked'); return real(...args); });
       await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'pending', detail: expect.stringContaining('keychain locked') });
     });
 
-    it('re-links only that connection when enabling fails, then retries once', async () => {
+    it('does not re-link the connection when enabling sync fails', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
         // The initiator enabled already; the follower's Repair joins the roster.
         await a.pairing.enable('b');
-        const calls = withInvites(b, { links: [link({ peerInstanceId: 'a' })] });
+        const calls = withConnections(b, { list: [conn('a')] });
         vi.spyOn(b.peers, 'enable').mockRejectedValueOnce(new Error('pair store busy'));
-        await expect(b.pairing.repair('a')).resolves.toMatchObject({ outcome: 'relinked' });
-        expect(calls.reconnectPeer).toHaveBeenCalledExactlyOnceWith('a', { signal: expect.any(AbortSignal) });
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('repair: enable failed, re-linking: pair store busy'));
+        await expect(b.pairing.repair('a')).resolves.toMatchObject({ outcome: 'unavailable', detail: expect.stringContaining('Reconnect the computer from Settings → Peers') });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('repair: enable failed: pair store busy'));
       } finally { warn.mockRestore(); }
     });
 
-    it('after re-linking, waits for the other computer to come back on the new link before trying again', async () => {
+    it('does not re-link after a failed sync setup', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const net = network(), a = net.app('a'), b = net.app('b', { relinkWait: { timeoutMs: 200, intervalMs: 5 } }); net.link(a, b);
         await a.pairing.enable('b');
-        const calls = withInvites(b, { links: [link({ peerInstanceId: 'a' })] });
+        const calls = withConnections(b, { list: [conn('a')] });
         vi.spyOn(b.peers, 'enable').mockRejectedValueOnce(new Error('pair store busy'));
         // A re-key tears the connector down; core does not list the peer until it is re-established.
         const enrolled = b.peers.enrolled.bind(b.peers);
         let away = 0;
-        calls.reconnectPeer.mockImplementationOnce(async () => { away = 3; return [link({ peerInstanceId: 'a', state: 'reconnecting' })]; });
+        calls.reconnectPeer.mockImplementationOnce(async () => { away = 3; return []; });
         vi.spyOn(b.peers, 'enrolled').mockImplementation(async (args) => away-- > 0 ? [] : enrolled(args));
-        await expect(b.pairing.repair('a')).resolves.toMatchObject({ outcome: 'relinked' });
+        await expect(b.pairing.repair('a')).resolves.toMatchObject({ outcome: 'unavailable' });
+        expect(calls.reconnectPeer).not.toHaveBeenCalled();
       } finally { warn.mockRestore(); }
     });
 
-    it('when the other computer does not come back after re-linking, says so in plain words with the next step', async () => {
+    it('failed sync repair directs the owner to core reconnect', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const net = network(), a = net.app('a'), b = net.app('b', { relinkWait: { timeoutMs: 30, intervalMs: 5 } }); net.link(a, b);
         await a.pairing.enable('b');
-        const calls = withInvites(b, { links: [link({ peerInstanceId: 'a' })] });
+        const calls = withConnections(b, { list: [conn('a')] });
         vi.spyOn(b.peers, 'enable').mockRejectedValueOnce(new Error('pair store busy'));
         const enrolled = b.peers.enrolled.bind(b.peers);
         let relinked = false;
-        calls.reconnectPeer.mockImplementationOnce(async () => { relinked = true; return [link({ peerInstanceId: 'a', state: 'reconnecting' })]; });
+        calls.reconnectPeer.mockImplementationOnce(async () => { relinked = true; return []; });
         vi.spyOn(b.peers, 'enrolled').mockImplementation(async (args) => relinked ? [] : enrolled(args));
         const result = await b.pairing.repair('a');
         expect(result.outcome).toBe('unavailable');
-        expect(result.detail).not.toContain('mutually enrolled peer unavailable');
-        expect(result.detail).toMatch(/re-linked.*press Repair again.*remove this computer.*add the peer again/s);
+        expect(result.detail).toContain('Reconnect the computer from Settings → Peers');
       } finally { warn.mockRestore(); }
     });
 
@@ -876,25 +846,22 @@ describe('DD invitation pairing', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const net = network(), a = net.app('a'), b = net.app('b'), c = net.app('c'); net.link(a, b); net.link(a, c);
-        const calls = withInvites(a, { links: [link({ peerInstanceId: 'c' })] });
+        const calls = withConnections(a, { list: [conn('c')] });
         await a.pairing.enable('b');
         await expect(a.pairing.repair('c')).resolves.toMatchObject({ outcome: 'unavailable', detail: expect.stringContaining('another database setup is pending') });
         expect(calls.reconnectPeer).not.toHaveBeenCalled();
       } finally { warn.mockRestore(); }
     });
 
-    it('reports the cause when re-linking fails too, without touching other computers', async () => {
+    it('reports sync failure without re-linking any computer', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-        const calls = withInvites(a, { links: [link()] });
+        const calls = withConnections(a, { list: [conn('b')] });
         vi.spyOn(a.peers, 'enable').mockRejectedValue(new Error('pair store busy'));
-        calls.reconnectPeer.mockRejectedValueOnce(new Error('ssh down'));
-        await expect(a.pairing.repair('b')).resolves.toEqual({ outcome: 'unavailable', detail: 'ssh down', reason: null });
-        calls.reconnectPeer.mockResolvedValueOnce([link()]);
-        await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'unavailable', detail: 'pair store busy' });
-        expect(calls.reconnectPeer.mock.calls.every(([peerId]) => peerId === 'b')).toBe(true);
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('repair: re-link failed: ssh down'));
+        await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'unavailable', detail: expect.stringContaining('pair store busy') });
+        expect(calls.reconnectPeer).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('repair: enable failed: pair store busy'));
       } finally { warn.mockRestore(); }
     });
 
@@ -902,7 +869,7 @@ describe('DD invitation pairing', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-        const calls = withInvites(a, { links: [link()] });
+        const calls = withConnections(a, { list: [conn('b')] });
         a.peers.list = vi.fn(async () => { throw new Error('peer encryption key unavailable [reason=key-missing]'); });
         await expect(a.pairing.repair('b')).resolves.toEqual({ outcome: 'unavailable', detail: null, reason: 'key-missing' });
         expect(calls.reconnectPeer).not.toHaveBeenCalled();
@@ -910,142 +877,126 @@ describe('DD invitation pairing', () => {
     });
   });
 
-  it('passes owner actions through with the plugin scope and owner proof only for approval', async () => {
-    const net = network(), a = net.app('a'); const calls = withInvites(a);
-    const repoId = a.group.sync.localRepository()!.repoId;
-    await expect(a.pairing.createInvitation()).resolves.toMatchObject({ token: 'zccinv1.secret' });
-    expect(calls.createInvitation).toHaveBeenCalledWith({ scope: repoId, signal: expect.any(AbortSignal) });
-    expect(await a.pairing.redeemInvitation('zccinv1.pasted')).toMatchObject({ role: 'redeemer', state: 'redeeming' });
-    expect(calls.redeemInvitation).toHaveBeenCalledWith({ token: 'zccinv1.pasted', signal: expect.any(AbortSignal) });
-    await a.pairing.invitationApproval('inv-1');
-    await a.pairing.decideInvitation('inv-1', 'approved', 'proof-token');
-    await a.pairing.decideInvitation('inv-1', 'denied', 'ignored-proof');
-    expect(calls.decideInvitation.mock.calls.map(([args]) => args)).toEqual([
-      { invitationId: 'inv-1', decision: 'approved', ownerProof: 'proof-token', signal: expect.any(AbortSignal) },
-      { invitationId: 'inv-1', decision: 'denied', signal: expect.any(AbortSignal) }]);
-    await a.pairing.cancelInvitation('inv-1');
-    expect(calls.cancelInvitation).toHaveBeenCalledWith({ invitationId: 'inv-1', signal: expect.any(AbortSignal) });
-    await expect(a.pairing.reconnect('b')).resolves.toEqual([link({ state: 'reconnecting' })]);
-    expect(calls.reconnectPeer).toHaveBeenCalledWith('b', { signal: expect.any(AbortSignal) });
-    await expect(a.pairing.reconnect('bad id')).rejects.toThrow();
-  });
-
-  it('auto-enables a ready invitation peer on both sides without Machines enrollment UI and never uploads', async () => {
+  it('auto-enables a used, connected computer on both sides without Machines enrollment UI and never uploads', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(a, { list: [ready('b')], links: [link()] }); withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
-    await a.pairing.inviteState(); await b.pairing.inviteState();
+    withConnections(a, { list: [conn('b')] }); withConnections(b, { list: [conn('a')] });
+    await a.pairing.reconcile(); await b.pairing.reconcile();
     await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalled());
-    await vi.waitFor(async () => { await b.pairing.inviteState(); expect(b.peers.enable).toHaveBeenCalled(); });
+    await vi.waitFor(async () => { await b.pairing.reconcile(); expect(b.peers.enable).toHaveBeenCalled(); });
     await vi.waitFor(() => expect(a.group.consent() ?? a.group.roster()).not.toBeNull());
     await a.pairing.retry(true); await b.pairing.retry(true);
     expect(a.group.roster()!.members.map((member) => member.machineId).sort()).toEqual(['a', 'b']);
-    expect((await a.pairing.inviteState()).enableError).toBeNull();
+    expect(await failure(a)).toBeNull();
     // Pairing alone never created a manual sync session.
     expect(a.db.prepare('SELECT COUNT(*) AS n FROM sync_manual_sessions').get()).toEqual({ n: 0 });
     // Already a member: a later poll does nothing more.
     const calls = a.peers.enable.mock.calls.length;
-    await a.pairing.inviteState();
+    await a.pairing.reconcile();
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(a.peers.enable.mock.calls).toHaveLength(calls);
   });
 
-  it('a ready peer that is already a roster member does not hold back the next ready peer', async () => {
+  it('a used computer that is already a roster member does not hold back the next used one', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'), c = net.app('c'); await net.found(a, b); net.link(a, c);
-    withInvites(a, { list: [ready('b'), invitation({ ...ready('c'), invitationId: 'inv-c' })], links: [link(), link({ peerInstanceId: 'c', pairingId: 'pair-c' })] });
-    await a.pairing.inviteState();
+    withConnections(a, { list: [conn('b'), conn('c')] });
+    await a.pairing.reconcile();
     await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalledWith('c', expect.objectContaining({ scope: bootstrapScope('a', 'c') })));
   });
 
-  it('keeps iterating ready candidates past one whose connection is down', async () => {
+  it('keeps iterating candidates past one that is not enrolled', async () => {
     const net = network(), a = net.app('a'), c = net.app('c'); net.link(a, c);
-    withInvites(a, { list: [ready('b'), invitation({ ...ready('c'), invitationId: 'inv-c' })], links: [link(), link({ peerInstanceId: 'c', pairingId: 'pair-c' })] });
-    await a.pairing.inviteState();
+    withConnections(a, { list: [conn('b'), conn('c')] });
+    await a.pairing.reconcile();
     await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalledWith('c', expect.anything()));
     expect(a.peers.enable).not.toHaveBeenCalledWith('b', expect.anything());
   });
 
-  it('Disable Link is not undone by a later tick; a new invitation or explicit Enable re-pairs', async () => {
+  it('Disable Link is not undone by a later tick; a new use request re-pairs', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    const state = { list: [ready('b')], links: [link()] };
-    const calls = withInvites(a, state); void calls;
+    const state = { list: [conn('b')] };
+    const calls = withConnections(a, state);
     await a.pairing.revoke('b');
+    // Disabling releases this plugin's use of the connection; the connection itself stays.
+    expect(calls.stopUsing).toHaveBeenCalledWith('b', { signal: expect.any(AbortSignal) });
     a.peers.enable.mockClear();
-    await a.pairing.inviteState(); await a.pairing.inviteState();
+    await a.pairing.reconcile(); await a.pairing.reconcile();
     expect(a.peers.enable).not.toHaveBeenCalled();
-    // A fresh ready invitation is the owner re-pairing.
-    state.list = [ready('b'), invitation({ ...ready('b'), invitationId: 'inv-fresh' })];
-    await a.pairing.inviteState();
-    await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalledWith('b', expect.anything()));
+    // The owner using the connection again is the owner re-pairing.
+    await expect(a.pairing.useConnection('b')).resolves.toEqual({ status: 'approved' });
+    await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalled());
   });
 
-  it('Disable Link before any tick remembers the already-ready invitation from the host list', async () => {
+  it('a connection that vanishes and returns is a new connection: a local disable no longer applies', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(a, { list: [ready('b')], links: [link()] });
+    const state = { list: [conn('b')] };
+    withConnections(a, state);
     await a.pairing.revoke('b');
     a.peers.enable.mockClear();
-    await a.pairing.inviteState();
+    await a.pairing.reconcile();
+    expect(a.peers.enable).not.toHaveBeenCalled();
+    state.list = [];
+    await a.pairing.reconcile();
+    state.list = [conn('b')];
+    await a.pairing.reconcile();
+    await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalled());
+  });
+
+  it('revoke survives core refusing to release the use, and still disables sync', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
+      const calls = withConnections(a, { list: [conn('b')] });
+      calls.stopUsing.mockRejectedValue(new Error('core busy'));
+      await expect(a.pairing.revoke('b')).resolves.toBeTruthy();
+      expect(a.peers.revoke).toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('releasing the connection use failed: core busy'));
+    } finally { warn.mockRestore(); }
+  });
+
+  it('Disable Link before any tick is remembered against the used connection', async () => {
+    const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
+    withConnections(a, { list: [conn('b')] });
+    await a.pairing.revoke('b');
+    a.peers.enable.mockClear();
+    await a.pairing.reconcile();
     expect(a.peers.enable).not.toHaveBeenCalled();
   });
 
   it('explicit Enable lifts a local Disable Link', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(a, { list: [ready('b')], links: [link()] });
+    withConnections(a, { list: [conn('b')] });
     await a.pairing.revoke('b');
     a.peers.enable.mockClear();
     await a.pairing.enable('b').catch(() => undefined);
     expect(a.peers.enable).toHaveBeenCalled();
   });
 
-  it('re-shows the open invitation token until it is redeemed, expired or cancelled, then forgets it', async () => {
-    const net = network(), a = net.app('a'); const state = { list: [invitation({ invitationId: 'inv-new' })] as PluginInvitationStatus[], links: [] as PluginPeerLink[] };
-    const calls = withInvites(a, state), expiresAt = Date.now() + 900_000;
-    calls.createInvitation.mockImplementation(async () => ({ invitationId: 'inv-new', token: 'zccinv1.secret', expiresAt }));
-    expect(await a.pairing.openInvitation()).toBeNull();
-    await a.pairing.createInvitation();
-    expect(await a.pairing.openInvitation()).toEqual({ invitationId: 'inv-new', token: 'zccinv1.secret', expiresAt });
-    state.list = [invitation({ invitationId: 'inv-new', state: 'reserved' })];
-    expect(await a.pairing.openInvitation()).toBeNull();
-    expect(await a.pairing.openInvitation()).toBeNull();
-    await a.pairing.createInvitation();
-    calls.listInvitations.mockRejectedValue(new Error('down'));
-    expect(await a.pairing.openInvitation()).toMatchObject({ token: 'zccinv1.secret' });
-    await a.pairing.cancelInvitation('inv-new');
-    expect(await a.pairing.openInvitation()).toBeNull();
-    calls.listInvitations.mockResolvedValue([]);
-    const now = vi.spyOn(Date, 'now');
-    await a.pairing.createInvitation(); now.mockReturnValue(expiresAt + 1);
-    expect(await a.pairing.openInvitation()).toBeNull();
-    now.mockRestore();
-    await a.pairing.createInvitation();
-    expect(await a.pairing.openInvitation()).toBeNull();
-  });
-
   it('both sides polling at once: only the lower instance id creates bindings, so no enable is ambiguous', async () => {
     const net = network({ race: true }), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(a, { list: [ready('b')], links: [link()] }); withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
-    await Promise.all([a.pairing.inviteState(), b.pairing.inviteState()]);
+    withConnections(a, { list: [conn('b')] }); withConnections(b, { list: [conn('a')] });
+    await Promise.all([a.pairing.reconcile(), b.pairing.reconcile()]);
     await vi.waitFor(() => expect(a.group.consent() ?? a.group.roster()).not.toBeNull());
-    await vi.waitFor(async () => { await b.pairing.inviteState(); expect(b.group.consent() ?? b.group.roster()).not.toBeNull(); });
+    await vi.waitFor(async () => { await b.pairing.reconcile(); expect(b.group.consent() ?? b.group.roster()).not.toBeNull(); });
     await a.pairing.retry(true); await b.pairing.retry(true);
     expect(net.ambiguous.size).toBe(0);
     expect(a.group.roster()!.members.map((member) => member.machineId).sort()).toEqual(['a', 'b']);
     expect(b.group.roster()!.members.map((member) => member.machineId).sort()).toEqual(['a', 'b']);
-    expect((await a.pairing.inviteState()).enableError).toBeNull();
-    expect((await b.pairing.inviteState()).enableError).toBeNull();
+    expect(await failure(a)).toBeNull();
+    expect(await failure(b)).toBeNull();
   });
 
   it('the higher id waits for the initiator without deadlock, then answers once its bindings exist', async () => {
     const net = network({ race: true }), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     // The initiator has not acted (offline host, slower poll): the follower neither creates a binding nor blocks.
-    await b.pairing.inviteState(); await b.pairing.inviteState();
+    await b.pairing.reconcile(); await b.pairing.reconcile();
     expect(b.peers.enable).not.toHaveBeenCalled();
-    expect((await b.pairing.inviteState()).enableError).toBeNull();
+    expect(await failure(b)).toBeNull();
     // The follower's own lifecycle stays free: a later initiator enable is answered on the next poll.
-    withInvites(a, { list: [ready('b')], links: [link()] });
-    await a.pairing.inviteState();
+    withConnections(a, { list: [conn('b')] });
+    await a.pairing.reconcile();
     await vi.waitFor(() => expect(a.group.consent() ?? a.group.roster()).not.toBeNull());
-    await vi.waitFor(async () => { await b.pairing.inviteState(); expect(b.group.consent() ?? b.group.roster()).not.toBeNull(); });
+    await vi.waitFor(async () => { await b.pairing.reconcile(); expect(b.group.consent() ?? b.group.roster()).not.toBeNull(); });
     await a.pairing.retry(true); await b.pairing.retry(true);
     expect(net.ambiguous.size).toBe(0);
     expect(b.group.roster()!.members.map((member) => member.machineId).sort()).toEqual(['a', 'b']);
@@ -1053,31 +1004,31 @@ describe('DD invitation pairing', () => {
 
   it('the follower backs off its probe of an unreachable initiator, bounded, and resumes after the delay', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     // Initiator's bootstrap binding exists, but its hello fails (host restarting).
     await a.peers.enable('b', { scope: bootstrapScope('a', 'b') });
     const call = b.peers.call.getMockImplementation()!;
     b.peers.call.mockRejectedValue(new Error('peer offline'));
     let now = 1_000_000; const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     try {
-      await b.pairing.inviteState();
+      await b.pairing.reconcile();
       const probes = () => b.peers.call.mock.calls.filter(([, method]) => method === 'group-hello').length;
       expect(probes()).toBe(1);
-      await b.pairing.inviteState();
+      await b.pairing.reconcile();
       expect(probes()).toBe(1);
-      for (let i = 0; i < 12; i++) { now += 15 * 60_000; await b.pairing.inviteState(); }
+      for (let i = 0; i < 12; i++) { now += 15 * 60_000; await b.pairing.reconcile(); }
       expect(probes()).toBe(13);
       b.peers.call.mockImplementation(call);
       now += 15 * 60_000;
-      await b.pairing.inviteState();
+      await b.pairing.reconcile();
       // Hello answered; the chosen-scope binding is still missing, so b waits locally without another binding.
       expect(b.peers.enable).not.toHaveBeenCalled();
       const probed = probes();
-      await b.pairing.inviteState();
+      await b.pairing.reconcile();
       expect(probes()).toBe(probed);
       // The learned scope is re-read once per tick.
       now += 30_000;
-      await b.pairing.inviteState();
+      await b.pairing.reconcile();
       expect(probes()).toBe(probed + 1);
       expect(b.peers.enable).not.toHaveBeenCalled();
     } finally { clock.mockRestore(); }
@@ -1085,127 +1036,108 @@ describe('DD invitation pairing', () => {
 
   it('the follower backoff doubles per failed probe while the initiator stays unreachable', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     await a.peers.enable('b', { scope: bootstrapScope('a', 'b') });
     b.peers.call.mockRejectedValue(new Error('peer offline'));
     let now = 1_000_000; const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const probes = () => b.peers.call.mock.calls.filter(([, method]) => method === 'group-hello').length;
     try {
-      await b.pairing.inviteState();
+      await b.pairing.reconcile();
       expect(probes()).toBe(1);
-      now += 29_000; await b.pairing.inviteState(); expect(probes()).toBe(1);
-      now += 1_000; await b.pairing.inviteState(); expect(probes()).toBe(2);
-      now += 59_000; await b.pairing.inviteState(); expect(probes()).toBe(2);
-      now += 1_000; await b.pairing.inviteState(); expect(probes()).toBe(3);
-      now += 119_000; await b.pairing.inviteState(); expect(probes()).toBe(3);
-      now += 1_000; await b.pairing.inviteState(); expect(probes()).toBe(4);
+      now += 29_000; await b.pairing.reconcile(); expect(probes()).toBe(1);
+      now += 1_000; await b.pairing.reconcile(); expect(probes()).toBe(2);
+      now += 59_000; await b.pairing.reconcile(); expect(probes()).toBe(2);
+      now += 1_000; await b.pairing.reconcile(); expect(probes()).toBe(3);
+      now += 119_000; await b.pairing.reconcile(); expect(probes()).toBe(3);
+      now += 1_000; await b.pairing.reconcile(); expect(probes()).toBe(4);
     } finally { clock.mockRestore(); }
   });
 
   it('the follower probes again at once after the initiator restores its grants (re-key), not after the long backoff', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     await a.peers.enable('b', { scope: bootstrapScope('a', 'b') });
     b.peers.call.mockRejectedValue(new Error('peer offline'));
     let now = 1_000_000; const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const probes = () => b.peers.call.mock.calls.filter(([, method]) => method === 'group-hello').length;
     try {
-      await b.pairing.inviteState();
-      for (let i = 0; i < 3; i++) { now += 130_000; await b.pairing.inviteState(); }
+      await b.pairing.reconcile();
+      for (let i = 0; i < 3; i++) { now += 130_000; await b.pairing.reconcile(); }
       expect(probes()).toBe(4);
       // Still inside the grown backoff window and nothing changed: no probe.
-      now += 5_000; await b.pairing.inviteState();
+      now += 5_000; await b.pairing.reconcile();
       expect(probes()).toBe(4);
       // The link was re-keyed: grants are re-issued under a new epoch.
       net.epochs.set('a', 2);
-      now += 5_000; await b.pairing.inviteState();
+      now += 5_000; await b.pairing.reconcile();
       expect(probes()).toBe(5);
       // A genuinely unreachable initiator backs off again from the minimum.
-      now += 20_000; await b.pairing.inviteState();
+      now += 20_000; await b.pairing.reconcile();
       expect(probes()).toBe(5);
-      now += 10_000; await b.pairing.inviteState();
+      now += 10_000; await b.pairing.reconcile();
       expect(probes()).toBe(6);
     } finally { clock.mockRestore(); }
   });
 
   it('the follower probes again at once when the bootstrap grant vanished and came back during the backoff', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     await a.peers.enable('b', { scope: bootstrapScope('a', 'b') });
     b.peers.call.mockRejectedValue(new Error('peer offline'));
     let now = 1_000_000; const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const probes = () => b.peers.call.mock.calls.filter(([, method]) => method === 'group-hello').length;
     try {
-      await b.pairing.inviteState();
-      for (let i = 0; i < 3; i++) { now += 130_000; await b.pairing.inviteState(); }
+      await b.pairing.reconcile();
+      for (let i = 0; i < 3; i++) { now += 130_000; await b.pairing.reconcile(); }
       const before = probes();
       b.scopes.get('a')!.delete(bootstrapScope('a', 'b'));
-      now += 1_000; await b.pairing.inviteState();
+      now += 1_000; await b.pairing.reconcile();
       expect(probes()).toBe(before);
       b.scopes.get('a')!.add(bootstrapScope('a', 'b'));
-      now += 1_000; await b.pairing.inviteState();
-      expect(probes()).toBe(before + 1);
-    } finally { clock.mockRestore(); }
-  });
-
-  it('the follower probes again at once when the link identity changes', async () => {
-    const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    const calls = withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
-    await a.peers.enable('b', { scope: bootstrapScope('a', 'b') });
-    b.peers.call.mockRejectedValue(new Error('peer offline'));
-    let now = 1_000_000; const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
-    const probes = () => b.peers.call.mock.calls.filter(([, method]) => method === 'group-hello').length;
-    try {
-      await b.pairing.inviteState();
-      for (let i = 0; i < 3; i++) { now += 130_000; await b.pairing.inviteState(); }
-      const before = probes();
-      calls.peerLinks.mockResolvedValue([link({ peerInstanceId: 'a', pairingId: 'pair-2' })]);
-      now += 1_000; await b.pairing.inviteState();
+      now += 1_000; await b.pairing.reconcile();
       expect(probes()).toBe(before + 1);
     } finally { clock.mockRestore(); }
   });
 
   it('the follower treats a hello with another identity or scope as not ready', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     await a.peers.enable('b', { scope: bootstrapScope('a', 'b') });
     await a.peers.enable('b', { scope: a.group.sync.localRepository()!.repoId });
     const hello = a.handlers.get('group-hello')!;
     a.handlers.set('group-hello', async (request) => ({ ...(await hello(request) as object), peerId: 'c' }));
-    await b.pairing.inviteState();
+    await b.pairing.reconcile();
     expect(b.peers.enable).not.toHaveBeenCalled();
     a.handlers.set('group-hello', hello);
     let now = Date.now() + 60 * 60_000; const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     try {
-      await vi.waitFor(async () => { await b.pairing.inviteState(); expect(b.peers.enable).toHaveBeenCalled(); });
+      await vi.waitFor(async () => { await b.pairing.reconcile(); expect(b.peers.enable).toHaveBeenCalled(); });
       now += 1;
     } finally { clock.mockRestore(); }
   });
 
   it.each([
-    ['invitation not ready', () => invitation({ state: 'connecting', peer: { instanceId: 'b', name: 'b', fingerprint: 'F' } }), [link()], false],
-    // A linked link carries the consent on its own (see 'pairing again'); without one an undiscovered ready peer stays off.
-    ['no discovered peer and no link', () => invitation({ state: 'ready' }), [], false],
-    ['malformed peer id', () => ready('bad id'), [link({ peerInstanceId: 'bad id' })], false],
-    ['link removed', () => ready('b'), [link({ phase: 'removed' })], false],
-    ['link still pending', () => ready('b'), [link({ phase: 'enrolled' })], false],
-    ['peer offline', () => ready('b'), [link()], true]
-  ] as const)('does not auto-enable: %s', async (_name, make, links, offline) => {
+    ['use not approved', () => conn('b', { usedByThisPlugin: false }), false],
+    ['connection reconnecting', () => conn('b', { state: 'reconnecting' }), false],
+    ['connection disconnected', () => conn('b', { state: 'disconnected' }), false],
+    ['malformed computer id', () => conn('bad id'), false],
+    ['peer offline', () => conn('b'), true]
+  ] as const)('does not auto-enable: %s', async (_name, make, offline) => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
     if (offline) net.offline.add('b');
-    withInvites(a, { list: [make()], links: [...links] });
-    await a.pairing.inviteState();
+    withConnections(a, { list: [make()] });
+    await a.pairing.reconcile();
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(a.peers.enable).not.toHaveBeenCalled();
   });
 
-  it('does not re-enable while another setup is pending or after the peer was removed from the link list', async () => {
+  it('does not re-enable while another setup is pending', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'), c = net.app('c'); net.link(a, b); net.link(a, c);
     await a.pairing.enable('c');
     expect(a.group.consent()).not.toBeNull();
     a.peers.enable.mockClear();
-    withInvites(a, { list: [ready('b')], links: [link()] });
-    await a.pairing.inviteState();
+    withConnections(a, { list: [conn('b')] });
+    await a.pairing.reconcile();
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(a.peers.enable).not.toHaveBeenCalled();
     void b;
@@ -1213,41 +1145,29 @@ describe('DD invitation pairing', () => {
 
   it('surfaces an automatic enable failure and clears it after success', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(a, { list: [ready('b')], links: [link()] });
+    withConnections(a, { list: [conn('b')] });
     const enable = a.peers.enable.getMockImplementation()!;
     a.peers.enable.mockRejectedValueOnce(new Error('peer offline'));
-    await a.pairing.inviteState();
-    await vi.waitFor(async () => expect((await a.pairing.inviteState()).enableError).toBe('peer offline'));
+    await a.pairing.reconcile();
+    await vi.waitFor(async () => expect(await failure(a)).toBe('peer offline'));
     a.peers.enable.mockImplementation(enable);
-    await vi.waitFor(async () => { await a.pairing.inviteState(); expect(a.group.consent()).not.toBeNull(); });
-    await vi.waitFor(async () => expect((await a.pairing.inviteState()).enableError).toBeNull());
-  });
-
-  it('removing a member also revokes its invitation-founded link scope, once per scope', async () => {
-    const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
-    const scope = a.group.sync.localRepository()!.repoId;
-    const calls = withInvites(a, { links: [link({ scope: 'invite-scope' }), link({ scope: 'invite-scope' }), link({ scope, pairingId: 'p2' }), link({ scope: 'gone', phase: 'removed' })] });
-    await a.pairing.revoke('b');
-    const scopes = a.peers.revoke.mock.calls.map(([, args]) => args.scope);
-    expect(scopes.filter((item) => item === 'invite-scope')).toHaveLength(1);
-    expect(scopes).toContain(scope);
-    expect(scopes).not.toContain('gone');
-    expect(calls.peerLinks).toHaveBeenCalledWith({ peerId: 'b', signal: expect.any(AbortSignal) });
+    await vi.waitFor(async () => { await a.pairing.reconcile(); expect(a.group.consent()).not.toBeNull(); });
+    await vi.waitFor(async () => expect(await failure(a)).toBeNull());
   });
 
   it('a link re-key during setup: the initiator restores the bootstrap binding so the follower still joins', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    withConnections(b, { list: [conn('a')] });
     // The initiator negotiated; the follower has not answered yet when the inviter's first rotation revokes every grant.
     await a.pairing.enable('b');
     expect(a.group.consent()).not.toBeNull();
     a.scopes.get('b')!.clear(); b.scopes.get('a')!.clear();
-    await b.pairing.inviteState();
+    await b.pairing.reconcile();
     expect(b.group.consent() ?? b.group.roster()).toBeNull();
     a.peers.enable.mockClear();
     await a.pairing.retry(true);
     expect(a.peers.enable).toHaveBeenCalledWith('b', expect.objectContaining({ scope: bootstrapScope('a', 'b') }));
-    await vi.waitFor(async () => { await b.pairing.inviteState(); expect(b.group.consent() ?? b.group.roster()).not.toBeNull(); });
+    await vi.waitFor(async () => { await b.pairing.reconcile(); expect(b.group.consent() ?? b.group.roster()).not.toBeNull(); });
     await a.pairing.retry(true); await b.pairing.retry(true);
     expect(a.group.roster()!.members.map((member) => member.machineId).sort()).toEqual(['a', 'b']);
     // The follower never re-creates the bootstrap binding itself.
@@ -1272,18 +1192,18 @@ describe('DD invitation pairing', () => {
     f.peers.enable.mockClear();
     await f.pairing.retry(true);
     expect(f.peers.enable).not.toHaveBeenCalled();
-    expect(f.group.consent()).toMatchObject({ state: 'pending', error: 'pair unavailable; automatic introduction pending' });
+    expect(f.group.consent()).toMatchObject({ state: 'pending', error: 'the other computer has not finished setting up the connection yet' });
   });
 
   it('a link re-key while a lower-id sponsor admits a newcomer: the sponsor restores both bindings so the follower joins', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'), c = net.app('c'); await net.found(a, b); net.link(b, c);
     const scope = b.group.roster()!.repoId;
-    withInvites(c, { list: [ready('b')], links: [link({ peerInstanceId: 'b' })] });
+    withConnections(c, { list: [conn('b')] });
     // Sponsor b (lower id) negotiated with newcomer c; then the inviter's first rotation revokes every grant on the b-c link.
     await b.pairing.enable('c');
     expect(b.group.consent()).toMatchObject({ peerId: 'c', repoId: scope });
     b.scopes.get('c')!.clear(); c.scopes.get('b')!.clear();
-    await c.pairing.inviteState();
+    await c.pairing.reconcile();
     expect(c.group.consent() ?? c.group.roster()).toBeNull();
     expect(c.peers.enable).not.toHaveBeenCalled();
     b.peers.enable.mockClear();
@@ -1293,7 +1213,7 @@ describe('DD invitation pairing', () => {
     b.peers.enable.mockClear();
     await b.pairing.retry(true);
     expect(b.peers.enable).not.toHaveBeenCalled();
-    await vi.waitFor(async () => { await c.pairing.inviteState(); expect(c.group.consent() ?? c.group.roster()).not.toBeNull(); });
+    await vi.waitFor(async () => { await c.pairing.reconcile(); expect(c.group.consent() ?? c.group.roster()).not.toBeNull(); });
     await c.pairing.retry(true); await b.pairing.retry(true); await a.pairing.retry(true);
     for (const app of [a, b, c]) expect(app.group.roster()!.members.map((member) => member.machineId).sort()).toEqual(['a', 'b', 'c']);
     expect(b.group.consent()).toBeNull();
@@ -1322,41 +1242,41 @@ describe('DD invitation pairing', () => {
   it('after the group formed, the initiator restores a member grant a re-key revoked, bounded per tick', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
     const scope = a.group.roster()!.repoId;
-    const state = { list: [ready('b')], links: [link()] };
-    withInvites(a, state); withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
+    const state = { list: [conn('b')] };
+    withConnections(a, state); withConnections(b, { list: [conn('a')] });
     a.scopes.get('b')!.clear(); b.scopes.get('a')!.clear();
     a.peers.enable.mockClear(); b.peers.enable.mockClear();
     let now = Date.now(); const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     try {
       // The follower waits; the initiator re-enables the database scope and core mirrors it to the follower.
-      await b.pairing.inviteState();
+      await b.pairing.reconcile();
       expect(b.peers.enable).not.toHaveBeenCalled();
       const enable = a.peers.enable.getMockImplementation()!;
       a.peers.enable.mockRejectedValueOnce(new Error('peer authority revoked or mismatched'));
-      await a.pairing.inviteState();
+      await a.pairing.reconcile();
       expect(a.peers.enable).toHaveBeenCalledExactlyOnceWith('b', { scope, signal: expect.any(AbortSignal) });
       // A failed restore backs off for one tick.
-      await a.pairing.inviteState();
+      await a.pairing.reconcile();
       expect(a.peers.enable).toHaveBeenCalledTimes(1);
       now += 30_000; a.peers.enable.mockImplementation(enable);
-      await a.pairing.inviteState();
+      await a.pairing.reconcile();
       expect(a.peers.enable).toHaveBeenCalledTimes(2);
       expect(b.scopes.get('a')?.has(scope)).toBe(true);
       expect((await a.pairing.status()).members.every((member) => member.authorized)).toBe(true);
       // Restored: later ticks do nothing.
       now += 30_000;
-      await a.pairing.inviteState();
+      await a.pairing.reconcile();
       expect(a.peers.enable).toHaveBeenCalledTimes(2);
       // Not restored over a link that is not connected, or for a peer the owner disabled.
       a.scopes.get('b')!.clear(); now += 30_000;
-      state.links = [link({ state: 'reconnecting' })];
-      await a.pairing.inviteState();
+      state.list = [conn('b', { state: 'reconnecting' })];
+      await a.pairing.reconcile();
       expect(a.peers.enable).toHaveBeenCalledTimes(2);
     } finally { clock.mockRestore(); }
-    state.links = [link()];
+    state.list = [conn('b')];
     await a.pairing.revoke('b');
     a.peers.enable.mockClear();
-    await a.pairing.inviteState();
+    await a.pairing.reconcile();
     expect(a.peers.enable).not.toHaveBeenCalled();
   });
 
@@ -1371,14 +1291,13 @@ describe('DD invitation pairing', () => {
       const [left, stayed] = leaver === 'a' ? [a, b] : [b, a];
       await left.pairing.remove(stayed.group.sync.localRepository()!.replicaId);
       await stayed.pairing.retry(true); await left.pairing.retry(true);
-      const cancelled = invitation({ state: 'cancelled', reason: 'cancelled', peer: null });
-      withInvites(a, { list: [cancelled], links: [link({ peerInstanceId: 'b' })] });
-      withInvites(b, { list: [cancelled], links: [link({ peerInstanceId: 'a', pairingId: 'pair-1' })] });
+      withConnections(a, { list: [conn('b')] });
+      withConnections(b, { list: [conn('a')] });
       // Core imported the initiator's database grant on the leaver: the leftover roster then looks authorized.
       await stayed.peers.enable(left.peerId, { scope: stayed.group.sync.localRepository()!.repoId });
       return { net, a, b, left, stayed };
     }
-    const formed = async (x: InviteApp, y: InviteApp) => {
+    const formed = async (x: PairApp, y: PairApp) => {
       for (const side of [x, y]) {
         expect(side.group.roster()?.members.map((member) => member.machineId).sort()).toEqual(['a', 'b']);
         expect(side.group.sync.localRepository()!.groupId).toBe(side.group.roster()!.groupId);
@@ -1386,9 +1305,9 @@ describe('DD invitation pairing', () => {
       expect(x.group.roster()!.groupId).toBe(y.group.roster()!.groupId);
       expect((await x.pairing.status()).configured).toBe(true);
     };
-    const poll = async (...sides: InviteApp[]) => {
+    const poll = async (...sides: PairApp[]) => {
       for (let round = 0; round < 8; round++) {
-        for (const side of sides) { await side.pairing.inviteState(); await new Promise((resolve) => setTimeout(resolve, 5)); await side.pairing.retry(true); }
+        for (const side of sides) { await side.pairing.reconcile(); await new Promise((resolve) => setTimeout(resolve, 5)); await side.pairing.retry(true); }
       }
     };
 
@@ -1439,7 +1358,7 @@ describe('DD invitation pairing', () => {
       net.link(a, c); await a.pairing.enable('c'); await c.pairing.enable('a'); await a.pairing.retry(true);
       await a.pairing.remove(b.group.sync.localRepository()!.replicaId); await a.pairing.retry(true); await b.pairing.retry(true); await a.pairing.retry(true);
       expect(a.group.roster()!.members.map((member) => member.machineId).sort()).toEqual(['a', 'c']);
-      withInvites(a, { links: [link({ peerInstanceId: 'b' })] });
+      withConnections(a, { list: [conn('b')] });
       await expect(a.pairing.repair('b')).resolves.toMatchObject({ outcome: 'unavailable', detail: expect.stringContaining('cannot take a removed computer back') });
     });
 
@@ -1448,7 +1367,7 @@ describe('DD invitation pairing', () => {
      * beside its one-member roster (an older build, or a setup started before the removal arrived). The leaver detached and
      * waits for it to set that group aside; the stayer counted its own consent as "setup in progress" and never did.
      */
-    const staleSponsorSetup = (stayed: InviteApp, left: InviteApp, replicaId: string) => {
+    const staleSponsorSetup = (stayed: PairApp, left: PairApp, replicaId: string) => {
       stayed.group.enable(stayed.peerId, left.peerId, stayed.group.sync.localRepository()!.repoId, replicaId);
       expect(stayed.group.consent()).toMatchObject({ peerId: left.peerId });
       expect(stayed.group.liveRoster()!.members.map((member) => member.machineId)).toEqual([stayed.peerId]);
@@ -1492,14 +1411,12 @@ describe('DD invitation pairing', () => {
         // current replica and waits for it to set its leftover group aside: the machine evidence.
         await a.peers.enable('b', { scope: bootstrapScope('a', 'b') });
         await vi.waitFor(async () => {
-          await b.pairing.inviteState(); await b.pairing.retry(true);
+          await b.pairing.reconcile(); await b.pairing.retry(true);
           expect(b.group.consent()).toMatchObject({ peerId: 'a', error: expect.stringContaining('set aside the sync group') });
         });
         staleSponsorSetup(a, b, 'replica-from-an-older-attempt');
-        const calls = a.peers as unknown as { reconnectPeer: ReturnType<typeof vi.fn> };
         const result = await a.pairing.repair('b');
         expect(result.outcome).not.toBe('unavailable');
-        expect(calls.reconnectPeer).not.toHaveBeenCalled();
         await poll(a, b);
         await formed(a, b);
       } finally { warn.mockRestore(); }
@@ -1513,7 +1430,7 @@ describe('DD invitation pairing', () => {
         // current replica and waits for it to set its leftover group aside: the machine evidence.
         await a.peers.enable('b', { scope: bootstrapScope('a', 'b') });
         await vi.waitFor(async () => {
-          await b.pairing.inviteState(); await b.pairing.retry(true);
+          await b.pairing.reconcile(); await b.pairing.retry(true);
           expect(b.group.consent()).toMatchObject({ peerId: 'a', error: expect.stringContaining('set aside the sync group') });
         });
         // The stayer runs a build that never sets it aside: the leaver's Repair must still give a way forward.
@@ -1521,7 +1438,7 @@ describe('DD invitation pairing', () => {
         const result = await b.pairing.repair('a');
         expect(result.outcome).toBe('pending');
         expect(result.detail).not.toContain('waiting for the other computer to set aside');
-        expect(result.detail).toMatch(/other computer.*Repair.*remove this computer.*add the peer again/s);
+        expect(result.detail).toMatch(/other computer.*Repair.*Settings → Peers/s);
       } finally { warn.mockRestore(); }
     });
 
@@ -1531,7 +1448,7 @@ describe('DD invitation pairing', () => {
      * delivery parsed that as a roster and failed with a raw Zod dump forever, and the leaver's link revocation and new
      * pairing both waited on it.
      */
-    const historicalReplica = (side: InviteApp, machineId: string) =>
+    const historicalReplica = (side: PairApp, machineId: string) =>
       historicalMembers(side.group.roster()!).find((member) => member.machineId === machineId)!.replicaId;
     const stayerSetAside = async (leaver: 'a' | 'b') => {
       const setup = await dissolvedThenRelinked(leaver);
@@ -1628,17 +1545,10 @@ describe('DD invitation pairing', () => {
       const { a, b } = await dissolvedThenRelinked('b');
       await a.pairing.revoke('b');
       const calls = a.peers.enable.mock.calls.length;
-      await a.pairing.inviteState(); await new Promise((resolve) => setTimeout(resolve, 5));
+      await a.pairing.reconcile(); await new Promise((resolve) => setTimeout(resolve, 5));
       expect(a.peers.enable.mock.calls).toHaveLength(calls);
       void b;
     });
-  });
-
-  it('local revoke survives a failed link lookup', async () => {
-    const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
-    withInvites(a).peerLinks.mockRejectedValue(new Error('links down'));
-    await expect(a.pairing.revoke('b')).resolves.toBeTruthy();
-    expect(a.peers.revoke).toHaveBeenCalled();
   });
 });
 
@@ -1738,71 +1648,81 @@ describe('DD out-of-sync check', () => {
   });
 });
 
-describe('DD link state notes for core Peers', () => {
-  type NoteCall = [string, { scope: string; note: { state: string; label: string; detail?: string } | null }];
+describe('DD status notes for core connections', () => {
   const setup = () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
-    const mocks = withInvites(a, { links: [link()] });
-    const setPeerLinkNote = vi.fn(async (_peer: string, _args: unknown) => undefined);
-    Object.assign(a.peers, { setPeerLinkNote });
-    const calls = () => setPeerLinkNote.mock.calls as unknown as NoteCall[];
-    return { net, a, b, mocks, setPeerLinkNote, calls };
+    const state = { list: [conn('b')] };
+    const mocks = withConnections(a, state);
+    const calls = () => mocks.setStatus.mock.calls.map(([computerId, note]) => [computerId, note] as [string, string | null]);
+    return { net, a, b, mocks, state, calls };
   };
 
-  it('reports attention once for a connected link without sync, and not again until it changes', async () => {
+  it('reports attention once for a used, connected computer without sync, and not again until it changes', async () => {
     const { a, calls } = setup();
-    await a.pairing.inviteState();
-    await a.pairing.inviteState();
-    expect(calls()).toHaveLength(1);
-    expect(calls()[0]![0]).toBe('b');
-    expect(calls()[0]![1]).toMatchObject({ scope: 'repo', note: { state: 'attention', label: 'Sync not set up' } });
+    await a.pairing.reconcile();
+    await a.pairing.reconcile();
+    expect(calls()).toEqual([['b', 'Sync not set up']]);
   });
 
   it('clears the note once the computer is synced', async () => {
     const { a, b, calls } = setup();
-    withInvites(b, { list: [ready('a')], links: [link({ peerInstanceId: 'a' })] });
-    // Both computers are linked; the invitation flow enables sync on its own, after which the attention note is cleared.
+    withConnections(b, { list: [conn('a')] });
+    // Both computers use the connection; sync is enabled on its own, after which the attention note is cleared.
     await vi.waitFor(async () => {
-      await a.pairing.inviteState(); await b.pairing.inviteState();
-      expect(calls().map(([, args]) => args.note?.state ?? null)).toEqual(['attention', null]);
+      await a.pairing.reconcile(); await b.pairing.reconcile();
+      expect(calls().map(([, note]) => note)).toEqual(['Sync not set up', null]);
     }, { timeout: 3000 });
   });
 
-  it('sends nothing for a link that is not connected, and clears after the link goes away', async () => {
-    const { a, mocks, calls } = setup();
-    mocks.peerLinks.mockResolvedValue([link({ state: 'reconnecting' })]);
-    await a.pairing.inviteState();
+  it('sends nothing for a connection that is not live or not used, and reports afresh after it goes away', async () => {
+    const { a, state, calls } = setup();
+    state.list = [conn('b', { state: 'reconnecting' })];
+    await a.pairing.reconcile();
+    state.list = [conn('b', { usedByThisPlugin: false })];
+    await a.pairing.reconcile();
     expect(calls()).toHaveLength(0);
-    mocks.peerLinks.mockResolvedValue([link()]);
-    await a.pairing.inviteState();
+    state.list = [conn('b')];
+    await a.pairing.reconcile();
     expect(calls()).toHaveLength(1);
-    // Core drops the note with the link; a link that reappears is reported afresh.
-    mocks.peerLinks.mockResolvedValue([]);
-    await a.pairing.inviteState();
-    mocks.peerLinks.mockResolvedValue([link()]);
-    await a.pairing.inviteState();
+    // The connection vanishes (core drops its note with it); one that reappears is reported afresh.
+    state.list = [];
+    await a.pairing.reconcile();
+    state.list = [conn('b')];
+    await a.pairing.reconcile();
     expect(calls()).toHaveLength(2);
   });
 
-  it('clears a stale attention note when the link stops being connected', async () => {
-    const { a, mocks, calls } = setup();
-    await a.pairing.inviteState();
-    mocks.peerLinks.mockResolvedValue([link({ state: 'disconnected' })]);
-    await a.pairing.inviteState();
-    expect(calls().map(([, args]) => args.note?.state ?? null)).toEqual(['attention', null]);
+  it('clears a stale attention note when the connection stops being connected', async () => {
+    const { a, state, calls } = setup();
+    await a.pairing.reconcile();
+    state.list = [conn('b', { state: 'disconnected' })];
+    await a.pairing.reconcile();
+    expect(calls()).toEqual([['b', 'Sync not set up'], ['b', null]]);
   });
 
-  it('tolerates older hosts without setPeerLinkNote and a failing report (retried next time)', async () => {
-    const { a, setPeerLinkNote, calls } = setup();
-    setPeerLinkNote.mockRejectedValueOnce(new Error('note refused'));
+  it('clears the note when the plugin stops using the connection', async () => {
+    const { a, state, calls } = setup();
+    await a.pairing.reconcile();
+    state.list = [conn('b', { usedByThisPlugin: false })];
+    await a.pairing.reconcile();
+    expect(calls()).toEqual([['b', 'Sync not set up'], ['b', null]]);
+  });
+
+  it('tolerates a failing report (retried next time) and older hosts without setStatus', async () => {
+    const { a, mocks, calls } = setup();
+    mocks.setStatus.mockImplementationOnce(() => { throw new Error('note refused'); });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      await expect(a.pairing.inviteState()).resolves.toMatchObject({ available: true });
-      await a.pairing.inviteState();
+      await expect(a.pairing.reconcile()).resolves.toBeUndefined();
+      await a.pairing.reconcile();
       expect(calls()).toHaveLength(2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('reporting connection status failed: note refused'));
     } finally { warn.mockRestore(); }
-    const older = network(), c = older.app('c'); withInvites(c, { links: [link({ peerInstanceId: 'd' })] });
-    await expect(c.pairing.inviteState()).resolves.toMatchObject({ available: true });
+    const older = network(), c = older.app('c'); older.app('d');
+    const olderMocks = withConnections(c, { list: [conn('d')] });
+    delete (c.peers.connections as { setStatus?: unknown }).setStatus;
+    await expect(c.pairing.reconcile()).resolves.toBeUndefined();
+    expect(olderMocks.list).toHaveBeenCalled();
   });
 });
 
@@ -1813,7 +1733,7 @@ describe('DD lifecycle job failures', () => {
     a.group.queueJob('b', 'roster', a.group.roster()!.rosterEpoch, a.group.roster());
     return { net, a, b };
   };
-  const rosterJob = (a: InviteApp) => a.group.jobs().find((job) => job.kind === 'roster' && job.peerId === 'b')!;
+  const rosterJob = (a: PairApp) => a.group.jobs().find((job) => job.kind === 'roster' && job.peerId === 'b')!;
 
   it('a malformed reply fails after the retry cap with a readable reason and stops blocking link revocation', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1875,16 +1795,16 @@ describe('readableError', () => {
   });
 });
 
-describe('DD orphan setup (no link, no pairing under way)', () => {
+describe('DD orphan setup (no connection, no pairing under way)', () => {
   /** A pending setup with b, then the link to b is gone: what remains after both owners removed the link. */
   async function orphaned(hooks: ConstructorParameters<typeof DesignDocPairing>[2] = { orphanGraceMs: 0 }) {
     const net = network(), a = net.app('a', hooks), b = net.app('b'); net.link(a, b);
     await a.pairing.enable('b');
     expect(a.group.consent()).toMatchObject({ peerId: 'b', state: 'pending' });
     a.enrollment.delete('b');
-    return { net, a, b, mocks: withInvites(a, { list: [], links: [] }) };
+    return { net, a, b, mocks: withConnections(a, { list: [] }) };
   }
-  const tick = async (a: InviteApp, times = 2) => { for (let i = 0; i < times; i++) await a.pairing.inviteState(); };
+  const tick = async (a: PairApp, times = 2) => { for (let i = 0; i < times; i++) await a.pairing.reconcile(); };
 
   it('drops the unfinished setup after two looks and the grace period, and logs once', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1909,28 +1829,27 @@ describe('DD orphan setup (no link, no pairing under way)', () => {
     expect(a.group.consent()).toBeNull();
   });
 
-  it('keeps the setup while a link, an unreadable link list, an active pairing or a frozen join exists', async () => {
+  it('keeps the setup while a connection, an unreadable connection list or a frozen join exists', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { a, mocks } = await orphaned();
-    mocks.peerLinks.mockResolvedValue([link()]);
+    mocks.list.mockResolvedValue([conn('b')]);
     await tick(a, 3); expect(a.group.consent()).not.toBeNull();
-    mocks.peerLinks.mockResolvedValue([link({ phase: 'pending', state: 'reconnecting' })]);
+    mocks.list.mockResolvedValue([conn('b', { state: 'reconnecting', usedByThisPlugin: false })]);
     await tick(a, 3); expect(a.group.consent()).not.toBeNull();
-    mocks.peerLinks.mockRejectedValue(new Error('links down'));
+    mocks.list.mockRejectedValue(new Error('core down'));
     await tick(a, 3); expect(a.group.consent()).not.toBeNull();
-    mocks.peerLinks.mockResolvedValue([]);
-    mocks.listInvitations.mockResolvedValue([invitation({ state: 'connecting', peer: { instanceId: 'b', name: 'b', fingerprint: 'F' } })]);
-    await tick(a, 3); expect(a.group.consent()).not.toBeNull();
-    mocks.listInvitations.mockResolvedValue([]);
+    warn.mockRestore();
+    mocks.list.mockResolvedValue([]);
     a.db.prepare("UPDATE sync_group_control SET consent_json = json_set(consent_json, '$.request', json('{}')) WHERE singleton = 1").run();
     await tick(a, 3); expect(a.group.consent()).not.toBeNull();
   });
 
-  it('a link that returns during the grace period resets it', async () => {
+  it('a connection that returns during the grace period resets it', async () => {
     const { a, mocks } = await orphaned({ orphanGraceMs: 60_000 });
     await tick(a, 3);
-    mocks.peerLinks.mockResolvedValue([link()]);
+    mocks.list.mockResolvedValue([conn('b')]);
     await tick(a, 1);
-    mocks.peerLinks.mockResolvedValue([]);
+    mocks.list.mockResolvedValue([]);
     vi.useFakeTimers({ now: Date.now() + 61_000, toFake: ['Date'] });
     try { await tick(a, 1); expect(a.group.consent()).not.toBeNull(); } finally { vi.useRealTimers(); }
   });
@@ -1949,22 +1868,280 @@ describe('DD orphan setup (no link, no pairing under way)', () => {
 
   it('leaves a live sync group and its documents alone', async () => {
     const net = network(), a = net.app('a', { orphanGraceMs: 0 }), b = net.app('b'); await net.found(a, b);
-    withInvites(a, { list: [], links: [] });
+    withConnections(a, { list: [] });
     a.db.prepare("UPDATE sync_group_control SET consent_json = ? WHERE singleton = 1").run(JSON.stringify({ peerId: 'c', repoId: a.group.roster()!.repoId, replicaId: 'r', requestId: 'q', state: 'pending', error: null }));
     await tick(a, 3);
     expect(a.group.consent()).not.toBeNull();
     expect(a.group.liveRoster()).not.toBeNull();
   });
+});
 
-  it('shows finished attempts for a while, then hides them without a Dismiss', async () => {
-    const net = network(), a = net.app('a');
-    const old = invitation({ invitationId: 'old', state: 'cancelled', reason: 'cancelled', expiresAt: Date.now() - 11 * 60_000 });
-    const fresh = invitation({ invitationId: 'fresh', state: 'cancelled', reason: 'cancelled', expiresAt: Date.now() });
-    const oldReady = invitation({ invitationId: 'ready-old', state: 'ready', expiresAt: 1_000 });
-    withInvites(a, { list: [old, fresh, oldReady], links: [] });
-    expect((await a.pairing.inviteState()).invitations.map((item) => item.invitationId)).toEqual(['fresh', 'ready-old']);
-    // Dismiss is kept on the server, so a reload (a new inviteState) does not bring the row back.
-    await a.pairing.dismissInvitation('fresh');
-    expect((await a.pairing.inviteState()).invitations.map((item) => item.invitationId)).toEqual(['ready-old']);
+describe('DD core connections API', () => {
+  const unknownConnection = () => Object.assign(new Error('no such connection'), { code: 'unknown_connection' });
+  const replicaOf = (app: PairApp, machineId: string) => app.group.roster()!.members.find((member) => member.machineId === machineId)!.replicaId;
+
+  describe('connections() view', () => {
+    it('is empty on a host without core connections, and the other calls refuse with one stable reason', async () => {
+      const net = network(), a = net.app('a');
+      expect(await a.pairing.connections()).toEqual([]);
+      await expect(a.pairing.reconcile()).resolves.toBeUndefined();
+      await expect(a.pairing.useConnection('b')).rejects.toThrow('this host cannot share computer connections');
+      await expect(a.pairing.stopUsingConnection('b')).rejects.toThrow('this host cannot share computer connections');
+      // A partial surface (no requestUse / stopUsing) is treated the same way.
+      Object.assign(a.peers, { connections: { list: vi.fn(async () => []) } });
+      await expect(a.pairing.useConnection('b')).rejects.toThrow('cannot share computer connections');
+      await expect(a.pairing.stopUsingConnection('b')).rejects.toThrow('cannot share computer connections');
+      await expect(a.pairing.connections()).resolves.toEqual([]);
+    });
+
+    it('joins core connections with use, sync and retiring state', async () => {
+      const net = network(), a = net.app('a'), b = net.app('b'), c = net.app('c'), d = net.app('d'); await net.found(a, b);
+      net.link(a, c); await a.pairing.enable('c'); await c.pairing.enable('a'); await a.pairing.retry(true);
+      net.offline.add('c');
+      await a.pairing.remove(replicaOf(a, 'c'));
+      const state = { list: [conn('b'), conn('c'), conn('d', { usedByThisPlugin: false, state: 'reconnecting' }), conn('e', { usedByThisPlugin: false }), conn('f', { usedByThisPlugin: false })] };
+      const calls = withConnections(a, state);
+      calls.requestUse.mockImplementation(async (computerId: string) => ({ status: computerId === 'd' ? 'pending' as const : computerId === 'e' ? 'denied' as const : 'approved' as const }));
+      await a.pairing.useConnection('d'); await a.pairing.useConnection('e'); await a.pairing.useConnection('f');
+      void d;
+      const byId = Object.fromEntries((await a.pairing.connections()).map((view) => [view.computerId, view]));
+      expect(byId.b).toEqual({ computerId: 'b', hostname: 'host-b', state: 'connected', usedByThisPlugin: true, use: 'approved', syncing: true, retiring: false });
+      expect(byId.c).toMatchObject({ use: 'approved', syncing: false, retiring: true });
+      expect(byId.d).toMatchObject({ state: 'reconnecting', usedByThisPlugin: false, use: 'pending', syncing: false, retiring: false });
+      expect(byId.e).toMatchObject({ use: 'denied' });
+      // Approved by core's answer but not (yet) reflected in the list: no stale "approved" badge.
+      expect(byId.f).toMatchObject({ use: null });
+      expect(calls.list).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    });
+
+    it('still lists connections when the sync status cannot be read', async () => {
+      const net = network(), a = net.app('a');
+      withConnections(a, { list: [conn('b')] });
+      a.peers.features = vi.fn(async () => { throw new Error('features down'); });
+      await expect(a.pairing.connections()).resolves.toEqual([expect.objectContaining({ computerId: 'b', syncing: false, retiring: false, use: 'approved' })]);
+    });
+  });
+
+  describe('useConnection / stopUsingConnection', () => {
+    it.each(['approved', 'pending', 'denied'] as const)('returns core\'s %s answer and remembers it', async (status) => {
+      const net = network(), a = net.app('a');
+      const calls = withConnections(a, { list: [conn('b', { usedByThisPlugin: false })] });
+      calls.requestUse.mockResolvedValue({ status });
+      await expect(a.pairing.useConnection('b')).resolves.toEqual({ status });
+      expect(calls.requestUse).toHaveBeenCalledWith('b', { signal: expect.any(AbortSignal) });
+      expect((await a.pairing.connections())[0]!.use).toBe(status === 'approved' ? null : status);
+      await expect(a.pairing.useConnection('bad id')).rejects.toThrow();
+    });
+
+    it('passes core\'s error through unchanged', async () => {
+      const net = network(), a = net.app('a');
+      const calls = withConnections(a, { list: [] });
+      const error = unknownConnection();
+      calls.requestUse.mockRejectedValue(error);
+      await expect(a.pairing.useConnection('b')).rejects.toBe(error);
+      calls.stopUsing.mockRejectedValue(error);
+      await expect(a.pairing.stopUsingConnection('b')).rejects.toBe(error);
+    });
+
+    it('bounds the remembered answers', async () => {
+      const net = network(), a = net.app('a');
+      const calls = withConnections(a, { list: [] });
+      calls.requestUse.mockResolvedValue({ status: 'pending' });
+      for (let i = 0; i < 70; i++) await a.pairing.useConnection(`c${i}`);
+      expect(calls.requestUse).toHaveBeenCalledTimes(70);
+    });
+
+  it('stops using before best-effort local group cleanup; the connection itself stays', async () => {
+      const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
+      const calls = withConnections(a, { list: [conn('b')] });
+      const order: string[] = [], remove = a.pairing.remove.bind(a.pairing);
+      vi.spyOn(a.pairing, 'remove').mockImplementation(async (replicaId) => { order.push('remove'); return remove(replicaId); });
+      calls.stopUsing.mockImplementation(async () => { order.push('stopUsing'); });
+      const status = await a.pairing.stopUsingConnection('b');
+    expect(order).toEqual(['stopUsing']);
+      expect(calls.stopUsing).toHaveBeenCalledWith('b', { signal: expect.any(AbortSignal) });
+      expect(status.configured).toBe(true);
+      expect(calls.setStatus).toHaveBeenCalledWith('b', null);
+      // The owner stopped syncing with it: the next tick does not re-pair while core still lists it as used.
+      a.peers.enable.mockClear();
+      await a.pairing.reconcile();
+      expect(a.peers.enable).not.toHaveBeenCalled();
+    });
+
+    it('just releases the use of a computer that is not a member', async () => {
+      const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
+      const calls = withConnections(a, { list: [conn('b'), conn('c')] });
+      const remove = vi.spyOn(a.pairing, 'remove');
+      await a.pairing.stopUsingConnection('c');
+      expect(remove).not.toHaveBeenCalled();
+      expect(calls.stopUsing).toHaveBeenCalledExactlyOnceWith('c', { signal: expect.any(AbortSignal) });
+      expect((await a.pairing.status()).configured).toBe(true);
+      await expect(a.pairing.stopUsingConnection('bad id')).rejects.toThrow();
+    });
+  });
+
+  describe('subscriptions', () => {
+    const registered = (hooks?: ConstructorParameters<typeof DesignDocPairing>[2], list: PeerConnection[] = []) => {
+      const net = network(), a = net.app('a', hooks, { list }), b = net.app('b');
+      net.link(a, b);
+      return { net, a, b, mocks: mocksOf(a) };
+    };
+    const removing = (mocks: ReturnType<typeof connectionMocks>) => mocks.onConnectionRemoving.mock.calls[0]![0];
+    const changed = (mocks: ReturnType<typeof connectionMocks>) => mocks.onChange.mock.calls[0]![0];
+
+    it('register subscribes once to removal and change notifications; dispose unsubscribes both', () => {
+      const { mocks } = registered();
+      expect(mocks.onConnectionRemoving).toHaveBeenCalledTimes(1);
+      expect(mocks.onChange).toHaveBeenCalledTimes(1);
+      const unsubscribes = [mocks.onConnectionRemoving.mock.results[0]!.value as ReturnType<typeof vi.fn>, mocks.onChange.mock.results[0]!.value as ReturnType<typeof vi.fn>];
+      unsubscribes.forEach((unsubscribe) => expect(unsubscribe).not.toHaveBeenCalled());
+      disposals.splice(0).forEach((dispose) => dispose());
+      unsubscribes.forEach((unsubscribe) => expect(unsubscribe).toHaveBeenCalledTimes(1));
+    });
+
+    it('dispose tolerates an unsubscribe that throws, and register tolerates a partial surface', () => {
+      const net = network(), a = net.app('a', undefined, { list: [] });
+      mocksOf(a).onChange.mock.results[0]!.value.mockImplementation(() => { throw new Error('already gone'); });
+      expect(() => disposals.splice(0).forEach((dispose) => dispose())).not.toThrow();
+      const partial = network().app('p');
+      Object.assign(partial.peers, { connections: { list: vi.fn(async () => []) } });
+      expect(() => partial.pairing.register({ onDispose: (dispose) => disposals.push(dispose) } as never)).not.toThrow();
+    });
+
+    it('a change notification reconciles and nudges the UI, even when the nudge throws; nothing after dispose', async () => {
+      const connectionsChanged = vi.fn();
+      const { a, mocks } = registered({ connectionsChanged }, [conn('b')]);
+      mocks.list.mockClear();
+      changed(mocks)([conn('b')]);
+      expect(connectionsChanged).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(mocks.list).toHaveBeenCalled());
+      await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalled());
+      connectionsChanged.mockImplementation(() => { throw new Error('ui gone'); });
+      mocks.list.mockClear();
+      expect(() => changed(mocks)([])).not.toThrow();
+      await vi.waitFor(() => expect(mocks.list).toHaveBeenCalled());
+      disposals.splice(0).forEach((dispose) => dispose());
+      mocks.list.mockClear(); connectionsChanged.mockClear();
+      changed(mocks)([]);
+      expect(connectionsChanged).not.toHaveBeenCalled();
+      expect(mocks.list).not.toHaveBeenCalled();
+    });
+
+    it('a failing background reconcile after a change is logged once, not thrown', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { a, mocks } = registered();
+        a.peers.features = vi.fn(async () => { throw new Error('features down'); });
+        mocks.list.mockResolvedValue([conn('b')]);
+        changed(mocks)([]);
+        await vi.waitFor(() => expect(mocks.list).toHaveBeenCalled());
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      } finally { warn.mockRestore(); }
+    });
+
+    describe('connection removing handler', () => {
+      it('stops syncing with the computer: revokes its grants, leaves the group, clears its note; idempotent', async () => {
+        const net = network(), a = net.app('a', undefined, { list: [conn('b')] }), b = net.app('b'); await net.found(a, b);
+        const mocks = mocksOf(a), repoId = a.group.roster()!.repoId;
+        a.peers.revoke.mockClear();
+        await removing(mocks)('b');
+        expect(a.peers.revoke).toHaveBeenCalledWith('b', { scope: repoId });
+        expect(a.peers.revoke).toHaveBeenCalledWith('b', { scope: bootstrapScope('a', 'b') });
+        expect(a.peers.revoke).toHaveBeenCalledWith('b', { scope: a.group.sync.localRepository()!.repoId });
+        expect(mocks.setStatus).toHaveBeenCalledWith('b', null);
+        expect(a.group.sync.localRepository()!.groupId).toBeNull();
+        expect((await a.pairing.status()).configured).toBe(false);
+        // Core can call again (Retry): nothing throws and nothing is undone.
+        await expect(removing(mocks)('b')).resolves.toBeUndefined();
+        expect(a.group.roster()!.members.map((member) => member.machineId)).not.toContain('a');
+        expect((await a.pairing.status()).configured).toBe(false);
+      });
+
+      it('in a group of three, the removed computer is retired and the others stay', async () => {
+        const net = network(), a = net.app('a', undefined, { list: [conn('b'), conn('c')] }), b = net.app('b'), c = net.app('c'); await net.found(a, b);
+        net.link(a, c); await a.pairing.enable('c'); await c.pairing.enable('a'); await a.pairing.retry(true);
+        net.offline.add('c');
+        await removing(mocksOf(a))('c');
+        const status = await a.pairing.status();
+        expect(status.members.find((member) => member.machineId === 'c')).toMatchObject({ retiring: true });
+        expect(status.members.find((member) => member.machineId === 'b')).toMatchObject({ retiring: false, authorized: true });
+        expect(a.peers.revoke).toHaveBeenCalledWith('c', expect.objectContaining({ scope: a.group.roster()!.repoId }));
+      });
+
+      it('cancels a pending setup and does not auto-enable the computer again', async () => {
+        const net = network(), a = net.app('a', undefined, { list: [conn('b')] }), b = net.app('b'); net.link(a, b);
+        await a.pairing.enable('b');
+        expect(a.group.consent()).toMatchObject({ peerId: 'b' });
+        await removing(mocksOf(a))('b');
+        expect(a.group.consent()).toBeNull();
+        a.peers.enable.mockClear();
+        await a.pairing.reconcile(); await new Promise((resolve) => setTimeout(resolve, 5));
+        expect(a.peers.enable).not.toHaveBeenCalled();
+        // A new use request (the connection came back) lifts it.
+        await a.pairing.useConnection('b');
+        await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalled());
+      });
+
+      it('never throws for an invalid, empty or unknown id, and ignores a stopped plugin', async () => {
+        const net = network(), a = net.app('a', undefined, { list: [] });
+        const handler = removing(mocksOf(a));
+        a.peers.revoke.mockClear();
+        await expect(handler('bad id')).resolves.toBeUndefined();
+        await expect(handler('')).resolves.toBeUndefined();
+        expect(a.peers.revoke).not.toHaveBeenCalled();
+        await expect(handler('zz')).resolves.toBeUndefined();
+        await expect(handler('zz')).resolves.toBeUndefined();
+        disposals.splice(0).forEach((dispose) => dispose());
+        a.peers.revoke.mockClear();
+        await expect(handler('b')).resolves.toBeUndefined();
+        expect(a.peers.revoke).not.toHaveBeenCalled();
+      });
+
+      it('completes within its budget when revoking never answers', async () => {
+        const net = network(), a = net.app('a', { removingBudgetMs: 50, removingStepMs: 20 }, { list: [conn('b')] }), b = net.app('b'); await net.found(a, b);
+        const handler = removing(mocksOf(a));
+        a.peers.revoke = vi.fn(() => new Promise<void>(() => {}));
+        const started = Date.now();
+        await handler('b');
+        expect(Date.now() - started).toBeLessThan(1000);
+        expect(a.peers.revoke).toHaveBeenCalled();
+        // The group was left locally even though no grant could be revoked.
+        expect(a.group.sync.localRepository()!.groupId).toBeNull();
+      });
+
+      it('completes within its overall budget when a later step hangs, and tolerates a failing step', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          const net = network(), a = net.app('a', { removingBudgetMs: 40, removingStepMs: 5_000 }, { list: [conn('b')] }), b = net.app('b'); await net.found(a, b);
+          const handler = removing(mocksOf(a));
+          a.peers.revoke = vi.fn(() => new Promise<void>(() => {}));
+          const started = Date.now();
+          await handler('b');
+          expect(Date.now() - started).toBeLessThan(1000);
+          vi.spyOn(a.group, 'cancelSetup').mockImplementation(() => { throw new Error('store locked'); });
+          await expect(handler('b')).resolves.toBeUndefined();
+        } finally { warn.mockRestore(); }
+      });
+
+      it('keeps going when leaving the group fails, and logs it', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          const net = network(), a = net.app('a', undefined, { list: [conn('b')] }), b = net.app('b'); await net.found(a, b);
+          vi.spyOn(a.group, 'remove').mockImplementation(() => { throw new Error('barrier busy'); });
+          await expect(removing(mocksOf(a))('b')).resolves.toBeUndefined();
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('leaving the sync group with a removed connection failed: barrier busy'));
+        } finally { warn.mockRestore(); }
+      });
+
+      it('a note re-sent for the same computer is cleared again, and a throwing setStatus is ignored', async () => {
+        const net = network(), a = net.app('a', undefined, { list: [conn('b')] }), b = net.app('b'); net.link(a, b);
+        const mocks = mocksOf(a);
+        await a.pairing.reconcile();
+        expect(mocks.setStatus).toHaveBeenCalledWith('b', 'Sync not set up');
+        mocks.setStatus.mockImplementation(() => { throw new Error('refused'); });
+        await expect(removing(mocks)('b')).resolves.toBeUndefined();
+        expect(mocks.setStatus).toHaveBeenLastCalledWith('b', null);
+      });
+    });
   });
 });

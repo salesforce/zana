@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import type { InviteItem, InviteView } from '../shared/invite-contract.js';
-import type { PluginApprovalRequest, PluginInvitationState, PluginInvitationStatus, PluginPeerLink, PluginPeerRequest, PluginSdkPeers, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import type { PeerConnection, PluginPeerRequest, PluginSdkPeers, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { canonicalPeerHash, PeerProtocolError } from '../shared/peer-contract.js';
 import { ownerText, syncedWith, UNREADABLE_REPLY, type GroupRoster, type GroupStatus, type PeerLifecycleReason, type RepairResult } from '../shared/peer-group.js';
 import { PEER_CALL_TIMEOUT_MS, PEER_PENDING_TICK_MS } from '../shared/peer-limits.js';
@@ -21,14 +20,10 @@ export function bootstrapScope(a: string, b: string): string {
   return `bootstrap-${canonicalPeerHash([a, b].sort())}`;
 }
 
-export const INVITE_UNSUPPORTED_REASON = 'host cannot invite peers';
-const INVITE_METHODS = ['createInvitation', 'redeemInvitation', 'invitationStatus', 'listInvitations', 'invitationApproval', 'decideInvitation', 'cancelInvitation', 'peerLinks', 'reconnectPeer'] as const;
-type InviteMethod = typeof INVITE_METHODS[number];
-type InvitePeers = PluginSdkPeers & Required<Pick<PluginSdkPeers, InviteMethod>>;
-const ACTIVE_INVITATION = new Set<PluginInvitationState>(['open', 'redeeming', 'reserved', 'consented', 'connecting']);
-const INVITATION_LIST_LIMIT = 6;
 /** Cap on the per-peer maps (`following`, `restoring`) so a long-lived process cannot grow them without bound. */
 const TRACKED_PEER_LIMIT = 6;
+const TRACKED_USE_LIMIT = 64;
+const UNSUPPORTED_CONNECTIONS = 'this host cannot share computer connections';
 const CAPACITY_WAIT = 'waiting for reserved capacity';
 /** Thrown by the core pair store while a link re-key or rotation is in flight; it clears on its own, so it is retried, not shown. */
 const TRANSIENT_PEER_ERROR = 'peer enrollment changed or revoked';
@@ -41,15 +36,13 @@ export function lifecycleReasonOf(error: unknown): PeerLifecycleReason {
 const isTransient = (error: unknown): boolean => error instanceof Error && error.message === TRANSIENT_PEER_ERROR;
 /** Cap for the follower's backoff between failed probes of an unreachable initiator. */
 const FOLLOWER_PROBE_MAX_MS = 5 * 60 * 1000;
-/** An unfrozen setup with a computer that has no link and no pairing under way is dropped after this long (and two looks). */
+/** An unfrozen setup with a computer that has no connection is dropped after this long (and two looks). */
 const ORPHAN_SETUP_GRACE_MS = 60_000;
-/** A finished (cancelled, denied, expired, failed) pairing attempt stops being listed this long after it could last expire. */
-const STALE_ATTEMPT_MS = 10 * 60 * 1000;
 /** Repair's re-link tears down that link's connector; core lists the peer as enrolled again once it is re-established. */
 const RELINK_WAIT = { timeoutMs: 20_000, intervalMs: 500 };
 const ENROLLMENT_UNAVAILABLE = 'mutually enrolled peer unavailable';
 const RELINK_NOT_BACK = 'The connection was re-linked, but the other computer has not reconnected on the new link yet. ' +
-  'Keep Zana open on both computers, wait a few seconds, then press Repair again. If it keeps failing, remove this computer and add the peer again.';
+  'Keep Zana open on both computers, wait a few seconds, then press Repair again. If it keeps failing, open Settings → Peers and use Reconnect, or Remove the connection there and connect again.';
 /**
  * Setup errors that mean "the other computer must act", in owner words with the way forward. The protocol text stays in
  * the log and the status line; Repair shows this instead of a bare waiting message.
@@ -58,10 +51,9 @@ const SETUP_GUIDANCE: Record<string, string> = {
   'waiting for the other computer to set aside the sync group from an earlier removal':
     'The other computer still keeps the sync group from the earlier removal. It sets that aside by itself once it runs this version of Design Docs with Zana open. ' +
     'If this does not clear within a minute, open Design Docs settings on the other computer and press Repair on this computer\'s card. ' +
-    'If that does not help either, remove this computer there and add the peer again.',
-  'pair unavailable; automatic introduction pending':
-    'This computer is waiting for the other computer to finish its half of the setup. Keep Zana open on both computers. ' +
-    'If this does not clear within a minute, press Repair on this computer\'s card on the other computer; if that fails, remove this computer there and add the peer again.'
+    'If that does not help either, remove this computer in Settings → Peers and connect again.',
+  'the other computer has not finished setting up the connection yet':
+    'Keep Zana open on both computers, press Repair on this computer\'s card; if that fails, open Settings → Peers and use Reconnect, or Remove the connection there and connect again.'
 };
 
 const NO_GROUP_ANYMORE = 'the other computer no longer keeps this sync group';
@@ -83,45 +75,28 @@ function technical(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 400);
 }
 
-/** Invitation UX is gated apart from group sync: older hosts keep syncing an existing group and only lose the new action. */
-export function inviteCapability(peers: Pick<PluginSdkPeers, never> | undefined): { available: true } | { available: false; reason: typeof INVITE_UNSUPPORTED_REASON } {
-  return peers && INVITE_METHODS.every((method) => typeof (peers as Record<string, unknown>)[method] === 'function')
-    ? { available: true }
-    : { available: false, reason: INVITE_UNSUPPORTED_REASON };
+/** What the owner sees for one connected computer. `syncing` = it is an authorized, non-retiring member of this sync group. */
+export interface ConnectionView {
+  computerId: string;
+  hostname: string;
+  state: 'connected' | 'reconnecting' | 'disconnected';
+  usedByThisPlugin: boolean;
+  use: 'pending' | 'approved' | 'denied' | null;
+  syncing: boolean;
+  retiring: boolean;
 }
 
-export type { InviteItem, InviteView };
+/** The handler core gives an `onConnectionRemoving` call; stay well inside it. */
+const REMOVING_BUDGET_MS = 4_000;
+/** One best-effort grant revoke while a connection is being removed. */
+const REMOVING_STEP_MS = 1_500;
+const NOTE_SYNC_MISSING = 'Sync not set up';
+type Connections = NonNullable<PluginSdkPeers['connections']>;
 
-interface InviteSnapshot { list: PluginInvitationStatus[]; links: PluginPeerLink[]; /** Why `links` is the previous read, when the link lookup failed this time. */ linksStale?: string }
-
-function inviteItem(status: PluginInvitationStatus): InviteItem {
-  const inviter = status.role === 'inviter';
-  const myDecision = inviter ? status.inviterDecision : status.redeemerDecision;
-  return { invitationId: status.invitationId, role: status.role, state: status.state, reason: status.reason ?? null,
-    peer: status.peer ? { instanceId: status.peer.instanceId, name: status.peer.name, fingerprint: status.peer.fingerprint } : null,
-    localFingerprint: status.localFingerprint, myDecision, theirDecision: inviter ? status.redeemerDecision : status.inviterDecision,
-    // Only the inviter approves: the redeemer's consent is pasting the invitation.
-    awaitingMyApproval: inviter && status.state === 'reserved' && myDecision === 'pending', expiresAt: status.expiresAt, consentExpiresAt: status.consentExpiresAt ?? null };
-}
-
-/**
- * Every peer this owner paired through an invitation whose link is still linked, with the keys a Disable Link remembers:
- * each ready invitation and each linked link. A new invitation or a new link brings a new key.
- */
-function pairedPeers(list: PluginInvitationStatus[], links: PluginPeerLink[]): Array<{ peerId: string; keys: string[] }> {
-  const peers = new Map<string, string[]>();
-  for (const link of links) {
-    if (link.phase !== 'linked' || !id.safeParse(link.peerInstanceId).success) continue;
-    peers.set(link.peerInstanceId, [...(peers.get(link.peerInstanceId) ?? []), `link:${link.pairingId}`]);
-  }
-  // Core commits a link before it marks the invitation ready, and a cancel in that window tears the link down: wait for
-  // an attempt still in flight with that peer to settle instead of racing it.
-  const settling = new Set(list.filter((item) => ACTIVE_INVITATION.has(item.state) && item.peer).map((item) => item.peer!.instanceId));
-  for (const item of list) {
-    const peerId = item.peer?.instanceId;
-    if (item.state === 'ready' && peerId && peers.has(peerId)) peers.get(peerId)!.push(item.invitationId);
-  }
-  return [...peers].filter(([peerId]) => !settling.has(peerId)).map(([peerId, keys]) => ({ peerId, keys }));
+/** Computers this owner let this plugin use and that are live right now: the ones sync is set up with automatically. */
+function pairedPeers(connections: PeerConnection[]): string[] {
+  return connections.filter((connection) => connection.usedByThisPlugin && connection.state === 'connected' && id.safeParse(connection.computerId).success)
+    .map((connection) => connection.computerId);
 }
 
 /** The other side's roster only while it is a current member of it (`hello.replicaId`); a roster it left is history. */
@@ -137,27 +112,25 @@ export class DesignDocPairing {
   private lifecycleReason: PeerLifecycleReason | null = null;
   private readonly logged = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
-  /** Last link note sent to core per `peer\0scope`; resent only on change or after the link reappears. */
+  /** Last status note sent to core per computer; resent only on change or after the connection reappears. */
   private readonly reportedNotes = new Map<string, 'attention' | 'clear'>();
+  /** Last answer of `requestUse` per computer (memory only), so the view can show a pending or denied request. */
+  private readonly lastUse = new Map<string, 'pending' | 'approved' | 'denied'>();
+  private readonly unsubscribes: Array<() => void> = [];
   private running: Promise<void> | null = null;
   private enabling: Promise<GroupStatus> | null = null;
   private revoking: Promise<GroupStatus> | null = null;
-  private reconciling: Promise<InviteSnapshot | null> | null = null;
+  private reconciling: Promise<void> | null = null;
   private enableError: string | null = null;
   /** Last non-transient failure of the best-effort auto-enable / grant restore steps; cleared by the next clean pass. */
   private setupError: string | null = null;
-  private lastSnapshot: InviteSnapshot | null = null;
-  /** The shareable token of this owner's open invitation. The host returns it once, so it lives here (memory only, never logged) until the invitation stops being open. */
-  private openInvite: { invitationId: string; token: string; expiresAt: number } | null = null;
-  /** Peers the owner disabled locally -> pairing keys (ready invitations, linked links) live then. Only a new one re-pairs them. */
-  private readonly disabledPeers = new Map<string, Set<string>>();
-  private pairingKeys = new Map<string, string[]>();
-  /** Invitation peers this (higher-id) side waits on; see `initiatorReady`. */
+  /** Computers the owner stopped syncing with (or core is removing). Only an explicit enable or a new use request re-pairs them. */
+  private readonly disabledPeers = new Set<string>();
+  /** Computers this (higher-id) side waits on; see `initiatorReady`. */
   private readonly following = new Map<string, { attempts: number; nextAt: number; scope: string | null; failedAt: string | null }>();
   /** Initiator side: earliest next grant restore per member peer (bounded like `following`). */
   private readonly restoring = new Map<string, number>();
-  private readonly dismissedInvites = new Set<string>();
-  /** The unfrozen setup whose peer has no link and no pairing under way, and since when (see `discardOrphanSetup`). */
+  /** The unfrozen setup whose peer has no connection, and since when (see `discardOrphanSetup`). */
   private orphan: { peerId: string; since: number; ticks: number } | null = null;
 
   /**
@@ -165,7 +138,8 @@ export class DesignDocPairing {
    * content. `stateChanged` fires when a peer says its state moved (e.g. after its Sync Now) so the UI can re-check.
    */
   constructor(readonly group: DesignDocPeerGroup, private readonly peers: PluginSdkPeers,
-    private readonly hooks: { stateDigest?: () => string | null; stateChanged?: () => void; relinkWait?: { timeoutMs: number; intervalMs: number }; orphanGraceMs?: number } = {}) {}
+    private readonly hooks: { stateDigest?: () => string | null; stateChanged?: () => void; relinkWait?: { timeoutMs: number; intervalMs: number }; orphanGraceMs?: number;
+      connectionsChanged?: () => void; removingBudgetMs?: number; removingStepMs?: number } = {}) {}
 
   register(zcc: Pick<ZccPluginApi, 'onDispose'>): void {
     this.peers.handle('group-hello', async (request) => {
@@ -268,11 +242,22 @@ export class DesignDocPairing {
     });
     zcc.onDispose(() => {
       this.abort.abort();
-      this.openInvite = null;
+      for (const unsubscribe of this.unsubscribes.splice(0)) { try { unsubscribe(); } catch { /* already released */ } }
       if (this.timer) clearInterval(this.timer);
       this.timer = null;
     });
-    this.timer = setInterval(() => { void this.retry().catch(this.background('retry')); void this.invitations().catch(this.background('invitations')); }, PEER_PENDING_TICK_MS);
+    const connections = this.connectionsApi();
+    if (connections) {
+      if (typeof connections.onConnectionRemoving === 'function') this.unsubscribes.push(connections.onConnectionRemoving((computerId) => this.connectionRemoving(computerId)));
+      if (typeof connections.onChange === 'function') {
+        this.unsubscribes.push(connections.onChange(() => {
+          if (this.abort.signal.aborted) return;
+          try { this.hooks.connectionsChanged?.(); } catch { /* a UI nudge must never break core's notification */ }
+          void this.reconcile().catch(this.background('connections'));
+        }));
+      }
+    }
+    this.timer = setInterval(() => { void this.retry().catch(this.background('retry')); void this.reconcile().catch(this.background('connections')); }, PEER_PENDING_TICK_MS);
     this.timer.unref();
     void this.retry().catch(this.background('retry'));
   }
@@ -289,98 +274,161 @@ export class DesignDocPairing {
     return (error) => { if (!this.abort.signal.aborted) this.logOnce(`background:${label}`, `background ${label} failed: ${this.message(error)}`); };
   }
 
-  /** Invitation flow, one method per owner action. Tokens pass through only `createInvitation`; nothing here logs or stores them. */
-  private invitePeers(): InvitePeers {
-    const capability = inviteCapability(this.peers);
-    if (!capability.available) throw new PeerProtocolError('invalid', capability.reason);
-    return this.peers as InvitePeers;
+  private connectionsApi(): Connections | null {
+    const connections = this.peers.connections;
+    return connections && typeof connections.list === 'function' ? connections : null;
   }
 
-  async inviteState(): Promise<InviteView> {
-    const capability = inviteCapability(this.peers);
-    if (!capability.available) return { available: false, reason: capability.reason, invitations: [], links: [], enableError: null };
-    let snapshot: InviteSnapshot | null, stale: string | undefined;
-    try { snapshot = await this.invitations(); }
-    catch (error) {
-      this.abort.signal.throwIfAborted();
-      // A failed read must not blank the Peers view: keep the last good one and say why it is old.
-      if (!this.lastSnapshot) throw error;
-      snapshot = this.lastSnapshot; stale = this.message(error);
-    }
-    stale ??= snapshot?.linksStale;
-    const now = Date.now();
-    // A finished attempt with no live purpose (no link to it, nothing pending) is history after a while, even if never dismissed.
-    const history = (item: PluginInvitationStatus) => !ACTIVE_INVITATION.has(item.state) && item.state !== 'ready' &&
-      Math.max(item.expiresAt, item.consentExpiresAt ?? 0) + STALE_ATTEMPT_MS < now;
-    return { available: true, reason: null, invitations: snapshot?.list.filter((item) => !this.dismissedInvites.has(item.invitationId) && !history(item)).map(inviteItem) ?? [], links: snapshot?.links ?? [],
-      enableError: this.enableError ?? this.setupError, ...(stale ? { stale } : {}) };
+  /** Every connected computer core knows, or [] on a host without core connections. */
+  private async listConnections(): Promise<PeerConnection[]> {
+    const connections = this.connectionsApi();
+    return connections ? connections.list({ signal: this.abort.signal }) : [];
   }
 
-  /** One in-flight read: refresh redeemer attempts, then act on invitation-founded peers (single consent). */
-  private invitations(): Promise<InviteSnapshot | null> {
-    if (!inviteCapability(this.peers).available || this.abort.signal.aborted) return Promise.resolve(null);
-    if (!this.reconciling) this.reconciling = this.loadInvitations().finally(() => { this.reconciling = null; });
+  /** One in-flight read of core's connections, then the best-effort sync steps that depend on them. */
+  reconcile(): Promise<void> {
+    if (!this.connectionsApi() || this.abort.signal.aborted) return Promise.resolve();
+    if (!this.reconciling) this.reconciling = this.loadConnections().finally(() => { this.reconciling = null; });
     return this.reconciling;
   }
 
-  private async loadInvitations(): Promise<InviteSnapshot> {
-    const peers = this.invitePeers(), signal = this.abort.signal;
-    const listed = await peers.listInvitations({ limit: INVITATION_LIST_LIMIT, signal });
-    const list = await Promise.all(listed.map((item) => item.role === 'redeemer' && ACTIVE_INVITATION.has(item.state)
-      ? peers.invitationStatus({ invitationId: item.invitationId, refresh: true, signal }).catch((error) => {
-        if (!signal.aborted) this.logOnce(`invitation-status:${item.invitationId}`, `refreshing invitation failed: ${this.message(error)}`);
-        return item;
-      }) : item));
-    let linksKnown = true, linksStale: string | undefined;
-    const links = await peers.peerLinks({ signal }).catch((error) => {
-      linksKnown = false; linksStale = this.message(error);
-      if (!signal.aborted) this.logOnce('peer-links', `listing peer links failed: ${linksStale}`);
-      return [] as PluginPeerLink[];
-    });
-    this.trackOpenInvite(list);
-    this.pairingKeys = new Map();
-    for (const peer of pairedPeers(list, links)) this.pairingKeys.set(peer.peerId, peer.keys);
-    // A failed link lookup keeps the last good links in the view (flagged stale) rather than blanking them as removed.
-    const snapshot: InviteSnapshot = { list, links: linksKnown ? links : this.lastSnapshot?.links ?? [], ...(linksStale ? { linksStale } : {}) };
-    this.lastSnapshot = snapshot;
+  /** Last non-transient failure of the automatic setup steps, for the owner's status line. */
+  setupFailure(): string | null { return this.enableError ?? this.setupError; }
+
+  private async loadConnections(): Promise<void> {
+    const signal = this.abort.signal;
+    let connections: PeerConnection[];
+    try { connections = await this.listConnections(); }
+    catch (error) {
+      signal.throwIfAborted();
+      this.logOnce('connections', `listing connections failed: ${this.message(error)}`);
+      return;
+    }
+    // A computer whose connection is gone and came back is a new connection: a local stop no longer applies.
+    const present = new Set(connections.map((connection) => connection.computerId));
+    for (const peerId of [...this.disabledPeers]) if (!present.has(peerId)) this.disabledPeers.delete(peerId);
+    for (const computerId of [...this.lastUse.keys()]) if (!present.has(computerId)) this.lastUse.delete(computerId);
     // Best effort and independent: a failure of one step (e.g. a re-key in flight) must not fail the read or skip the other, and is retried next tick.
     let failure: unknown = null;
-    for (const step of [() => this.discardOrphanSetup(list, links, linksKnown), () => this.autoEnable(list, links), () => this.restoreGrants(list, links)]) {
-      try { await step(); } catch (error) { this.abort.signal.throwIfAborted(); if (!isTransient(error)) failure = error; }
+    for (const step of [() => this.discardOrphanSetup(connections), () => this.autoEnable(connections), () => this.restoreGrants(connections)]) {
+      try { await step(); } catch (error) { signal.throwIfAborted(); if (!isTransient(error)) failure = error; }
     }
     this.setupError = failure ? this.message(failure) : null;
     if (failure) this.logOnce('setup', `peer setup step failed: ${this.setupError}`);
-    if (linksKnown) await this.reportLinkNotes(links).catch((error) => { if (!signal.aborted) this.logOnce('link-notes', `reporting link notes failed: ${this.message(error)}`); });
-    return snapshot;
+    await this.reportStatusNotes(connections).catch((error) => { if (!signal.aborted) this.logOnce('link-notes', `reporting connection status failed: ${this.message(error)}`); });
   }
 
   /**
-   * Tell core, per link, when the connection is live but database sync is not set up, so core's Peers hub agrees with
-   * this plugin's computer card ("Connected, sync not set up"). Same definition as the card and Repair (`syncedWith`).
-   * Sent on change only; best effort (older hosts lack `setPeerLinkNote`).
+   * Tell core, per used computer, when the connection is live but database sync is not set up, so core's connections list
+   * agrees with this plugin's computer card. Same definition as the card and Repair (`syncedWith`). Sent on change only;
+   * best effort (older hosts lack `setStatus`).
    */
-  private async reportLinkNotes(links: PluginPeerLink[]): Promise<void> {
-    const peers = this.peers;
-    if (typeof peers.setPeerLinkNote !== 'function' || this.abort.signal.aborted) return;
-    const keyOf = (link: PluginPeerLink) => `${link.peerInstanceId}\u0000${link.scope}`;
-    const present = new Set(links.map(keyOf));
+  private async reportStatusNotes(connections: PeerConnection[]): Promise<void> {
+    const api = this.connectionsApi();
+    if (!api || typeof api.setStatus !== 'function' || this.abort.signal.aborted) return;
+    const present = new Set(connections.map((connection) => connection.computerId));
     for (const key of [...this.reportedNotes.keys()]) if (!present.has(key)) this.reportedNotes.delete(key);
-    const live = links.filter((link) => link.phase === 'linked' && link.state === 'connected');
+    const live = connections.filter((connection) => connection.usedByThisPlugin && connection.state === 'connected');
     if (!live.length && !this.reportedNotes.size) return;
     const status = live.length ? await this.status() : null;
-    const changed = links.flatMap((link) => {
-      const key = keyOf(link), unsynced = !!status && live.includes(link) && !syncedWith(status, link.peerInstanceId);
-      const want = unsynced ? 'attention' as const : 'clear' as const;
-      return (this.reportedNotes.get(key) ?? 'clear') === want ? [] : [{ link, key, want, unsynced }];
+    for (const connection of connections) {
+      const want = status && live.includes(connection) && !syncedWith(status, connection.computerId) ? 'attention' as const : 'clear' as const;
+      if ((this.reportedNotes.get(connection.computerId) ?? 'clear') === want) continue;
+      try {
+        api.setStatus(connection.computerId, want === 'attention' ? NOTE_SYNC_MISSING : null);
+        this.reportedNotes.set(connection.computerId, want);
+      } catch (error) { this.logOnce(`link-note:${connection.computerId}`, `reporting connection status failed: ${this.message(error)}`); }
+    }
+  }
+
+  /** The view behind the Computers list: core's connections joined with this plugin's use and sync state. */
+  async connections(): Promise<ConnectionView[]> {
+    if (!this.connectionsApi()) return [];
+    const list = await this.listConnections();
+    let status: GroupStatus | null = null;
+    try { status = await this.status(); } catch { this.abort.signal.throwIfAborted(); }
+    return list.map((connection) => {
+      const member = status?.members.find((entry) => entry.machineId === connection.computerId && entry.replicaId !== status!.replicaId);
+      const remembered = this.lastUse.get(connection.computerId) ?? null;
+      const use = connection.usedByThisPlugin ? 'approved' as const : remembered === 'approved' ? null : remembered;
+      return { computerId: connection.computerId, hostname: connection.hostname, state: connection.state, usedByThisPlugin: connection.usedByThisPlugin,
+        use, syncing: !!status && syncedWith(status, connection.computerId), retiring: !!member?.retiring };
     });
-    const results = await Promise.allSettled(changed.map(({ link, unsynced }) => peers.setPeerLinkNote!(link.peerInstanceId, { scope: link.scope, signal: this.abort.signal,
-      note: unsynced ? { state: 'attention', label: 'Sync not set up', detail: 'Connected, but database sync is not set up with this computer.' } : null })));
-    this.abort.signal.throwIfAborted();
-    results.forEach((result, index) => {
-      const { link, key, want } = changed[index];
-      if (result.status === 'fulfilled') this.reportedNotes.set(key, want);
-      else this.logOnce(`link-note:${link.peerInstanceId}`, `reporting link status failed: ${this.message(result.reason)}`);
+  }
+
+  /** Ask core to let this plugin use a connection. Core's error codes (e.g. `unknown_connection`) pass through unchanged. */
+  async useConnection(computerId: string): Promise<{ status: 'pending' | 'approved' | 'denied' }> {
+    id.parse(computerId);
+    const api = this.connectionsApi();
+    if (!api || typeof api.requestUse !== 'function') throw new PeerProtocolError('invalid', UNSUPPORTED_CONNECTIONS);
+    const result = await api.requestUse(computerId, { signal: this.abort.signal });
+    if (this.lastUse.size >= TRACKED_USE_LIMIT && !this.lastUse.has(computerId)) this.lastUse.delete(this.lastUse.keys().next().value as string);
+    this.lastUse.set(computerId, result.status);
+    this.disabledPeers.delete(computerId);
+    if (result.status === 'approved') void this.reconcile().catch(this.background('connections'));
+    return { status: result.status };
+  }
+
+  /** Release the core-owned use first. Local roster cleanup never delays Stop using. */
+  async stopUsingConnection(computerId: string): Promise<GroupStatus> {
+    id.parse(computerId);
+    const api = this.connectionsApi();
+    if (!api || typeof api.stopUsing !== 'function') throw new PeerProtocolError('invalid', UNSUPPORTED_CONNECTIONS);
+    this.disabledPeers.add(computerId);
+    await api.stopUsing(computerId, { signal: this.abort.signal });
+    // Plugin cleanup is best effort; the core use must be gone even while a peer is offline.
+    void this.detachConnection(computerId);
+    this.lastUse.delete(computerId);
+    this.clearNote(computerId);
+    return this.status();
+  }
+
+  private clearNote(computerId: string): void {
+    this.reportedNotes.delete(computerId);
+    try { this.peers.connections?.setStatus?.(computerId, null); } catch { /* best effort */ }
+  }
+
+  /**
+   * Core is removing a connection: stop syncing with that computer without waiting on it. Idempotent, never throws, and
+   * bounded well below core's 5 s: a stuck step is abandoned, and anything left is retried by the normal job loop.
+   */
+  private async connectionRemoving(computerId: string): Promise<void> {
+    if (!id.safeParse(computerId).success || this.abort.signal.aborted) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<void>((resolve) => { timer = setTimeout(resolve, this.hooks.removingBudgetMs ?? REMOVING_BUDGET_MS); timer.unref?.(); });
+    try { await Promise.race([this.detachConnection(computerId), budget]); }
+    catch (error) { if (!this.abort.signal.aborted) this.logOnce(`removing:${computerId}`, `stopping sync with a removed connection failed: ${this.message(error)}`); }
+    finally { clearTimeout(timer); }
+  }
+
+  private async detachConnection(computerId: string): Promise<void> {
+    if (this.disabledPeers.size >= TRACKED_USE_LIMIT) this.disabledPeers.clear();
+    this.disabledPeers.add(computerId);
+    this.following.delete(computerId);
+    this.restoring.delete(computerId);
+    this.lastUse.delete(computerId);
+    this.clearNote(computerId);
+    const step = (work: () => Promise<unknown>) => new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, this.hooks.removingStepMs ?? REMOVING_STEP_MS); timer.unref?.();
+      void Promise.resolve().then(work).then(() => undefined, () => undefined).finally(() => { clearTimeout(timer); resolve(); });
     });
+    const local = this.group.sync.localRepository(), self = this.group.localPeerId();
+    // Grants first: with them gone, undeliverable work for that computer ends instead of waiting on it.
+    const scopes = new Set<string>();
+    if (local) scopes.add(local.repoId);
+    const roster = this.group.roster();
+    if (roster) scopes.add(roster.repoId);
+    if (self && self !== computerId) scopes.add(bootstrapScope(self, computerId));
+    await Promise.all([...scopes].map((scope) => step(() => this.peers.revoke(computerId, { scope }))));
+    this.group.cancelSetup(computerId);
+    this.group.discardUnfrozenSetup(computerId);
+    const current = this.group.roster();
+    const member = current?.members.find((entry) => entry.machineId === computerId && !isRetiring(current, entry.replicaId));
+    if (member) {
+      try { this.group.remove(this.dissolvesTo(member.replicaId) ?? member.replicaId); }
+      catch (error) { this.logOnce(`removing-leave:${computerId}`, `leaving the sync group with a removed connection failed: ${this.message(error)}`); }
+    }
+    await step(() => this.retry(true));
   }
 
   /**
@@ -388,18 +436,17 @@ export class DesignDocPairing {
    * vanish after the group formed. The initiator (lower id) re-enables it for a ready, linked, connected member; core
    * imports the new binding on the follower. Bounded: at most one enable per tick, then a per-peer back-off.
    */
-  private async restoreGrants(list: PluginInvitationStatus[], links: PluginPeerLink[]): Promise<void> {
+  private async restoreGrants(connections: PeerConnection[]): Promise<void> {
     if (this.enabling || this.revoking || this.group.consent()) return;
     const roster = this.group.liveRoster(), local = this.group.sync.localRepository(), self = this.group.localPeerId();
     if (!roster || !local?.groupId || roster.repoId !== local.repoId || !self) return;
     const now = Date.now();
-    const due = pairedPeers(list, links).filter(({ peerId, keys }) => self < peerId && !this.isDisabled(peerId, keys) &&
+    const due = pairedPeers(connections).filter((peerId) => self < peerId && !this.disabledPeers.has(peerId) &&
       roster.members.some((member) => member.machineId === peerId && !isRetiring(roster, member.replicaId)) &&
-      links.some((link) => link.peerInstanceId === peerId && link.phase === 'linked' && link.state === 'connected') &&
       (this.restoring.get(peerId) ?? 0) <= now);
     if (!due.length) return;
     const grants = await this.peers.list({ signal: this.abort.signal });
-    for (const { peerId } of due) {
+    for (const peerId of due) {
       if (grants.some((grant) => grant.id === peerId && grant.scope === roster.repoId)) continue;
       if (this.restoring.size >= TRACKED_PEER_LIMIT && !this.restoring.has(peerId)) this.restoring.delete(this.restoring.keys().next().value as string);
       this.restoring.set(peerId, now + PEER_PENDING_TICK_MS);
@@ -411,28 +458,27 @@ export class DesignDocPairing {
   }
 
   /**
-   * The invitation was the pairing consent, and the linked link it founded carries it: a ready invitation can fall out of
-   * the bounded invitation list, and core commits the link before it marks the invitation ready. So once a link is live and
-   * the peer is connected but not in this computer's sync group, run the existing mutual-proof `enable` so group-hello /
-   * group-join negotiate as before. Removed or disabled links never re-enable.
+   * The owner approved this plugin's use of the connection, and that approval is the pairing consent. So once a used
+   * computer is connected but not in this computer's sync group, run the existing mutual-proof `enable` so group-hello /
+   * group-join negotiate as before. Computers the owner stopped syncing with never re-enable until they are used again.
    */
-  private async autoEnable(list: PluginInvitationStatus[], links: PluginPeerLink[]): Promise<void> {
+  private async autoEnable(connections: PeerConnection[]): Promise<void> {
     if (this.enabling || this.revoking || this.group.consent()) return;
     const roster = this.group.liveRoster();
-    const candidates = pairedPeers(list, links).filter(({ peerId, keys }) =>
+    const candidates = pairedPeers(connections).filter((peerId) =>
       // An already-enrolled member must not occupy the single enable slot of this tick.
       !roster?.members.some((member) => member.machineId === peerId && !isRetiring(roster, member.replicaId)) &&
-      // A peer the owner disabled stays off until a newer invitation re-pairs it.
-      !this.isDisabled(peerId, keys));
+      // A peer the owner disabled stays off until it is used again or enabled explicitly.
+      !this.disabledPeers.has(peerId));
     if (!candidates.length) return;
     const enrolled = await this.peers.enrolled({ signal: this.abort.signal });
     const self = id.parse((await this.peers.localIdentity()).id);
-    for (const { peerId } of candidates) {
+    for (const peerId of candidates) {
       if (!enrolled.some((peer) => peer.id === peerId && peer.connected)) continue;
       // Governance left from an earlier removal is archived before either side negotiates, so the other side never
       // joins (or waits on) a group this computer already left. A blocked one is skipped; Repair states why.
       if (!this.prepareRejoin(self, peerId)) continue;
-      if (self > peerId && !(await this.initiatorReady(self, peerId, links))) continue;
+      if (self > peerId && !(await this.initiatorReady(self, peerId))) continue;
       if (this.enabling || this.revoking || this.group.consent()) return;
       this.following.delete(peerId);
       this.disabledPeers.delete(peerId);
@@ -444,29 +490,14 @@ export class DesignDocPairing {
     }
   }
 
-  /** Forget the token once the invitation is no longer open (redeemed, expired, cancelled, gone) so it cannot be re-shown. */
-  private trackOpenInvite(list: PluginInvitationStatus[]): void {
-    const open = this.openInvite;
-    if (!open) return;
-    const found = list.find((item) => item.invitationId === open.invitationId);
-    if (open.expiresAt <= Date.now() || (found ? found.state !== 'open' : list.length < INVITATION_LIST_LIMIT)) this.openInvite = null;
-  }
-
-  /** Re-show the open invitation's token (the host returns it once). Null once it is no longer open. */
-  async openInvitation(): Promise<{ invitationId: string; token: string; expiresAt: number } | null> {
-    if (!this.openInvite) return null;
-    await this.invitations().catch(() => null);
-    return this.openInvite;
-  }
-
   /**
-   * Both invited machines see the ready invitation at once. If both ran `enable`, each would create its own core link
+   * Both machines see the approved connection at once. If both ran `enable`, each would create its own core link
    * binding for the same scope and every later enable would fail as ambiguous. So the lower instance id initiates and the
    * higher one only answers: it runs the same bilateral `enable` once the initiator's bindings for the bootstrap scope and
    * the database scope already exist, so core reuses them. Waiting never holds a lifecycle lock; the poll tick re-checks,
    * and only a failed remote probe backs off (bounded), so an offline initiator cannot deadlock or flood this side.
    */
-  private async initiatorReady(self: string, peerId: string, links: PluginPeerLink[]): Promise<boolean> {
+  private async initiatorReady(self: string, peerId: string): Promise<boolean> {
     let wait = this.following.get(peerId);
     if (!wait) {
       if (this.following.size >= TRACKED_PEER_LIMIT) this.following.delete(this.following.keys().next().value as string);
@@ -475,9 +506,9 @@ export class DesignDocPairing {
     }
     const bootstrap = bootstrapScope(self, peerId);
     const grant = await this.grant(peerId, bootstrap).catch(() => null);
-    // A re-key revokes and re-issues grants (new epoch) or replaces the link; the stale-grant window it opens is short, so a
-    // failure seen before it must not keep delaying the probe. A genuinely unreachable initiator keeps its own backoff.
-    const identity = grant ? `${grant.grantEpoch}:${links.find((link) => link.peerInstanceId === peerId && link.phase === 'linked')?.pairingId ?? ''}` : null;
+    // A re-key revokes and re-issues grants (new epoch); the stale-grant window it opens is short, so a failure seen
+    // before it must not keep delaying the probe. A genuinely unreachable initiator keeps its own backoff.
+    const identity = grant ? String(grant.grantEpoch) : null;
     if (wait.failedAt !== null && (!identity || identity !== wait.failedAt)) {
       if (identity) { wait.attempts = 0; wait.nextAt = 0; wait.failedAt = null; }
       else wait.failedAt = '';
@@ -505,11 +536,6 @@ export class DesignDocPairing {
     return this.hasGrant(peerId, wait.scope);
   }
 
-  private isDisabled(peerId: string, keys: string[]): boolean {
-    const disabled = this.disabledPeers.get(peerId);
-    return !!disabled && keys.every((key) => disabled.has(key));
-  }
-
   /** Archive leftover governance that blocks pairing again with `peerId` (see `rejoinState`). False when it cannot be. */
   private prepareRejoin(self: string, peerId: string): boolean {
     const state = this.group.rejoinState(peerId);
@@ -534,18 +560,17 @@ export class DesignDocPairing {
   }
 
   /**
-   * A setup with a computer that has no link and no pairing under way can never finish: enabling needs core's mutual
-   * enrollment, which only a link provides. Left alone it shows "Setup pending" forever with nothing to press, and blocks a
+   * A setup with a computer that has no connection can never finish: enabling needs core's mutual
+   * enrollment, which only a connection provides. Left alone it shows "Setup pending" forever with nothing to press, and blocks a
    * fresh pairing with another computer ("another database setup is pending"). Dropped here after a grace period (looked at
    * on two consecutive reads and for `orphanGraceMs`) so a link about to come up is never raced. Never touches a frozen join,
-   * a live sync group, or documents. An unreadable link list means "unknown", never "none".
+   * a live sync group, or documents. An unreadable connection list means "unknown", never "none" (the read is skipped).
    */
-  private discardOrphanSetup(list: PluginInvitationStatus[], links: PluginPeerLink[], linksKnown: boolean): void {
+  private discardOrphanSetup(connections: PeerConnection[]): void {
     const consent = this.group.consent();
-    const orphaned = !!consent && linksKnown && !this.enabling && !this.revoking && consent.state === 'pending' && !consent.request && !consent.capacity &&
+    const orphaned = !!consent && !this.enabling && !this.revoking && consent.state === 'pending' && !consent.request && !consent.capacity &&
       !this.group.liveRoster() &&
-      !links.some((link) => link.peerInstanceId === consent.peerId && link.phase !== 'removed' && link.phase !== 'failed') &&
-      !list.some((item) => ACTIVE_INVITATION.has(item.state) && item.peer?.instanceId === consent.peerId);
+      !connections.some((connection) => connection.computerId === consent.peerId);
     if (!orphaned) { this.orphan = null; return; }
     const now = Date.now();
     if (this.orphan?.peerId !== consent.peerId) this.orphan = { peerId: consent.peerId, since: now, ticks: 0 };
@@ -563,39 +588,6 @@ export class DesignDocPairing {
     return this.grant(peerId, scope).then(() => true, () => false);
   }
 
-  async createInvitation(): Promise<{ invitationId: string; token: string; expiresAt: number }> {
-    const peers = this.invitePeers();
-    const created = await peers.createInvitation({ scope: this.group.sync.localRepository()!.repoId, signal: this.abort.signal });
-    this.openInvite = { invitationId: created.invitationId, token: created.token, expiresAt: created.expiresAt };
-    return created;
-  }
-  async redeemInvitation(token: string): Promise<InviteItem> {
-    return inviteItem(await this.invitePeers().redeemInvitation({ token, signal: this.abort.signal }));
-  }
-  async invitationApproval(invitationId: string): Promise<PluginApprovalRequest> {
-    return this.invitePeers().invitationApproval({ invitationId, signal: this.abort.signal });
-  }
-  /** `approved` carries the single-use owner proof from the approval sheet; `denied` needs none. */
-  async decideInvitation(invitationId: string, decision: 'approved' | 'denied', ownerProof?: string): Promise<InviteItem> {
-    const peers = this.invitePeers();
-    return inviteItem(await peers.decideInvitation({ invitationId, decision, ...(decision === 'approved' ? { ownerProof } : {}), signal: this.abort.signal }));
-  }
-  /** Owner hides a finished (non-active) attempt for good. Kept server-side so it survives reloads; active invitations cannot be dismissed. */
-  async dismissInvitation(invitationId: string): Promise<void> {
-    const item = this.lastSnapshot?.list.find((entry) => entry.invitationId === invitationId);
-    if (!item || ACTIVE_INVITATION.has(item.state)) throw new PeerProtocolError('invalid', 'only a finished pairing attempt can be dismissed');
-    if (this.dismissedInvites.size >= 256) this.dismissedInvites.clear();
-    this.dismissedInvites.add(invitationId);
-  }
-  async cancelInvitation(invitationId: string): Promise<void> {
-    await this.invitePeers().cancelInvitation({ invitationId, signal: this.abort.signal });
-    if (this.openInvite?.invitationId === invitationId) this.openInvite = null;
-  }
-  async reconnect(peerId: string): Promise<PluginPeerLink[]> {
-    id.parse(peerId);
-    return this.invitePeers().reconnectPeer(peerId, { signal: this.abort.signal });
-  }
-
   /**
    * Owner action on one computer whose link is live but which is not in the sync group. Re-tries enabling sync; if that
    * fails, re-links only this connection and tries once more. Authorized here (the renderer is untrusted): the peer must
@@ -604,10 +596,8 @@ export class DesignDocPairing {
    */
   async repair(peerId: string): Promise<RepairResult> {
     id.parse(peerId);
-    const peers = this.invitePeers();
-    const links = await peers.peerLinks({ peerId, signal: this.abort.signal });
-    if (!links.some((link) => link.peerInstanceId === peerId && link.phase === 'linked')) {
-      throw new PeerProtocolError('invalid', 'no linked connection to that computer; add the peer again');
+    if (this.connectionsApi() && !(await this.listConnections()).some((connection) => connection.computerId === peerId)) {
+      throw new PeerProtocolError('invalid', 'no connection to that computer; connect it in Settings first');
     }
     const status = await this.status();
     if (syncedWith(status, peerId)) return { outcome: 'already-synced', detail: null, reason: null };
@@ -619,7 +609,7 @@ export class DesignDocPairing {
     const enrolled = (await this.peers.enrolled({ signal: this.abort.signal })).find((peer) => peer.id === peerId);
     if (!enrolled) {
       return { outcome: 'unavailable', reason: null,
-        detail: 'The connection exists but this computer was never fully enrolled (the pairing was cancelled part-way). Remove it, then use Add peer to pair again.' };
+        detail: 'The connection exists but this computer was never fully enrolled (the pairing was cancelled part-way). Remove it in Settings → Peers and connect again.' };
     }
     if (!enrolled.connected) return { outcome: 'unavailable', reason: null, detail: 'That computer is offline. Open Zana there, then press Repair again.' };
     const rejoin = this.group.rejoinState(peerId);
@@ -642,22 +632,9 @@ export class DesignDocPairing {
         this.logOnce(`repair-enable:${peerId}`, `repair: enable failed: ${first.message}`);
         return { outcome: 'unavailable', detail: first.message, reason: null };
       }
-      this.logOnce(`repair-enable:${peerId}`, `repair: enable failed, re-linking: ${this.message(first)}`);
-      try {
-        await peers.reconnectPeer(peerId, { signal: this.abort.signal });
-        // The re-key tears down this link's connector; enabling before core re-enrolls the peer can only fail.
-        if (!(await this.enrolledAgain(peerId))) {
-          this.logOnce(`repair-relink:${peerId}`, 'repair: re-linked, but the peer did not re-enroll in time');
-          return { outcome: 'unavailable', detail: RELINK_NOT_BACK, reason: null };
-        }
-        await attempt();
-        return await settled('relinked');
-      } catch (second) {
-        this.abort.signal.throwIfAborted();
-        this.logOnce(`repair-relink:${peerId}`, `repair: re-link failed: ${this.message(second)}`);
-        if (this.message(second) === ENROLLMENT_UNAVAILABLE) return { outcome: 'unavailable', detail: RELINK_NOT_BACK, reason: null };
-        return { outcome: 'unavailable', detail: this.message(second), reason: lifecycleReasonOf(second) === 'unknown' ? null : lifecycleReasonOf(second) };
-      }
+      this.logOnce(`repair-enable:${peerId}`, `repair: enable failed: ${this.message(first)}`);
+      return { outcome: 'unavailable', reason: null,
+        detail: this.message(first) === ENROLLMENT_UNAVAILABLE ? RELINK_NOT_BACK : `Sync setup failed: ${this.message(first)}. Reconnect the computer from Settings → Peers, then retry sync.` };
     }
   }
 
@@ -670,7 +647,7 @@ export class DesignDocPairing {
     if (!id.safeParse(peerId).success) throw new PeerProtocolError('invalid', 'peerId is not a valid computer id');
     if (this.enabling || this.revoking) throw new PeerProtocolError('conflict', 'database lifecycle action already running');
     await this.running?.catch(() => {});
-    // A setup that can no longer finish (no link, or stuck) is dropped too; a frozen join is left for its original sponsor.
+    // A setup that can no longer finish (no connection, or stuck) is dropped too; a frozen join is left for its original sponsor.
     const discarded = this.group.resetPeer(peerId) + (this.group.discardUnfrozenSetup(peerId) ? 1 : 0);
     this.orphan = null;
     this.logOnce(`reset:${peerId}:${discarded}`, `reset sync with ${peerId}: discarded ${discarded} undelivered job(s)`);
@@ -845,19 +822,22 @@ export class DesignDocPairing {
   private async disable(peerId: string): Promise<GroupStatus> {
     const self = id.parse((await this.peers.localIdentity()).id);
     bootstrapScope(self, peerId);
-    const known = new Set(this.pairingKeys.get(peerId) ?? []);
-    if (inviteCapability(this.peers).available) {
-      const listed = await this.invitePeers().listInvitations({ limit: INVITATION_LIST_LIMIT, signal: this.abort.signal }).catch(() => []);
-      const links = await this.invitePeers().peerLinks({ peerId, signal: this.abort.signal }).catch(() => [] as PluginPeerLink[]);
-      for (const peer of pairedPeers(listed, links)) if (peer.peerId === peerId) peer.keys.forEach((key) => known.add(key));
-    }
-    this.disabledPeers.set(peerId, known);
+    this.disabledPeers.add(peerId);
     await this.enabling?.catch(() => {});
     await this.running?.catch(() => {});
     const local = this.group.sync.localRepository()!;
     this.group.cancelSetup(peerId);
     this.group.queueJob(self, 'local-revoke', local.rosterEpoch, { peerId, scope: local.repoId, localOnly: true });
     await this.retry(true);
+    // Release this plugin's use too; core keeps the connection itself.
+    const connections = this.peers.connections;
+    if (typeof connections?.stopUsing === 'function') {
+      await connections.stopUsing(peerId, { signal: this.abort.signal }).catch((error) => {
+        this.abort.signal.throwIfAborted();
+        this.logOnce(`stop-using:${peerId}`, `releasing the connection use failed: ${this.message(error)}`);
+      });
+      this.lastUse.delete(peerId);
+    }
     return this.status();
   }
 
@@ -972,7 +952,6 @@ export class DesignDocPairing {
           // its side, which makes delivery impossible. Delivery is best effort and ends with the link.
           await this.peers.revoke(input.peerId, { scope: input.scope });
           await this.peers.revoke(input.peerId, { scope: bootstrapScope(job.peerId, input.peerId) });
-          await this.revokeInviteLinks(input.peerId, [input.scope, bootstrapScope(job.peerId, input.peerId)]);
         } else if (job.kind === 'revoke') {
           await this.peers.call(job.peerId, 'group-revoke', job.payload, this.options(local.repoId));
         } else if (job.kind === 'introduce') {
@@ -1045,15 +1024,6 @@ export class DesignDocPairing {
     } catch (error) { this.group.setupState('pending', this.message(error)); }
   }
 
-  /** An invitation-founded transport link is scoped by its invitation, which may differ from the sync scopes revoked above. */
-  private async revokeInviteLinks(peerId: string, done: string[]): Promise<void> {
-    if (!inviteCapability(this.peers).available) return;
-    const links = await this.invitePeers().peerLinks({ peerId, signal: this.abort.signal }).catch(() => [] as PluginPeerLink[]);
-    for (const scope of new Set(links.filter((link) => link.phase !== 'removed').map((link) => link.scope))) {
-      if (!done.includes(scope)) await this.peers.revoke(peerId, { scope });
-    }
-  }
-
   private receipt(raw: unknown, request: Admission) {
     const receipt = receiptSchema.parse(raw), roster = parseRoster(receipt.roster);
     if (receipt.requestId !== request.requestId || roster.repoId !== request.repoId ||
@@ -1067,7 +1037,7 @@ export class DesignDocPairing {
   private async grant(peerId: string, scope: string) {
     const grants = (await this.peers.list({ signal: this.abort.signal })).filter((peer) => peer.id === peerId && peer.scope === scope);
     if (grants.length !== 1 || !grants[0]!.connected || !Number.isSafeInteger(grants[0]!.grantEpoch) || grants[0]!.grantEpoch < 1) {
-      throw new PeerProtocolError('invalid', 'pair unavailable; automatic introduction pending');
+      throw new PeerProtocolError('invalid', 'the other computer has not finished setting up the connection yet');
     }
     return grants[0]!;
   }

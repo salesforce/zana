@@ -10,7 +10,7 @@ import { EnrolledPeerChannels } from './enrolled-peer-channels.js';
 import { InvitationError } from './peer-invitation.js';
 import { BootstrapRejection } from './peer-link-bootstrap.js';
 import {
-  PEER_LINK_BOOTSTRAP_SKEW_MS, PEER_LINK_PRE_CONSENT_MAX_MS, PEER_LINK_ROTATION_MS, PEER_OFFLINE_AFTER_MS, PEER_RELINK_ACCEPT_INTERVAL_MS, PEER_RELINK_AFTER_MS, PeerLinks
+  LINK_LINE_TTL_MS, PEER_LINK_BOOTSTRAP_SKEW_MS, PEER_LINK_PRE_CONSENT_MAX_MS, PEER_LINK_ROTATION_MS, PEER_OFFLINE_AFTER_MS, PEER_RELINK_ACCEPT_INTERVAL_MS, PEER_RELINK_AFTER_MS, PeerLinks
 } from './peer-links.js';
 import type { AuthorizedKeyInput, AuthorizedKeyKind, OpenTunnelInput, PeerSshEndpoint, SshReason } from './peer-ssh-contract.js';
 
@@ -796,8 +796,9 @@ describe('teardown, remove, release', () => {
     expect(f.held.size).toBe(0);
   });
 
-  it('acceptRemoval removes the local side after the reply has left', async () => {
-    const f = await fixture(), links = f.make();
+  it('acceptRemoval removes the local side and runs grant cleanup after the reply has left', async () => {
+    const onRemoved = vi.fn(async () => undefined);
+    const f = await fixture(), links = f.make({ onRemoved });
     const ctx = await f.inviterLinked(links);
     const outbound = f.recOf(links, ctx.id).outbound.hostId;
     expect(await links.acceptRemoval(ctx.peer.id, ctx.mint.offer.hostId, { pairingId: ctx.pairing.pairingId, hostId: outbound })).toEqual({ accepted: true });
@@ -806,15 +807,108 @@ describe('teardown, remove, release', () => {
     expect(f.recOf(links, ctx.id)).toMatchObject({ phase: 'removed', removal: 'revoked' });
     expect(f.lines.size).toBe(0);
     expect(f.bridge.peerRemove).not.toHaveBeenCalled();
+    expect(onRemoved).toHaveBeenCalledWith(ctx.peer.id);
   });
 
-  it('release drops one plugin use and removes the link with the last one', async () => {
+  it('useRoute names the linked unpaused connection and useRouteFor demands the same sender, host and pairing', async () => {
+    const f = await fixture(), links = f.make();
+    const ctx = await f.inviterLinked(links);
+    const route = links.useRoute(ctx.peer.id);
+    expect(route).toMatchObject({ pairingId: ctx.pairing.pairingId, hostId: ctx.mint.offer.hostId });
+    expect(links.useRouteFor(ctx.peer.id, ctx.mint.offer.hostId, ctx.pairing.pairingId)).toEqual(route);
+    expect(links.useRouteFor(ctx.peer.id, ctx.mint.offer.hostId, 'other')).toBeUndefined();
+    expect(links.useRouteFor(ctx.peer.id, randomUUID(), ctx.pairing.pairingId)).toBeUndefined();
+    expect(links.useRouteFor(randomUUID(), ctx.mint.offer.hostId, ctx.pairing.pairingId)).toBeUndefined();
+    expect(links.useRoute(randomUUID())).toBeUndefined();
+  });
+
+  it('release drops one plugin use and keeps the link even with the last one', async () => {
     const f = await fixture(), links = f.make();
     const ctx = await f.redeemerLinked(links);
     expect(await links.release(ctx.peer.id, 'other-plugin', 'x')).toBe(false);
     expect(await links.release(ctx.peer.id, 'test-plugin', 'scope-a')).toBe(true);
+    expect(f.recOf(links, ctx.id).phase).toBe('linked');
+    expect(f.bridge.peerRemove).not.toHaveBeenCalled();
+    expect(await links.release(ctx.peer.id, 'test-plugin', 'scope-a')).toBe(false);
+  });
+
+  it('a released founding use stays released across a restart (no use is re-added at startup)', async () => {
+    const f = await fixture(), first = f.make();
+    const ctx = await f.redeemerLinked(first);
+    expect(getHost(f.db, ctx.inboundId)?.purpose).toMatchObject({ uses: [expect.objectContaining({ pluginId: 'test-plugin' })] });
+    expect(await first.release(ctx.peer.id, 'test-plugin', 'scope-a')).toBe(true);
+    first.dispose(); await first.whenIdle();
+    const second = f.make();
+    await second.start();
+    expect(f.recOf(second, ctx.id).phase).toBe('linked');
+    expect(getHost(f.db, ctx.inboundId)?.purpose).toEqual({ kind: 'plugin-link', uses: [] });
+  });
+
+  it('remove is local-first: teardown finishes while the peer notice is still pending', async () => {
+    const f = await fixture(), links = f.make();
+    const ctx = await f.inviterLinked(links);
+    f.bridge.peerRemove.mockImplementationOnce(() => new Promise(() => undefined));
+    expect(await links.remove(ctx.peer.id)).toBe(true);
+    expect(f.bridge.peerRemove).toHaveBeenCalledTimes(1);
+    expect(f.recOf(links, ctx.id)).toMatchObject({ phase: 'removed' });
+    expect(f.lines.size).toBe(0);
+  });
+
+  it('remove survives a rejecting or throwing peer notice', async () => {
+    const f = await fixture(), links = f.make();
+    const ctx = await f.inviterLinked(links);
+    f.bridge.peerRemove.mockImplementationOnce(() => { throw new Error('sync boom'); });
+    expect(await links.remove(ctx.peer.id)).toBe(true);
+    expect(f.recOf(links, ctx.id)).toMatchObject({ phase: 'removed' });
+    const g = await fixture(), l2 = g.make();
+    const c2 = await g.inviterLinked(l2);
+    g.bridge.peerRemove.mockRejectedValueOnce(new Error('offline'));
+    expect(await l2.remove(c2.peer.id)).toBe(true);
+    expect(g.recOf(l2, c2.id)).toMatchObject({ phase: 'removed' });
+  });
+
+  it('remove runs onRemoved for the peer, and a failing hook does not fail removal', async () => {
+    const onRemoved = vi.fn(async () => { throw new Error('cleanup boom'); });
+    const f = await fixture(), links = f.make({ onRemoved });
+    const ctx = await f.inviterLinked(links);
+    expect(await links.remove(ctx.peer.id)).toBe(true);
+    expect(onRemoved).toHaveBeenCalledWith(ctx.peer.id);
+    expect(await links.remove(ctx.peer.id)).toBe(false);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+  });
+
+  it('remove runs onRemoving before teardown, and a failing hook never vetoes it', async () => {
+    const order: string[] = [];
+    const onRemoving = vi.fn(async () => { order.push('removing'); throw new Error('plugin boom'); });
+    const onRemoved = vi.fn(async () => { order.push('removed'); });
+    const f = await fixture(), links = f.make({ onRemoving, onRemoved });
+    const ctx = await f.inviterLinked(links);
+    expect(await links.remove(ctx.peer.id)).toBe(true);
+    expect(onRemoving).toHaveBeenCalledWith(ctx.peer.id);
+    expect(order).toEqual(['removing', 'removed']);
+    expect(await links.remove(ctx.peer.id)).toBe(false);
+    expect(onRemoving).toHaveBeenCalledTimes(1);
+  });
+
+  it('an owner removal that already ran the handlers skips onRemoving but still tears down', async () => {
+    const onRemoving = vi.fn(), onRemoved = vi.fn();
+    const f = await fixture(), links = f.make({ onRemoving, onRemoved });
+    const ctx = await f.inviterLinked(links);
+    const hostId = f.recOf(links, ctx.id).inbound!.hostId;
+    expect(await links.directory.remove!(hostId, { hooksRan: true })).toEqual({ linkRemoved: true });
+    expect(onRemoving).not.toHaveBeenCalled();
+    expect(onRemoved).toHaveBeenCalledWith(ctx.peer.id);
     expect(f.recOf(links, ctx.id).phase).toBe('removed');
-    expect(f.recOf(links, ctx.id).removal).toBe('revoked');
+  });
+
+  it('link lines carry a 30 day expiry that each peer connect renews', async () => {
+    const f = await fixture(), links = f.make();
+    const ctx = await f.inviterLinked(links);
+    expect(f.lines.get(`${ctx.id}:link`)!.expiresAt).toBe(f.clock.t + LINK_LINE_TTL_MS);
+    f.clock.t += 10 * 24 * 60 * 60 * 1000;
+    links.onInboundConnected(f.recOf(links, ctx.id).inbound.hostId);
+    await f.settle(links, 50);
+    expect(f.lines.get(`${ctx.id}:link`)!.expiresAt).toBe(f.clock.t + LINK_LINE_TTL_MS);
   });
 
   it('release cancels a pending invitation of that scope', async () => {
@@ -828,7 +922,9 @@ describe('teardown, remove, release', () => {
     const f = await fixture(), links = f.make();
     const ctx = await f.redeemerLinked(links);
     expect(links.directory.describe(ctx.inboundId)).toMatchObject({ peerInstanceId: ctx.peer.id, state: 'linked' });
-    expect(await links.directory.release(ctx.inboundId, 'test-plugin', 'scope-a')).toEqual({ linkRemoved: true });
+    expect(await links.directory.release(ctx.inboundId, 'test-plugin', 'scope-a')).toEqual({ linkRemoved: false });
+    expect(links.directory.describe(ctx.inboundId)).toMatchObject({ state: 'linked' });
+    expect(await links.directory.remove(ctx.inboundId)).toEqual({ linkRemoved: true });
     expect(await links.directory.remove(ctx.inboundId)).toBeUndefined();
     expect(links.directory.describe(randomUUID())).toBeUndefined();
     expect(await links.directory.release(randomUUID(), 'p', 's')).toBeUndefined();
@@ -1231,6 +1327,19 @@ describe('pause (owner Disconnect) and unpause (Reconnect)', () => {
     expect(f.recOf(links, ctx.id).paused).toBeUndefined();
   });
 
+  it('directory repair rotates a linked, unpaused link and declines otherwise', async () => {
+    const f = await fixture(), links = f.make();
+    expect(await links.directory.repair(randomUUID())).toBeUndefined();
+    const ctx = await f.redeemerLinked(links);
+    const rotate = vi.spyOn(links, 'rotate');
+    expect(await links.directory.repair(ctx.inboundId)).toEqual({ repaired: true });
+    expect(rotate).toHaveBeenCalledWith(ctx.peer.id);
+    await links.pause(ctx.peer.id);
+    rotate.mockClear();
+    expect(await links.directory.repair(ctx.inboundId)).toBeUndefined();
+    expect(rotate).not.toHaveBeenCalled();
+  });
+
   it('removing a paused link still tears everything down', async () => {
     const f = await fixture(), links = f.make();
     const ctx = await f.inviterLinked(links);
@@ -1240,5 +1349,51 @@ describe('pause (owner Disconnect) and unpause (Reconnect)', () => {
     expect(f.held.size).toBe(0);
     expect(f.recOf(links, ctx.id)).toMatchObject({ phase: 'removed' });
     expect(links.directory.describe(ctx.mint.offer.hostId)).not.toHaveProperty('paused');
+  });
+});
+
+describe('core connection (no plugin, no scope)', () => {
+  it('inviter: persists a record without plugin or scope and projects the link without them', async () => {
+    const f = await fixture(), links = f.make(), id = randomUUID();
+    const mint = await links.invitationLinks.create({ invitationId: id });
+    expect(mint.offer.hostId).toEqual(expect.any(String));
+    const rec = f.recOf(links, id);
+    expect(rec).toMatchObject({ role: 'inviter', phase: 'pre-consent' });
+    expect(rec).not.toHaveProperty('pluginId');
+    expect(rec).not.toHaveProperty('scope');
+    const fresh = f.make(); await fresh.start();
+    expect(f.recOf(fresh, id)).toMatchObject({ invitationId: id });
+  });
+
+  it('redeemer: links without recording a plugin use and exposes no plugin or scope', async () => {
+    const f = await fixture(), links = f.make(), peer = f.newPeer();
+    const id = randomUUID();
+    await links.invitationLinks.redeem({ invitationId: id, inviterId: peer.id, inviterName: 'Bob', link: f.offerFor(peer) as never }, new AbortController().signal);
+    const pull = await f.answer(links, id, peer.host);
+    f.seedHost(pull.reverse.hostId); f.session(pull.reverse.hostId, peer.id);
+    const { pluginId: _p, scope: _s, ...core } = f.pairing('redeemer', id, peer.id);
+    links.onConsented(core);
+    await links.whenIdle(); await f.settle(links, 0);
+    const rec = f.recOf(links, id);
+    expect(rec).toMatchObject({ phase: 'linked' });
+    expect(rec).not.toHaveProperty('pluginId');
+    expect(getHost(f.db, pull.reverse.hostId)?.purpose).not.toMatchObject({ kind: 'plugin-link', uses: expect.arrayContaining([expect.anything()]) });
+    const [view] = await links.links(peer.id);
+    expect(view).toMatchObject({ peerInstanceId: peer.id, phase: 'linked' });
+    expect(view).not.toHaveProperty('pluginId');
+    expect(view).not.toHaveProperty('scope');
+    // A restart keeps the link and does not try to record a plugin use for it.
+    const fresh = f.make(); await fresh.start();
+    expect(f.recOf(fresh, id)).toMatchObject({ phase: 'linked' });
+    expect(await fresh.foundedFor(peer.id, f.recOf(fresh, id).outbound.hostId, 'test-plugin')).toBe(false);
+  });
+
+  it('counts core and plugin connections together against the linked cap', async () => {
+    const f = await fixture(), links = f.make();
+    const row = (index: number) => ({ invitationId: randomUUID(), role: 'inviter' as const, phase: 'linked' as const, createdAt: f.clock.t, updatedAt: f.clock.t,
+      ...(index % 2 ? { pluginId: 'test-plugin', scope: `scope-${index}` } : {}), ssh: { side: 'server' as const, listenPort: 41_001, targetPort: F } });
+    for (let index = 0; index < 16; index++) await (links as any).insert(row(index));
+    await expect((links as any).insert(row(16))).rejects.toMatchObject({ code: 'capacity' });
+    await expect((links as any).insert(row(17))).rejects.toMatchObject({ code: 'capacity' });
   });
 });

@@ -45,11 +45,14 @@ export const ControlInputSchema = z.discriminatedUnion('operation', [
   // asks the destination to rotate the code for the host the peer enrolled there.
   z.object({ operation: z.literal('peer.relink'), hostId: z.string().uuid() }).strict(),
   // Either side: the sender removed the link; the receiver drops and revokes its side too.
-  z.object({ operation: z.literal('peer.remove'), pairingId: id, hostId: z.string().uuid() }).strict()
+  z.object({ operation: z.literal('peer.remove'), pairingId: id, hostId: z.string().uuid() }).strict(),
+  // Either side: a plugin asks to use the connection, then each owner's decision. Plain ids only; the receiver builds all text itself.
+  z.object({ operation: z.literal('use.request'), pairingId: id, pluginId: z.string().regex(PEER_TOKEN) }).strict(),
+  z.object({ operation: z.literal('use.decision'), pairingId: id, pluginId: z.string().regex(PEER_TOKEN), approved: z.boolean(), revoke: z.literal(true).optional() }).strict()
 ]);
 /** Operations a linked peer may send while the receiver has no live session for it (its connector cannot reach it). */
 export const SESSIONLESS_OPERATIONS: ReadonlySet<string> = new Set(['peer.relink', 'peer.remove']);
-/** Reply to `peer.rotate` and `peer.remove`. */
+/** Reply to `peer.rotate`, `peer.remove`, `use.request` and `use.decision`. */
 export const AcceptedReplySchema = z.object({ accepted: z.boolean() }).strict();
 /** Reply to `peer.relink`: a fresh join code for the peer's host at the destination, or a refusal. */
 export const RelinkReplySchema = z.union([

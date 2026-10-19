@@ -22,6 +22,7 @@ const LOCAL_HOST_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/;
 const OVERRIDE_HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const OVERRIDE_USER_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
 
+const SSH_REASON_SET: ReadonlySet<string> = new Set(['ssh_remote_login_off', 'ssh_unreachable', 'ssh_auth_refused', 'ssh_forwarding_refused', 'ssh_host_key_mismatch'] satisfies SshReason[]);
 const fail = (reason: SshReason): Error => new Error(reason);
 
 export type BannerResult = 'ok' | 'refused' | 'no-banner';
@@ -265,5 +266,18 @@ export async function preflightPeerSsh(host: string, port: number, signal: Abort
     await (deps.connectTcp ?? ((h, p, s) => tcpConnect(h, p, s, deps.timeoutMs ?? 5000)))(host, port, signal);
   } catch {
     throw fail('ssh_unreachable');
+  }
+}
+
+export type RemoteLoginCheck = { ok: true } | { ok: false; reason: SshReason };
+
+/**
+ * Owner-facing Remote Login check for Add computer: the same probe and throwaway-key self-test that mints an invitation,
+ * reported as a fixed reason the UI keys its directions on. Anything else (including an abort) reads as unreachable.
+ */
+export async function checkRemoteLogin(localEndpoint: (signal: AbortSignal) => Promise<unknown>, signal: AbortSignal): Promise<RemoteLoginCheck> {
+  try { await localEndpoint(signal); return { ok: true }; } catch (error) {
+    const reason = error instanceof Error ? error.message : '';
+    return { ok: false, reason: (SSH_REASON_SET.has(reason) ? reason : 'ssh_unreachable') as SshReason };
   }
 }

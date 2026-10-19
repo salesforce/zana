@@ -78,7 +78,7 @@ describe('peers view', () => {
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Peers' }).getAttribute('aria-current')).toBe('page');
     const peers = screen.getByRole('region', { name: 'Database sync peers' });
-    expect(within(peers).getByRole('heading', { name: 'Pair another computer' })).toBeTruthy();
+    expect(within(peers).queryByRole('link', { name: /Not listed/ })).toBeNull();
     expect(screen.queryByText('Payments API')).toBeNull();
     expect(screen.queryByRole('button', { name: 'New' })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -143,13 +143,11 @@ describe('peers view', () => {
     expect(settings.getAttribute('title')).toBe('Design Docs settings: peers and agent');
   });
 
-  it('counts only this computer when no peer is connected, and every connected one otherwise', async () => {
+  it('hides Sync until a remote peer is connected, then counts every connected computer', async () => {
     let connected: string[] = [];
     const harness = createHarness({ peerSync: configuredPeers(async () => ({ attempted: 0, synced: 0, blocked: 0 }), ['a', 'b', 'c']), pairing: connectedPairing(() => connected) });
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
-    const sync = await screen.findByRole('button', { name: 'Sync' });
-    expect(sync.textContent).toBe('1');
-    expect(sync.getAttribute('title')).toBe('1 computer syncing (this one)');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Sync' })).toBeNull());
     connected = ['app-b', 'app-c'];
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Back to design docs' }));
@@ -165,10 +163,10 @@ describe('peers view', () => {
       expect((await screen.findByRole('button', { name: 'Sync' })).textContent).toBe('2');
       connected = [];
       await act(async () => { vi.advanceTimersByTime(PEER_STATUS_POLL_MS); });
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Sync' }).textContent).toBe('1'));
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Sync' })).toBeNull());
       harness.fail('peerStatus', 'offline');
       await act(async () => { vi.advanceTimersByTime(PEER_STATUS_POLL_MS); });
-      expect(screen.getByRole('button', { name: 'Sync' }).textContent).toBe('1');
+      expect(screen.queryByRole('button', { name: 'Sync' })).toBeNull();
     } finally { vi.useRealTimers(); }
   });
 
@@ -190,15 +188,15 @@ describe('peers view', () => {
   it('syncs from the collapsed doc list, without a Peers entry there', async () => {
     let finish!: (value: { attempted: number; synced: number; blocked: number }) => void;
     const syncNow = vi.fn(() => new Promise<{ attempted: number; synced: number; blocked: number }>((resolve) => { finish = resolve; }));
-    const harness = createHarness({ peerSync: configuredPeers(syncNow) });
+    const harness = createHarness({ peerSync: configuredPeers(syncNow), pairing: connectedPairing(() => ['app-b']) });
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
     await screen.findByRole('button', { name: 'Sync' });
     fireEvent.click(screen.getByRole('button', { name: 'Hide doc list' }));
     const rail = screen.getByRole('navigation', { name: 'Design docs' });
     expect(within(rail).queryByRole('button', { name: 'Settings' })).toBeNull();
-    const sync = within(rail).getByRole('button', { name: 'Sync peers: 1 computer syncing (this one)' }) as HTMLButtonElement;
+    const sync = within(rail).getByRole('button', { name: 'Sync peers: 2 computers syncing (including this one)' }) as HTMLButtonElement;
     fireEvent.click(sync);
-    const busy = within(rail).getByRole('button', { name: 'Syncing peers: 1 computer syncing (this one)' }) as HTMLButtonElement;
+    const busy = within(rail).getByRole('button', { name: 'Syncing peers: 2 computers syncing (including this one)' }) as HTMLButtonElement;
     expect(busy.disabled).toBe(true);
     // A second press while syncing is ignored.
     fireEvent.click(busy);
@@ -209,7 +207,7 @@ describe('peers view', () => {
   });
 
   it('reports a failed sync and hides Sync until a group is configured', async () => {
-    const harness = createHarness({ peerSync: configuredPeers(async () => { throw new Error('peer offline'); }) });
+    const harness = createHarness({ peerSync: configuredPeers(async () => { throw new Error('peer offline'); }), pairing: connectedPairing(() => ['app-b']) });
     const view = harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Sync' }));
     await waitFor(() => expect(harness.toasts.at(-1)).toEqual({ message: 'peer offline', kind: 'error' }));

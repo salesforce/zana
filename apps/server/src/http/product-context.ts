@@ -57,7 +57,7 @@ import { startConversationHistoryMaintenance } from '../services/threads/convers
 import { PersistentTerminalSessions } from './persistent-terminal-sessions.js';
 import { ProviderModelCatalogStore } from '../services/threads/provider-model-catalog-store.js';
 import { createUiSendVerifier } from './ui-send-proof.js';
-import { createPluginApprovalVerifier } from './plugin-approval-proof.js';
+import { createPluginApprovalVerifier, signPluginApproval } from './plugin-approval-proof.js';
 import { createNativeToolPolicyVerifier } from './native-tool-policy-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import { createDbTunnelHostStore, createTunnelHostReopener, type TunnelHostStore } from '../services/hosts/tunnel-hosts.js';
@@ -67,6 +67,7 @@ import { PeerReplayWindow } from '../services/peers/peer-replay-window.js';
 import { PluginStorageEpochs } from '../services/peers/plugin-storage-epochs.js';
 import { ScopedLinkAuthority, type EnrolledPeerBridge } from '../services/peers/scoped-link-authority.js';
 import { EnrolledPeerChannels, channelHash } from '../services/peers/enrolled-peer-channels.js';
+import { PeerUseRequests } from '../services/peers/peer-use-requests.js';
 import { createEnrolledPeerBridge } from '../services/peers/enrolled-peer-bridge.js';
 import { PeerKeyUnavailableError } from '../services/peers/peer-auth.js';
 import { PeerIntroductionInstaller, type InstallerConnector } from '../services/peers/introduction-installer.js';
@@ -74,11 +75,14 @@ import { PeerRouteOrigins } from '../services/peers/peer-route-origins.js';
 import { PeerSshEndpoints } from '../services/peers/peer-ssh-endpoints.js';
 import { PeerTunnels } from '@zana-ai/zcc-host-daemon/peer-tunnels';
 import { listPublicHosts } from '../services/hosts/host-public.js';
-import { PeerInvitations } from '../services/peers/peer-invitation.js';
+import { CORE_APPROVAL_PRINCIPAL, PeerInvitations } from '../services/peers/peer-invitation.js';
+import { PeerConnectionRegistry, type PeerConnectionUses } from '../services/peers/peer-connections.js';
+import { PeerActiveUse } from '../services/peers/peer-active-use.js';
+import { hostUseApproved } from '../services/peers/peer-uses.js';
 import { PeerLinks } from '../services/peers/peer-links.js';
 import { PluginLinkNotes } from '../services/peers/plugin-link-notes.js';
 import { createPeerForwarderLease } from '../services/peers/peer-forwarder-lease.js';
-import { createLocalEndpoint, preflightPeerSsh } from '../services/peers/peer-ssh-local.js';
+import { checkRemoteLogin, createLocalEndpoint, preflightPeerSsh } from '../services/peers/peer-ssh-local.js';
 import { createPeerSshTransport } from '../services/peers/peer-ssh-transport.js';
 import { SshAuthorizedKeys } from '../services/peers/ssh-authorized-keys.js';
 import type { ConnectFetch } from '../mobile/connect-account.js';
@@ -133,14 +137,26 @@ export interface ProductHttpContext {
   peerSshEndpoints?: PeerSshEndpoints;
   /** Owner-managed allowlist of advertised peer route origins. Present with the installer; read live by it. */
   peerRouteAllowlist?: PeerRouteOrigins;
-  /** First-contact invitations. Present only with a real peer key; owner operations are in-process, never `/api/v1`. */
+  /** First-contact invitations. Present only with a real peer key. Plugins reach them in-process; core's own Add/Join/Approve use `/api/v1/peer-connections`. */
   peerInvitations?: PeerInvitations;
   /** Invitation-founded `peer.forward` links over Zana Connect machine codes, and their lifecycle. Present with invitations. */
   peerLinks?: PeerLinks;
   /** Owner-store view of plugin links for the core Peers hub. Absent: links are listed from host rows alone. */
   peerLinkDirectory?: import('../services/hosts/peer-link-view.js').PeerLinkDirectory;
+  /** Core Add computer: runs the Remote Login self-test. Present with a peer key and SSH transport. */
+  peerRemoteLoginCheck?: (signal: AbortSignal) => Promise<import('../services/peers/peer-ssh-local.js').RemoteLoginCheck>;
+  /** Signs the single-use core approval proof for a binding core itself built, after the typed pairing code matched. Absent without a UI secret. */
+  mintCoreApproval?: (binding: unknown) => string;
   /** Plugin-reported per-link state notes shown by the core Peers hub. In memory, bounded. */
   peerLinkNotes?: PluginLinkNotes;
+  /** Plugin-facing connection hooks (removing handlers, change listeners, statuses). */
+  peerConnections?: PeerConnectionRegistry;
+  /** Core-observed recent successful `peers.call`s per plugin and computer; drives the Peers hub "Stop anyway?" confirm. */
+  peerActiveUse?: PeerActiveUse;
+  /** Per-plugin use records of connections; absent until the approval layer is installed. */
+  peerConnectionUses?: PeerConnectionUses;
+  /** Core-rendered two-sided approval of a plugin's use of a connection; backs `peerConnectionUses` and the `/api/v1/peer-uses` routes. */
+  peerUseRequests?: PeerUseRequests;
   /**
    * Optional host-injected Team verbs. Product HTTP validates bounded wire
    * shape; Electron main authorizes team/project/persona and mutations.
@@ -437,10 +453,13 @@ export function createProductHttpContext(
 
   let verifyUiSend: ProductHttpContext['verifyUiSend'] = rejectUiSend;
   let verifyPluginApproval: NonNullable<ProductHttpContext['verifyPluginApproval']> = rejectUiSend;
+  let mintCoreApproval: ProductHttpContext['mintCoreApproval'];
   let verifyNativeToolPolicy: NonNullable<ProductHttpContext['verifyNativeToolPolicy']> = rejectUiSend;
   if (options.uiSendSecret && options.uiSendSecret.length >= 32) {
     verifyUiSend = createUiSendVerifier(options.uiSendSecret);
     verifyPluginApproval = createPluginApprovalVerifier(options.uiSendSecret);
+    const approvalSecret = options.uiSendSecret;
+    mintCoreApproval = binding => signPluginApproval(approvalSecret, CORE_APPROVAL_PRINCIPAL, binding as never);
     verifyNativeToolPolicy = createNativeToolPolicyVerifier(options.uiSendSecret);
   }
 
@@ -470,6 +489,8 @@ export function createProductHttpContext(
     currentReverseEnrollment: remoteId => peerChannels.current(remoteId),
     // A link host is never plugin-usable before both owners consented and the founding linked it.
     isLinkUsable: hostId => peerLinks?.isLinkUsable(hostId) ?? true,
+    // Default deny: a connection carries a plugin's traffic only with that plugin's approved use.
+    isUseApproved: (hostId, pluginId) => hostUseApproved(db, hostId, pluginId),
     bridge: peerBridge
   });
   const joinCodes = createJoinCodeStore(db);
@@ -503,6 +524,12 @@ export function createProductHttpContext(
     authorizedKeys: peerAuthorizedKeys,
     localEndpoint: createLocalEndpoint({ authorizedKeys: peerAuthorizedKeys }), preflight: preflightPeerSsh
   }) : undefined;
+  const peerLinkNotes = new PluginLinkNotes();
+  const peerConnections = new PeerConnectionRegistry();
+  const peerActiveUse = new PeerActiveUse();
+  const revokePeerUses = async (peerInstanceId: string) => {
+    for (const pairId of await peerAuthority.activePairIds(peerInstanceId)) await peerAuthority.revoke(pairId).catch(() => undefined);
+  };
   peerLinks = options.peerKeyProvider && peerSsh ? new PeerLinks({
     directory: join(realpathSync(dataDir), 'peer-links'), instanceId: productInstanceId, keyProvider,
     localAppDataDir: realpathSync(dataDir), db, hostHub, joinCodes, channels: peerChannels,
@@ -511,9 +538,25 @@ export function createProductHttpContext(
     bridge: peerBridge,
     connector: options.peerInstallerConnector,
     pluginLabel,
-    onChanged: () => { if (!disposed) hub.emit('hosts:changed', listPublicHosts(db, hostHub)); }
+    // One removal order everywhere: plugin handlers (bounded) -> revoke uses -> local drop -> peer notice (not awaited).
+    onRemoving: async peerInstanceId => { await peerConnections.runRemoving(peerInstanceId); await revokePeerUses(peerInstanceId); },
+    onRemoved: async peerInstanceId => {
+      peerLinkNotes.clearPeer(peerInstanceId);
+      peerConnections.forget(peerInstanceId);
+      peerActiveUse.forget(peerInstanceId);
+      peerUseRequests?.forget(peerInstanceId);
+      await revokePeerUses(peerInstanceId);
+    },
+    onChanged: () => { if (!disposed) { hub.emit('hosts:changed', listPublicHosts(db, hostHub)); peerConnections.notifyChanged(); } }
   }) : undefined;
   const links = peerLinks;
+  const peerUseRequests = links ? new PeerUseRequests({
+    db, links, bridge: peerBridge, label: pluginLabel,
+    verify: (token, principal, binding) => verifyPluginApproval(token, principal, binding),
+    revoke: async (pluginId, computerId) => { await peerAuthority.revokeUse(pluginId, computerId); await peerAuthority.recover(); },
+    isActive: (pluginId, computerId) => peerActiveUse.isActive(pluginId, computerId),
+    onChange: () => { peerConnections.notifyChanged(); }
+  }) : undefined;
   const peerInvitations: PeerInvitations | undefined = links ? new PeerInvitations({
     directory: join(realpathSync(dataDir), 'peer-invitations'), instanceId: productInstanceId, keyProvider,
     verifyOwnerApproval: (token, pluginId, binding) => ctx.verifyPluginApproval?.(token, pluginId, binding) ?? false,
@@ -559,9 +602,14 @@ export function createProductHttpContext(
     peerSshEndpoints,
     peerRouteAllowlist,
     peerInvitations,
+    ...(peerSsh ? { peerRemoteLoginCheck: (signal: AbortSignal) => checkRemoteLogin(peerSsh.localEndpoint, signal) } : {}),
+    ...(mintCoreApproval ? { mintCoreApproval } : {}),
     peerLinks,
     ...(peerLinks ? { peerLinkDirectory: peerLinks.directory } : {}),
-    peerLinkNotes: new PluginLinkNotes(),
+    peerLinkNotes,
+    peerConnections,
+    peerActiveUse,
+    ...(peerUseRequests ? { peerUseRequests, peerConnectionUses: peerUseRequests } : {}),
     peerControlReplay: new PeerReplayWindow({ directory: join(realpathSync(dataDir), 'peer-control-replay'), localInstanceId: productInstanceId, keyProvider }),
     pluginStorageEpochs: new PluginStorageEpochs({ directory: join(realpathSync(dataDir), 'plugin-storage-epochs'), instanceId: productInstanceId, keyProvider }),
     verifyUiSend,
@@ -574,6 +622,8 @@ export function createProductHttpContext(
       stopPeerAuthority();
       ctx.peerInstaller?.dispose();
       ctx.peerLinks?.dispose();
+      peerConnections.dispose();
+      peerUseRequests?.dispose();
       peerSsh?.dispose();
       void peerForwarderLease?.close().catch(error => console.warn(`[zcc] peer forwarder lease close failed: ${error instanceof Error ? error.message : String(error)}`));
       ctx.peerInvitations?.dispose();

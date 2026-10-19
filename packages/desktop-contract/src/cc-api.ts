@@ -224,6 +224,8 @@ export interface CcApi {
     open(raw: string): Promise<import('./deep-link.js').DeepLinkOpenResult>;
     /** A validated link main wants routed to a plugin. */
     onLink(cb: (delivery: import('./deep-link.js').DeepLinkDelivery) => void): () => void;
+    /** A validated core link (e.g. `peers/join`) main wants the app itself to handle. */
+    onCoreLink(cb: (delivery: import('./deep-link.js').CoreDeepLinkDelivery) => void): () => void;
   };
   startup: {
     state(): Promise<{ mode: 'ready' } | { mode: 'repair-required'; reason: 'harness-routing-migration' }>;

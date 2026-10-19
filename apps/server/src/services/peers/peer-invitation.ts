@@ -3,12 +3,14 @@ import {
   sign, timingSafeEqual, verify
 } from 'node:crypto';
 import { z } from 'zod';
+import { CORE_APPROVAL_PRINCIPAL } from '../../http/plugin-approval-proof.js';
 import type { PluginApprovalBinding, PluginApprovalRequest } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   PEER_DIGEST, PEER_ID, PEER_NONCE, PEER_TOKEN, PrivatePeerStorage, sealPeerBytes, unsealPeerBytes, validScope,
   type PeerKeyProvider
 } from './peer-auth.js';
 import { SSH_REASONS, type InvitationLinkMint, type InvitationSshOffer } from './peer-ssh-contract.js';
+import { PAIRING_CODE_MISMATCH_LIMIT, pairingCodeMatches, pairingCodeOf } from './pairing-code.js';
 
 export type { InvitationLinkMint, InvitationSshOffer } from './peer-ssh-contract.js';
 
@@ -20,6 +22,11 @@ export type { InvitationLinkMint, InvitationSshOffer } from './peer-ssh-contract
  */
 export const INVITATION_TOKEN_PREFIX = 'zccinv1.';
 export const INVITATION_APPROVE_ACTION = 'peer.invitation.approve';
+/**
+ * Owner-approval principal of a core connection (no plugin, no scope). Contains a colon, so no plugin id (`PEER_TOKEN`)
+ * can ever equal it and a plugin-signed approval cannot be replayed against a core connection.
+ */
+export { CORE_APPROVAL_PRINCIPAL };
 
 export const INVITATION_LIMITS = Object.freeze({
   tokenBytes: 4096,
@@ -54,7 +61,7 @@ export const INVITATION_LIMITS = Object.freeze({
 export const INVITATION_REASONS = [
   'invalid_invitation', 'own_invitation', 'wrong_plugin', 'expired', 'denied', 'cancelled',
   'already_redeemed', 'attempt_limit', 'identity_mismatch', 'unreachable', 'not_found', 'capacity', 'replay',
-  'stale_generation', 'owner_proof_required', 'not_ready', 'fenced', 'unavailable', ...SSH_REASONS
+  'stale_generation', 'owner_proof_required', 'not_ready', 'fenced', 'unavailable', 'unknown_connection', 'use_unavailable', ...SSH_REASONS
 ] as const;
 export type InvitationReason = typeof INVITATION_REASONS[number];
 
@@ -77,6 +84,8 @@ const MESSAGES: Record<InvitationReason, string> = {
   not_ready: 'Pairing is not ready for that action',
   fenced: 'Pairing consent is no longer valid',
   unavailable: 'Invitations are unavailable',
+  unknown_connection: 'That computer is not connected to this one',
+  use_unavailable: 'Using a connection is not available yet',
   ssh_remote_login_off: 'Remote Login is off on the computer that created the invitation',
   ssh_unreachable: 'The other computer could not be reached over SSH. Both computers must be on the same network',
   ssh_auth_refused: 'The other computer refused the SSH connection',
@@ -101,8 +110,9 @@ const ENDED = new Set<InvitationState>(['denied', 'cancelled', 'expired', 'faile
 export interface PublicInvitationStatus {
   invitationId: string;
   role: 'inviter' | 'redeemer';
-  pluginId: string;
-  scope: string;
+  /** Absent on a core connection (no plugin, no scope). */
+  pluginId?: string;
+  scope?: string;
   state: InvitationState;
   reason?: InvitationReason;
   localFingerprint: string;
@@ -111,6 +121,8 @@ export interface PublicInvitationStatus {
   redeemerDecision: InvitationDecision;
   pairingId?: string;
   consentDigest?: string;
+  /** Redeemer only, once reserved: the `XXXX-XXXX` code its owner reads to the inviter's owner. */
+  pairingCode?: string;
   generation: number;
   expiresAt: number;
   consentExpiresAt?: number;
@@ -122,8 +134,9 @@ export interface PairingFence { invitationId: string; pairingId: string; consent
 export interface ConsentedPairing extends PairingFence {
   role: 'inviter' | 'redeemer';
   state: 'consented' | 'connecting';
-  pluginId: string;
-  scope: string;
+  /** Absent on a core connection. */
+  pluginId?: string;
+  scope?: string;
   local: { instanceId: string; fingerprint: string };
   /** `sshKey` is the redeemer's per-link public key (set when the remote side is the redeemer). */
   remote: { instanceId: string; name: string; fingerprint: string; ed: string; x: string; sshKey?: string };
@@ -143,12 +156,12 @@ export interface InvitationTransport {
 /** The link store (PeerLinks). Platform-internal; its codes never reach a plugin. */
 export interface InvitationLinks {
   /** Inviter: mint the SSH offer (endpoint, bootstrap key, ports, forward-only join code) the token carries. Throws `InvitationError` (e.g. `ssh_remote_login_off`). */
-  create(input: { invitationId: string; pluginId: string; scope: string }): Promise<InvitationLinkMint>;
+  create(input: { invitationId: string; pluginId?: string; scope?: string }): Promise<InvitationLinkMint>;
   /**
    * Redeemer: open the SSH tunnel, enroll with the join code and connect into the inviter. An `InvitationError` other than `unreachable` ends
    * the invitation with that reason; any other failure is retried with backoff until the token expires.
    */
-  redeem(input: { invitationId: string; inviterId: string; inviterName: string; pluginId: string; scope: string; link: InvitationSshOffer },
+  redeem(input: { invitationId: string; inviterId: string; inviterName: string; pluginId?: string; scope?: string; link: InvitationSshOffer },
     signal: AbortSignal): Promise<void>;
 }
 
@@ -159,8 +172,8 @@ export interface PeerInvitationsOptions {
   directory: string;
   instanceId: string;
   keyProvider: PeerKeyProvider;
-  /** Consumes a main-signed single-use owner approval (`ctx.verifyPluginApproval`). */
-  verifyOwnerApproval: (token: unknown, pluginId: string, binding: PluginApprovalBinding) => boolean;
+  /** Consumes a main-signed single-use owner approval (`ctx.verifyPluginApproval`). `principal` is the plugin id, or `CORE_APPROVAL_PRINCIPAL` for a core connection. */
+  verifyOwnerApproval: (token: unknown, principal: string, binding: PluginApprovalBinding) => boolean;
   localName?: () => string;
   links?: InvitationLinks;
   /** Redeemer: this link's own SSH public key (created on first use); signed into the offer so both owners approve it. */
@@ -178,7 +191,8 @@ export interface PeerInvitationsOptions {
   onFounding?: (pairing: ConsentedPairing, message: { op: FoundingOp }) => Promise<void>;
   /** After commit, once per record entering denied/cancelled/expired/failed (or a create that never stored its record). */
   onTerminated?: (invitationId: string, role: 'inviter' | 'redeemer', reason: InvitationReason) => void;
-  onChanged?: (pluginId: string) => void;
+  /** `pluginId` is absent for a core connection. */
+  onChanged?: (pluginId: string | undefined) => void;
   now?: () => number;
 }
 
@@ -206,7 +220,7 @@ type Endpoint = z.infer<typeof endpointSchema>;
 const keyPair = z.object({ x: b32, d: b32 }).strict();
 type KeyPair = z.infer<typeof keyPair>;
 const recordSchema = z.object({
-  id, role: z.enum(['inviter', 'redeemer']), pluginId: z.string().regex(PEER_TOKEN), scope,
+  id, role: z.enum(['inviter', 'redeemer']), pluginId: z.string().regex(PEER_TOKEN).optional(), scope: scope.optional(),
   createdAt: int, updatedAt: int, expiresAt: int,
   inviter: endpointSchema, redeemer: endpointSchema.optional(),
   tokenHash: b32.optional(), secret: b32.optional(), attempts: z.number().int().min(0).max(1000),
@@ -215,10 +229,12 @@ const recordSchema = z.object({
   link: sshOfferSchema.optional(),
   pairingId: id.optional(), consentDigest: b32.optional(), consentExpiresAt: int.optional(),
   generation: z.number().int().min(1), inviterDecision: decision, redeemerDecision: decision,
+  /** Inviter only: wrong pairing codes typed (separate from `attempts`); the invitation burns at the limit. */
+  codeMismatches: z.number().int().min(0).max(PAIRING_CODE_MISMATCH_LIMIT).optional(),
   state: z.enum(INVITATION_STATES), reason: z.enum(INVITATION_REASONS).optional(),
   seenNonces: z.array(nonce).max(INVITATION_LIMITS.noncesPerRecord),
   outbox: z.object({ op: z.enum(['redeem', 'decide', 'status']), attempts: z.number().int().min(0).max(10_000), nextAt: int }).strict().optional()
-}).strict();
+}).strict().refine(rec => (rec.pluginId === undefined) === (rec.scope === undefined), { message: 'pluginId and scope go together' });
 type Rec = z.infer<typeof recordSchema>;
 const MAX_RECORDS = INVITATION_LIMITS.live + INVITATION_LIMITS.pending + INVITATION_LIMITS.terminal;
 const stateSchema = z.object({
@@ -231,8 +247,8 @@ type Keys = NonNullable<State['keys']>;
 
 const tokenSchema = z.object({
   v: z.literal(3), id, inviter: id, name: displayName, fp: b32, ed: b32, x: b32,
-  plugin: z.string().regex(PEER_TOKEN), scope, exp: int, s: b32, link: sshOfferSchema
-}).strict();
+  plugin: z.string().regex(PEER_TOKEN).optional(), scope: scope.optional(), exp: int, s: b32, link: sshOfferSchema
+}).strict().refine(token => (token.plugin === undefined) === (token.scope === undefined));
 export type InvitationTokenPayload = z.infer<typeof tokenSchema>;
 
 const sealedText = z.string().regex(/^[A-Za-z0-9_-]{1,30000}$/);
@@ -240,9 +256,9 @@ const wireRedeem = z.object({ v: z.literal(1), invitationId: id, redeemerX: b32,
 const wireExchange = z.object({ v: z.literal(1), invitationId: id, sealed: sealedText }).strict();
 const wireResponse = z.object({ v: z.literal(1), sealed: sealedText }).strict();
 const offerSchema = z.object({
-  invitationId: id, inviterId: id, inviterFingerprint: b32, pluginId: z.string().regex(PEER_TOKEN), scope,
+  invitationId: id, inviterId: id, inviterFingerprint: b32, pluginId: z.string().regex(PEER_TOKEN).optional(), scope: scope.optional(),
   redeemer: endpointSchema, nonce
-}).strict();
+}).strict().refine(offer => (offer.pluginId === undefined) === (offer.scope === undefined));
 const redeemInner = z.object({ offer: offerSchema, secret: b32, sig: z.string().max(128) }).strict();
 const exchangeMsg = z.object({
   op: z.enum(['status', 'decide', 'offer', 'ack']), invitationId: id, pairingId: id, redeemerId: id, consentDigest: b32,
@@ -304,13 +320,13 @@ function cleanName(value: string | undefined): string {
 }
 /** Exported for tests: both owners approve a digest that covers the redeemer's per-link SSH key. */
 export function consentDigestOf(rec: Pick<Rec, 'id' | 'pluginId' | 'scope' | 'inviter'> & { pairingId: string; redeemer: Endpoint }): string {
-  return digest('consent', rec.pairingId, rec.id, rec.pluginId, rec.scope, rec.inviter.instanceId, rec.inviter.fingerprint,
+  return digest('consent', rec.pairingId, rec.id, rec.pluginId ?? '', rec.scope ?? '', rec.inviter.instanceId, rec.inviter.fingerprint,
     rec.redeemer.instanceId, rec.redeemer.fingerprint, rec.redeemer.sshKey ?? '');
 }
 /** Exported for tests: the redeemer signs this digest, which covers its per-link SSH key. */
 export function offerDigest(offer: z.infer<typeof offerSchema>, secret: string): string {
   const r = offer.redeemer;
-  return digest('redeem', offer.invitationId, offer.inviterId, offer.inviterFingerprint, offer.pluginId, offer.scope,
+  return digest('redeem', offer.invitationId, offer.inviterId, offer.inviterFingerprint, offer.pluginId ?? '', offer.scope ?? '',
     r.instanceId, r.name, r.fingerprint, r.ed, r.x, r.sshKey ?? '', offer.nonce, secretHash(secret));
 }
 function messageDigest(msg: z.infer<typeof exchangeMsg>): string {
@@ -442,12 +458,13 @@ export class PeerInvitations {
   private project(rec: Rec, keys: Keys | undefined): PublicInvitationStatus {
     const peer = rec.role === 'inviter' ? rec.redeemer : rec.inviter;
     return {
-      invitationId: rec.id, role: rec.role, pluginId: rec.pluginId, scope: rec.scope, state: rec.state,
+      invitationId: rec.id, role: rec.role, ...(rec.pluginId !== undefined ? { pluginId: rec.pluginId, scope: rec.scope } : {}), state: rec.state,
       ...(rec.reason ? { reason: rec.reason } : {}),
       localFingerprint: keys ? invitationFingerprint(keys.ed.x) : '',
       ...(peer ? { peer: { instanceId: peer.instanceId, name: peer.name, fingerprint: peer.fingerprint } } : {}),
       inviterDecision: rec.inviterDecision, redeemerDecision: rec.redeemerDecision,
       ...(rec.pairingId ? { pairingId: rec.pairingId } : {}), ...(rec.consentDigest ? { consentDigest: rec.consentDigest } : {}),
+      ...(rec.role === 'redeemer' && rec.consentDigest ? { pairingCode: pairingCodeOf(Buffer.from(rec.consentDigest, 'base64url')) } : {}),
       generation: rec.generation, expiresAt: rec.expiresAt,
       ...(rec.consentExpiresAt ? { consentExpiresAt: rec.consentExpiresAt } : {})
     };
@@ -456,7 +473,7 @@ export class PeerInvitations {
   private consented(rec: Rec): ConsentedPairing {
     const remote = rec.role === 'inviter' ? rec.redeemer! : rec.inviter, local = rec.role === 'inviter' ? rec.inviter : rec.redeemer!;
     return { invitationId: rec.id, pairingId: rec.pairingId!, consentDigest: rec.consentDigest!, generation: rec.generation, role: rec.role,
-      state: rec.state as ConsentedPairing['state'], pluginId: rec.pluginId, scope: rec.scope,
+      state: rec.state as ConsentedPairing['state'], ...(rec.pluginId !== undefined ? { pluginId: rec.pluginId, scope: rec.scope } : {}),
       local: { instanceId: local.instanceId, fingerprint: local.fingerprint },
       remote: { instanceId: remote.instanceId, name: remote.name, fingerprint: remote.fingerprint, ed: remote.ed, x: remote.x, ...(remote.sshKey ? { sshKey: remote.sshKey } : {}) } };
   }
@@ -469,7 +486,7 @@ export class PeerInvitations {
   /** Mutating transaction with sweep and change/consent/termination notification after commit. */
   private async mutate<R>(pluginId: string | undefined, run: (state: State, save: () => Promise<void>) => Promise<R>): Promise<R> {
     this.live();
-    let changed = new Set<string>(), consented: ConsentedPairing[] = [], ended: { id: string; role: Rec['role']; reason: InvitationReason }[] = [];
+    let changed = new Set<string | undefined>(), consented: ConsentedPairing[] = [], ended: { id: string; role: Rec['role']; reason: InvitationReason }[] = [];
     let committed = false;
     const result = await this.storage.transaction(async (state, persist) => {
       const before = new Map(state.records.map(rec => [rec.id + rec.role, rec.state]));
@@ -507,13 +524,14 @@ export class PeerInvitations {
     return result;
   }
 
-  private notify(changed: Set<string>, consented: ConsentedPairing[], ended: { id: string; role: Rec['role']; reason: InvitationReason }[]): void {
+  private notify(changed: Set<string | undefined>, consented: ConsentedPairing[], ended: { id: string; role: Rec['role']; reason: InvitationReason }[]): void {
     for (const entry of ended) this.notifyTerminated(entry.id, entry.role, entry.reason);
     for (const plugin of changed) { try { this.options.onChanged?.(plugin); } catch { /* observer only */ } }
     for (const pairing of consented) { try { this.options.onConsented?.(pairing); } catch { /* observer only */ } }
   }
 
-  private find(state: State, pluginId: string, invitationId: string): Rec {
+  /** `pluginId` undefined addresses core connections only; a plugin never sees a core record and vice versa. */
+  private find(state: State, pluginId: string | undefined, invitationId: string): Rec {
     const rec = state.records.find(row => row.id === invitationId && row.pluginId === pluginId);
     if (!rec) throw new InvitationError('not_found');
     return rec;
@@ -526,14 +544,15 @@ export class PeerInvitations {
 
   // ---------- Owner-local operations (never routed over /api/v1) ----------
 
-  async create(args: { pluginId: string; scope: string }): Promise<{ invitationId: string; token: string; expiresAt: number }> {
-    if (typeof args?.pluginId !== 'string' || !PEER_TOKEN.test(args.pluginId) || !validScope(args.scope)) throw new InvitationError('invalid_invitation');
+  async create(args: { pluginId?: string; scope?: string }): Promise<{ invitationId: string; token: string; expiresAt: number }> {
+    const core = typeof args === 'object' && args !== null && args.pluginId === undefined && args.scope === undefined;
+    if (!core && (typeof args?.pluginId !== 'string' || !PEER_TOKEN.test(args.pluginId) || !validScope(args.scope))) throw new InvitationError('invalid_invitation');
     const links = this.options.links;
     if (!links) throw new InvitationError('unavailable');
     await this.mutate(undefined, async state => { if (this.full(state)) throw new InvitationError('capacity'); });
     const invitationId = randomUUID();
     let minted: InvitationLinkMint;
-    try { minted = await links.create({ invitationId, pluginId: args.pluginId, scope: args.scope }); }
+    try { minted = await links.create({ invitationId, ...(core ? {} : { pluginId: args.pluginId, scope: args.scope }) }); }
     catch (error) {
       this.notifyTerminated(invitationId, 'inviter', 'unavailable');
       throw error instanceof InvitationError ? error : new InvitationError('unavailable');
@@ -546,10 +565,10 @@ export class PeerInvitations {
         const keys = this.keys(state), now = this.now(), secret = randomBytes(32).toString('base64url');
         const inviter = this.self(keys), expiresAt = Math.min(now + INVITATION_LIMITS.ttlMs, minted.expiresAt);
         const payload: InvitationTokenPayload = { v: 3, id: invitationId, inviter: inviter.instanceId, name: inviter.name, fp: inviter.fingerprint,
-          ed: inviter.ed, x: inviter.x, plugin: args.pluginId, scope: args.scope, exp: expiresAt, s: secret, link };
+          ed: inviter.ed, x: inviter.x, ...(core ? {} : { plugin: args.pluginId, scope: args.scope }), exp: expiresAt, s: secret, link };
         const token = INVITATION_TOKEN_PREFIX + Buffer.from(JSON.stringify(payload)).toString('base64url');
         if (Buffer.byteLength(token) > INVITATION_LIMITS.tokenBytes) throw new InvitationError('invalid_invitation');
-        state.records.push({ id: invitationId, role: 'inviter', pluginId: args.pluginId, scope: args.scope, createdAt: now, updatedAt: now, expiresAt,
+        state.records.push({ id: invitationId, role: 'inviter', ...(core ? {} : { pluginId: args.pluginId, scope: args.scope }), createdAt: now, updatedAt: now, expiresAt,
           inviter, tokenHash: secretHash(secret), attempts: 0, generation: 1, inviterDecision: 'pending', redeemerDecision: 'pending',
           state: 'open', seenNonces: [] });
         await save();
@@ -566,10 +585,10 @@ export class PeerInvitations {
    * Redeemer side: record the attempt, then let the link store open the SSH tunnel and connect. Re-pasting the
    * same token resumes the same attempt; after an `ssh_unreachable`/`unreachable` failure it starts over (until expiry).
    */
-  async redeem(args: { pluginId: string; token: string }): Promise<PublicInvitationStatus> {
+  async redeem(args: { pluginId?: string; token: string }): Promise<PublicInvitationStatus> {
     const token = parseInvitationToken(args?.token);
     if (token.inviter === this.options.instanceId) throw new InvitationError('own_invitation');
-    if (token.plugin !== args.pluginId) throw new InvitationError('wrong_plugin');
+    if (token.plugin !== args?.pluginId) throw new InvitationError('wrong_plugin');
     if (this.now() >= token.exp || token.exp > this.now() + INVITATION_LIMITS.ttlMs + INVITATION_LIMITS.clockSkewMs) throw new InvitationError('expired');
     if (!this.options.links) throw new InvitationError('unavailable');
     const status = await this.mutate(args.pluginId, async (state, save) => {
@@ -595,7 +614,7 @@ export class PeerInvitations {
       if (this.options.linkKey) {
         try { sshKey = z.string().regex(SSH_PUB).parse(await this.options.linkKey(token.id)); } catch { throw new InvitationError('unavailable'); }
       }
-      const rec: Rec = { id: token.id, role: 'redeemer', pluginId: token.plugin, scope: token.scope, createdAt: now, updatedAt: now, expiresAt: token.exp,
+      const rec: Rec = { id: token.id, role: 'redeemer', ...(token.plugin !== undefined ? { pluginId: token.plugin, scope: token.scope } : {}), createdAt: now, updatedAt: now, expiresAt: token.exp,
         inviter: { instanceId: token.inviter, name: token.name, fingerprint: token.fp, ed: token.ed, x: token.x },
         redeemer: { ...this.self(keys), ...(sshKey ? { sshKey } : {}) }, secret: token.s, attempts: 0, nonce: randomBytes(24).toString('base64url'), link: token.link,
         generation: 1, inviterDecision: 'pending', redeemerDecision: 'pending', state: 'redeeming', seenNonces: [],
@@ -608,19 +627,19 @@ export class PeerInvitations {
     return this.status({ pluginId: args.pluginId, invitationId: status.invitationId });
   }
 
-  async status(args: { pluginId: string; invitationId: string }): Promise<PublicInvitationStatus> {
+  async status(args: { pluginId?: string; invitationId: string }): Promise<PublicInvitationStatus> {
     return this.mutate(undefined, async state => this.project(this.find(state, args.pluginId, args.invitationId), state.keys));
   }
 
   /** Newest first, bounded page. */
-  async list(args: { pluginId: string; limit?: number }): Promise<PublicInvitationStatus[]> {
+  async list(args: { pluginId?: string; limit?: number }): Promise<PublicInvitationStatus[]> {
     const limit = Math.max(1, Math.min(INVITATION_LIMITS.listMax, Math.trunc(args.limit ?? INVITATION_LIMITS.listMax)));
     return this.mutate(undefined, async state => state.records.filter(rec => rec.pluginId === args.pluginId)
       .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit).map(rec => this.project(rec, state.keys)));
   }
 
   /** Core-rendered approval sheet; its binding is the only one `decide` will accept. */
-  async approvalRequest(args: { pluginId: string; invitationId: string }): Promise<PluginApprovalRequest> {
+  async approvalRequest(args: { pluginId?: string; invitationId: string }): Promise<PluginApprovalRequest> {
     return this.mutate(undefined, async state => {
       const rec = this.find(state, args.pluginId, args.invitationId);
       // Only the inviter's owner approves; the redeemer's consent is the pasted invitation.
@@ -633,27 +652,42 @@ export class PeerInvitations {
     const peer = rec.role === 'inviter' ? rec.redeemer! : rec.inviter;
     const binding: PluginApprovalBinding = {
       action: INVITATION_APPROVE_ACTION, target: rec.pairingId!, targetLabel: `${peer.name} (${peer.fingerprint.slice(0, 16)})`,
-      subject: `${rec.role}:${rec.pluginId}`, revision: `${rec.consentDigest}.${rec.generation}`
+      subject: `${rec.role}:${rec.pluginId ?? 'core'}`, revision: `${rec.consentDigest}.${rec.generation}`
     };
     return {
       binding, title: 'Pair with another computer',
-      summary: `Allow ${peer.name} to sync ${rec.pluginId} data with this computer. This does not share projects, threads, terminals or files.`,
+      summary: rec.pluginId
+        ? `Allow ${peer.name} to sync ${rec.pluginId} data with this computer. This does not share projects, threads, terminals or files.`
+        : `Connect this computer with ${peer.name}. This does not share projects, threads, terminals or files, and grants no plugin access.`,
       details: [`Computer: ${peer.name}`, `Fingerprint: ${peer.fingerprint}`, `Instance: ${peer.instanceId}`,
         ...(peer.sshKey ? [`SSH key: ${sshKeyFingerprint(peer.sshKey)}`] : [])],
       confirmLabel: 'Approve pairing'
     };
   }
 
-  /** Owner decision. Approve needs a single-use main-signed proof over the core binding; deny needs none. */
-  async decide(args: { pluginId: string; invitationId: string; decision: 'approved' | 'denied'; ownerProof?: string }): Promise<PublicInvitationStatus> {
+  /**
+   * Owner decision. Approve needs a single-use main-signed proof over the core binding; deny needs none. A core
+   * inviter's approve also needs the `pairingCode` the redeemer shows. A wrong code is `identity_mismatch` and counts
+   * toward its own limit (not `attempts`), after which the invitation burns as `attempt_limit`. It is checked before the
+   * proof so a typo does not consume it.
+   */
+  async decide(args: { pluginId?: string; invitationId: string; decision: 'approved' | 'denied'; ownerProof?: string; pairingCode?: string }): Promise<PublicInvitationStatus> {
     if (args?.decision !== 'approved' && args?.decision !== 'denied') throw new InvitationError('not_ready');
     const status = await this.mutate(args.pluginId, async (state, save) => {
       const rec = this.find(state, args.pluginId, args.invitationId);
       if (rec.state !== 'reserved' || !rec.pairingId || !rec.consentDigest) throw new InvitationError(TERMINAL.has(rec.state) ? rec.reason ?? 'fenced' : 'not_ready');
       const field = rec.role === 'inviter' ? 'inviterDecision' : 'redeemerDecision';
       if (rec[field] !== 'pending') throw new InvitationError('not_ready');
+      if (args.decision === 'approved' && rec.role === 'inviter' && rec.pluginId === undefined &&
+        !pairingCodeMatches(args.pairingCode, Buffer.from(rec.consentDigest, 'base64url'))) {
+        rec.codeMismatches = (rec.codeMismatches ?? 0) + 1; rec.updatedAt = this.now();
+        const burned = rec.codeMismatches >= PAIRING_CODE_MISMATCH_LIMIT;
+        if (burned) this.terminate(rec, 'cancelled', 'attempt_limit');
+        await save();
+        throw new InvitationError(burned ? 'attempt_limit' : 'identity_mismatch');
+      }
       if (args.decision === 'approved' &&
-        !this.options.verifyOwnerApproval(args.ownerProof, rec.pluginId, this.approvalFor(rec).binding)) throw new InvitationError('owner_proof_required');
+        !this.options.verifyOwnerApproval(args.ownerProof, rec.pluginId ?? CORE_APPROVAL_PRINCIPAL, this.approvalFor(rec).binding)) throw new InvitationError('owner_proof_required');
       rec[field] = args.decision; rec.updatedAt = this.now();
       // A deny ends the attempt here; the link store's bootstrap abort tells the peer.
       if (args.decision === 'denied') this.terminate(rec, 'denied', 'denied');
@@ -667,7 +701,7 @@ export class PeerInvitations {
   }
 
   /** Owner cancel; no proof required. Fences any in-flight link work. Idempotent on terminal records. */
-  async cancel(args: { pluginId: string; invitationId: string }): Promise<PublicInvitationStatus> {
+  async cancel(args: { pluginId?: string; invitationId: string }): Promise<PublicInvitationStatus> {
     return this.mutate(args.pluginId, async (state, save) => {
       const rec = this.find(state, args.pluginId, args.invitationId);
       if (!TERMINAL.has(rec.state)) { this.terminate(rec, 'cancelled', 'cancelled'); await save(); }
@@ -676,7 +710,7 @@ export class PeerInvitations {
   }
 
   /** Redeemer side: deliver any queued message or poll the inviter now instead of waiting for backoff. */
-  async poll(args: { pluginId: string; invitationId: string }): Promise<PublicInvitationStatus> {
+  async poll(args: { pluginId?: string; invitationId: string }): Promise<PublicInvitationStatus> {
     const due = await this.mutate(undefined, async (state, save) => {
       const rec = this.find(state, args.pluginId, args.invitationId);
       if (rec.role !== 'redeemer' || !rec.outbox) return false;
@@ -693,13 +727,13 @@ export class PeerInvitations {
    * that failed as `unreachable`), at most once per `refreshMinMs` per invitation; a plain status poll never spends the
    * peer link's exchange budget faster than its own cadence. Otherwise it answers the stored status.
    */
-  async refresh(args: { pluginId: string; invitationId: string }): Promise<PublicInvitationStatus> {
+  async refresh(args: { pluginId?: string; invitationId: string }): Promise<PublicInvitationStatus> {
     const owed = await this.mutate(undefined, async state => {
       const rec = this.find(state, args.pluginId, args.invitationId);
       return rec.role === 'redeemer' && !!rec.outbox && (rec.outbox.op !== 'status' || rec.reason === 'unreachable');
     });
     if (!owed) return this.status(args);
-    const key = `${args.pluginId}\u0000${args.invitationId}`, now = this.now(), last = this.refreshed.get(key);
+    const key = `${args.pluginId ?? ''}\u0000${args.invitationId}`, now = this.now(), last = this.refreshed.get(key);
     if (last !== undefined && now >= last && now - last < INVITATION_LIMITS.refreshMinMs) return this.status(args);
     this.refreshed.delete(key);
     if (this.refreshed.size >= MAX_RECORDS) this.refreshed.delete(this.refreshed.keys().next().value!);
@@ -1005,7 +1039,7 @@ export class PeerInvitations {
         if (!rec?.outbox || !rec.redeemer || !state.keys || !rec.secret || !rec.nonce) return null;
         if (rec.link) {
           return { link: { id: rec.id, input: { invitationId: rec.id, inviterId: rec.inviter.instanceId, inviterName: rec.inviter.name,
-            pluginId: rec.pluginId, scope: rec.scope, link: { ...rec.link } } } satisfies LinkStep };
+            ...(rec.pluginId !== undefined ? { pluginId: rec.pluginId, scope: rec.scope } : {}), link: { ...rec.link } } } satisfies LinkStep };
         }
         const plan = this.plan(state.keys, rec);
         if (plan) return { plan };
@@ -1061,8 +1095,8 @@ export class PeerInvitations {
   }
 
   private redeemBody(keys: Keys, rec: Rec): { body: Record<string, unknown>; expect: string } {
-    const offer = { invitationId: rec.id, inviterId: rec.inviter.instanceId, inviterFingerprint: rec.inviter.fingerprint, pluginId: rec.pluginId,
-      scope: rec.scope, redeemer: rec.redeemer!, nonce: rec.nonce! };
+    const offer = { invitationId: rec.id, inviterId: rec.inviter.instanceId, inviterFingerprint: rec.inviter.fingerprint,
+      ...(rec.pluginId !== undefined ? { pluginId: rec.pluginId, scope: rec.scope } : {}), redeemer: rec.redeemer!, nonce: rec.nonce! };
     const requestDigest = offerDigest(offer, rec.secret!);
     rec.requestDigest = requestDigest;
     const sealed = sealJson({ offer, secret: rec.secret, sig: signText(keys.ed, requestDigest) },

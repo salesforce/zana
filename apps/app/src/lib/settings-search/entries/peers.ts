@@ -8,7 +8,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'peers',
     anchor: 'peers',
     label: 'Peers',
-    help: 'Links to other Zana installs. Each link exists only because a plugin uses it, and these links cannot run work on this machine.',
+    help: 'Connections between computers; plugins ask to use them. A connection is only useful once you install a plugin that uses connections, and connections cannot run work on this machine.',
     keywords: ['peer', 'peers', 'link', 'plugin link', 'remove link', 'remove use', 'introduction'],
     kind: 'subsection'
   },
@@ -16,8 +16,8 @@ export const entries: readonly SettingsSearchEntry[] = [
     id: 'peers.empty',
     section: 'peers',
     anchor: 'peers',
-    label: 'No peer links yet',
-    help: 'No peer links yet. They appear here when a plugin connects this install to another one.',
+    label: 'No connections yet',
+    help: 'No connections yet. A connection is only useful once a plugin that uses connections is installed; they appear here when a plugin connects this install to another one.',
     keywords: ['peer', 'empty', 'no links'],
     kind: 'setting'
   },
@@ -27,7 +27,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     anchor: 'peers',
     label: 'Peer links',
     help: 'Remove a plugin use, or remove the whole link and every use on it. Peer links never appear in Machines.',
-    keywords: ['remove use', 'remove link', 'plugin uses', 'connected', 'linked', 'unclaimed', 'failed'],
+    keywords: ['remove use', 'remove link', 'pause', 'resume', 'reconnect', 'plugin uses', 'connected', 'linked', 'unclaimed', 'failed'],
     kind: 'setting'
   }
 ];

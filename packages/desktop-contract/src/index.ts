@@ -72,12 +72,19 @@ export {
   DEEP_LINK_MAX_PAYLOAD_LENGTH,
   DEEP_LINK_PAYLOAD_PARAM,
   DEEP_LINK_PROD_SCHEME,
+  CORE_DEEP_LINK_ROUTES,
   findDeepLinkInArgv,
+  formatCoreDeepLink,
   formatDeepLink,
+  parseAnyDeepLink,
   parseDeepLink,
   resolveDeepLinkChannel
 } from './deep-link.js';
 export type {
+  AnyDeepLinkParseResult,
+  CoreDeepLink,
+  CoreDeepLinkDelivery,
+  CoreDeepLinkRoute,
   DeepLink,
   DeepLinkChannel,
   DeepLinkConfig,

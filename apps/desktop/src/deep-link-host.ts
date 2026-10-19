@@ -1,5 +1,6 @@
 /**
- * Main-process side of plugin deep links (`<scheme>://plugin/<id>/<route>?d=<payload>`).
+ * Main-process side of deep links: plugin links (`<scheme>://plugin/<id>/<route>?d=<payload>`)
+ * and core links (`<scheme>://peers/join?d=<payload>`, delivered on their own channel).
  *
  * Main owns validation: every link, whether it came from the OS (argv /
  * `open-url`) or from a renderer paste, is parsed here with the strict
@@ -13,7 +14,8 @@ import {
   IPC,
   DEEP_LINK_KNOWN_SCHEMES,
   findDeepLinkInArgv,
-  parseDeepLink,
+  parseAnyDeepLink,
+  type CoreDeepLinkDelivery,
   type DeepLinkChannel,
   type DeepLinkConfig,
   type DeepLinkDelivery,
@@ -26,7 +28,7 @@ export const DEEP_LINK_PENDING_LIMIT = 8;
 export interface DeepLinkHostDeps {
   channel: DeepLinkChannel;
   /** Route one validated link to the renderer. Rejection is logged, never thrown. */
-  deliver(delivery: DeepLinkDelivery): Promise<void> | void;
+  deliver(delivery: DeepLinkDelivery | CoreDeepLinkDelivery): Promise<void> | void;
   logError(scope: string, detail: unknown): void;
 }
 
@@ -44,12 +46,12 @@ export interface DeepLinkHost {
 }
 
 export function createDeepLinkHost(deps: DeepLinkHostDeps): DeepLinkHost {
-  const pending: DeepLinkDelivery[] = [];
+  const pending: Array<DeepLinkDelivery | CoreDeepLinkDelivery> = [];
   const pasteSchemes = [...new Set([...DEEP_LINK_KNOWN_SCHEMES, ...deps.channel.acceptSchemes])];
   let armed = false;
   let chain: Promise<void> = Promise.resolve();
 
-  const send = (delivery: DeepLinkDelivery): Promise<void> => {
+  const send = (delivery: DeepLinkDelivery | CoreDeepLinkDelivery): Promise<void> => {
     chain = chain.then(async () => {
       try {
         await deps.deliver(delivery);
@@ -60,7 +62,7 @@ export function createDeepLinkHost(deps: DeepLinkHostDeps): DeepLinkHost {
     return chain;
   };
 
-  const route = (delivery: DeepLinkDelivery): Promise<void> => {
+  const route = (delivery: DeepLinkDelivery | CoreDeepLinkDelivery): Promise<void> => {
     if (armed) return send(delivery);
     pending.push(delivery);
     while (pending.length > DEEP_LINK_PENDING_LIMIT) pending.shift();
@@ -68,10 +70,14 @@ export function createDeepLinkHost(deps: DeepLinkHostDeps): DeepLinkHost {
   };
 
   const submitOsLink = (raw: unknown): boolean => {
-    const parsed = parseDeepLink(raw, { acceptSchemes: deps.channel.acceptSchemes });
+    const parsed = parseAnyDeepLink(raw, { acceptSchemes: deps.channel.acceptSchemes });
     if (!parsed.ok) {
       deps.logError('deepLink.rejected', parsed.reason);
       return false;
+    }
+    if (parsed.kind === 'core') {
+      void route({ route: parsed.link.route, payload: parsed.link.payload });
+      return true;
     }
     const { pluginId, route: linkRoute, payload } = parsed.link;
     void route({ pluginId, route: linkRoute, payload });
@@ -85,8 +91,10 @@ export function createDeepLinkHost(deps: DeepLinkHostDeps): DeepLinkHost {
       return link === null ? false : submitOsLink(link);
     },
     async open(raw) {
-      const parsed = parseDeepLink(raw, { acceptSchemes: pasteSchemes });
+      const parsed = parseAnyDeepLink(raw, { acceptSchemes: pasteSchemes });
       if (!parsed.ok) return { ok: false, reason: parsed.reason };
+      // The in-app "Open link" path is the plugin API; core links arrive from the OS only.
+      if (parsed.kind === 'core') return { ok: false, reason: 'bad-route' };
       const { pluginId, route: linkRoute, payload } = parsed.link;
       await route({ pluginId, route: linkRoute, payload });
       return { ok: true, pluginId, route: linkRoute };

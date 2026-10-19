@@ -135,9 +135,87 @@ export const removePeerLinkResponseSchema = z.object({
   linkRemoved: z.boolean(),
 });
 export type RemovePeerLinkResponse = z.infer<typeof removePeerLinkResponseSchema>;
+/** `force=1` is Remove anyway: the link goes even though a plugin's removing handler failed or timed out. */
+export const removePeerLinkQuerySchema = z.object({ force: z.literal("1").optional() }).strict();
+export type RemovePeerLinkQuery = z.infer<typeof removePeerLinkQuerySchema>;
+/** A plugin whose removing handler failed or timed out; `label` is its registered display name. */
+export const peerLinkHookFailureSchema = z.object({
+  pluginId: z.string().min(1).max(128),
+  label: z.string().min(1).max(80),
+  reason: z.enum(["timeout", "error"]),
+});
+export type PeerLinkHookFailure = z.infer<typeof peerLinkHookFailureSchema>;
+/** Link removal: either done, or stopped before teardown so the owner can Retry or Remove anyway. */
+export const removePeerLinkResultSchema = z.union([
+  removePeerLinkResponseSchema,
+  z.object({ ok: z.literal(false), hookFailures: z.array(peerLinkHookFailureSchema).min(1).max(32) }),
+]);
+export type RemovePeerLinkResult = z.infer<typeof removePeerLinkResultSchema>;
+/** Plugins that completed a call with this computer in the last few seconds (core-observed). */
+export const peerLinkActivityResponseSchema = z.object({
+  active: z.array(z.object({ pluginId: z.string().min(1).max(128), label: z.string().min(1).max(80) })).max(32),
+});
+export type PeerLinkActivityResponse = z.infer<typeof peerLinkActivityResponseSchema>;
 /** Owner Disconnect / Reconnect of a link; the record survives either way. */
 export const pausePeerLinkResponseSchema = z.object({ ok: z.literal(true), paused: z.boolean() });
 export type PausePeerLinkResponse = z.infer<typeof pausePeerLinkResponseSchema>;
+
+/** A computer removed with Remove anyway while these plugins' cleanup had failed; hidden until Forget. */
+export const peerLeftoverSchema = z.object({
+  computerId: z.string().min(1).max(128),
+  name: z.string().max(80),
+  plugins: z.array(z.object({
+    pluginId: z.string().min(1).max(128),
+    label: z.string().max(80),
+    reason: z.enum(["timeout", "error"]),
+  })).max(32),
+});
+export type PeerLeftover = z.infer<typeof peerLeftoverSchema>;
+export const peerLeftoverListResponseSchema = z.object({ leftovers: z.array(peerLeftoverSchema).max(64) });
+export type PeerLeftoverListResponse = z.infer<typeof peerLeftoverListResponseSchema>;
+export const forgetPeerLeftoverResponseSchema = z.object({ ok: z.literal(true) });
+export type ForgetPeerLeftoverResponse = z.infer<typeof forgetPeerLeftoverResponseSchema>;
+
+/** Owner Repair of a dropped or unhealthy link: re-keys and reopens it; the record survives. */
+export const repairPeerLinkResponseSchema = z.object({ ok: z.literal(true) });
+export type RepairPeerLinkResponse = z.infer<typeof repairPeerLinkResponseSchema>;
+
+/**
+ * Core-owned computer connections (Add / Join / Approve). The invitation record carries no secret except the
+ * redeemer's own pairing code, which its owner reads aloud to the inviter's owner.
+ */
+export const peerConnectionStateSchema = z.enum(["open", "redeeming", "reserved", "consented", "connecting", "ready", "denied", "cancelled", "expired", "failed"]);
+export const peerConnectionSchema = z.object({
+  invitationId: z.string().uuid(),
+  /** `inviter` = Add computer (this computer waits); `redeemer` = Join computer (this computer connects out). */
+  role: z.enum(["inviter", "redeemer"]),
+  state: peerConnectionStateSchema,
+  reason: z.string().max(80).optional(),
+  expiresAt: z.number().int().nonnegative(),
+  peer: z.object({ name: z.string().max(200), fingerprint: z.string().max(128) }).strict().optional(),
+  /** Redeemer only, once the pairing is reserved: the `XXXX-XXXX` code to read to the inviter's owner. */
+  pairingCode: z.string().regex(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/).optional(),
+  /** Inviter only: this computer's owner may now approve (needs the typed code). */
+  awaitingApproval: z.boolean(),
+}).strict();
+export type PeerConnection = z.infer<typeof peerConnectionSchema>;
+export const peerConnectionListResponseSchema = z.object({ connections: z.array(peerConnectionSchema).max(64) }).strict();
+export type PeerConnectionListResponse = z.infer<typeof peerConnectionListResponseSchema>;
+export const peerRemoteLoginCheckResponseSchema = z.union([
+  z.object({ ok: z.literal(true) }).strict(),
+  z.object({ ok: z.literal(false), reason: z.enum(["ssh_remote_login_off", "ssh_unreachable", "ssh_auth_refused", "ssh_forwarding_refused", "ssh_host_key_mismatch"]) }).strict(),
+]);
+export type PeerRemoteLoginCheckResponse = z.infer<typeof peerRemoteLoginCheckResponseSchema>;
+export const createPeerConnectionResponseSchema = z.object({
+  invitationId: z.string().uuid(), token: z.string().min(1).max(4096), expiresAt: z.number().int().nonnegative(),
+}).strict();
+export type CreatePeerConnectionResponse = z.infer<typeof createPeerConnectionResponseSchema>;
+export const joinPeerConnectionRequestSchema = z.object({ token: z.string().min(1).max(4096) }).strict();
+export type JoinPeerConnectionRequest = z.infer<typeof joinPeerConnectionRequestSchema>;
+export const approvePeerConnectionRequestSchema = z.object({ code: z.string().min(1).max(32) }).strict();
+export type ApprovePeerConnectionRequest = z.infer<typeof approvePeerConnectionRequestSchema>;
+/** `reason` is a short, fixed code (for example `identity_mismatch` for a wrong code, `attempt_limit` when it burns). */
+export const peerConnectionErrorSchema = z.object({ error: z.string(), reason: z.string().max(80).optional() });
 
 /** Forward-only link the installer created from an approved introduction. Never carries codes, keys or routes. */
 export const peerInstallationSchema = z.object({

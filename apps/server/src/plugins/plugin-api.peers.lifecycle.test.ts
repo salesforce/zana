@@ -14,6 +14,7 @@ import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { createPluginApi, type PluginHandle } from './plugin-api.js';
 import { InvitationError, PeerInvitations, type InvitationTransport, type PeerInvitationsOptions } from '../services/peers/peer-invitation.js';
 import type { PeerLinkView } from '../services/peers/peer-links.js';
+import { PeerConnectionRegistry } from '../services/peers/peer-connections.js';
 import { NOTES_PER_PLUGIN_MAX, PluginLinkNotes } from '../services/peers/plugin-link-notes.js';
 
 const roots: string[] = [], servers: ProductServer[] = [], connections: EnrolledHostConnection[] = [], handles: PluginHandle[] = [];
@@ -223,6 +224,23 @@ it('refuses ambiguous manual proposals and existing bindings to a different loca
     remoteInstanceId: peerId, pluginId: 'test-plugin', targetHostId: ab.hostId, scope, epoch: 1 });
   await expect(handle.api.sdk.peers.enable(peerId, { scope })).rejects.toThrow('ambiguous');
   expect(await a.server.ctx.peerPairs.grant(grant.pairId)).not.toBeNull();
+}, 40_000);
+
+it('product wiring gates connection hosts on an approved use and leaves execution enrollments ungated', async () => {
+  const { a, ab, handle, peerId } = await pair();
+  const db = a.server.ctx.db, authority = a.server.ctx.peerAuthority;
+  const link = upsertHost(db, { id: randomUUID(), name: 'Zana peer link: Peer (sync only)', hostKeyHash: 'd'.repeat(64), enrollmentCapability: 'peer.forward', isPrimary: false });
+  const input = { pluginId: 'test-plugin', remoteInstanceId: peerId, targetHostId: link.id, scope };
+  await expect(authority.ensureProposal(input)).rejects.toThrow('use_not_approved');
+  addHostLinkUse(db, link.id, { pluginId: 'other-plugin', scope, label: 'Other' });
+  await expect(authority.ensureProposal(input)).rejects.toThrow('use_not_approved');
+  addHostLinkUse(db, link.id, { pluginId: 'test-plugin', scope, label: 'Test' });
+  // Past the use gate: the forward-only host has no live enrollment, so the proof step refuses instead.
+  await expect(authority.ensureProposal(input)).rejects.toThrow('mutual enrollment unavailable');
+  removeHostLinkUse(db, link.id, 'test-plugin');
+  await expect(authority.ensureProposal(input)).rejects.toThrow('use_not_approved');
+  await expect(handle.api.sdk.peers.enable(peerId, { scope })).resolves.toMatchObject({ id: peerId });
+  expect((await authority.proposals('test-plugin', peerId, scope))[0]).toMatchObject({ targetHostId: ab.hostId });
 }, 40_000);
 
 it('rejects malformed lifecycle input, unavailable runtimes and pre-cancelled requests before authority work', async () => {
@@ -772,3 +790,109 @@ it('setPeerLinkNote reports unavailable without a notes store or invitation link
   const withoutLinks = inviteApi(scratch(), 'sync-plugin', { peerLinkNotes: new PluginLinkNotes() });
   await expect(withoutLinks.setPeerLinkNote!(mine.peerInstanceId, { scope: INV_SCOPE, note: null })).rejects.toThrow('unavailable');
 });
+
+function connectionsWorld(over: { uses?: Record<string, unknown> } = {}) {
+  const mine = link({ peerName: 'Laptop' });
+  const other = link({ pluginId: 'other-plugin', peerName: 'Desk', state: 'reconnecting' });
+  const bare = link({ pluginId: undefined, scope: undefined, peerName: undefined });
+  const pending = link({ phase: 'pending' });
+  const all = [mine, other, bare, pending];
+  const registry = new PeerConnectionRegistry();
+  const release = vi.fn(async () => true);
+  const ctx = { peerConnections: registry, peerLinks: { links: vi.fn(async (peer?: string) => all.filter(item => !peer || item.peerInstanceId === peer)), rotate: vi.fn(), release },
+    ...over.uses };
+  const handle = createPluginApi('sync-plugin', join(scratch(), 'plugins', 'sync-plugin'), { productContext: { productInstanceId: randomUUID(), ...ctx } as never });
+  handles.push(handle);
+  return { mine, other, bare, pending, registry, release, ctx, connections: handle.api.sdk.peers.connections! };
+}
+
+it('connections.list returns every linked computer with only the whitelisted fields', async () => {
+  const w = connectionsWorld();
+  const rows = await w.connections.list();
+  expect(rows).toHaveLength(3);
+  expect(rows).toContainEqual({ computerId: w.mine.peerInstanceId, hostname: 'Laptop', state: 'connected', usedByThisPlugin: true });
+  expect(rows).toContainEqual({ computerId: w.other.peerInstanceId, hostname: 'Desk', state: 'reconnecting', usedByThisPlugin: false });
+  expect(rows).toContainEqual({ computerId: w.bare.peerInstanceId, hostname: 'Computer', state: 'connected', usedByThisPlugin: false });
+  for (const row of rows) expect(Object.keys(row).sort()).toEqual(['computerId', 'hostname', 'state', 'usedByThisPlugin']);
+  expect(JSON.stringify(rows)).not.toContain('other-plugin');
+});
+
+it('connections.list marks a use granted through the use seam', async () => {
+  const has = vi.fn(async (_plugin: string, computer: string) => computer === 'x');
+  const w = connectionsWorld({ uses: { peerConnectionUses: { has, request: vi.fn(), stop: vi.fn() } } });
+  const rows = await w.connections.list();
+  expect(rows.find(row => row.computerId === w.bare.peerInstanceId)?.usedByThisPlugin).toBe(false);
+  expect(has).toHaveBeenCalledWith('sync-plugin', w.bare.peerInstanceId);
+});
+
+it('connections.requestUse refuses unknown computers and a missing approval layer, and relays the seam decision', async () => {
+  const w = connectionsWorld();
+  await expect(w.connections.requestUse(randomUUID())).rejects.toThrow('not connected');
+  await expect(w.connections.requestUse('bad id!')).rejects.toThrow('not connected');
+  await expect(w.connections.requestUse(w.bare.peerInstanceId)).rejects.toThrow('not available yet');
+  const request = vi.fn(async () => 'pending' as const);
+  const v = connectionsWorld({ uses: { peerConnectionUses: { has: vi.fn(async () => false), request, stop: vi.fn() } } });
+  expect(await v.connections.requestUse(v.bare.peerInstanceId)).toEqual({ status: 'pending' });
+  expect(request).toHaveBeenCalledWith('sync-plugin', v.bare.peerInstanceId, expect.any(AbortSignal));
+});
+
+it('connections.stopUsing releases only this plugin\'s uses and never removes the link', async () => {
+  const stop = vi.fn(async () => undefined);
+  const w = connectionsWorld({ uses: { peerConnectionUses: { has: vi.fn(async () => false), request: vi.fn(), stop } } });
+  w.registry.setStatus('sync-plugin', w.mine.peerInstanceId, 'busy');
+  await w.connections.stopUsing(w.mine.peerInstanceId);
+  expect(w.release).toHaveBeenCalledWith(w.mine.peerInstanceId, 'sync-plugin', INV_SCOPE);
+  expect(w.release).toHaveBeenCalledTimes(1);
+  expect(stop).toHaveBeenCalledWith('sync-plugin', w.mine.peerInstanceId);
+  expect(w.registry.statusOf('sync-plugin', w.mine.peerInstanceId)).toBeUndefined();
+  expect((w.ctx.peerLinks as { remove?: unknown }).remove).toBeUndefined();
+  await expect(w.connections.stopUsing(randomUUID())).rejects.toThrow('not connected');
+});
+
+it('connections.onChange delivers the plugin\'s list and is released on dispose; onConnectionRemoving is single and released', async () => {
+  const w = connectionsWorld();
+  const seen = vi.fn();
+  w.connections.onChange(seen);
+  w.registry.notifyChanged();
+  await vi.waitFor(() => expect(seen).toHaveBeenCalledTimes(1));
+  expect(seen.mock.calls[0]![0]).toHaveLength(3);
+  const handler = vi.fn(async () => undefined);
+  const off = w.connections.onConnectionRemoving(handler);
+  expect(() => w.connections.onConnectionRemoving(vi.fn())).toThrow('only one');
+  await w.registry.runRemoving(w.mine.peerInstanceId);
+  expect(handler).toHaveBeenCalledWith(w.mine.peerInstanceId);
+  off();
+  await w.registry.runRemoving(w.mine.peerInstanceId);
+  expect(handler).toHaveBeenCalledTimes(1);
+  w.connections.onConnectionRemoving(handler);
+  await handles.at(-1)!.dispose();
+  w.registry.notifyChanged();
+  await w.registry.runRemoving(w.mine.peerInstanceId);
+  expect(seen).toHaveBeenCalledTimes(1);
+  expect(handler).toHaveBeenCalledTimes(1);
+});
+
+it('connections.setStatus validates and stores per plugin', async () => {
+  const w = connectionsWorld();
+  w.connections.setStatus(w.mine.peerInstanceId, 'Syncing');
+  expect(w.registry.statusOf('sync-plugin', w.mine.peerInstanceId)).toBe('Syncing');
+  expect(() => w.connections.setStatus('bad id!', 'x')).toThrow();
+  w.connections.setStatus(w.mine.peerInstanceId, null);
+  expect(w.registry.statusOf('sync-plugin', w.mine.peerInstanceId)).toBeUndefined();
+});
+
+it('records active use only for a peers.call that completed; failed calls do not count', async () => {
+  const { a, handle, peerId } = await pair();
+  await handle.api.sdk.peers.enable(peerId, { scope });
+  const active = a.server.ctx.peerActiveUse!;
+  const rpc = vi.spyOn(a.server.ctx.hostHub, 'callHostOnlineRpc');
+  for (const reply of [{ status: 500, body: '{}' }, { status: 200, body: '{"ok":false}' }, { status: 200, body: 'nope' }]) {
+    rpc.mockResolvedValueOnce(reply as never);
+    await expect(handle.api.sdk.peers.call(peerId, 'echo', {}, { scope })).rejects.toThrow();
+  }
+  expect(active.isActive('test-plugin', peerId)).toBe(false);
+  rpc.mockResolvedValueOnce({ status: 200, body: '{"ok":true,"result":7}' } as never);
+  await expect(handle.api.sdk.peers.call(peerId, 'echo', {}, { scope })).resolves.toBe(7);
+  expect(active.isActive('test-plugin', peerId)).toBe(true);
+  expect(active.isActive('other-plugin', peerId)).toBe(false);
+}, 40_000);

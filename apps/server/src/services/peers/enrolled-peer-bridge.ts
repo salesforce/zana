@@ -86,6 +86,16 @@ export function createEnrolledPeerBridge(options: { instanceId: string; db: ZccD
       const parsed = AcceptedReplySchema.safeParse(await send(hostId, recipientInstanceId, { operation: 'peer.remove', ...input }, signal));
       if (!parsed.success) throw new Error('invalid peer removal reply');
       return parsed.data;
+    },
+    async useRequest(hostId, { recipientInstanceId, ...input }, signal) {
+      const parsed = AcceptedReplySchema.safeParse(await send(hostId, recipientInstanceId, { operation: 'use.request', ...input }, signal));
+      if (!parsed.success) throw new Error('invalid peer use reply');
+      return parsed.data;
+    },
+    async useDecision(hostId, { recipientInstanceId, ...input }, signal) {
+      const parsed = AcceptedReplySchema.safeParse(await send(hostId, recipientInstanceId, { operation: 'use.decision', ...input }, signal));
+      if (!parsed.success) throw new Error('invalid peer use reply');
+      return parsed.data;
     }
   };
 }

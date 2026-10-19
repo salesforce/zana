@@ -7,7 +7,6 @@ import { openSettingsHit } from './links';
 import { getSettingsSearchSourcesVersion, subscribeSettingsSearchSources } from './registry';
 import { ensureSettingsSearchProviders } from './runtime';
 import { useSettingsSnapshot } from './snapshot';
-import { hiddenSettingsSections, usePeersSettingsVisibility } from '../peers-visibility.js';
 import type { SettingsSearchHit, SettingsValueSnapshot } from './types';
 
 /** Rows the ⌘P "All" scope shows for Settings; the rest sit behind the overflow link. */
@@ -72,8 +71,6 @@ export function useSettingsPaletteItems({
   navigate: (path: string) => void;
 }): PaletteItem[] {
   const snapshot = useSettingsSnapshot(projectId, active);
-  const peers = usePeersSettingsVisibility();
-  const hiddenSections = hiddenSettingsSections(peers.visible);
   const setAnchor = useUi((s) => s.setSettingsAnchor);
   const sourcesVersion = useSyncExternalStore(subscribeSettingsSearchSources, getSettingsSearchSourcesVersion);
   const navigateRef = useRef(navigate);
@@ -85,9 +82,9 @@ export function useSettingsPaletteItems({
   }, [active]);
   return useMemo(
     () => (active
-      ? settingsPaletteItems(query, snapshot, { limit, hiddenSections, projectId, setAnchor, navigate: (path) => navigateRef.current(path) })
+      ? settingsPaletteItems(query, snapshot, { limit, projectId, setAnchor, navigate: (path) => navigateRef.current(path) })
       : []),
     // sourcesVersion: plugin settings landing does not change the snapshot, but must re-rank.
-    [active, query, snapshot, projectId, limit, hiddenSections, setAnchor, sourcesVersion]
+    [active, query, snapshot, projectId, limit, setAnchor, sourcesVersion]
   );
 }

@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PeerLink, PeerLinkState } from '@zana-ai/zcc-server-contract';
-import { Section } from '@/components/settings/FormFields';
-import { peerLinks } from '../../lib/product-client.js';
+import type { PeerConnection, PeerLink, PeerLinkHookFailure, PeerLinkState, RemovePeerLinkResult } from '@zana-ai/zcc-server-contract';
+import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
+import { peerConnections, peerLinks, product, type PeerLeftover } from '../../lib/product-client.js';
 import { SearchTarget } from './MachineCard.js';
+import { subscribePeerJoin, takePendingPeerJoin } from '../../lib/peers-join-link.js';
+import { AddComputer } from './peers/AddComputer.js';
+import { JoinComputer } from './peers/JoinComputer.js';
+import { PeerDialog } from './peers/PeerDialog.js';
+import { ActiveUseConfirm, HookFailureDialog, RemovePluginsConfirm } from './peers/RemovalDialogs.js';
+import { LeftoverAccess, StuckStateActions, forceRemoveText, type StuckAction } from './peers/StuckState.js';
 import './peers-settings.css';
+
+const TERMINAL_CONNECTION_STATES = new Set<PeerConnection['state']>(['ready', 'denied', 'cancelled', 'expired', 'failed']);
+const CANCELLABLE_CONNECTION_STATES = new Set<PeerConnection['state']>(['open', 'redeeming', 'reserved']);
+const CONNECTION_POLL_MS = 2000;
+
 
 const STATE_LABELS: Record<PeerLinkState, string> = {
   'pre-consent': 'Awaiting approval',
@@ -13,6 +24,42 @@ const STATE_LABELS: Record<PeerLinkState, string> = {
   failed: 'Failed',
   unclaimed: 'Unclaimed'
 };
+
+type ActiveEntry = { pluginId: string; label: string };
+type Flow =
+  | { kind: 'link'; hostId: string; step: 'active'; active: ActiveEntry[] }
+  | { kind: 'link'; hostId: string; step: 'confirm' }
+  | { kind: 'link'; hostId: string; step: 'force' }
+  | { kind: 'link'; hostId: string; step: 'failed'; failures: PeerLinkHookFailure[] }
+  | { kind: 'use'; key: string };
+
+type Group = { id: string; name: string; links: PeerLink[] };
+
+/** Group links by computer; two computers sharing a name get a short id suffix. */
+function groupLinks(links: PeerLink[]): Group[] {
+  const byId = new Map<string, PeerLink[]>();
+  for (const link of links) {
+    const id = link.peerInstanceId ?? link.hostId;
+    byId.set(id, [...(byId.get(id) ?? []), link]);
+  }
+  const nameCount = new Map<string, number>();
+  for (const items of byId.values()) nameCount.set(items[0]!.peerName, (nameCount.get(items[0]!.peerName) ?? 0) + 1);
+  return [...byId].map(([id, items]) => {
+    const name = items[0]!.peerName;
+    return { id, name: (nameCount.get(name) ?? 0) > 1 ? `${name} (${id.slice(0, 8)})` : name, links: items };
+  });
+}
+
+function LinkStatuses({ link }: { link: PeerLink }) {
+  const stateLabel = link.state === 'linked' ? null : STATE_LABELS[link.state] ?? link.state;
+  return (
+    <div className="peers-link-statuses">
+      {stateLabel && <span className="peers-state" data-state={link.state} role="status">{stateLabel}</span>}
+      {link.paused ? <span className="peers-state" data-state="paused" role="status">Paused</span>
+        : link.connected && <span className="peers-state" data-state="connected" role="status">Connected</span>}
+    </div>
+  );
+}
 
 type Pending = { kind: 'use'; hostId: string; pluginId: string; scope: string } | { kind: 'link'; hostId: string };
 
@@ -25,6 +72,12 @@ function sinceText(since: number): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
 }
 
+function removeText(link: PeerLink): string {
+  const names = [...new Set(link.uses.map((use) => use.label))];
+  const using = names.length ? ` Plugins using it: ${names.join(', ')}.` : '';
+  return `Delete this connection for all plugins and remove this machine's access?${using}`;
+}
+
 /**
  * Generic Peers hub. Lists every plugin link and the uses that justify it. The view
  * never names a plugin: labels come from the server's registry, and removal is an
@@ -33,9 +86,33 @@ function sinceText(since: number): string {
 export function PeersSettingsView() {
   const [links, setLinks] = useState<PeerLink[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [flow, setFlow] = useState<Flow | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const disposed = useRef(false);
+  const [connections, setConnections] = useState<PeerConnection[]>([]);
+  const [leftovers, setLeftovers] = useState<PeerLeftover[]>([]);
+  const [panel, setPanel] = useState<'add' | 'join' | null>(null);
+  const [joinPrefill, setJoinPrefill] = useState<{ token: string; nonce: number } | null>(null);
+  const [plugins, setPlugins] = useState<PluginAppEntry[] | null>(null);
+
+  const loadConnections = useCallback(async () => {
+    try {
+      const body = await peerConnections.list();
+      if (!disposed.current) setConnections(Array.isArray(body?.connections) ? body.connections : []);
+    } catch {
+      // Polling is best effort; the next tick retries.
+    }
+  }, []);
+
+  // Best effort: a failed fetch hides the section rather than raising an error.
+  const loadLeftovers = useCallback(async () => {
+    try {
+      const body = await peerLinks.leftovers();
+      if (!disposed.current) setLeftovers(Array.isArray(body?.leftovers) ? body.leftovers : []);
+    } catch {
+      if (!disposed.current) setLeftovers([]);
+    }
+  }, []);
 
   const load = useCallback(async (keepError = false) => {
     try {
@@ -49,15 +126,59 @@ export function PeersSettingsView() {
   useEffect(() => {
     disposed.current = false;
     void load();
-    return () => { disposed.current = true; };
-  }, [load]);
+    void loadConnections();
+    void loadLeftovers();
+    product.pluginApps.list().then((next) => {
+      if (!disposed.current) setPlugins(next);
+    }).catch(() => {
+      if (!disposed.current) setPlugins([]);
+    });
+    const offPlugins = product.pluginApps.onChanged((next) => {
+      if (!disposed.current) setPlugins(next);
+    });
+    return () => { disposed.current = true; offPlugins(); };
+  }, [load, loadConnections, loadLeftovers]);
 
-  const run = async (key: string, action: () => Promise<unknown>) => {
-    if (busy) return;
+  // A `peers/join` deep link only opens Accept invitation with the token filled in; the user confirms it.
+  useEffect(() => {
+    const open = (token: string) => { setJoinPrefill((prev) => ({ token, nonce: (prev?.nonce ?? 0) + 1 })); setPanel('join'); };
+    const waiting = takePendingPeerJoin();
+    if (waiting) open(waiting);
+    return subscribePeerJoin(open);
+  }, []);
+
+  const hasActiveConnection = connections.some((connection) => !TERMINAL_CONNECTION_STATES.has(connection.state));
+  useEffect(() => {
+    if (!hasActiveConnection) return undefined;
+    const timer = setInterval(() => { void loadConnections(); }, CONNECTION_POLL_MS);
+    return () => clearInterval(timer);
+  }, [hasActiveConnection, loadConnections]);
+
+  // A connection reaching a new state (consented, ready, ...) creates or advances a link; reload the link list so it shows.
+  const connectionStates = connections.map((connection) => `${connection.invitationId}:${connection.state}`).join(',');
+  const seenStates = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = seenStates.current;
+    seenStates.current = connectionStates;
+    if (previous !== null && previous !== connectionStates) void load(true);
+  }, [connectionStates, load]);
+
+  const groups = links ? groupLinks(links) : [];
+  const hasPeerPlugin = plugins?.some((plugin) => plugin.enabled && plugin.peers) ?? false;
+  const refreshAll = useCallback(() => { void loadConnections(); void load(true); }, [loadConnections, load]);
+  const cancelConnection = (invitationId: string) => run(`cancel:${invitationId}`, async () => {
+    await peerConnections.cancel(invitationId);
+    await loadConnections();
+  });
+  const inProgress = connections.filter((connection) => !TERMINAL_CONNECTION_STATES.has(connection.state));
+
+  const run = async (key: string, action: () => Promise<unknown>): Promise<unknown> => {
+    if (busy) return undefined;
     setBusy(key);
-    setConfirming(null);
+    setFlow(null);
+    let result: unknown;
     try {
-      await action();
+      result = await action();
       setError(null);
     } catch (failure) {
       if (!disposed.current) setError(errorText(failure));
@@ -65,95 +186,184 @@ export function PeersSettingsView() {
       if (!disposed.current) setBusy(null);
       await load(true);
     }
+    return result;
+  };
+
+  // Activity is advisory: a failed lookup must never block Stop/Remove.
+  const fetchActive = async (hostId: string): Promise<ActiveEntry[]> => {
+    try {
+      const body = await peerLinks.activity(hostId);
+      return Array.isArray(body?.active) ? body.active : [];
+    } catch {
+      return [];
+    }
+  };
+  const startRemove = async (link: PeerLink) => {
+    const active = await fetchActive(link.hostId);
+    if (disposed.current) return;
+    setFlow(active.length ? { kind: 'link', hostId: link.hostId, step: 'active', active } : { kind: 'link', hostId: link.hostId, step: 'confirm' });
+  };
+  const startStopUse = async (hostId: string, pluginId: string, scope: string, key: string) => {
+    const active = await fetchActive(hostId);
+    if (disposed.current) return;
+    if (active.some((entry) => entry.pluginId === pluginId)) setFlow({ kind: 'use', key });
+    else await removeUse({ kind: 'use', hostId, pluginId, scope });
   };
 
   const removeUse = (target: Extract<Pending, { kind: 'use' }>) =>
     run(`use:${target.hostId}:${target.pluginId}:${target.scope}`, () => peerLinks.removeUse(target.hostId, target.pluginId, target.scope));
-  const removeLink = (hostId: string) => run(`link:${hostId}`, () => peerLinks.removeLink(hostId));
-  const disconnect = (hostId: string) => run(`pause:${hostId}`, () => peerLinks.disconnect(hostId));
-  const reconnect = (hostId: string) => run(`resume:${hostId}`, () => peerLinks.reconnect(hostId));
+  const removeLink = async (hostId: string, force = false) => {
+    const result = (await run(`link:${hostId}`, () => (force ? peerLinks.removeLink(hostId, { force: true }) : peerLinks.removeLink(hostId)))) as RemovePeerLinkResult | undefined;
+    if (result && result.ok === false && !disposed.current) setFlow({ kind: 'link', hostId, step: 'failed', failures: result.hookFailures });
+    await loadLeftovers();
+  };
+  const forgetLeftover = async (computerId: string) => {
+    await run(`forget:${computerId}`, () => peerLinks.forgetLeftover(computerId));
+    await loadLeftovers();
+  };
+  const stuckAction = (link: PeerLink, action: StuckAction) => {
+    if (action === 'reconnect') return repair(link.hostId);
+    if (action === 'retry') return link.state === 'linked' ? repair(link.hostId) : run(`retry:${link.hostId}`, async () => undefined);
+    if (action === 'remove-anyway') { setFlow({ kind: 'link', hostId: link.hostId, step: 'force' }); return undefined; }
+    return undefined;
+  };
+  const pause = (hostId: string) => run(`pause:${hostId}`, () => peerLinks.disconnect(hostId));
+  const resume = (hostId: string) => run(`resume:${hostId}`, () => peerLinks.reconnect(hostId));
+  const repair = (hostId: string) => run(`repair:${hostId}`, () => peerLinks.repair(hostId));
 
   return (
-    <Section
-      anchorId="peers"
-      searchId="peers.links"
-      title="Peers"
-      help="Links to other Zana installs. Each link exists only because a plugin uses it, and these links cannot run work on this machine."
-    >
+    <div id="settings-anchor-peers" data-settings-target="peers.links" className="peers-page">
+      <div className="peers-actions peers-page-actions">
+        <button type="button" className="btn primary" onClick={() => setPanel(panel === 'add' ? null : 'add')}>Add computer</button>
+        <button type="button" className="btn" onClick={() => setPanel(panel === 'join' ? null : 'join')}>Accept invitation</button>
+      </div>
+      {panel === 'add' && <PeerDialog title="Add a computer"><AddComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
+      {panel === 'join' && <PeerDialog title="Accept invitation"><JoinComputer key={joinPrefill?.nonce ?? 0} initialToken={joinPrefill?.token} connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
+      {inProgress.length > 0 && (
+        <ul className="peers-list" aria-label="Connections in progress">
+          {inProgress.map((connection) => (
+            <li key={connection.invitationId} className="peers-link" data-testid="peer-connection">
+              <div className="peers-link-header">
+                <h4 className="peers-link-name">{connection.peer?.name ?? (connection.role === 'inviter' ? 'Waiting for a computer to join' : 'Joining a computer')}</h4>
+                <span className="peers-state" data-state={connection.state === 'failed' ? 'failed' : 'paused'} role="status">{connection.state}</span>
+                {CANCELLABLE_CONNECTION_STATES.has(connection.state) && (
+                  <button type="button" className="btn peers-btn-remove" disabled={busy !== null} onClick={() => void cancelConnection(connection.invitationId)}>Cancel</button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
       {error && <p className="peers-error" role="alert">{error}</p>}
       {links === null && !error && <p className="peers-loading" role="status">Loading links…</p>}
       {links !== null && links.length === 0 && (
-        <SearchTarget searchId="peers.empty" block><p className="peers-empty">No peer links yet. They appear here when a plugin connects this install to another one.</p></SearchTarget>
+        <SearchTarget searchId="peers.empty" block><p className="peers-empty">{plugins !== null && !hasPeerPlugin
+          ? 'No installed plugin uses peers yet. You can add a computer now; a plugin can request to use the connection after it is installed and enabled.'
+          : 'No connections yet. Add a computer here, then let a plugin request to use the connection when needed.'}</p></SearchTarget>
       )}
       {links !== null && links.length > 0 && (
         <SearchTarget searchId="peers.link-list" block>
           <ul className="peers-list" aria-label="Peer links">
-            {links.map((link) => (
-              <li key={link.hostId} className="peers-link" data-testid="peer-link">
-                <div className="peers-link-header">
-                  <h4 className="peers-link-name">{link.peerName}</h4>
-                  <div className="peers-link-statuses">
-                    <span className="peers-state" data-state={link.state} role="status">{STATE_LABELS[link.state] ?? link.state}</span>
-                    {link.paused ? <span className="peers-state" data-state="paused" role="status">Paused</span>
-                      : link.connected && <span className="peers-state" data-state="connected" role="status">Connected</span>}
-                  </div>
-                  <div className="peers-link-actions">
-                    {confirming === link.hostId ? (
-                      <>
-                        <span className="peers-confirm-text">Delete this link for all plugins and remove this machine&apos;s access?</span>
-                        <button type="button" className="btn danger" disabled={busy !== null} onClick={() => void removeLink(link.hostId)}>Confirm remove</button>
-                        <button type="button" className="btn" onClick={() => setConfirming(null)}>Keep link</button>
-                      </>
-                    ) : (
-                      <>
-                        {link.state === 'linked' && (link.paused || !link.connected ? (
-                          <button type="button" className="btn peers-btn-secondary" disabled={busy !== null} onClick={() => void reconnect(link.hostId)}>Reconnect</button>
-                        ) : (
-                          <button type="button" className="btn peers-btn-secondary" disabled={busy !== null} onClick={() => void disconnect(link.hostId)}>Disconnect</button>
-                        ))}
-                        <button type="button" className="btn peers-btn-remove" disabled={busy !== null} onClick={() => setConfirming(link.hostId)}>Remove link</button>
-                      </>
+            {groups.map((group) => {
+              const primary = group.links[0]!;
+              const many = group.links.length > 1;
+              return (
+                <li key={group.id} className="peers-link peers-computer" data-testid="peer-computer">
+                  <div className="peers-link-header">
+                    <h4 className="peers-link-name">{group.name}</h4>
+                    <LinkStatuses link={primary} />
+                    {!many && !flow && (
+                      <div className="peers-link-actions">
+                        {primary.state === 'linked' && primary.paused && (
+                          <button type="button" className="btn peers-btn-secondary" disabled={busy !== null} onClick={() => void resume(primary.hostId)}>Resume</button>
+                        )}
+                        {primary.state === 'linked' && !primary.paused && (
+                          <button type="button" className="btn peers-btn-secondary" disabled={busy !== null} onClick={() => void pause(primary.hostId)}>Pause</button>
+                        )}
+                        <button type="button" className="btn peers-btn-remove" disabled={busy !== null} aria-label="Remove link" onClick={() => void startRemove(primary)}>Remove...</button>
+                      </div>
                     )}
                   </div>
-                </div>
-                {link.reason && <p className="peers-reason">{link.reason}</p>}
-                {link.uses.length === 0 ? (
-                  <p className="peers-empty">No plugin uses this link.</p>
-                ) : (
-                  <ul className="peers-uses" aria-label="Plugin uses">
-                    {link.uses.map((use) => {
-                      const key = `use:${link.hostId}:${use.pluginId}:${use.scope}`;
+                  {group.links.some((link) => link.uses.length > 0) && <h5 className="peers-used-by">Used by</h5>}
+                  {!group.links.some((link) => link.uses.length > 0) && <p className="peers-empty">No plugin uses this computer.</p>}
+                  <ul className="peers-list" aria-label="Computer links">
+                    {group.links.map((link) => {
+                      const dialog = flow && flow.kind === 'link' && flow.hostId === link.hostId ? flow : null;
                       return (
-                        <li key={key} className="peers-use" data-testid="peer-link-use">
-                          <span className="peers-use-label">{use.label}</span>
-                          {use.note && (
-                            <span className="peers-state" data-state={use.note.state === 'attention' ? 'attention' : 'ok'} data-testid="peer-use-note" role="status" title={use.note.detail}>
-                              {use.note.label}
-                            </span>
-                          )}
-                          <span className="peers-use-meta" title={use.scope}>{use.scope} · since {sinceText(use.since)}</span>
-                          {use.note?.detail && <span className="peers-note-detail">{use.note.detail}</span>}
-                          {link.uses.length > 1 && (
-                            <button
-                              type="button"
-                              className="btn"
-                              disabled={busy !== null}
-                              aria-label={`Stop syncing ${use.label}`}
-                              onClick={() => void removeUse({ kind: 'use', hostId: link.hostId, pluginId: use.pluginId, scope: use.scope })}
-                            >
-                              Stop syncing
-                            </button>
+                        <li key={link.hostId} className="peers-link-entry" data-testid="peer-link">
+                          <div className={many ? 'peers-link-header' : 'peers-link-header peers-link-header-empty'}>
+                            {many && <LinkStatuses link={link} />}
+                            {many && !dialog && (
+                              <div className="peers-link-actions">
+                                {link.state === 'linked' && link.paused && (
+                                  <button type="button" className="btn peers-btn-secondary" disabled={busy !== null} onClick={() => void resume(link.hostId)}>Resume</button>
+                                )}
+                                {link.state === 'linked' && !link.paused && (
+                                  <button type="button" className="btn peers-btn-secondary" disabled={busy !== null} onClick={() => void pause(link.hostId)}>Pause</button>
+                                )}
+                                <button type="button" className="btn peers-btn-remove" disabled={busy !== null} onClick={() => void startRemove(link)}>Remove link</button>
+                              </div>
+                            )}
+                          </div>
+                          {!dialog && <StuckStateActions link={link} busy={busy !== null} onAction={(action) => void stuckAction(link, action)} />}
+                          {link.uses.length > 0 && (
+                            <ul className="peers-uses" aria-label="Plugin uses">
+                              {link.uses.map((use) => {
+                                const key = `use:${link.hostId}:${use.pluginId}:${use.scope}`;
+                                const useDialog = flow && flow.kind === 'use' && flow.key === key;
+                                return (
+                                  <li key={key} className="peers-use" data-testid="peer-link-use">
+                                    <span className="peers-use-label">{use.label}</span>
+                                    {use.note && (
+                                      <span className="peers-state" data-state={use.note.state === 'attention' ? 'attention' : 'ok'} data-testid="peer-use-note" role="status" title={use.note.detail}>
+                                        {use.note.label}
+                                      </span>
+                                    )}
+                                    <span className="peers-use-meta" title={use.scope}>{use.scope} · since {sinceText(use.since)}</span>
+                                    {use.note?.detail && <span className="peers-note-detail">{use.note.detail}</span>}
+                                    {useDialog ? (
+                                      <ActiveUseConfirm
+                                        active={[{ label: use.label }]}
+                                        host={link.peerName}
+                                        busy={busy !== null}
+                                        onStop={() => void removeUse({ kind: 'use', hostId: link.hostId, pluginId: use.pluginId, scope: use.scope })}
+                                        onCancel={() => setFlow(null)}
+                                      />
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="btn"
+                                        disabled={busy !== null}
+                                        aria-label={`Stop syncing ${use.label}`}
+                                        onClick={() => void startStopUse(link.hostId, use.pluginId, use.scope, key)}
+                                      >
+                                        Stop syncing
+                                      </button>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
                           )}
                         </li>
                       );
                     })}
                   </ul>
-                )}
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         </SearchTarget>
       )}
-    </Section>
+      <LeftoverAccess leftovers={leftovers} busy={busy !== null} onForget={(id) => void forgetLeftover(id)} />
+      {flow?.kind === 'link' && (() => {
+        const link = links?.find((item) => item.hostId === flow.hostId);
+        if (!link) return null;
+        if (flow.step === 'active') return <PeerDialog title={`Sync is running with ${link.peerName}`}><ActiveUseConfirm active={flow.active} host={link.peerName} busy={busy !== null} onStop={() => setFlow({ kind: 'link', hostId: link.hostId, step: 'confirm' })} onCancel={() => setFlow(null)} /></PeerDialog>;
+        if (flow.step === 'force') return <PeerDialog title={`Remove ${link.peerName}?`}><RemovePluginsConfirm text={forceRemoveText(link)} busy={busy !== null} onConfirm={() => void removeLink(link.hostId, true)} onCancel={() => setFlow(null)} /></PeerDialog>;
+        if (flow.step === 'failed') return <PeerDialog title="Plugin cleanup did not finish"><HookFailureDialog failures={flow.failures} busy={busy !== null} onRetry={() => void removeLink(link.hostId)} onRemoveAnyway={() => void removeLink(link.hostId, true)} onCancel={() => setFlow(null)} /></PeerDialog>;
+        return <PeerDialog title={`Remove ${link.peerName}?`}><RemovePluginsConfirm text={removeText(link)} busy={busy !== null} onConfirm={() => void removeLink(link.hostId)} onCancel={() => setFlow(null)} /></PeerDialog>;
+      })()}
+    </div>
   );
 }

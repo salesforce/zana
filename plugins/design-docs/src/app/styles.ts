@@ -151,13 +151,16 @@ export const DESIGN_DOCS_STYLES = `
 .dd-peers-guide ol { margin: 6px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
 .dd-peers-heading { margin: 0; font-size: 12.5px; font-weight: 650; }
 .dd-peers-block { display: flex; flex-direction: column; gap: 4px; }
+.dd-peers-connect { align-self: flex-start; }
+.dd-peers-computers { gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); }
+.dd-peers-computers > h4 { margin: 0; color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .dd-peers-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .dd-peers-member { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .dd-peers-member-name { min-width: 0; overflow-wrap: anywhere; }
 .dd-peers-status { display: block; }
 .dd-peers-cards { gap: 10px; }
-.dd-peers-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); min-width: 0; }
-.dd-peers-card + .dd-peers-card { border-top-color: var(--border-strong, var(--border)); }
+.dd-peers-card { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; min-width: 0; }
+.dd-peers-card + .dd-peers-card { border-top: 1px solid var(--border); padding-top: 14px; }
 .dd-peers-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .dd-peers-card-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .dd-peers-badge { --dd-dot: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; font-size: 11px; line-height: 1.4; color: var(--text-muted); cursor: default; user-select: none; }

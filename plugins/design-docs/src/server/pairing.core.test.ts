@@ -137,7 +137,7 @@ it('real SDK cyclic retirements converge after lost seal ACK and restart; failed
     expect(target.group.jobs().some((job) => job.kind === 'retire' && job.state !== 'done')).toBe(false);
     // Link teardown no longer waits on delivery, so a best-effort roster job may outlive the link it needed
     // (the remote has already dropped its side, so core answers 401).
-    expect(target.group.jobs().filter((job) => job.kind === 'roster' && job.state !== 'done' && !/pair unavailable|not (pair )?authorized|peer request failed: 401/.test(job.error ?? ''))
+    expect(target.group.jobs().filter((job) => job.kind === 'roster' && job.state !== 'done' && !/the other computer has not finished setting up|not (pair )?authorized|peer request failed: 401/.test(job.error ?? ''))
       .map((job) => job.error)).toEqual([]);
     expect(target.group.jobs().some((job) => job.kind === 'local-revoke' && /waiting for/.test(job.error ?? ''))).toBe(false);
   }

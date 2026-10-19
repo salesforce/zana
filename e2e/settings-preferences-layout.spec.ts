@@ -89,6 +89,8 @@ test('Peers settings stay hidden until opted in from Experimental, and a deep li
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await expect.poll(() => win.evaluate(() => window.cc.config.get())).toMatchObject({ peersSettingsEnabled: true });
+  // The opt-in alone reveals Peers; no peer-capable plugin is required.
+  await expect(win.getByTestId('settings-nav-peers')).toBeVisible();
 });
 
 test('Inbox keeps readable titles, report markers, and keyboard selection in both themes', async ({ home }, testInfo) => {

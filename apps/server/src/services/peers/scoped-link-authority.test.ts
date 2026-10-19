@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { PairStore } from './pair-store.js';
-import { ScopedLinkAuthority, signMutualEnrollmentProof, type EnrolledPeerBridge, type EnrollmentChannel, type PairProposal } from './scoped-link-authority.js';
+import { PeerUseError, ScopedLinkAuthority, signMutualEnrollmentProof, type EnrolledPeerBridge, type EnrollmentChannel, type PairProposal } from './scoped-link-authority.js';
 import { unsealPeerBytes, sealPeerBytes } from './peer-auth.js';
 
 const roots: string[] = [];
@@ -13,8 +13,9 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const proposal: PairProposal = { pairId: 'pair-1', localInstanceId: 'app-a', remoteInstanceId: 'app-b', pluginId: 'test-plugin',
   scope: 'opaque-scope', targetHostId: 'host-b', epoch: 1, proposalId: 'proposal-1' };
 const reverse: PairProposal = { ...proposal, localInstanceId: 'app-b', remoteInstanceId: 'app-a', targetHostId: 'host-a' };
-async function fixture(gated = false) {
-  const blocked = new Set<string>(); let throwing = false;
+async function fixture(gated = false, uses?: Set<string>) {
+  const blocked = new Set<string>(); let throwing = false, usesThrowing = false;
+  const isUseApproved = uses ? (hostId: string, pluginId: string) => { if (usesThrowing) throw new Error('lookup failed'); return uses.has(`${hostId}/${pluginId}`); } : undefined;
   const isLinkUsable = gated ? (hostId: string) => { if (throwing) throw new Error('lookup failed'); return !blocked.has(hostId); } : undefined;
   const root = await realpath(await mkdtemp(join(tmpdir(), 'scoped-authority-'))); roots.push(root);
   const provider = { getKey: async () => Buffer.alloc(32, 17) };
@@ -47,9 +48,9 @@ async function fixture(gated = false) {
   const options = (instanceId: string, pairs: PairStore) => ({ directory: join(root, `authority-${instanceId}`), instanceId, keyProvider: provider, pairs,
     enrollment: (hostId: string) => channels.get(hostId) ?? null,
     reverseEnrollment: async (remote: string) => channels.get(remote === 'app-a' ? 'host-b' : 'host-a') ?? null,
-    currentReverseEnrollment: (remote: string) => channels.get(remote === 'app-a' ? 'host-b' : 'host-a') ?? null, bridge, isLinkUsable });
+    currentReverseEnrollment: (remote: string) => channels.get(remote === 'app-a' ? 'host-b' : 'host-a') ?? null, bridge, isLinkUsable, isUseApproved });
   a = new ScopedLinkAuthority(options('app-a', pairsA)); b = new ScopedLinkAuthority(options('app-b', pairsB));
-  return { blocked, setThrowing: (v: boolean) => { throwing = v; }, root, get a() { return a; }, b, get pairsA() { return pairsA; }, pairsB, channels, prove, exchange, introduce, bridge,
+  return { blocked, setThrowing: (v: boolean) => { throwing = v; }, setUsesThrowing: (v: boolean) => { usesThrowing = v; }, root, get a() { return a; }, b, get pairsA() { return pairsA; }, pairsB, channels, prove, exchange, introduce, bridge,
     restart: () => { a.dispose(); a = new ScopedLinkAuthority(options('app-a', pairsA)); return a; },
     restartAll: () => { a.dispose(); pairsA.dispose(); pairsA = new PairStore(join(root, 'pairs-a'), pairOptions('app-a')); a = new ScopedLinkAuthority(options('app-a', pairsA)); return a; }, options };
 }
@@ -158,6 +159,8 @@ it('ensureProposal replaces a binding superseded by a re-key, and keeps one whos
   const next = await f.a.ensureProposal(input);
   expect(next.pairId).not.toBe(first.pairId);
   expect(await f.pairsA.grant(first.pairId)).toBeNull();
+  expect(await f.a.activePairIds('app-b')).toEqual([next.pairId]);
+  expect(await f.a.activePairIds('app-other')).toEqual([]);
   expect((await f.a.proposals(proposal.pluginId, 'app-b', proposal.scope, true)).map(p => p.pairId).sort()).toEqual([first.pairId, next.pairId].sort());
   await expect(f.a.activate(next)).resolves.toMatchObject({ status: 'active' });
   // The reverse direction re-keyed instead: same replacement.
@@ -511,4 +514,104 @@ it('forwards the connect offer form through introduction enrollment relays', asy
   introductionEnrollment.mockClear();
   await expect(f.b.requestIntroductionEnrollment('intro-r', {} as never)).rejects.toThrow();
   expect(introductionEnrollment).not.toHaveBeenCalled();
+});
+
+// Use enforcement: `host-b` is app-a's host for app-b, `host-a` is app-b's host for app-a; a use is `${hostId}/${pluginId}`.
+const both = (pluginId = proposal.pluginId) => new Set([`host-b/${pluginId}`, `host-a/${pluginId}`]);
+const sync = (f: Awaited<ReturnType<typeof fixture>>) => f.pairsA.signRequest(proposal.pairId, { pluginId: proposal.pluginId, scope: proposal.scope, method: 'sync', body: Buffer.from('{}') });
+const deliver = async (f: Awaited<ReturnType<typeof fixture>>, envelope: NonNullable<Awaited<ReturnType<typeof sync>>>) =>
+  f.pairsB.authenticateRequest({ envelope, body: Buffer.from('{}'), pluginId: proposal.pluginId, scope: proposal.scope, route: envelope.route, httpMethod: 'POST' });
+
+it('sender refuses a zero-use connection at ensureProposal, propose and activate, before any proof or exchange', async () => {
+  const f = await fixture(false, new Set());
+  const input = { pluginId: proposal.pluginId, remoteInstanceId: 'app-b', targetHostId: 'host-b', scope: proposal.scope };
+  await expect(f.a.ensureProposal(input)).rejects.toBeInstanceOf(PeerUseError);
+  await expect(f.a.propose(proposal)).rejects.toThrow('use_not_approved');
+  await expect(f.a.activate(proposal)).rejects.toMatchObject({ reason: 'use_not_approved' });
+  expect(f.prove).not.toHaveBeenCalled();
+  expect(f.exchange).not.toHaveBeenCalled();
+  expect(await f.pairsA.grant(proposal.pairId)).toBeNull();
+  await expect(f.a.proposals(proposal.pluginId, 'app-b', proposal.scope)).resolves.toEqual([]);
+});
+
+it('a link used by plugin X carries no pair for plugin Y on either side', async () => {
+  const f = await fixture(false, both('plugin-x'));
+  const y = { ...proposal, pluginId: 'plugin-y' };
+  await expect(f.a.ensureProposal({ pluginId: 'plugin-y', remoteInstanceId: 'app-b', targetHostId: 'host-b', scope: proposal.scope })).rejects.toThrow('use_not_approved');
+  await expect(f.a.activate(y)).rejects.toThrow('use_not_approved');
+  await expect(f.b.import({ ...reverse, pluginId: 'plugin-y' }, Buffer.alloc(16))).rejects.toThrow('use_not_approved');
+  await expect(f.b.acceptActivation({ ...reverse, pluginId: 'plugin-y' })).rejects.toThrow('use_not_approved');
+  await expect(f.a.activate({ ...proposal, pluginId: 'plugin-x' })).resolves.toMatchObject({ status: 'active' });
+});
+
+it('receiver refuses import and activation without its own approved use; the sender never activates', async () => {
+  const uses = new Set([`host-b/${proposal.pluginId}`]);
+  const f = await fixture(false, uses);
+  await expect(f.a.activate(proposal)).rejects.toThrow('use_not_approved');
+  expect(f.exchange).toHaveBeenCalledWith('host-b', 'import', proposal, expect.anything(), expect.anything());
+  expect(f.exchange).not.toHaveBeenCalledWith('host-b', 'activate', expect.anything(), undefined, expect.anything());
+  expect(await f.pairsB.grant(proposal.pairId)).toBeNull();
+  expect(await f.pairsA.grant(proposal.pairId)).toBeNull();
+  await expect(f.b.acceptActivation(reverse)).rejects.toThrow('use_not_approved');
+});
+
+it('Stop using on the receiver denies the next request inside the commit guard and revokes both sides', async () => {
+  const uses = both(), f = await fixture(false, uses);
+  await f.a.activate(proposal);
+  const before = (await sync(f))!, lease = await deliver(f, before);
+  expect(lease).not.toBeNull(); lease!.release();
+  const envelope = (await sync(f))!;
+  uses.delete(`host-a/${proposal.pluginId}`);
+  await expect(deliver(f, envelope)).resolves.toBeNull();
+  expect(await f.pairsB.grant(proposal.pairId)).toBeNull();
+  await f.b.recover();
+  expect(f.exchange).toHaveBeenCalledWith('host-a', 'revoke', reverse, undefined, expect.anything());
+  expect(await f.pairsA.grant(proposal.pairId)).toBeNull();
+  // Approving the use again never revives the revoked pair: a new grant needs a new binding.
+  uses.add(`host-a/${proposal.pluginId}`);
+  expect(await f.pairsB.grant(proposal.pairId)).toBeNull();
+  await expect(f.a.activate(proposal)).rejects.toThrow();
+});
+
+it('Stop using on the sender stops signing and revokeUse revokes every scope of that plugin only', async () => {
+  const uses = new Set([...both(), ...both('other-plugin')]), f = await fixture(false, uses);
+  const second = { ...proposal, pairId: 'pair-2', proposalId: 'proposal-2', scope: 'second-scope' };
+  const other = { ...proposal, pairId: 'pair-3', proposalId: 'proposal-3', pluginId: 'other-plugin' };
+  for (const p of [proposal, second, other]) await f.a.activate(p);
+  uses.delete(`host-b/${proposal.pluginId}`);
+  await expect(sync(f)).resolves.toBeNull();
+  uses.add(`host-b/${proposal.pluginId}`);
+  await expect(f.a.revokeUse(proposal.pluginId, 'app-b')).resolves.toEqual(['pair-1', 'pair-2']);
+  await expect(f.a.revokeUse(proposal.pluginId, 'app-b')).resolves.toEqual([]);
+  expect(await f.pairsA.grant('pair-1')).toBeNull();
+  expect(await f.pairsA.grant('pair-2')).toBeNull();
+  expect(await f.pairsA.grant('pair-3')).toMatchObject({ status: 'active' });
+  await f.a.recover();
+  expect(await f.pairsB.grant('pair-1')).toBeNull();
+  expect(await f.pairsB.grant('pair-2')).toBeNull();
+  expect(await f.pairsB.grant('pair-3')).toMatchObject({ status: 'active' });
+  await expect(f.a.revokeUse(proposal.pluginId, 'bad id')).rejects.toThrow();
+  f.a.dispose();
+  await expect(f.a.revokeUse(proposal.pluginId, 'app-b')).rejects.toThrow('disposed');
+});
+
+it('a rotation mints a fresh pair and never revives the pre-rotation grant, even with the use kept', async () => {
+  const f = await fixture(false, both());
+  const input = { pluginId: proposal.pluginId, remoteInstanceId: 'app-b', targetHostId: 'host-b', scope: proposal.scope };
+  const first = await f.a.ensureProposal(input);
+  await f.a.activate(first);
+  f.channels.get('host-b')!.keyHash = hash('rotated-key-b');
+  const next = await f.a.ensureProposal(input);
+  expect(next.pairId).not.toBe(first.pairId);
+  expect(next.epoch).toBe(1);
+  expect(await f.pairsA.grant(first.pairId)).toBeNull();
+  await expect(f.a.activate(first)).rejects.toThrow();
+});
+
+it('treats a throwing use lookup as not approved', async () => {
+  const f = await fixture(false, both());
+  await f.a.activate(proposal);
+  f.setUsesThrowing(true);
+  await expect(sync(f)).resolves.toBeNull();
+  await expect(f.a.propose({ ...proposal, pairId: 'pair-9', proposalId: 'proposal-9' })).rejects.toThrow('use_not_approved');
 });

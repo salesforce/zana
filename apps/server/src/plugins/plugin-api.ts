@@ -421,7 +421,7 @@ export function createPluginApi(
     return ctx.peerInvitations;
   };
   const publicInvitation = (status: PublicInvitationStatus) => ({
-    invitationId: status.invitationId, role: status.role, scope: status.scope, state: status.state,
+    invitationId: status.invitationId, role: status.role, scope: status.scope ?? '', state: status.state,
     ...(status.reason ? { reason: status.reason } : {}), localFingerprint: status.localFingerprint,
     ...(status.peer ? { peer: { instanceId: status.peer.instanceId, name: status.peer.name, fingerprint: status.peer.fingerprint } } : {}),
     inviterDecision: status.inviterDecision, redeemerDecision: status.redeemerDecision,
@@ -429,7 +429,7 @@ export function createPluginApi(
     ...(status.consentExpiresAt !== undefined ? { consentExpiresAt: status.consentExpiresAt } : {})
   });
   const publicLink = (link: PeerLinkView) => ({
-    pairingId: link.pairingId, peerInstanceId: link.peerInstanceId, scope: link.scope, role: link.role, phase: link.phase, state: link.state,
+    pairingId: link.pairingId, peerInstanceId: link.peerInstanceId, scope: link.scope ?? '', role: link.role, phase: link.phase, state: link.state,
     ...(link.peerName ? { peerName: link.peerName } : {}),
     ...(link.reason ? { reason: link.reason } : {}), ...(link.failure ? { failure: link.failure } : {}),
     ...(link.retryInMs !== undefined ? { retryInMs: link.retryInMs } : {})
@@ -485,6 +485,28 @@ export function createPluginApi(
     if (!ctx.peerLinks) throw new InvitationError('unavailable');
     return (await ctx.peerLinks.links(peerId)).filter(link => link.pluginId === pluginId);
   };
+  /** Every linked computer, one row each; the plugin's own use flag is the only per-plugin field. */
+  const connectionList = async () => {
+    const ctx = peerContext();
+    if (!ctx.peerLinks) throw new InvitationError('unavailable');
+    const byComputer = new Map<string, PeerLinkView[]>();
+    for (const link of await ctx.peerLinks.links()) {
+      if (link.phase !== 'linked') continue;
+      byComputer.set(link.peerInstanceId, [...(byComputer.get(link.peerInstanceId) ?? []), link]);
+    }
+    const rows = [];
+    for (const [computerId, links] of byComputer) {
+      const best = links.find(link => link.state === 'connected') ?? links[0]!;
+      const used = links.some(link => link.pluginId === pluginId) || (await ctx.peerConnectionUses?.has(pluginId, computerId)) === true;
+      rows.push({ computerId, hostname: links.find(link => link.peerName)?.peerName ?? 'Computer', state: best.state, usedByThisPlugin: used });
+    }
+    return rows;
+  };
+  const requireConnection = async (computerId: unknown): Promise<void> => {
+    peerContext();
+    if (typeof computerId !== 'string' || !PEER_ID.test(computerId)) throw new InvitationError('unknown_connection');
+    if (!(await connectionList()).some(row => row.computerId === computerId)) throw new InvitationError('unknown_connection');
+  };
   const peerSignal = (signal?: AbortSignal) => AbortSignal.any([peerLifecycle.signal, AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]);
   const resolvePeerHost = async (peerId: string, signal: AbortSignal, hosts?: HostRow[]) => {
     const ctx = peerContext();
@@ -517,6 +539,7 @@ export function createPluginApi(
   disposeHooks.push(() => kv.dispose());
   // Plugin link notes are in memory and plugin-reported: they die with this plugin generation (stop, reload, uninstall).
   disposeHooks.push(() => options?.productContext?.peerLinkNotes?.clearPlugin(pluginId));
+  disposeHooks.push(() => options?.productContext?.peerConnections?.clearPlugin(pluginId));
   const readSettings = (): Record<string, PluginSettingValue | undefined> =>
     mergeSecretSettings(
       kvDir,
@@ -783,6 +806,65 @@ export function createPluginApi(
         }
       },
       peers: {
+        connections: {
+          list: async (args) => {
+            const signal = peerSignal(args?.signal);
+            signal.throwIfAborted();
+            const list = await connectionList();
+            assertLive();
+            signal.throwIfAborted();
+            return list;
+          },
+          requestUse: async (computerId, args) => {
+            const ctx = peerContext(), signal = peerSignal(args?.signal);
+            await requireConnection(computerId);
+            const uses = ctx.peerConnectionUses;
+            if (!uses) throw new InvitationError('use_unavailable');
+            const status = await uses.request(pluginId, computerId, signal);
+            assertLive();
+            signal.throwIfAborted();
+            ctx.peerConnections?.notifyChanged();
+            return { status };
+          },
+          stopUsing: async (computerId, args) => {
+            const ctx = peerContext(), signal = peerSignal(args?.signal);
+            await requireConnection(computerId);
+            await ctx.peerConnectionUses?.confirmStop?.(pluginId, computerId, signal);
+            // Releases this plugin's scoped uses and any approved use; the link itself is never removed here.
+            for (const link of await ownLinks(computerId)) {
+              if (link.scope !== undefined) await ctx.peerLinks!.release(computerId, pluginId, link.scope);
+              assertLive();
+            }
+            await ctx.peerConnectionUses?.stop(pluginId, computerId);
+            assertLive();
+            signal.throwIfAborted();
+            ctx.peerConnections?.setStatus(pluginId, computerId, null);
+            ctx.peerConnections?.notifyChanged();
+          },
+          onChange: (callback) => {
+            const registry = peerContext().peerConnections;
+            if (typeof callback !== 'function') throw new Error('connection change callback must be a function');
+            if (!registry) return () => undefined;
+            const off = registry.onChange(() => {
+              if (stale) return;
+              void connectionList().then(list => { if (!stale) callback(list); }).catch(() => undefined);
+            });
+            disposeHooks.push(off);
+            return off;
+          },
+          onConnectionRemoving: (handler) => {
+            const registry = peerContext().peerConnections;
+            if (!registry) throw new InvitationError('unavailable');
+            // Stale generations are inert: the wrapper checks liveness so a handler outliving its plugin never runs.
+            const off = registry.onRemoving(pluginId, async (computerId) => { if (!stale) await handler(computerId); });
+            disposeHooks.push(off);
+            return off;
+          },
+          setStatus: (computerId, note) => {
+            const registry = peerContext().peerConnections;
+            if (!registry || !registry.setStatus(pluginId, computerId, note)) throw new InvitationError('invalid_invitation');
+          }
+        },
         localIdentity: async () => ({ id: peerContext().productInstanceId }),
         storageEpoch: async () => {
           const epochs = peerContext().pluginStorageEpochs;
@@ -857,8 +939,8 @@ export function createPluginApi(
             await ctx.peerAuthority.revoke(proposal.pairId);
             assertLive();
           }
-          // Release this plugin scope's binding on the invitation-founded transport link; the link itself is torn down
-          // only when no other plugin or scope still uses it (never another plugin's binding).
+          // Release this plugin scope's use of the invitation-founded transport link. The link itself stays, even with
+          // no uses left; only an explicit owner removal tears it down.
           if (ctx.peerLinks) {
             await ctx.peerLinks.release(peerId, pluginId, args.scope as string);
             assertLive();
@@ -1030,6 +1112,8 @@ export function createPluginApi(
             // Never surface the parser message: it can quote fragments of the peer's body.
             try { response = JSON.parse(result.body) as typeof response; } catch { throw new Error('invalid peer response'); }
             if (!response || typeof response !== 'object' || response.ok !== true) throw new Error('peer request was rejected');
+            // Core-observed active use: only a call that completed counts; every failure above threw first.
+            ctx.peerActiveUse?.recordSuccess(pluginId, peerId);
             return response.result;
           } finally {
             if (cancel) signal.removeEventListener('abort', cancel);

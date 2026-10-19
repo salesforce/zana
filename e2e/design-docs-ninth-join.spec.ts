@@ -5,31 +5,26 @@ import { DesignDocPeerGroup } from '../plugins/design-docs/src/server/peer-group
 import { appendSeat, createRoster } from '../plugins/design-docs/src/server/peer-slots.js';
 import { canonicalJson } from '../plugins/design-docs/src/shared/peer-contract.js';
 import { test, expect, type AppHandle } from './fixtures/app.js';
-import { createPeerApps } from './fixtures/peer-apps.js';
+import { corePeerConfig, createPeerApps } from './fixtures/peer-apps.js';
+import { pairComputers } from './fixtures/core-peer-use.js';
+import { connectedComputer, ddGroup, installDesignDocs, useDesignDocsOnBothSides } from './fixtures/design-docs-core.js';
+import { startPrivateSshd } from './fixtures/sshd.js';
 
-type Status = { members: Array<{ machineId: string }>; setup: { state: string; error: string | null } | null; enrolled: Array<{ id: string; connected: boolean }> };
+type Status = { members: Array<{ machineId: string }>; setup: { state: string; error: string | null } | null };
 
 test('a full 8-seat group refuses a ninth member between two real built apps', async ({ home }) => {
   test.setTimeout(300_000);
+  const sshd = await startPrivateSshd([join(home, 'app-a', '.ssh', 'authorized_keys'), join(home, 'app-b', '.ssh', 'authorized_keys')]);
   const peers = createPeerApps(home);
   const rpc = <T,>(app: AppHandle, method: string, args?: unknown): Promise<T> => app.window.evaluate(
     ({ method, args }) => window.cc.pluginApps.callRpc('design-docs', method, args), { method, args }) as Promise<T>;
   try {
-    const a = await peers.launch('app-a'), b = await peers.launch('app-b');
-    for (const app of [a, b]) {
-      expect(await app.window.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'design-docs' }))).toMatchObject({ ok: true });
-      const trust = app.window.getByRole('button', { name: 'Install with full trust' });
-      if (await trust.isVisible().catch(() => false)) await trust.click();
-      await expect.poll(() => app.window.evaluate(async () =>
-        (await window.cc.pluginApps.list()).find(plugin => plugin.id === 'design-docs')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
-    }
-    await peers.enroll(a, b); await peers.enroll(b, a);
-    const enrolledOf = async (app: AppHandle) => {
-      let id = '';
-      await expect.poll(async () => { id = (await rpc<Status>(app, 'groupStatus')).enrolled.find(peer => peer.connected)?.id ?? ''; return id; }, { timeout: 30_000 }).not.toBe('');
-      return id;
-    };
-    const bId = await enrolledOf(a), aId = await enrolledOf(b);
+    const a = await peers.launch('app-a', { initialConfig: corePeerConfig, env: { ZCC_E2E_PEER_SSH_ENDPOINT: sshd.endpoint() } });
+    const b = await peers.launch('app-b', { initialConfig: corePeerConfig });
+    for (const app of [a, b]) await installDesignDocs(app);
+    // Core owns the connection; Design Docs has not been approved to use it yet.
+    await pairComputers(a, b);
+    const bId = (await connectedComputer(a)).computerId, aId = (await connectedComputer(b)).computerId;
 
     // Fill A's group to the 8-seat limit with governance-valid members (isolated HOME only).
     const db = createSqliteDatabase(join(a.home, '.zcc', 'plugins', 'design-docs', 'data.db'), { fileMustExist: true });
@@ -61,17 +56,17 @@ test('a full 8-seat group refuses a ninth member between two real built apps', a
     } finally { db.close(); }
 
     expect((await rpc<Status>(a, 'groupStatus')).members).toHaveLength(8);
-    // Ninth machine: B is a real mutually enrolled app. Both owners try; the group must stay at eight.
-    const attempt = await rpc<Status>(a, 'enablePeer', { peerId: bId }).then(status => status, error => ({ failure: String(error) }));
-    await rpc(b, 'enablePeer', { peerId: aId }).catch(() => {});
+    // Ninth machine: B is a real core-connected computer. Both owners approve the use; the group must stay at eight.
+    const attempt = await useDesignDocsOnBothSides(a, b).then(() => ({ failure: null }), error => ({ failure: String(error) }));
     await rpc(a, 'retryIntroductions').catch(() => {});
     await new Promise(resolve => setTimeout(resolve, 5000));
-    const after = await rpc<Status>(a, 'groupStatus');
+    const after = await ddGroup(a);
     expect(after.members).toHaveLength(8);
     expect(after.members.some(member => member.machineId === bId)).toBe(false);
-    expect((await rpc<Status>(b, 'groupStatus')).members.some(member => member.machineId === bId)).toBe(false);
-    console.log('[ninth-join] refused:', JSON.stringify('failure' in attempt ? attempt : { setup: attempt.setup }));
+    expect((await ddGroup(b)).members.some(member => member.machineId === bId)).toBe(false);
+    console.log('[ninth-join] refused:', JSON.stringify({ attempt, setup: (await rpc<Status>(a, 'groupStatus')).setup }));
   } finally {
     await peers.dispose();
+    await sshd.dispose();
   }
 });

@@ -10,6 +10,7 @@
 import type { DeepLinkConfig, DeepLinkDelivery } from '@zana-ai/zcc-desktop-contract';
 import type { ZccDeepLinkOpenResult, ZccDeepLinks } from '@zana-ai/zcc-plugin-sdk/app';
 import { appNavigate } from '../lib/app-navigate.js';
+import { routeCoreDeepLink } from '../lib/peers-join-link.js';
 import { useUi } from '../store.js';
 import { hrefForPluginNavPanel, hrefForPluginProjectTab } from './plugin-nav-href.js';
 import { getPluginRegistrationSets, listNavPanels, listProjectTabs, subscribePluginSlots } from './plugin-slots.js';
@@ -185,9 +186,13 @@ export function installDeepLinkBridge(): () => void {
   const off = api.onLink((delivery) => {
     void routeDeepLink(delivery);
   });
+  const offCore = api.onCoreLink?.((delivery) => {
+    void routeCoreDeepLink(delivery);
+  });
   return () => {
     active = false;
     off();
+    offCore?.();
   };
 }
 

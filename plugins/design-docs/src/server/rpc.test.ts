@@ -103,14 +103,11 @@ describe('Design Docs RPC', () => {
     await handlers.retryIntroductions!(undefined); expect(pairing.retry).toHaveBeenCalledOnce();
     await expect(handlers.removePeer!({ replicaId: 'replica' })).rejects.toThrow(/revoke unavailable/);
     expect(() => handlers.removePeer!({ replicaId: 'replica', scope: 'other' })).toThrow(/only replicaId/);
-    expect(() => handlers.revokePeer!({ peerId: 'app', scope: 'other' })).toThrow(/only peerId/);
-    await expect(handlers.revokePeer!({ peerId: 'app' })).resolves.toEqual({ configured: true });
-    expect(pairing.revoke).toHaveBeenCalledExactlyOnceWith('app');
+    expect(handlers.revokePeer).toBeUndefined();
     const unavailable = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never });
     expect(() => unavailable.groupStatus!(undefined)).toThrow(/unavailable/);
     expect(() => unavailable.enablePeer!({ peerId: 'app' })).toThrow(/unavailable/);
     expect(() => unavailable.removePeer!({ replicaId: 'replica' })).toThrow(/unavailable/);
-    expect(() => unavailable.revokePeer!({ peerId: 'app' })).toThrow(/unavailable/);
     await expect(unavailable.retryIntroductions!(undefined)).rejects.toThrow(/unavailable/);
   });
   it('peerStatus marks this computer and linked members connected, and degrades without pairing or on a failed lookup', async () => {
@@ -448,30 +445,23 @@ describe('Design Docs RPC', () => {
     registerRpc({ rpc: { method } } as never, { store, changed: () => {}, sdk: {} as never });
     expect(method.mock.calls.map(([name]) => name)).toContain('askAgent');
     expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining([
-      'publish', 'pin', 'peerStatus', 'groupStatus', 'enablePeer', 'retryIntroductions', 'removePeer', 'revokePeer',
+      'publish', 'pin', 'peerStatus', 'groupStatus', 'enablePeer', 'retryIntroductions', 'removePeer', 'connections', 'useConnection', 'stopUsingConnection',
       'syncNow', 'peerConflicts', 'peerConflictReview', 'peerConflictFile', 'resolvePeerConflict', 'backupDatabase', 'backups'
     ]));
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('setAgentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentHarnesses');
-    expect(method).toHaveBeenCalledTimes(54);
+    expect(method).toHaveBeenCalledTimes(47);
   });
 });
 
-describe('Design Docs invitation RPC handlers', () => {
-  const TOKEN = 'zccinv1.SECRET-TOKEN-VALUE', PROOF = 'owner-proof-SECRET';
+describe('Design Docs connection RPC handlers', () => {
   function invite() {
     const store = new DesignDocStore(createTestDatabase());
     const pairing = {
-      inviteState: vi.fn(async () => ({ available: true, invitations: [], links: [] })),
-      createInvitation: vi.fn(async () => ({ invitationId: 'inv-1', token: TOKEN, expiresAt: 1 })),
-      openInvitation: vi.fn(async () => ({ invitationId: 'inv-1', token: TOKEN, expiresAt: 1 })),
-      redeemInvitation: vi.fn(async () => ({ invitationId: 'inv-2', state: 'redeeming' })),
-      invitationApproval: vi.fn(async () => ({ title: 'Approve' })),
-      decideInvitation: vi.fn(async () => ({ invitationId: 'inv-1', state: 'consented' })),
-      cancelInvitation: vi.fn(async () => undefined),
-      dismissInvitation: vi.fn(async () => undefined),
-      reconnect: vi.fn(async () => [{ pairingId: 'p' }]),
+      connections: vi.fn(async () => [{ computerId: 'app-b', hostname: 'B', state: 'connected', usedByThisPlugin: true, use: 'approved', syncing: false, retiring: false }]),
+      useConnection: vi.fn(async () => ({ status: 'pending' })),
+      stopUsingConnection: vi.fn(async () => ({ configured: false })),
       repair: vi.fn(async () => ({ outcome: 'sync-enabled', detail: null, reason: null })),
       resetPeer: vi.fn(async () => ({ discarded: 2, status: { configured: false } })),
       outOfSync: vi.fn(async () => true),
@@ -485,92 +475,54 @@ describe('Design Docs invitation RPC handlers', () => {
 
   it('every handler fails with a clear message when pairing is unavailable', async () => {
     const handlers = createRpcHandlers({ store: new DesignDocStore(createTestDatabase()), changed: vi.fn(), sdk: {} as never });
-    const calls: Array<[string, unknown]> = [['inviteState', undefined], ['createInvitation', undefined], ['openInvitation', undefined], ['redeemInvitation', { token: TOKEN }],
-      ['invitationApproval', { invitationId: 'i' }], ['decideInvitation', { invitationId: 'i', decision: 'denied' }], ['cancelInvitation', { invitationId: 'i' }], ['dismissInvitation', { invitationId: 'i' }],
-      ['reconnectPeer', { peerId: 'p' }], ['repairPeer', { peerId: 'p' }], ['resetPeerSync', { peerId: 'p' }], ['peersOutOfSync', undefined]];
+    const calls: Array<[string, unknown]> = [['connections', undefined], ['useConnection', { computerId: 'c' }], ['stopUsingConnection', { computerId: 'c' }],
+      ['repairPeer', { peerId: 'p' }], ['resetPeerSync', { peerId: 'p' }], ['peersOutOfSync', undefined]];
     for (const [name, args] of calls) expect(await reject(() => handlers[name]!(args)), name).toBe('database group setup is unavailable');
   });
 
-  it('inviteState, createInvitation and peersOutOfSync delegate; only a boolean reaches the UI', async () => {
+  it('connections and peersOutOfSync delegate; only a boolean reaches the UI', async () => {
     const { handlers, pairing } = invite();
-    await expect(handlers.inviteState!(undefined)).resolves.toMatchObject({ available: true });
-    await expect(handlers.createInvitation!(undefined)).resolves.toEqual({ invitationId: 'inv-1', token: TOKEN, expiresAt: 1 });
-    await expect(handlers.openInvitation!(undefined)).resolves.toEqual({ invitationId: 'inv-1', token: TOKEN, expiresAt: 1 });
+    await expect(handlers.connections!(undefined)).resolves.toEqual([expect.objectContaining({ computerId: 'app-b', syncing: false })]);
     await expect(handlers.peersOutOfSync!(undefined)).resolves.toEqual({ outOfSync: true });
     pairing.outOfSync.mockResolvedValueOnce(false);
     await expect(handlers.peersOutOfSync!({ extra: 1 })).resolves.toEqual({ outOfSync: false });
-    expect(pairing.inviteState).toHaveBeenCalledOnce();
-    expect(pairing.createInvitation).toHaveBeenCalledWith();
+    expect(pairing.connections).toHaveBeenCalledOnce();
   });
 
-  it('redeemInvitation needs only a non-blank token and rejects extra keys without echoing it', async () => {
+  it('useConnection and stopUsingConnection take only a computerId', async () => {
     const { handlers, pairing } = invite();
-    await handlers.redeemInvitation!({ token: TOKEN });
-    expect(pairing.redeemInvitation).toHaveBeenCalledExactlyOnceWith(TOKEN);
-    for (const bad of [undefined, {}, { token: '   ' }, { token: 7 }]) expect(message(() => handlers.redeemInvitation!(bad))).toBe('token is required');
-    const extra = message(() => handlers.redeemInvitation!({ token: TOKEN, scope: 'other' }));
-    expect(extra).toBe('accepts only token');
-    expect(extra).not.toContain(TOKEN);
-    expect(pairing.redeemInvitation).toHaveBeenCalledOnce();
+    await expect(handlers.useConnection!({ computerId: 'app-b' })).resolves.toEqual({ status: 'pending' });
+    await expect(handlers.stopUsingConnection!({ computerId: 'app-b' })).resolves.toEqual({ configured: false });
+    expect(pairing.useConnection).toHaveBeenCalledExactlyOnceWith('app-b');
+    expect(pairing.stopUsingConnection).toHaveBeenCalledExactlyOnceWith('app-b');
+    for (const name of ['useConnection', 'stopUsingConnection'] as const) {
+      expect(await reject(() => handlers[name]!({}))).toBe('computerId is required');
+      expect(await reject(() => handlers[name]!({ computerId: ' ' }))).toBe('computerId is required');
+      expect(await reject(() => handlers[name]!({ computerId: 'x', scope: 'other' }))).toBe('accepts only computerId');
+    }
   });
 
-  it('invitationApproval, cancelInvitation and reconnectPeer take a single identifier', async () => {
+  it('repairPeer and resetPeerSync take a single peer id', async () => {
     const { handlers, pairing } = invite();
-    await expect(handlers.invitationApproval!({ invitationId: 'inv-1' })).resolves.toEqual({ title: 'Approve' });
-    await expect(handlers.cancelInvitation!({ invitationId: 'inv-1' })).resolves.toBeUndefined();
-    await expect(handlers.reconnectPeer!({ peerId: 'app-b' })).resolves.toEqual([{ pairingId: 'p' }]);
-    expect(pairing.invitationApproval).toHaveBeenCalledExactlyOnceWith('inv-1');
-    expect(pairing.cancelInvitation).toHaveBeenCalledExactlyOnceWith('inv-1');
-    expect(pairing.reconnect).toHaveBeenCalledExactlyOnceWith('app-b');
     await expect(handlers.repairPeer!({ peerId: 'app-b' })).resolves.toMatchObject({ outcome: 'sync-enabled' });
     expect(pairing.repair).toHaveBeenCalledExactlyOnceWith('app-b');
     await expect(handlers.resetPeerSync!({ peerId: 'app-b' })).resolves.toEqual({ discarded: 2, status: { configured: false } });
     expect(pairing.resetPeer).toHaveBeenCalledExactlyOnceWith('app-b');
-    for (const [name, key] of [['invitationApproval', 'invitationId'], ['cancelInvitation', 'invitationId'], ['reconnectPeer', 'peerId'], ['repairPeer', 'peerId'], ['resetPeerSync', 'peerId']] as const) {
-      expect(await reject(() => handlers[name]!({}))).toBe(`${key} is required`);
-      expect(await reject(() => handlers[name]!({ [key]: ' ' }))).toBe(`${key} is required`);
-      expect(await reject(() => handlers[name]!({ [key]: 'x', token: TOKEN }))).toBe(`accepts only ${key}`);
+    for (const name of ['repairPeer', 'resetPeerSync'] as const) {
+      expect(await reject(() => handlers[name]!({}))).toBe('peerId is required');
+      expect(await reject(() => handlers[name]!({ peerId: 'x', token: 'y' }))).toBe('accepts only peerId');
     }
   });
 
-  it('decideInvitation validates the decision and forwards the owner proof only when approving', async () => {
+  it('propagates core failures (error codes) unchanged', async () => {
     const { handlers, pairing } = invite();
-    await handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'approved', ownerProof: PROOF });
-    expect(pairing.decideInvitation).toHaveBeenLastCalledWith('inv-1', 'approved', PROOF);
-    await handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'denied', ownerProof: PROOF });
-    expect(pairing.decideInvitation).toHaveBeenLastCalledWith('inv-1', 'denied', undefined);
-    await handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'denied' });
-    expect(pairing.decideInvitation).toHaveBeenLastCalledWith('inv-1', 'denied', undefined);
-    pairing.decideInvitation.mockClear();
-    expect(message(() => handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'maybe', ownerProof: PROOF }))).toBe('decision must be approved or denied');
-    expect(message(() => handlers.decideInvitation!({ invitationId: 'inv-1', ownerProof: PROOF }))).toBe('decision must be approved or denied');
-    expect(message(() => handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'approved' }))).toBe('ownerProof is required');
-    expect(message(() => handlers.decideInvitation!({ invitationId: ' ', decision: 'denied' }))).toBe('invitationId is required');
-    const extra = message(() => handlers.decideInvitation!({ invitationId: 'inv-1', decision: 'approved', ownerProof: PROOF, scope: 'x' }));
-    expect(extra).toBe('accepts only invitationId, decision, ownerProof');
-    expect(extra).not.toContain(PROOF);
-    expect(pairing.decideInvitation).not.toHaveBeenCalled();
-  });
-
-  it('propagates pairing failures unchanged and never writes the token or proof to the log', async () => {
-    const { handlers, pairing } = invite();
-    const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error'), vi.spyOn(console, 'info')].map((spy) => spy.mockImplementation(() => undefined));
-    try {
-      pairing.redeemInvitation.mockRejectedValueOnce(new Error('invalid_invitation'));
-      pairing.decideInvitation.mockRejectedValueOnce(new Error('owner_proof_required'));
-      pairing.reconnect.mockRejectedValueOnce(new Error('Pairing is not ready for that action'));
-      pairing.cancelInvitation.mockRejectedValueOnce(new Error('not_found'));
-      pairing.invitationApproval.mockRejectedValueOnce(new Error('fenced'));
-      pairing.outOfSync.mockRejectedValueOnce(new Error('peer down'));
-      expect(await reject(() => handlers.redeemInvitation!({ token: TOKEN }))).toBe('invalid_invitation');
-      expect(await reject(() => handlers.decideInvitation!({ invitationId: 'i', decision: 'approved', ownerProof: PROOF }))).toBe('owner_proof_required');
-      expect(await reject(() => handlers.reconnectPeer!({ peerId: 'p' }))).toBe('Pairing is not ready for that action');
-      expect(await reject(() => handlers.cancelInvitation!({ invitationId: 'i' }))).toBe('not_found');
-      expect(await reject(() => handlers.invitationApproval!({ invitationId: 'i' }))).toBe('fenced');
-      expect(await reject(() => handlers.peersOutOfSync!(undefined))).toBe('peer down');
-      await handlers.createInvitation!(undefined);
-      for (const spy of logs) expect(spy).not.toHaveBeenCalled();
-    } finally { for (const spy of logs) spy.mockRestore(); }
+    const denied = Object.assign(new Error('unknown_connection'), { code: 'unknown_connection' });
+    pairing.useConnection.mockRejectedValueOnce(denied);
+    pairing.stopUsingConnection.mockRejectedValueOnce(new Error('fenced'));
+    pairing.outOfSync.mockRejectedValueOnce(new Error('peer down'));
+    await expect(handlers.useConnection!({ computerId: 'c' })).rejects.toBe(denied);
+    expect(await reject(() => handlers.stopUsingConnection!({ computerId: 'c' }))).toBe('fenced');
+    expect(await reject(() => handlers.peersOutOfSync!(undefined))).toBe('peer down');
   });
 
   it('syncNow tells peers to re-check afterwards without failing or awaiting the sync', async () => {

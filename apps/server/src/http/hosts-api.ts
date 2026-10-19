@@ -6,6 +6,7 @@ import {
   hostProviderCliInstallRequestSchema,
   hostBootstrapRequestSchema,
   peerIntroductionDecisionRequestSchema,
+  removePeerLinkQuerySchema,
   removePeerLinkUseQuerySchema,
   hostSshIdentityRequestSchema,
   hostPathsExistRequestSchema,
@@ -23,7 +24,7 @@ import {
 import { readJsonBody, sendJson, beginNdjson, rejectMobilePeerManagement } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
 import { listPublicHosts, parseHostUpdate, toPublicHost } from '../services/hosts/host-public.js';
-import { listPeerLinks, pausePeerLink, removePeerLink, removePeerLinkUse, resumePeerLink, type PeerLinkRemoval } from '../services/hosts/peer-link-view.js';
+import { forgetLeftover, listPeerLeftovers, listPeerLinks, pausePeerLink, peerLinkActivity, removePeerLink, removePeerLinkUse, repairPeerLink, resumePeerLink, type PeerLinkRemoval } from '../services/hosts/peer-link-view.js';
 import { relaunchLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 import { HostUnavailableError } from './host-hub.js';
 import { bootstrapHostBySsh, bootstrapHostForProject, parseSshIdentity, reconcileRemoteProjectBindings, repairHost, type HostBootstrapEvent } from '../services/hosts/host-bootstrap.js';
@@ -88,6 +89,17 @@ export async function handleHostsApi(
       sendJson(response, 200, listPeerLinks(ctx));
       return true;
     }
+    if (path === '/api/v1/peer-links/leftover' && method === 'GET') {
+      sendJson(response, 200, listPeerLeftovers(ctx));
+      return true;
+    }
+    const forgetParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/leftover/:computerId/forget') : null;
+    if (forgetParams) {
+      const result = await forgetLeftover(ctx, forgetParams.computerId!);
+      if (result.status === 'ok') sendJson(response, 200, { ok: true as const });
+      else sendJson(response, 404, { error: 'leftover not found' });
+      return true;
+    }
     const pauseParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/:hostId/disconnect') : null;
     const resumeParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/:hostId/reconnect') : null;
     if (pauseParams || resumeParams) {
@@ -97,6 +109,14 @@ export async function handleHostsApi(
       else sendJson(response, 503, { error: 'Could not change this link right now. Try again.' });
       return true;
     }
+    const repairParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/:hostId/repair') : null;
+    if (repairParams) {
+      const result = await repairPeerLink(ctx, repairParams.hostId!);
+      if (result.status === 'ok') sendJson(response, 200, { ok: true as const });
+      else if (result.status === 'not-found') sendJson(response, 404, { error: 'peer link not found' });
+      else sendJson(response, 503, { error: 'Could not repair this link right now. Try again.' });
+      return true;
+    }
     const useParams = method === 'DELETE' ? routeParams(path, '/api/v1/peer-links/:hostId/uses/:pluginId') : null;
     if (useParams) {
       const query = removePeerLinkUseQuerySchema.safeParse({ scope: requestUrl.searchParams.get('scope') ?? undefined });
@@ -104,9 +124,21 @@ export async function handleHostsApi(
       sendPeerLinkRemoval(response, await removePeerLinkUse(ctx, useParams.hostId!, useParams.pluginId!, query.data.scope));
       return true;
     }
+    const activityParams = method === 'GET' ? routeParams(path, '/api/v1/peer-links/:hostId/activity') : null;
+    if (activityParams) {
+      const activity = peerLinkActivity(ctx, activityParams.hostId!);
+      if (activity) sendJson(response, 200, activity);
+      else sendJson(response, 404, { error: 'peer link not found' });
+      return true;
+    }
     const linkParams = method === 'DELETE' ? routeParams(path, '/api/v1/peer-links/:hostId') : null;
     if (linkParams) {
-      sendPeerLinkRemoval(response, await removePeerLink(ctx, linkParams.hostId!));
+      const query = removePeerLinkQuerySchema.safeParse({ force: requestUrl.searchParams.get('force') ?? undefined });
+      if (!query.success) { sendJson(response, 400, { error: 'invalid peer link removal' }); return true; }
+      const result = await removePeerLink(ctx, linkParams.hostId!, { force: query.data.force === '1' });
+      // A failed plugin handler stops before anything is removed: the owner picks Retry or Remove anyway.
+      if (result.status === 'hooks-failed') sendJson(response, 200, { ok: false as const, hookFailures: result.failures });
+      else sendPeerLinkRemoval(response, result);
       return true;
     }
     sendJson(response, 404, { error: 'not found' });

@@ -5,8 +5,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { RevealContext, useSettingsTargetReveal } from '@/lib/settings-search/reveal';
 import { buildSettingsSnapshot } from '@/lib/settings-search/snapshot';
 import { SETTINGS_SECTIONS } from './settings-navigation.js';
-import { usePeersSettingsVisibility } from '../../lib/peers-visibility.js';
-import { getSettingsTabRoutePath } from '../../lib/route-paths.js';
 export { SETTINGS_GROUPS, SETTINGS_SECTIONS, SETTINGS_SUBSECTIONS } from './settings-navigation.js';
 export type { SettingsGroup } from './settings-navigation.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
@@ -97,7 +95,6 @@ export function SettingsView() {
   // Resolve the pending hash target (entry id or section anchor) once its page
   // has rendered: reveal container, scroll, flash, focus (see reveal.ts).
   const snapshot = useMemo(() => buildSettingsSnapshot({ config, project: null, machines: null }), [config]);
-  const peers = usePeersSettingsVisibility();
   const navigate = useNavigate();
   const location = useLocation();
   const routeRef = useRef({ navigate, location });
@@ -119,16 +116,7 @@ export function SettingsView() {
     clearHash: clearSettingsHash
   });
 
-  // Deep link / remembered route to Peers while it is hidden: fall back to Preferences
-  // once both gates have resolved (never before, or a valid link would be lost).
-  const peersHiddenRoute = tab === 'peers' && !peers.visible;
-  useEffect(() => {
-    if (peersHiddenRoute && peers.ready) {
-      void routeRef.current.navigate(getSettingsTabRoutePath('global'), { replace: true });
-    }
-  }, [peersHiddenRoute, peers.ready]);
-
-  if (!config || peersHiddenRoute) {
+  if (!config) {
     return (
       <div className="settings-panel settings-panel--preferences" aria-label="Settings" aria-busy="true">
         <div className="settings-inner">

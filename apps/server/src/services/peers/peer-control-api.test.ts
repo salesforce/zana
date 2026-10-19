@@ -173,6 +173,32 @@ it('peer.relink and peer.remove reach peerLinks without a live sender session; o
   expect(f.peerLinks.acceptRotate).not.toHaveBeenCalled();
 });
 
+it('use.request and use.decision reach the use layer with the sender and the host minted for it (our inbound host), and need a live session', async () => {
+  const f = await linkFixture('peer.forward');
+  const peerUseRequests = { acceptRequest: vi.fn(async () => ({ accepted: true })), acceptDecision: vi.fn(async () => ({ accepted: false })) };
+  Object.assign(f.ctx, { peerUseRequests });
+  const request = { pairingId: 'pair-1', pluginId: 'plugin-x' };
+  await expect(f.send({ operation: 'use.request', ...request })).resolves.toMatchObject({ status: 200, reply: { accepted: true } });
+  expect(peerUseRequests.acceptRequest).toHaveBeenCalledExactlyOnceWith(f.senderId, f.host.id, request);
+  await expect(f.send({ operation: 'use.decision', ...request, approved: true })).resolves.toMatchObject({ status: 200, reply: { accepted: false } });
+  expect(peerUseRequests.acceptDecision).toHaveBeenCalledExactlyOnceWith(f.senderId, f.host.id, { ...request, approved: true });
+  Object.assign(f.ctx, { hostHub: { getSession: vi.fn(() => null) } });
+  expect((await f.send({ operation: 'use.request', ...request })).status).toBe(403);
+});
+
+it.each(['execution', 'missing-uses'])('use.* messages are refused (%s) and malformed ones never dispatch', async mode => {
+  const f = await linkFixture(mode === 'execution' ? 'execution' : 'peer.forward');
+  const peerUseRequests = { acceptRequest: vi.fn(), acceptDecision: vi.fn() };
+  if (mode === 'execution') Object.assign(f.ctx, { peerUseRequests });
+  expect((await f.send({ operation: 'use.request', pairingId: 'pair-1', pluginId: 'plugin-x' })).status).toBe(403);
+  if (mode === 'execution') return void expect(peerUseRequests.acceptRequest).not.toHaveBeenCalled();
+  Object.assign(f.ctx, { peerUseRequests });
+  expect((await f.send({ operation: 'use.decision', pairingId: 'pair-1', pluginId: 'plugin-x', approved: 'yes' })).status).toBe(403);
+  expect((await f.send({ operation: 'use.request', pairingId: 'pair-1', pluginId: 'Not A Token!' })).status).toBe(403);
+  expect(peerUseRequests.acceptRequest).not.toHaveBeenCalled();
+  expect(peerUseRequests.acceptDecision).not.toHaveBeenCalled();
+});
+
 it('peer.relink is refused when hostId is not the sender host', async () => {
   const f = await linkFixture('peer.forward');
   expect((await f.send({ operation: 'peer.relink', hostId: randomUUID() })).status).toBe(403);

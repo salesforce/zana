@@ -24,17 +24,3 @@ it.each([false, true])('hydrates recovery and service-tier switches and persists
     expect(update).toHaveBeenCalledWith({ [key]: !enabled });
   }
 });
-
-it.each([false, true])('hydrates the Peers switch and persists the toggle from %s', enabled => {
-  const update = vi.fn();
-  render(<ExperimentalView config={{ ...base, peersSettingsEnabled: enabled }} onConfigDraft={vi.fn()} onUpdate={update} />);
-  const toggle = screen.getByRole('switch', { name: 'Show Peers in Settings' });
-  expect(toggle.getAttribute('aria-checked')).toBe(String(enabled));
-  fireEvent.click(toggle);
-  expect(update).toHaveBeenCalledWith({ peersSettingsEnabled: !enabled });
-});
-
-it('defaults the Peers switch to off when unset', () => {
-  render(<ExperimentalView config={base} onConfigDraft={vi.fn()} onUpdate={vi.fn()} />);
-  expect(screen.getByRole('switch', { name: 'Show Peers in Settings' }).getAttribute('aria-checked')).toBe('false');
-});

@@ -249,6 +249,7 @@ import {
 import { createPluginViewHost } from './window/plugin-view-host.js';
 import { registerPluginViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
+import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
 import { createPluginApprovalHandler } from './ipc/plugin-approvals.js';
 import { listPluginAppsFromProductServer } from './ipc/plugin-apps-loopback.js';
 import { createLoopbackPluginCommands } from './control/plugin-commands-loopback.js';
@@ -3418,6 +3419,8 @@ const pluginViews = createPluginViewHost({
 let loudSinceFocus = 0;
 /** Disposer for the once-registered `inboxStore.onAppended` loud-tier subscription; released in before-quit (Rule 3). */
 let offLoudInboxAppended: (() => void) | null = null;
+/** Stops the once-started core stream of plugin-use approvals owed by this computer's owner; released in before-quit (Rule 3). */
+let stopPeerUsePrompts: (() => void) | null = null;
 
 function clearLoudBadge() {
   loudSinceFocus = 0;
@@ -7156,6 +7159,16 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
 
 function registerIpc() {
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
+  // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
+  /* v8 ignore next -- started at built-Electron boot; startPeerUsePrompts is unit-tested */
+  stopPeerUsePrompts ??= startPeerUsePrompts({
+    secret: ensureProductServerCredential,
+    serverUrl: () => productServerUrl(),
+    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
+    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options)),
+    pickParent: () => BrowserWindow.getFocusedWindow() ?? mainWindow(),
+    log: (message, error) => logMainError(message, error ?? 'peer use')
+  }).stop;
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
   safeHandleFromWindow(IPC.pluginApprovals.request, createPluginApprovalHandler({
@@ -7486,7 +7499,7 @@ const deepLinks = createDeepLinkHost({
     showMainWindow();
     const win = unscopedWindow();
     if (!win || win.isDestroyed() || win.webContents.isDestroyed()) throw new Error('main window is unavailable');
-    win.webContents.send(IPC.deepLinks.onLink, delivery);
+    win.webContents.send('pluginId' in delivery ? IPC.deepLinks.onLink : IPC.deepLinks.onCoreLink, delivery);
   }
 });
 const deepLinkRegistration = registerDeepLinkScheme({
@@ -9255,6 +9268,8 @@ app.on('before-quit', (event) => {
   // Release the loud-tier inbox subscription (Rule 3).
   offLoudInboxAppended?.();
   offLoudInboxAppended = null;
+  stopPeerUsePrompts?.();
+  stopPeerUsePrompts = null;
   // Local tmux owns persistent inner processes. Let process teardown close our
   // client naturally; explicitly killing it emits a false terminal exit that
   // marks Team lifecycle state dead before next launch can reattach.

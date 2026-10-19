@@ -3,11 +3,10 @@
  * two-pane view (grouped section rail + content) that replaces the doc list
  * and doc while open.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { ArrowLeft, Bot, Settings as SettingsIcon, Users, type LucideIcon } from 'lucide-react';
 import type { PeerStatus } from './api.js';
 import { usePersistentState } from './hooks.js';
-import type { JoinRequest } from './invite-format.js';
 import { PeerSettings } from './PeerSettings.js';
 
 export type SettingsTab = 'peers' | 'agent';
@@ -30,7 +29,7 @@ const NAV_GROUPS: Array<{ label: string; sections: SettingsSection[] }> = [
         label: 'Peers',
         icon: Users,
         title: 'Peers',
-        description: 'Pair computers so every design doc stays in sync across them.'
+        description: 'Choose which connected computers Design Docs syncs with.'
       }
     ]
   },
@@ -88,12 +87,9 @@ export function SettingsToggle({ open, onToggle }: { open: boolean; onToggle(): 
  * a grouped section rail on the left and the selected section in a centered
  * reading column. Collapses the rail to a row of tabs at narrow widths.
  */
-export function SettingsView({ peer, onBack, headerActions, joinRequest, onJoinRequestHandled }: { peer: PeerStatus | null; onBack(): void; headerActions?: ReactNode; joinRequest?: JoinRequest | null; onJoinRequestHandled?(): void }) {
+export function SettingsView({ peer, onBack, headerActions }: { peer: PeerStatus | null; onBack(): void; headerActions?: ReactNode }) {
   const [stored, setSection] = usePersistentState<SettingsTab>('settings-tab', 'peers');
-  // A received invitation link shows Peers without overwriting the remembered tab.
-  const [forcePeers, setForcePeers] = useState(!!joinRequest);
-  useEffect(() => { if (joinRequest) setForcePeers(true); }, [joinRequest]);
-  const section = SECTIONS.find((entry) => entry.id === (forcePeers ? 'peers' : stored)) ?? SECTIONS[0]!;
+  const section = SECTIONS.find((entry) => entry.id === stored) ?? SECTIONS[0]!;
   return (
     <div className="dd-peers-view dd-settings-view">
       <header className="dd-settings-header">
@@ -121,7 +117,7 @@ export function SettingsView({ peer, onBack, headerActions, joinRequest, onJoinR
                     id={`dd-settings-nav-${entry.id}`}
                     className={`dd-nav-row${on ? ' active' : ''}`}
                     aria-current={on ? 'page' : undefined}
-                    onClick={() => { setForcePeers(false); setSection(entry.id); }}
+                    onClick={() => setSection(entry.id)}
                   >
                     <Icon size={15} aria-hidden />
                     <span>{entry.label}</span>
@@ -137,7 +133,7 @@ export function SettingsView({ peer, onBack, headerActions, joinRequest, onJoinR
               <h3>{section.title}</h3>
               <p className="dd-muted">{section.description}</p>
             </div>
-            {section.id === 'peers' ? <PeerSettings joinRequest={joinRequest} onJoinRequestHandled={onJoinRequestHandled} />
+            {section.id === 'peers' ? <PeerSettings />
               : <AgentSettings />}
           </div>
         </div>

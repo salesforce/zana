@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useZccContext, useZccDeepLinks, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
   Bot,
@@ -29,7 +29,6 @@ import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
 import { SyncButton, usePeerSync, type PeerSync } from './PeerSettings.js';
 import { SettingsToggle, SettingsView } from './Settings.js';
-import type { JoinRequest } from './invite-format.js';
 import { markSeen, parseSeen, unseenAgentEdit } from './seen.js';
 import { ContextMenu, contextMenuPoint, Dialog, IconButton, Spinner, StatusPill, TimeAgo } from './ui.js';
 
@@ -613,17 +612,6 @@ export function Workbench({
   const [creating, setCreating] = useState<{ template: string | null } | null>(null);
   const [listOpen, setListOpen] = usePersistentState<boolean>('list-open', true);
   const [view, setView] = useState<'docs' | 'settings'>('docs');
-  const [joinRequest, setJoinRequest] = useState<JoinRequest | null>(null);
-  const deepLinks = useZccDeepLinks();
-  const deepLinksRef = useRef(deepLinks);
-  deepLinksRef.current = deepLinks;
-  // Registered while the nav panel is mounted (the host routes a received link there), so early links are delivered from the host queue.
-  // A link never joins: it opens Settings → Peers with the Join peer field prefilled.
-  useEffect(() => {
-    if (variant !== 'global') return;
-    let seq = 0;
-    return deepLinksRef.current.on('join', (payload) => { setJoinRequest({ seq: ++seq, payload }); setView('settings'); });
-  }, [variant]);
   const peerSync = usePeerSync();
   const projectList = projects.data ?? [];
 
@@ -632,11 +620,8 @@ export function Workbench({
       <div className="dd-root dd-workbench">
         <SettingsView
           peer={peerSync.peer}
-          joinRequest={joinRequest}
-          onJoinRequestHandled={() => setJoinRequest(null)}
           onBack={() => {
             setView('docs');
-            setJoinRequest(null);
             peerSync.refresh();
           }}
           headerActions={headerActions}

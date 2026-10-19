@@ -67,7 +67,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'remote' },
   { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Unpaired SSH fallback', group: 'remote' },
   { id: 'phone', label: 'Mobile', icon: Smartphone, desc: 'Use Zana from your mobile browser', group: 'remote' },
-  { id: 'peers', label: 'Peers', icon: Link2, desc: 'Plugin links to other installs', group: 'remote' },
+  { id: 'peers', label: 'Peers', icon: Link2, desc: 'Peers are linked computers that can be used by Plugins to communicate between the computers. They are different from Machines which describe Computers where Agents can be run. Connections will not be used until a Plugin is configured to use the Connection.', group: 'remote' },
   { id: 'remote-access', label: 'Remote access', icon: Globe, desc: 'Open this computer from any browser', group: 'remote' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
   { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },

@@ -21,14 +21,13 @@ import { createActorResolver, registerDesignDocTools } from './src/server/tools.
 import { DesignDocSyncStore } from './src/server/sync-store.js';
 import { DesignDocPeerService } from './src/server/peer-service.js';
 import { DesignDocPeerGroup } from './src/server/peer-group.js';
-import { DesignDocPairing, INVITE_UNSUPPORTED_REASON, inviteCapability } from './src/server/pairing.js';
+import { DesignDocPairing } from './src/server/pairing.js';
 import { createStateDigest } from './src/server/state-digest.js';
 import { DesignDocBackups } from './src/server/backup.js';
 
 /** The plugin folder: `server.ts` (path installs) and the built `server.mjs` both sit at its root. */
 const PLUGIN_ROOT = dirname(fileURLToPath(import.meta.url));
 
-export { INVITE_UNSUPPORTED_REASON, inviteCapability };
 
 export default function plugin(zcc: ZccPluginApi): void {
   let syncStore!: DesignDocSyncStore;
@@ -62,7 +61,8 @@ export default function plugin(zcc: ZccPluginApi): void {
     pairing = new DesignDocPairing(group, peers, {
       // Opaque, convergence-stable digest (ids + file content, not per-replica heads); peers compare it without exchanging content.
       stateDigest: createStateDigest(store, syncStore),
-      stateChanged: () => zcc.realtime.publish(PEER_STATE_CHANNEL, {})
+      stateChanged: () => zcc.realtime.publish(PEER_STATE_CHANNEL, {}),
+      connectionsChanged: () => zcc.realtime.publish(PEER_STATE_CHANNEL, {})
     });
     let disposed = false, stopFence = () => {};
     zcc.onDispose(() => { disposed = true; stopFence(); });
@@ -80,8 +80,6 @@ export default function plugin(zcc: ZccPluginApi): void {
   } else {
     zcc.log.warn('design docs peer setup unavailable: host SDK peers are not installed');
   }
-  const invites = inviteCapability(zcc.sdk.peers);
-  if (!invites.available) zcc.log.info(`design docs peer invitations unavailable: ${invites.reason}; existing group sync is unaffected`);
   const kit = createKitReader(join(PLUGIN_ROOT, 'kit'));
   const endpoint = pluginHttpEndpoint(zcc.pluginId);
   const changed = (docId: string) => zcc.realtime.publish(CHANGED_CHANNEL, { docId });

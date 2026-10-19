@@ -666,7 +666,7 @@ export type PluginInvitationDecision = 'pending' | 'approved' | 'denied';
 export type PluginInvitationReason =
   | 'invalid_invitation' | 'own_invitation' | 'wrong_plugin' | 'expired' | 'denied' | 'cancelled'
   | 'already_redeemed' | 'attempt_limit' | 'identity_mismatch' | 'unreachable' | 'not_found' | 'capacity' | 'replay'
-  | 'stale_generation' | 'owner_proof_required' | 'not_ready' | 'fenced' | 'unavailable'
+  | 'stale_generation' | 'owner_proof_required' | 'not_ready' | 'fenced' | 'unavailable' | 'unknown_connection' | 'use_unavailable'
   | 'ssh_remote_login_off' | 'ssh_unreachable' | 'ssh_auth_refused' | 'ssh_forwarding_refused' | 'ssh_host_key_mismatch';
 
 /** Redacted projection of one of this plugin's invitations. Never carries a token, key, locator or credential. */
@@ -711,7 +711,45 @@ export interface PluginPeerLinkNote {
   detail?: string;
 }
 
+/** Opaque id of a connected computer; stable for the life of the connection. */
+export type PeerComputerId = string;
+
+/** One computer connected to this one. Carries nothing about other plugins' uses, keys or addresses. */
+export interface PeerConnection {
+  computerId: PeerComputerId;
+  /** Display label only; two computers can share it. */
+  hostname: string;
+  state: 'connected' | 'reconnecting' | 'disconnected';
+  /** True once the owner approved this plugin's use of the connection. */
+  usedByThisPlugin: boolean;
+}
+
+/**
+ * Core-owned computer connections. A plugin sees every connected computer, asks to use one, and cleans up when one
+ * is being removed. Optional on older hosts. Failures use the fixed `PluginInvitationReason` codes.
+ */
+export interface PluginSdkPeerConnections {
+  /** Every connected computer, including ones no plugin uses yet. */
+  list(args?: { signal?: AbortSignal }): Promise<PeerConnection[]>;
+  /** Ask the owner to let this plugin use the connection. `pending` until both computers' owners have decided. */
+  requestUse(computerId: PeerComputerId, args?: { signal?: AbortSignal }): Promise<{ status: 'pending' | 'approved' | 'denied' }>;
+  /** Stop this plugin's use. A recent successful transfer gets a core-owned Stop anyway confirmation. The connection always stays; only the owner removes it in Settings. */
+  stopUsing(computerId: PeerComputerId, args?: { signal?: AbortSignal }): Promise<void>;
+  /** Called after any connection changes, with the current list. Returns the unsubscribe; released when the plugin stops. */
+  onChange(callback: (connections: PeerConnection[]) => void): () => void;
+  /**
+   * One handler per plugin. Runs when the owner removes a connection, in parallel with other plugins' handlers, and
+   * is given 5 seconds. A throw or timeout never blocks the removal: the owner is offered Retry or Remove anyway.
+   * Make the handler idempotent. Returns the unsubscribe.
+   */
+  onConnectionRemoving(handler: (computerId: PeerComputerId) => Promise<void>): () => void;
+  /** Short status (at most 200 characters) shown beside this plugin's use. `null` clears. In memory only. */
+  setStatus(computerId: PeerComputerId, note: string | null): void;
+}
+
 export interface PluginSdkPeers {
+  /** Core-owned connections. Absent on older hosts. */
+  connections?: PluginSdkPeerConnections;
   localIdentity(): Promise<{ id: string }>;
   /**
    * This plugin's app-level storage epoch, held by core outside the plugin's data folder so restoring or copying
@@ -725,7 +763,7 @@ export interface PluginSdkPeers {
   features(): Promise<{ lifecycle: boolean; introductions: boolean; installer: boolean; /** Absent on older hosts. */ invitations?: boolean }>;
   /** Core verifies mutual execution enrollment. Domain consent remains the plugin's responsibility. */
   enable(peerId: string, args: { scope: string; signal?: AbortSignal }): Promise<PluginPeerGrant>;
-  /** Also tears down the peer's invitation-founded transport link for this plugin and scope. */
+  /** Releases this plugin scope's use of the peer's link. The link itself stays (zero uses is normal); the owner removes it in Settings. */
   revoke(peerId: string, args: { scope: string }): Promise<void>;
   /*
    * Invitations: optional because older hosts lack them (test `typeof peers.createInvitation === 'function'`).

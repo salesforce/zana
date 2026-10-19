@@ -36,6 +36,14 @@ export interface EnrolledPeerBridge {
   peerRelink?(hostId: string, input: { hostId: string; recipientInstanceId: string }, signal: AbortSignal): Promise<RelinkReply>;
   /** Tells a linked peer this app removed the link. Optional: absent means only Connect revocation stops the peer. */
   peerRemove?(hostId: string, input: PeerLinkRefInput & { recipientInstanceId: string }, signal: AbortSignal): Promise<{ accepted: boolean }>;
+  /** A plugin asks the peer to use the connection / this owner's decision on it. Optional: absent means uses are unavailable. */
+  useRequest?(hostId: string, input: { recipientInstanceId: string; pairingId: string; pluginId: string }, signal: AbortSignal): Promise<{ accepted: boolean }>;
+  useDecision?(hostId: string, input: { recipientInstanceId: string; pairingId: string; pluginId: string; approved: boolean; revoke?: true }, signal: AbortSignal): Promise<{ accepted: boolean }>;
+}
+/** A plugin pair over a connection with no approved use for that plugin. Revocation is never gated by it. */
+export class PeerUseError extends Error {
+  readonly reason = 'use_not_approved' as const;
+  constructor() { super('use_not_approved'); this.name = 'PeerUseError'; }
 }
 export interface PeerLinkRefInput { pairingId: string; hostId: string }
 export interface PeerRotateInput { hostId: string; code: string; expiresAt: number }
@@ -92,6 +100,12 @@ export class ScopedLinkAuthority {
      * Absent means every enrolled host is usable (execution enrollments, introduced links).
      */
     isLinkUsable?(hostId: string): boolean;
+    /**
+     * Synchronous approved-use check keyed on the pair's `targetHostId` (the local host row for the peer). A use belongs to
+     * one connection: a new invitation mints new hosts, so it never inherits an earlier connection's uses. False denies
+     * every plugin pair to that host (default deny). Absent means every host carries plugin traffic.
+     */
+    isUseApproved?(hostId: string, pluginId: string): boolean;
   }) {
     this.storage = new PrivatePeerStorage(options.directory, 'authority-v1', options.keyProvider, options.instanceId,
       () => ({ version: 1, instanceId: options.instanceId, records: [], revokedIds: [], jobs: [], received: [] }), value => {
@@ -123,6 +137,14 @@ export class ScopedLinkAuthority {
     try { return this.options.isLinkUsable?.(hostId) ?? true; } catch { return false; }
   }
 
+  private approved(proposal: Pick<PairProposal, 'targetHostId' | 'pluginId'>): boolean {
+    try { return this.options.isUseApproved?.(proposal.targetHostId, proposal.pluginId) ?? true; } catch { return false; }
+  }
+
+  private assertUse(proposal: Pick<PairProposal, 'targetHostId' | 'pluginId'>): void {
+    if (!this.approved(proposal)) throw new PeerUseError();
+  }
+
   /** No pair calls under authority mutex. PairStore runs this outside its own mutex. */
   readonly validateGrant = async (grant: Readonly<PeerPairGrant>): Promise<(() => boolean) | null> => {
     const proposal = proposalForGrant(grant);
@@ -132,7 +154,8 @@ export class ScopedLinkAuthority {
     });
     if (!record) return null;
     await this.options.reverseEnrollment(proposal.remoteInstanceId);
-    const current = () => !this.disposed && !this.fences.has(proposal.pairId) &&
+    // Runs synchronously inside the PairStore mutex at commit, so a stopped use fences the very next request.
+    const current = () => !this.disposed && !this.fences.has(proposal.pairId) && this.approved(proposal) &&
       this.generationsCurrent(proposal, record.channelKeyHash, record.reverseKeyHash, record.reverseHostId);
     return current() ? current : null;
   };
@@ -232,6 +255,13 @@ export class ScopedLinkAuthority {
       r.proposal.pluginId === pluginId && r.proposal.remoteInstanceId === remoteInstanceId && r.proposal.scope === scope).map(r => ({ ...r.proposal })));
   }
 
+  /** Pair ids of every non-revoked grant with a peer, across plugins and scopes (removing the link revokes them all). */
+  async activePairIds(remoteInstanceId: string): Promise<string[]> {
+    if (this.disposed) throw new Error('scoped link authority disposed');
+    return this.storage.transaction(async state => [...new Set(state.records.filter(r => r.status !== 'revoked' &&
+      r.proposal.remoteInstanceId === remoteInstanceId).map(r => r.proposal.pairId))]);
+  }
+
   /** Resolve an app against host-owned candidates using the existing mutual identity proof. */
   async resolveHost(remoteInstanceId: string, hostIds: readonly string[], signal?: AbortSignal): Promise<string | null> {
     id.parse(remoteInstanceId);
@@ -257,9 +287,10 @@ export class ScopedLinkAuthority {
     signal?.throwIfAborted();
     const existing = await this.proposals(input.pluginId, input.remoteInstanceId, input.scope);
     if (existing.length > 1) throw new Error('peer link binding is ambiguous');
+    if (existing[0] && existing[0].targetHostId !== input.targetHostId) throw new Error('peer destination mismatch');
+    this.assertUse(input);
     if (existing.length) {
       const proposal = existing[0]!;
-      if (proposal.targetHostId !== input.targetHostId) throw new Error('peer destination mismatch');
       // A re-key (link rotation) supersedes the binding; revoke it now, as recovery would, instead of failing until then.
       if (await this.superseded(proposal)) await this.revoke(proposal.pairId);
       else {
@@ -281,6 +312,7 @@ export class ScopedLinkAuthority {
       }
       if (new Set([...state.revokedIds, ...state.records.map(r => r.proposal.pairId)]).size >= 256) throw new Error('peer authority capacity exceeded');
       if (!this.generationsCurrent(proposal, auth.keyHash, auth.reverseKeyHash, auth.reverseHostId)) throw new Error('mutual enrollment proof mismatch');
+      this.assertUse(proposal);
       state.records.push({ proposal, channelKeyHash: auth.keyHash, reverseKeyHash: auth.reverseKeyHash, reverseHostId: auth.reverseHostId, status: 'proposed', revokeDelivered: false });
       await save();
       signal?.throwIfAborted();
@@ -305,7 +337,9 @@ export class ScopedLinkAuthority {
     return this.options.pairs.propose(proposal);
   }
 
+  /** Sender `activate` and receiver `import` both land here: no approved use, no recorded proposal. */
   private async record(proposal: PairProposal, signal?: AbortSignal): Promise<void> {
+    this.assertUse(proposal);
     const context = await this.context(proposal, false, signal), auth = this.contexts.get(context)!;
     await this.storage.transaction(async (state, save) => {
       this.assertLive(state, proposal.pairId);
@@ -337,6 +371,7 @@ export class ScopedLinkAuthority {
 
   async acceptActivation(input: PairProposal): Promise<PeerPairGrant> {
     const proposal = bindingSchema.parse(input);
+    this.assertUse(proposal);
     await this.context(proposal);
     await this.storage.transaction(async state => {
       const record = state.records.find(r => r.proposal.pairId === proposal.pairId);
@@ -349,6 +384,7 @@ export class ScopedLinkAuthority {
 
   async activate(input: PairProposal, signal?: AbortSignal): Promise<PeerPairGrant> {
     const proposal = bindingSchema.parse(input);
+    this.assertUse(proposal);
     await this.propose(proposal, signal);
     const sealed = await this.options.pairs.exportCredential(proposal.pairId, await this.context(proposal, false, signal));
     await this.call((bridge, signal) => bridge.exchange(proposal.targetHostId, 'import', proposal, sealed, signal), signal);
@@ -395,6 +431,19 @@ export class ScopedLinkAuthority {
       await save();
     }); } finally { const error = await completion; if (error) throw error; }
     this.fences.delete(pairId);
+  }
+
+  /**
+   * Stop using: revokes every live pair one plugin holds with one peer, all scopes. Local grants fence at once; the peer
+   * drops its side when `recover()` delivers the revocation. Returns the revoked pair ids.
+   */
+  async revokeUse(pluginId: string, remoteInstanceId: string): Promise<string[]> {
+    id.parse(remoteInstanceId);
+    if (this.disposed) throw new Error('scoped link authority disposed');
+    const pairIds = await this.storage.transaction(async state => [...new Set(state.records.filter(r => r.status !== 'revoked' &&
+      r.proposal.pluginId === pluginId && r.proposal.remoteInstanceId === remoteInstanceId).map(r => r.proposal.pairId))]);
+    for (const pairId of pairIds) await this.revoke(pairId);
+    return pairIds;
   }
 
   async acceptRevocation(input: PairProposal): Promise<void> {
@@ -572,6 +621,8 @@ export class ScopedLinkAuthority {
     for (const record of snapshot.records) {
       if (this.disposed) throw new Error('scoped link authority disposed');
       if (record.status === 'revoked') { await this.options.pairs.revoke(record.proposal.pairId); continue; }
+      // A stopped use revokes at authority level too, so the peer is told (below) and drops its side of the pair.
+      if (!this.approved(record.proposal)) { await this.revoke(record.proposal.pairId); continue; }
       const channel = this.options.enrollment(record.proposal.targetHostId), reverse = await this.options.reverseEnrollment(record.proposal.remoteInstanceId);
       if (!channel || channel.keyHash !== record.channelKeyHash || !linkCapable(channel.capability) ||
         !reverse || reverse.hostId !== record.reverseHostId || reverse.keyHash !== record.reverseKeyHash || !linkCapable(reverse.capability)) await this.revoke(record.proposal.pairId);

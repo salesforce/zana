@@ -116,6 +116,13 @@ export async function handlePeerControlApi(req: IncomingMessage, res: ServerResp
       result = input.operation === 'peer.relink'
         ? await ctx.peerLinks.acceptRelink(packet.senderId, packet.senderHostId, controller.signal)
         : await ctx.peerLinks.acceptRemoval(packet.senderId, packet.senderHostId, { pairingId: input.pairingId, hostId: input.hostId });
+    } else if (input.operation === 'use.request' || input.operation === 'use.decision') {
+      // Over the link this app minted for the sender: the sender's own host id (`senderHostId`) is our inbound host.
+      if (!ctx.peerUseRequests || channel.capability !== 'peer.forward') throw new Error('peer use unavailable');
+      result = input.operation === 'use.request'
+        ? await ctx.peerUseRequests.acceptRequest(packet.senderId, packet.senderHostId, { pairingId: input.pairingId, pluginId: input.pluginId })
+        : await ctx.peerUseRequests.acceptDecision(packet.senderId, packet.senderHostId, { pairingId: input.pairingId, pluginId: input.pluginId,
+          approved: input.approved, ...(input.revoke ? { revoke: true as const } : {}) });
     } else {
       const proposal = input.proposal;
       if (proposal.localInstanceId !== packet.senderId || proposal.remoteInstanceId !== ctx.productInstanceId || proposal.targetHostId !== packet.recipientHostId) throw new Error('proposal destination mismatch');

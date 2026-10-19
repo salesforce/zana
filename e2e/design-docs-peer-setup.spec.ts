@@ -49,12 +49,14 @@ test('Design Docs peer setup exposes lifecycle, enrolled peers and refuses fabri
   await expect(nav.getByRole('button', { name: 'Agent', exact: true })).not.toHaveAttribute('aria-current', 'page');
   await expect(window.locator('.dd-list')).toHaveCount(0);
   const peers = view.getByRole('region', { name: 'Database sync peers' });
-  await expect(peers.getByRole('heading', { name: 'Pair another computer' })).toBeVisible();
-  await expect(peers.getByRole('button', { name: 'Add peer', exact: true })).toBeVisible();
-  await expect(peers.getByRole('button', { name: 'Join peer', exact: true })).toBeDisabled();
-  await expect(peers.getByLabel('Paste invitation')).toBeVisible();
-  const actions = await peers.locator('.dd-actions').last().evaluate((row) => getComputedStyle(row).columnGap);
-  expect(actions).toBe('8px');
+  // Core owns connections: this panel only points at them and lists what Design Docs may use.
+  await expect(peers.getByRole('link', { name: 'Add or remove computers in Settings → Peers' })).toHaveAttribute('href', '/settings/peers');
+  await expect(peers.getByRole('heading', { name: 'Pair another computer' })).toHaveCount(0);
+  await expect(peers.getByRole('button', { name: /^(Add peer|Join peer)$/ })).toHaveCount(0);
+  await expect(peers.getByLabel('Paste invitation')).toHaveCount(0);
+  // No OS-protected peer key in this HOME: the connection list fails closed with a visible reason, not an empty list.
+  await expect(peers.getByRole('alert')).toContainText('peer encryption key or local identity unavailable');
+  await expect(peers.getByLabel('Computers')).toHaveCount(0);
   const status = await window.evaluate(() => window.cc.pluginApps.callRpc('design-docs', 'groupStatus'));
   await expect(peers).toContainText('No sync group configured.');
   await expect(peers.getByRole('button', { name: 'Enable Database Sync' })).toHaveCount(0);
@@ -107,12 +109,8 @@ test('Design Docs peer setup exposes lifecycle, enrolled peers and refuses fabri
     expect(retiring.stage).toBe('retiring');
     // The Peers view polls; no manual Refresh.
     await expect(peers).toContainText('Sync group: 3 of 8 computers', { timeout: 20_000 });
-    const member = peers.getByLabel('Computers').getByRole('listitem').filter({ has: window.locator('[title="Computer id e2e-app-b"]') });
-    await expect(member).toContainText('Being removed');
-    await expect(member).toContainText('Waiting for committed frontier; data sync disabled');
-    // A retiring computer offers no Remove; with three computers the roster actions are Leave Group on this computer only.
-    await expect(member.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(0);
-    await expect(member.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0);
+    // Members with no core connection have no card; the roster stays authoritative for the count and for Leave Group.
+    await expect(peers.getByLabel('Computers').getByRole('listitem')).toHaveCount(0);
     await expect(peers.getByRole('button', { name: 'Leave Group', exact: true })).toBeVisible();
     expect(await window.evaluate(() => window.cc.pluginApps.callRpc('design-docs', 'peerStatus')))
       .toMatchObject({ configured: true, members: expect.not.arrayContaining([expect.objectContaining({ replicaId: 'e2e-replica-b' })]) });

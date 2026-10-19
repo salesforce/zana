@@ -313,6 +313,27 @@ it('relays peer.remove as sealed control and only accepts a strict boolean reply
   await expect(f.bridge.peerRemove!(f.host.id, ref, signal)).rejects.toThrow('invalid peer removal reply');
 });
 
+it.each([
+  ['useRequest', 'use.request', { pluginId: 'plugin-x' }],
+  ['useDecision', 'use.decision', { pluginId: 'plugin-x', approved: true }]
+] as const)('relays %s as sealed control carrying ids only and requires a strict boolean reply', async (method, operation, extra) => {
+  const f = await fixture('peer.forward');
+  const ref = { recipientInstanceId: f.channel.remoteInstanceId, pairingId: 'pair-1', ...extra };
+  const reply = (value: unknown) => f.call.mockImplementationOnce(async req => {
+    if (req.command.type !== 'peer.control') throw new Error('unexpected command');
+    expect(openControl(req.command.packet, f.key)).toEqual({ operation, pairingId: 'pair-1', ...extra });
+    return { status: 200, body: JSON.stringify(controlResponse(req.command.packet, value, f.key)) } as never;
+  });
+  const signal = new AbortController().signal;
+  const send = (f.bridge as unknown as Record<string, (h: string, i: unknown, s: AbortSignal) => Promise<unknown>>)[method]!;
+  reply({ accepted: true });
+  await expect(send(f.host.id, ref, signal)).resolves.toEqual({ accepted: true });
+  reply({ accepted: false });
+  await expect(send(f.host.id, ref, signal)).resolves.toEqual({ accepted: false });
+  reply({ accepted: 1 });
+  await expect(send(f.host.id, ref, signal)).rejects.toThrow('invalid peer use reply');
+});
+
 it('relays the connect form of an introduction enrollment and rejects a malformed connect reply without echoing it', async () => {
   const f = await fixture('peer.forward');
   const connect = { code: CONNECT_CODE, accountUrl: 'https://account.example', serverId: randomUUID() };

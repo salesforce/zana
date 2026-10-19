@@ -98,21 +98,3 @@ describe('Experimental CLI Agent remote tools', () => {
     expect(html).not.toContain('ssh -t');
   });
 });
-
-describe('Experimental Peers visibility', () => {
-  it('has its own Peers section with an off-by-default toggle', () => {
-    const html = renderToStaticMarkup(
-      <ExperimentalView config={base} onConfigDraft={vi.fn()} onUpdate={vi.fn()} />
-    );
-    expect(html).toContain('Show Peers in Settings');
-    expect(html).toContain('id="settings-anchor-peers-visibility"');
-    expect(html).toContain('aria-checked="false" aria-label="Show Peers in Settings"');
-  });
-
-  it('reflects an enabled setting', () => {
-    const html = renderToStaticMarkup(
-      <ExperimentalView config={{ ...base, peersSettingsEnabled: true }} onConfigDraft={vi.fn()} onUpdate={vi.fn()} />
-    );
-    expect(html).toContain('aria-checked="true" aria-label="Show Peers in Settings"');
-  });
-});

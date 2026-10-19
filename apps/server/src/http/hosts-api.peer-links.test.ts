@@ -149,16 +149,16 @@ describe('plugin links stay out of execution surfaces', () => {
 });
 
 describe('DELETE peer-link uses', () => {
-  it('removes one scope, then the whole plugin, then the link on the last use', async () => {
+  it('removes one scope, then the whole plugin; the link stays with zero uses', async () => {
     const s = await start();
     const { link } = seed(s);
     const first = await fetch(url(`/peer-links/${link.id}/uses/plug-a?scope=repo-1`), { method: 'DELETE', headers: JSON_HEADERS });
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ ok: true, linkRemoved: false });
     const last = await fetch(url(`/peer-links/${link.id}/uses/plug-b`), { method: 'DELETE', headers: JSON_HEADERS });
-    expect(await last.json()).toEqual({ ok: true, linkRemoved: true });
-    expect(getHost(s.ctx.db, link.id)?.destroyedAt).not.toBeNull();
-    expect(listHosts(s.ctx.db).map(h => h.id)).not.toContain(link.id);
+    expect(await last.json()).toEqual({ ok: true, linkRemoved: false });
+    expect(getHost(s.ctx.db, link.id)?.destroyedAt).toBeFalsy();
+    expect(listHosts(s.ctx.db).map(h => h.id)).toContain(link.id);
   });
 
   it('404s an unknown host, an execution host, an unknown plugin and a wrong scope', async () => {
@@ -210,6 +210,43 @@ describe('DELETE peer-link uses', () => {
     const response = await fetch(url(`/peer-links/${link.id}/uses/plug-a`), { method: 'DELETE', headers: JSON_HEADERS });
     expect(response.status).toBe(503);
     expect(getHost(s.ctx.db, link.id)?.destroyedAt).toBeNull();
+  });
+});
+
+describe('POST peer-link repair', () => {
+  const post = (path: string) => fetch(url(path), { method: 'POST', headers: JSON_HEADERS });
+
+  it('delegates to the owner store repair, distinct from resume', async () => {
+    const s = await start();
+    const { link } = seed(s);
+    const repair = vi.fn(async () => ({ repaired: true as const }));
+    const resume = vi.fn(async () => ({ paused: false as const }));
+    s.ctx.peerLinkDirectory = { describe: () => undefined, repair, resume };
+    const response = await post(`/peer-links/${link.id}/repair`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(repair).toHaveBeenCalledWith(link.id);
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it('404s an unknown host, an execution host and an unclaimed link; 503s on failure', async () => {
+    const s = await start();
+    const { exec, link } = seed(s);
+    s.ctx.peerLinkDirectory = { describe: () => undefined, repair: async () => undefined };
+    for (const path of ['/peer-links/nope/repair', `/peer-links/${exec.id}/repair`, `/peer-links/${link.id}/repair`]) {
+      expect((await post(path)).status).toBe(404);
+    }
+    s.ctx.peerLinkDirectory = undefined;
+    expect((await post(`/peer-links/${link.id}/repair`)).status).toBe(404);
+    s.ctx.peerLinkDirectory = { describe: () => undefined, repair: async () => { throw new Error('boom'); } };
+    expect((await post(`/peer-links/${link.id}/repair`)).status).toBe(503);
+  });
+
+  it('refuses the mobile proxy', async () => {
+    const s = await start();
+    const { link } = seed(s);
+    const response = await fetch(url(`/peer-links/${link.id}/repair`), { method: 'POST', headers: { ...JSON_HEADERS, 'x-zcc-app-surface': 'mobile' } });
+    expect(response.status).toBe(403);
   });
 });
 

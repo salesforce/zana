@@ -133,33 +133,11 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     // Never a roster: the only accepted key is the peer id.
     enablePeer: (raw) => requirePairing(deps).enable(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
 
-    inviteState: () => requirePairing(deps).inviteState(),
+    connections: () => requirePairing(deps).connections(),
 
-    createInvitation: () => requirePairing(deps).createInvitation(),
+    useConnection: (raw) => requirePairing(deps).useConnection(requiredString(onlyKeys(raw, ['computerId']), 'computerId')),
 
-    openInvitation: () => requirePairing(deps).openInvitation(),
-
-    redeemInvitation: (raw) => requirePairing(deps).redeemInvitation(requiredString(onlyKeys(raw, ['token']), 'token')),
-
-    invitationApproval: (raw) => requirePairing(deps).invitationApproval(requiredString(onlyKeys(raw, ['invitationId']), 'invitationId')),
-
-    decideInvitation: (raw) => {
-      const input = onlyKeys(raw, ['invitationId', 'decision', 'ownerProof']);
-      const decision = input.decision;
-      if (decision !== 'approved' && decision !== 'denied') throw new DesignDocError('invalid', 'decision must be approved or denied');
-      const ownerProof = decision === 'approved' ? requiredString(input, 'ownerProof') : undefined;
-      return requirePairing(deps).decideInvitation(requiredString(input, 'invitationId'), decision, ownerProof);
-    },
-
-    cancelInvitation: async (raw) => {
-      await requirePairing(deps).cancelInvitation(requiredString(onlyKeys(raw, ['invitationId']), 'invitationId'));
-    },
-
-    dismissInvitation: async (raw) => {
-      await requirePairing(deps).dismissInvitation(requiredString(onlyKeys(raw, ['invitationId']), 'invitationId'));
-    },
-
-    reconnectPeer: (raw) => requirePairing(deps).reconnect(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+    stopUsingConnection: (raw) => requirePairing(deps).stopUsingConnection(requiredString(onlyKeys(raw, ['computerId']), 'computerId')),
 
     repairPeer: (raw) => requirePairing(deps).repair(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
 
@@ -174,8 +152,6 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     },
 
     removePeer: (raw) => requirePairing(deps).remove(requiredString(onlyKeys(raw, ['replicaId']), 'replicaId')),
-
-    revokePeer: (raw) => requirePairing(deps).revoke(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
 
     syncNow: async () => {
       if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');

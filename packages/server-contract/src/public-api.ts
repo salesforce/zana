@@ -41,6 +41,8 @@ import type {
   EmptyInput,
   PathId,
   PathHostId,
+  PathPeerConnection,
+  PathPeerComputer,
   PathPeerLinkUse,
   PathProjectId,
   PathPreviewAndFilePath,
@@ -61,7 +63,18 @@ import type {
   PeerInstallation,
   PeerInstallationListResponse,
   PeerLinkListResponse,
+  PeerLeftoverListResponse,
+  ForgetPeerLeftoverResponse,
   RemovePeerLinkResponse,
+  RemovePeerLinkResult,
+  PeerLinkActivityResponse,
+  RepairPeerLinkResponse,
+  PeerConnection,
+  PeerConnectionListResponse,
+  PeerRemoteLoginCheckResponse,
+  CreatePeerConnectionResponse,
+  JoinPeerConnectionRequest,
+  ApprovePeerConnectionRequest,
   PeerSshEndpoint,
   PeerSshEndpointListResponse,
   PeerRouteOriginRequest,
@@ -268,6 +281,8 @@ import {
   restartTerminalRequestSchema,
   createProjectRequestSchema,
   createHostJoinCodeRequestSchema,
+  joinPeerConnectionRequestSchema,
+  approvePeerConnectionRequestSchema,
   peerIntroductionDecisionRequestSchema,
   peerSshEndpointSchema,
   peerRouteOriginRequestSchema,
@@ -677,6 +692,65 @@ export const publicApiRoutes = {
       request: noRequest<EmptyInput>(),
       response: jsonResponse<PeerInstallationListResponse>(),
     }),
+    /** Owner-session only: core-owned computer connections (Add / Join / Approve), independent of any plugin. */
+    listPeerConnections: defineRoute({
+      path: "/peer-connections",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerConnectionListResponse>(),
+    }),
+    /** Runs the Remote Login self-test on this computer; `ok:false` carries the fixed reason the directions are keyed on. */
+    checkPeerRemoteLogin: defineRoute({
+      path: "/peer-connections/remote-login",
+      method: "post",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerRemoteLoginCheckResponse>(),
+    }),
+    createPeerConnection: defineRoute({
+      path: "/peer-connections",
+      method: "post",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<CreatePeerConnectionResponse>({ status: 201 }),
+    }),
+    joinPeerConnection: defineRoute({
+      path: "/peer-connections/join",
+      method: "post",
+      request: jsonRequest<EmptyInput, JoinPeerConnectionRequest>(joinPeerConnectionRequestSchema),
+      response: jsonResponse<PeerConnection>({ status: 201 }),
+    }),
+    /** Inviter's owner approves by typing the code the other computer shows. */
+    approvePeerConnection: defineRoute({
+      path: "/peer-connections/:invitationId/approve",
+      method: "post",
+      request: jsonRequest<PathPeerConnection, ApprovePeerConnectionRequest>(approvePeerConnectionRequestSchema),
+      response: jsonResponse<PeerConnection>(),
+    }),
+    denyPeerConnection: defineRoute({
+      path: "/peer-connections/:invitationId/deny",
+      method: "post",
+      request: noRequest<PathPeerConnection>(),
+      response: jsonResponse<PeerConnection>(),
+    }),
+    cancelPeerConnection: defineRoute({
+      path: "/peer-connections/:invitationId",
+      method: "delete",
+      request: noRequest<PathPeerConnection>(),
+      response: jsonResponse<PeerConnection>(),
+    }),
+    /** Computers removed with Remove anyway while a plugin's cleanup had failed. Matched before `/:hostId`. */
+    listPeerLeftovers: defineRoute({
+      path: "/peer-links/leftover",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerLeftoverListResponse>(),
+    }),
+    /** Retry cleanup once, then drop the record whatever the result. 404 when no such record. */
+    forgetPeerLeftover: defineRoute({
+      path: "/peer-links/leftover/:computerId/forget",
+      method: "post",
+      request: noRequest<PathPeerComputer>(),
+      response: jsonResponse<ForgetPeerLeftoverResponse>(),
+    }),
     /** Owner-session only (never the mobile proxy): every plugin link with the uses that justify it. */
     listPeerLinks: defineRoute({
       path: "/peer-links",
@@ -684,19 +758,33 @@ export const publicApiRoutes = {
       request: noRequest<EmptyInput>(),
       response: jsonResponse<PeerLinkListResponse>(),
     }),
-    /** Owner gesture. Optional `?scope=` narrows to one use; removing the last use removes the link. */
+    /** Owner gesture. Optional `?scope=` narrows to one use; the link stays even when no use is left. */
     removePeerLinkUse: defineRoute({
       path: "/peer-links/:hostId/uses/:pluginId",
       method: "delete",
       request: noRequest<PathPeerLinkUse>(),
       response: jsonResponse<RemovePeerLinkResponse>(),
     }),
-    /** Owner gesture: removes the link and every use on it. */
+    /** Owner gesture: re-keys and reopens a dropped or unhealthy link. Distinct from resuming a paused one. */
+    repairPeerLink: defineRoute({
+      path: "/peer-links/:hostId/repair",
+      method: "post",
+      request: noRequest<PathHostId>(),
+      response: jsonResponse<RepairPeerLinkResponse>(),
+    }),
+    /** Plugins that completed a call with the link's computer in the last 10 s; drives the "Stop anyway?" confirm. */
+    peerLinkActivity: defineRoute({
+      path: "/peer-links/:hostId/activity",
+      method: "get",
+      request: noRequest<PathHostId>(),
+      response: jsonResponse<PeerLinkActivityResponse>(),
+    }),
+    /** Owner gesture: removes the link and every use on it. `?force=1` is Remove anyway after a plugin handler failed. */
     removePeerLink: defineRoute({
       path: "/peer-links/:hostId",
       method: "delete",
       request: noRequest<PathHostId>(),
-      response: jsonResponse<RemovePeerLinkResponse>(),
+      response: jsonResponse<RemovePeerLinkResult>(),
     }),
     listPeerSshEndpoints: defineRoute({
       path: "/peers/ssh-endpoints",

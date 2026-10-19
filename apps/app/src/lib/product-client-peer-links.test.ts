@@ -26,10 +26,24 @@ describe('peerLinks client', () => {
     apiJson.mockResolvedValue({ ok: true });
     await peerLinks.removeLink('a b');
     expect(apiJson).toHaveBeenLastCalledWith('/peer-links/a%20b', { method: 'DELETE' });
+    await peerLinks.removeLink('a b', { force: true });
+    expect(apiJson).toHaveBeenLastCalledWith('/peer-links/a%20b?force=1', { method: 'DELETE' });
+    await peerLinks.activity('h/1');
+    expect(apiJson).toHaveBeenLastCalledWith('/peer-links/h%2F1/activity');
     await peerLinks.disconnect('h');
     expect(apiJson).toHaveBeenLastCalledWith('/peer-links/h/disconnect', { method: 'POST' });
     await peerLinks.reconnect('h');
     expect(apiJson).toHaveBeenLastCalledWith('/peer-links/h/reconnect', { method: 'POST' });
+    await peerLinks.repair('h/1');
+    expect(apiJson).toHaveBeenLastCalledWith('/peer-links/h%2F1/repair', { method: 'POST' });
+  });
+
+  it('lists and forgets leftover access, encoding the computer id', async () => {
+    apiJson.mockResolvedValue({ leftovers: [] });
+    await expect(peerLinks.leftovers()).resolves.toEqual({ leftovers: [] });
+    expect(apiJson).toHaveBeenLastCalledWith('/peer-links/leftover');
+    await peerLinks.forgetLeftover('c/1');
+    expect(apiJson).toHaveBeenLastCalledWith('/peer-links/leftover/c%2F1/forget', { method: 'POST' });
   });
 
   it('propagates failures', async () => {

@@ -13,8 +13,7 @@ const h = vi.hoisted(() => ({
   },
   data: { projects: [{ id: 'selected', name: 'Demo' }] },
   snapshot: { config: { theme: 'Dark' } } as never,
-  snapshotEnabled: [] as boolean[],
-  peersVisible: false
+  snapshotEnabled: [] as boolean[]
 }));
 
 vi.mock('../../store.js', () => ({
@@ -34,10 +33,6 @@ vi.mock('../../lib/settings-search/snapshot.js', () => ({
     h.snapshotEnabled.push(enabled);
     return h.snapshot;
   }
-}));
-vi.mock('../../lib/peers-visibility.js', async (importActual) => ({
-  ...(await importActual<typeof import('../../lib/peers-visibility.js')>()),
-  usePeersSettingsVisibility: () => ({ visible: h.peersVisible, ready: true })
 }));
 vi.mock('../mobile-nav-context.js', () => ({ useMobileNavDismiss: () => h.dismiss }));
 
@@ -253,16 +248,10 @@ describe('focused Settings navigation', () => {
   });
 });
 
-describe('SettingsPane Peers gating', () => {
-  it('omits the Peers row when the page is hidden', () => {
-    mount();
-    expect(screen.queryByTestId('settings-nav-peers')).toBeNull();
-    expect(screen.getByTestId('settings-nav-machines')).toBeTruthy();
-  });
-
-  it('shows the Peers row when the page is visible', () => {
-    h.peersVisible = true;
+describe('SettingsPane Peers navigation', () => {
+  it('always shows the Peers row', () => {
     mount();
     expect(screen.getByTestId('settings-nav-peers')).toBeTruthy();
+    expect(screen.getByTestId('settings-nav-machines')).toBeTruthy();
   });
 });

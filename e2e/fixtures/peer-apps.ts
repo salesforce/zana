@@ -26,6 +26,8 @@ export interface PeerLaunchOptions {
   env?: Record<string, string>;
   /** Merged into the first-launch config only; a relaunch keeps the app's own config. */
   initialConfig?: Record<string, unknown>;
+  /** First launch only: runs once the app's HOME and config exist, before the app starts (e.g. seed an installed plugin). */
+  prelaunch?(isolatedHome: string): void;
 }
 
 /** Peer app plus the name the fixture relaunches it under. */
@@ -55,6 +57,7 @@ export function createPeerApps(home: string) {
       launchOptions.set(name, options);
       mkdirSync(isolatedHome, { mode: 0o700 });
       writeAppConfig(isolatedHome, { sponsorPromptDismissed: true, ...options.initialConfig });
+      options.prelaunch?.(isolatedHome);
       mkdirSync(launcher);
       writeFileSync(join(launcher, 'package.json'), JSON.stringify({ name: 'zana-command-center', version, type: 'module', main: 'main.mjs' }));
       // Server-runtime-only clock offset (ms) read from a file, so an invitation can age past its TTL without waiting.
@@ -201,4 +204,18 @@ export function hostCapabilities(app: AppHandle): { execution: number; forward: 
     const rows = db.prepare('SELECT id, enrollment_capability AS capability FROM hosts WHERE destroyed_at IS NULL').all() as Array<{ id: string; capability: string }>;
     return { execution: rows.filter(row => row.capability === 'execution').length, forward: rows.filter(row => row.capability === 'peer.forward').map(row => row.id) };
   } finally { db.close(); }
+}
+
+/** Config that reveals Settings → Peers (the Experimental opt-in) and keeps the mobile gateway out of the way. */
+export const corePeerConfig = { peersSettingsEnabled: true, mobileGatewayEnabled: false } as const;
+
+/** Opens the core Settings → Peers hub in `app`. */
+export async function openCorePeers(app: AppHandle) {
+  const { window } = app;
+  await window.evaluate(() => {
+    window.history.pushState({}, '', '/settings/peers');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(window.getByRole('heading', { name: 'Peers', exact: true, level: 3 })).toBeVisible({ timeout: 30_000 });
+  return { window };
 }

@@ -4,7 +4,7 @@
  * validates and attributes every mutation.
  */
 import { useMemo } from 'react';
-import { useRpc, type PluginApprovalRequest } from '@zana-ai/zcc-plugin-sdk/app';
+import { useRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import type {
   CommentStatus,
   DesignDocComment,
@@ -21,9 +21,17 @@ import type { PageFile } from '../shared/frame-protocol.js';
 import type { PublishFolder } from '../shared/publish.js';
 import type { PageRenderReport, RenderedPage, SiteFile } from '../shared/page.js';
 import type { GroupStatus, RepairResult } from '../shared/peer-group.js';
-import type { InviteItem, InviteView } from '../shared/invite-contract.js';
 
-export type { InviteItem, InviteView };
+/** One computer connected to this one (owned by core), with this plugin's use of it and its sync state. */
+export interface ConnectionView {
+  computerId: string;
+  hostname: string;
+  state: 'connected' | 'reconnecting' | 'disconnected';
+  usedByThisPlugin: boolean;
+  use: 'pending' | 'approved' | 'denied' | null;
+  syncing: boolean;
+  retiring: boolean;
+}
 
 export interface TemplateInfo {
   id: string;
@@ -84,20 +92,12 @@ export interface DesignDocsApi {
   groupStatus(): Promise<GroupStatus>;
   enablePeer(peerId: string): Promise<GroupStatus>;
   retryIntroductions(): Promise<GroupStatus>;
-  /** Invitations and invitation-founded link states; `available: false` carries the reason older hosts cannot invite. */
-  inviteState(): Promise<InviteView>;
-  /** The token is returned here, to be copied; `inviteState` never includes it. `openInvitation` is the sanctioned re-read while the invitation stays open. */
-  createInvitation(): Promise<{ invitationId: string; token: string; expiresAt: number }>;
-  /** Re-read the token of this computer's still-open invitation (null once redeemed, expired or cancelled). */
-  openInvitation(): Promise<{ invitationId: string; token: string; expiresAt: number } | null>;
-  redeemInvitation(token: string): Promise<InviteItem>;
-  /** The core-rendered approval sheet to hand to `experimental_requestApproval`. */
-  invitationApproval(invitationId: string): Promise<PluginApprovalRequest>;
-  /** `approved` needs the owner proof from the sheet; `denied` needs none. */
-  decideInvitation(args: { invitationId: string; decision: 'approved' | 'denied'; ownerProof?: string }): Promise<InviteItem>;
-  cancelInvitation(invitationId: string): Promise<void>;
-  dismissInvitation(invitationId: string): Promise<void>;
-  reconnectPeer(peerId: string): Promise<PeerLink[]>;
+  /** Computers connected to this one (core owns the link). `[]` on a host without core connections. */
+  connections(): Promise<ConnectionView[]>;
+  /** Ask the owner to let this plugin use a connection; `pending` until both owners decided. Core error codes pass through. */
+  useConnection(computerId: string): Promise<{ status: 'pending' | 'approved' | 'denied' }>;
+  /** Leave the sync group with that computer, then stop using the connection. The connection itself stays. */
+  stopUsingConnection(computerId: string): Promise<GroupStatus>;
   /** Re-try sync setup for one linked computer; re-links only that connection if needed. */
   repairPeer(peerId: string): Promise<RepairResult>;
   /** Discard this computer's stuck sync work for one linked computer; documents and history are kept. */
@@ -105,7 +105,6 @@ export interface DesignDocsApi {
   /** Only whether a connected peer's database differs; never names or counts. */
   peersOutOfSync(): Promise<{ outOfSync: boolean }>;
   removePeer(replicaId: string): Promise<GroupStatus>;
-  revokePeer(peerId: string): Promise<GroupStatus>;
   syncNow(): Promise<{ attempted: number; synced: number; blocked: number }>;
   peerConflicts(doc: string, cursor?: string): Promise<PeerConflictPage>;
   peerConflictReview(doc: string, remoteHead: string): Promise<PeerConflictReview>;
@@ -145,8 +144,6 @@ export interface DesignDocsApi {
   publish(doc: string, args: { repo?: string; branch: string; folder: PublishFolder; projectId?: string }): Promise<{ threadId: string; projectId: string }>;
 }
 
-export type PeerLink = InviteView['links'][number];
-
 export interface PeerStatus {
   configured: boolean;
   repoId?: string;
@@ -175,20 +172,13 @@ export function createApi(call: Call): DesignDocsApi {
     groupStatus: () => typed('groupStatus'),
     enablePeer: (peerId) => typed('enablePeer', { peerId }),
     retryIntroductions: () => typed('retryIntroductions'),
-    inviteState: () => typed('inviteState'),
-    createInvitation: () => typed('createInvitation'),
-    openInvitation: () => typed('openInvitation'),
-    redeemInvitation: (token) => typed('redeemInvitation', { token }),
-    invitationApproval: (invitationId) => typed('invitationApproval', { invitationId }),
-    decideInvitation: (args) => typed('decideInvitation', args),
-    cancelInvitation: (invitationId) => done(typed('cancelInvitation', { invitationId })),
-    dismissInvitation: (invitationId) => done(typed('dismissInvitation', { invitationId })),
-    reconnectPeer: (peerId) => typed('reconnectPeer', { peerId }),
+    connections: () => typed('connections'),
+    useConnection: (computerId) => typed('useConnection', { computerId }),
+    stopUsingConnection: (computerId) => typed('stopUsingConnection', { computerId }),
     repairPeer: (peerId) => typed('repairPeer', { peerId }),
     resetPeerSync: (peerId) => typed('resetPeerSync', { peerId }),
     peersOutOfSync: () => typed('peersOutOfSync'),
     removePeer: (replicaId) => typed('removePeer', { replicaId }),
-    revokePeer: (peerId) => typed('revokePeer', { peerId }),
     syncNow: () => typed('syncNow'),
     peerConflicts: (doc, cursor) => typed('peerConflicts', { doc, cursor }),
     peerConflictReview: (doc, remoteHead) => typed('peerConflictReview', { doc, remoteHead }),
