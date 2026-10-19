@@ -71,7 +71,7 @@ test('Machines recover failed upgrades, missing hello and heartbeat replies with
   const machineHome = join(home, 'execution-machine');
   const dataDir = join(machineHome, '.zcc-machines/fixture.test'), runtime = join(dataDir, 'runtime');
   mkdirSync(runtime, { recursive: true });
-  let child: ChildProcess | undefined, replacementPid: number | undefined;
+  let child: ChildProcess | undefined, consent: ChildProcess | undefined, replacementPid: number | undefined;
   let stderr = '';
   try {
     await expect.poll(async () => (await api('/hosts')).some((h: any) => h.isPrimary && h.status === 'connected')).toBe(true);
@@ -159,6 +159,28 @@ test('Machines recover failed upgrades, missing hello and heartbeat replies with
     await expect(card).toHaveClass(/machine-card--online/);
     expect(readFileSync(join(dataDir, 'auth.json'), 'utf8')).toBe(auth);
     expect(hellos.at(-1)!.instanceId).not.toBe(lifetime);
+
+    // A legacy enrollment (no provenance) whose forwarded loopback port changed
+    // is refused, and the app's repair path recovers it with one-join consent.
+    const holder = Number(readFileSync(join(dataDir, 'host-daemon.pid'), 'utf8'));
+    for (const pid of new Set([holder, replacementPid!])) { try { process.kill(pid, 'SIGTERM'); } catch {} }
+    await expect.poll(async () => { try { process.kill(holder, 0); return 'alive'; } catch { return 'gone'; } }, { timeout: 30000 }).toBe('gone');
+    const legacy = JSON.parse(readFileSync(join(dataDir, 'auth.json'), 'utf8'));
+    delete legacy.provenance; legacy.serverUrl = 'http://127.0.0.1:1/';
+    writeFileSync(join(dataDir, 'auth.json'), JSON.stringify(legacy), { mode: 0o600 });
+    const legacyAuth = readFileSync(join(dataDir, 'auth.json'), 'utf8');
+    const repair = await api('/hosts/join-codes', {});
+    const joinArgs = ['join', '--join-code', repair.joinCode, '--host-id', repair.hostId, '--server-url', address, '--host-daemon-port', String(port)];
+    const joinEnv = { PATH: process.env.PATH, HOME: machineHome, ZCC_DATA_DIR: dataDir, SHELL: '/bin/sh' };
+    const refused = spawnSync(process.execPath, [entry, ...joinArgs], { cwd: machineHome, env: joinEnv, encoding: 'utf8', timeout: 30000 });
+    expect(refused.status).not.toBe(0);
+    expect(`${refused.stderr}${refused.stdout}`).toContain('belongs to another server');
+    expect(readFileSync(join(dataDir, 'auth.json'), 'utf8')).toBe(legacyAuth);
+    consent = spawn(process.execPath, [entry, ...joinArgs], { detached: true, stdio: ['ignore', 'ignore', 'pipe'], cwd: machineHome, env: { ...joinEnv, ZCC_HOST_REPLACE_ENROLLMENT: '1' } });
+    consent.stderr!.on('data', bytes => { stderr = (stderr + String(bytes)).slice(-16384); });
+    const repaired = async () => (await api('/hosts')).find((h: any) => h.id === repair.hostId)?.status;
+    await expect.poll(repaired, { timeout: 30000 }).toBe('connected');
+    expect(JSON.parse(readFileSync(join(dataDir, 'auth.json'), 'utf8')).serverUrl).toBe(`${address}/`);
   } catch (error) {
     console.error('Isolated daemon diagnostics:', stderr);
     console.error('Isolated desktop diagnostics:', desktopProcess.exitCode, desktopProcess.signalCode, desktopStderr);
@@ -168,7 +190,7 @@ test('Machines recover failed upgrades, missing hello and heartbeat replies with
     throw error;
   } finally {
     if (!replacementPid) { try { replacementPid = Number(readFileSync(join(dataDir, 'host-daemon.pid'), 'utf8')); } catch {} }
-    const pids = new Set([child?.pid, replacementPid]);
+    const pids = new Set([child?.pid, replacementPid, consent?.pid]);
     for (const pid of pids) if (pid && pid > 1) { try { process.kill(-pid, 'SIGTERM'); } catch {} }
     for (const socket of upstreamSockets) socket.terminate();
     for (const socket of wss.clients) socket.terminate();

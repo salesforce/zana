@@ -127,16 +127,61 @@ describe('product context tunnel reopener wiring', () => {
   });
 });
 
-describe('GET /api/v1/projects remote binding reconcile', () => {
-  it('reconciles before listing and still answers when reconcile rejects', async () => {
+describe('remote binding reconciliation lifecycle', () => {
+  it('backfills once at startup; GET and projects:changed never reconcile', async () => {
     server = await startProductServer({ dataDir, origins: { serverPort: 0 } });
+    await vi.waitFor(() => expect(mocks.reconcile).toHaveBeenCalledTimes(1));
+    expect(mocks.reconcile).toHaveBeenCalledWith(server.ctx);
+    server.ctx.hub.emit('projects:changed', []);
     const ok = await fetch(`${server.url}api/v1/projects`);
     expect(ok.status).toBe(200);
+    await new Promise(resolve => setImmediate(resolve));
     expect(mocks.reconcile).toHaveBeenCalledTimes(1);
-    mocks.reconcile.mockRejectedValueOnce(new Error('ssh down'));
-    const failed = await fetch(`${server.url}api/v1/projects`);
-    expect(failed.status).toBe(200);
-    expect(await failed.json()).toHaveProperty('projects');
+  });
+
+  it('serializes writes and coalesces a burst into one queued rerun', async () => {
+    server = await startProductServer({ dataDir, origins: { serverPort: 0 } });
+    await vi.waitFor(() => expect(mocks.reconcile).toHaveBeenCalledTimes(1));
+    let release!: () => void;
+    mocks.reconcile.mockImplementationOnce(() => new Promise<number>(resolve => { release = () => resolve(0); }));
+    const write = () => fetch(`${server!.url}api/v1/projects`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: dataDir })
+    });
+    expect((await write()).status).toBe(200);
+    await vi.waitFor(() => expect(mocks.reconcile).toHaveBeenCalledTimes(2));
+    for (let i = 0; i < 10; i++) expect((await write()).status).toBe(200);
     expect(mocks.reconcile).toHaveBeenCalledTimes(2);
+    release();
+    await vi.waitFor(() => expect(mocks.reconcile).toHaveBeenCalledTimes(3));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(mocks.reconcile).toHaveBeenCalledTimes(3);
+  });
+
+  it('recovers after rejection and drops queued work on shutdown', async () => {
+    server = await startProductServer({ dataDir, origins: { serverPort: 0 } });
+    await vi.waitFor(() => expect(mocks.reconcile).toHaveBeenCalledTimes(1));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mocks.reconcile.mockRejectedValueOnce('tok_secret');
+    const write = () => fetch(`${server!.url}api/v1/projects`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: dataDir })
+    });
+    await write();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledExactlyOnceWith('[zcc] remote project reconcile failed: unknown error'));
+    await write();
+    await vi.waitFor(() => expect(mocks.reconcile).toHaveBeenCalledTimes(3));
+    let release!: () => void;
+    mocks.reconcile.mockImplementationOnce(() => new Promise<number>(resolve => { release = () => resolve(0); }));
+    await write();
+    await vi.waitFor(() => expect(mocks.reconcile).toHaveBeenCalledTimes(4));
+    await write();
+    const ctx = server.ctx;
+    const closed = server.close();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    release();
+    await closed;
+    server = undefined;
+    ctx.hub.emit('projects:changed', []);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(mocks.reconcile).toHaveBeenCalledTimes(4);
   });
 });

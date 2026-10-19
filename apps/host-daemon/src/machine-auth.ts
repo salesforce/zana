@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node
 import { join } from 'node:path';
 
 export interface HostDaemonAuth {
+  provenance?: 'tunnel' | 'non-tunnel';
   serverUrl?: string;
   enrollmentId?: string;
   hostId: string;
@@ -18,6 +19,7 @@ export function readHostAuth(dataDir: string): HostDaemonAuth | null {
   try {
     const parsed = JSON.parse(readFileSync(authPath(dataDir), 'utf8')) as HostDaemonAuth;
     if (!parsed.hostId || !parsed.hostKey) return null;
+    if (parsed.provenance !== 'tunnel' && parsed.provenance !== 'non-tunnel') delete parsed.provenance;
     return parsed;
   } catch {
     return null;

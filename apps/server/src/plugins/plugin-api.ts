@@ -116,8 +116,8 @@ import {
 } from './plugin-secret-settings.js';
 
 // Bundlers inline this value; packaged servers must not inspect a cwd's package.json.
-import { version as packageVersion } from '../../../../package.json';
-export const HOST_ZCC_VERSION = packageVersion;
+import packageJson from '../../../../package.json' with { type: 'json' };
+export const HOST_ZCC_VERSION: string = packageJson.version;
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
 export const FACTORY_TIMEOUT_MS = 10_000;
 

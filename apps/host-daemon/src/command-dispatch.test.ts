@@ -1129,6 +1129,22 @@ describe('host command dispatch', () => {
     expect(run).toHaveBeenCalledWith({ host: 'devbox' }, expect.stringContaining('/api/connect/host-installer'), expect.any(Number));
   });
 
+  it('dispatches a repair install with one-join replacement consent through to the install script', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-replace-')), artifact = join(dir, 'host.tgz');
+    writeFileSync(artifact, 'artifact');
+    try {
+      const commands: string[] = [];
+      const run = vi.fn(async (_remote: unknown, command: string) => { commands.push(command); return { code: 0, stdout: '', stderr: '' }; });
+      const runtime = createCommandRuntime({ peerSsh: { run, pipeFile: vi.fn(async () => ({ code: 0, stdout: '', stderr: '' })) } });
+      const command = { type: 'peer_daemon.install' as const, remote: { host: 'devbox' }, joinCode: 'zcde_x', hostId: '11111111-1111-4111-8111-111111111111',
+        serverUrl: 'https://machine.example.com', artifactPath: artifact };
+      await dispatchHostCommand(runtime, { ...command, replaceEnrollment: true });
+      expect(commands.at(-1)).toContain('export ZCC_HOST_REPLACE_ENROLLMENT=1');
+      await dispatchHostCommand(runtime, command);
+      expect(commands.at(-1)).not.toContain('ZCC_HOST_REPLACE_ENROLLMENT');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('dispatches peer_daemon.logs through injectable SSH', async () => {
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,

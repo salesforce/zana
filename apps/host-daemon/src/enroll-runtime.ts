@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { enrollDaemonHost } from './enroll.js';
 import { detectHostName, persistHostId, resolveHostId } from './identity.js';
 import { acquireDaemonLock } from './lock.js';
-import { readHostAuth, writeHostAuth } from './machine-auth.js';
+import { readHostAuth, writeHostAuth, type HostDaemonAuth } from './machine-auth.js';
 import { startEnrolledHostConnection, type EnrolledHostConnection } from './server-connection.js';
 import { HostAuthenticationError, HOST_STARTUP_TIMEOUT_MS } from './server-socket.js';
 import { disposeHostFsWatcher } from './workspace-fs-watch.js';
@@ -39,7 +39,10 @@ async function mintCredentials(options: {
   hostName?: string;
   instanceId: string;
   connectCredential?: string;
-}): Promise<{ hostId: string; hostKey: string }> {
+  provenance?: HostDaemonAuth['provenance'];
+  signal?: AbortSignal;
+}): Promise<HostDaemonAuth> {
+  options.signal?.throwIfAborted();
   const requestedHostId = options.hostId ?? resolveHostId(options.dataDir);
   const enrolled = await enrollDaemonHost({
     serverUrl: options.serverUrl,
@@ -49,15 +52,15 @@ async function mintCredentials(options: {
     hostId: requestedHostId,
     fetchFn: connectHostFetch(options.serverUrl, options.connectCredential)
   });
-  persistHostId(options.dataDir, enrolled.hostId);
-  writeHostAuth(options.dataDir, {
+  options.signal?.throwIfAborted();
+  return {
     hostId: enrolled.hostId,
     hostKey: enrolled.hostKey,
     ...(options.connectCredential ? { enrollmentId: createHash('sha256').update(options.token).digest('hex') } : {}),
     hostName: options.hostName ?? detectHostName(),
-    serverUrl: options.serverUrl
-  });
-  return { hostId: enrolled.hostId, hostKey: enrolled.hostKey };
+    serverUrl: options.serverUrl,
+    ...(options.provenance ? { provenance: options.provenance } : {})
+  };
 }
 
 async function openSession(options: {
@@ -107,10 +110,29 @@ function loopbackHost(url: string): boolean {
   try { return ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname.toLowerCase()); } catch { return false; }
 }
 
-/** A tunnel-forwarded owner is the same server on any loopback port: the port is chosen per tunnel. */
-export function sameEnrolledServer(enrolled: string, requested: string): boolean {
+/** Only a previously recorded tunnel may change its forwarded loopback port. */
+export function sameEnrolledServer(enrolled: string, requested: string, provenance?: HostDaemonAuth['provenance']): boolean {
   if (trimUrl(enrolled) === trimUrl(requested)) return true;
-  return loopbackHost(enrolled) && loopbackHost(requested);
+  if (provenance !== 'tunnel' || !loopbackHost(enrolled) || !loopbackHost(requested)) return false;
+  const left = new URL(enrolled), right = new URL(requested);
+  return left.protocol === right.protocol && left.pathname === right.pathname && left.search === right.search &&
+    left.hash === right.hash && !left.username && !left.password && !right.username && !right.password;
+}
+
+export function assertEnrollmentSafe(options: {
+  dataDir: string; serverUrl: string; hostId?: string; replaceEnrollment?: boolean;
+}): void {
+  const access = readConnectHostAccess(options.dataDir, options.serverUrl);
+  if (access && options.hostId && access.hostId !== options.hostId) throw new Error('Machine access host mismatch');
+  const existing = readHostAuth(options.dataDir);
+  if (!existing || options.replaceEnrollment) return;
+  if (!existing.serverUrl || !sameEnrolledServer(existing.serverUrl, options.serverUrl, existing.provenance)) {
+    throw new Error('Existing machine enrollment belongs to another server; use --replace-enrollment to re-pair');
+  }
+  const hostId = options.hostId ?? access?.hostId;
+  if (hostId && existing.hostId !== hostId) {
+    throw new Error('Existing machine enrollment identity changed; use --replace-enrollment to re-pair');
+  }
 }
 
 export async function startEnrolledHostDaemon(options: {
@@ -120,6 +142,8 @@ export async function startEnrolledHostDaemon(options: {
   connectCredential?: string;
   hostId?: string;
   hostName?: string;
+  provenance?: HostDaemonAuth['provenance'];
+  replaceEnrollment?: boolean;
   /** Desktop co-started daemon: replace another holder of this data dir. */
   stealLock?: boolean;
   keepRetryingStartup?: boolean;
@@ -127,6 +151,7 @@ export async function startEnrolledHostDaemon(options: {
   onSocketClose?: (code: number) => void;
   onConnectionChange?: (connected: boolean) => void;
 }): Promise<EnrolledHostDaemon> {
+  assertEnrollmentSafe(options);
   const releaseLock = acquireDaemonLock(options.dataDir, { steal: options.stealLock === true });
   try {
     const access = readConnectHostAccess(options.dataDir, options.serverUrl);
@@ -134,12 +159,13 @@ export async function startEnrolledHostDaemon(options: {
     options = { ...options, connectCredential: options.connectCredential ?? access?.credential, hostId: options.hostId ?? access?.hostId };
     const instanceId = randomUUID();
     const existing = readHostAuth(options.dataDir);
-    if (existing?.serverUrl && !sameEnrolledServer(existing.serverUrl, options.serverUrl)) throw new Error('Existing machine enrollment belongs to another server');
+    // Recheck under the daemon lock; a fresh token is not a changed identity.
+    assertEnrollmentSafe(options);
     // Matched only through the loopback-port relaxation: the listener may be a
     // different server, so a rejection must never re-enroll over this auth.
     const loopbackRelaxedMatch = existing?.serverUrl !== undefined && trimUrl(existing.serverUrl) !== trimUrl(options.serverUrl);
-    const existingUsable =
-      existing && (!options.hostId || existing.hostId === options.hostId) && !(options.connectCredential && options.token && existing.enrollmentId !== createHash('sha256').update(options.token).digest('hex'));
+    const existingUsable = existing && !options.replaceEnrollment;
+    let pendingAuth: HostDaemonAuth | undefined;
     let hostId: string;
     let connection: EnrolledHostConnection;
     if (existingUsable) {
@@ -171,8 +197,11 @@ export async function startEnrolledHostDaemon(options: {
           connectCredential: options.connectCredential,
           hostId: options.hostId ?? existing.hostId,
           hostName: options.hostName,
-          instanceId
+          instanceId,
+          provenance: existing.provenance,
+          signal: options.signal
         });
+        pendingAuth = minted;
         hostId = minted.hostId;
         connection = await openSession({
           dataDir: options.dataDir,
@@ -198,8 +227,11 @@ export async function startEnrolledHostDaemon(options: {
         connectCredential: options.connectCredential,
         hostId: options.hostId,
         hostName: options.hostName,
-        instanceId
+        instanceId,
+        provenance: options.provenance ?? 'non-tunnel',
+        signal: options.signal
       });
+      pendingAuth = minted;
       hostId = minted.hostId;
       connection = await openSession({
         dataDir: options.dataDir,
@@ -214,6 +246,13 @@ export async function startEnrolledHostDaemon(options: {
         signal: options.signal
       });
     }
+    try {
+      options.signal?.throwIfAborted();
+      if (pendingAuth) {
+        persistHostId(options.dataDir, pendingAuth.hostId);
+        writeHostAuth(options.dataDir, pendingAuth);
+      }
+    } catch (error) { await connection.close(); throw error; }
     let closeTask: Promise<void> | undefined;
     return {
       hostId,

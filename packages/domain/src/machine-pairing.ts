@@ -67,7 +67,7 @@ export function sshPairingRemoteScript(input: {
   const remoteServer = `http://127.0.0.1:${remotePort}`;
   return (
     `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${remoteServer}/install.sh` +
-    ` | sh -s -- --join-code ${input.joinCode} --host-id ${input.hostId} --server ${remoteServer}` +
+    ` | ZCC_HOST_ENROLLMENT_PROVENANCE=tunnel sh -s -- --join-code ${input.joinCode} --host-id ${input.hostId} --server ${remoteServer}` +
     ` && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity`
   );
 }

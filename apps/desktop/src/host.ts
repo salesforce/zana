@@ -426,8 +426,7 @@ import type {
 import { MAIN_MODULES } from './modules/index.js';
 import { homedir } from 'node:os';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
-import { readPersistedHostId } from '@zana-ai/zcc-host-daemon/identity';
-import { createLocalHostIdResolver } from './runtime/local-host-id.js';
+import { createLocalHostIdResolver, createPersistedHostIdDeps } from './runtime/local-host-id.js';
 import {
   AUTO_CLOSE_IDLE_DEFAULTS,
   HEARTBEAT_DEFAULTS,
@@ -2992,7 +2991,7 @@ let runtimeSupervisor: RuntimeSupervisor | null = null;
 const localHostId = createLocalHostIdResolver({
   supervisorHostId: () => runtimeSupervisor?.hostId,
   devAttach: () => Boolean(process.env.ELECTRON_RENDERER_URL),
-  readPersistedHostId: () => readPersistedHostId(resolveZccDataDir(process.env, app.getPath('home')))
+  ...createPersistedHostIdDeps(() => resolveZccDataDir(process.env, app.getPath('home')))
 });
 export function discoveryForRegisteredLaunch(
   supervisor: Pick<RuntimeSupervisor, 'cliDiscovery' | 'hostId'> | null,

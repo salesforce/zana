@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const script = join(dirname(fileURLToPath(import.meta.url)), '../assets/install-machine.sh');
@@ -16,6 +16,39 @@ function writeNodeStub(dir: string, major: number): string {
 }
 
 describe('install-machine.sh flags', () => {
+  it.each([false, true])('validates enrollment before stopping the daemon, replacement=%s', replace => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-install-preflight-'));
+    const bin = join(root, 'bin'), data = join(root, 'data'), trace = join(root, 'trace');
+    mkdirSync(bin); mkdirSync(data);
+    writeFileSync(join(data, 'auth.json'), 'saved-auth');
+    const stubs = {
+      node: 'case "$1" in -e) printf 22; exit 0;; -v) echo v22.0.0; exit 0;; esac\nprintf "%s\\n" "$*" >> "$TRACE"\ncase "$*" in *--check-enrollment*) exit 7;; esac',
+      curl: 'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n: > "$out"; printf 200',
+      tar: 'printf x > "$4/join.mjs"',
+      launchctl: 'printf "launchctl %s\\n" "$*" >> "$TRACE"',
+      systemctl: 'printf "systemctl %s\\n" "$*" >> "$TRACE"'
+    };
+    for (const [name, body] of Object.entries(stubs)) {
+      writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`); chmodSync(join(bin, name), 0o755);
+    }
+    const daemon = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', join(data, 'runtime/join.mjs'), 'join'], { stdio: 'ignore' });
+    daemon.unref();
+    writeFileSync(join(data, 'host-daemon.pid'), String(daemon.pid));
+    try {
+      const result = spawnSync('sh', [script, '--host-id', 'host-1', '--join-code', 'code', '--server', 'https://example.com', ...(replace ? ['--replace-enrollment'] : [])], {
+        encoding: 'utf8', env: { ...process.env, HOME: root, PATH: `${bin}:/usr/bin:/bin`, ZCC_NODE: join(bin, 'node'), ZCC_DATA_DIR: data, TRACE: trace,
+          ZCC_INSTALL_WAIT_ATTEMPTS: '1', ZCC_INSTALL_WAIT_DELAY: '0', ZCC_INSTALL_SKIP_SERVICE: '1' }
+      });
+      expect(result.status).toBe(7);
+      const calls = readFileSync(trace, 'utf8');
+      expect(calls).toContain('--check-enrollment');
+      expect(calls.includes('--replace-enrollment')).toBe(replace);
+      expect(calls).not.toMatch(/launchctl|systemctl/);
+      expect(readFileSync(join(data, 'auth.json'), 'utf8')).toBe('saved-auth');
+      expect(() => process.kill(daemon.pid!, 0)).not.toThrow();
+      expect(readFileSync(join(data, 'host-daemon.pid'), 'utf8')).toBe(String(daemon.pid));
+    } finally { daemon.kill('SIGKILL'); rmSync(root, { recursive: true, force: true }); }
+  });
   it('requires join-code, host-id, and server', () => {
     const missing = spawnSync('sh', [script], { encoding: 'utf8' });
     expect(missing.status).toBe(2);

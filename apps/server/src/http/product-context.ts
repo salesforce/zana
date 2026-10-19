@@ -59,7 +59,8 @@ import { createPluginApprovalVerifier } from './plugin-approval-proof.js';
 import { createNativeToolPolicyVerifier } from './native-tool-policy-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import { createDbTunnelHostStore, createTunnelHostReopener, type TunnelHostStore } from '../services/hosts/tunnel-hosts.js';
-import { repairHost, tunnelLocalPort } from '../services/hosts/host-bootstrap.js';
+import { reconcileRemoteProjectBindings, repairHost, tunnelLocalPort } from '../services/hosts/host-bootstrap.js';
+import { createCoalescedReconciler, type CoalescedReconciler } from '../services/hosts/coalesced-reconciler.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
@@ -84,6 +85,7 @@ export interface ProductHttpContext {
   /** Plugin-contributed environment for sessions on non-primary machines (memory only). */
   remoteEnvironment: RemoteEnvironmentService;
   projects: ProjectStore;
+  remoteProjectReconciler?: CoalescedReconciler;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
   inboxRead: IInboxReadStore;
@@ -116,7 +118,7 @@ export interface ProductHttpContext {
   verifyNativeToolPolicy?: (token: unknown, body: string) => boolean;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
-  dispose(): void;
+  dispose(): void | Promise<void>;
 }
 
 export interface CreateProductHttpContextOptions {
@@ -194,6 +196,7 @@ export function createProductHttpContext(
         disconnectHealTimers.delete(hostId);
       }
       if (!ctx) return;
+      void ctx.remoteProjectReconciler?.request();
       tunnelReopener.hostConnected(hostId);
       ctx.remoteEnvironment.hostConnected(hostId);
       void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
@@ -376,6 +379,10 @@ export function createProductHttpContext(
     verifyNativeToolPolicy = createNativeToolPolicyVerifier(options.uiSendSecret);
   }
 
+  const remoteProjectReconciler = createCoalescedReconciler(
+    () => reconcileRemoteProjectBindings(ctx),
+    (error) => console.warn(`[zcc] remote project reconcile failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+  );
   ctx = {
     productInstanceId: readProductInstanceId(dataDir),
     origins: options.origins,
@@ -388,6 +395,7 @@ export function createProductHttpContext(
     modelCatalogs,
     remoteEnvironment,
     projects,
+    remoteProjectReconciler,
     config,
     inbox,
     inboxRead,
@@ -404,6 +412,7 @@ export function createProductHttpContext(
     verifyNativeToolPolicy,
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
+      const reconcilerStopped = remoteProjectReconciler.dispose();
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);
       disposePreviews(ctx);
       disposeEnvironmentRetireTimers(ctx);
@@ -418,6 +427,7 @@ export function createProductHttpContext(
       promptRegistry.stop();
       remoteEnvironment.dispose();
       ctx.plugins?.stop?.();
+      return reconcilerStopped;
     }
   };
   previewService(ctx);
@@ -429,5 +439,6 @@ export function createProductHttpContext(
     await retryDueConversationSends(ctx,
       (threadId) => flushHeldConversationSends(ctx, threadId, { enforceConcurrencyCap: true }));
   });
+  void remoteProjectReconciler.request();
   return ctx;
 }
