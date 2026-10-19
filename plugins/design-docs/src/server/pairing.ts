@@ -308,6 +308,9 @@ export class DesignDocPairing {
     const present = new Set(connections.map((connection) => connection.computerId));
     for (const peerId of [...this.disabledPeers]) if (!present.has(peerId)) this.disabledPeers.delete(peerId);
     for (const computerId of [...this.lastUse.keys()]) if (!present.has(computerId)) this.lastUse.delete(computerId);
+    // A new approved use wakes reconciliation immediately. Set aside an obsolete two-member group before auto-enable so the
+    // new connection does not wait for the 30-second retry tick while both computers hold stale removal state.
+    this.setAsideStaleSetup();
     // Best effort and independent: a failure of one step (e.g. a re-key in flight) must not fail the read or skip the other, and is retried next tick.
     let failure: unknown = null;
     for (const step of [() => this.discardOrphanSetup(connections), () => this.autoEnable(connections), () => this.restoreGrants(connections)]) {

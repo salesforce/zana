@@ -1332,6 +1332,18 @@ describe('DD core connection pairing', () => {
       } finally { warn.mockRestore(); }
     });
 
+    it.each(['a', 'b'] as const)('leaver %s: reconciliation clears stale removal state before the retry tick', async (leaver) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { a, b, left } = await dissolvedThenRelinked(leaver);
+        const replica = left.group.sync.localRepository()!.replicaId;
+        await a.pairing.reconcile();
+        await b.pairing.reconcile();
+        expect(left.group.sync.localRepository()!.replicaId).not.toBe(replica);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('archived the sync group left over from an earlier removal'));
+      } finally { warn.mockRestore(); }
+    });
+
     it('Repair on the leaver converges once the other side polls', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
