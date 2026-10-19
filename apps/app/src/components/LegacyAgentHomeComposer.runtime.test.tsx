@@ -92,7 +92,9 @@ vi.mock('./EnvironmentPicker.js', () => ({
 vi.mock('./ComposerProjectPicker.js', () => ({ ComposerProjectPicker: () => null }));
 vi.mock('./RemoteComposerConnection.js', () => ({ RemoteComposerConnection: () => null }));
 vi.mock('./ui/PopoverPicklist.js', () => ({ PopoverPicklist: () => null }));
-vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: () => null }));
+vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: (props: { onRefresh?: () => void }) => (
+  props.onRefresh ? <button onClick={props.onRefresh}>Refresh modes</button> : null
+) }));
 vi.mock('./thread/pickers/ModelReasoningPicker.js', () => ({ ModelReasoningPicker: (props: NonNullable<typeof h.modelProps>) => {
   h.modelProps = props;
   return <><span data-testid="selected-provider">{props.selectedProviderId}</span>
@@ -201,6 +203,15 @@ describe('CLI Agent project-owned discovery', () => {
     expect(screen.getByTestId('selected-provider').textContent).toBe('codex');
     fireEvent.click(screen.getByRole('button', { name: 'Launch agent' }));
     await waitFor(() => expect(h.createTerminal).toHaveBeenCalledWith('local', 'codex', 80, 24, expect.objectContaining({ hostId: 'primary-host' })));
+  });
+
+  it('refreshes the OpenCode provider catalog from the mode picker', async () => {
+    h.catalog = catalog(['acp-opencode']);
+    h.descriptors = [{ id: 'opencode', label: 'OpenCode', defaultProfileId: 'opencode', profiles: [], targets: { models: [] } }] as unknown as HarnessAdapterDescriptor[];
+    h.effectiveDefault.mockResolvedValue({ ok: true, profile: 'opencode', family: 'opencode', source: 'global-default' });
+    render(composer(h.projects[0]));
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh modes' }));
+    expect(h.refresh).toHaveBeenCalledWith('acp-opencode');
   });
 
   it('lets a native-only harness own its model selection without offering model reload', async () => {
