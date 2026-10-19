@@ -8,6 +8,7 @@ import {
   parseVersions,
   publishRecordKey,
   ReadGrants,
+  clickedSdk,
   releaseBinding,
   releaseRequest,
   versionsSoql,
@@ -196,6 +197,19 @@ describe('approved envelopes', () => {
     await expect(sdk.confirm(envelope('agent.activate', 'other'), '')).resolves.toMatchObject({ approved: false });
     await expect(sdk.confirm(envelope('agent.activate'), '')).resolves.toEqual({ approved: true, reason: 'submitted' });
     await expect(sdk.confirm(envelope('agent.activate'), '')).resolves.toMatchObject({ approved: false });
+    expect(base.confirm).toHaveBeenCalledTimes(3);
+  });
+
+  it('lets a clicked Studio button pass an org read, never publish or Live', async () => {
+    const base = baseSdk();
+    expect(clickedSdk(base, { startedByUser: 'yes' })).toBe(base);
+    expect(clickedSdk(base, null)).toBe(base);
+    const sdk = clickedSdk(base, { startedByUser: true });
+    await expect(sdk.confirm(envelope(undefined), '')).resolves.toEqual({ approved: true, reason: 'submitted' });
+    await expect(sdk.confirm(envelope('org.production.read'), '')).resolves.toEqual({ approved: true, reason: 'submitted' });
+    await expect(sdk.confirm(envelope('agent.publish'), '')).resolves.toMatchObject({ approved: false });
+    await expect(sdk.confirm(envelope('agent.preview.live'), '')).resolves.toMatchObject({ approved: false });
+    await expect(sdk.confirm(envelope('org.unknown.read', ORG_ID, 'production'), '')).resolves.toMatchObject({ approved: false });
     expect(base.confirm).toHaveBeenCalledTimes(3);
   });
 
@@ -392,6 +406,8 @@ describe('release RPCs on production', () => {
     expect(queries).toEqual([]);
     await expect(call(RELEASE_RPC.prepare, { action: 'agent.activate', versionNumber: 2 })).resolves.toMatchObject({ code: 'read_required' });
     await expect(call('agentScript.compile', { path: PATH })).resolves.toMatchObject({ ok: false, code: 'refused' });
+    // A click on Compile is its own approval, so it reads without asking anywhere.
+    await expect(call('agentScript.compile', { path: PATH, startedByUser: true })).resolves.toMatchObject({ ok: true });
     const read = await prepare({ action: 'org.read' });
     expect(read.binding).toEqual({ action: 'org.read', target: ORG_ID, targetLabel: 'dev (production)', subject: 'MyBot versions' });
     await expect(approveAndRun({ action: 'org.read' })).resolves.toMatchObject({ ok: true, data: { readUntil: expect.any(Number) } });

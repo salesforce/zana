@@ -197,7 +197,7 @@ describe('PreviewWorkbench', () => {
   it('runs the suite, reruns one case and reloads on realtime', async () => {
     const el = await mount({ threadId: 'owner' });
     await click(btn(el, 'Run suite'));
-    expect(calls.find(c => c.method === 'studio.suites.run')?.args).toMatchObject({ path: 'tests/A.scenario.json', engine: 'preview', source: 'agent_label: x', threadId: 'owner' });
+    expect(calls.find(c => c.method === 'studio.suites.run')?.args).toMatchObject({ path: 'tests/A.scenario.json', engine: 'preview', source: 'agent_label: x', threadId: 'owner', startedByUser: true });
     expect([...el.querySelectorAll('.sf-pw-chip')].map(c => c.getAttribute('data-state'))).toEqual(['fail', 'pass']);
     await click(btn(el, '✗ Refund'));
     expect(calls.filter(c => c.method === 'studio.suites.run').pop()?.args).toMatchObject({ caseIds: ['c1'] });

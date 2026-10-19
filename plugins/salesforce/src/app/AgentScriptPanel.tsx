@@ -618,7 +618,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     setCompileState({ status: 'running', path, ...(sha ? { sha } : {}) });
     patch({ bottomOpen: true, bottomTab: 'problems' });
     let reply: unknown;
-    try { reply = await callPluginRpc(pluginId, 'agentScript.compile', rpcArgs({ path, ...(threadId ? { threadId } : {}) })); }
+    try { reply = await callPluginRpc(pluginId, 'agentScript.compile', rpcArgs({ path, startedByUser: true, ...(threadId ? { threadId } : {}) })); }
     catch (err) { reply = { ok: false, error: err instanceof Error ? err.message : String(err) }; }
     if (!alive.current) return;
     setCompileState(current => current?.status === 'running' && current.path === path ? parseCompileReply(path, sha, reply) : current);
@@ -633,7 +633,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     if (!path) return;
     setOpeningBuilder(true); setError(null);
     try {
-      const reply = await callPluginRpc(pluginId, 'agentBuilder.open', rpcArgs({ path, ...(threadId ? { threadId } : {}) })) as { ok?: boolean; error?: string } | null;
+      const reply = await callPluginRpc(pluginId, 'agentBuilder.open', rpcArgs({ path, startedByUser: true, ...(threadId ? { threadId } : {}) })) as { ok?: boolean; error?: string } | null;
       if (reply?.ok === false) throw new Error(reply.error || 'Could not open Agentforce Builder.');
     } catch (err) { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }
     finally { if (alive.current) setOpeningBuilder(false); }

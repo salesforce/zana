@@ -293,7 +293,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     if (!suite || engine === 'live') return;
     setSuiteBusy(caseIds?.length ? 'Running case…' : `Running ${suite.cases.length} cases…`); setError('');
     try {
-      const res = await rpc<never>(STUDIO_RPC.suiteRun, { path: suite.path, agentPath: path, source: props.source, engine: engineToLab(engine), ...(props.threadId ? { threadId: props.threadId } : {}), ...(caseIds ? { caseIds } : {}) });
+      const res = await rpc<never>(STUDIO_RPC.suiteRun, { path: suite.path, agentPath: path, source: props.source, engine: engineToLab(engine), startedByUser: true, ...(props.threadId ? { threadId: props.threadId } : {}), ...(caseIds ? { caseIds } : {}) });
       const next = (res as { suite?: SuiteEntry }).suite;
       if (!res.ok || !next) throw new Error(res.error || 'The suite could not run.');
       if (alive.current) setSuite(prev => ({ ...next, sha256: prev?.sha256 ?? next.sha256 }));

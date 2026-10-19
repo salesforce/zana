@@ -265,7 +265,7 @@ export class ScenarioSuites {
    * Sequential, one run per project, every case ends its lab session (the lab owns the 12-session / 50-call budgets).
    * `store: false` keeps the results out of the suite: a proposal or fix-loop candidate is not the file on disk.
    */
-  async run(input: { path: string; source: string; engine: LabEngine; model?: string; caseIds?: string[]; agentPath?: string; threadId?: string; store?: boolean }): Promise<{ suite: SuiteEntry; results: SuiteResults; details: CaseRunDetail[] }> {
+  async run(input: { path: string; source: string; engine: LabEngine; model?: string; caseIds?: string[]; agentPath?: string; threadId?: string; store?: boolean; startedByUser?: boolean }): Promise<{ suite: SuiteEntry; results: SuiteResults; details: CaseRunDetail[] }> {
     const lock = this.o.project() || 'global';
     if (this.running.has(lock)) throw new AgentFilesError('invalid_input', 'A suite is already running for this project.');
     const suite = (await this.list()).find(s => s.path === input.path);
@@ -288,7 +288,7 @@ export class ScenarioSuites {
     return { suite: { ...suite, lastResults: results }, results, details };
   }
 
-  private async runCase(c: ScenarioCase, input: { source: string; engine: LabEngine; model?: string; agentPath?: string; threadId?: string }): Promise<CaseRunDetail> {
+  private async runCase(c: ScenarioCase, input: { source: string; engine: LabEngine; model?: string; agentPath?: string; threadId?: string; startedByUser?: boolean }): Promise<CaseRunDetail> {
     const { lab } = this.o;
     const scenario: LabScenario = {
       persona: 'A scripted test customer.', goal: c.name, opening: c.utterances[0]!,
@@ -297,7 +297,7 @@ export class ScenarioSuites {
     let id = '';
     const detail: CaseRunDetail = { caseId: c.id, outcome: 'inconclusive', runId: '', at: this.o.now(), notes: [], turns: [] };
     try {
-      const started = await lab.start({ engine: input.engine, source: input.source, scenario, ...(input.model ? { model: input.model } : {}), ...(input.threadId ? { threadId: input.threadId } : {}), ...(input.agentPath ? { path: input.agentPath } : {}) });
+      const started = await lab.start({ engine: input.engine, source: input.source, scenario, ...(input.model ? { model: input.model } : {}), ...(input.threadId ? { threadId: input.threadId } : {}), ...(input.agentPath ? { path: input.agentPath } : {}), ...(input.startedByUser ? { startedByUser: true } : {}) });
       id = detail.runId = started.id;
       let last = started;
       for (const utterance of c.utterances.slice(0, scenario.maxTurns)) last = await lab.send({ id, text: utterance });
@@ -424,7 +424,9 @@ export function registerStudioPreview(studio: StudioServerContext, options: Stud
       engine: loop ? 'preview' : row.engine === 'rehearsal' ? 'rehearsal' : 'preview',
       model: rpcString(args, 'model') || undefined, agentPath: agentPath || undefined, threadId: rpcString(args, 'threadId') || undefined,
       caseIds: loop ? loop.caseIds : caseIdsOf(row.caseIds),
-      store: loop ? false : row.store !== false
+      store: loop ? false : row.store !== false,
+      // A click on Run approves its own runs; a fix loop's attempts are agent-driven, so they still ask.
+      startedByUser: !loop && row.startedByUser === true
     });
     if (!loop) return { ok: true, ...run };
     const updated = loops.record(project(), loop.id, Object.fromEntries(Object.entries(run.results).map(([id, result]) => [id, result.outcome])));
