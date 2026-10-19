@@ -36466,22 +36466,6 @@ body.split-frame-guard webview {
   gap: 8px;
 }
 
-/* A collapsed desktop prompt shows at most 15 lines; font metrics match the
- * .inbox-md body so `lh` is one rendered line. */
-.thread-message-collapsible {
-  font-size: 15px;
-  line-height: 1.55;
-}
-
-.thread-message-collapsible[data-collapsed='true'] {
-  max-height: 15lh;
-  overflow: hidden;
-}
-
-.thread-message-collapsible[data-overflowing='true'] {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 2lh), transparent);
-}
-
 .thread-message-overflow-row {
   display: flex;
   flex-wrap: wrap;

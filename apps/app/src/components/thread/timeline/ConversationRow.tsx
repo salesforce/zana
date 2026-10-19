@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { memo, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
 import { MobileMessagePreview } from './MobileMessagePreview.js';
 import { MarkdownContent } from '../../MarkdownContent.js';
@@ -17,10 +17,9 @@ import { repairStreamingMarkdownTail } from './repair-streaming-markdown-tail.js
 import {
   canEditConversationMessage,
   MessageActionBar,
-  USER_MESSAGE_CHAR_CAP,
+  MESSAGE_OVERFLOW_CAP,
   visibleMessageText
 } from './MessageActionBar.js';
-import { useMessageOverflow } from './useMessageOverflow.js';
 import { resolveIcon } from '../../../lib/resolveIcon.js';
 import { product } from '../../../lib/product-client.js';
 import { readTrimmedSelection } from '../secondary-panel/SecondaryPanelSelectionActions.js';
@@ -88,14 +87,7 @@ export const ConversationRow = memo(function ConversationRow({
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
   const extracted = useMemo(() => extractInlineThreadImages(row.text ?? ''), [row.text]);
   const text = extracted.text.trim();
-  // User prompts collapse by rendered height (mobile has its own preview) and
-  // keep a render cap for huge pastes; assistant replies always render in full.
-  const collapsible = row.role === 'user' && !mobileUser && !editing;
-  const visibleText = row.role === 'user' ? visibleMessageText(extracted.text, expanded) : extracted.text;
-  const collapsibleRef = useRef<HTMLDivElement>(null);
-  const overflowing = useMessageOverflow(collapsibleRef, collapsible && !expanded, visibleText);
-  const showOverflowToggle = collapsible
-    && (expanded || overflowing || extracted.text.length > USER_MESSAGE_CHAR_CAP);
+  const visibleText = visibleMessageText(extracted.text, expanded);
   const imageRefs = useMemo(() => {
     const refs: Array<{ id: string; name: string; path: string }> = [];
     const seen = new Set<string>();
@@ -358,17 +350,11 @@ export const ConversationRow = memo(function ConversationRow({
                 />
               )
             ) : (
-              <div
-                ref={collapsibleRef}
-                className="thread-message-collapsible"
-                data-collapsed={collapsible && !expanded ? 'true' : undefined}
-                data-overflowing={showOverflowToggle && !expanded ? 'true' : undefined}
-              >
-                <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} filePathHints={filePathHints} />
-              </div>
+              <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} filePathHints={filePathHints} />
             )
           ) : null}
-          {(threadId && previewPaths.length > 0 && !editing) || showOverflowToggle ? (
+          {(threadId && previewPaths.length > 0 && !editing)
+            || (extracted.text.length > MESSAGE_OVERFLOW_CAP && !editing && !mobileUser) ? (
             <div className="thread-message-overflow-row">
               {threadId && previewPaths.length > 0 && !editing ? (
                 previewPaths.map((path) => (
@@ -378,12 +364,11 @@ export const ConversationRow = memo(function ConversationRow({
                   />
                 ))
               ) : null}
-              {showOverflowToggle ? (
+              {extracted.text.length > MESSAGE_OVERFLOW_CAP && !editing && !mobileUser ? (
                 <button
                   type="button"
                   className="thread-message-overflow"
                   data-testid="thread-message-overflow"
-                  aria-expanded={expanded}
                   onClick={() => setExpanded((value) => !value)}
                 >
                   {expanded ? 'Show less' : 'Show more'}

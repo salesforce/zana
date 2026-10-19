@@ -87,16 +87,11 @@ export function MessageActionBar({
   );
 }
 
-/** Render cap for a collapsed user message. The visible collapse is height-based;
- * this only keeps huge pastes from rendering in full while collapsed. */
-export const USER_MESSAGE_CHAR_CAP = 4096;
+export const MESSAGE_OVERFLOW_CAP = 2000;
 
-export function visibleMessageText(text: string, expanded: boolean, cap = USER_MESSAGE_CHAR_CAP): string {
+export function visibleMessageText(text: string, expanded: boolean, cap = MESSAGE_OVERFLOW_CAP): string {
   if (expanded || text.length <= cap) return text;
-  const clipped = `${text.slice(0, cap).trimEnd()}…`;
-  // An odd fence count means the cut landed inside a code block; close it so
-  // the rest of the preview does not render as code.
-  return (clipped.match(/^[ \t]*```/gmu)?.length ?? 0) % 2 === 1 ? `${clipped}\n\`\`\`` : clipped;
+  return `${text.slice(0, cap).trimEnd()}…`;
 }
 
 export function canEditConversationMessage(
