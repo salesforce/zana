@@ -19,8 +19,8 @@ not a merge of BB's main branch or a deployment to the installed application.
   `a604f2e7` baseline. Existing release, mobile and other concurrent edits were
   preserved.
 - Commit inventory, changed-file inventory and selected patches are saved locally
-  in `.zcc/references/bb-18960354e/`. Adapted source attribution is in
-  `third-party/bb/`.
+  in `.zcc/references/bb-18960354e/`. The BB MIT notice is in
+  `docs/third-party/BB-LICENSE`.
 
 ## Applied changes
 
