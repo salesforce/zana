@@ -51,6 +51,8 @@ import { closeFollowupProgressMessage, runCloseIdleAgents } from './lib/close-id
 
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
+import { projectSplitScopeKey } from './lib/split-layout/scope.js';
+import { useSplitWorkspace } from './lib/split-layout/store.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
 import {
   readLocalStorageItem,
@@ -3160,6 +3162,7 @@ export const useData = create<DataState>((set, get) => ({
       useCatchUpSummary.getState().clear(t.id);
     }
     useAgentStatus.getState().clearProject(id);
+    useSplitWorkspace.getState().forgetScope(projectSplitScopeKey(id));
     set((s) => {
       const terminals = { ...s.terminals };
       const claudeSessions = { ...s.claudeSessions };

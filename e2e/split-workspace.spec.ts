@@ -82,6 +82,14 @@ setInterval(() => {}, 1000);
     scoped = electron.windows().find((candidate) => candidate !== page && isAppRendererUrl(candidate.url()));
     return Boolean(scoped);
   }).toBe(true);
+  // A new project window starts from the project's saved layout.
+  const scopedWorkspace = scoped!.getByTestId('split-workspace');
+  await expect(scopedWorkspace.locator('.split-pane')).toHaveCount(4);
+  for (const remaining of [3, 2, 1]) {
+    await scopedWorkspace.getByRole('button', { name: 'Close pane', exact: true }).last().click();
+    await expect(scopedWorkspace.locator('.split-pane')).toHaveCount(remaining);
+  }
+  await expect(scopedWorkspace).toHaveAttribute('data-split', 'false');
   await checkProjectSplits(scoped!);
 });
 
@@ -174,6 +182,10 @@ test('shell splits: drag, cancel, resize, move, maximize and reload', async ({ a
   await expect(page.locator('[contenteditable="true"]').first()).toHaveText('Draft survives split changes');
   await page.setViewportSize({ width: 1480, height: 960 });
   await expect(workspace).toHaveAttribute('data-split', 'true');
+  await page.reload();
+  await expect(workspace.locator('.split-pane-bar-title')).toHaveText(['Inbox', 'Home']);
+  // A new window or a relaunch has no window copy and starts from the saved layout.
+  await page.evaluate(() => sessionStorage.clear());
   await page.reload();
   await expect(workspace.locator('.split-pane-bar-title')).toHaveText(['Inbox', 'Home']);
   await workspace.getByRole('button', { name: 'Close pane', exact: true }).last().click();
