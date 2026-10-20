@@ -159,14 +159,9 @@ describe('AgentScriptPanel studio layout', () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
     await post(el, { type: 'cursor', line: 2, column: 3, selection: { startLine: 2, endLine: 2, text: 'a' } });
-    await post(el, { type: 'commentAction', kind: 'add', line: 2, endLine: 3, quote: 'a b' });
-    const form = el.querySelector('form[aria-label="Add comment"]')!;
-    expect(form.textContent).toContain('lines 2-3');
-    await act(async () => { fireEvent.change(form.querySelector('textarea')!, { target: { value: 'Needs work' } }); });
-    await act(async () => { fireEvent.submit(form); });
+    // The comment box lives in the editor; the host only stores what it submits.
+    await post(el, { type: 'commentAction', kind: 'submit', line: 2, endLine: 3, quote: 'a b', body: ' Needs work ' });
     expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.comments.add', expect.objectContaining({ projectId: 'proj-1', body: 'Needs work', line: 2, endLine: 3, quote: 'a b' }));
-    await post(el, { type: 'commentAction', kind: 'add', line: 1, endLine: 1, quote: 'x' });
-    await act(async () => { fireEvent.click([...el.querySelectorAll('form button')].find(b => b.textContent === 'Cancel')!); });
     expect(el.querySelector('form[aria-label="Add comment"]')).toBeNull();
     await post(el, { type: 'commentAction', kind: 'open', line: 1, endLine: 1, quote: '' });
     await post(el, { type: 'askSelection', action: 'explain-selection', startLine: 1, endLine: 2, text: 'a' });

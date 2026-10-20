@@ -48,6 +48,8 @@ export const WORKBENCH_ACTIONS = {
   'comments.list': ['studio.comments.list', 'local', 'List review comments: path, includeResolved'],
   'comments.add': ['studio.comments.add', 'local', 'Add a review comment: path, line, endLine, body'],
   'comments.resolve': ['studio.comments.resolve', 'local', 'Resolve a review comment: id, note'],
+  'comments.update': ['studio.comments.update', 'local', 'Edit the body of your own open review comment: id, body'],
+  'comments.delete': ['studio.comments.delete', 'local', 'Delete your own review comment: id'],
   'suites.list': ['studio.suites.list', 'local', 'List scenario suites and last results'],
   'suites.run': ['studio.suites.run', 'org', 'Run a scenario suite in Simulate: agentPath; optional source (a candidate, else the saved file), caseIds, loopId. With loopId, each run spends one attempt of a fix loop the user started, runs only its cases and is not stored; follow the returned next'],
   'loop.status': ['studio.loop.get', 'local', 'Read a fix loop the user started in Tests: loopId (or agentPath for the newest)'],

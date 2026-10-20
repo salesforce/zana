@@ -271,8 +271,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [comments, setComments] = useState<StudioComment[]>([]);
   // Bumped on every successful file read so comments reload even when the same path is reopened.
   const [fileLoads, setFileLoads] = useState(0);
-  const [addComment, setAddComment] = useState<{ line: number; endLine: number; quote: string } | null>(null);
-  const [commentBody, setCommentBody] = useState('');
   const [fixBusy, setFixBusy] = useState(false);
   const [previewEngine, setPreviewEngine] = useState<StudioEngine>('simulate');
   const [previewCommand, setPreviewCommand] = useState<PreviewCommand | null>(null);
@@ -555,6 +553,15 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     } catch { /* comments are optional */ }
   }, [pluginId, projectId]);
   useEffect(() => { void loadComments(); }, [loadComments, activePath, fileLoads]);
+  /** Runs a comment mutation, shows its failure, and reloads the list either way. */
+  const commentRpc = (method: string, args: Record<string, unknown>, fallback: string) => {
+    if (!projectId) return;
+    void Promise.resolve(callPluginRpc(pluginId, method, { projectId, ...args }))
+      .then(result => { const failure = result as { ok?: boolean; error?: string } | null; if (failure?.ok === false && alive.current) setError(failure.error || fallback); void loadComments(); })
+      .catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); });
+  };
+  const updateComment = (id: string, body: string) => commentRpc(STUDIO_RPC.commentUpdate, { id, body }, 'Could not edit the comment.');
+  const deleteComment = (id: string) => commentRpc(STUDIO_RPC.commentDelete, { id }, 'Could not delete the comment.');
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const changed = payload as { projectId?: string; path?: string; kind?: string } | null;
     if (changed?.kind === 'comments' && (!changed.projectId || changed.projectId === projectId)) void loadComments();
@@ -825,8 +832,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       });
     },
     onCommentAction: message => {
-      if (message.kind === 'add') { setCommentBody(''); setAddComment({ line: message.line, endLine: message.endLine, quote: message.quote }); }
-      else openTool('comments');
+      if (message.kind === 'open') { openTool('comments'); return; }
+      if (message.kind === 'update' && message.id && message.body) { updateComment(message.id, message.body); return; }
+      if (message.kind === 'delete' && message.id) { deleteComment(message.id); return; }
+      const body = message.body?.trim();
+      const path = activePath;
+      if (message.kind !== 'submit' || !body || !path || !projectId) return;
+      commentRpc(STUDIO_RPC.commentAdd, { path, line: message.line, endLine: message.endLine, quote: message.quote, body, content: sourceRef.current }, 'Could not add the comment.');
     },
     onAskSelection: message => {
       if (message.action === 'preview-topic') { openTool('preview'); return; }
@@ -1001,6 +1013,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}
       onReveal={revealLine}
       onResolve={(commentId, note) => { void Promise.resolve(callPluginRpc(pluginId, STUDIO_RPC.commentResolve, { projectId, id: commentId, note })).then(() => loadComments()).catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }}
+      onEdit={updateComment}
+      onDelete={deleteComment}
       onAddressWithAgent={() => { void askAgent('address-comments').catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }} />;
     if (id === 'graph') return <AgentScriptGraphPanel source={source} visible={visible} compact={compact} focusNode={graphFocus.node} focusSeq={graphFocus.seq} onOpenAction={id => { const action = actions.find(row => row.id === id); if (action) openAction(action); }} />;
     if (id === 'preview') return <PreviewWorkbench pluginId={pluginId} projectId={projectId} source={source} fileLabel={activePath?.split('/').pop() ?? 'Draft'}
@@ -1038,23 +1052,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       {draftWarning && <div className="sf-as-banner is-error" role="alert">Local recovery is unavailable for this draft. Save it to a project file before leaving.</div>}
       {hint ? <div className="sf-as-banner">{hint}</div> : null}
       {error ? <div className="sf-as-banner is-error" role="alert">{error}</div> : null}
-      {addComment && <form className="sf-comment-form" aria-label="Add comment" onSubmit={event => {
-        event.preventDefault();
-        const body = commentBody.trim();
-        const path = activePath;
-        if (!body || !path || !projectId) return;
-        const target = addComment;
-        setAddComment(null);
-        void Promise.resolve(callPluginRpc(pluginId, STUDIO_RPC.commentAdd, { projectId, path, line: target.line, endLine: target.endLine, quote: target.quote, body, content: sourceRef.current }))
-          .then(result => { const failure = result as { ok?: boolean; error?: string } | null; if (failure?.ok === false && alive.current) setError(failure.error || 'Could not add the comment.'); void loadComments(); })
-          .catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); });
-      }}>
-        <label>Comment on line{addComment.endLine > addComment.line ? `s ${addComment.line}-${addComment.endLine}` : ` ${addComment.line}`}
-          <textarea value={commentBody} autoFocus rows={2} maxLength={2000} onChange={event => setCommentBody(event.target.value)} />
-        </label>
-        <button type="submit" className="sf-btn-small" disabled={!commentBody.trim() || !activePath || !projectId}>Add comment</button>
-        <button type="button" className="sf-btn-small" onClick={() => setAddComment(null)}>Cancel</button>
-      </form>}
       <StudioShell layout={layout} tier={tier} top={top} activity={activity} explorer={wide && studio.explorerOpen ? explorerNode : false}
         explorerWidth={studio.explorerWidth} onExplorerWidth={width => patch({ explorerWidth: width })}
         quickOpen={quickOpen} quickItems={quickItems} onQuickOpenChange={setQuickOpen} onQuickPick={pickQuick} onSave={save}

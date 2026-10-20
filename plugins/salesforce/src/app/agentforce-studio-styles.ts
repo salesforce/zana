@@ -242,9 +242,6 @@ button.af-agent-row-main { cursor:pointer; }button.af-agent-row-main:disabled { 
 
 .sf-main-col { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; }
 .sf-main-col>.af-workspace { flex:1 1 0; min-height:0; }
-.sf-comment-form { display:flex; align-items:flex-end; gap:8px; padding:8px 12px; border-bottom:1px solid var(--sf-border); background:var(--sf-bg); color:var(--sf-text); font-size:12px; }
-.sf-comment-form label { display:flex; flex-direction:column; gap:4px; flex:1; }
-.sf-comment-form textarea { font:inherit; color:inherit; background:transparent; border:1px solid var(--sf-border); border-radius:6px; padding:4px 6px; resize:vertical; }
 
 .sf-as-no-file { position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:24px; background:var(--sf-surface); }
 .sf-as .sf-as-explorer-top { display:flex; align-items:center; gap:4px; margin-top:10px; }
