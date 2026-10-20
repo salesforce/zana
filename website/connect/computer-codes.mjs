@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { CODE_TTL, ConnectError, digest } from './registry.mjs';
-import { addressError } from './addresses.mjs';
+import { addressError, reclaimAddress } from './addresses.mjs';
 
 export function normalizeComputerCode(value) {
   if (typeof value !== 'string' || value.length > 80) throw new ConnectError('invalid_code');
@@ -25,12 +25,15 @@ export function createComputerCodes(db, { accountUrl, serverUrl, browserUrl, now
       if (error) throw new ConnectError(error);
       return db.transaction(userId, async query => {
         const [count] = await query('SELECT COUNT(*) AS n FROM connect_servers WHERE user_id=$1 AND revoked_at IS NULL', [userId]);
-        const [addresses] = await query('SELECT COUNT(*) AS n FROM connect_addresses WHERE user_id=$1', [userId]);
-        if (Number(count.n) >= limit || Number(addresses.n) >= limit) throw new ConnectError('account_limit', 409);
+        if (Number(count.n) >= limit) throw new ConnectError('account_limit', 409);
         const serverId = randomUUID(), transport = `s-${randomBytes(12).toString('hex')}`;
         await query('INSERT INTO connect_servers(id,user_id,label,name,created_at) VALUES($1,$2,$3,$4,$5)', [serverId, userId, transport, label, now()]);
-        const inserted = await query('INSERT INTO connect_addresses(label,server_id,user_id,created_at) VALUES($1,$2,$3,$4) ON CONFLICT(label) DO NOTHING RETURNING label', [label, serverId, userId, now()]);
-        if (!inserted.length) throw new ConnectError('address_taken', 409);
+        if (!await reclaimAddress(query, userId, serverId, label)) {
+          const [addresses] = await query('SELECT COUNT(*) AS n FROM connect_addresses WHERE user_id=$1', [userId]);
+          if (Number(addresses.n) >= limit) throw new ConnectError('account_limit', 409);
+          const inserted = await query('INSERT INTO connect_addresses(label,server_id,user_id,created_at) VALUES($1,$2,$3,$4) ON CONFLICT(label) DO NOTHING RETURNING label', [label, serverId, userId, now()]);
+          if (!inserted.length) throw new ConnectError('address_taken', 409);
+        }
         return { ...await issue(query, userId, serverId), serverId, browserUrl: browserUrl(label) };
       });
     },
