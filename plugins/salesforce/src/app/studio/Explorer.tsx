@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Bot, Braces, ChevronRight, Cloud, FlaskConical, History, Library, MessageSquareText, PanelLeftClose, Shapes, Workflow } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bot, Braces, ChevronRight, Cloud, Component, FlaskConical, History, Library, MessageSquareText, PanelLeftClose, Shapes, Workflow } from 'lucide-react';
 import type { ExplorerNode, ExplorerUse } from '../../../lib/studio-contract.js';
 import { EmptyState } from '../components/SalesforceState.js';
 import type { PlaygroundFileRef } from '../playground-bridge.js';
 import { modShortcut } from '../shortcut-label.js';
+import { agentSummary } from './bundle-format.js';
 
 type Icon = ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean | 'true' }>;
 type RefKind = ExplorerUse['kind'];
 
-const KIND_LABEL: Record<string, string> = { apex: 'Apex', flow: 'Flow', prompt: 'Prompts', 'lightning-type': 'Lightning Types', scenario: 'Tests', 'org-agent': 'Org agents' };
-const SECTION_ORDER = ['apex', 'flow', 'prompt', 'lightning-type', 'scenario', 'org-agent'] as const;
-const REF_KINDS: readonly RefKind[] = ['apex', 'flow', 'prompt', 'lightning-type'];
-const REF_GROUP_LABEL: Record<RefKind, string> = { apex: 'Apex', flow: 'Flows', prompt: 'Prompts', 'lightning-type': 'Types' };
-const KIND_ICON: Record<string, Icon> = { agent: Bot, apex: Braces, flow: Workflow, prompt: MessageSquareText, 'lightning-type': Shapes, scenario: FlaskConical, 'org-agent': Cloud };
+const KIND_LABEL: Record<string, string> = { apex: 'Apex', flow: 'Flow', prompt: 'Prompts', 'lightning-type': 'Lightning Types', lwc: 'Components', scenario: 'Tests', 'org-agent': 'Org agents' };
+const SECTION_ORDER = ['apex', 'flow', 'prompt', 'lightning-type', 'lwc', 'scenario', 'org-agent'] as const;
+const REF_KINDS: readonly RefKind[] = ['apex', 'flow', 'prompt', 'lightning-type', 'lwc'];
+const REF_GROUP_LABEL: Record<RefKind, string> = { apex: 'Apex', flow: 'Flows', prompt: 'Prompts', 'lightning-type': 'Types', lwc: 'Components' };
+const KIND_ICON: Record<string, Icon> = { agent: Bot, apex: Braces, flow: Workflow, prompt: MessageSquareText, 'lightning-type': Shapes, lwc: Component, scenario: FlaskConical, 'org-agent': Cloud };
 /** Sections that start folded; toggling one records it in `collapsed`, which flips its default. */
 const DEFAULT_COLLAPSED = new Set(['history']);
 /** Local snapshots, caches and baselines the Studio writes under `.zcc/`: listed apart so they do not bury the project's agents. */
@@ -29,14 +30,14 @@ export interface OutlineUse { use: ExplorerUse; node?: ExplorerNode }
 export interface OutlineAgent {
   file: PlaygroundFileRef;
   node?: ExplorerNode;
-  /** What the agent references; 'unindexed' when the explorer skipped the file (scan limit), null when nothing is known yet. */
+  /** What the agent references; 'unindexed' when the explorer skipped the file (agent or scan limit), null when nothing is known yet. */
   uses: OutlineUse[] | 'unindexed' | null;
   /** First path segment, shown when two agents share a name. */
   hint?: string;
 }
 
 /**
- * The outline: each project agent with the Apex, Flows, prompts and Lightning Types it references, resolved to their explorer nodes
+ * The outline: each project agent with the Apex, Flows, prompts, Lightning Types and components (LWC) it references, resolved to their explorer nodes
  * so they open like the catalogue rows. Agents under `.zcc/` go to `history`. Without per-agent `uses` (an older server), the
  * capped `usedBy` lists are inverted instead.
  */
@@ -53,7 +54,7 @@ export function buildAgentOutline(files: readonly PlaygroundFileRef[], nodes: re
     const node = agentNodes.get(file.path);
     let uses: OutlineAgent['uses'];
     if (node?.uses) uses = node.uses.map(use => ({ use, node: refs.get(`${use.kind}:${use.apiName}`) }));
-    else if (node && anyUses) uses = 'unindexed';
+    else if (anyUses) uses = 'unindexed';
     else {
       const inverted = [...refs.values()].filter(ref => ref.usedBy?.includes(file.path)).map(ref => ({ use: { kind: ref.kind as RefKind, apiName: ref.apiName }, node: ref }));
       uses = inverted.length ? inverted : node ? [] : null;
@@ -98,18 +99,19 @@ const usesLabel = (count: number) => `Used by ${count} ${count === 1 ? 'agent' :
 function RefRow({ node, depth, onOpen, showUses }: { node: ExplorerNode; depth: 1 | 2; onOpen(node: ExplorerNode): void; showUses?: boolean }) {
   const uses = node.usedBy?.length ?? 0;
   return <button type="button" className={`sf-as-tree-btn sf-as-depth-${depth}`} disabled={node.kind === 'prompt'} onClick={() => onOpen(node)}
-    title={uses ? `${node.apiName}\n${usesLabel(uses)}: ${node.usedBy!.map(path => path.split('/').pop()).join(', ')}` : node.path ?? node.apiName}>
+    title={uses ? `${node.apiName}\n${usesLabel(uses)}: ${agentSummary(node.usedBy!)}` : node.path ?? node.apiName}>
     <KindIcon kind={node.kind} />
     <span className="sf-as-tree-name">{node.apiName}</span>
     {node.kind === 'lightning-type' && node.apiName.startsWith('lightning__') ? <span className="sf-as-tree-meta" title="Standard Lightning Type">std</span> : null}
     {node.kind === 'lightning-type' && !node.path && !node.apiName.startsWith('lightning__') ? <span className="sf-as-tree-meta is-warn" title="No bundle in this project">missing</span> : null}
+    {node.kind === 'lwc' && !node.path ? <span className="sf-as-tree-meta is-warn" title="No component bundle in this project">missing</span> : null}
     {showUses && uses ? <span className="sf-as-tree-meta sf-as-tree-uses" aria-label={usesLabel(uses)}>{uses}</span> : null}
     {node.badge?.status ? <span className="sf-as-tree-meta" data-testid="sf-explorer-badge" aria-label={node.badge.status === 'pass' ? 'Passing' : 'Failing'}>{node.badge.status === 'pass' ? '✓' : '✕'}</span> : null}
   </button>;
 }
 
-function AgentRow({ agent, open, active, dirty, onToggle, onOpenFile, onOpenNode }: {
-  agent: OutlineAgent; open: boolean; active: boolean; dirty: boolean; onToggle(): void; onOpenFile(path: string): void; onOpenNode(node: ExplorerNode): void;
+function AgentRow({ agent, open, active, dirty, indexing, onToggle, onOpenFile, onOpenNode }: {
+  agent: OutlineAgent; open: boolean; active: boolean; dirty: boolean; indexing: boolean; onToggle(): void; onOpenFile(path: string): void; onOpenNode(node: ExplorerNode): void;
 }) {
   const { file, uses } = agent;
   const expandable = uses !== null;
@@ -130,7 +132,7 @@ function AgentRow({ agent, open, active, dirty, onToggle, onOpenFile, onOpenNode
       </button>
     </div>
     {open && expandable && <div className="sf-as-deps" role="group" aria-label={`${file.apiName} references`}>
-      {uses === 'unindexed' && <div className="sf-as-dep-note">References not indexed for this agent.</div>}
+      {uses === 'unindexed' && <div className="sf-as-dep-note">{indexing ? 'Finding references…' : 'References not indexed for this agent.'}</div>}
       {Array.isArray(uses) && uses.length === 0 && <div className="sf-as-dep-note">No Apex, Flow, prompt or type references.</div>}
       {groups.map(group => <div key={group.kind} className="sf-as-dep-group">
         <div className="sf-as-dep-label">{REF_GROUP_LABEL[group.kind]}<span>{group.rows.length}</span></div>
@@ -146,7 +148,9 @@ function FocusedAgent({ agent, query, total, dirty, history, activePath, collaps
   collapsed(id: string): boolean; onToggleSection?(id: string): void; onAll(): void; onOpenFile(path: string): void; onOpenNode(node: ExplorerNode): void;
 }) {
   const { file, uses } = agent;
-  const rows = Array.isArray(uses) ? uses.filter(row => !query || row.use.apiName.toLowerCase().includes(query)) : [];
+  // As in the outline, a filter that names the agent itself (how it was found) keeps all of its references.
+  const filter = query && !`${file.apiName} ${file.path}`.toLowerCase().includes(query) ? query : '';
+  const rows = Array.isArray(uses) ? uses.filter(row => !filter || row.use.apiName.toLowerCase().includes(filter)) : [];
   const groups = REF_KINDS.map(kind => ({ kind, rows: rows.filter(row => row.use.kind === kind) })).filter(group => group.rows.length);
   return <>
     <button type="button" className="sf-as-tree-btn sf-as-focus-back" data-testid="sf-explorer-all-agents" title={`Show all ${total.toLocaleString()} agents in this project`} onClick={onAll}>
@@ -162,7 +166,7 @@ function FocusedAgent({ agent, query, total, dirty, history, activePath, collaps
     </button>
     {uses === null && <div className="sf-as-dep-note">Finding references…</div>}
     {uses === 'unindexed' && <div className="sf-as-dep-note">References not indexed for this agent.</div>}
-    {Array.isArray(uses) && groups.length === 0 && <div className="sf-as-dep-note">{query ? 'No matching references.' : 'No Apex, Flow, prompt or type references.'}</div>}
+    {Array.isArray(uses) && groups.length === 0 && <div className="sf-as-dep-note">{filter ? 'No matching references.' : 'No Apex, Flow, prompt or type references.'}</div>}
     {groups.map(group => <Section key={group.kind} id={`focus-${group.kind}`} label={REF_GROUP_LABEL[group.kind]} count={group.rows.length} collapsed={collapsed(`focus-${group.kind}`)} onToggle={onToggleSection}>
       {group.rows.map(row => <RefRow key={`${row.use.kind}:${row.use.apiName}`} node={row.node ?? { kind: row.use.kind, apiName: row.use.apiName }} depth={1} onOpen={onOpenNode} showUses />)}
     </Section>)}
@@ -183,7 +187,7 @@ function FocusedAgent({ agent, query, total, dirty, history, activePath, collaps
  * "All references" swaps the outline for the full catalogue. The same component is the wide
  * left column and the rail's "File explorer" tool.
  */
-export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, onOpenFile, onOpenNode, onBrowseOrg, orgLabel, orgAgentsMore, orgAgentsNotLocal, collapsed = [], onToggleSection, onHide }: {
+export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, onOpenFile, onOpenNode, onIndexAgent, indexing = [], onBrowseOrg, orgLabel, orgAgentsMore, orgAgentsNotLocal, collapsed = [], onToggleSection, onHide }: {
   files: PlaygroundFileRef[];
   nodes: ExplorerNode[];
   activePath: string | null;
@@ -192,6 +196,10 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
   onQuery(value: string): void;
   onOpenFile(path: string): void;
   onOpenNode(node: ExplorerNode): void;
+  /** An unfolded agent the explorer did not scan (past its agent or scan limit): list again with it scanned. */
+  onIndexAgent?(path: string): void;
+  /** Agents whose references are being listed after `onIndexAgent`. */
+  indexing?: readonly string[];
   onBrowseOrg(): void;
   /** The connected org, named under the "more in the org" row. */
   orgLabel?: string;
@@ -229,7 +237,11 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
   const focused = view === 'outline' && wideFor !== activePath ? outline.agents.find(agent => agent.file.path === activePath) : undefined;
   // Choosing the open agent again returns to its focused view.
   const focusOn = (path: string) => { if (path === activePath) setWideFor(null); onOpenFile(path); };
-  const toggle = (path: string) => setExpanded(current => { const next = new Set(current); if (next.has(path)) next.delete(path); else next.add(path); return next; });
+  const toggle = (agent: OutlineAgent) => {
+    const path = agent.file.path;
+    if (!expanded.has(path) && agent.uses === 'unindexed') onIndexAgent?.(path);
+    setExpanded(current => { const next = new Set(current); if (next.has(path)) next.delete(path); else next.add(path); return next; });
+  };
 
   const outlineView = <>
     <Section id="project" label="Agents in this project" count={outline.agents.length} collapsed={isCollapsed('project')} onToggle={onToggleSection}>
@@ -239,7 +251,7 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
           {query ? 'Try another file name.' : 'Create a local agent or retrieve a source from your org.'}
         </EmptyState>
         : agents.map(agent => <AgentRow key={agent.file.path} agent={agent} open={agent.forceOpen || expanded.has(agent.file.path)} active={activePath === agent.file.path}
-          dirty={dirtyPath === agent.file.path} onToggle={() => toggle(agent.file.path)} onOpenFile={focusOn} onOpenNode={onOpenNode} />)}
+          dirty={dirtyPath === agent.file.path} indexing={indexing.includes(agent.file.path)} onToggle={() => toggle(agent)} onOpenFile={focusOn} onOpenNode={onOpenNode} />)}
       {orgOnly > 0 && agents.length > 0 && <button type="button" className="sf-as-org-link" data-testid="sf-explorer-org-link" onClick={onBrowseOrg}>
         <KindIcon kind="org-agent" />
         <span className="sf-as-org-link-text">

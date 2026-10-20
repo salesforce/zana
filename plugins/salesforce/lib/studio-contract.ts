@@ -44,20 +44,29 @@ export interface SuiteEval {
   multiTurn: string[];
 }
 export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, { outcome: CaseOutcome; runId: string; at: number }>; lastEval?: SuiteEval }
-/** One reference an agent makes (`apex://X`, `flow://Y`, a Lightning Type), as listed on its explorer node. */
-export interface ExplorerUse { kind: 'apex' | 'flow' | 'prompt' | 'lightning-type'; apiName: string }
-/** `usedBy` lists at most 20 agent paths per reference; `uses` (agent nodes only, scanned agents only) is the uncapped inverse. */
-export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; uses?: ExplorerUse[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
+/** One reference an agent makes (`apex://X`, `flow://Y`, a Lightning Type, or an LWC one of its types renders with), as listed on its explorer node. */
+export interface ExplorerUse { kind: 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'lwc'; apiName: string }
+/**
+ * `usedBy` lists at most 20 agent paths per reference; `uses` (agent nodes only, scanned agents only) is the uncapped inverse.
+ * `via` (LWC nodes only) names the Lightning Types whose renderer or editor uses the component.
+ */
+export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'lwc' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; via?: string[]; uses?: ExplorerUse[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
 export interface LightningTypeProperty { name: string; type?: string; title?: string; description?: string; required: boolean }
 /** One Lightning Type as `studio.lightningType` returns it: a project bundle, a standard platform type, or a missing reference. */
 export interface LightningTypeView {
   ref: string; standard: boolean; status: 'ready' | 'standard' | 'missing'; path?: string; title?: string; description?: string; message?: string;
   properties: LightningTypeProperty[]; files: Array<{ path: string; content: string; truncated?: boolean }>;
+  /** The LWCs the bundle's channel renderer.json / editor.json override with; `path` is set when the component is in this project. */
+  components: LightningTypeComponent[];
 }
+/** `ref` is the `definition` as written (`c/offerCard`); `target` is the overridden property, `$` for the whole type. */
+export interface LightningTypeComponent { ref: string; namespace: string; name: string; role: 'renderer' | 'editor'; channel: string; target: string; path?: string }
+/** One LWC bundle as `studio.lwc` returns it: its source files, or why it is not in the project. */
+export interface LwcBundleView { ref: string; name: string; status: 'ready' | 'missing'; path?: string; message?: string; files: Array<{ path: string; content: string; truncated?: boolean }> }
 
 export const STUDIO_RPC = {
   askAgent: 'studio.askAgent', draftAgent: 'studio.draftAgent', threads: 'studio.threads', unlink: 'studio.unlinkThread',
-  viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType',
+  viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType', lwc: 'studio.lwc',
   comments: 'studio.comments.list', commentAdd: 'studio.comments.add', commentResolve: 'studio.comments.resolve',
   commentUpdate: 'studio.comments.update', commentDelete: 'studio.comments.delete',
   trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run',

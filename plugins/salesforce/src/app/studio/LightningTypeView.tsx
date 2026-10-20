@@ -1,36 +1,43 @@
 import { useEffect, useState } from 'react';
 import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
+import { cachedRead, readCacheKey, rememberRead } from './read-cache.js';
+import { UsedByAgents } from './UsedByAgents.js';
 import { STUDIO_RPC, type LightningTypeView as LightningTypeData } from '../../../lib/studio-contract.js';
 import { EmptyState } from '../components/SalesforceState.js';
 
 type Load = { state: 'loading' } | { state: 'error'; message: string } | { state: 'ready'; data: LightningTypeData };
 
 /**
- * Read-only Lightning Type tab: the schema's properties, the agents whose actions declare the type, and the
- * bundle's raw JSON (schema.json plus each channel's renderer/editor). Standard and missing types explain themselves.
+ * Read-only Lightning Type tab: the schema's properties, the agents whose actions declare the type, the LWCs its renderer
+ * and editor override with, and the bundle's raw JSON (schema.json plus each channel's renderer/editor). Standard and missing types explain themselves.
  */
-export function LightningTypeView({ pluginId, projectId, typeRef, usedBy, onOpenAgent }: {
+export function LightningTypeView({ pluginId, projectId, typeRef, usedBy, onOpenAgent, onOpenComponent }: {
   pluginId: string;
   projectId?: string;
   typeRef: string;
   usedBy?: string[];
   onOpenAgent(path: string): void;
+  onOpenComponent?(ref: string): void;
 }) {
-  const [load, setLoad] = useState<Load>({ state: 'loading' });
+  const key = readCacheKey(pluginId, projectId, 'lightning-type', typeRef);
+  const initial = (): Load => { const data = cachedRead<LightningTypeData>(key); return data ? { state: 'ready', data } : { state: 'loading' }; };
+  const [load, setLoad] = useState<Load>(initial);
   const [file, setFile] = useState(0);
   useEffect(() => {
     let alive = true;
-    setLoad({ state: 'loading' }); setFile(0);
+    // A remount keeps the last answer on screen while it reads again; a new ref starts over.
+    setLoad(initial());
     Promise.resolve(callPluginRpc(pluginId, STUDIO_RPC.lightningType, { ...(projectId ? { projectId } : {}), ref: typeRef }))
       .then(result => {
         const res = result as { ok?: boolean; data?: LightningTypeData; error?: string } | null;
         if (!alive) return;
-        if (res?.ok && res.data) setLoad({ state: 'ready', data: res.data });
+        if (res?.ok && res.data) { rememberRead(key, res.data); setLoad({ state: 'ready', data: res.data }); }
         else setLoad({ state: 'error', message: res?.error || 'The Lightning Type could not be read.' });
       })
       .catch(err => { if (alive) setLoad({ state: 'error', message: err instanceof Error ? err.message : String(err) }); });
     return () => { alive = false; };
-  }, [pluginId, projectId, typeRef]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` names exactly these inputs.
+  }, [key]);
 
   const data = load.state === 'ready' ? load.data : null;
   const shown = data?.files[file];
@@ -49,10 +56,7 @@ export function LightningTypeView({ pluginId, projectId, typeRef, usedBy, onOpen
     {load.state === 'loading' && <p className="sf-lt-note">Loading…</p>}
     {load.state === 'error' && <p className="sf-lt-note is-error" role="alert">{load.message}</p>}
     {data?.message && <p className={`sf-lt-note${data.status === 'ready' ? ' is-warn' : ''}`}>{data.message}</p>}
-    {usedBy && usedBy.length > 0 && <div className="sf-lt-section">
-      <h3>Used by</h3>
-      <div className="sf-lt-used">{usedBy.map(path => <button key={path} type="button" className="af-text-button" title={path} onClick={() => onOpenAgent(path)}>{path.split('/').pop()}</button>)}</div>
-    </div>}
+    {usedBy && usedBy.length > 0 && <dl className="sf-lt-rel"><UsedByAgents usedBy={usedBy} onOpenAgent={onOpenAgent} /></dl>}
     {data?.status === 'ready' && <div className="sf-lt-section">
       <h3>Properties</h3>
       {data.properties.length === 0
@@ -65,6 +69,21 @@ export function LightningTypeView({ pluginId, projectId, typeRef, usedBy, onOpen
             <td>{row.description ?? ''}</td>
           </tr>)}</tbody>
         </table>}
+    </div>}
+    {data && (data.components?.length ?? 0) > 0 && <div className="sf-lt-section">
+      <h3>Components</h3>
+      <table className="sf-lt-table" aria-label="Components">
+        <thead><tr><th scope="col">Component</th><th scope="col">Role</th><th scope="col">Channel</th><th scope="col">Overrides</th></tr></thead>
+        <tbody>{data.components.map(row => <tr key={`${row.channel}:${row.role}:${row.target}:${row.ref}`}>
+          <td>{onOpenComponent
+            ? <button type="button" className="af-text-button" title={row.path ?? row.ref} onClick={() => onOpenComponent(row.ref)}>{row.ref}</button>
+            : <code>{row.ref}</code>}
+            {!row.path && <span className="sf-lt-sub">Not in this project</span>}</td>
+          <td>{row.role === 'editor' ? 'Editor' : 'Renderer'}</td>
+          <td><code>{row.channel || '—'}</code></td>
+          <td>{row.target === '$' ? 'Whole type' : <code>{row.target}</code>}</td>
+        </tr>)}</tbody>
+      </table>
     </div>}
     {data && data.files.length > 0 && <div className="sf-lt-section">
       <h3>Bundle files</h3>

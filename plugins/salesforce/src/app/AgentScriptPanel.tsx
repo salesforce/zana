@@ -69,6 +69,7 @@ import { StudioShell } from './studio/StudioShell.js';
 import { Explorer } from './studio/Explorer.js';
 import { EditorTabs } from './studio/EditorTabs.js';
 import { LightningTypeView } from './studio/LightningTypeView.js';
+import { LwcBundleView } from './studio/LwcBundleView.js';
 import { BottomPanel, type BottomTab } from './studio/BottomPanel.js';
 import { ProblemsPanel } from './studio/ProblemsPanel.js';
 import { ToolStrip, type StripItem } from './studio/ToolStrip.js';
@@ -414,11 +415,14 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
 
   // Only the latest listing lands: an org switch must not be overwritten by a slower, older answer.
   const explorerSeq = useRef(0);
+  // Agents unfolded in the outline that the explorer had not scanned; newest first, bounded like the server's `expand`.
+  const expandedAgents = useRef<string[]>([]);
   const refreshExplorer = useCallback(async () => {
     const seq = ++explorerSeq.current;
     try {
-      // The open agent is scanned first, so it shows its references however many agents the project has.
-      const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs(activePathRef.current ? { focus: activePathRef.current } : undefined))) as { ok?: boolean; nodes?: ExplorerNode[]; orgAgentsTruncated?: boolean; orgAgentsNotLocal?: number };
+      // The open agent, then unfolded ones, are scanned first, so they show their references however many agents the project has.
+      const scan = { ...(activePathRef.current ? { focus: activePathRef.current } : {}), ...(expandedAgents.current.length ? { expand: expandedAgents.current } : {}) };
+      const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs(Object.keys(scan).length ? scan : undefined))) as { ok?: boolean; nodes?: ExplorerNode[]; orgAgentsTruncated?: boolean; orgAgentsNotLocal?: number };
       if (alive.current && seq === explorerSeq.current && result?.ok !== false && Array.isArray(result?.nodes)) {
         setExplorerNodes(result.nodes);
         setOrgAgentsMore(result.orgAgentsTruncated === true);
@@ -429,6 +433,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
 
   // A newly opened agent may sit past the explorer's scan window: list again with it in focus.
   useEffect(() => { if (activePath) void refreshExplorer(); }, [activePath, refreshExplorer]);
+  const [indexingAgents, setIndexingAgents] = useState<string[]>([]);
+  const indexAgent = useCallback((path: string) => {
+    expandedAgents.current = [path, ...expandedAgents.current.filter(row => row !== path)].slice(0, 20);
+    setIndexingAgents(current => [...current, path]);
+    void refreshExplorer().finally(() => { if (alive.current) setIndexingAgents(current => current.filter(row => row !== path)); });
+  }, [refreshExplorer]);
 
   const refreshFiles = useCallback(async () => {
     const listed = (await callPluginRpc(pluginId, 'agentFiles.list', rpcArgs())) as {
@@ -910,12 +920,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const composeFor = (instruction: string) => navigate.toCompose({ initialPrompt: `${instruction}\nProject: ${projectId}\nSource: ${activePath}`, focusPrompt: true });
   const quickItems = useMemo<QuickOpenItem[]>(() => [
     ...files.map(file => ({ id: `file:${file.path}`, label: file.apiName || basename(file.path), detail: file.path, kind: 'agent' })),
-    ...explorerNodes.flatMap((node, index) => node.kind === 'agent' || node.kind === 'prompt' ? [] : [{ id: `node:${index}`, label: node.apiName, detail: node.path ?? node.usedBy?.[0], kind: node.kind === 'lightning-type' ? 'type' : node.kind }])
+    ...explorerNodes.flatMap((node, index) => node.kind === 'agent' || node.kind === 'prompt' ? [] : [{ id: `node:${index}`, label: node.apiName, detail: node.path ?? node.usedBy?.[0], kind: node.kind === 'lightning-type' ? 'type' : node.kind === 'lwc' ? 'LWC' : node.kind }])
   ], [files, explorerNodes]);
   const openNode = useCallback((node: ExplorerNode) => {
     if (node.kind === 'agent' && node.path) void openFile(node.path);
     else if (node.kind === 'apex' || node.kind === 'flow') openTarget(node.kind, node.apiName, node.path);
     else if (node.kind === 'lightning-type') { openTab({ id: `type:${node.apiName}`, kind: 'type', label: node.apiName, target: node.apiName, ...(node.path ? { path: node.path } : {}) }); if (compact) patch({ tool: 'code' }); }
+    else if (node.kind === 'lwc') { openTab({ id: `lwc:${node.apiName}`, kind: 'lwc', label: node.apiName, target: node.apiName, ...(node.path ? { path: node.path } : {}) }); if (compact) patch({ tool: 'code' }); }
     else if (node.kind === 'scenario') openTool('test');
     else if (node.kind === 'org-agent') browseAgents(node.apiName);
   }, [browseAgents, compact, openFile, openTab, openTarget, openTool, patch]);
@@ -981,7 +992,16 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       {activeEditorTab.kind === 'type'
         ? <LightningTypeView key={`${projectId}:${activeEditorTab.id}`} pluginId={pluginId} projectId={projectId} typeRef={activeEditorTab.target ?? activeEditorTab.label}
           usedBy={explorerNodes.find(node => node.kind === 'lightning-type' && node.apiName === (activeEditorTab.target ?? activeEditorTab.label))?.usedBy}
-          onOpenAgent={path => void openFile(path)} />
+          onOpenAgent={path => void openFile(path)}
+          onOpenComponent={ref => openNode(explorerNodes.find(node => node.kind === 'lwc' && node.apiName === ref) ?? { kind: 'lwc', apiName: ref })} />
+        : activeEditorTab.kind === 'lwc'
+        ? (() => {
+          const ref = activeEditorTab.target ?? activeEditorTab.label;
+          const node = explorerNodes.find(row => row.kind === 'lwc' && row.apiName === ref);
+          return <LwcBundleView key={`${projectId}:${activeEditorTab.id}`} pluginId={pluginId} projectId={projectId} componentRef={ref}
+            usedBy={node?.usedBy} via={node?.via} onOpenAgent={path => void openFile(path)}
+            onOpenType={type => openNode(explorerNodes.find(row => row.kind === 'lightning-type' && row.apiName === type) ?? { kind: 'lightning-type', apiName: type })} />;
+        })()
         : (() => {
           const target = activeEditorTab.target ?? `${activeEditorTab.kind}://${activeEditorTab.label}`;
           const context = dependencyContext(target, activeEditorTab.kind, activeEditorTab.label, explorerNodes, activePath, actions);
@@ -1023,7 +1043,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const explorerNode = (
     <Explorer files={files} nodes={badgedNodes} activePath={activePath} dirtyPath={dirty ? activePath : null}
       query={fileQuery} onQuery={setFileQuery} onOpenFile={path => void openFile(path)}
-      onOpenNode={openNode} onBrowseOrg={() => browseAgents()} orgLabel={org?.alias} orgAgentsMore={orgAgentsMore} orgAgentsNotLocal={orgAgentsNotLocal}
+      onOpenNode={openNode} onIndexAgent={indexAgent} indexing={indexingAgents} onBrowseOrg={() => browseAgents()} orgLabel={org?.alias} orgAgentsMore={orgAgentsMore} orgAgentsNotLocal={orgAgentsNotLocal}
       collapsed={studio.collapsedSections} onToggleSection={toggleSection} onHide={wide ? () => patch({ explorerOpen: false }) : undefined} />
   );
 

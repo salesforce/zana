@@ -325,7 +325,7 @@ describe('AgentScriptPanel studio layout', () => {
     expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.lightningType', { projectId: 'proj-1', ref: 'c__Order' });
     const view = el.querySelector('[data-testid="lightning-type-view"]')!;
     expect(view.querySelector('h2')!.textContent).toBe('Order');
-    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'Help.agent')!); });
+    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'Help')!); });
     await flush();
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
     // Fold and unfold a section.
@@ -347,6 +347,66 @@ describe('AgentScriptPanel studio layout', () => {
     await act(async () => { fireEvent.click(pick!); });
     await flush();
     expect(el.querySelector('[data-testid="lightning-type-view"]')).toBeTruthy();
+    rpc.mockImplementation(base);
+  });
+
+  it('opens a type\'s component and walks back to the type', async () => {
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => {
+      if (method === 'studio.explorer') return { ok: true, nodes: [
+        { kind: 'agent', path: 'force-app/bots/QC.agent', apiName: 'QC', uses: [{ kind: 'lightning-type', apiName: 'c__Order' }, { kind: 'lwc', apiName: 'c/orderCard' }] },
+        { kind: 'lightning-type', apiName: 'c__Order', path: 'lightningTypes/Order', usedBy: ['force-app/bots/QC.agent'] },
+        { kind: 'lwc', apiName: 'c/orderCard', path: 'lwc/orderCard', usedBy: ['force-app/bots/Help.agent'], via: ['c__Order'] }
+      ] };
+      if (method === 'studio.lightningType') return { ok: true, data: { ref: args.ref, standard: false, status: 'ready', title: 'Order', properties: [], files: [], components: [{ ref: 'c/orderCard', namespace: 'c', name: 'orderCard', role: 'renderer', channel: 'lightningDesktopGenAi', target: '$', path: 'lwc/orderCard' }, { ref: 'c/ghost', namespace: 'c', name: 'ghost', role: 'editor', channel: 'lightningDesktopGenAi', target: '$' }] } };
+      if (method === 'studio.lwc') return { ok: true, data: { ref: args.ref, name: args.ref.split('/')[1], status: 'ready', path: `lwc/${args.ref.split('/')[1]}`, files: [{ path: 'lwc/orderCard/orderCard.html', content: '<template></template>' }] } };
+      return base(p, method, args);
+    });
+    const el = await mount();
+    await ready(el);
+    await openReferences(el);
+    const explorer = () => el.querySelector('[data-testid="salesforce-agent-script-explorer"]')!;
+    const lwcNode = [...explorer().querySelectorAll('button')].find(n => n.textContent?.includes('c/orderCard'))!;
+    await act(async () => { fireEvent.click(lwcNode); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.lwc', { projectId: 'proj-1', ref: 'c/orderCard' });
+    let view = el.querySelector('[data-testid="lwc-bundle-view"]')!;
+    expect(view.querySelector('.sf-lt-source')!.textContent).toBe('<template></template>');
+    expect(el.querySelector('.sf-etab.is-active')!.textContent).toContain('LWC');
+    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'Help')!); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
+    // From the component to its type, and from the type to a component the explorer does not list.
+    await act(async () => { fireEvent.click(lwcNode); });
+    await flush();
+    view = el.querySelector('[data-testid="lwc-bundle-view"]')!;
+    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'c__Order')!); });
+    await flush();
+    const typeView = el.querySelector('[data-testid="lightning-type-view"]')!;
+    await act(async () => { fireEvent.click([...typeView.querySelectorAll('button')].find(n => n.textContent === 'c/ghost')!); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.lwc', { projectId: 'proj-1', ref: 'c/ghost' });
+    expect(el.querySelector('[data-testid="lwc-bundle-view"] h2')!.textContent).toBe('ghost');
+    rpc.mockImplementation(base);
+  });
+
+  it('lists an unfolded agent the explorer had not scanned', async () => {
+    const base = rpc.getMockImplementation()!;
+    const help = 'force-app/bots/Help.agent';
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => {
+      if (method === 'studio.explorer') return { ok: true, nodes: [
+        { kind: 'agent', path: 'force-app/bots/QC.agent', apiName: 'QC', uses: [] },
+        ...(args?.expand?.includes(help) ? [{ kind: 'agent', path: help, apiName: 'Help', uses: [{ kind: 'apex', apiName: 'Foo' }] }, { kind: 'apex', apiName: 'Foo', path: 'force-app/classes/Foo.cls', usedBy: [help] }] : [])
+      ] };
+      return base(p, method, args);
+    });
+    const el = await mount();
+    await ready(el);
+    const twisty = () => el.querySelector<HTMLButtonElement>('button[aria-label$="what Help uses"]')!;
+    await act(async () => { fireEvent.click(twisty()); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.explorer', { projectId: 'proj-1', expand: [help] });
+    expect(el.querySelector('[aria-label="Help references"]')!.textContent).toContain('Foo');
     rpc.mockImplementation(base);
   });
 

@@ -258,7 +258,7 @@ describe('Explorer', () => {
   const twisty = (name: string) => screen.getByRole('button', { name: new RegExp(`^(Show|Hide) what ${name} uses$`) });
   it('groups nodes by kind and filters by query', () => {
     expect(groupExplorerNodes(nodes, '').map(group => group.kind)).toEqual(['apex', 'flow', 'prompt', 'scenario', 'org-agent']);
-    expect(groupExplorerNodes([{ kind: 'lightning-type', apiName: 'c__T' }, ...nodes], '').map(group => group.kind)).toEqual(['apex', 'flow', 'prompt', 'lightning-type', 'scenario', 'org-agent']);
+    expect(groupExplorerNodes([{ kind: 'lwc', apiName: 'c/card' }, { kind: 'lightning-type', apiName: 'c__T' }, ...nodes], '').map(group => group.kind)).toEqual(['apex', 'flow', 'prompt', 'lightning-type', 'lwc', 'scenario', 'org-agent']);
     expect(groupExplorerNodes(nodes, ' refund ').map(group => group.kind)).toEqual(['flow']);
     expect(groupExplorerNodes([], '')).toEqual([]);
   });
@@ -384,9 +384,34 @@ describe('Explorer', () => {
     expect(screen.queryByText('OrderLookup')).toBeNull();
     rerender(<Explorer {...p} files={all} nodes={withMore} activePath={QC} query="nothing" />);
     expect(screen.getByText('No matching references.')).toBeTruthy();
+    // The filter that found the agent names it, so it keeps every reference once the agent opens.
+    rerender(<Explorer {...p} files={all} nodes={withMore} activePath={QC} query="qc" />);
+    expect(screen.getByText('RefundFlow')).toBeTruthy();
+    expect(screen.getByText('OrderLookup')).toBeTruthy();
+    expect(screen.queryByText('No matching references.')).toBeNull();
     // A local-history file is not a project agent, so it keeps the full outline.
     rerender(<Explorer {...p} files={[...all, { apiName: 'QC', path: '.zcc/v/QC.agent', lines: 1 }]} nodes={withMore} activePath=".zcc/v/QC.agent" />);
     expect(screen.queryByTestId('sf-explorer-all-agents')).toBeNull();
+  });
+  it('lists an unscanned agent on demand when it is unfolded', () => {
+    const p = { ...props(), onIndexAgent: vi.fn() };
+    // `Late` has no node at all: past the server's agent limit, beside agents that were scanned.
+    const late = { apiName: 'Late', path: 'Late.agent', lines: 1 };
+    expect(buildAgentOutline([...files, late], nodes).agents[1]!.uses).toBe('unindexed');
+    const { rerender } = render(<Explorer {...p} files={[...files, late]} />);
+    fireEvent.click(twisty('Late'));
+    expect(p.onIndexAgent).toHaveBeenCalledWith('Late.agent');
+    expect(screen.getByText('References not indexed for this agent.')).toBeTruthy();
+    rerender(<Explorer {...p} files={[...files, late]} indexing={['Late.agent']} />);
+    expect(screen.getByText('Finding references…')).toBeTruthy();
+    // Folding asks nothing; an indexed agent unfolds without asking.
+    fireEvent.click(twisty('Late'));
+    fireEvent.click(twisty('QC'));
+    expect(p.onIndexAgent).toHaveBeenCalledTimes(1);
+    rerender(<Explorer {...p} files={[...files, late]} nodes={[...nodes, { kind: 'agent', apiName: 'Late', path: 'Late.agent', uses: [{ kind: 'apex', apiName: 'OrderLookup' }] }]} />);
+    fireEvent.click(twisty('Late'));
+    expect(screen.getByRole('group', { name: 'Late references' }).textContent).toContain('OrderLookup');
+    expect(p.onIndexAgent).toHaveBeenCalledTimes(1);
   });
   it('lists local history apart, folded by default, and opens its files', () => {
     const p = props();
@@ -439,6 +464,12 @@ describe('Explorer', () => {
     expect(screen.getByLabelText('Used by 2 agents').textContent).toBe('2');
     rerender(<Explorer {...p} query="zzz" />);
     expect(screen.getByText('No matching references.')).toBeTruthy();
+    rerender(<Explorer {...p} nodes={[...typed, { kind: 'lwc', apiName: 'c/orderCard', path: 'lwc/orderCard', usedBy: [QC], via: ['c__Order'] }, { kind: 'lwc', apiName: 'acme/chip', usedBy: [QC] }]} query="" collapsed={[]} onToggleSection={onToggleSection} />);
+    const components = screen.getByRole('button', { name: /Components/ });
+    expect(components.textContent).toContain('2');
+    expect(screen.getAllByText('missing')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: /c\/orderCard/ }));
+    expect(p.onOpenNode).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'lwc', apiName: 'c/orderCard' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back to agents' }));
     expect(screen.getByRole('button', { name: /All references/ }).getAttribute('aria-pressed')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: /All references/ }));
