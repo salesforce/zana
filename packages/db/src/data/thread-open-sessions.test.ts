@@ -6,6 +6,7 @@ import {
   applyConversationThreadLifecycleEvent,
   archiveConversationThread,
   clearConversationSessionOpen,
+  clearConversationSessionsOpenForHost,
   createConversationThread,
   createEnvironment,
   listOpenSessionConversationThreadsForHost,
@@ -92,5 +93,16 @@ describe('thread open sessions', () => {
     clearConversationSessionOpen(database, released.id);
     clearConversationSessionOpen(database, released.id);
     expect(listOpenSessionConversationThreadsForHost(database, host.id, 10)).toEqual([]);
+  });
+
+  it('forgets every open session on one host only', () => {
+    const { database, host, other, thread } = fixture();
+    const first = thread(host.id);
+    const second = thread(host.id);
+    const elsewhere = thread(other.id);
+    for (const row of [first, second, elsewhere]) markConversationSessionOpen(database, row.id);
+    clearConversationSessionsOpenForHost(database, host.id);
+    expect(listOpenSessionConversationThreadsForHost(database, host.id, 10)).toEqual([]);
+    expect(ids(listOpenSessionConversationThreadsForHost(database, other.id, 10))).toEqual([elsewhere.id]);
   });
 });

@@ -98,6 +98,7 @@ export {
   listOpenSessionConversationThreadsForHost,
   markConversationSessionOpen,
   clearConversationSessionOpen,
+  clearConversationSessionsOpenForHost,
   listConversationThreadsForHost,
   listVisibleConversationThreads,
   listMenubarConversationThreads,

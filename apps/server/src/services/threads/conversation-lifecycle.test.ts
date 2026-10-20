@@ -81,6 +81,7 @@ vi.mock('@zana-ai/zcc-db', () => {
   listLiveConversationThreadsForHost: vi.fn(() => []),
   listOpenSessionConversationThreadsForHost: vi.fn(() => []),
   clearConversationSessionOpen: vi.fn(),
+  clearConversationSessionsOpenForHost: vi.fn(),
   setConversationProviderThreadId: vi.fn(),
   archiveConversationThread: vi.fn(),
   unarchiveConversationThread: vi.fn((_db, id) => ({ ...thread, id, archivedAt: null })),
@@ -197,7 +198,8 @@ import {
   getDeferredThreadMessage,
   listDueDeferredThreadMessages,
   listOpenSessionConversationThreadsForHost,
-  clearConversationSessionOpen
+  clearConversationSessionOpen,
+  clearConversationSessionsOpenForHost
 } from '@zana-ai/zcc-db';
 
 function lifecycleCall(type: 'run.started' | 'run.failed' | 'stop.requested' | 'stop.settled' | 'run.succeeded') {
@@ -2325,16 +2327,31 @@ describe('resuming open sessions after a host restart', () => {
     vi.mocked(listOpenSessionConversationThreadsForHost).mockReset().mockReturnValue([]);
   });
 
-  it('does nothing unless idle sessions are set to never be released', async () => {
+  it('forgets open sessions on the host unless idle sessions are set to never be released', async () => {
     const rpc = vi.fn(async () => ({}));
+    vi.mocked(clearConversationSessionsOpenForHost).mockClear();
     for (const config of [{}, { threadSessionReleaseMinutes: 30 }]) {
-      await expect(resumeOpenConversationSessionsAfterHostRestart(ctx(rpc, config), 'host-1')).resolves.toBe(0);
+      const context = ctx(rpc, config);
+      await expect(resumeOpenConversationSessionsAfterHostRestart(context, 'host-1')).resolves.toBe(0);
+      expect(clearConversationSessionsOpenForHost).toHaveBeenLastCalledWith(context.db, 'host-1');
     }
+    expect(clearConversationSessionsOpenForHost).toHaveBeenCalledTimes(2);
     expect(listOpenSessionConversationThreadsForHost).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it('logs and resumes nothing when the open sessions cannot be read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(listOpenSessionConversationThreadsForHost).mockImplementation(() => { throw new Error('database locked'); });
+    const rpc = vi.fn(async () => ({}));
+    await expect(resumeOpenConversationSessionsAfterHostRestart(ctx(rpc, { threadSessionReleaseMinutes: 0 }), 'host-1')).resolves.toBe(0);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('host host-1'), 'database locked');
+    warn.mockRestore();
+  });
+
   it('resumes each idle or failed open session and skips busy, archived and missing threads', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const rpc = vi.fn(async (input: unknown) => {
       const command = (input as { command: { threadId: string } }).command;
       if (command.threadId === failing.id) throw new Error('provider exited');
@@ -2352,5 +2369,9 @@ describe('resuming open sessions after a host restart', () => {
     // a provider failure keeps its mark for the next restart.
     expect(clearConversationSessionOpen).toHaveBeenCalledTimes(1);
     expect(clearConversationSessionOpen).toHaveBeenCalledWith(context.db, sessionless.id);
+    // Only the provider failure is worth a log line, naming the host and thread.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`host host-1 .*thread ${failing.id}`)), 'provider exited');
+    warn.mockRestore();
   });
 });

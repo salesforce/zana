@@ -241,6 +241,13 @@ export function clearConversationSessionOpen(db: ZccDatabase, threadId: string):
   db.sqlite.prepare('DELETE FROM thread_open_sessions WHERE thread_id = ?').run(threadId);
 }
 
+/** Forget every open-session mark on a host, whose sessions all ended with its daemon. */
+export function clearConversationSessionsOpenForHost(db: ZccDatabase, hostId: string): void {
+  db.sqlite.prepare(
+    'DELETE FROM thread_open_sessions WHERE thread_id IN (SELECT id FROM threads WHERE host_id = ?)'
+  ).run(hostId);
+}
+
 /** Unarchived threads on a host whose provider session was open, most recent first. */
 export function listOpenSessionConversationThreadsForHost(
   db: ZccDatabase,

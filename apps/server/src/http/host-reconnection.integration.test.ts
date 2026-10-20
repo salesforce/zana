@@ -12,6 +12,12 @@ import { hashHostKey } from './host-hub.js';
 import { createHostServerSocket } from '../../../host-daemon/src/server-socket.js';
 import { healDisconnectedConversationThreadsForHost } from '../services/threads/conversation-host-recovery.js';
 import * as plans from '../services/threads/conversation-plan.js';
+import { resumeOpenConversationSessionsAfterHostRestart } from '../services/threads/conversation-lifecycle.js';
+
+vi.mock('../services/threads/conversation-lifecycle.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/threads/conversation-lifecycle.js')>();
+  return { ...actual, resumeOpenConversationSessionsAfterHostRestart: vi.fn(actual.resumeOpenConversationSessionsAfterHostRestart) };
+});
 
 const key = 'fixture-key-with-enough-characters';
 let dir: string, server: Awaited<ReturnType<typeof startProductServer>>;
@@ -201,12 +207,16 @@ it('reopens open sessions only after a daemon restart when idle release is never
     reply(JSON.stringify({ type: 'host-rpc.response', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: message.requestId,
       commandType: message.command.type, ok: true, result: { threadId: message.command.threadId, resumed: true } }));
   };
-  // The same daemon reconnecting still holds its sessions.
-  const same = connect({ onMessage }); await same.ready;
-  await new Promise(resolve => setTimeout(resolve, 200));
-  expect(resumed).toEqual([]);
+  const pass = vi.mocked(resumeOpenConversationSessionsAfterHostRestart);
+  pass.mockClear();
+  // The same daemon reconnecting still holds its sessions. The server decides
+  // in onHostConnected, in the same tick that sends ready-ok.
+  await connect({ onMessage }).ready;
+  expect(pass).not.toHaveBeenCalled();
   await connect({ instanceId: randomUUID(), onMessage }).ready;
-  await vi.waitFor(() => expect(resumed).toEqual([open.id]));
+  expect(pass).toHaveBeenCalledTimes(1);
+  await expect(pass.mock.results[0]!.value).resolves.toBe(1);
+  expect(resumed).toEqual([open.id]);
 });
 
 it('a superseded daemon releases ownership instead of reclaiming the host', async () => {
