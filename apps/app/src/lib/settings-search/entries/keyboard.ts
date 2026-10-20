@@ -1,4 +1,5 @@
 import type { SettingsSearchEntry } from '../types';
+import { platformShortcut } from '../../platformShortcut.js';
 
 /**
  * Settings > Shortcuts. Per-command rows come from the runtime provider in
@@ -11,7 +12,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'keyboard',
     anchor: 'keyboard',
     label: 'Shortcuts',
-    help: 'Remap New Chat, the palette, Quick Open, the explorer, Settings, and split-pane navigation. Press ⌘/ to see every shortcut.',
+    help: platformShortcut('Remap New Chat, the palette, Quick Open, the explorer, Settings, and split-pane navigation. Press ⌘/ to see every shortcut.'),
     keywords: ['keybindings', 'hotkeys', 'keyboard', 'remap', 'chords'],
     kind: 'subsection'
   },
@@ -20,7 +21,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'keyboard',
     anchor: 'keyboard',
     label: 'All shortcuts',
-    help: 'The full list, including chords that are not remappable here. Press ⌘/ from anywhere. Show',
+    help: platformShortcut('The full list, including chords that are not remappable here. Press ⌘/ from anywhere. Show'),
     keywords: ['cheat sheet', 'hotkeys', 'keybindings'],
     kind: 'action'
   }

@@ -4,7 +4,7 @@ import { installRuntimeLog } from '@zana-ai/zcc-process-utils';
 import { spawn } from 'node:child_process';
 import { readConnectEnrollment } from './connect-access.js';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
-import { startEnrolledHostDaemon, type EnrolledHostDaemon } from './enroll-runtime.js';
+import { assertEnrollmentSafe, startEnrolledHostDaemon, type EnrolledHostDaemon } from './enroll-runtime.js';
 import { parseJoinArgv, type JoinCliOptions } from './join-argv.js';
 import { startLocalStatusServer } from './local-status.js';
 import { handleProtocolMismatch, confirmHostUpdate, rollbackHostUpdate } from './protocol-self-update.js';
@@ -72,6 +72,8 @@ export async function runJoin(options: JoinCliOptions, restart = restartHostProc
       keepRetryingStartup: true,
       signal: controller.signal,
       dataDir: options.dataDir,
+      provenance: options.provenance ?? 'non-tunnel',
+      replaceEnrollment: options.replaceEnrollment,
       serverUrl: options.serverUrl.endsWith('/') ? options.serverUrl : `${options.serverUrl}/`,
       token: options.joinCode || readConnectEnrollment(options.dataDir, options.hostId), hostId: options.hostId,
       onConnectionChange: value => { connected = value && !closing; },
@@ -89,6 +91,9 @@ export async function runJoin(options: JoinCliOptions, restart = restartHostProc
       }
     });
     daemon = await startup;
+    // Replacement consent applies to this join only, not a standalone restart.
+    process.argv = process.argv.filter(arg => arg !== '--replace-enrollment');
+    delete process.env.ZCC_HOST_REPLACE_ENROLLMENT;
     if (closing) return { close };
     rmSync(join(options.dataDir, 'connect-enroll.json'), { force: true });
     hostId = daemon.hostId;
@@ -106,6 +111,28 @@ export async function runJoin(options: JoinCliOptions, restart = restartHostProc
   }
 }
 
+/** Installer pre-flight: refuse an unsafe enrollment before touching a running daemon. */
+export function checkEnrollmentOnly(options: JoinCliOptions, assertSafe: typeof assertEnrollmentSafe = assertEnrollmentSafe): void {
+  if (!options.dataDir) throw new Error('ZCC_DATA_DIR is required for an isolated machine install');
+  assertSafe(options);
+}
+
+/** Run installer pre-flight without leaking a Node stack trace to shell users. */
+export function runEnrollmentCheck(
+  options: JoinCliOptions,
+  assertSafe: typeof assertEnrollmentSafe = assertEnrollmentSafe,
+  writeError: (message: string) => void = message => process.stderr.write(message),
+  exit: (code: number) => never = code => process.exit(code)
+): void {
+  try {
+    checkEnrollmentOnly(options, assertSafe);
+  } catch (error) {
+    writeError(`${error instanceof Error ? error.message : String(error)}\n`);
+    exit(1);
+  }
+  exit(0);
+}
+
 const entry = process.argv[1] ?? '';
 const launchedDirectly = /(?:join-cli\.[tj]s|join\.[cm]js)$/.test(entry);
 if (launchedDirectly && process.argv[2] === 'restart') {
@@ -120,6 +147,9 @@ if (launchedDirectly && process.argv.includes('--check-protocol')) {
 }
 if (launchedDirectly && process.argv.includes('join')) {
   const options = parseJoinArgv(process.argv.slice(2));
+  if (process.argv.includes('--check-enrollment')) {
+    runEnrollmentCheck(options);
+  }
   installRuntimeLog(options.dataDir, 'host-daemon', import.meta.url);
   // A standalone self-restart has a new PID; never leave the installer's old record behind.
   const pidFile = join(options.dataDir, 'host-daemon.pid');

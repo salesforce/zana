@@ -28,8 +28,10 @@ import { createTerminalExecutionService, type TerminalExecutionService } from '.
 import { TerminalSessionService } from './terminal-session-service.js';
 import { createRuntimeDatabase, type TerminalSessionRepository } from './runtime-database.js';
 import { createTerminalLaunchAuthority } from './terminal-launch-authority.js';
-import { createModernTeamLaunchConfigSource } from './services/agents/modern-team-launch-config.js';
+import { createModernTeamLaunchConfigSource, pushedRuntimeAppConfig } from './services/agents/modern-team-launch-config.js';
 import { createRuntimeMcpConfig } from './services/agents/runtime-mcp-config.js';
+import { sendConversationTurn } from './services/threads/conversation-lifecycle.js';
+import { ThreadCreateError } from './http/thread-create.js';
 import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
 import { getConversationThread } from '@zana-ai/zcc-db';
 import type { ZccDatabase } from '@zana-ai/zcc-db';
@@ -134,7 +136,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),
         hostAgentToolSource: createModernTeamLaunchConfigSource({
           getMcpBaseUrl: () => runtimeMcpConfig.get().mcpBaseUrl,
-          getAppConfig: () => runtimeMcpConfig.get()
+          getAppConfig: () => pushedRuntimeAppConfig(runtimeMcpConfig.get())
         }),
         onAgentCapabilitiesChanged: (contributors) => {
           parentPort.postMessage({
@@ -279,6 +281,24 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         live = false;
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: live });
+    }
+    if (message.operation === 'thread-queue-turn') {
+      // Never throws and always posts a result: the caller is a loopback
+      // notifier that must not hang on a dead or full thread.
+      let value: { ok: boolean; queued?: boolean; reason?: string };
+      try {
+        const row = threadDb ? getConversationThread(threadDb, message.threadId) : null;
+        if (!productContext || !isThreadLiveInProject(row, message.projectId)) {
+          value = { ok: false, reason: 'not-live' };
+        } else {
+          const queued = row?.status === 'active' || row?.status === 'starting';
+          await sendConversationTurn(productContext, message.threadId, [{ type: 'text', text: message.text, mentions: [] }], 'queue-if-active');
+          value = { ok: true, queued };
+        }
+      } catch (error) {
+        value = { ok: false, reason: error instanceof ThreadCreateError ? error.code : 'error' };
+      }
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
     }
     if (message.operation === 'menubar-threads-list') {
       const agents = menubarThreads?.list(message.limit) ?? [];

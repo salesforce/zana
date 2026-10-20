@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
+import { platformKey, platformShortcut } from '../lib/platformShortcut.js';
 
 interface Props {
   onClose: () => void;
@@ -120,10 +121,10 @@ export function ShortcutsHelp({ onClose }: Props) {
                 <div key={i} className="shortcut-row">
                   <span className="shortcut-keys">
                     {r.keys.map((k, j) => (
-                      <kbd key={j}>{k}</kbd>
+                      <kbd key={j}>{platformKey(k)}</kbd>
                     ))}
                   </span>
-                  <span className="shortcut-label">{r.label}</span>
+                  <span className="shortcut-label">{platformShortcut(r.label)}</span>
                 </div>
               ))}
             </section>

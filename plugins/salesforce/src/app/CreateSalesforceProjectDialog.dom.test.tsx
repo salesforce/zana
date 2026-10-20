@@ -89,6 +89,20 @@ describe('Salesforce project setup', () => {
     expect(rpc).toHaveBeenLastCalledWith('salesforce', 'orgs', expect.objectContaining({ refresh: true }));
     expect(ui().getByRole('option', { name: /dev@example/ })).toBeTruthy();
   });
+  it('locks the org picker and shows progress until connected orgs load', async () => {
+    let finish!: (value: unknown) => void;
+    rpc.mockImplementation(async (_id, method) => method === 'orgs' ? new Promise(resolve => { finish = resolve; }) : { ok: true });
+    await mount(); await click('Use a connected org');
+    const picker = ui().getByLabelText<HTMLSelectElement>('Connected org');
+    expect(picker.disabled).toBe(true);
+    expect(ui().getByRole('option', { name: 'Loading orgs…' })).toBeTruthy();
+    expect(ui().getByRole('status').textContent).toContain('Loading your connected orgs');
+    expect(ui().queryByText('No connected orgs yet. Log in to continue.')).toBeNull();
+    await act(async () => { finish({ ok: true, orgs }); });
+    expect(picker.disabled).toBe(false);
+    expect(ui().getByRole('option', { name: 'Choose an org' })).toBeTruthy();
+    expect(ui().queryByRole('status')).toBeNull();
+  });
   it('asks for an explicit org when login cannot identify the new connection', async () => {
     rpc.mockImplementation(async (_id, method) => method === 'orgs.login.start' ? { ok: true, loginId: 'id' } : { ok: true, done: true, result: { ok: true, orgs, warning: 'Choose your signed-in org.' } });
     await mount(); await submit();

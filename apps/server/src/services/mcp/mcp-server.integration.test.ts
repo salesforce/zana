@@ -203,6 +203,61 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(cancelTeamLaunch).not.toHaveBeenCalled();
   });
 
+  describe('squad proposal tools', () => {
+    const okResult = {
+      ok: true as const,
+      value: {
+        proposalId: 'p1', inboxEntryId: 'i1',
+        team: { id: 't1', name: 'T', workers: 1, orchestrator: 'o' },
+        planning: 'infer' as const, plan: null, sources: [], expiresAt: 1
+      }
+    };
+    const baseOpts = () => ({
+      inboxStore: createMemoryInboxStore(), suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => makeProject('proj-1', 'My Project') },
+      log: () => {}
+    });
+
+    it('lists both tools on a credentialed session route and forwards the call', async () => {
+      const proposeSquad = vi.fn(async () => okResult);
+      const checkSquadPlan = vi.fn(async () => ({ ok: true as const, value: { ok: false as const, reason: 'bad' } }));
+      const validateLaunchRouteIdentity = vi.fn(async () => true);
+      handle = await startMcpServer({ ...baseOpts(), proposeSquad, checkSquadPlan, validateLaunchRouteIdentity });
+      const client = await connectClient(handle.url, `proj-1/caller-session/${controlCredentialForSession('caller-session')}`);
+      clients.push(client);
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      expect(names).toEqual(expect.arrayContaining(['squad_propose', 'squad_plan_check']));
+      const res = await client.callTool({ name: 'squad_propose', arguments: { teamId: 't1', goal: 'do it' } });
+      expect((res as { isError?: boolean }).isError).toBeFalsy();
+      expect(validateLaunchRouteIdentity).toHaveBeenCalledWith('caller-session', 'proj-1');
+      expect(proposeSquad).toHaveBeenCalledWith(
+        { projectId: 'proj-1', sessionId: 'caller-session' },
+        expect.objectContaining({ teamId: 't1', goal: 'do it' })
+      );
+    });
+
+    it('hides both tools without the deps', async () => {
+      handle = await startMcpServer(baseOpts());
+      const client = await connectClient(handle.url, `proj-1/caller-session/${controlCredentialForSession('caller-session')}`);
+      clients.push(client);
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      expect(names).not.toContain('squad_propose');
+      expect(names).not.toContain('squad_plan_check');
+    });
+
+    it('returns NOT_LIVE on an uncredentialed route', async () => {
+      const proposeSquad = vi.fn(async () => okResult);
+      handle = await startMcpServer({ ...baseOpts(), proposeSquad, validateLaunchRouteIdentity: async () => true });
+      const client = await connectClient(handle.url, 'proj-1/caller-session/forged');
+      clients.push(client);
+      const res = await client.callTool({ name: 'squad_propose', arguments: { teamId: 't1', goal: 'g' } }) as
+        { isError?: boolean; content: Array<{ text: string }> };
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain('NOT_LIVE');
+      expect(proposeSquad).not.toHaveBeenCalled();
+    });
+  });
+
   it('1a2. stamps host-resolved origin (resume coordinates) onto a session-scoped push', async () => {
     const store = createMemoryInboxStore();
     const origins: Record<string, import('@zana-ai/zcc-domain/product').InboxOrigin> = {

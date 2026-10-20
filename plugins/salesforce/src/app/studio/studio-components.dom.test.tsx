@@ -230,6 +230,17 @@ describe('ProblemsPanel', () => {
     rerender(<ProblemsPanel path={null} diagnostics={[]} />);
     expect(screen.getByText(/Open a project file/)).toBeTruthy();
   });
+  it('lists info and hint entries as notes without counting them as problems', () => {
+    const onFix = vi.fn();
+    const { rerender } = render(<ProblemsPanel path="a/b.agent" diagnostics={[diag(1, 'info'), diag(2, 'hint')]} onFixWithAgent={onFix} />);
+    expect(screen.getByText(/No problems · 2 notes/)).toBeTruthy();
+    expect(screen.getByText('m1')).toBeTruthy();
+    expect(screen.getByText('m2')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /Fix with agent/ }) as HTMLButtonElement).disabled).toBe(true);
+    rerender(<ProblemsPanel path="a/b.agent" diagnostics={[diag(1, 'info'), diag(4, 'error')]} onFixWithAgent={onFix} />);
+    expect(screen.getByText(/1 problem · 1 note/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: /Fix with agent/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
 });
 
 describe('Explorer', () => {

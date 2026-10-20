@@ -228,6 +228,40 @@ export function listLiveConversationThreadsForHost(
   ).all(hostId, limit) as ConversationThreadSqlRow[]).map(toThread);
 }
 
+/** Record that a thread's provider session is open (a run started on it). */
+export function markConversationSessionOpen(db: ZccDatabase, threadId: string, at = Date.now()): void {
+  db.sqlite.prepare(
+    `INSERT INTO thread_open_sessions (thread_id, opened_at) VALUES (?, ?)
+     ON CONFLICT(thread_id) DO UPDATE SET opened_at = excluded.opened_at`
+  ).run(threadId, at);
+}
+
+/** Forget an open provider session the user released (stop, plan cancel, archive). */
+export function clearConversationSessionOpen(db: ZccDatabase, threadId: string): void {
+  db.sqlite.prepare('DELETE FROM thread_open_sessions WHERE thread_id = ?').run(threadId);
+}
+
+/** Forget every open-session mark on a host, whose sessions all ended with its daemon. */
+export function clearConversationSessionsOpenForHost(db: ZccDatabase, hostId: string): void {
+  db.sqlite.prepare(
+    'DELETE FROM thread_open_sessions WHERE thread_id IN (SELECT id FROM threads WHERE host_id = ?)'
+  ).run(hostId);
+}
+
+/** Unarchived threads on a host whose provider session was open, most recent first. */
+export function listOpenSessionConversationThreadsForHost(
+  db: ZccDatabase,
+  hostId: string,
+  limit: number
+): ConversationThreadRow[] {
+  return (db.sqlite.prepare(
+    `SELECT threads.* FROM threads
+     JOIN thread_open_sessions AS open_session ON open_session.thread_id = threads.id
+     WHERE threads.host_id = ? AND threads.archived_at IS NULL
+     ORDER BY open_session.opened_at DESC LIMIT ?`
+  ).all(hostId, Math.max(1, Math.trunc(limit) || 1)) as ConversationThreadSqlRow[]).map(toThread);
+}
+
 /** Cap for the unscoped visible-thread list (idle + error included). */
 export const VISIBLE_CONVERSATION_THREAD_LIMIT = 200;
 
@@ -352,6 +386,7 @@ export function applyConversationThreadLifecycleEventOnRow(
       detail: `status changed from ${thread.status} while applying ${event.type}`
     };
   }
+  if (evaluation.to === 'active') markConversationSessionOpen(db, thread.id, now);
   const next = getConversationThread(db, thread.id);
   if (!next) {
     return {

@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, Bot, Braces, ChevronRight, Cloud, FlaskConical, 
 import type { ExplorerNode, ExplorerUse } from '../../../lib/studio-contract.js';
 import { EmptyState } from '../components/SalesforceState.js';
 import type { PlaygroundFileRef } from '../playground-bridge.js';
+import { modShortcut } from '../shortcut-label.js';
 
 type Icon = ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean | 'true' }>;
 type RefKind = ExplorerUse['kind'];
@@ -280,7 +281,7 @@ export function Explorer({ files, nodes, activePath, dirtyPath, query, onQuery, 
   return <aside className="sf-as-explorer" data-testid="salesforce-agent-script-explorer" aria-label="Agentforce files">
     <div className="sf-as-explorer-top">
       <input className="sf-as-explorer-search" aria-label="Filter Agentforce files" placeholder={focused ? `Filter ${focused.file.apiName}` : 'Filter files'} value={query} onChange={event => onQuery(event.target.value)} />
-      {onHide && <button type="button" className="icon-btn sf-as-explorer-hide" aria-label="Hide explorer" title="Hide explorer (⌘B)" onClick={onHide}><PanelLeftClose size={15} aria-hidden="true" /></button>}
+      {onHide && <button type="button" className="icon-btn sf-as-explorer-hide" aria-label="Hide explorer" title={`Hide explorer (${modShortcut('B')})`} onClick={onHide}><PanelLeftClose size={15} aria-hidden="true" /></button>}
     </div>
     <div className="sf-as-explorer-scroll">{view === 'references' ? referencesView : focusView || outlineView}</div>
     {refCount > 0 && <div className="sf-as-explorer-foot">

@@ -1,6 +1,6 @@
 import { useRealtime, useZccNavigate, type PluginMessageDirectiveProps } from '@zana-ai/zcc-plugin-sdk/app';
 import type { StudioComment, StudioViewState } from '../../../lib/studio-contract.js';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../../../lib/studio-contract.js';
+import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, countProblems } from '../../../lib/studio-contract.js';
 import { queueAgentScriptOpen } from '../agent-script-open.js';
 import { AGENTFORCE_PLAYGROUND_ACTION } from '../agentforce-panel-params.js';
 import { openInStudioWindow, STUDIO_TAB_ID } from '../studio-window-route.js';
@@ -36,7 +36,7 @@ export function AgentCard({ pluginId, attributes, source, message }: PluginMessa
     ]);
     const list = rpcFailure(comments) ? null : (comments as { comments?: StudioComment[] } | null)?.comments;
     const state = rpcFailure(view) ? null : ((view as { state?: StudioViewState; view?: StudioViewState } | null)?.state ?? (view as { view?: StudioViewState } | null)?.view);
-    const problems = state && state.path === path ? state.diagnostics.filter(item => item.severity === 'error' || item.severity === 'warning').length : null;
+    const problems = state && state.path === path ? countProblems(state.diagnostics) : null;
     return {
       apiName: file.apiName || (file.path ?? path).split('/').pop()!.replace(/\.(agent|afscript)$/i, ''),
       path: file.path ?? path,

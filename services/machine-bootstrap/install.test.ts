@@ -51,6 +51,26 @@ it('preserves a conflicting existing identity and secrets', async () => {
   await expect(installMachine({ accountUrl: g.accountUrl, code, serverId: g.serverId, home: h, fetcher: async () => Response.json(g), execute })).rejects.toThrow('another machine');
   expect(readFileSync(join(dir, 'auth.json'), 'utf8')).toBe('canary'); expect(execute).not.toHaveBeenCalled();
 });
+it('forwards explicit replacement consent without exporting it into the service environment', async () => {
+  const h = home(), g = grant(), dir = join(h, '.zcc-machines', g.instanceId); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'host.id'), randomUUID());
+  writeFileSync(join(dir, 'auth.json'), JSON.stringify({ hostId: randomUUID(), serverUrl: 'https://other.example' }));
+  const execute = vi.fn(async (_file: string, env: any, args: string[]) => {
+    expect(args).toContain('--replace-enrollment');
+    expect(env.ZCC_HOST_REPLACE_ENROLLMENT).toBeUndefined();
+  });
+  await installMachine({ accountUrl: g.accountUrl, code, serverId: g.serverId, home: h, replaceEnrollment: true,
+    fetcher: async (url: string) => url.endsWith('/redeem') ? Response.json(g) : new Response('script'), execute });
+  expect(execute).toHaveBeenCalledOnce();
+});
+it('parses replacement consent exactly once in the Connect command', async () => {
+  const { main } = await import('./install.mjs');
+  const io = { stdout: { write: vi.fn() }, stderr: { write: vi.fn() } }, install = vi.fn();
+  const args = ['--account', 'https://account.example', '--code', code, '--server-id', randomUUID()];
+  expect(await main([...args, '--replace-enrollment'], install, io)).toBe(0);
+  expect(install).toHaveBeenCalledWith(expect.objectContaining({ replaceEnrollment: true }));
+  expect(await main([...args, '--replace-enrollment', '--replace-enrollment'], install, io)).toBe(1);
+});
 it('allows repair only for the same instance and host, refusing linked data and wrong-server auth', () => {
   const h = home(), g = grant(), dir = join(h, 'machine'); mkdirSync(dir);
   writeFileSync(join(dir, 'host.id'), g.hostId); writeFileSync(join(dir, 'connect-access.json'), JSON.stringify(g));

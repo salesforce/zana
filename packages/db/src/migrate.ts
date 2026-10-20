@@ -483,6 +483,26 @@ export function migrate(database: SqliteDatabase): void {
     `CREATE INDEX IF NOT EXISTS deferred_thread_messages_edit_hold_idx
        ON deferred_thread_messages(edit_held_until) WHERE edit_held_until IS NOT NULL`
   ]);
+  // Host name provenance: NULL = legacy unknown, 1 = user-owned, 0 = app/alias-owned.
+  if (!applied.has(33)) applyVersion(database, 33,
+    hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
+  // Some pre-release builds recorded v33 before applying its ALTER TABLE. Keep
+  // this repair separate so opening those databases restores the missing column.
+  if (!applied.has(34)) applyVersion(database, 34,
+    hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
+  // Other pre-release builds subsequently reused v34 and v35. Migration
+  // history alone cannot establish the column, so v36 repairs every lineage
+  // that predates this version.
+  if (!applied.has(36)) applyVersion(database, 36,
+    hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
+  // Threads whose provider session was opened and not released by the user.
+  // Thread status only tracks turns, so this is what survives a daemon restart.
+  if (!applied.has(37)) applyVersion(database, 37, [
+    `CREATE TABLE IF NOT EXISTS thread_open_sessions (
+      thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+      opened_at INTEGER NOT NULL
+    )`
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

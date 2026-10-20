@@ -525,6 +525,8 @@ async function installPeer(
     emit: HostBootstrapListener;
     stages: HostBootstrapStageTracker;
     sshTunnel?: { localPort: number; remotePort: number };
+    /** Repair only: the user asked to reconnect this known host, so its old enrollment may be replaced. */
+    replaceEnrollment?: boolean;
   }
 ): Promise<void> {
   const primary = requirePrimaryHost(ctx);
@@ -555,7 +557,8 @@ async function installPeer(
         hostId: input.hostId,
         serverUrl: input.serverUrl,
         artifactPath: artifact.tarballPath,
-        ...(input.sshTunnel ? { sshTunnel: input.sshTunnel } : {})
+        ...(input.sshTunnel ? { sshTunnel: input.sshTunnel } : {}),
+        ...(input.replaceEnrollment ? { replaceEnrollment: true } : {})
       }
     });
   } catch (error) {
@@ -691,7 +694,8 @@ async function installTunnelPeer(
   remote: ProjectRemote,
   emit: HostBootstrapListener,
   stages: HostBootstrapStageTracker,
-  localCode: { hostId: string; joinCode: string }
+  localCode: { hostId: string; joinCode: string },
+  options: { replaceEnrollment?: boolean } = {}
 ): Promise<TunnelPeerInstall> {
   const { hostId } = localCode;
   try {
@@ -700,7 +704,8 @@ async function installTunnelPeer(
       (port) => installPeer(ctx, {
         remote, hostId, joinCode: localCode.joinCode,
         serverUrl: `http://127.0.0.1:${port}`, serverHost: `ssh-${hostId}`, emit, stages,
-        sshTunnel: { localPort, remotePort: port }
+        sshTunnel: { localPort, remotePort: port },
+        ...(options.replaceEnrollment ? { replaceEnrollment: true } : {})
       }),
       { onRetry: (port) => emit({ type: 'log', text: `Port ${port} is busy on the remote machine; trying another…` }) }
     );
@@ -931,7 +936,7 @@ export async function repairHost(
     }
     assertJoinOrigin(ctx);
     emit({ type: 'log', text: NO_CONNECT_TUNNEL_LOG });
-    await installTunnelPeer(ctx, remote, emit, stages, ctx.joinCodes.mintForHost(hostId));
+    await installTunnelPeer(ctx, remote, emit, stages, ctx.joinCodes.mintForHost(hostId), { replaceEnrollment: true });
     emit({ type: 'done', hostId });
     return events;
   } catch (error) {

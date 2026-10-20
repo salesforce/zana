@@ -249,6 +249,7 @@ describe('hosts API', () => {
   it('install.sh can skip service install after /status reports connected', async () => {
     const artifactDir = mkdtempSync(join(tmpdir(), 'zcc-host-stub-'));
     writeFileSync(join(artifactDir, 'join.mjs'), `import { createServer } from 'node:http';
+if (process.argv.includes('--check-enrollment')) process.exit(0);
 const port = Number(process.argv[process.argv.indexOf('--host-daemon-port') + 1]);
 const hostId = process.argv[process.argv.indexOf('--host-id') + 1];
 const serverUrl = process.argv[process.argv.indexOf('--server-url') + 1];
@@ -660,9 +661,11 @@ createServer((_req, res) => {
 
 describe('ssh-identity reconcile failure', () => {
   it.each([
-    ['Error', new Error('reconcile exploded'), 'reconcile exploded'],
-    ['non-Error', 'tok_secret_session_123', 'unknown error']
-  ])('warns with the message only and still answers when reconcile rejects with %s', async (_label, failure, expected) => {
+    ['Error', new Error('reconcile exploded'), 'reconcile exploded', true],
+    ['non-Error', 'tok_secret_session_123', 'unknown error', true],
+    ['Error', new Error('reconcile exploded'), 'reconcile exploded', false],
+    ['non-Error', 'tok_secret_session_123', 'unknown error', false]
+  ])('warns with the message only and still answers when reconcile rejects with %s (context reconciler=%s)', async (_label, failure, expected, contextReconciler) => {
     await start('https://machine.example.com');
     await fetch(`${server!.url}internal/hosts/enroll`, {
       method: 'POST',
@@ -695,6 +698,10 @@ describe('ssh-identity reconcile failure', () => {
       })
     });
     expect(enrolled.status).toBe(201);
+    if (!contextReconciler) {
+      await server!.ctx.remoteProjectReconciler!.dispose();
+      delete server!.ctx.remoteProjectReconciler;
+    }
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     reconcileMock.failure = failure;
     reconcileMock.active = true;

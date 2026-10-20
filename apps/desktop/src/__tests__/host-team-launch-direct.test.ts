@@ -160,6 +160,14 @@ describe('authorizeTeamLaunch', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('authorizes a bound SSH remote while keeping a secondary checkout blocked', () => {
+    h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks())).toMatchObject({ ok: true });
+    h.projects = [{ id: 'p1', name: 'Secondary', path: projectDir, hostId: 'other-host' }];
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks()))
+      .toMatchObject({ ok: false, code: 'HOST_UNSUPPORTED' });
+  });
+
   it('rejects mismatched counts, invalid tasks, over-limit and unknown personas', () => {
     expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks().slice(1))).toMatchObject({ ok: false, code: 'INVALID' });
     const blank = tasks(); blank[0].initialTask = '  ';
@@ -228,6 +236,14 @@ describe('launchTeam validation failures', () => {
     expect(await launchTeam('team1', 'zzz')).toMatchObject({ ok: false, code: 'NOT_FOUND' });
     h.projects = [{ id: 'p1', name: 'Proj', path: projectDir, hostId: 'other-host' }];
     expect(await launchTeam('team1', 'p1')).toMatchObject({ ok: false });
+  });
+
+  it('launches a bound SSH remote through the existing remote path', async () => {
+    h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
+    const result = await launchTeam('team1', 'p1');
+    expect(result.ok).toBe(true);
+    expect(h.creates).toHaveLength(4);
+    for (const create of h.creates) expect(create.remote).toMatchObject({ host: 'ssh-box' });
   });
 
   it('requires an orchestrator for durable coordination', async () => {
@@ -448,4 +464,3 @@ describe('launchTeam non-claude recovery, orchestrator binding failure and orche
     expect(result).toMatchObject({ ok: false, code: 'NO_ORCHESTRATOR' });
   });
 });
-

@@ -316,6 +316,9 @@ export function peerInstallServiceCommand(input: {
   joinCode: string;
   hostId: string;
   serverUrl: string;
+  provenance?: 'tunnel' | 'non-tunnel';
+  /** One-join consent to replace a prior enrollment; never written to the service unit. */
+  replaceEnrollment?: boolean;
 }): string {
   const host = requireServerHost(input.serverHost);
   const label = `ai.zana.zcc-host-daemon.${host}`;
@@ -341,8 +344,9 @@ export function peerInstallServiceCommand(input: {
     'printf "%s\\n" "$data_dir" > "$port_dir/$port"',
     `join_code=${shQuote(input.joinCode)}`,
     `server_url=${shQuote(input.serverUrl)}`,
-    'if [ -f "$data_dir/host.id" ]; then existing_id=$(tr -d "[:space:]" < "$data_dir/host.id"); if [ "$existing_id" != "$host_id" ]; then rm -f "$data_dir/host.id" "$data_dir/auth.json"; fi; fi',
     'export ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url"',
+    `export ZCC_HOST_ENROLLMENT_PROVENANCE=${input.provenance === 'tunnel' ? 'tunnel' : 'non-tunnel'}`,
+    ...(input.replaceEnrollment ? ['export ZCC_HOST_REPLACE_ENROLLMENT=1'] : []),
     // Marks where this attempt's output begins so the primary reads only its lines.
     'printf "zcc-join: attempt %s host=%s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$host_id" >>"$data_dir/host-daemon.log"',
     'nohup "$node_bin" "$join_bin" join --join-code "$join_code" --host-id "$host_id" --server-url "$server_url" --host-daemon-port "$port" --auto-update >>"$data_dir/host-daemon.log" 2>&1 &',
@@ -376,6 +380,7 @@ export function peerInstallServiceCommand(input: {
     '  printf "%s\\n" "<key>EnvironmentVariables</key><dict>" >> "$plist"',
     '  printf "%s\\n" "<key>ZCC_DATA_DIR</key><string>$data_dir</string>" >> "$plist"',
     '  printf "%s\\n" "<key>ZCC_SERVER_URL</key><string>$server_url</string>" >> "$plist"',
+    '  printf "%s\\n" "<key>ZCC_HOST_ENROLLMENT_PROVENANCE</key><string>$ZCC_HOST_ENROLLMENT_PROVENANCE</string>" >> "$plist"',
     '  printf "%s\\n" "<key>ZCC_HOST_SERVICE_MANAGED</key><string>1</string>" >> "$plist"',
     '  printf "%s\\n" "</dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>" >> "$plist"',
     '  launchctl unload "$plist" 2>/dev/null || true',
@@ -394,6 +399,7 @@ export function peerInstallServiceCommand(input: {
     '  printf "%s\\n" "ExecStart=$node_bin $join_bin join --host-id $host_id --server-url $server_url --host-daemon-port $port --auto-update" >> "$unit"',
     '  printf "%s\\n" "Environment=ZCC_DATA_DIR=$data_dir" >> "$unit"',
     '  printf "%s\\n" "Environment=ZCC_SERVER_URL=$server_url" >> "$unit"',
+    '  printf "%s\\n" "Environment=ZCC_HOST_ENROLLMENT_PROVENANCE=$ZCC_HOST_ENROLLMENT_PROVENANCE" >> "$unit"',
     '  printf "%s\\n" "Environment=ZCC_HOST_SERVICE_MANAGED=1" >> "$unit"',
     '  printf "%s\\n" "Restart=always" >> "$unit"',
     '  printf "%s\\n" "RestartSec=3" >> "$unit"',
@@ -462,6 +468,7 @@ export async function peerDaemonInstall(
     serverHost: string;
     artifactPath: string;
     sshTunnel?: { localPort: number; remotePort: number };
+    replaceEnrollment?: boolean;
   }
 ): Promise<{ ok: true; log: string }> {
   if (!existsSync(input.artifactPath)) {
@@ -485,7 +492,9 @@ export async function peerDaemonInstall(
         serverHost: input.serverHost,
         joinCode: input.joinCode,
         hostId: input.hostId,
-        serverUrl: input.serverUrl
+        serverUrl: input.serverUrl,
+        provenance: input.sshTunnel ? 'tunnel' : 'non-tunnel',
+        ...(input.replaceEnrollment ? { replaceEnrollment: true } : {})
       })
     );
     if (installed.code !== 0) {

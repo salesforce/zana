@@ -1254,6 +1254,7 @@ export async function dispatchHostCommand(
         serverUrl: command.serverUrl,
         serverHost: command.sshTunnel ? `ssh-${command.hostId}` : serverHost,
         sshTunnel: command.sshTunnel,
+        ...(command.replaceEnrollment ? { replaceEnrollment: true } : {}),
         artifactPath: command.artifactPath
       });
     }

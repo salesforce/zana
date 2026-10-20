@@ -7,6 +7,7 @@ import { writeMcpPort } from '../mcp/mcp-port-store.js';
 import {
   createModernTeamLaunchConfigSource,
   mcpPortFileForDataDir,
+  pushedRuntimeAppConfig,
   standaloneModernTeamLaunchSource
 } from './modern-team-launch-config.js';
 
@@ -34,6 +35,24 @@ describe('Modern team-launch config source', () => {
       'execution_start',
       'execution_snapshot'
     ]));
+  });
+
+  it('uses exactly the flag main pushed to the utility runtime (no hidden composer fallback)', async () => {
+    let pushed = { teamLaunchEnabled: false, teamJobLaunchEnabled: false };
+    const source = createModernTeamLaunchConfigSource({
+      getMcpBaseUrl: () => 'http://127.0.0.1:43123',
+      // The pushed payload has no composerShowAutonomousTeam key, as in utility-entry.
+      getAppConfig: () => pushedRuntimeAppConfig(pushed)
+    });
+    const off = await resolvePluginSessionTools([source], session);
+    expect(off.tools.map((tool) => tool.name)).not.toEqual(expect.arrayContaining(['squad_propose']));
+    expect(off.tools.map((tool) => tool.name)).not.toEqual(expect.arrayContaining(['execution_start']));
+    pushed = { teamLaunchEnabled: false, teamJobLaunchEnabled: true };
+    const on = await resolvePluginSessionTools([source], session);
+    expect(on.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['squad_propose', 'squad_plan_check', 'list_teams', 'execution_start']));
+    expect(pushedRuntimeAppConfig({ teamLaunchEnabled: true, teamJobLaunchEnabled: false })).toEqual({
+      teamLaunchEnabled: true, teamJobLaunchEnabled: false, composerShowAutonomousTeam: false
+    });
   });
 
   it('discovers standalone dev MCP port without restart', async () => {

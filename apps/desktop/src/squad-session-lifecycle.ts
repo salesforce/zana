@@ -6,7 +6,8 @@ import {
   releaseSquadWorktreeFollowUp,
   restoreSquadWorktreeFollowUp,
   squadWorktreeFollowUpExecution,
-  withSquadWorktreeLifecycleLock
+  withSquadWorktreeLifecycleLock,
+  type SquadWorktreeTerminalOutcome
 } from './squad-worktree-lifecycle.js';
 
 type RestoreCapabilities = {
@@ -115,7 +116,7 @@ export interface SessionExitTeardownDeps {
     get(executionId: string): Promise<ExecutionRecord | undefined>;
     getInProject(projectId: string, executionId: string): Promise<ExecutionRecord | undefined>;
   };
-  handleSquadWorktreeTerminal(record: ExecutionRecord): Promise<void>;
+  handleSquadWorktreeTerminal(record: ExecutionRecord): Promise<SquadWorktreeTerminalOutcome | undefined>;
   teamPlanHandoff: { forget(executionId: string): void };
   inferredPlanCorrection: { forget(executionId: string): void };
   projects: { listProjects(): Array<{ id: string; path: string }> };

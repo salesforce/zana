@@ -7,6 +7,7 @@ import { type AgentScriptDialect, type PublicOrgView } from '../../lib/types.js'
 import {
   STUDIO_CHANGED_CHANNEL,
   STUDIO_RPC,
+  countProblems,
   type ExplorerNode,
   type ProposalOutcome,
   type ProposeEditInput,
@@ -78,6 +79,7 @@ import { BottomTests, BottomTrace } from './studio/BottomPanes.js';
 import { STUDIO_TOKENS } from './studio/studio-tokens.js';
 import { useSuites, withSuiteBadges } from './studio/useSuites.js';
 import { useContextChangeRelay } from './context-sync.js';
+import { modShortcut } from './shortcut-label.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -767,7 +769,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   bridgeHandlers.current = {
     onSnapshot: message => {
       const nextActions = message.actions ?? [];
-      setSource(message.content); setIssues(message.issues); setActions(nextActions);
+      // The frame's `issues` counts every diagnostic; the document bar shows problems only.
+      setSource(message.content); setIssues(message.diagnostics ? countProblems(message.diagnostics) : message.issues); setActions(nextActions);
       setDiagnostics(message.diagnostics ?? []);
       setActionTabs(tabs => tabs.filter(tab => tab.action.id.startsWith('dependency:') || nextActions.some(action => action.id === tab.action.id)));
       setSelectedActionId(id => id?.startsWith('dependency:') || nextActions.some(action => action.id === id) ? id : null);
@@ -918,7 +921,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     {followChip}
     {askAgentMenu}
     {props.headerActions}
-    <button type="button" className="icon-btn" title="Go to file (⌘P)" aria-label="Go to file" onClick={() => setQuickOpen(true)}><Search size={15} aria-hidden="true" /></button>
+    <button type="button" className="icon-btn" title={`Go to file (${modShortcut('P')})`} aria-label="Go to file" onClick={() => setQuickOpen(true)}><Search size={15} aria-hidden="true" /></button>
     {orgPicker && <div className="af-document-org">{orgPicker}</div>}
     {!panelShown && !compact && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={showPanel}><PanelRight size={15} aria-hidden="true" /></button>}
   </> : undefined;
@@ -944,7 +947,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     </div>
   ) : false;
 
-  const problemsCount = problems.length;
+  const problemsCount = countProblems(problems);
   const tabs = layout === 'legacy' ? false : (
     <EditorTabs tabs={studio.tabs} active={studio.activeTab} dirtyId={dirty && activePath ? `agent:${activePath}` : null} problems={problemsCount}
       problemsId={activePath ? `agent:${activePath}` : null} trailing={workspaceActions} onSelect={selectTab} onClose={closeTab} onCloseMany={closeTabs} />

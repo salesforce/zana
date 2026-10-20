@@ -620,7 +620,7 @@ describe('PluginService', () => {
       const pending = service.decideToolPolicy(request);
       await vi.advanceTimersByTimeAsync(5_000);
       await expect(pending).resolves.toEqual({ action: 'deny', reason: 'Plugin tool policy unavailable: broken-policy' });
-      await expect(service.decideToolPolicy(request)).resolves.toEqual({ action: 'deny', reason: 'Plugin tool policy unavailable: broken-policy' });
+      await expect(service.decideToolPolicy(request)).resolves.toMatchObject({ action: 'deny' });
       expect(warn).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();

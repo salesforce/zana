@@ -46,6 +46,7 @@ export function enrollHostUtility(
     child.on('message', onMessage);
     try {
       child.postMessage({ type, protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, ...input,
+        provenance: 'non-tunnel', replaceEnrollment: false,
         path: process.env.PATH, ghBinary: process.env.ZCC_GH_BINARY });
     } catch (error) {
       finish(error instanceof Error ? error : new Error('host enrollment transport failed'));

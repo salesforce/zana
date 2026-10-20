@@ -15,7 +15,7 @@ it('allows registered SSH projects with or without a bound daemon', () => {
     if (hostId) expect(cliHostProblem({ hostId }, project, 'primary')).toBeUndefined();
     expect(cliHostProblem({ hostId: 'other' }, project, 'primary')).toContain('secondary machines');
     expect(cliHostProblem({ hostId: '' }, project, 'primary')).toContain('valid execution machine');
-    expect(teamHostProblem(project, 'primary')).toBe(hostId ? 'Squad/Team execution on secondary machines is not available yet. Choose a project on the primary machine.' : undefined);
+    expect(teamHostProblem(project, 'primary')).toBeUndefined();
   }
 });
 it('keeps primary and legacy Team projects launchable, and rejects secondary or unresolved owners', () => {

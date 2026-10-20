@@ -101,6 +101,17 @@ describe('InboxDetail host-owned actions', () => {
     expect(screen.queryByRole('button', { name: 'Continue', exact: true })).toBeNull();
   });
 
+  it('routes a Squad result report to Squad details, with no reply box and no fresh agent', async () => {
+    state.entry = { ...state.entry, subject: 'Squad completed: Ship it', executionId: 'run-1', squadNotice: 'proposal-result', sessionId: undefined, origin: undefined };
+    state.action = undefined;
+    render(view());
+    expect(await screen.findByText('The full run, with its work units and results, is in Squad details.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open Squad details' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
+    expect(screen.queryByPlaceholderText(/Leave a reply/)).toBeNull();
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
   it('names the Squad run on a retained-worktree card with no live session', async () => {
     state.entry = { ...state.entry, subject: 'Squad worktree retained', executionId: 'run-1', squadNotice: 'worktree-lifecycle', sessionId: undefined, origin: { title: 'Write Output File' } };
     state.action = { ...state.action!, kind: 'squad-worktree-lifecycle' };

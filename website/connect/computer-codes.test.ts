@@ -106,3 +106,14 @@ it('atomically awards a contested label to one account without orphaned servers'
   expect(await db.query('SELECT id FROM connect_servers')).toHaveLength(1);
   expect(await db.query('SELECT hash FROM connect_codes')).toHaveLength(1);
 });
+it('reserves a new computer under the owner’s revoked address without another reservation slot', async () => {
+  const limited = createRegistry(db, { domain: 'connect.example.com', accountUrl: 'https://example.com', now: () => clock, limit: 1 });
+  const first = await limited.reserveComputer('alice', 'alice-mac');
+  await expect(limited.reserveComputer('alice', 'alice-mac')).rejects.toMatchObject({ status: 409 });
+  await limited.revoke('alice', 'server', first.serverId);
+  await expect(limited.reserveComputer('bob', 'alice-mac')).rejects.toThrow('address_taken');
+  await expect(limited.reserveComputer('alice', 'alice-air')).rejects.toThrow('account_limit');
+  const again = await limited.reserveComputer('alice', 'alice-mac');
+  expect(again).toMatchObject({ browserUrl: first.browserUrl, serverId: expect.not.stringMatching(first.serverId) });
+  expect(await db.query('SELECT server_id FROM connect_addresses WHERE label=$1', ['alice-mac'])).toEqual([{ server_id: again.serverId }]);
+});

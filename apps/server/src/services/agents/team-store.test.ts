@@ -16,6 +16,7 @@ vi.mock('electron', () => ({
 
 import { TeamStore, sanitizeTeam } from './team-store.js';
 import { PersonaStore } from './persona-store.js';
+import { personaCanWriteFiles } from '@zana-ai/zcc-domain/squad-proposal';
 import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import type { Project } from '@zana-ai/zcc-domain/product';
 
@@ -32,6 +33,20 @@ describe('sanitizeTeam', () => {
       .toMatchObject({ routingEnforced: true });
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], routingEnforced: 'true' }))
       .toMatchObject({ routingEnforced: undefined });
+  });
+
+  it('keeps only the infer and provided default planning modes', () => {
+    for (const mode of ['provided', 'infer'] as const) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], defaultPlanning: mode })).toMatchObject({ defaultPlanning: mode });
+    }
+    for (const bad of ['structured', true, 'x']) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], defaultPlanning: bad })?.defaultPlanning).toBeUndefined();
+    }
+  });
+
+  it('emits no defaultPlanning key after a JSON round-trip when absent', () => {
+    const team = sanitizeTeam({ id: 'x', name: 'X', slots: [] });
+    expect(Object.keys(JSON.parse(JSON.stringify(team)))).not.toContain('defaultPlanning');
   });
 
   it('requires id, name, and a slots array', () => {
@@ -152,6 +167,23 @@ describe('TeamStore', () => {
     }
   });
 
+  it('personaCanWriteFiles matches the shipped personas', () => {
+    const personas = new PersonaStore(() => []);
+    personas.refresh();
+    const byId = new Map(personas.list().map((p) => [p.id, p]));
+    // Since the tiered built-in defaults (#348) the built-in orchestrator has no tool deny list,
+    // so built-in Squads can infer their own plan.
+    expect(personaCanWriteFiles(byId.get('builtin:orchestrator')!)).toBe(true);
+    // A coordinator that denies Write/Edit (e.g. a custom contribution Squad) cannot.
+    expect(personaCanWriteFiles({ deniedTools: ['Write', 'Edit', 'NotebookEdit', 'Bash'] })).toBe(false);
+    // Plan-state and read-only personas cannot write a plan file.
+    expect(personaCanWriteFiles({ executionState: 'plan' })).toBe(false);
+    expect(personaCanWriteFiles({ codexSandbox: 'read-only' })).toBe(false);
+    expect(personaCanWriteFiles(byId.get('builtin:software-engineer')!)).toBe(true);
+    // A Squad engineer that only blocks specific paths can still write files.
+    expect(personaCanWriteFiles({ deniedTools: ['Write(~/.zcc/**)', 'Edit(~/.zcc/**)', 'Bash(git push:*)'] })).toBe(true);
+  });
+
   it('merges 4 sources with project > user > builtin precedence', () => {
     const projectPath = join(testHome, 'proj');
     const projectTeamsDir = join(projectPath, '.zcc', 'teams');
@@ -191,6 +223,11 @@ describe('TeamStore', () => {
     });
     const saved = store.saveUser({ name: 'User Team', slots: [] });
     expect(store.list().find((team) => team.id === saved.id)?.source).toBe('user');
+  });
+
+  it('saveUser round-trips defaultPlanning', () => {
+    const saved = store.saveUser({ name: 'Planner', slots: [], defaultPlanning: 'provided' });
+    expect(store.list().find((team) => team.id === saved.id)?.defaultPlanning).toBe('provided');
   });
 
   it('saveUser writes atomically and refresh picks it up', () => {

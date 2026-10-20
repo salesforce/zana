@@ -101,9 +101,9 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     close: async () => {
       if (ctx.origins.pairingPort === pairingForwarder?.port) delete ctx.origins.pairingPort;
       await pairingForwarder?.close();
+      ctx.hostHub.close();
+      await ctx.dispose();
       await new Promise<void>((resolveClose, rejectClose) => {
-        ctx.hostHub.close();
-        ctx.dispose();
         hostWss.close();
         wss.close();
         ctx.db.close();

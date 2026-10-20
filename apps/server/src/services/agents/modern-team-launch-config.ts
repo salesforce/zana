@@ -14,6 +14,20 @@ export function mcpPortFileForDataDir(dataDir: string, userDataDir?: string): st
   return join(root, expectedName);
 }
 
+/**
+ * The utility runtime receives main's already-resolved flags: `teamJobLaunchEnabled` is
+ * main's `teamExecutionEnabled()`, which folds in `composerShowAutonomousTeam`. Pin that
+ * key to false so the OR below reduces to exactly what main pushed; leaving it absent
+ * would read as "on" and expose the owner tools while Team jobs are off.
+ */
+export function pushedRuntimeAppConfig(pushed: Pick<ModernTeamLaunchConfig, 'teamLaunchEnabled' | 'teamJobLaunchEnabled'>): ReturnType<ModernTeamLaunchConfigSourceOptions['getAppConfig']> {
+  return {
+    teamLaunchEnabled: pushed.teamLaunchEnabled,
+    teamJobLaunchEnabled: pushed.teamJobLaunchEnabled === true,
+    composerShowAutonomousTeam: false
+  };
+}
+
 export function createModernTeamLaunchConfigSource(options: ModernTeamLaunchConfigSourceOptions) {
   return createModernTeamLaunchSource({
     getConfig: (): ModernTeamLaunchConfig => {

@@ -175,12 +175,16 @@ export function SalesforceProjectTab(props: {
     window.addEventListener('sf:context-changed', changed);
     return () => window.removeEventListener('sf:context-changed', changed);
   }, [props.projectId, status.refresh]);
-  const refreshConnection = () => window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: props.projectId } }));
+  const refreshConnection = async () => {
+    // The org roster is cached until sign-in; drop it so orgs added or removed from a terminal show up.
+    await call('orgs', { refresh: true }).catch(() => undefined);
+    window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: props.projectId } }));
+  };
   const connectionGuidance = <SalesforceState compact kind={readiness.kind === 'unavailable' ? 'error' : 'empty'} title={readiness.title}
     action={<>
       <button className="sf-btn primary" type="button" onClick={() => setLoginRequest(value => value + 1)}>Sign in to an org</button>
       <button className="sf-btn" type="button" onClick={() => setOrgsOpen(true)}>Choose an existing org</button>
-      <button className="sf-btn quiet" type="button" disabled={status.busy} onClick={refreshConnection}>Check again</button>
+      <button className="sf-btn quiet" type="button" disabled={status.busy} onClick={() => void refreshConnection()}>Check again</button>
     </>}>
     <p>{readiness.detail}</p>
     <p>The target applies to this project. Other projects keep their own targets.</p>

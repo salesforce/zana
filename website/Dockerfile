@@ -53,7 +53,7 @@ ENV NODE_ENV=production \
 # Heroku Essential Postgres uses AWS RDS certificates. Pin the vendor bundle
 # so production can use PGSSLMODE=verify-full without disabling TLS validation.
 # Refresh this checksum deliberately when AWS rotates the published bundle.
-ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 \
+ADD --checksum=sha256:90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b \
     https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/certs/aws-rds-global-bundle.pem
 RUN chmod 0644 /app/certs/aws-rds-global-bundle.pem
 ENV NODE_EXTRA_CA_CERTS=/app/certs/aws-rds-global-bundle.pem
