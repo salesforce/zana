@@ -372,6 +372,8 @@ export class StudioLayer {
         if (this.chip) { this.editor.removeContentWidget(this.chip); this.chip = null; }
       }));
     }
+    // Like the comment rows: the chip's buttons own their clicks, so Monaco must not take focus back from the box they open.
+    for (const type of ['mousedown', 'pointerdown']) node.addEventListener(type, event => event.stopPropagation());
     this.chip = {
       getId: () => 'sf.selection.chip',
       getDomNode: () => node,

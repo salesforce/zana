@@ -239,6 +239,13 @@ it('debounces cursor reports and shows a selection chip with actions', () => {
   const labels = Array.from(node.querySelectorAll('button')).map(b => b.textContent!);
   expect(labels.length).toBeGreaterThanOrEqual(2);
   node.querySelectorAll('button')[0]!.dispatchEvent(new MouseEvent('mousedown', { cancelable: true }));
+  // The chip keeps its pointer presses from Monaco, which would otherwise take focus back from the comment box.
+  const outside = vi.fn();
+  fake.parent.addEventListener('mousedown', outside);
+  fake.parent.addEventListener('pointerdown', outside);
+  fake.parent.appendChild(node);
+  for (const type of ['mousedown', 'pointerdown']) node.querySelector('button')!.dispatchEvent(new Event(type, { bubbles: true }));
+  expect(outside).not.toHaveBeenCalled();
   for (const button of Array.from(node.querySelectorAll('button'))) button.click();
   const types = post.mock.calls.map((c: any[]) => c[0] as any);
   expect(Array.from(fake.zones.values()).map(row => [row.afterLineNumber, row.domNode.textContent])).toEqual([[2, 'Comment on lines 1-2Add commentCancel']]);
