@@ -41,7 +41,8 @@ import { PluginHostArtifactRegistry } from '../plugins/plugin-host-artifact-regi
 import {
   flushDueConversationSendsForHost,
   flushHeldConversationSends,
-  reconcileStoppingConversationThreadsOnHostConnect
+  reconcileStoppingConversationThreadsOnHostConnect,
+  resumeOpenConversationSessionsAfterHostRestart
 } from '../services/threads/conversation-lifecycle.js';
 import { publishConversationLifecycleOutcome } from '../services/threads/conversation-lifecycle-outcome.js';
 import { healDisconnectedConversationThreadsForHost } from '../services/threads/conversation-host-recovery.js';
@@ -172,6 +173,8 @@ export function createProductHttpContext(
   let pendingInteractions: PendingInteractionLifecycle;
   let ctx!: ProductHttpContext;
   const disconnectHealTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Hosts whose daemon came back as a new process; their sessions need reopening.
+  const restartedHosts = new Set<string>();
   const tunnelHosts = createDbTunnelHostStore({ db, dataDir });
   // The primary's SSH tunnels die with its daemon and target this server's
   // per-process pairing port, so each primary connect reopens them.
@@ -188,6 +191,7 @@ export function createProductHttpContext(
         hostId,
         'host-daemon-restarted'
       );
+      restartedHosts.add(hostId);
     },
     onHostConnected: (hostId) => {
       const timer = disconnectHealTimers.get(hostId);
@@ -200,6 +204,9 @@ export function createProductHttpContext(
       tunnelReopener.hostConnected(hostId);
       ctx.remoteEnvironment.hostConnected(hostId);
       void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
+      if (restartedHosts.delete(hostId)) {
+        void resumeOpenConversationSessionsAfterHostRestart(ctx, hostId).catch(() => undefined);
+      }
       void flushDueConversationSendsForHost(ctx, hostId).catch(() => undefined);
       for (const provider of listThreadProviders().filter((row) => row.models?.scope === 'host')) {
         try {

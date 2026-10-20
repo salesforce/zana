@@ -441,6 +441,8 @@ describe("public Salesforce panels", () => {
     ready = true;
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
     await screen.findByTestId('soql-editor');
+    // Check again drops the cached roster, so orgs signed in from a terminal appear.
+    expect(call).toHaveBeenCalledWith('orgs', expect.objectContaining({ refresh: true }));
     expect(screen.queryByRole('button', { name: 'Sign in to an org' })).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
     await screen.findByText('Ready for your next change.');

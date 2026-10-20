@@ -182,7 +182,7 @@ export function createConnectApi({ registry, db, sessionSecret, onRevoke = () =>
       }
       if (path === '/api/connect/address' && request.method === 'GET') {
         const user = await account(request); rate(`address:${user.id}`);
-        return json(await registry.addressAvailability(url.searchParams.get('label')));
+        return json(await registry.addressAvailability(url.searchParams.get('label'), user.id));
       }
       if (path === '/api/connect/address' && request.method === 'POST') {
         const user = await account(request); rate(`address:${user.id}`);

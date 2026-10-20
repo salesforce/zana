@@ -257,9 +257,9 @@ export function EditorView({
           onToggle={(on) => setShown('terminal', on)}
           advanced={override(
             'Preferred terminal app',
-            'macOS app name launched via ‘open -a <name>’. Blank ⇒ auto-pick iTerm → WezTerm → Alacritty → Terminal.',
+            'macOS: app name launched via ‘open -a <name>’; blank ⇒ auto-pick iTerm → WezTerm → Alacritty → Terminal. Windows: program name or path started in the folder, without arguments, such as pwsh or cmd; blank ⇒ PowerShell.',
             'terminalApp',
-            'iTerm',
+            navigator.platform.toUpperCase().startsWith('WIN') ? 'pwsh' : 'iTerm',
             { searchId: 'editor.terminal-app' }
           )}
         />

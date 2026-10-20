@@ -6,6 +6,7 @@ import { getTerminal } from '../lib/findRegistry.js';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
 import { cliAgentDeleteConfirm, cliAgentRestartLiveTitle } from './agentCardActions.js';
+import { platformShortcut } from '../lib/platformShortcut.js';
 
 /** Human label for the status dot's tooltip + aria. */
 const AGENT_STATE_LABEL: Record<AgentState, string> = {
@@ -466,7 +467,7 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onDetach, onNewTe
             <button
               onClick={() => { setTabMenu(null); closeOne(t); }}
               disabled={!!t.pinned}
-              title="Close this tab. The process keeps running and stays in the sidebar; click its row or press ⌘⇧T to re-open it."
+              title={platformShortcut('Close this tab. The process keeps running and stays in the sidebar; click its row or press ⌘⇧T to re-open it.')}
             >
               {t.status === 'exited' ? 'Dismiss' : 'Close'}
             </button>
@@ -489,7 +490,7 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onDetach, onNewTe
               className="tab-context-danger"
               onClick={() => { setTabMenu(null); deleteOne(t); }}
               disabled={!!t.pinned}
-              title="Terminate this session and remove the tab. Reopen with ⌘⇧T."
+              title={platformShortcut('Terminate this session and remove the tab. Reopen with ⌘⇧T.')}
             >
               {t.status === 'exited' ? 'Dismiss' : 'Delete'}
             </button>

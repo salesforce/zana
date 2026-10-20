@@ -38,19 +38,19 @@ export async function boundedResponse(response, cap) {
   return Buffer.concat(chunks);
 }
 /** A published identity is never replaced by another machine or product instance. */
-export function assertCompatible(dataDir, grant) {
+export function assertCompatible(dataDir, grant, replaceEnrollment = false) {
   if (existsSync(dataDir) && lstatSync(dataDir).isSymbolicLink()) throw new Error('Machine data directory must not be a symlink');
   const hostFile = join(dataDir, 'host.id');
-  if (existsSync(hostFile) && (lstatSync(hostFile).isSymbolicLink() || readFileSync(hostFile, 'utf8').trim() !== grant.hostId)) throw new Error('This installation belongs to another machine; generate a repair code for that machine');
+  if (existsSync(hostFile) && (lstatSync(hostFile).isSymbolicLink() || (!replaceEnrollment && readFileSync(hostFile, 'utf8').trim() !== grant.hostId))) throw new Error('This installation belongs to another machine; generate a repair code for that machine');
   const accessFile = join(dataDir, 'connect-access.json');
   if (existsSync(accessFile)) {
     const prior = readJson(accessFile);
-    if (['serverId', 'instanceId', 'hostId'].some(key => prior[key] !== grant[key])) throw new Error('This installation belongs to another instance or machine');
+    if (!replaceEnrollment && ['serverId', 'instanceId', 'hostId'].some(key => prior[key] !== grant[key])) throw new Error('This installation belongs to another instance or machine');
   }
   const authFile = join(dataDir, 'auth.json');
   if (existsSync(authFile)) {
     const prior = readJson(authFile);
-    if (prior.hostId !== grant.hostId || (prior.serverUrl && prior.serverUrl.replace(/\/$/, '') !== grant.serverUrl)) throw new Error('Existing machine credentials belong to another server');
+    if (!replaceEnrollment && (prior.hostId !== grant.hostId || !prior.serverUrl || prior.serverUrl.replace(/\/$/, '') !== grant.serverUrl)) throw new Error('Existing machine credentials belong to another server');
   }
 }
 function acquire(path) {
@@ -75,7 +75,7 @@ function acquire(path) {
   return () => { if (existsSync(path) && readJson(path).nonce === owner.nonce) rmSync(path); };
 }
 
-export async function installMachine({ accountUrl, code, serverId, home = homedir(), fetcher = fetch, execute = runInstaller }) {
+export async function installMachine({ accountUrl, code, serverId, replaceEnrollment = false, home = homedir(), fetcher = fetch, execute = runInstaller }) {
   accountUrl = originOf(accountUrl);
   code = String(code ?? '').replace(/[\s-]/g, '').toUpperCase();
   if (!/^[0-9A-F]{32}$/.test(code) || !uuid(serverId)) throw new Error('Use the complete machine command from Settings → Machines');
@@ -105,11 +105,11 @@ export async function installMachine({ accountUrl, code, serverId, home = homedi
     }
     validateGrant(grant, accountUrl, serverId);
     const dataDir = join(root, grant.instanceId);
-    assertCompatible(dataDir, grant);
+    assertCompatible(dataDir, grant, replaceEnrollment);
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const releaseInstall = acquire(join(dataDir, 'install.lock'));
     try {
-      assertCompatible(dataDir, grant);
+      assertCompatible(dataDir, grant, replaceEnrollment);
       const response = await fetcher(`${grant.serverUrl}/install.sh`, { redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'x-zcc-machine-credential': grant.credential } });
       const script = await boundedResponse(response, 128 * 1024);
       const installer = join(dataDir, `install-${randomUUID()}.sh`);
@@ -120,7 +120,9 @@ export async function installMachine({ accountUrl, code, serverId, home = homedi
       try {
         writeFileSync(header, `x-zcc-machine-credential: ${grant.credential}\n`, { mode: 0o600, flag: 'wx' });
         writeFileSync(installer, script, { mode: 0o600, flag: 'wx' });
-        await execute(installer, { ...process.env, HOME: home, ZCC_DATA_DIR: dataDir, ZCC_CONNECT_HEADER_FILE: header, ZCC_CONNECT_INSTANCE_ID: grant.instanceId }, ['--host-id', grant.hostId, '--server', grant.serverUrl]);
+        const env = { ...process.env, HOME: home, ZCC_DATA_DIR: dataDir, ZCC_CONNECT_HEADER_FILE: header, ZCC_CONNECT_INSTANCE_ID: grant.instanceId };
+        delete env.ZCC_HOST_REPLACE_ENROLLMENT;
+        await execute(installer, env, ['--host-id', grant.hostId, '--server', grant.serverUrl, ...(replaceEnrollment ? ['--replace-enrollment'] : [])]);
         rmSync(file, { force: true });
         return { hostId: grant.hostId, serverId, serverUrl: grant.serverUrl, dataDir };
       } finally { rmSync(header, { force: true }); rmSync(installer, { force: true }); }
@@ -150,12 +152,15 @@ export function runInstaller(file, env, args, { timeoutMs = 10 * 60_000, killGra
 export async function main(args, install = installMachine, io = process) {
   try {
     const values = new Map();
+    const replaceEnrollment = args.includes('--replace-enrollment');
+    if (args.filter(arg => arg === '--replace-enrollment').length > 1) throw new Error('Duplicate --replace-enrollment');
+    args = args.filter(arg => arg !== '--replace-enrollment');
     if (args.length !== 6) throw new Error('Expected --account, --code and --server-id');
     for (let i = 0; i < args.length; i += 2) {
       if (!['--account', '--code', '--server-id'].includes(args[i]) || values.has(args[i]) || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Expected --account, --code and --server-id');
       values.set(args[i], args[i + 1]);
     }
-    await install({ accountUrl: values.get('--account'), code: values.get('--code'), serverId: values.get('--server-id') });
+    await install({ accountUrl: values.get('--account'), code: values.get('--code'), serverId: values.get('--server-id'), replaceEnrollment });
     io.stdout.write('Machine connected to your shared Zana.\n');
     return 0;
   } catch (error) { io.stderr.write(`${error instanceof Error ? error.message : 'Machine installation failed'}\n`); return 1; }

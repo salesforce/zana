@@ -28,6 +28,21 @@ export function previewTargets(value, now = Date.now()) {
 }
 
 const secretCookie = name => /^(?:__Host-|__Secure-|zcc_|zana_|session(?:[._-]|$)|better-auth\.)/i.test(name);
+const keepCookies = values => values.join('; ').split(';').map(item => item.trim()).filter(item => item && !secretCookie(item.split('=')[0])).join('; ');
+const keepSetCookies = values => values.filter(value => !secretCookie(value.split('=')[0].trim())).map(value => value.split(';').filter(part => !/^\s*domain\s*=/i.test(part)).join(';'));
+
+/**
+ * The Connect edge authenticates its own session cookies. Keep them off the
+ * tunnel, and never let the computer set them or widen a cookie's Domain.
+ */
+export function edgeCookies(out, response = false) {
+  const name = response ? 'set-cookie' : 'cookie';
+  if (out[name] === undefined) return out;
+  const values = Array.isArray(out[name]) ? out[name] : [out[name]];
+  const kept = response ? keepSetCookies(values) : keepCookies(values);
+  if (kept.length) out[name] = kept; else delete out[name];
+  return out;
+}
 const skip = new Set(['host', 'connection', 'upgrade', 'content-length', 'transfer-encoding', 'proxy-authorization', 'proxy-authenticate', 'authorization', 'keep-alive', 'te', 'trailer', 'proxy-connection']);
 function previewRedirect(value, port) {
   // URL parsing normalizes backslashes and removes tabs. Check the raw value
@@ -53,11 +68,11 @@ export function previewHeaders(input, response = false, port) {
     const values = Array.isArray(raw) ? raw : [raw];
     if (values.some(value => typeof value !== 'string' || /[\r\n\0]/.test(value))) throw new Error('Invalid preview header');
     if (name === 'cookie') {
-      const value = values.join('; ').split(';').map(item => item.trim()).filter(item => !secretCookie(item.split('=')[0])).join('; ');
+      const value = keepCookies(values);
       if (value) out.cookie = value;
     } else if (name === 'set-cookie') {
       if (!response) continue;
-      const cookies = values.filter(value => !secretCookie(value.split('=')[0].trim())).map(value => value.split(';').filter(part => !/^\s*domain\s*=/i.test(part)).join(';'));
+      const cookies = keepSetCookies(values);
       if (cookies.length) out[name] = cookies;
     } else if (name === 'location' && response) {
       const location = previewRedirect(values[0], port);

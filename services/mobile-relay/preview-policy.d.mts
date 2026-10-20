@@ -9,3 +9,4 @@ export function previewPathAllowed(path: unknown): boolean;
 export function parsePreviewLabel(label: string): { base: string; machine: string | null; port: number } | null;
 export function previewTargets(value: unknown, now?: number): Array<{ port: number; expiresAt: number }>;
 export function previewHeaders(input: unknown, response?: boolean, port?: number): Record<string, string | string[]>;
+export function edgeCookies<T extends Record<string, string | string[]>>(out: T, response?: boolean): T;
