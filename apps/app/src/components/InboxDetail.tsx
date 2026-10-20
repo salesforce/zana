@@ -48,6 +48,7 @@ import { resolveAnswerSurface } from '../lib/answerSurface.js';
 import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
 import { useExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
+import { fileManagerName } from '../lib/file-manager.js';
 import type {
   InboxDoc,
   InboxEntry,
@@ -1591,8 +1592,8 @@ function DocActions({
         type="button"
         className="inbox-doc-open"
         onClick={stop(onReveal)}
-        title="Reveal in Finder"
-        aria-label={`Reveal ${label} in Finder`}
+        title={`Reveal in ${fileManagerName()}`}
+        aria-label={`Reveal ${label} in ${fileManagerName()}`}
       >
         <FolderOpen size={12} strokeWidth={1.75} />
       </button>

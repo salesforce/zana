@@ -20,6 +20,7 @@ import type {
   SkillState
 } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '@/store';
+import { fileManagerName } from '@/lib/file-manager';
 import {
   filterSkills,
   harnessOptions,
@@ -616,8 +617,8 @@ function SkillRow({
           type="button"
           className="scheduler-icon-btn"
           onClick={onReveal}
-          title="Reveal in Finder"
-          aria-label="Reveal in Finder"
+          title={`Reveal in ${fileManagerName()}`}
+          aria-label={`Reveal in ${fileManagerName()}`}
         >
           <FolderOpen size={14} />
         </button>
