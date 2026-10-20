@@ -79,7 +79,7 @@ export class DesignDocPeerGroup {
    * computer it removed, and a computer that left never joins through its old roster), and counting it as "setup in
    * progress" left both sides waiting on each other. A frozen join (unknown outcome) or a setup with another computer stays.
    */
-  rejoinState(peerId: string): { kind: 'clear' } | { kind: 'detach' } | { kind: 'blocked'; reason: string } {
+  rejoinState(peerId: string, supersedePeerWork = false): { kind: 'clear' } | { kind: 'detach' } | { kind: 'blocked'; reason: string } {
     id.parse(peerId);
     const roster = this.roster(), consent = this.consent();
     if (!roster || (consent && (consent.peerId !== peerId || consent.request || consent.capacity))) return { kind: 'clear' };
@@ -89,9 +89,10 @@ export class DesignDocPeerGroup {
     if (live && roster.members.length > 1) {
       return { kind: 'blocked', reason: 'That computer was removed from this sync group earlier, and a group cannot take a removed computer back. Remove the other computers from this group (or leave it), then pair again.' };
     }
-    // Only this peer's teardown may be dropped: the leaver's own roster delivery must reach the others first.
-    const pending = this.openJobs().filter((job) => !(job.kind === 'local-revoke' && (job.payload as { peerId?: string }).peerId === peerId) &&
-      !(live && job.kind === 'roster' && job.peerId === peerId));
+    // Work addressed to the computer being paired again is superseded by the new connection. Work for another computer
+    // still has to finish first because it can carry governance that this pairing does not replace.
+    const pending = this.openJobs().filter((job) => (!supersedePeerWork || job.peerId !== peerId) &&
+      !(job.kind === 'local-revoke' && (job.payload as { peerId?: string }).peerId === peerId));
     if (pending.length) {
       const job = pending[0]!;
       const cause = ownerText(job.error);
@@ -102,10 +103,10 @@ export class DesignDocPeerGroup {
   }
 
   /** Archive leftover governance (see `rejoinState`) and continue as a fresh standalone replica; documents and history stay. */
-  detachForRejoin(currentPeerId: string, peerId: string): void {
+  detachForRejoin(currentPeerId: string, peerId: string, supersedePeerWork = false): void {
     id.parse(currentPeerId);
     this.db.transaction(() => {
-      if (this.rejoinState(peerId).kind !== 'detach') throw new PeerProtocolError('conflict', 'leftover sync group changed');
+      if (this.rejoinState(peerId, supersedePeerWork).kind !== 'detach') throw new PeerProtocolError('conflict', 'leftover sync group changed');
       this.detach(this.localPeerId(), currentPeerId);
     });
   }

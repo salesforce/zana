@@ -1355,14 +1355,13 @@ describe('DD core connection pairing', () => {
       } finally { warn.mockRestore(); }
     });
 
-    it('states the concrete cause while the earlier removal is still being delivered', async () => {
+    it('a new connection supersedes undelivered removal work addressed to that computer', async () => {
       const { left, stayed } = await dissolvedThenRelinked('a');
       left.group.queueJob(stayed.peerId, 'roster', left.group.roster()!.rosterEpoch, left.group.roster());
       left.db.prepare("UPDATE sync_group_jobs SET state = 'blocked', error = 'peer offline' WHERE kind = 'roster'").run();
       const result = await left.pairing.repair(stayed.peerId);
-      expect(result).toMatchObject({ outcome: 'unavailable', detail: expect.stringContaining('earlier removal is still being delivered') });
-      expect(result.detail).toContain('peer offline');
-      expect(left.group.roster()).not.toBeNull();
+      expect(result.outcome).not.toBe('unavailable');
+      expect(left.group.roster()).toBeNull();
     });
 
     it('a removed computer in a group that still has other members is refused with the reason, not re-admitted', async () => {

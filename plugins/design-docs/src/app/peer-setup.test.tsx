@@ -171,6 +171,16 @@ describe('Repair and unsynced', () => {
     expect(within(card).getByRole('button', { name: 'Stop using' })).toHaveProperty('disabled', true);
   });
 
+  it('keeps connected computer setup details in its card, not a second global work list', async () => {
+    const status = { ...EMPTY, setup: { peerId: 'app-b', repoId: 'database', state: 'pending' as const, error: 'waiting for the other computer' },
+      jobs: [{ id: 'setup', kind: 'roster', peerId: 'app-b', state: 'blocked', attempts: 1, error: 'waiting for the other computer' }] };
+    mount({ connections: async () => [used({ syncing: false })], groupStatus: async () => status });
+    const card = await screen.findByRole('listitem');
+    expect(within(card).getByText('Setting up sync')).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Pending work' })).toBeNull();
+    expect(screen.queryByText(/Setup pending:/)).toBeNull();
+  });
+
   it('an unused computer or a syncing one has no Repair', async () => {
     mount({ connections: async () => [conn({ syncing: false }), used({ computerId: 'app-c', hostname: 'Desk' })] });
     await screen.findByText('Desk');

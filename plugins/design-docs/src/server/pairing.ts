@@ -541,10 +541,10 @@ export class DesignDocPairing {
 
   /** Archive leftover governance that blocks pairing again with `peerId` (see `rejoinState`). False when it cannot be. */
   private prepareRejoin(self: string, peerId: string): boolean {
-    const state = this.group.rejoinState(peerId);
+    const state = this.group.rejoinState(peerId, true);
     if (state.kind === 'blocked') { this.logOnce(`rejoin:${peerId}`, `pairing again is blocked: ${state.reason}`); return false; }
     if (state.kind === 'detach') {
-      this.group.detachForRejoin(self, peerId);
+      this.group.detachForRejoin(self, peerId, true);
       this.following.delete(peerId);
       this.logOnce(`rejoin-detach:${peerId}`, 'archived the sync group left over from an earlier removal to pair again');
     }
@@ -558,7 +558,7 @@ export class DesignDocPairing {
    */
   private setAsideStaleSetup(): void {
     const consent = this.group.consent(), self = this.group.localPeerId();
-    if (!consent || !self || this.enabling || this.revoking || this.group.rejoinState(consent.peerId).kind !== 'detach') return;
+    if (!consent || !self || this.enabling || this.revoking || this.group.rejoinState(consent.peerId, true).kind !== 'detach') return;
     this.prepareRejoin(self, consent.peerId);
   }
 
@@ -615,8 +615,9 @@ export class DesignDocPairing {
         detail: 'The connection exists but this computer was never fully enrolled (the pairing was cancelled part-way). Remove it in Settings → Peers and connect again.' };
     }
     if (!enrolled.connected) return { outcome: 'unavailable', reason: null, detail: 'That computer is offline. Open Zana there, then press Repair again.' };
-    const rejoin = this.group.rejoinState(peerId);
+    const rejoin = this.group.rejoinState(peerId, true);
     if (rejoin.kind === 'blocked') return { outcome: 'unavailable', reason: null, detail: rejoin.reason };
+    if (rejoin.kind === 'detach') this.prepareRejoin(id.parse((await this.peers.localIdentity()).id), peerId);
     const attempt = async (): Promise<unknown> => { this.disabledPeers.delete(peerId); await this.enableNow(peerId); return null; };
     // `negotiate` records a half-finished setup as a pending consent instead of throwing, so success means the peer joined the roster.
     const settled = async (outcome: 'sync-enabled' | 'relinked'): Promise<RepairResult> => {

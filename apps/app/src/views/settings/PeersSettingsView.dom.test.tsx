@@ -89,11 +89,17 @@ describe('PeersSettingsView', () => {
     expect(screen.getByRole('heading', { name: 'Used by' })).toBeTruthy();
     const actions = header.querySelector('.peers-link-actions') as HTMLElement;
     expect(within(actions).getByRole('button', { name: 'Pause' }).className).toContain('peers-btn-secondary');
-    expect(within(actions).getByRole('button', { name: 'Remove link' }).className).toContain('peers-btn-remove');
+    expect(within(actions).queryByRole('button', { name: 'Remove link' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
     fireEvent.click(within(actions).getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(api.disconnect).toHaveBeenCalledWith('h1'));
     await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps the global Remove link action only for unused connections', async () => {
+    api.list.mockResolvedValue({ links: [link({ uses: [] })] });
+    render(<PeersSettingsView />);
+    expect(await screen.findByRole('button', { name: 'Remove link' })).toBeTruthy();
   });
 
   it('groups links of one computer and disambiguates equal names', async () => {
@@ -116,67 +122,6 @@ describe('PeersSettingsView', () => {
     render(<PeersSettingsView />);
     expect(await screen.findByText('Studio laptop')).toBeTruthy();
     expect(screen.getByText('Other')).toBeTruthy();
-  });
-
-  it('shows the active-transfer confirm, then the plugin list, then removes', async () => {
-    api.activity.mockResolvedValue({ active: [{ pluginId: 'a', label: 'Alpha plugin' }] });
-    render(<PeersSettingsView />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    expect(await screen.findByText('Alpha plugin is transferring with Studio laptop. Stop anyway?')).toBeTruthy();
-    expect(api.activity).toHaveBeenCalledWith('h1');
-    fireEvent.click(screen.getByRole('button', { name: 'Stop anyway' }));
-    expect(screen.getByText(/Plugins using it: Alpha plugin, Beta plugin\./)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(api.removeLink).toHaveBeenCalledWith('h1'));
-  });
-
-  it('cancelling the active-transfer confirm removes nothing', async () => {
-    api.activity.mockResolvedValue({ active: [{ pluginId: 'a', label: 'Alpha plugin' }] });
-    render(<PeersSettingsView />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Keep syncing' }));
-    expect(screen.getByRole('button', { name: 'Remove link' })).toBeTruthy();
-    expect(api.removeLink).not.toHaveBeenCalled();
-  });
-
-  it('skips straight to the plugin list with no activity, and when activity throws or is malformed', async () => {
-    render(<PeersSettingsView />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    expect(await screen.findByRole('button', { name: 'Remove' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
-    api.activity.mockRejectedValue(new Error('down'));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove link' }));
-    expect(await screen.findByRole('button', { name: 'Remove' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
-    api.activity.mockResolvedValue({});
-    fireEvent.click(screen.getByRole('button', { name: 'Remove link' }));
-    expect(await screen.findByRole('button', { name: 'Remove' })).toBeTruthy();
-    expect(screen.queryByText(/Stop anyway/)).toBeNull();
-  });
-
-  it('offers Retry and Remove anyway after a plugin cleanup failure', async () => {
-    api.removeLink.mockResolvedValueOnce({ ok: false, hookFailures: [{ pluginId: 'a', label: 'Alpha plugin', reason: 'timeout' }] });
-    render(<PeersSettingsView />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
-    expect(await screen.findByText("Alpha plugin didn't finish cleaning up (timed out).")).toBeTruthy();
-    api.removeLink.mockResolvedValueOnce({ ok: false, hookFailures: [{ pluginId: 'b', label: 'Beta plugin', reason: 'error' }] });
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(api.removeLink).toHaveBeenCalledTimes(2));
-    expect(api.removeLink).toHaveBeenLastCalledWith('h1');
-    expect(await screen.findByText("Beta plugin didn't finish cleaning up (failed).")).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove anyway' }));
-    await waitFor(() => expect(api.removeLink).toHaveBeenLastCalledWith('h1', { force: true }));
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-  });
-
-  it('can cancel the failure dialog', async () => {
-    api.removeLink.mockResolvedValueOnce({ ok: false, hookFailures: [{ pluginId: 'a', label: 'Alpha plugin', reason: 'timeout' }] });
-    render(<PeersSettingsView />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
   it('confirms Stop syncing only for an actively transferring plugin', async () => {
@@ -228,9 +173,10 @@ describe('PeersSettingsView', () => {
   });
 
   it('requires confirmation before removing a link, and can back out', async () => {
+    api.list.mockResolvedValue({ links: [link({ uses: [] })] });
     render(<PeersSettingsView />);
     fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    expect(await screen.findByText(/Delete this connection for all plugins and remove this machine's access\? Plugins using it: Alpha plugin, Beta plugin\./)).toBeTruthy();
+    expect(await screen.findByText(/Delete this connection for all plugins and remove this machine's access\?/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
     expect(api.removeLink).not.toHaveBeenCalled();
@@ -246,15 +192,11 @@ describe('PeersSettingsView', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('server down');
   });
 
-  it('surfaces a removal failure and a non-Error rejection', async () => {
+  it('surfaces a use-removal failure', async () => {
     api.removeUse.mockRejectedValueOnce(new Error('denied'));
     render(<PeersSettingsView />);
     fireEvent.click(await screen.findByRole('button', { name: 'Stop syncing Alpha plugin' }));
     expect((await screen.findByRole('alert')).textContent).toBe('denied');
-    api.removeLink.mockRejectedValueOnce('boom');
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Request failed'));
   });
 
   it('renders a plugin-supplied note beside only that plugin use, amber for attention', async () => {

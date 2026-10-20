@@ -317,6 +317,9 @@ export function PeerSettings() {
     return reason ? `: waiting for ${name} to connect; no link to this computer right now` : '';
   };
   const self = status?.members.find((member) => member.replicaId === status.replicaId);
+  // Each connected computer owns its setup state in its card. Keep global work only for computers no longer in the list.
+  const usedConnectionIds = new Set(list.filter((connection) => connection.usedByThisPlugin).map((connection) => connection.computerId));
+  const backgroundJobs = pendingJobs.filter((job) => !usedConnectionIds.has(job.peerId));
   // The durable roster can retain a removed member until every computer seals its retirement. The connection list is the
   // current authority for what this computer is actually syncing with.
   const groupSize = status?.configured ? 1 + list.filter((connection) => connection.usedByThisPlugin && connection.syncing && connection.state === 'connected' && !connection.retiring).length : 0;
@@ -369,13 +372,13 @@ export function PeerSettings() {
         <>
           <div className="dd-peers-block">
             {!status.configured ? <p>No sync group configured.</p> : null}
-            {status.setup ? (
+            {status.setup && !usedConnectionIds.has(status.setup.peerId) ? (
               <p role="status">Setup {status.setup.state}: {nameOf(status.setup.peerId)}{setupReason(status.setup)}</p>
             ) : null}
           </div>
-          {pendingJobs.length ? (
+          {backgroundJobs.length ? (
             <ul className="dd-peers-list" aria-label="Pending work">
-              {pendingJobs.map((job) => (
+              {backgroundJobs.map((job) => (
                 <li key={job.id}>{job.kind === 'local-revoke' ? 'This computer' : nameOf(job.peerId)}: {job.state === 'failed' ? 'stopped' : job.state}{job.error ? `: ${ownerText(job.error)}` : ''}</li>
               ))}
             </ul>
