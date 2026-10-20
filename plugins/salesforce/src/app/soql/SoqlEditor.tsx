@@ -1,5 +1,6 @@
 import { forwardRef, useImperativeHandle, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { formatQuery } from './soql-ast.js';
+import { modShortcut } from '../shortcut-label.js';
 import { soqlCompletions, type SoqlCompletion } from './soql-completions.js';
 import type { SObjectListEntry, SoqlSObjectDescribe } from '../../../lib/soql-describe.js';
 
@@ -99,7 +100,7 @@ export const SoqlEditor = forwardRef<
         >
           Format
         </button>
-        <span className="sf-soql-hint">⌘/Ctrl+Enter to run · Ctrl+Space for suggestions</span>
+        <span className="sf-soql-hint">{modShortcut('Enter')} to run · Ctrl+Space for suggestions</span>
       </div>
       {props.error ? (
         <p className="sf-soql-editor-error" data-testid="soql-editor-error">

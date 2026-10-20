@@ -8,6 +8,8 @@ import { requireResult, useSalesforceCall } from './components/client.js';
 import { SALESFORCE_STYLES } from './components/styles.js';
 import { ArrowUpRight, CircleCheck } from './components/icons.js';
 
+const LOADING_ORGS = 'Loading connected orgs…';
+
 export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogProps) {
   const call = useSalesforceCall(props.pluginId);
   const folderId = useId();
@@ -52,7 +54,7 @@ export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogPr
     setError(null);
     setName(current => current || value.split('@')[0].replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+/, '').slice(0, 80) || 'salesforce-project');
   };
-  const loadOrgs = (refresh = false) => run('Loading connected orgs…', async () => {
+  const loadOrgs = (refresh = false) => run(LOADING_ORGS, async () => {
     setExisting(true);
     const result = requireResult<{ orgs: PublicListedOrg[] }>(await call('orgs', refresh ? { refresh: true } : undefined));
     if (alive.current) setOrgs(result.orgs);
@@ -116,10 +118,11 @@ export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogPr
           {existing ? <>
             <label className="sf-login-field">Connected org
               <select className="sf-select" value={selected} disabled={!!busy} onChange={event => setSelected(event.target.value)}>
-                <option value="">Choose an org</option>
+                <option value="">{busy === LOADING_ORGS ? 'Loading orgs…' : 'Choose an org'}</option>
                 {orgs.map(org => <option key={org.username} value={org.alias || org.username}>{org.alias || org.username} · {org.username}</option>)}
               </select>
             </label>
+            {busy === LOADING_ORGS && <div className="sf-login-waiting" role="status"><span className="sf-login-spinner" aria-hidden="true" /><div><strong>Loading your connected orgs…</strong><span>This can take a minute if some orgs can’t be reached.</span></div></div>}
             {!busy && !orgs.length && <p className="sf-muted">No connected orgs yet. Log in to continue.</p>}
             <div><button type="button" className="sf-btn quiet" disabled={!!busy} onClick={() => { setExisting(false); setError(null); }}>Log in to another org</button>
               <button type="button" className="sf-btn quiet" disabled={!!busy} onClick={() => void loadOrgs(true)}>Refresh</button></div>

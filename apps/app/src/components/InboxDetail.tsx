@@ -59,6 +59,7 @@ import type {
   SavedRecordInput,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
+import { platformShortcut } from '../lib/platformShortcut.js';
 
 interface InboxDetailProps {
   /**
@@ -1278,7 +1279,7 @@ function ReplyBox({
         aria-label="Reply to the originating agent"
       />
       <div className="inbox-reply-actions">
-        <span className="inbox-reply-hint">⌘↵ to send</span>
+        <span className="inbox-reply-hint">{platformShortcut('⌘↵ to send')}</span>
         <button
           type="button"
           className="inbox-reply-send"

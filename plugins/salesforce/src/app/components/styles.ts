@@ -88,6 +88,7 @@ export const SALESFORCE_STYLES = `
 .sf-notice { padding:10px 16px; border-bottom:1px solid var(--border); background:var(--bg-base); color:var(--text-muted); overflow-wrap:anywhere; }
 .sf-notice[role=alert] { color:var(--danger); }
 .sf-input, .sf-select { min-width:0; max-width:100%; padding:7px 9px; color:var(--text-primary); background:var(--bg-input,var(--bg-panel)); border:1px solid var(--border); border-radius:6px; font:inherit; }
+.sf-input:disabled, .sf-select:disabled { opacity:.5; cursor:default; }
 .sf-form { display:grid; gap:14px; max-width:650px; }
 .sf-form label { display:grid; gap:5px; }
 .sf-form textarea { min-height:100px; resize:vertical; }

@@ -266,6 +266,20 @@ describe('AgentScriptPanel control verbs and compact side panel', () => {
     expect(el.textContent).not.toContain('Act One');
   });
 
+  it('counts errors and warnings as problems but not info notes', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    const info = (line: number) => ({ severity: 'info', message: `Variable ${line} is not used`, line, column: 1, endLine: line, endColumn: 4 });
+    await post(el, { type: 'snapshot', content: SOURCE, issues: 2, actions: [], diagnostics: [info(2), info(3)] });
+    expect(el.querySelector('.sf-etab-problems')).toBeNull();
+    expect(el.querySelector('.sf-bottom-badge')).toBeNull();
+    expect(el.querySelector('.af-document-issues')).toBeNull();
+    await post(el, { type: 'snapshot', content: SOURCE, issues: 3, actions: [], diagnostics: [info(2), info(3), { ...info(4), severity: 'warning' }] });
+    expect(el.querySelector('.sf-etab-problems')?.textContent).toBe('1');
+    expect(el.querySelector('.sf-bottom-badge')?.textContent).toBe('1');
+    expect(el.querySelector('.af-document-issues')?.textContent).toBe('1 issue');
+  });
+
   it('opens graph actions, and trace/preview reveal sources', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);

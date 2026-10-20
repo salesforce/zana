@@ -38,6 +38,22 @@ describe('EditorView settings-search targets', () => {
     for (const id of children) expect(rendered).toContain(id);
   });
 
+  it.each([
+    ['Win32', 'pwsh'],
+    ['MacIntel', 'iTerm']
+  ])('suggests a %s terminal app in the placeholder', (platform, placeholder) => {
+    const real = Object.getOwnPropertyDescriptor(navigator, 'platform');
+    Object.defineProperty(navigator, 'platform', { value: platform, configurable: true });
+    try {
+      const { container } = render(ui({ target: 'editor.terminal-app', reveal: 'advanced' }));
+      const field = container.querySelector('[data-settings-target="editor.terminal-app"] input');
+      expect(field?.getAttribute('placeholder')).toBe(placeholder);
+    } finally {
+      if (real) Object.defineProperty(navigator, 'platform', real);
+      else delete (navigator as { platform?: string }).platform;
+    }
+  });
+
   it('does not open when the reveal kind or target does not match', () => {
     const a = render(ui({ target: 'editor.cursor-binary', reveal: null }));
     expect(ids(a.container)).not.toContain('editor.cursor-binary');
