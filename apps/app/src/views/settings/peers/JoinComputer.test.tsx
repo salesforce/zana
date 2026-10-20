@@ -22,25 +22,25 @@ describe('JoinComputer', () => {
     fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: '  tok-1 \n' } });
     fireEvent.click(join);
     await waitFor(() => expect(api.join).toHaveBeenCalledWith('tok-1'));
-    expect(await screen.findByText(/Status: redeeming/)).toBeTruthy();
+    expect(await screen.findByText(/Your approval code will appear here/)).toBeTruthy();
     expect(onChange).toHaveBeenCalled();
     expect(api.checkRemoteLogin).not.toHaveBeenCalled();
   });
 
-  it('shows the pairing code large with the connects-out note', async () => {
+  it('shows the pairing code large with instructions to finish connecting', async () => {
     const withCode = { ...base, state: 'reserved', pairingCode: 'ABCD-1234' } as never;
     render(<JoinComputer connections={[]} />);
     fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'tok' } });
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
-    await screen.findByText(/Status/);
+    await screen.findByText(/Your approval code will appear here/);
     cleanup();
     api.join.mockResolvedValue(withCode);
     const view = render(<JoinComputer connections={[]} />);
     fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'tok' } });
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
     expect((await screen.findByTestId('pairing-code')).textContent).toBe('ABCD-1234');
-    expect(screen.getByText('Tell the other computer this code.')).toBeTruthy();
-    expect(screen.getByText('This computer connects out to the other one; Remote Login is not needed here.')).toBeTruthy();
+    expect(screen.getByText('Enter this code on the other computer to finish connecting.')).toBeTruthy();
+    expect(screen.queryByText(/Remote Login is not needed/)).toBeNull();
     view.unmount();
     expect(api.checkRemoteLogin).not.toHaveBeenCalled();
   });
@@ -49,9 +49,14 @@ describe('JoinComputer', () => {
     const { rerender } = render(<JoinComputer connections={[]} />);
     fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'tok' } });
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
-    await screen.findByText(/Status/);
+    await screen.findByText(/Your approval code will appear here/);
+    const code = screen.getByTestId('pairing-code');
+    expect(code.textContent).toBe('---- ----');
+    expect(code.getAttribute('aria-busy')).toBe('true');
     rerender(<JoinComputer connections={[{ ...base, state: 'reserved', pairingCode: 'WXYZ-2345' } as never]} />);
     expect((await screen.findByTestId('pairing-code')).textContent).toBe('WXYZ-2345');
+    expect(screen.getByTestId('pairing-code')).toBe(code);
+    expect(code.getAttribute('aria-busy')).toBe('false');
   });
 
   it('closes after the other computer approves', async () => {
@@ -59,7 +64,7 @@ describe('JoinComputer', () => {
     const { rerender } = render(<JoinComputer connections={[]} onClose={onClose} />);
     fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'tok' } });
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
-    await screen.findByText(/Status/);
+    await screen.findByText(/Your approval code will appear here/);
     rerender(<JoinComputer connections={[{ ...base, state: 'ready' } as never]} onClose={onClose} />);
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });

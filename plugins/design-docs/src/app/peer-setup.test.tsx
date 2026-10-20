@@ -182,11 +182,13 @@ describe('Repair and unsynced', () => {
     expect(screen.queryByText(/Setup pending:/)).toBeNull();
   });
 
-  it('keeps a connection job with its computer before Design Docs use is approved', async () => {
-    const status = { ...EMPTY, jobs: [{ id: 'setup', kind: 'roster', peerId: 'app-b', state: 'blocked', attempts: 1, error: 'peer enrollment changed or revoked' }] };
+  it('does not show stale sync work or Reset before Design Docs use is approved', async () => {
+    const status = { ...EMPTY, jobs: [{ id: 'setup', kind: 'roster', peerId: 'app-b', state: 'blocked', attempts: 5, error: 'peer enrollment changed or revoked' }] };
     mount({ connections: async () => [conn()], groupStatus: async () => status });
     const card = await screen.findByRole('listitem');
-    expect(within(card).getByText('Sync setup waiting: peer enrollment changed or revoked')).toBeTruthy();
+    expect(within(card).getByRole('button', { name: 'Use for Design Docs' })).toBeTruthy();
+    expect(screen.queryByText(/Sync setup waiting/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Reset sync/ })).toBeNull();
     expect(screen.queryByRole('list', { name: 'Pending work' })).toBeNull();
   });
 
@@ -393,7 +395,7 @@ describe('group status, jobs and lifecycle', () => {
       .mockResolvedValueOnce({ discarded: 1, status: { ...status, jobs: [] } }).mockResolvedValueOnce({ discarded: 0, status });
     const { restore } = withConfirm(true);
     try {
-      const harness = mount({ connections: async () => [conn({ hostname: 'Studio' })], groupStatus: async () => status, resetPeerSync: reset });
+      const harness = mount({ connections: async () => [used({ hostname: 'Studio' })], groupStatus: async () => status, resetPeerSync: reset });
       expect(await screen.findByText('Sync setup stopped: the other computer no longer keeps this sync group')).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'Reset sync with Studio' }));
       expect((await screen.findByRole('alert')).textContent).toBe('sync setup is in progress; try again in a moment');
@@ -424,7 +426,7 @@ describe('group status, jobs and lifecycle', () => {
 
   it('with a live connection the wording is a plain wait; a joining setup has no Cancel', async () => {
     const orphan = { ...EMPTY, setup: { peerId: 'app-b', repoId: 'database', state: 'pending' as const, error: 'mutual enrollment unavailable' } };
-    mount({ groupStatus: async () => orphan, connections: async () => [conn()] });
+    mount({ groupStatus: async () => orphan, connections: async () => [used({ syncing: false })] });
     expect(await screen.findByText('Sync setup waiting: waiting for Laptop to connect; no link to this computer right now')).toBeTruthy();
     cleanup();
     mount({ groupStatus: async () => ({ ...EMPTY, setup: { ...orphan.setup, state: 'joining' as const, error: null } }) });

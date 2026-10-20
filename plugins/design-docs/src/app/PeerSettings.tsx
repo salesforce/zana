@@ -291,7 +291,8 @@ export function PeerSettings() {
   // An unfinished setup can be abandoned whatever its state, so it never sits there with nothing to press.
   const setupPeer = status?.setup?.state === 'pending' ? status.setup.peerId : null;
   const setupOnly = (id: string) => id === setupPeer && !stuckPeers.includes(id);
-  const resettable = setupPeer && setupOnly(setupPeer) ? [...stuckPeers, setupPeer] : stuckPeers;
+  const resettable = (setupPeer && setupOnly(setupPeer) ? [...stuckPeers, setupPeer] : stuckPeers)
+    .filter((id) => !connected.has(id) || list.some((connection) => connection.computerId === id && connection.usedByThisPlugin));
   const resetComputer = (id: string) => {
     const name = nameOf(id);
     const message = setupOnly(id)
@@ -344,7 +345,7 @@ export function PeerSettings() {
             <ul className="dd-peers-list dd-peers-cards" aria-label="Computers">
               {list.map((c) => (
                 <ComputerRow key={c.computerId} c={c} label={labels.get(c.computerId)!} status={status} busy={busy}
-                  note={notes[c.computerId] ?? jobNotes.get(c.computerId)} denied={denied.includes(c.computerId)}
+                  note={c.usedByThisPlugin ? notes[c.computerId] ?? jobNotes.get(c.computerId) : undefined} denied={denied.includes(c.computerId)}
                   onUse={() => requestUse(c.computerId)} onStop={() => stopUsing(c.computerId)} onRepair={() => repairComputer(c.computerId)} />
               ))}
             </ul>

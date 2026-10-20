@@ -43,6 +43,7 @@ export function JoinComputer({ connections, onChange, onClose }: JoinComputerPro
 
   const current = (joinedId && connections.find((c) => c.invitationId === joinedId)) || joined;
   const code = current?.pairingCode;
+  const failed = current && ['failed', 'denied', 'cancelled', 'expired'].includes(current.state);
 
   useEffect(() => {
     if (current?.state === 'ready') onClose?.();
@@ -50,7 +51,7 @@ export function JoinComputer({ connections, onChange, onClose }: JoinComputerPro
 
   return (
     <div className="peers-panel" data-testid="join-computer">
-      {!current && (
+      {!current && !busy && (
         <>
           <p>Paste the invitation from the other computer.</p>
           <label className="peers-approve-label">
@@ -64,18 +65,17 @@ export function JoinComputer({ connections, onChange, onClose }: JoinComputerPro
           </div>
         </>
       )}
-      {current && (
+      {(current || busy) && (
         <>
-          {code ? (
+          {!failed ? (
             <>
-              <p>Tell the other computer this code.</p>
-              <p className="peers-pairing-code" data-testid="pairing-code">{code}</p>
-              <p className="peers-loading" role="status">Waiting for approval on the other computer…</p>
+              <p>Enter this code on the other computer to finish connecting.</p>
+              <p className="peers-pairing-code" data-testid="pairing-code" aria-busy={!code} aria-label={code ? 'Approval code' : 'Approval code pending'}>{code ?? '---- ----'}</p>
+              <p className="peers-loading" role="status">{code ? 'Waiting for approval on the other computer…' : 'Waiting for the other computer. Your approval code will appear here…'}</p>
             </>
           ) : (
-            <p className="peers-loading" role="status">{connectionStatusText(current)}</p>
+            <p className="peers-error" role="alert">{connectionStatusText(current)}</p>
           )}
-          <p className="peers-empty">This computer connects out to the other one; Remote Login is not needed here.</p>
           {onClose && <div className="peers-dialog-actions"><button type="button" className="btn" onClick={onClose}>Close</button></div>}
         </>
       )}
