@@ -79,6 +79,8 @@ const STYLES = `
 .sf-tp-foot { color: var(--sf-muted); margin: 0; }
 .sf-tp-empty { color: var(--sf-muted); padding: 4px 2px; }
 `;
+/** Shared by the Org tests editor tab, which reuses the pane's tables, chips and buttons. */
+export const TESTS_PANE_STYLES = STYLES;
 
 const OUTCOME_LABEL: Record<CaseOutcome, string> = { pass: 'Pass', fail: 'Fail', inconclusive: 'Unclear' };
 function Chip({ outcome, title }: { outcome?: CaseOutcome; title?: string }) {

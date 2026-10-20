@@ -2,7 +2,7 @@ import { AGENT_SOURCE_MAX_LABEL, isProposeEditInput, PREVIEW_ENGINES, type Studi
 import { parsePreviewContext } from './preview-context.js';
 
 /** Isomorphic input validation for the Studio UI verbs (server request() and the renderer executor share it). */
-export const STUDIO_UI_COMMANDS = ['editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set'] as const;
+export const STUDIO_UI_COMMANDS = ['editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open'] as const;
 export type StudioUiCommandName = typeof STUDIO_UI_COMMANDS[number];
 export const PREVIEW_TEXT_MAX = 4000;
 const posInt = (value: unknown) => Number.isInteger(value) && Number(value) >= 0;
@@ -29,6 +29,10 @@ export function validateUiCommandInput(command: string, input: Record<string, un
       return typeof input.node === 'string' && input.node.trim() && input.node.length <= 200 && !unknownKeys(input, ['node']) ? undefined : 'Provide node (1-200 characters).';
     case 'layout.set':
       return typeof input.compact === 'boolean' && !unknownKeys(input, ['compact']) ? undefined : 'Provide compact as a boolean.';
+    case 'orgTests.open':
+      if (unknownKeys(input, ['name', 'runId'])) return 'orgTests.open accepts only name and runId.';
+      if (input.name !== undefined && (typeof input.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(input.name))) return 'name must be an AiEvaluationDefinition API name.';
+      return input.runId === undefined || (typeof input.runId === 'string' && /^[A-Za-z0-9]{15,18}$/.test(input.runId)) ? undefined : 'runId must be 15 to 18 letters and digits.';
     default:
       return undefined;
   }

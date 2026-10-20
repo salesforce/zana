@@ -125,7 +125,7 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     // Browsing focuses the panel's search without naming an agent, and the request is handed over once.
     expect(agentRequests).toEqual([{ seq: 1 }]);
     expect(el.querySelector<HTMLElement>('[data-testid="stub-agents"]')!.dataset.focus).toBe('none');
-    await click(activity.querySelectorAll('button')[2]);
+    await click(activity.querySelector('[aria-label="Go to file"]')!);
     expect(document.querySelector('[role="dialog"], [role="listbox"], [role="option"]')).toBeTruthy();
   });
 

@@ -3,7 +3,8 @@ import { AGENT_SCRIPT_TOOLS, type AgentScriptTool } from '../AgentScriptTools.js
 import { isBottomTab, type BottomTab } from './BottomPanel.js';
 
 export type CompactTool = 'code' | AgentScriptTool;
-export interface EditorTab { id: string; kind: 'agent' | 'apex' | 'flow' | 'type'; label: string; path?: string; target?: string }
+/** `org` is the Org agents browser: beside a host side panel it opens here instead of as a panel tool. */
+export interface EditorTab { id: string; kind: 'agent' | 'apex' | 'flow' | 'type' | 'org'; label: string; path?: string; target?: string }
 export interface StudioLayoutState {
   /** Compact mode shows exactly one tool; wide mode ignores it. */
   tool: CompactTool;
@@ -31,7 +32,7 @@ const text = (value: unknown, max = 300) => typeof value === 'string' && value.l
 export function parseTab(value: unknown): EditorTab | null {
   if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;
-  const kind = row.kind === 'agent' || row.kind === 'apex' || row.kind === 'flow' || row.kind === 'type' ? row.kind : null;
+  const kind = row.kind === 'agent' || row.kind === 'apex' || row.kind === 'flow' || row.kind === 'type' || row.kind === 'org' ? row.kind : null;
   const id = text(row.id); const label = text(row.label, 160);
   if (!kind || !id || !label) return null;
   const path = text(row.path); const target = text(row.target);

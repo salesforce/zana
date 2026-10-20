@@ -19,6 +19,8 @@ describe('uiCommandReadsOrg', () => {
       expect(uiCommandReadsOrg(command, { engine: 'rehearse' })).toBe(true);
     }
     for (const command of ['editor.proposeEdit', 'trace.focus', 'graph.focus', 'layout.set']) expect(uiCommandReadsOrg(command, {})).toBe(false);
+    // The Org tests tab lists the org's definitions as soon as it opens.
+    expect(uiCommandReadsOrg('orgTests.open', {})).toBe(true);
   });
   it('leaves local-only commands alone', () => {
     expect(uiCommandReadsOrg('view.open', { view: 'agentforce' })).toBe(false);

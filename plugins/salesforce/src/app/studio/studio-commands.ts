@@ -31,6 +31,8 @@ export interface StudioCommandTargets {
   traceFocus?(input: { runId?: string; turn?: number; step?: number }): Promise<void | ControlState> | void | ControlState;
   graphFocus?(node: string): Promise<void | ControlState> | void | ControlState;
   layoutSet?(compact: boolean): void;
+  /** orgTests.open: shows the Org tests tab, on a definition or run when named. */
+  orgTestsOpen?(input: { name?: string; runId?: string }): void;
 }
 
 const unsupported = (command: string) => Error(`${command} is not supported in this view.`);
@@ -77,6 +79,11 @@ export function createStudioCommandExecutor(targets: StudioCommandTargets): Stud
     if (command === 'layout.set') {
       if (!targets.layoutSet) throw unsupported(command);
       targets.layoutSet(input.compact === true); return { compact: input.compact === true };
+    }
+    if (command === 'orgTests.open') {
+      if (!targets.orgTestsOpen) throw unsupported(command);
+      const focus = { ...(typeof input.name === 'string' ? { name: input.name } : {}), ...(typeof input.runId === 'string' ? { runId: input.runId } : {}) };
+      targets.orgTestsOpen(focus); return focus;
     }
     if (command === 'file.open') {
       if (targets.isBusyOrDirty()) throw Error('Save the current draft before switching files.');

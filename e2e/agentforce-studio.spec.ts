@@ -254,7 +254,7 @@ const studioIn = (page: Page) => studioPanel(page).or(page.locator('.sf-panel-to
 const sidePanel = (page: Page) => page.getByTestId('plugin-panel-host-layout').getByTestId('thread-secondary-panel');
 const sidePanelTab = (page: Page, name: string) => sidePanel(page).locator('.thread-secondary-tabs').getByRole('button', { name, exact: true });
 const activeSidePanelTab = (page: Page) => sidePanel(page).locator('.thread-secondary-tab.is-active .thread-secondary-tab-label');
-const TOOL_IDS: Record<string, string> = { Agents: 'agents', 'Graph view': 'graph', Preview: 'preview', Tests: 'test', Release: 'release', Actions: 'actions', 'Org preview': 'org-preview', Comments: 'comments' };
+const TOOL_IDS: Record<string, string> = { 'Graph view': 'graph', Preview: 'preview', Tests: 'test', Release: 'release', Actions: 'actions', 'Org preview': 'org-preview', Comments: 'comments' };
 
 /** Opens a Studio tool in the host side panel: its tab when open, else from the panel's New Tab page. */
 async function openTool(studio: Locator, name: string) {
@@ -1086,7 +1086,12 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   await agents.getByRole('textbox', { name: 'Search org agents' }).fill('Support');
   await agents.getByRole('combobox', { name: 'Source version for Support' }).selectOption('Support_v1');
   await retrieveOrgAgent(agents, 'Support');
-  await expect(agents.getByRole('status')).toContainText('Retrieved to your project', { timeout: 30_000 });
+  // The retrieved agent opens in its own tab; the Org agents tab keeps the result.
+  const files = studio.getByRole('tablist', { name: 'Open files' });
+  await expect(files.getByRole('tab', { name: /Support_v1\.agent/ })).toHaveAttribute('aria-selected', 'true', { timeout: 30_000 });
+  await files.getByRole('tab', { name: /Org agents/ }).click();
+  await expect(agents.getByRole('status')).toContainText('Retrieved to your project');
+  await files.getByRole('tab', { name: /Support_v1\.agent/ }).click();
   const imported = join(home, 'dx', 'agentforce', '00D000000000001', 'Support_v1', 'Support_v1.agent');
   expect(readFileSync(imported, 'utf8')).toContain('ORG_AGENT_SOURCE_COMPLETE');
   expect(readFileSync(imported.replace('.agent', '.bundle-meta.xml'), 'utf8')).toContain('Support.v1');
@@ -1095,7 +1100,10 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   await page.keyboard.type('\n# MY_LOCAL_AGENT_EDIT');
   await studio.getByRole('button', { name: 'Save Agentforce file' }).click();
   await expect.poll(() => readFileSync(imported, 'utf8')).toContain('MY_LOCAL_AGENT_EDIT');
+  await files.getByRole('tab', { name: /Org agents/ }).click();
   await retrieveOrgAgent(agents, 'Support');
+  await expect(files.getByRole('tab', { name: /Support_v1\.agent/ })).toHaveAttribute('aria-selected', 'true');
+  await files.getByRole('tab', { name: /Org agents/ }).click();
   await expect(agents.getByRole('status')).toContainText('Existing edits were preserved');
   expect(readFileSync(imported, 'utf8')).toContain('MY_LOCAL_AGENT_EDIT');
   const retrievals = readFileSync(join(home, 'agent-retrievals.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -1130,7 +1138,9 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', 'wide');
   const noFile = studio.getByTestId('salesforce-agent-script-no-file');
   await expect(noFile).toBeVisible({ timeout: 30_000 });
-  const agentsTab = sidePanelTab(page, 'Agents');
+  // Org agents pick what to edit, so they open as an editor tab instead of a side-panel tool.
+  const agentsTab = studio.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Org agents/ });
+  const openAgents = () => studio.getByRole('toolbar', { name: 'Studio activity' }).getByRole('button', { name: 'Agents', exact: true }).click();
   const search = studio.getByRole('region', { name: 'Org agents' }).getByRole('textbox', { name: 'Search org agents' });
 
   // The empty state's actions sit with its message instead of floating far below it.
@@ -1138,7 +1148,7 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   const openOrgAgents = noFile.getByRole('button', { name: 'Open org agents', exact: true });
   expect((await openOrgAgents.boundingBox())!.y - (message!.y + message!.height)).toBeLessThan(48);
   await openOrgAgents.click();
-  await expect(activeSidePanelTab(page)).toHaveText('Agents');
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
   await expect(search).toBeFocused();
 
   // An empty graph is a single readable hint, not one row per text run and code chip.
@@ -1148,14 +1158,18 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   expect(await hint.evaluate(el => [...el.childNodes].map(node => node.nodeName))).toEqual(['P']);
   expect((await hint.locator('p').boundingBox())!.height).toBeLessThan(80);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('empty-graph-hint.png'));
+  // The side panel's New Tab lists Studio tools only; org agents are not one of them.
+  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toBeVisible();
+  await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-agents')).toHaveCount(0);
 
-  // The explorer link switches back to Agents, and re-asking while Agents is already open still lands focus in its search.
+  // The explorer link switches back to Org agents, and re-asking while it is already open still lands focus in its search.
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
   // No local file matches, so the project section offers the org instead, next to the matching org agent row.
   await explorer.getByRole('textbox', { name: 'Filter Agentforce files' }).fill('Agent_0');
   const browse = explorer.getByRole('button', { name: 'Browse agents in your org', exact: true });
   await browse.click();
-  await expect(activeSidePanelTab(page)).toHaveText('Agents');
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
   await expect(search).toBeFocused();
   await search.blur();
   await expect(search).not.toBeFocused();
@@ -1164,26 +1178,27 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
 
   // An org agent row retrieves and opens that agent rather than only showing the list.
   await openTool(studio, 'Graph view');
-  // The explorer only links to the org; the Agents panel lists org agents and retrieves them per row.
+  // The explorer only links to the org; the Org agents tab lists them and retrieves them per row.
   await expect(explorer.getByTestId('sf-explorer-org-agent')).toHaveCount(0);
-  await openTool(studio, 'Agents');
-  await expect(activeSidePanelTab(page)).toHaveText('Agents');
+  await openAgents();
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
   await search.fill('Agent_0');
   await retrieveOrgAgent(studio.getByRole('region', { name: 'Org agents' }), 'Agent_0');
-  await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toContainText('Retrieved to your project', { timeout: 30_000 });
-  await expect(studio.locator('.af-document-name')).toHaveText('Agent_0_v1.agent');
+  await expect(studio.locator('.af-document-name')).toHaveText('Agent_0_v1.agent', { timeout: 30_000 });
   await expect(noFile).toBeHidden();
   const retrievals = readFileSync(join(home, 'agent-retrievals.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(retrievals.map(row => row.args.join(' '))).toEqual([expect.stringContaining('AiAuthoringBundle:Agent_0_v1')]);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('explorer-org-agent-opened.png'));
 
   // Reopening a closed Agents tab starts clean instead of replaying the last request.
-  await sidePanel(page).getByRole('button', { name: 'Close Agents', exact: true }).click();
+  await agentsTab.click();
+  await studio.getByRole('tablist', { name: 'Open files' }).getByRole('button', { name: 'Close Org agents', exact: true }).click();
   await expect(agentsTab).toHaveCount(0);
-  await openTool(studio, 'Agents');
+  await openAgents();
   await expect(studio.getByRole('region', { name: 'Org agents' }).getByText('Z Last', { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(search).toHaveValue('');
   await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toHaveCount(0);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('org-agents-editor-tab.png'));
   expect(errors).toEqual([]);
 });
 
@@ -1496,8 +1511,8 @@ test('Salesforce readiness: local authoring without CLI, project org selection a
   await dialog.getByRole('button', { name: 'Create agent', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(editor.locator('.view-lines')).toContainText('Offline_support');
-  // The org agents opened in the host side panel; hide it to check the workbench on its own.
-  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  // Org browsing can stay in the explorer; hide a host panel only if it opened.
+  if (await sidePanel(page).isVisible()) await sidePanel(page).getByTestId('thread-secondary-hide').click();
   expect(existsSync(join(projectRoot, 'agentforce-drafts/force-app/main/default/aiAuthoringBundles/Offline_support/Offline_support.agent'))).toBe(true);
   await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
   await expect(workbench.getByRole('button', { name: 'Sign in to an org' })).toBeVisible();
@@ -1595,8 +1610,8 @@ test('Salesforce illustrated states: editor and agents loading, empty results, r
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-agents-unavailable-narrow-light.png'));
     const state = studio.locator('.sf-state[data-kind=error]');
     expect(await state.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
-    // The narrow window's side panel covers the page until it is closed.
-    await sidePanel(page).getByTestId('thread-secondary-hide').click();
+    // Org agents open in Studio itself, so no side panel covers the narrow page.
+    await expect(sidePanel(page)).toBeHidden();
     await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Run a query to see records.' })).toBeVisible();
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-data-empty-light.png'));
@@ -1692,5 +1707,135 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
   const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, unknown> }>;
   expect(requests.filter(r => r.path.endsWith('/einstein/ai-evaluations/runs')).map(r => r.body)).toEqual([{ aiEvaluationDefinitionName: 'Support_Regression' }]);
   expect(requests.some(r => r.path.includes('/einstein/ai-evaluations/runs/4KB000000000001AAA/results'))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('Agentforce Studio window: Org tests sit in the activity rail, and an agent runs one that the Studio follows live', async ({ app, home }, testInfo) => {
+  const { window: main, electron } = app;
+  const errors: string[] = [];
+  main.on('pageerror', e => errors.push(`main: ${e.message}`));
+  expect(await main.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = main.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => main.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await main.evaluate(async path => {
+    const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id;
+  }, join(home, 'dx'));
+  await main.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await main.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await main.getByTestId('salesforce-workbench').getByTestId('plugin-tab-open-in-window').click();
+  let studio: Page | undefined;
+  await expect.poll(() => (studio = app.electron.windows().find(w => !w.isClosed() && w.url().includes('surface=plugin-view') && w.url().includes('pluginId=salesforce'))) ? 'open' : 'waiting', { timeout: 20_000 }).toBe('open');
+  const page = studio!;
+  await page.waitForSelector('#root', { timeout: 30_000 });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  page.on('pageerror', e => errors.push(`studio: ${e.message}`));
+  const beat = () => process.env.ZCC_E2E_RECORD_VIDEO ? page.waitForTimeout(1800) : Promise.resolve();
+  // A recorded demo names each step on screen, so the agent's calls are visible too.
+  const caption = async (text: string) => {
+    if (!process.env.ZCC_E2E_RECORD_VIDEO) return;
+    await page.evaluate(value => {
+      let node = document.getElementById('e2e-caption');
+      if (!node) {
+        node = Object.assign(document.createElement('div'), { id: 'e2e-caption' });
+        node.style.cssText = 'position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:99999;padding:10px 16px;border-radius:10px;background:rgba(20,24,33,.92);color:#fff;font:600 15px/1.35 -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35);border:1px solid rgba(120,160,255,.6);pointer-events:none;max-width:80%;text-align:center';
+        document.body.appendChild(node);
+      }
+      node.textContent = value;
+    }, text);
+  };
+  const panel = page.getByTestId('salesforce-agent-script-panel');
+  // A fresh window may take the click before its editor is ready, so retry the open.
+  await caption('You: open Support.agent in the Studio window');
+  await expect(async () => {
+    await panel.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+    await expect(panel.getByTestId('salesforce-agent-script-no-file')).toHaveCount(0, { timeout: 3_000 });
+  }).toPass({ timeout: 30_000 });
+  await beat();
+
+  // The activity rail: Files, Agents, Org tests, Go to file. Org tests opens as a full-width editor tab.
+  const rail = panel.getByRole('toolbar', { name: 'Studio activity' });
+  expect(await rail.getByRole('button').evaluateAll(nodes => nodes.map(n => n.getAttribute('aria-label')))).toEqual(['Files', 'Agents', 'Org tests', 'Go to file']);
+  await caption('You: click Org tests in the left activity rail');
+  await rail.getByRole('button', { name: 'Org tests' }).click();
+  const tab = panel.getByTestId('studio-org-tests-view');
+  await expect(panel.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Org tests/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(tab).toContainText('Testing Center definitions and runs in studio');
+  const table = tab.getByTestId('org-tests-table');
+  await expect(table.getByRole('button', { name: 'Support_Regression', exact: true })).toBeVisible();
+  await expect(table.getByRole('button', { name: 'Billing_Smoke', exact: true })).toBeVisible();
+  await beat();
+  // Going back to the agent keeps the tab mounted behind it.
+  await caption('You: go back to editing Support.agent');
+  await panel.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Support\.agent/ }).click();
+  await expect(tab).toBeHidden();
+  await beat();
+
+  // The agent's side: the same sf_workbench actions a thread calls.
+  async function cli(argv: string[]) {
+    return main.evaluate(async ({ argv, projectId }) => {
+      const response = await fetch('/api/v1/plugins/salesforce/cli', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ argv, projectId }) });
+      if (!response.ok) throw Error(await response.text());
+      const result = await response.json();
+      if (!result.stdout) throw Error(result.stderr || 'Missing CLI result');
+      return JSON.parse(result.stdout);
+    }, { argv, projectId });
+  }
+  const action = (name: string, input = {}) => cli(['action', name, '--input', JSON.stringify(input), '--json']);
+  await caption('Agent → sf_workbench orgTests.list');
+  await beat();
+  const listed = await action('orgTests.list');
+  expect(listed).toMatchObject({ ok: true, definitions: expect.arrayContaining([expect.objectContaining({ name: 'Support_Regression' })]) });
+  await caption('Agent → sf_workbench orgTests.run { name: "Support_Regression" }');
+  await beat();
+  const started = await action('orgTests.run', { name: 'Support_Regression' });
+  expect(started).toMatchObject({ ok: true, run: { runId: '4KB000000000001AAA', definition: 'Support_Regression', status: expect.stringMatching(/new|in_progress/) } });
+  let viewId = '';
+  await expect.poll(async () => {
+    const views = (await action('ui.views')).views as Array<{ id: string; surface: string; window?: string; commands: string[] }>;
+    viewId = views.find(v => v.surface === 'agentforce' && v.window === 'plugin-view' && v.commands.includes('orgTests.open'))?.id ?? '';
+    return viewId;
+  }).not.toBe('');
+  await caption(`Agent → ui.command orgTests.open { runId: "${started.run.runId}" }`);
+  await beat();
+  const job = await action('ui.command', { viewId, command: 'orgTests.open', input: { runId: started.run.runId } });
+  expect(job).toMatchObject({ ok: true });
+  let shown: any;
+  await expect.poll(async () => { shown = await action('ui.result', { commandId: job.commandId }); return shown.state; }, { timeout: 15_000 }).not.toBe('pending');
+  expect(shown).toMatchObject({ ok: true });
+
+  // The Studio follows: the tab comes back on the run's definition and polls the run to completion.
+  await expect(tab).toBeVisible();
+  await expect(tab.getByTestId('org-def-detail').getByRole('heading', { name: 'Support regression' })).toBeVisible();
+  const run = tab.getByTestId('org-run-detail');
+  await expect(run).toContainText('4KB000000000001AAA');
+  await caption('Studio follows the run live: polling the org until it finishes');
+  await beat();
+  await expect(run.getByTestId('org-run-counts')).toContainText('2 pass · 1 fail · 0 error of 3', { timeout: 30_000 });
+  await expect(run).toContainText('completed');
+  await beat();
+  await caption('Agent → sf_workbench orgTests.result → 2 pass · 1 fail');
+  await beat();
+  // The agent reads the same results.
+  await expect.poll(async () => (await action('orgTests.result', { runId: '4KB000000000001AAA' })).run?.status).toBe('completed');
+  expect((await action('orgTests.result', { runId: '4KB000000000001AAA' })).run.counts).toMatchObject({ total: 3, pass: 2, fail: 1 });
+  expect((await action('orgTests.runs')).runs).toEqual([expect.objectContaining({ runId: '4KB000000000001AAA', status: 'completed' })]);
+
+  // The person looks at the failure in the wide tab.
+  await caption('You: Failing filter, expand the failing case');
+  await run.getByRole('tablist', { name: 'Case filter' }).getByRole('tab', { name: /Failing/ }).click();
+  await run.getByRole('button', { name: 'Cancel my subscription' }).click();
+  await expect(run.getByRole('table', { name: 'Case 3 metrics' })).toContainText('The agent routed to General_FAQ instead of Billing.');
+  await beat();
+  await caption('Expected topic Billing, the agent routed to General_FAQ');
+  await beat();
+  await captureElectronScreenshot(electron, page, testInfo.outputPath('studio-window-org-tests.png'));
+  await beat();
+
+  const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, unknown> }>;
+  expect(requests.filter(r => r.path.endsWith('/einstein/ai-evaluations/runs')).map(r => r.body)).toEqual([{ aiEvaluationDefinitionName: 'Support_Regression' }]);
   expect(errors).toEqual([]);
 });

@@ -18,7 +18,7 @@ function setup(over: Partial<StudioCommandTargets> = {}) {
 describe('Studio verbs report unsupported when the target is absent', () => {
   it.each([
     ['editor.proposeEdit', proposal], ['preview.start', {}], ['preview.send', { text: 'hi' }],
-    ['trace.focus', {}], ['graph.focus', { node: 'n' }], ['layout.set', { compact: true }]
+    ['trace.focus', {}], ['graph.focus', { node: 'n' }], ['layout.set', { compact: true }], ['orgTests.open', {}]
   ])('%s', async (command, input) => {
     await expect(setup().exec(command, input)).rejects.toThrow(`${command} is not supported in this view.`);
   });
@@ -105,5 +105,27 @@ describe('preview, trace, graph and layout verbs', () => {
     expect(targets.layoutSet).toHaveBeenCalledWith(true);
     await exec('layout.set', { compact: false });
     expect(targets.layoutSet).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('orgTests.open', () => {
+  it('opens the Org tests tab on an optional definition and run', async () => {
+    const orgTestsOpen = vi.fn();
+    const { exec } = setup({ orgTestsOpen });
+    expect(await exec('orgTests.open', {})).toEqual({});
+    expect(orgTestsOpen).toHaveBeenLastCalledWith({});
+    expect(await exec('orgTests.open', { name: 'Support_Regression', runId: '4KB000000000001AAA' })).toEqual({ name: 'Support_Regression', runId: '4KB000000000001AAA' });
+    expect(orgTestsOpen).toHaveBeenLastCalledWith({ name: 'Support_Regression', runId: '4KB000000000001AAA' });
+  });
+  it.each([
+    [{ other: 1 }, 'accepts only name and runId'],
+    [{ name: '1bad' }, 'API name'],
+    [{ name: 7 }, 'API name'],
+    [{ runId: 'short' }, '15 to 18'],
+    [{ runId: 15 }, '15 to 18']
+  ])('rejects %o', async (input, message) => {
+    const orgTestsOpen = vi.fn();
+    await expect(setup({ orgTestsOpen }).exec('orgTests.open', input)).rejects.toThrow(message);
+    expect(orgTestsOpen).not.toHaveBeenCalled();
   });
 });

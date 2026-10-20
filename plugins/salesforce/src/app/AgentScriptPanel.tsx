@@ -29,7 +29,8 @@ import {
 import { usePlaygroundBridge } from './studio/usePlaygroundBridge.js';
 import { compilerDiagnostic, parseCompileReply, type CompileState } from './studio/compile-result.js';
 import { ReleasePane } from './studio/ReleasePane.js';
-import { TestsPane } from './studio/TestsPane.js';
+import { TESTS_PANE_STYLES, TestsPane } from './studio/TestsPane.js';
+import { OrgTestsView, type OrgTestsFocus } from './studio/OrgTestsView.js';
 import { createStudioCommandExecutor } from './studio/studio-commands.js';
 import { commandAuthor, holdCommand, holdReason, REVEAL_COMMANDS, type HeldReveal } from './studio/follow-gate.js';
 import { FollowChip, FollowToast } from './studio/FollowControl.js';
@@ -142,6 +143,9 @@ const COMPACT_TOOLS: readonly CompactTool[] = ['code', 'agents', 'graph', 'previ
 /** Studio can open the host side panel's tabs but not close them; the user closes them there. */
 const HOST_PANEL_CLOSE = 'Studio tools are in the ZCC side panel; close or hide them from the panel.';
 const HIDDEN_COMPACT: readonly AgentScriptTool[] = ['files'];
+const ORG_AGENTS_TAB: EditorTab = { id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' };
+/** The org's Testing Center definitions and runs, full width beside the editor's other tabs. */
+const ORG_TESTS_TAB: EditorTab = { id: 'org-tests', kind: 'org', label: 'Org tests', target: 'tests' };
 const HIDDEN_WIDE: readonly AgentScriptTool[] = ['files'];
 const NO_HIDDEN: readonly AgentScriptTool[] = [];
 const stripItem = (id: CompactTool, badge?: number): StripItem => ({ id, title: TOOL_TITLE[id], icon: TOOL_ICON[id], ...(badge ? { badge } : {}) });
@@ -318,6 +322,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       else patch({ tool: 'code' });
       return;
     }
+    // Beside a host side panel, browsing org agents picks what to edit, so it opens as an editor tab.
+    if (id === 'agents' && hostCapable) { openTab(ORG_AGENTS_TAB); return; }
     if (hostCapable && isPanelTool(id)) {
       if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(id) })) {
         if (id !== hostTool) requestedHostTool.current = id;
@@ -328,7 +334,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     }
     tools.openTool(id);
     patch({ tool: id });
-  }, [hostCapable, hostTool, layout, patch, tools.openTool]);
+  }, [hostCapable, hostTool, layout, openTab, patch, tools.openTool]);
   const panelShown = hostPanel ? hostTool !== null : tools.state.open;
   // The toggle shows only while the side panel is hidden: a host panel showing another tab (a thread) is still open.
   const panelVisible = hostPanel && typeof context.sidePanelOpen === 'boolean' ? context.sidePanelOpen : panelShown;
@@ -365,6 +371,15 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     openTool('agents');
   }, [openTool]);
   const agentsFocusHandled = useCallback((seq: number) => setAgentsFocus(current => current?.seq === seq ? null : current), []);
+
+  // The rail's Org tests entry and orgTests.open land in the Org tests tab; a named definition or run is shown once.
+  const orgTestsSeq = useRef(0);
+  const [orgTestsFocus, setOrgTestsFocus] = useState<OrgTestsFocus | null>(null);
+  const openOrgTests = useCallback((target: { name?: string; runId?: string } = {}) => {
+    if (target.name || target.runId) { orgTestsSeq.current += 1; setOrgTestsFocus({ ...target, seq: orgTestsSeq.current }); }
+    if (layout === 'legacy') openTool('test'); else openTab(ORG_TESTS_TAB);
+  }, [layout, openTab, openTool]);
+  const orgTestsFocusHandled = useCallback((seq: number) => setOrgTestsFocus(current => current?.seq === seq ? null : current), []);
 
   // The Project / Org choice carries over to every implementation view in this project.
   const actionOrigin = useRef(studio.actionOrigin);
@@ -749,7 +764,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       if (wide) patch({ bottomOpen: true, bottomTab: 'trace' }); else openTool('preview');
     },
     graphFocus: node => { setGraphFocus(current => ({ node, seq: current.seq + 1 })); openTool('graph'); },
-    layoutSet: setEditorCompactOverride
+    layoutSet: setEditorCompactOverride,
+    orgTestsOpen: openOrgTests
   });
 
   const applyReveal = (command: UiCommand) => {
@@ -770,7 +786,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   };
 
   useSalesforceControl({ pluginId, projectId, orgAlias: org?.alias, threadId, surface: 'agentforce', enabled: playgroundReady,
-    commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set'],
+    commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open'],
     state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: hostPanel ? { host: true, tabs: hostSlots.filter(slot => slot.attached).map(slot => slot.tool), kept: hostSlots.filter(slot => !slot.attached).map(slot => slot.tool), active: requestedHostTool.current ?? hostTool, open: (requestedHostTool.current ?? hostTool) !== null } : tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id), follow: followPaused ? 'paused' : 'on', ...(heldReveal ? { heldReveal: heldReveal.command.command } : {}) }),
     execute: followCommand,
   });
@@ -940,9 +956,27 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     {!panelVisible && !compact && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={showPanel}><PanelRight size={15} aria-hidden="true" /></button>}
   </> : undefined;
 
+  const orgAgentsPanel = (visible: boolean) => <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => !file.path.startsWith('.zcc/')).map(file => ({ ...file, publishable: file.path.includes('aiAuthoringBundles/') }))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
   const showTargetTab = layout !== 'legacy' && activeEditorTab !== null && activeEditorTab.kind !== 'agent';
   const openAgentTab = (path: string) => { if (path === activePath) selectTab(`agent:${path}`); else void openFile(path); };
-  const targetTabView = showTargetTab && activeEditorTab ? (
+  // The Org agents tab stays mounted while open, so its search and retrieve status survive opening an agent.
+  const orgTabActive = activeEditorTab?.kind === 'org';
+  const orgAgentsActive = orgTabActive && activeEditorTab?.target !== 'tests';
+  const orgTestsActive = orgTabActive && activeEditorTab?.target === 'tests';
+  const orgAgentsView = layout !== 'legacy' && studio.tabs.some(tab => tab.kind === 'org' && tab.target !== 'tests') ? (
+    <div className="sf-etab-view" data-testid="studio-org-agents-view" style={orgAgentsActive ? undefined : { display: 'none' }}>{orgAgentsPanel(orgAgentsActive)}</div>
+  ) : false;
+  // Like Org agents, the Org tests tab stays mounted while open so a followed run keeps its place.
+  const orgTestsView = layout !== 'legacy' && studio.tabs.some(tab => tab.id === ORG_TESTS_TAB.id) ? (
+    <div className="sf-etab-view" data-testid="studio-org-tests-view" style={orgTestsActive ? undefined : { display: 'none' }}>
+      <section className="sf-tp" aria-label="Org tests"><style>{TESTS_PANE_STYLES}</style>
+        <div className="sf-tp-head"><h2>Org tests</h2><span className="sf-tp-sub">Testing Center definitions and runs in {org?.alias ?? 'the selected org'}</span></div>
+        <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={activePath} visible={orgTestsActive}
+          onAskAgent={composeFor} focus={orgTestsFocus} onFocusHandled={orgTestsFocusHandled} />
+      </section>
+    </div>
+  ) : false;
+  const targetTabView = showTargetTab && activeEditorTab && !orgTabActive ? (
     <div className="sf-etab-view" data-testid="studio-target-view">
       {activeEditorTab.kind === 'type'
         ? <LightningTypeView key={`${projectId}:${activeEditorTab.id}`} pluginId={pluginId} projectId={projectId} typeRef={activeEditorTab.target ?? activeEditorTab.label}
@@ -1003,15 +1037,15 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   ) : false;
   const activity = wide ? (
     <ToolStrip orientation="vertical" label="Studio activity" active={studio.explorerOpen ? 'files' : null}
-      items={[stripItem('files'), stripItem('agents'), { id: 'search', title: 'Go to file', icon: <Search size={16} aria-hidden="true" /> }]}
-      onSelect={id => { if (id === 'files') patch({ explorerOpen: !studio.explorerOpen }); else if (id === 'agents') browseAgents(); else setQuickOpen(true); }} />
+      items={[stripItem('files'), stripItem('agents'), { id: 'org-tests', title: 'Org tests', icon: <FlaskConical size={16} aria-hidden="true" /> }, { id: 'search', title: 'Go to file', icon: <Search size={16} aria-hidden="true" /> }]}
+      onSelect={id => { if (id === 'files') patch({ explorerOpen: !studio.explorerOpen }); else if (id === 'agents') browseAgents(); else if (id === 'org-tests') openOrgTests(); else setQuickOpen(true); }} />
   ) : false;
 
   const splitMode = hostPanel ? 'editor' : swapCompact ? (compactTool === 'code' ? 'editor' : 'panel') : 'split';
   const splitOpen = hostPanel ? false : swapCompact ? compactTool !== 'code' : tools.state.open;
 
   const renderTool = (id: AgentScriptTool, visible: boolean): ReactNode => {
-    if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => !file.path.startsWith('.zcc/')).map(file => ({ ...file, publishable: file.path.includes('aiAuthoringBundles/') }))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
+    if (id === 'agents') return orgAgentsPanel(visible);
     if (id === 'files') return layout === 'legacy' ? explorerNode : null;
     if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}
       onReveal={revealLine}
@@ -1066,6 +1100,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           {orgSessionLabel(org) ? <span hidden className="sf-as-crumb-seg" data-testid="salesforce-playground-org">{orgSessionLabel(org)}</span> : null}
           {heldReveal && <FollowToast held={heldReveal} onShow={showHeldReveal} onDismiss={() => setHeldReveal(null)} />}
           {targetTabView}
+          {orgAgentsView}
+          {orgTestsView}
           {playgroundFailed ? (
           <div data-testid="salesforce-agent-script-playground-error"><SalesforceState kind="error" art="code" title="Editor unavailable">{PLAYGROUND_LOAD_ERROR}</SalesforceState></div>
         ) : (

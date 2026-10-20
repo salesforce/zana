@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { X } from 'lucide-react';
 import type { EditorTab } from './studio-layout.js';
 
-const KIND_MARK: Record<EditorTab['kind'], string> = { agent: 'AGENT', apex: 'APEX', flow: 'FLOW', type: 'TYPE' };
+const KIND_MARK: Record<EditorTab['kind'], string> = { agent: 'AGENT', apex: 'APEX', flow: 'FLOW', type: 'TYPE', org: 'ORG' };
 
 /** Open editor tabs: agent (editable), Apex (read-only), Flow (read-only map) and Lightning Type (read-only schema). */
 /** Tab ids each context-menu command closes, in strip order. */
@@ -125,7 +125,7 @@ export function EditorTabs({ tabs, active, dirtyId, problems, problemsId, traili
           }}>
           <span className="sf-etab-kind">{KIND_MARK[tab.kind]}</span>
           <span className="sf-etab-name">{tab.label}</span>
-          {tab.kind !== 'agent' && <span className="sf-etab-ro">read-only</span>}
+          {tab.kind !== 'agent' && tab.kind !== 'org' && <span className="sf-etab-ro">read-only</span>}
           {dirtyId === tab.id && <span className="sf-etab-dirty" role="img" aria-label="Unsaved changes">●</span>}
           {tab.id === badged && tab.kind === 'agent' && problems ? <span className="sf-etab-problems" aria-label={`${problems} problems`}>{problems}</span> : null}
         </button>

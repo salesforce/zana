@@ -9,6 +9,7 @@ afterEach(cleanup);
 it('parses tabs strictly', () => {
   expect(parseTab({ id: 'agent:a', kind: 'agent', label: 'a', path: 'a.agent' })).toEqual({ id: 'agent:a', kind: 'agent', label: 'a', path: 'a.agent' });
   expect(parseTab({ id: 'apex:X', kind: 'apex', label: 'X', target: 'apex://X' })).toMatchObject({ kind: 'apex', target: 'apex://X' });
+  expect(parseTab({ id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' })).toMatchObject({ kind: 'org', target: 'agents' });
   for (const bad of [null, 4, {}, { id: 'x', kind: 'agent', label: 'x' }, { id: 'x', kind: 'weird', label: 'x' }, { id: '', kind: 'apex', label: 'x' }, { id: 'x', kind: 'apex', label: '' }]) {
     expect(parseTab(bad)).toBeNull();
   }

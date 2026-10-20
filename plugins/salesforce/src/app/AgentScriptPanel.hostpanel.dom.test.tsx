@@ -18,6 +18,7 @@ vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data
 const { AgentScriptPanel } = await import('./AgentScriptPanel.js');
 const { StudioPanelTool } = await import('./studio/StudioPanelTool.js');
 const { resetStudioToolBridge } = await import('./studio/studio-tool-bridge.js');
+const { readStudioLayout } = await import('./studio/studio-layout.js');
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const flush = () => act(async () => { for (let i = 0; i < 3; i++) await new Promise(r => setTimeout(r, 0)); });
@@ -162,6 +163,35 @@ describe('AgentScriptPanel beside the host side panel', () => {
     expect(control.options.state()).toMatchObject({ panels: { active: 'graph', open: true } });
     await graph.unmount();
     expect(control.options.state()).toMatchObject({ panels: { active: null, open: false } });
+  });
+
+  it('browses org agents in an editor tab, not the host panel', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await act(async () => { await exec('panel.open', { tool: 'agents' }); });
+    await flush();
+    expect(navigate.openPanelTool).not.toHaveBeenCalled();
+    const tab = [...el.querySelectorAll('.sf-etab')].find(row => row.textContent?.includes('Org agents'))!;
+    expect(tab.getAttribute('data-kind')).toBe('org');
+    expect(tab.querySelector('.sf-etab-kind')!.textContent).toBe('ORG');
+    expect(tab.querySelector('.sf-etab-ro')).toBeNull();
+    const view = el.querySelector<HTMLElement>('[data-testid="studio-org-agents-view"]')!;
+    expect(view.querySelector('[data-testid="stub-agents"]')).toBeTruthy();
+    expect(view.style.display).toBe('');
+    expect(el.querySelector('[data-testid="studio-target-view"]')).toBeNull();
+    // Publishing from the list lands on that agent's editor tab; the list stays mounted behind it.
+    const panel = view.querySelector('[data-testid="stub-agents"]');
+    await act(async () => { fireEvent.click(el.querySelector('[data-testid="stub-agents-publish"]')!); });
+    await flush();
+    expect(view.style.display).toBe('none');
+    expect(view.querySelector('[data-testid="stub-agents"]')).toBe(panel);
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-release' });
+    // The tab is kept with the layout.
+    const layoutKey = Object.keys(localStorage).find(key => key.startsWith('salesforce:studio:') && !key.includes(':split:'))!;
+    expect(readStudioLayout(layoutKey).tabs).toEqual(expect.arrayContaining([{ id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' }]));
+    // Closing the tab unmounts the list.
+    await act(async () => { fireEvent.click(el.querySelector('[aria-label="Close Org agents"]')!); });
+    expect(el.querySelector('[data-testid="studio-org-agents-view"]')).toBeNull();
   });
 
   it('shows host tools on panel.show and leaves closing them to the host panel', async () => {

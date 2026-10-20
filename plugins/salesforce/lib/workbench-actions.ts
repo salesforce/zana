@@ -54,7 +54,7 @@ export const WORKBENCH_ACTIONS = {
   'suites.run': ['studio.suites.run', 'org', 'Run a scenario suite in Simulate: agentPath; optional source (a candidate, else the saved file), caseIds, loopId. With loopId, each run spends one attempt of a fix loop the user started, runs only its cases and is not stored; follow the returned next'],
   'orgTests.list': ['studio.orgTests.list', 'org', 'List the org\'s Testing Center definitions (AiEvaluationDefinition): optional refresh. Returns name, subject, case count when known'],
   'orgTests.definition': ['studio.orgTests.definition', 'org', 'Read one org test definition and its cases (utterance, history, context variables, expectations): name'],
-  'orgTests.run': ['studio.orgTests.run.start', 'org', 'Start an org test run of a definition in the org (runs the real agent and consumes org eval capacity): name. Returns runId; poll orgTests.result'],
+  'orgTests.run': ['studio.orgTests.run.start', 'org', 'Start an org test run of a definition in the org (runs the real agent and consumes org eval capacity): name. Returns runId; poll orgTests.result. To show it to the user, ui.command orgTests.open {runId}'],
   'orgTests.result': ['studio.orgTests.run.get', 'org', 'Read an org test run: runId. Per-case verdict (pass/fail/error/pending), topic, actions, reply and metric results; refreshes while running'],
   'orgTests.cancel': ['studio.orgTests.run.cancel', 'org', 'Cancel a running org test run: runId'],
   'orgTests.runs': ['studio.orgTests.runs', 'local', 'List org test runs started or attached from this project, newest first: optional name'],
@@ -62,7 +62,7 @@ export const WORKBENCH_ACTIONS = {
   'loop.status': ['studio.loop.get', 'local', 'Read a fix loop the user started in Tests: loopId (or agentPath for the newest)'],
   'preview.trace': ['agentLab.trace', 'org', 'Read the planner trace of a Studio turn: id, planId'],
   'ui.views': ['control.views', 'local', 'List active workbench surfaces and their view IDs, the focused window first; each view names its window (main, project-window, plugin-view for the Studio window) and whether it is visible and focused'],
-  'ui.command': ['control.command', 'local', 'Control a specific view: viewId, command, input; poll ui.result for acknowledgement. preview.start accepts engine and optional contextVariables [{name,type,value}], and shows the applied context in Preview. A reveal (file.open, editor.reveal, trace.focus, graph.focus) can complete with viewState.held "typing" or "paused": the Studio holds it for the user, so do not repeat it'],
+  'ui.command': ['control.command', 'local', 'Control a specific view: viewId, command, input; poll ui.result for acknowledgement. preview.start accepts engine and optional contextVariables [{name,type,value}], and shows the applied context in Preview. A reveal (file.open, editor.reveal, trace.focus, graph.focus) can complete with viewState.held "typing" or "paused": the Studio holds it for the user, so do not repeat it. orgTests.open {name?, runId?} opens the Org tests tab on a definition or run, which then follows the run live'],
   'ui.result': ['control.result', 'local', 'Check UI acknowledgement: commandId'],
 } as const;
 export type WorkbenchAction = keyof typeof WORKBENCH_ACTIONS;
