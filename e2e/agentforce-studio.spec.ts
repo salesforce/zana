@@ -1102,6 +1102,7 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
   })()`)).toBeNull();
 
   // Publish opens the Release tool on the file's org and versions.
+  await studio.getByRole('button', { name: 'More save options' }).click();
   await studio.getByTestId('salesforce-agent-script-publish').click();
   const release = studio.getByTestId('studio-release-pane');
   await expect(release.getByTestId('release-org')).toHaveText('studio (sandbox)');

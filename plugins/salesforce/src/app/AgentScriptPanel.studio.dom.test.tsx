@@ -258,7 +258,7 @@ describe('AgentScriptPanel studio layout', () => {
     await act(async () => { fireEvent.click(apex!); });
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
     // The agent's document bar belongs to the agent tab; the strip keeps the workspace controls.
-    expect(el.querySelector('[data-testid="salesforce-agent-script-publish"]')).toBeNull();
+    expect(el.querySelector('[aria-label="Save Agentforce file"]')).toBeNull();
     const goTo = el.querySelector<HTMLButtonElement>('.sf-etabs-actions [aria-label="Go to file"]');
     expect(goTo).toBeTruthy();
     await act(async () => { fireEvent.click(goTo!); });
@@ -268,7 +268,7 @@ describe('AgentScriptPanel studio layout', () => {
     expect(back?.textContent).toBe('← QC.agent');
     await act(async () => { fireEvent.click(back!); });
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeNull();
-    expect(el.querySelector('[data-testid="salesforce-agent-script-publish"]')).toBeTruthy();
+    expect(el.querySelector('[aria-label="Save Agentforce file"]')).toBeTruthy();
     await act(async () => { fireEvent.click(el.querySelector('[aria-label="Browse org agents"]')!); });
     await act(async () => { fireEvent.click(apex!); });
     const scenario = [...el.querySelectorAll('.sf-as-explorer button')].find(n => n.textContent?.includes('a.scenario') || n.textContent?.trim().startsWith('a'));
@@ -503,6 +503,7 @@ describe('AgentScriptPanel follows the driving thread', () => {
     rpc.mockImplementation(baseRpc);
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
+    await act(async () => { fireEvent.click(el.querySelector('[aria-label="More save options"]')!); });
     await act(async () => { fireEvent.click(el.querySelector('[data-testid="salesforce-agent-script-publish"]')!); });
     await flush();
     const pane = el.querySelector('[data-testid="studio-release-pane"]')!;
