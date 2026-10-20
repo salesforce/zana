@@ -123,6 +123,22 @@ describe('goalExecutionSourcePaths', () => {
     expect(descriptors.map((d) => d.canonicalPath)).toContain(realpathSync(plan));
   });
 
+  it('keeps project files, including the project library, and drops HOME when includeHome is false', async () => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-project-')));
+    const userHome = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-userhome-')));
+    mkdirSync(join(project, '.zcc', 'library', 'designs'), { recursive: true });
+    const design = join(project, '.zcc', 'library', 'designs', 'design.md');
+    writeFileSync(design, '# design');
+    const notes = join(userHome, 'notes.md');
+    writeFileSync(notes, 'private');
+    const goal = `Build ${design} using ${notes}`;
+
+    const projectOnly = await goalExecutionSourcePaths(goal, project, userHome, { includeHome: false });
+    expect(projectOnly.map((d) => d.canonicalPath)).toEqual([design]);
+    const withHome = await goalExecutionSourcePaths(goal, project, userHome);
+    expect(withHome.map((d) => d.canonicalPath).sort()).toEqual([design, notes].sort());
+  });
+
   it('blocks a sensitive HOME root even when named in the goal', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-project-'));
     const userHome = mkdtempSync(join(tmpdir(), 'zcc-userhome-'));

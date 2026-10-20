@@ -1,8 +1,90 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
-  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse
+  createDesktopNativeRecovery, findProposalExecution, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
+  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch
 } from '../team-launch-support.js';
+
+describe('withProposalLaunch', () => {
+  const proposal = { id: 'prop-1', proposerKind: 'pty' as const, proposerId: 's1' };
+  const started = { ok: true as const, value: { executionId: 'exec-1', state: 'RUNNING' as never } };
+  function deps(begin: unknown = { ok: true, value: { proposal } }) {
+    return {
+      beginLaunch: vi.fn(async () => begin as never),
+      markLaunched: vi.fn(async () => undefined),
+      releaseLaunch: vi.fn(),
+      logError: vi.fn()
+    };
+  }
+
+  it('runs an ordinary launch without touching any proposal', async () => {
+    const d = deps();
+    const start = vi.fn(async () => started);
+    expect(await withProposalLaunch(d, undefined, 'p1', start)).toBe(started);
+    expect(start).toHaveBeenCalledWith(undefined);
+    expect(d.beginLaunch).not.toHaveBeenCalled();
+    expect(d.releaseLaunch).not.toHaveBeenCalled();
+  });
+
+  it('records a started Squad and keeps the hold', async () => {
+    const d = deps();
+    const start = vi.fn(async () => started);
+    expect(await withProposalLaunch(d, 'prop-1', 'p1', start)).toBe(started);
+    expect(d.beginLaunch).toHaveBeenCalledWith('prop-1', 'p1');
+    expect(start).toHaveBeenCalledWith(proposal);
+    expect(d.markLaunched).toHaveBeenCalledWith('prop-1', 'exec-1');
+    expect(d.releaseLaunch).not.toHaveBeenCalled();
+  });
+
+  it('logs a failed launch record but still reports the running Squad', async () => {
+    const d = deps();
+    d.markLaunched.mockRejectedValue(new Error('disk full'));
+    expect(await withProposalLaunch(d, 'prop-1', 'p1', async () => started)).toBe(started);
+    expect(d.logError).toHaveBeenCalledWith('squad proposal prop-1 markLaunched', expect.any(Error));
+    expect(d.releaseLaunch).not.toHaveBeenCalled();
+  });
+
+  it('returns a refused hold without starting', async () => {
+    const d = deps({ ok: false, code: 'NOT_PENDING', message: 'already handled' });
+    const start = vi.fn(async () => started);
+    expect(await withProposalLaunch(d, 'prop-1', 'p1', start)).toEqual({ ok: false, code: 'NOT_PENDING', message: 'already handled' });
+    expect(start).not.toHaveBeenCalled();
+    expect(d.releaseLaunch).not.toHaveBeenCalled();
+  });
+
+  it('releases the hold when the start fails or throws', async () => {
+    const d = deps();
+    const refused = { ok: false as const, code: 'INVALID_PLAN', message: 'bad plan' };
+    expect(await withProposalLaunch(d, 'prop-1', 'p1', async () => refused as never)).toBe(refused);
+    expect(d.releaseLaunch).toHaveBeenCalledTimes(1);
+    await expect(withProposalLaunch(d, 'prop-1', 'p1', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+    expect(d.releaseLaunch).toHaveBeenCalledTimes(2);
+    expect(d.markLaunched).not.toHaveBeenCalled();
+  });
+});
+
+describe('findProposalExecution', () => {
+  const page = (ids: Array<[string, string | undefined, number]>, hasMore: boolean) => ({
+    records: ids.map(([id, proposalId, createdAt]) => ({ id, createdAt, ...(proposalId ? { proposal: { id: proposalId } } : {}) }) as never),
+    hasMore
+  });
+
+  it('pages newest first until it finds the proposal', async () => {
+    const listInProject = vi.fn()
+      .mockResolvedValueOnce(page([['e3', undefined, 30], ['e2', 'other', 20]], true))
+      .mockResolvedValueOnce(page([['e1', 'prop-1', 10]], false));
+    expect(await findProposalExecution({ listInProject }, 'p1', 'prop-1')).toBe('e1');
+    expect(listInProject).toHaveBeenNthCalledWith(1, 'p1', undefined, 100);
+    expect(listInProject).toHaveBeenNthCalledWith(2, 'p1', 20, 100);
+  });
+
+  it('stops at the last page, an empty page, and after five pages', async () => {
+    expect(await findProposalExecution({ listInProject: vi.fn().mockResolvedValue(page([['e1', undefined, 1]], false)) }, 'p1', 'prop-1')).toBeUndefined();
+    expect(await findProposalExecution({ listInProject: vi.fn().mockResolvedValue(page([], true)) }, 'p1', 'prop-1')).toBeUndefined();
+    const endless = vi.fn().mockResolvedValue(page([['e', undefined, 5]], true));
+    expect(await findProposalExecution({ listInProject: endless }, 'p1', 'prop-1')).toBeUndefined();
+    expect(endless).toHaveBeenCalledTimes(5);
+  });
+});
 
 describe('slotRecoveryLaunch', () => {
   const base = { slotId: 's1', role: 'worker' as const, personaId: 'p1', profile: 'claude' as never };

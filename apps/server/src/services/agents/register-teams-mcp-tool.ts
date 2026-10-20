@@ -23,7 +23,10 @@ export const LIST_TEAMS_DESCRIPTION = [
   '',
   'Returns non-sensitive metadata only: id, name, description, slot count, and',
   'source. Use the `id` when an operator launches the team. Read-only; takes no',
-  'arguments.'
+  'arguments.',
+  '',
+  "defaultPlanning is the Squad's preferred planning mode; canInferPlan false means its",
+  "orchestrator cannot write a plan, so propose it with planning 'provided' and a portable plan."
 ].join(' ');
 
 export interface ListTeamsOpts {

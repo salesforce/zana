@@ -109,7 +109,7 @@ describe('host bootstrap helpers', () => {
       hostId: '028c8627-a6d8-4c62-964e-8f6b35cb2335',
       listenPort: 8780
     })).toBe(
-      "ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:8780 limited-pony 'curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 http://127.0.0.1:18782/install.sh | sh -s -- --join-code zcde_abc --host-id 028c8627-a6d8-4c62-964e-8f6b35cb2335 --server http://127.0.0.1:18782 && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity'"
+      "ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:8780 limited-pony 'curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 http://127.0.0.1:18782/install.sh | ZCC_HOST_ENROLLMENT_PROVENANCE=tunnel sh -s -- --join-code zcde_abc --host-id 028c8627-a6d8-4c62-964e-8f6b35cb2335 --server http://127.0.0.1:18782 && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity'"
     );
     expect(sshFallbackPairingCommand({
       sshHost: '-evil',
@@ -766,5 +766,21 @@ describe('tunnel route memory', () => {
     const events = await bootstrapHostForProject(f.ctx, 'project');
     expect(events.at(-1)).toMatchObject({ type: 'done' });
     expect(warn).toHaveBeenCalledWith('[zcc] Could not save the SSH tunnel route: EACCES');
+  });
+});
+
+describe('enrollment replacement consent', () => {
+  it('repair of a known host asks the machine to replace its old enrollment', async () => {
+    const f = flow('no_origin');
+    const remote = f.addRemote();
+    const events = await repairHost(f.ctx, remote.id);
+    expect(events.at(-1)).toMatchObject({ type: 'done' });
+    expect(f.install.mock.calls[0]![0]).toMatchObject({ hostId: remote.id, replaceEnrollment: true });
+  });
+
+  it('adding a new machine never asks to replace an enrollment', async () => {
+    const f = flow('no_origin');
+    await bootstrapHostForProject(f.ctx, 'project');
+    expect(f.install.mock.calls[0]![0]).not.toHaveProperty('replaceEnrollment');
   });
 });

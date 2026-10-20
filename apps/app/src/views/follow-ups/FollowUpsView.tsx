@@ -39,6 +39,7 @@ import { isClaudeProfile, knownProfile, projectDefaultProfile } from '@/lib/laun
 import { buildFollowUpPrompt, followUpAgentTitle } from '@/lib/followUpPrompt';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { useNowTick } from '@/hooks/useNowTick';
+import { platformShortcut } from '../../lib/platformShortcut.js';
 
 /** Status → pill label / class suffix. Reuses the scheduler pill palette. */
 const STATUS_META: Record<FollowUpStatus, { label: string; cls: string }> = {
@@ -804,7 +805,7 @@ function FollowUpAnswerBox({
         aria-label="Answer this follow-up"
       />
       <div className="inbox-reply-actions">
-        <span className="inbox-reply-hint">⌘↵ to send · resolves this follow-up</span>
+        <span className="inbox-reply-hint">{platformShortcut('⌘↵ to send · resolves this follow-up')}</span>
         <button
           type="button"
           className="inbox-reply-send"
@@ -1060,7 +1061,7 @@ function FollowUpModal({
             className="btn primary"
             onClick={save}
             disabled={!canSave || saving}
-            title={canSave ? '⌘+Enter to save' : 'Fill in a title'}
+            title={canSave ? platformShortcut('⌘+Enter to save') : 'Fill in a title'}
           >
             {saving ? 'Saving…' : isNew ? 'Create follow-up' : 'Save changes'}
           </button>

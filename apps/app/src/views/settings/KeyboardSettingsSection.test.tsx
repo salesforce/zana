@@ -7,6 +7,7 @@ import {
   formatAppShortcut,
   REMAPPABLE_COMMANDS
 } from '@/lib/keyboard-shortcut-settings';
+import { platformShortcut } from '@/lib/platformShortcut';
 
 vi.mock('@/store', () => ({
   useUi: { getState: () => ({ setShortcutsOpen: () => {} }) }
@@ -17,7 +18,7 @@ describe('KeyboardSettingsSection', () => {
     const html = renderToStaticMarkup(<KeyboardSettingsSection />);
     expect(html).toContain('settings-anchor-keyboard');
     expect(html).toContain('show-all-shortcuts');
-    expect(html).toContain('⌘/');
+    expect(html).toContain(platformShortcut('⌘/'));
     expect(html).toContain('Shortcuts');
     for (const command of REMAPPABLE_COMMANDS) {
       expect(html).toContain(`keyboard-shortcut-${command.command}`);

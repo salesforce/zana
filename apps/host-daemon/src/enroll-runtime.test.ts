@@ -54,6 +54,7 @@ describe('startEnrolledHostDaemon', () => {
     readHostAuth.mockReturnValue({
       hostId: '11111111-1111-4111-8111-111111111111',
       hostKey: 'stale-key',
+      serverUrl: 'http://127.0.0.1:8780/',
       hostName: 'test-host'
     });
     enrollDaemonHost.mockResolvedValue({
@@ -76,7 +77,7 @@ describe('startEnrolledHostDaemon', () => {
     await daemon.close();
   });
 
-  it('does not reuse stored auth for a different join host id', async () => {
+  it('replaces stored auth for a different join host id only with explicit consent', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-enroll-hostid-'));
     readHostAuth.mockReturnValue({
       hostId: '11111111-1111-4111-8111-111111111111',
@@ -94,6 +95,7 @@ describe('startEnrolledHostDaemon', () => {
       dataDir,
       serverUrl: 'https://zcc.example/t/zcrs_abcdefghijklmnopqr/',
       token: 'enroll-token-enroll-token-enroll',
+      replaceEnrollment: true,
       hostId: '22222222-2222-4222-8222-222222222222'
     });
     expect(enrollDaemonHost).toHaveBeenCalledOnce();
@@ -103,6 +105,18 @@ describe('startEnrolledHostDaemon', () => {
       '22222222-2222-4222-8222-222222222222'
     );
     await daemon.close();
+  });
+
+  it('does not replace host.id when saving replacement auth fails', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-enroll-persist-'));
+    readHostAuth.mockReturnValue({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'stale-key', hostName: 'test-host' });
+    enrollDaemonHost.mockResolvedValue({ protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId: '22222222-2222-4222-8222-222222222222', hostKey: 'fresh-key' });
+    startEnrolledHostConnection.mockImplementation(() => openConnection());
+    writeHostAuth.mockImplementationOnce(() => { throw new Error('disk full'); });
+
+    await expect(startEnrolledHostDaemon({ dataDir, serverUrl: 'https://zcc.example/', token: 'enroll-token-enroll-token-enroll',
+      replaceEnrollment: true, hostId: '22222222-2222-4222-8222-222222222222' })).rejects.toThrow('disk full');
+    expect(persistHostId).not.toHaveBeenCalled();
   });
 });
 
@@ -115,7 +129,7 @@ it('consumes a Connect repair before reusing auth, then recovers a completed enr
   enrollDaemonHost.mockResolvedValue({ protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId, hostKey: 'new-key' });
   startEnrolledHostConnection.mockImplementation(() => openConnection());
   const options = { dataDir, serverUrl, hostId, token: 'zcde_' + 'a'.repeat(24), connectCredential: 'b'.repeat(43) };
-  const first = await startEnrolledHostDaemon(options);
+  const first = await startEnrolledHostDaemon({ ...options, replaceEnrollment: true });
   expect(enrollDaemonHost).toHaveBeenCalledOnce();
   expect(startEnrolledHostConnection).toHaveBeenCalledWith(expect.objectContaining({ hostKey: 'new-key' }));
   const saved = writeHostAuth.mock.calls[0]![1];
@@ -129,7 +143,7 @@ it('consumes a Connect repair before reusing auth, then recovers a completed enr
 
 it('does not rotate credentials on a transient failure even when a join token is present', async () => {
   vi.clearAllMocks();
-  readHostAuth.mockReturnValue({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'existing-key' });
+  readHostAuth.mockReturnValue({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'existing-key', serverUrl: 'https://example.com/' });
   startEnrolledHostConnection.mockReturnValue({ ready: Promise.reject(new Error('Host server connection timed out')), close: vi.fn(async () => {}) });
   await expect(startEnrolledHostDaemon({ dataDir: mkdtempSync(join(tmpdir(), 'zcc-enroll-outage-')), serverUrl: 'https://example.com/', token: 'unused-join-token' })).rejects.toThrow('timed out');
   expect(enrollDaemonHost).not.toHaveBeenCalled();
@@ -139,7 +153,7 @@ it('does not rotate credentials on a transient failure even when a join token is
 it.each([false, true])('keeps saved credentials while startup is offline, cancellation=%s', async cancel => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    readHostAuth.mockReturnValue({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'saved' });
+    readHostAuth.mockReturnValue({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'saved', serverUrl: 'http://127.0.0.1:1' });
     let resolve!: () => void, reject!: (error: Error) => void;
     const ready = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     const close = vi.fn(async () => { reject(new Error('closed')); });
@@ -168,7 +182,7 @@ describe('enrollment across tunnel restarts', () => {
 
   it('keeps an enrollment when the owner is reached on another loopback tunnel port, and records the new URL', async () => {
     vi.clearAllMocks();
-    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000' });
+    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000', provenance: 'tunnel' });
     startEnrolledHostConnection.mockImplementation(() => openConnection());
     const daemon = await start('http://127.0.0.1:38892');
     expect(enrollDaemonHost).not.toHaveBeenCalled();
@@ -178,7 +192,7 @@ describe('enrollment across tunnel restarts', () => {
 
   it('never re-enrolls over stored auth when another loopback port rejects the stored key', async () => {
     vi.clearAllMocks();
-    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000' });
+    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000', provenance: 'tunnel' });
     startEnrolledHostConnection.mockImplementation(() => closedConnection());
     await expect(start('http://127.0.0.1:38892')).rejects.toThrow('Existing machine enrollment belongs to another server');
     expect(enrollDaemonHost).not.toHaveBeenCalled();
@@ -194,6 +208,14 @@ describe('enrollment across tunnel restarts', () => {
     expect(enrollDaemonHost).toHaveBeenCalledOnce();
     expect(writeHostAuth).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ hostKey: 'fresh' }));
     await daemon.close();
+  });
+
+  it('fails closed on a legacy enrollment without provenance when the loopback port changed', async () => {
+    vi.clearAllMocks();
+    readHostAuth.mockReturnValue({ hostId, hostKey: 'k', hostName: 'h', serverUrl: 'http://127.0.0.1:41000' });
+    await expect(start('http://127.0.0.1:38892')).rejects.toThrow('belongs to another server');
+    expect(enrollDaemonHost).not.toHaveBeenCalled();
+    expect(writeHostAuth).not.toHaveBeenCalled();
   });
 
   it('still refuses an enrollment that belongs to a different server', async () => {

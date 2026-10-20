@@ -10,6 +10,7 @@ import {
 } from '@/lib/keyboard-shortcut-settings';
 import { Field, Section, SettingsActionRow } from '@/components/settings/FormFields';
 import { useUi } from '@/store';
+import { platformShortcut } from '../../lib/platformShortcut.js';
 
 export function KeyboardSettingsSection() {
   const [, setTick] = useState(0);
@@ -26,7 +27,7 @@ export function KeyboardSettingsSection() {
       anchorId="keyboard"
       searchId="keyboard.shortcuts-intro"
       title="Shortcuts"
-      help="Remap New Chat, the palette, Quick Open, the explorer, Settings, and split-pane navigation. Press ⌘/ to see every shortcut."
+      help={platformShortcut('Remap New Chat, the palette, Quick Open, the explorer, Settings, and split-pane navigation. Press ⌘/ to see every shortcut.')}
     >
       {REMAPPABLE_COMMANDS.map((command) => {
         const binding = bindings.find((row) => row.command === command.command);
@@ -71,7 +72,7 @@ export function KeyboardSettingsSection() {
       <SettingsActionRow
         searchId="keyboard.all-shortcuts"
         label="All shortcuts"
-        help="The full list, including chords that are not remappable here. Press ⌘/ from anywhere."
+        help={platformShortcut('The full list, including chords that are not remappable here. Press ⌘/ from anywhere.')}
       >
         <button
           type="button"

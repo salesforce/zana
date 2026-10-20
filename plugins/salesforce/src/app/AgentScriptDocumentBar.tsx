@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bot, Check, ChevronDown, Circle, CloudDownload, CopyPlus, ExternalLink, Hammer, PanelRight, Play, Rocket, Save, Search } from 'lucide-react';
 import { breadcrumbSegments } from '../../lib/agent-script-file-tree.js';
+import { modShortcut } from './shortcut-label.js';
 
 type DocumentBarProps = {
   path: string | null;
@@ -61,7 +62,7 @@ export function AgentScriptDocumentBar(props: DocumentBarProps) {
     <div className="af-document-actions">
       {props.follow}
       {props.headerActions}
-      {props.onQuickOpen && <button type="button" className="icon-btn" title="Go to file (⌘P)" aria-label="Go to file" onClick={props.onQuickOpen}><Search size={15} aria-hidden="true" /></button>}
+      {props.onQuickOpen && <button type="button" className="icon-btn" title={`Go to file (${modShortcut('P')})`} aria-label="Go to file" onClick={props.onQuickOpen}><Search size={15} aria-hidden="true" /></button>}
       {props.onFetch && <button type="button" className="icon-btn" data-testid="salesforce-agent-script-fetch" aria-label="Fetch agent from org" title={props.dirty ? 'Save first: Fetch reads what the saved file uses' : 'Fetch this agent and what it uses from the org'} disabled={!props.path || props.dirty} onClick={props.onFetch}><CloudDownload size={15} aria-hidden="true" /></button>}
       {props.onCompile && <button type="button" className={`icon-btn af-document-compile${props.compiling ? ' is-busy' : ''}`} data-testid="salesforce-agent-script-compile" aria-label={props.compiling ? 'Compiling…' : 'Compile'} title={props.dirty ? 'Save first: Compile checks the file on disk' : props.compiling ? 'Compiling…' : 'Compile the saved file and show the result under Problems'} disabled={!props.path || props.dirty || props.compiling} onClick={props.onCompile}><Hammer size={15} aria-hidden="true" /></button>}
       {props.onOpenInBuilder && <button type="button" className={`icon-btn${props.openingBuilder ? ' is-busy' : ''}`} data-testid="salesforce-agent-script-open-builder" aria-label="Open in Agentforce Builder" title="Open in Agentforce Builder (Chrome)" disabled={!props.path || props.openingBuilder} onClick={props.onOpenInBuilder}><ExternalLink size={15} aria-hidden="true" /></button>}
@@ -98,7 +99,7 @@ function SaveSplit(props: DocumentBarProps) {
     event.stopPropagation(); setOpen(false);
     root.current?.querySelector<HTMLButtonElement>('.sf-as-save-more')?.focus();
   }}>
-    <button type="button" className={`sf-as-save${primary}`} data-testid="salesforce-agent-script-save" aria-label="Save Agentforce file" title="Save Agentforce file (⌘S / Ctrl+S)" disabled={props.saveDisabled} onClick={props.onSave}><Save size={13} aria-hidden="true" />{props.busy ? 'Saving…' : 'Save'}{props.shortcutHint && <kbd className="sf-kbd">⌘S</kbd>}</button>
+    <button type="button" className={`sf-as-save${primary}`} data-testid="salesforce-agent-script-save" aria-label="Save Agentforce file" title={`Save Agentforce file (${modShortcut('S')})`} disabled={props.saveDisabled} onClick={props.onSave}><Save size={13} aria-hidden="true" />{props.busy ? 'Saving…' : 'Save'}{props.shortcutHint && <kbd className="sf-kbd">⌘S</kbd>}</button>
     <button type="button" className={`sf-as-save sf-as-save-more${primary}`} aria-label="More save options" title="More save options" aria-haspopup="menu" aria-expanded={open} disabled={menuDisabled} onClick={() => setOpen(value => !value)}><ChevronDown size={13} aria-hidden="true" /></button>
     {open && <div className="sf-as-save-menu" role="menu" aria-label="Save options">
       <button ref={props.saveAsDisabled ? undefined : item} type="button" role="menuitem" disabled={props.saveAsDisabled} onClick={() => { setOpen(false); props.onSaveAs(); }}><CopyPlus size={13} aria-hidden="true" />Save as…</button>

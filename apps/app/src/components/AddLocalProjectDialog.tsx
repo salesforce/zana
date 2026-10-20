@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, X } from 'lucide-react';
 import { HostMachinePicker } from './HostMachinePicker.js';
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
+import { folderPathPlaceholder } from '../lib/path.js';
 import { product } from '../lib/product-client.js';
 import { Modal } from './Modal.js';
 
@@ -131,7 +132,7 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && canSubmit) submit();
                 }}
-                placeholder="/path/to/project"
+                placeholder={folderPathPlaceholder(selectedHost)}
                 spellCheck={false}
                 autoCapitalize="off"
                 autoCorrect="off"

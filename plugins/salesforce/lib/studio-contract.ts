@@ -5,6 +5,10 @@
 export type StudioTool = 'code' | 'preview' | 'tests' | 'graph' | 'actions' | 'data' | 'deploy' | 'assistant' | 'comments' | 'agents';
 export type StudioEngine = 'rehearse' | 'simulate' | 'live';
 export interface StudioDiagnostic { line: number; column: number; endLine: number; endColumn: number; severity: 'error' | 'warning' | 'info' | 'hint'; message: string; code?: string }
+/** Problem counters count errors and warnings; info and hint entries are listed but not counted. */
+export function countProblems(diagnostics: readonly StudioDiagnostic[]): number {
+  return diagnostics.filter(item => item.severity === 'error' || item.severity === 'warning').length;
+}
 export interface StudioViewState {
   surface: 'studio' | 'sidepanel'; path: string | null; sha256?: string; dirty: boolean;
   cursor?: { line: number; column: number }; selection?: { startLine: number; endLine: number; text: string /* <=2000 */ };

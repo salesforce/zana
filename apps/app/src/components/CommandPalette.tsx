@@ -26,6 +26,7 @@ import { useSettingsPaletteItems } from '../lib/settings-search/palette.js';
 import { PaletteFrame, paletteOptionProps } from './palette/PaletteFrame.js';
 import { favoritePaletteKeys } from './palette/favoriteItems.js';
 import { paneCommandsAvailable } from '../lib/split-layout/paneCommands.js';
+import { platformShortcut } from '../lib/platformShortcut.js';
 
 interface Props {
   onClose: () => void;
@@ -715,7 +716,7 @@ function renderSlashRows(
       <span className="palette-icon"><Slash size={14} /></span>
       <span className="palette-label">{highlightMatches(r.cmd.invocation, r.matchIdx)}</span>
       {r.cmd.description && <span className="palette-hint">{r.cmd.description}</span>}
-      <span className="palette-kbd">{activeIsClaude ? '↵ new · ⇧↵ active tab' : '↵ new tab'}</span>
+      <span className="palette-kbd">{platformShortcut(activeIsClaude ? '↵ new · ⇧↵ active tab' : '↵ new tab')}</span>
     </button>
   ));
 }
@@ -747,7 +748,7 @@ function renderCommandRows(
     <button
       key={row.item.key}
       aria-label={`${row.item.label} ${row.item.hint ?? ''}`.trim()}
-      title={row.item.hint ? `${row.item.label} — ${row.item.hint}` : row.item.label}
+      title={row.item.hint ? `${row.item.label} — ${platformShortcut(row.item.hint)}` : row.item.label}
       {...paletteOptionProps(i, activeIdx)}
       onMouseDown={(event) => event.preventDefault()}
       data-idx={i}
@@ -760,7 +761,7 @@ function renderCommandRows(
         {row.labelMatchIdx ? highlightMatches(row.item.label, row.labelMatchIdx) : row.item.label}
       </span>
       {row.item.favorite && <Star size={12} className="command-palette-favorite" fill="currentColor" aria-hidden="true" />}
-      {row.item.hint && <span className="palette-hint">{row.item.hint}</span>}
+      {row.item.hint && <span className="palette-hint">{platformShortcut(row.item.hint)}</span>}
       <ChevronRight size={12} className="palette-chev" />
     </button>
   );

@@ -847,7 +847,9 @@ export const PeerDaemonInstallCommandSchema = z.union([z.object({
   sshTunnel: z.object({
     localPort: z.number().int().min(1).max(65535),
     remotePort: z.number().int().min(1).max(65535)
-  }).strict().optional()
+  }).strict().optional(),
+  /** Repair of a known host: replace its prior enrollment for this one join only. */
+  replaceEnrollment: z.boolean().optional()
 }).strict(), z.object({
   type: z.literal('peer_daemon.install'),
   remote: PeerDaemonRemoteSchema,

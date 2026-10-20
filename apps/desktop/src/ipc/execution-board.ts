@@ -1,6 +1,7 @@
 import { dialog, type BrowserWindow } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
+import { createSourcePickerFolders, sourcePickerDialogOptions } from './execution-source-picker.js';
 import { registerSharedProduct } from './shared-product-registry.js';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import { projectExecutionProjection, executionBoardProjection } from '@zana-ai/zcc-server/services/execution/projection';
@@ -29,7 +30,7 @@ type ExecutionCaller = { kind: 'window'; window: BrowserWindow } | { kind: 'shar
 
 export function registerExecutionBoardIpc(): void {
   const { safeHandle, safeHandleFromWindow, ptys, teams, personas, windows,
-    executionStore, executionResumeTokens, executionSources, squadExecutionService,
+    executionStore, executionResumeTokens, executionSources, squadProposals, squadExecutionService,
     startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability, squadWorktreeAction } = ctx;
 
   // The product-server credential identifies the authenticated instance owner.
@@ -423,23 +424,24 @@ export function registerExecutionBoardIpc(): void {
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'monitor relaunch unavailable' })
   );
 
+  const sourcePickerFolders = createSourcePickerFolders();
   safeHandleFromWindow<[string], Result<Awaited<ReturnType<typeof executionSources.issue>>>>(
     IPC.executionSources.pick,
     async (win, projectId) => {
-      if (typeof projectId !== 'string' || !store.listProjects().some((project) => project.id === projectId)) {
+      const project = typeof projectId === 'string' ? store.listProjects().find((candidate) => candidate.id === projectId) : undefined;
+      if (!project) {
         return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
       }
       const scopedProjectId = windows.get(win.id)?.projectId;
       if (scopedProjectId && scopedProjectId !== projectId) {
         return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
       }
-      const pick = await dialog.showOpenDialog(win, {
-        title: 'Add execution sources',
-        properties: ['openFile', 'multiSelections']
-      });
+      const pick = await dialog.showOpenDialog(win, sourcePickerDialogOptions(await sourcePickerFolders.defaultPathFor(project)));
       if (pick.canceled) return { ok: true, value: [] };
       try {
-        return { ok: true, value: await executionSources.issue({ windowId: win.id, projectId, paths: pick.filePaths }) };
+        const issued = await executionSources.issue({ windowId: win.id, projectId, paths: pick.filePaths });
+        sourcePickerFolders.remember(projectId, pick.filePaths);
+        return { ok: true, value: issued };
       } catch (error) {
         return error instanceof ExecutionSourceError
           ? { ok: false, code: error.code, message: error.message }
@@ -447,5 +449,19 @@ export function registerExecutionBoardIpc(): void {
       }
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'Execution source chooser unavailable' })
+  );
+
+  // Resolve a stored Squad proposal into a composer pre-fill. Main re-checks the
+  // proposal's project against this window's scope; the renderer only supplies an id.
+  safeHandleFromWindow<[string], { ok: boolean; [key: string]: unknown }>(
+    IPC.teams.reviewProposal,
+    async (win, proposalId) => {
+      if (typeof proposalId !== 'string' || !proposalId) {
+        return { ok: false, code: 'INVALID', message: 'proposal id is required' };
+      }
+      return squadProposals.review(win.id, proposalId, (projectId: string) =>
+        isExecutionProjectAllowed({ kind: 'window', window: win }, projectId));
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'Squad launch review unavailable' })
   );
 }

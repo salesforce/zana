@@ -246,6 +246,11 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     jobTitle: record.jobTitle,
     ...(record.coordinationMode ? { coordinationMode: record.coordinationMode } : {}),
     ...(record.origin ? { origin: record.origin } : {}),
+    ...(record.proposal ? { startedFrom: {
+      kind: record.proposal.proposerKind,
+      id: record.proposal.proposerId,
+      ...(record.proposal.proposerTitle === undefined ? {} : { title: record.proposal.proposerTitle })
+    } } : {}),
     state: record.state,
     attempt: record.attempt,
     stateVersion: record.stateVersion,

@@ -25,6 +25,52 @@ it('selects required ownership boundaries, deduplicates specs and leaves docs al
   expect(boundarySpecs(['apps/app/src/App.tsx'])).toEqual([...new Set(boundarySpecs(['apps/app/src/App.tsx']))].sort());
 });
 
+it('selects the Squad proposal specs for proposal, team and composer seams', () => {
+  for (const path of [
+    'apps/desktop/src/squad-proposals/service.ts',
+    'apps/server/src/services/squad-proposals/squad-proposal-mcp-tools.ts',
+    'apps/server/src/services/agents/team-store.ts',
+    'apps/app/src/components/TeamComposer.tsx',
+    'apps/app/src/components/SquadEditor.tsx',
+    'apps/server/src/services/agents/register-teams-mcp-tool.ts',
+    'apps/app/src/components/InboxDetail.tsx',
+    'apps/app/src/components/AgentLauncher.tsx',
+    'apps/app/src/components/ExecutionJobDetails.tsx',
+    'apps/server/src/services/agents/modern-team-launch-tools.ts',
+    'apps/desktop/src/ipc/execution-board.ts',
+    'apps/server/src/services/execution/store.ts',
+    'apps/server/src/services/execution/projection.ts',
+    'apps/desktop/src/squad-worktree-runtime.ts',
+    'apps/desktop/src/squad-session-lifecycle.ts'
+  ]) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/squad-proposal-flow.spec.ts', 'e2e/job-team-launch-ui.spec.ts']));
+  }
+  // Unrelated Squad and launcher files must not pull in the slow proposal specs.
+  for (const path of [
+    'docs/readme.md',
+    'apps/desktop/src/triggered-squad.ts',
+    'apps/app/src/components/GlobalAgentLauncher.tsx',
+    'apps/app/src/lib/settings-search/entries/squads.ts',
+    'apps/desktop/src/inbox-actions/squad-instruct.ts'
+  ]) {
+    expect(boundarySpecs([path])).not.toContain('e2e/squad-proposal-flow.spec.ts');
+  }
+});
+
+it('selects the Squad source retry spec for the picker, registry and composer seams', () => {
+  for (const path of [
+    'apps/desktop/src/ipc/execution-source-picker.ts',
+    'apps/desktop/src/ipc/execution-board.ts',
+    'apps/server/src/services/execution/source-registry.ts',
+    'apps/desktop/src/team-launch-support.ts',
+    'apps/app/src/components/TeamComposer.tsx',
+    'apps/app/src/components/team-composer-sources.ts'
+  ]) {
+    expect(boundarySpecs([path])).toContain('e2e/squad-source-retry.spec.ts');
+  }
+  expect(boundarySpecs(['docs/readme.md'])).not.toContain('e2e/squad-source-retry.spec.ts');
+});
+
 it('selects the scheduler specs for scheduler seams', () => {
   for (const path of ['apps/server/src/services/scheduler/scheduler.ts', 'apps/app/src/components/scheduler/ProblemsPanel.tsx', 'apps/app/src/views/scheduler/SchedulerView.tsx', 'packages/domain/src/schedule-health.ts']) {
     expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/scheduler-self-healing.spec.ts', 'e2e/scheduler-overview.spec.ts', 'e2e/scheduler-detail.spec.ts', 'e2e/scheduler-cron.spec.ts']));
@@ -202,4 +248,19 @@ it('keeps the existing required CI check as an always-running gate over every jo
   expect(workflow).toContain('coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json');
   expect(workflow).toContain("description: 'Optional comparison base for the full unpublished branch range'");
   expect(workflow.match(/CI_BASE_SHA: \$\{\{ inputs\.base_sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'HEAD\^' \}\}/g)).toHaveLength(2);
+});
+
+it('includes the Squad proposal flow in the job-team E2E runner', async () => {
+  vi.resetModules();
+  const main = vi.fn(async () => 0);
+  vi.doMock('./run-electron-e2e.mjs', () => ({ main }));
+  const previousExitCode = process.exitCode;
+  try {
+    await import('./run-jobteam-e2e.mjs');
+    expect(main).toHaveBeenCalledOnce();
+    expect(main.mock.calls[0]![0]).toEqual(expect.arrayContaining(['--build', 'e2e/squad-proposal-flow.spec.ts']));
+  } finally {
+    process.exitCode = previousExitCode;
+    vi.doUnmock('./run-electron-e2e.mjs');
+  }
 });

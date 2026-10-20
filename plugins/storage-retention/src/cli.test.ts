@@ -186,6 +186,10 @@ it("removes orphaned storage after a scan, in the foreground or the background",
     (host) => host.maintenance.state !== "running",
   );
   expect(done.maintenance.state).toBe("completed");
+  await until(
+    async () => fs.readdir(rootOf(fixture)),
+    (entries) => !entries.some((entry) => entry.startsWith(".zcc-trash-")),
+  );
   expect(await fs.readdir(rootOf(fixture))).toEqual([uuid(1)]);
 });
 

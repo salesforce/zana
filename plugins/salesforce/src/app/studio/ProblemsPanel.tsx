@@ -1,5 +1,5 @@
 import { Sparkles } from 'lucide-react';
-import type { StudioDiagnostic } from '../../../lib/studio-contract.js';
+import { countProblems, type StudioDiagnostic } from '../../../lib/studio-contract.js';
 import type { CompileState } from './compile-result.js';
 
 const SEVERITY_ORDER: Record<StudioDiagnostic['severity'], number> = { error: 0, warning: 1, info: 2, hint: 3 };
@@ -34,10 +34,16 @@ export function sortDiagnostics(diagnostics: StudioDiagnostic[]): StudioDiagnost
 
 export function ProblemsPanel({ path, diagnostics, compact, onReveal, onFixWithAgent, busy, compile, stale = false }: ProblemsPanelProps) {
   const rows = sortDiagnostics(diagnostics);
+  const problems = countProblems(rows);
+  const notes = rows.length - problems;
+  const summary = [
+    problems === 0 ? 'No problems' : `${problems} ${problems === 1 ? 'problem' : 'problems'}`,
+    ...(notes ? [`${notes} ${notes === 1 ? 'note' : 'notes'}`] : [])
+  ].join(' · ');
   return <section className="sf-problems" data-compact={compact ? 'true' : undefined} aria-label="Problems">
     <header className="sf-problems-head">
-      <span>{rows.length === 0 ? 'No problems' : `${rows.length} ${rows.length === 1 ? 'problem' : 'problems'}`}{path ? <small> · {path.split('/').pop()}</small> : null}</span>
-      {onFixWithAgent && <button type="button" className="sf-btn-small" disabled={rows.length === 0 || !path || busy} onClick={onFixWithAgent}>
+      <span>{summary}{path ? <small> · {path.split('/').pop()}</small> : null}</span>
+      {onFixWithAgent && <button type="button" className="sf-btn-small" disabled={problems === 0 || !path || busy} onClick={onFixWithAgent}>
         <Sparkles size={12} aria-hidden="true" />{busy ? 'Asking…' : 'Fix with agent'}
       </button>}
     </header>

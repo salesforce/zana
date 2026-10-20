@@ -24,6 +24,14 @@ describe('Agent Script document toolbar', () => {
     expect(screen.queryByRole('button', { name: 'Show side panel' })).toBeNull();
   });
 
+  it.each([['Win32', 'Ctrl+P', 'Ctrl+S'], ['MacIntel', '⌘P', '⌘S']])('labels Go to file and Save shortcuts for %s', (platform, find, save) => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue(platform);
+    render(<AgentScriptDocumentBar {...defaults} onQuickOpen={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Go to file' }).title).toBe(`Go to file (${find})`);
+    expect(screen.getByRole('button', { name: 'Save Agentforce file' }).title).toBe(`Save Agentforce file (${save})`);
+    vi.restoreAllMocks();
+  });
+
   it('keeps toolbar actions and a labelled org picker usable', () => {
     const onBrowse = vi.fn(), onSave = vi.fn(), onSaveAs = vi.fn(), onShowPanel = vi.fn();
     render(<AgentScriptDocumentBar {...defaults} panelOpen={false} dirty issues={1}

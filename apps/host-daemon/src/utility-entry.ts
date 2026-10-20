@@ -33,6 +33,8 @@ parentPort.on('message', async ({ data }) => {
     dataDir?: string;
     path?: string;
     ghBinary?: string;
+    provenance?: 'tunnel' | 'non-tunnel';
+    replaceEnrollment?: boolean;
   };
   if (
     (message.type === 'start' || message.type === 'enroll' || message.type === 'relaunch' || message.type === 'stop')
@@ -81,6 +83,8 @@ parentPort.on('message', async ({ data }) => {
         dataDir: message.dataDir,
         serverUrl: message.serverUrl,
         token: message.token,
+        provenance: message.provenance === 'tunnel' ? 'tunnel' : 'non-tunnel',
+        replaceEnrollment: message.replaceEnrollment === true,
         stealLock: true
       });
       parentPort.postMessage({
@@ -104,7 +108,9 @@ parentPort.on('message', async ({ data }) => {
         dataDir: message.dataDir,
         serverUrl: message.serverUrl,
         token: message.token,
-        stealLock: true
+        stealLock: true,
+        provenance: message.provenance === 'tunnel' ? 'tunnel' : 'non-tunnel',
+        replaceEnrollment: message.replaceEnrollment === true
       });
       parentPort.postMessage({
         type: 'enrolled',
