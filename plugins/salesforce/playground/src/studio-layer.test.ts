@@ -283,6 +283,25 @@ it('dispose clears visuals, the chip and pending cursor reports', () => {
   new StudioLayer(fake.monaco, fake.editor, post).dispose();
 });
 
+it('keeps focusing the comment box until Monaco shows its zone', () => {
+  vi.useFakeTimers();
+  document.body.appendChild(fake.parent);
+  layer.openCommentComposer(1, 1, 'a');
+  const zone = Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'));
+  fake.parent.appendChild(zone.domNode);
+  const input: HTMLTextAreaElement = zone.domNode.querySelector('textarea');
+  // A hidden zone ignores focus(), as Monaco's does before its next render.
+  const real = input.focus.bind(input);
+  let hidden = true;
+  input.focus = () => { if (!hidden) real(); };
+  vi.advanceTimersByTime(48);
+  expect(document.activeElement).not.toBe(input);
+  hidden = false;
+  vi.advanceTimersByTime(16);
+  expect(document.activeElement).toBe(input);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it('stops waiting to focus the comment box once it is closed or never attaches', () => {
   vi.useFakeTimers();
   const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
