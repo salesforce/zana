@@ -20,12 +20,13 @@ export function registerConfigIpc(): void {
     IPC.config.set,
     (patch) => {
       // Window state is main-owned. Renderer config writes cannot alter shared
-      // unscoped-window geometry, plugin view window geometry or fullscreen
+      // unscoped-window geometry, plugin/thread view window geometry or fullscreen
       // monitor selection.
       const {
         windowBounds: _windowBounds,
         windowMaximized: _windowMaximized,
         pluginViewWindowBounds: _pluginViewWindowBounds,
+        threadViewWindowBounds: _threadViewWindowBounds,
         ...safePatch
       } = patch;
       const previous = store.getConfig();

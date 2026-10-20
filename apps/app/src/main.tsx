@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
 import { getPluginViewTarget } from './lib/pluginViewSurface.js';
+import { getThreadViewTarget } from './lib/threadViewSurface.js';
 // Prevent the OS from navigating to files dropped outside the terminal area.
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
@@ -51,11 +52,18 @@ if (!root) {
       // tab and never imports `./App`, so it cannot restore sessions or drive
       // main-window state.
       const pluginView = isRepair ? null : getPluginViewTarget();
+      // A thread view window (`?surface=thread-view`) shows one thread and its
+      // side panel, likewise without `./App`.
+      const threadView = isRepair || pluginView ? null : getThreadViewTarget();
       if (!isRepair) {
-        // Every window needs main's open plugin view set from the start, so a
-        // navigation can bring an open one forward before any pane subscribes.
-        const { startPluginViewMirror } = await import('./plugins/plugin-view-windows.js');
+        // Every window needs main's open plugin and thread view sets from the
+        // start, so a navigation can bring an open one forward before any pane subscribes.
+        const [{ startPluginViewMirror }, { startThreadViewMirror }] = await Promise.all([
+          import('./plugins/plugin-view-windows.js'),
+          import('./lib/thread-view-windows.js')
+        ]);
         startPluginViewMirror();
+        startThreadViewMirror();
       }
       let content: ReactElement;
       if (isRepair) {
@@ -66,6 +74,13 @@ if (!root) {
         content = (
           <BrowserRouter>
             <PluginViewApp target={pluginView} />
+          </BrowserRouter>
+        );
+      } else if (threadView) {
+        const { ThreadViewApp } = await import('./views/thread-view/ThreadViewApp.js');
+        content = (
+          <BrowserRouter>
+            <ThreadViewApp target={threadView} />
           </BrowserRouter>
         );
       } else {

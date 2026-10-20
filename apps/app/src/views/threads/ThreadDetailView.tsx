@@ -26,6 +26,7 @@ import {
   QueuedMessagesCard
 } from '../../components/thread/timeline/ComposerStackCards.js';
 import { ThreadDetailOverflow } from '../../components/thread/ThreadDetailOverflow.js';
+import { DetachedThread, useThreadDetached } from '../../components/thread/DetachedThread.js';
 import { ThreadDetailSearch } from '../../components/thread/ThreadDetailSearch.js';
 import { createCoalescedRunner } from '../../lib/coalesced-runner.js';
 import { createThreadRefreshScheduler } from './thread-detail-refresh.js';
@@ -104,7 +105,20 @@ export function ThreadDetailView() {
   return <ThreadDetail key={threadId} threadId={threadId} />;
 }
 
-export function ThreadDetail({
+type ThreadDetailProps = Parameters<typeof ThreadDetailBody>[0];
+
+/**
+ * A thread open in its own window runs only there; every other host shows a
+ * placeholder, so one window owns its timeline and side panel.
+ */
+export function ThreadDetail(props: ThreadDetailProps) {
+  const detached = useThreadDetached(props.threadId);
+  const projectId = useThreads((s) => s.threads.find((row) => row.id === props.threadId)?.projectId ?? null);
+  if (detached) return <DetachedThread threadId={props.threadId} projectId={projectId} />;
+  return <ThreadDetailBody {...props} />;
+}
+
+function ThreadDetailBody({
   threadId,
   timelineEnabled = true,
   embedded = false,

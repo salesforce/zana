@@ -50,12 +50,13 @@ function socket(server: any, path: string, headers: Record<string, string>) {
 }
 async function laptop(server: any, name: string) {
   const ws = socket(server, '/_relay/connect', { authorization: `Bearer ${server.credential}` });
-  const hello = once(ws, 'message'); await once(ws, 'open'); await hello;
+  // Answer from the first frame: a held visitor's request can arrive in the same chunk as hello.
   ws.on('message', raw => {
     const frame = JSON.parse(raw.toString());
     if (frame.type === 'request-end') for (const value of [{ type: 'response', status: 200, headers: { 'content-type': 'text/plain' } }, { type: 'response-data', data: Buffer.from(name.repeat(9000)).toString('base64') }, { type: 'response-end' }]) ws.send(JSON.stringify({ id: frame.id, ...value }));
     if (frame.type === 'ws-data') ws.send(JSON.stringify({ ...frame, data: Buffer.from(`${name}:${Buffer.from(frame.data, 'base64')}`).toString('base64') }));
-  }); return ws;
+  });
+  const hello = once(ws, 'message'); await once(ws, 'open'); await hello; return ws;
 }
 it('opens a dashboard domain through redirects into the live app without another approval', async () => {
   const a = await enroll('alice'); await laptop(a, 'Zana');
@@ -240,6 +241,51 @@ it('shows an offline page only after browser authorization and refuses unknown C
   expect(offline.headers['content-security-policy']).toContain("frame-ancestors 'none'");
   expect((await call(a.host, '/_connect/missing')).status).toBe(404);
   expect((await call('not.valid.connect.example.com', '/')).status).toBe(404);
+});
+
+it('holds a visitor while a recently seen computer redials, and fails at once for one long gone', async () => {
+  const a = await enroll('alice'); const old = await laptop(a, 'old'); const p = await phone(a);
+  const oldClosed = once(old, 'close'); old.close(); await oldClosed;
+  const pending = call(a.host, '/', undefined, { cookie: p.cookie });
+  const ws = socket(a, '/ws', { cookie: p.cookie }); const opened = once(ws, 'open');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  expect(ws.readyState).toBe(WebSocket.CONNECTING);
+  const replacement = await laptop(a, 'new');
+  expect((await pending).body).toBe('new'.repeat(9000));
+  await opened; const message = once(ws, 'message'); ws.send('hi'); expect((await message)[0].toString()).toBe('new:hi');
+  const closed = once(replacement, 'close'); replacement.close(); await closed;
+  await db.query('UPDATE connect_servers SET last_seen_at=$1 WHERE id=$2', [Date.now() - 120_000, a.serverId]);
+  const started = Date.now();
+  expect((await call(a.host, '/', undefined, { cookie: p.cookie })).status).toBe(503);
+  expect(Date.now() - started).toBeLessThan(1000);
+});
+it('gives up on a redialing computer once the reconnect grace runs out', async () => {
+  await gateway.close();
+  gateway = createConnectGateway({ db, registry, sessionSecret: secret, checkIntervalMs: 30, reconnectGraceMs: 250 });
+  const a = await enroll('alice'); const old = await laptop(a, 'old'); const p = await phone(a);
+  const closed = once(old, 'close'); old.close(); await closed;
+  const started = Date.now();
+  const offline = await call(a.host, '/', undefined, { cookie: p.cookie, accept: 'text/html' });
+  expect(offline.status).toBe(503); expect(offline.body).toContain('Your computer is offline');
+  expect(Date.now() - started).toBeGreaterThanOrEqual(200);
+  const ws = socket(a, '/ws', { cookie: p.cookie });
+  const [, response] = await once(ws, 'unexpected-response');
+  expect(response.statusCode).toBe(503);
+});
+it('keeps Connect session cookies off the tunnel and refuses the ones a computer sets', async () => {
+  const a = await enroll('alice'); const p = await phone(a);
+  const ws = socket(a, '/_relay/connect', { authorization: `Bearer ${a.credential}` });
+  const hello = once(ws, 'message'); await once(ws, 'open'); await hello;
+  const seen: any[] = [];
+  ws.on('message', raw => {
+    const frame = JSON.parse(raw.toString());
+    if (frame.type === 'request') seen.push(frame.headers);
+    if (frame.type === 'request-end') for (const value of [{ type: 'response', status: 200, headers: { 'content-type': 'text/plain', 'set-cookie': ['app=1; Domain=.example.com; Path=/', 'zcc_connect_session=forged; Path=/', 'zcc_mobile_session=forged'] } }, { type: 'response-end' }]) ws.send(JSON.stringify({ id: frame.id, ...value }));
+  });
+  const result = await call(a.host, '/', undefined, { cookie: `${p.cookie}; theme=dark; ${cookie('alice')}` });
+  expect(result.status).toBe(200);
+  expect(seen[0].cookie).toBe('theme=dark');
+  expect(result.headers['set-cookie']).toEqual(['app=1; Path=/']);
 });
 
 async function previewLane(server: any, port = 5173, machineCredential?: string) {

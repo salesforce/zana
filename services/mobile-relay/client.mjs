@@ -5,7 +5,7 @@ import { isMachinePath, machineIdentity } from './machine-routes.mjs';
 import { TUNNEL_PATH, LIMITS, headers, validPath, parseFrame, send, dataFramesFlushed, bytes, heartbeat, remoteOrigin, validToken } from './protocol.mjs';
 
 /** Dials ONLY the supplied loopback mobile gateway, never the product server or a frame-supplied host. */
-export function connectRelay({ publicUrl, token, gatewayPort, gatewayCredential, productInstanceId, allowLocal = false, onState = () => {}, retryMs = 1000, heartbeatMs = 20_000, helloTimeoutMs = 10_000, previews, machineCredential }) {
+export function connectRelay({ publicUrl, token, gatewayPort, gatewayCredential, productInstanceId, allowLocal = false, onState = () => {}, retryMs = 1000, heartbeatMs = 20_000, helloTimeoutMs = 10_000, previews, machineCredential, random = Math.random }) {
   const origin = remoteOrigin(publicUrl, allowLocal);
   if (!validToken(token)) throw new Error('Invalid relay token');
   if (gatewayCredential !== undefined && !validToken(gatewayCredential)) throw new Error('Invalid local gateway credential');
@@ -69,7 +69,8 @@ export function connectRelay({ publicUrl, token, gatewayPort, gatewayCredential,
       cleanup();
       if (stopped) return;
       update('reconnecting');
-      retry = setTimeout(dial, backoff + Math.floor(Math.random() * Math.min(250, backoff)));
+      // Equal jitter: [0.5x, 1x] of the backoff so desktops don't redial in lockstep after a web restart.
+      retry = setTimeout(dial, Math.floor(backoff * (0.5 + 0.5 * random())));
       retry.unref();
       backoff = Math.min(30_000, backoff * 2);
     });

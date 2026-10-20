@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { win32 } from 'node:path';
 import { shell } from 'electron';
+import { isWithin } from '@zana-ai/zcc-path-confine';
 import type { EditorTarget, OpenResult, OpenTarget } from '@zana-ai/zcc-domain/product';
 import { resolveWindowsEditorLaunch, WINDOWS_INSTALL_HINTS } from '@zana-ai/zcc-server/services/projects/editor-windows';
 
@@ -65,10 +66,10 @@ function spawnDetached(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Pr
  * Dock-launched app's minimal PATH, and it doesn't require the user to have
  * installed the editor's shell command. `-n` opens a fresh instance/window.
  */
-function openMacApp(appName: string, path: string): Promise<OpenResult> {
+function openMacApp(appName: string, paths: string[]): Promise<OpenResult> {
   return new Promise((resolve) => {
     try {
-      const child = spawn('/usr/bin/open', ['-a', appName, '-n', path], { stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn('/usr/bin/open', ['-a', appName, '-n', ...paths], { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';
       child.stderr?.on('data', (d) => {
         stderr += String(d);
@@ -151,7 +152,7 @@ function openWindowsTerminal(dir: string, program: string, timeoutMs = 20_000): 
  *
  * Windows shims are batch files `spawn` can't start without a shell, so there we
  * run what the shim runs, directly (see `editor-windows.ts`): `Code.exe cli.js
- * -n <path>` as Node. Without `cli.js`, the bare exe gets just the path: with
+ * -n <path>` as Node. Without `cli.js`, the bare exe gets just the paths: with
  * `-n` a running VS Code exits 0 and opens nothing.
  */
 async function openInEditor(
@@ -162,31 +163,51 @@ async function openInEditor(
   appNames: string[],
   installHint: string
 ): Promise<OpenResult> {
+  const paths = cliArgs[0] === '-n' ? cliArgs.slice(1) : cliArgs;
   if (process.platform === 'win32') {
     const launch = await resolveWindowsEditorLaunch(target, cli);
     const notFound = `Could not launch ${name}. Install it ${WINDOWS_INSTALL_HINTS[target]} in Settings → Editor.`;
     if (!launch) return { ok: false, message: notFound };
     const viaExe = launch.cliJs
       ? await spawnDetached(launch.exe, [launch.cliJs, ...cliArgs], { ...process.env, ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: '' })
-      : await spawnDetached(launch.exe, cliArgs[0] === '-n' ? cliArgs.slice(1) : cliArgs);
+      : await spawnDetached(launch.exe, paths);
     return viaExe.ok ? viaExe : { ok: false, message: `${notFound} (${viaExe.message})` };
   }
   const viaCli = await spawnDetached(cli, cliArgs);
   if (viaCli.ok) return viaCli;
   if (process.platform === 'darwin') {
     for (const appName of appNames) {
-      const path = cliArgs[cliArgs.length - 1];
-      const viaOpen = await openMacApp(appName, path);
+      const viaOpen = await openMacApp(appName, paths);
       if (viaOpen.ok) return viaOpen;
     }
   }
   return { ok: false, message: installHint };
 }
 
+/**
+ * What an editor opens for `path`: `[projectRoot, file]` when `path` is a file
+ * inside `projectRoot` (already trusted by main), so the editor shows the file
+ * in that project's window — VS Code and Cursor reuse a window that already has
+ * the folder open, IntelliJ opens the project and then the file in it.
+ * Otherwise just `[path]`. Both are realpaths so the editor sees the file
+ * under the folder even through a symlinked or `subst` path.
+ */
+function editorPaths(path: string, projectRoot: string | null | undefined): string[] {
+  if (!projectRoot) return [path];
+  try {
+    const file = realpathSync(path);
+    if (statSync(file).isFile() && isWithin(file, projectRoot)) return [projectRoot, file];
+  } catch {
+    /* gone or unreadable: let the editor report it */
+  }
+  return [path];
+}
+
 export async function openIn(
   target: OpenTarget,
   path: string,
-  overrides: OpenerOverrides = {}
+  overrides: OpenerOverrides = {},
+  projectRoot?: string | null
 ): Promise<OpenResult> {
   // A user-set app override is tried FIRST (before the default candidates), so a
   // custom install location / edition ("IntelliJ IDEA Ultimate") wins.
@@ -202,7 +223,7 @@ export async function openIn(
         'cursor',
         'Cursor',
         bin(overrides.cursorBinary, 'cursor'),
-        ['-n', path],
+        ['-n', ...editorPaths(path, projectRoot)],
         appNames(overrides.cursorApp, ['Cursor']),
         'Could not launch Cursor. Install its CLI via Cursor → Cmd+Shift+P → "Shell Command: Install \'cursor\' command", or make sure Cursor.app is in /Applications.'
       );
@@ -211,7 +232,7 @@ export async function openIn(
         'code',
         'VS Code',
         bin(overrides.codeBinary, 'code'),
-        ['-n', path],
+        ['-n', ...editorPaths(path, projectRoot)],
         appNames(overrides.codeApp, ['Visual Studio Code']),
         'Could not launch VS Code. Install its CLI via Code → Cmd+Shift+P → "Shell Command: Install \'code\' command", or make sure Visual Studio Code.app is in /Applications.'
       );
@@ -220,7 +241,7 @@ export async function openIn(
         'intellij',
         'IntelliJ IDEA',
         bin(overrides.intellijBinary, 'idea'),
-        [path],
+        editorPaths(path, projectRoot),
         appNames(overrides.intellijApp, ['IntelliJ IDEA', 'IntelliJ IDEA Ultimate', 'IntelliJ IDEA CE']),
         'Could not launch IntelliJ IDEA. Install its CLI via IntelliJ → Tools → "Create Command-line Launcher…", or make sure IntelliJ IDEA.app is in /Applications.'
       );
