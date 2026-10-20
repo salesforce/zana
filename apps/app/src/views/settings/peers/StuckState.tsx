@@ -39,9 +39,10 @@ export function forceRemoveText(link: Pick<PeerLink, 'peerName' | 'uses'>): stri
   return `Remove ${link.peerName} anyway without waiting for plugins to clean up? ${may}.`;
 }
 
-export function StuckStateActions({ link, busy, onAction }: {
+export function StuckStateActions({ link, busy, onAction, showRemove = true }: {
   link: PeerLink;
   busy?: boolean;
+  showRemove?: boolean;
   onAction: (action: StuckAction) => void;
 }) {
   const stuck = stuckStateOf(link);
@@ -50,7 +51,7 @@ export function StuckStateActions({ link, busy, onAction }: {
     <div className="peers-stuck" data-testid="peer-stuck" data-state={link.state}>
       <p className="peers-stuck-text">{stuck.text}</p>
       <div className="peers-link-actions">
-        {stuck.actions.map((action) => (
+        {stuck.actions.filter((action) => showRemove || action !== 'remove-anyway').map((action) => (
           <button
             key={action}
             type="button"

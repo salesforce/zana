@@ -89,18 +89,21 @@ describe('PeersSettingsView', () => {
     expect(screen.getByRole('heading', { name: 'Used by' })).toBeTruthy();
     const actions = header.querySelector('.peers-link-actions') as HTMLElement;
     expect(within(actions).getByRole('button', { name: 'Pause' }).className).toContain('peers-btn-secondary');
-    expect(within(actions).queryByRole('button', { name: 'Remove link' })).toBeNull();
+    expect(within(actions).getByRole('button', { name: 'Remove computer' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
     fireEvent.click(within(actions).getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(api.disconnect).toHaveBeenCalledWith('h1'));
     await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
   });
 
-  it('does not show a normal Remove action; recovery owns forced removal', async () => {
+  it('offers confirmed removal for a healthy unused computer', async () => {
     api.list.mockResolvedValue({ links: [link({ uses: [] })] });
     render(<PeersSettingsView />);
     await screen.findByText('No plugin uses this computer.');
-    expect(screen.queryByRole('button', { name: /Remove link|Remove\.\.\./ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove computer' }));
+    expect(api.removeLink).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(api.removeLink).toHaveBeenCalledWith('h1'));
   });
 
   it('groups links of one computer and disambiguates equal names', async () => {
@@ -206,11 +209,12 @@ describe('PeersSettingsView', () => {
   describe('stuck states', () => {
     const stuck = (over: Record<string, unknown>) => api.list.mockResolvedValue({ links: [link({ connected: false, uses: [{ pluginId: 'a', label: 'Alpha plugin', scope: 's', since: 1 }], ...over })] });
 
-    it('shows plain text and Remove anyway for failed and unclaimed links, with no jargon', async () => {
+    it('shows one header Remove for failed and unclaimed links', async () => {
       stuck({ state: 'failed' });
       const { unmount } = render(<PeersSettingsView />);
       expect(await screen.findByText("Pairing didn't finish on this computer.")).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Remove anyway' })).toBeTruthy();
+      expect(screen.getAllByRole('button', { name: 'Remove computer' })).toHaveLength(1);
+      expect(screen.queryByRole('button', { name: 'Remove anyway' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
       unmount();
       stuck({ state: 'unclaimed', uses: [] });
@@ -234,25 +238,27 @@ describe('PeersSettingsView', () => {
       await waitFor(() => expect(api.repair).toHaveBeenCalledWith('h1'));
     });
 
-    it('Remove anyway works with no hook failure: confirms naming plugins, then forces', async () => {
+    it('offers forced removal only after plugin cleanup fails', async () => {
       stuck({});
+      api.removeLink.mockResolvedValueOnce({ ok: false, hookFailures: [{ pluginId: 'a', label: 'Alpha plugin', reason: 'timeout' }] });
       render(<PeersSettingsView />);
-      fireEvent.click(await screen.findByRole('button', { name: 'Remove anyway' }));
-      expect(screen.getByText(/Alpha plugin may keep leftover access/)).toBeTruthy();
+      fireEvent.click(await screen.findByRole('button', { name: 'Remove computer' }));
+      expect(screen.getByText(/Plugins using it: Alpha plugin/)).toBeTruthy();
       expect(api.removeLink).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Remove anyway' }));
       await waitFor(() => expect(api.removeLink).toHaveBeenCalledWith('h1', { force: true }));
-      await waitFor(() => expect(api.leftovers).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(api.leftovers).toHaveBeenCalledTimes(3));
     });
 
-    it('can back out of Remove anyway, and a removal failure shows an error', async () => {
+    it('can back out of removal, and a removal failure shows an error', async () => {
       stuck({ state: 'failed' });
       render(<PeersSettingsView />);
-      fireEvent.click(await screen.findByRole('button', { name: 'Remove anyway' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Remove computer' }));
       fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
       expect(api.removeLink).not.toHaveBeenCalled();
       api.removeLink.mockRejectedValueOnce(new Error('nope'));
-      fireEvent.click(screen.getByRole('button', { name: 'Remove anyway' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Remove computer' }));
       fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
       expect((await screen.findByRole('alert')).textContent).toBe('nope');
     });
