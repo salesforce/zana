@@ -208,13 +208,20 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
       await expect(drawer).toBeHidden();
       await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
       await expect(page.locator('.agent-terminal-modal, .modal-backdrop')).toHaveCount(0);
-      // CLI Agents have no mobile surface; the session route shows the desktop-only notice.
-      const cliNotice = page.getByTestId('cli-agent-mobile-unsupported');
-      await expect(cliNotice).toBeVisible();
-      await expect(cliNotice.getByRole('heading')).toHaveText('CLI Agents aren’t supported on mobile yet');
-      await expect(page.getByTestId('agent-session-view')).toHaveCount(0);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-      await page.screenshot({ path: testInfo.outputPath(`${width}-cli-agent-notice.png`) });
+      const cliTitle = page.locator('.mobile-thread-title-slot h1');
+      await expect(cliTitle).toHaveText('Mobile terminal');
+      const cliHeader = page.getByTestId('agent-session-view').locator('.thread-detail-header');
+      await expect(cliHeader.locator('h1')).toHaveCount(0);
+      await expect(cliHeader).toBeHidden();
+      const cliControls = page.locator('.mobile-thread-controls-slot');
+      await expect(cliControls.getByRole('img', { name: /Mobile interface verification/ })).toBeVisible();
+      await expect(cliControls.getByRole('button', { name: 'Show right panel' })).toBeVisible();
+      expect((await page.locator('.titlebar').boundingBox())!.height).toBe(48);
+      const terminal = page.locator('.agent-session-terminal .xterm');
+      await expect(terminal).toBeVisible();
+      expect((await terminal.boundingBox())!.height).toBeGreaterThan(700);
+      expect((await terminal.boundingBox())!.y).toBeLessThanOrEqual(56);
+      await page.screenshot({ path: testInfo.outputPath(`${width}-cli-agent-header.png`) });
       await page.getByRole('link', { name: 'Back to agents', exact: true }).click();
       await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
       await search.fill('Responsive agent 1 delay');
