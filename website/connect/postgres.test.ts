@@ -66,6 +66,14 @@ it.skipIf(!process.env.ZCC_CONNECT_TEST_DATABASE_URL)('persists enrollment acros
     await registry.revoke(owner, 'server', server.id);
     expect(await secondRegistry.authenticateServer(enrolled.credential)).toBeNull();
     await expect(secondRegistry.redeemPhoneCode(server, qr.code, 'Revoked computer')).rejects.toMatchObject({ status: 403 });
+    // The owner takes a revoked computer's address back; concurrent reclaims bind it once.
+    if (claimedServer.id !== server.id) await registry.revoke(owner, 'server', claimedServer.id);
+    expect(await registry.addressAvailability(label, owner)).toMatchObject({ available: true });
+    const enroll = async (r: any, name: string) => { const pending = await r.startEnrollment(name); await r.approveEnrollment(owner, pending.userCode); return r.authenticateServer((await r.pollEnrollment(pending.deviceCode)).credential); };
+    const [first, second] = [await enroll(registry, 'Reclaim A'), await enroll(secondRegistry, 'Reclaim B')];
+    const reclaims = await Promise.allSettled([registry.claimAddress(owner, first.id, label), secondRegistry.claimAddress(owner, second.id, label)]);
+    expect(reclaims.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect([first.id, second.id]).toContain((await secondRegistry.resolveServer(label)).id);
     // Model cleanup holding the sessions table while startup wants to migrate
     // servers/codes first. The common advisory lock prevents table-lock inversion.
     let entered!: () => void, release!: () => void;
