@@ -10,7 +10,7 @@ import {
   MOBILE_BRIDGE_VERSION
 } from '../packages/mobile-bridge/src/index.js';
 
-test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { voiceInputEnabled: true } });
+test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 test('Mobile pairs to built Electron, uses phone navigation, reads and sends a live thread', async ({
   app
 }, testInfo) => {
