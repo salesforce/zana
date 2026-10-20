@@ -276,6 +276,20 @@ it('dispose clears visuals, the chip and pending cursor reports', () => {
   new StudioLayer(fake.monaco, fake.editor, post).dispose();
 });
 
+it('stops waiting to focus the comment box once it is closed or never attaches', () => {
+  vi.useFakeTimers();
+  const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
+  layer.openCommentComposer(1, 1, 'a');
+  vi.advanceTimersByTime(16 * 40);
+  expect(focus).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+  layer.openCommentComposer(1, 1, 'a');
+  layer.closeCommentComposer();
+  vi.advanceTimersByTime(32);
+  expect(vi.getTimerCount()).toBe(0);
+  focus.mockRestore();
+});
+
 it('the inline comment box submits, cancels and keeps its keys from the editor', () => {
   vi.useFakeTimers();
   document.body.appendChild(fake.parent);
@@ -290,8 +304,11 @@ it('the inline comment box submits, cancels and keeps its keys from the editor',
   const add = Array.from(form.querySelectorAll('button')).find(b => b.textContent === 'Add comment')!;
   expect(form.textContent).toContain('Comment on lines 3-9');
   expect(input.maxLength).toBe(2000);
+  // Monaco attaches the zone a few frames later; focus waits for it.
+  vi.advanceTimersByTime(40);
+  expect(document.activeElement).not.toBe(input);
   fake.parent.appendChild(form);
-  vi.runAllTimers();
+  vi.advanceTimersByTime(16);
   expect(document.activeElement).toBe(input);
   expect(add.disabled).toBe(true);
   const outside = vi.fn();

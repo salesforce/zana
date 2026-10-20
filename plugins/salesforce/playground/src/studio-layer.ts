@@ -34,6 +34,8 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
 const HUNK_ROW_PX = 26;
 /** Height of the inline comment composer: label, two-line box, buttons. */
 const COMMENT_COMPOSE_PX = 104;
+/** How many 16 ms ticks the composer waits for Monaco to attach its zone before giving up on focus. */
+const COMPOSE_FOCUS_TRIES = 30;
 
 export class StudioLayer {
   private session: ProposalSession | null = null;
@@ -325,8 +327,12 @@ export class StudioLayer {
     this.editor.changeViewZones(accessor => {
       this.composeZoneId = accessor.addZone({ afterLineNumber: Math.min(endLine, model.getLineCount()), ordinal: 2, heightInPx: COMMENT_COMPOSE_PX, domNode: zone, suppressMouseDown: true });
     });
-    // Monaco attaches the zone on its next render.
-    setTimeout(() => { if (input.isConnected) input.focus(); }, 0);
+    // Monaco attaches the zone on a later animation frame, so wait for it (bounded) before focusing.
+    const focusWhenAttached = (attempt: number): void => {
+      if (input.isConnected) { input.focus(); return; }
+      if (attempt < COMPOSE_FOCUS_TRIES && this.composeZoneId) setTimeout(() => focusWhenAttached(attempt + 1), 16);
+    };
+    setTimeout(() => focusWhenAttached(0), 0);
   }
 
   closeCommentComposer(): void {
