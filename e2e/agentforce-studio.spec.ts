@@ -611,6 +611,151 @@ test('Org preview: searchable agent picker, employee-agent simulation and an unc
   expect(errors).toEqual([]);
 });
 
+test('Preview context: Context tab, setup, typed snapshots and restart work in both preview surfaces', async ({ app, home }, testInfo) => {
+  const contextSource = `variables:
+    sessionId: linked string
+        source: @MessagingSession.Id
+        label: "Session"
+    verified: mutable boolean = False
+        visibility: "External"
+    retryCount: mutable number = 0
+        visibility: "External"
+`;
+  writeFileSync(join(home, 'dx', toolbarFile), `${AGENT_SCRIPT_EXAMPLES[0].source}\n${contextSource}`);
+  const page = app.window;
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
+  await showAllAgents(studio);
+  await studio.getByTestId(`salesforce-agent-script-file:${toolbarFile}`).click();
+  await openTool(studio, 'Preview');
+  const workbench = page.getByTestId('preview-workbench');
+  await workbench.getByRole('tab', { name: 'Context 0', exact: true }).click();
+  await expect(workbench.getByRole('checkbox', { name: 'Set Session', exact: true })).toBeVisible();
+  await expect(workbench.getByRole('region', { name: 'Agent variables' })).toBeVisible();
+  await expect(workbench.getByRole('region', { name: 'Session context' })).toBeVisible();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-defaults.png'));
+  await workbench.getByRole('button', { name: '+ Add variable', exact: true }).click();
+  await expect(workbench.getByLabel('Variable name', { exact: true })).toBeFocused();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-add.png'));
+  await workbench.getByRole('button', { name: 'Cancel adding variable', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(workbench.getByLabel('Variable name', { exact: true })).toBeHidden();
+  await workbench.getByLabel('Session value', { exact: true }).fill('context-e2e-session');
+  await expect(workbench.getByRole('checkbox', { name: 'Set Session', exact: true })).toBeChecked();
+  await workbench.getByLabel('verified value', { exact: true }).selectOption('false');
+  await workbench.getByLabel('retryCount value', { exact: true }).fill('0');
+  // Real RPC + isolated SQLite persistence; validation never sends a partial context.
+  await expect(workbench.getByLabel('Context preset', { exact: true })).toBeEnabled();
+  await workbench.getByRole('button', { name: 'Save as…', exact: true }).click();
+  await workbench.getByLabel('Preset name', { exact: true }).fill('Unverified customer');
+  await workbench.getByRole('button', { name: 'Save preset', exact: true }).click();
+  await expect(workbench.getByLabel('Preset name', { exact: true })).toBeHidden();
+  const presetId = await workbench.getByLabel('Context preset', { exact: true }).inputValue();
+  await workbench.getByLabel('retryCount value', { exact: true }).fill('-');
+  await workbench.getByLabel('Session value', { exact: true }).focus();
+  await expect(workbench.getByRole('alert')).toContainText('Enter a number');
+  await expect(workbench.getByRole('button', { name: 'Save as…', exact: true })).toBeDisabled();
+  await workbench.getByTestId('pw-start').click();
+  await expect(workbench.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true })).toBeDisabled();
+  await workbench.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await workbench.getByLabel('Context preset', { exact: true }).selectOption('');
+  await expect(workbench.getByLabel('retryCount value', { exact: true })).toHaveValue('');
+  await workbench.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(workbench.getByLabel('retryCount value', { exact: true })).toHaveValue('-');
+  await workbench.getByLabel('Context preset', { exact: true }).selectOption(presetId);
+  await expect(workbench.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
+  await expect(workbench.getByRole('alert')).toHaveCount(0);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-preset.png'));
+
+  await workbench.getByLabel('Options for Session', { exact: true }).click();
+  await expect(workbench.getByRole('button', { name: 'Set Session to null', exact: true })).toBeVisible();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-options.png'));
+  await page.keyboard.press('Escape');
+  await expect(workbench.getByRole('button', { name: 'Set Session to null', exact: true })).toBeHidden();
+  await workbench.getByTestId('pw-start').click();
+  const setup = workbench.getByRole('dialog', { name: 'Start a conversation' });
+  await expect(setup).toBeVisible();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-setup.png'));
+  await setup.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(existsSync(join(home, 'sfap-requests.json')) && readFileSync(join(home, 'sfap-requests.json'), 'utf8').includes('/preview/sessions')).toBe(false);
+  await workbench.getByTestId('pw-start').click();
+  await setup.getByRole('button', { name: 'Start preview', exact: true }).click();
+  await expect(workbench.getByRole('log')).toContainText('support concierge');
+  await workbench.getByRole('tab', { name: 'Context 3', exact: true }).click();
+  await workbench.getByLabel('Session value', { exact: true }).fill('next-session');
+  await expect(workbench.getByText(/keeps its original context/)).toBeVisible();
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    expect(await workbench.locator('.sf-context-editor').evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`preview-context-${theme}.png`));
+  }
+  const originalSize = await app.electron.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]; const size = window.getSize(); window.setSize(900, 850); return size;
+  });
+  await expect(workbench.getByLabel('Session value', { exact: true })).toBeVisible();
+  expect(await workbench.locator('.sf-context-editor').evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-narrow.png'));
+  await app.electron.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(size[0], size[1]), originalSize);
+  await workbench.getByRole('button', { name: 'Review & restart', exact: true }).click();
+  await workbench.getByRole('dialog').getByRole('button', { name: 'Restart preview', exact: true }).click();
+  await expect(workbench.getByRole('log')).toContainText('support concierge');
+  await workbench.getByRole('button', { name: 'End', exact: true }).click();
+  // Exercise the real Electron child-process boundary too. Only this private fixture CLI runs.
+  const saved = readFileSync(join(home, 'dx', toolbarFile), 'utf8');
+  writeFileSync(join(home, 'dx', toolbarFile), saved.replace('config:\n', 'config:\n    default_agent_user: "fixture@example.com"\n'));
+  await workbench.getByRole('button', { name: 'Live', exact: true }).click();
+  await workbench.getByTestId('pw-start').click();
+  await workbench.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true }).click();
+  await expect(workbench.getByRole('button', { name: 'End', exact: true })).toBeVisible();
+  await workbench.getByLabel('Preview message', { exact: true }).fill('Large fixture response');
+  await workbench.getByRole('button', { name: 'Send preview message', exact: true }).click();
+  await expect(workbench.getByRole('log')).toContainText('CLI_END_OF_RESPONSE');
+  await workbench.getByRole('button', { name: 'End', exact: true }).click();
+  await openTool(studio, 'Org preview');
+  const orgPreview = page.getByTestId('salesforce-agentforce-preview');
+  await orgPreview.getByTestId('salesforce-agentforce-preview-start').click();
+  const orgSetup = orgPreview.getByRole('dialog');
+  await expect(orgSetup).toBeVisible();
+  await expect(orgSetup.getByRole('option', { name: 'Unverified customer', exact: true })).toBeAttached();
+  await orgSetup.getByLabel('Context preset', { exact: true }).selectOption(presetId);
+  await expect(orgSetup.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
+  await orgSetup.getByLabel('Context preset', { exact: true }).selectOption('');
+
+  await orgSetup.getByRole('checkbox', { name: 'Set verified', exact: true }).check();
+  await orgSetup.getByRole('button', { name: 'Start preview', exact: true }).click();
+  await expect(orgPreview.getByRole('log')).toContainText('support concierge');
+  await orgPreview.getByTestId('salesforce-agentforce-preview-end').click();
+  const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, any> }>;
+  const starts = requests.filter(r => r.path.endsWith('/preview/sessions'));
+  expect(starts).toHaveLength(3);
+  expect(starts[0]!.body.variables).toEqual([{ name: '$Context.sessionId', type: 'Text', value: 'context-e2e-session' }, { name: 'verified', type: 'Boolean', value: false }, { name: 'retryCount', type: 'Number', value: 0 }]);
+  expect(starts[1]!.body.variables[0].value).toBe('next-session');
+  expect(starts[2]!.body.variables).toEqual([{ name: 'verified', type: 'Boolean', value: false }]);
+  expect(starts.every(r => r.body.enableSimulationMode === true)).toBe(true);
+  const cliCalls = readFileSync(join(home, 'agent-cli.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  expect(cliCalls.map(call => call.args.slice(0, 3))).toEqual([['agent', 'preview', 'start'], ['agent', 'preview', 'send'], ['agent', 'preview', 'end']]);
+  expect(cliCalls.every(call => realpathSync(call.cwd) === realpathSync(join(home, 'dx')) && realpathSync(call.home) === realpathSync(home))).toBe(true);
+  const startArgs: string[] = cliCalls[0].args;
+  expect(JSON.parse(startArgs[startArgs.indexOf('--context-variables-json') + 1]!)).toEqual(starts[1]!.body.variables);
+  expect(cliCalls.slice(1).every(call => !call.args.includes('--context-variables-json'))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 test('Agentforce action explorer: real source RPC, Apex colors, Flow map and preserved draft/conversation', async ({ app, home }, testInfo) => {
   const page = app.window;
   const errors: string[] = [];

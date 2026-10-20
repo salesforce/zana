@@ -92,6 +92,10 @@ describe('preview, trace, graph and layout verbs', () => {
     const { exec } = setup(targets);
     expect(await exec('preview.start', { engine: 'simulate' })).toEqual({ runId: 'r' });
     expect(targets.preview.start).toHaveBeenCalledWith({ engine: 'simulate' });
+    const contextVariables = [{ name: 'verified', type: 'Boolean', value: false }];
+    await exec('preview.start', { contextVariables });
+    expect(targets.preview.start).toHaveBeenLastCalledWith({ engine: undefined, contextVariables });
+    await expect(exec('preview.start', { contextVariables: [{ name: 'verified', type: 'Boolean', value: 'false' }] })).rejects.toThrow('Boolean');
     expect(await exec('preview.send', { text: 'hello' })).toEqual({ turn: 1 });
     expect(targets.preview.send).toHaveBeenCalledWith({ text: 'hello', engine: undefined });
     await exec('trace.focus', { runId: 'r', turn: 2, step: 3 });

@@ -8,6 +8,7 @@ import {
   type SalesforceDeps
 } from './types.js';
 import { fingerprint, listFilesRecursive, parsePackageDirectories, readJsonObject, resolveUnderRoot } from './dx-project.js';
+import { parsePreviewContext, type PreviewContextVariable } from './preview-context.js';
 
 export type AgentAction =
   | 'compile'
@@ -25,6 +26,7 @@ export type AgentAction =
 export type AgentLspQuery = 'diagnostics' | 'hover' | 'complete' | 'definition' | 'symbols';
 
 export interface AgentInput {
+  contextVariables?: unknown;
   action?: string;
   apiName?: string;
   path?: string;
@@ -43,6 +45,7 @@ export interface AgentInput {
 }
 
 export interface AgentPlan {
+  contextVariables?: PreviewContextVariable[];
   action: AgentAction;
   apiName?: string;
   path?: string;
@@ -103,6 +106,12 @@ export const EVAL_POLL_MAX_ATTEMPTS = 30;
 
 export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } | { ok: false; error: string } {
   const raw = input && typeof input === 'object' ? (input as AgentInput) : {};
+  let contextVariables: PreviewContextVariable[] | undefined;
+  if (raw.contextVariables !== undefined) {
+    if (raw.action !== 'preview.start') return { ok: false, error: 'Context variables can only be set when starting a preview.' };
+    try { contextVariables = parsePreviewContext(raw.contextVariables); }
+    catch (error) { return { ok: false, error: (error as Error).message }; }
+  }
   const action = typeof raw.action === 'string' ? raw.action.trim() : '';
   if (!ACTIONS.includes(action as AgentAction)) {
     return { ok: false, error: `Unknown sf_agent action. Use ${ACTIONS.join(', ')}. Create/mutate/deploy are not offered.` };
@@ -167,6 +176,7 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
   return {
     ok: true,
     plan: {
+      ...(contextVariables ? { contextVariables } : {}),
       action: action as AgentAction,
       apiName: apiName || undefined,
       path: path || undefined,
@@ -503,7 +513,7 @@ export function lacksDefaultAgentUser(source: string): boolean {
 
 export function previewArgs(
   verb: 'start' | 'send' | 'end',
-  plan: Pick<AgentPlan, 'sessionId' | 'utterance' | 'live'>,
+  plan: Pick<AgentPlan, 'sessionId' | 'utterance' | 'live' | 'contextVariables'>,
   alias: string,
   identity?: AgentPreviewIdentity
 ): string[] {
@@ -516,6 +526,7 @@ export function previewArgs(
   }
   if (plan.sessionId && verb !== 'start') args.push('--session-id', plan.sessionId);
   if (verb === 'send') args.push('--utterance', plan.utterance ?? '');
+  if (verb === 'start' && plan.contextVariables?.length) args.push('--context-variables-json', JSON.stringify(parsePreviewContext(plan.contextVariables)));
   return args;
 }
 

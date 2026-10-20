@@ -8,6 +8,9 @@ import {
 } from '../agentforce-preview-logic.js';
 import { STUDIO_TOKENS } from '../studio/studio-tokens.js';
 import { TRACE_PANEL_STYLES, TracePanel } from './TracePanel.js';
+import { PREVIEW_CONTEXT_STYLES, PreviewContextEditor, PreviewContextSetup, PreviewContextTabs, usePreviewContext } from './PreviewContext.js';
+import type { AppliedContextPreset } from '../../../lib/preview-context-preset-contract.js';
+import { parsePreviewContext, type PreviewContextVariable } from '../../../lib/preview-context.js';
 
 export interface PreviewWorkbenchProps {
   pluginId: string;
@@ -33,11 +36,11 @@ export interface PreviewWorkbenchProps {
   dirty?: boolean;
 }
 
-export interface PreviewCommand { seq: number; type: 'start' | 'send'; text?: string; engine?: StudioEngine }
+export interface PreviewCommand { seq: number; type: 'start' | 'send'; text?: string; engine?: StudioEngine; contextVariables?: PreviewContextVariable[] }
 
 type SuiteEntry = ScenarioSuite & { sha256?: string };
 /** A started run and the context it was started in, so it is ended against the same project, file and thread. */
-type ActiveRun = { id: string; engine: StudioEngine; projectId?: string; path?: string; threadId?: string };
+type ActiveRun = { id: string; engine: StudioEngine; projectId?: string; path?: string; threadId?: string; orgAlias?: string };
 type Rpc<T> = { ok?: boolean; error?: string; data?: T } & Record<string, unknown>;
 const ENGINE_COPY: Record<StudioEngine, { title: string; hint: string }> = {
   rehearse: { title: 'Rehearse', hint: 'AI plays your script · no runtime' },
@@ -101,6 +104,8 @@ const LIVE_TRACE_REASON = 'Live runs do not return a planner trace here. Use Sim
 
 export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   const { pluginId, projectId, path } = props;
+  const context = usePreviewContext({ pluginId, projectId, path, source: props.source, orgAlias: props.orgAlias, scope: `${projectId ?? ''}:${path ?? ''}:${props.orgAlias ?? ''}` });
+  const [runContext, setRunContext] = useState<PreviewContextVariable[]>([]);
   const [innerEngine, setInnerEngine] = useState<StudioEngine>(props.engine ?? 'simulate');
   // Rehearse is hidden for now: a stale request for it runs Simulate.
   const chosen = props.engine ?? innerEngine;
@@ -110,6 +115,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   const [traces, setTraces] = useState<Record<string, TurnTrace>>({});
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [tracing, setTracing] = useState<Record<number, boolean>>({});
+  const [runPreset, setRunPreset] = useState<AppliedContextPreset | null>(null);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -137,7 +143,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     const live = run.engine === 'live';
     const result = await callPluginRpc(pluginId, live ? 'agentPreview.end' : 'agentLab.end', {
       ...(run.projectId ? { projectId: run.projectId } : {}),
-      ...(live ? { sessionId: run.id, path: run.path, live: true, ...(run.threadId ? { threadId: run.threadId } : {}) } : { id: run.id })
+      ...(live ? { sessionId: run.id, path: run.path, orgAlias: run.orgAlias, live: true, ...(run.threadId ? { threadId: run.threadId } : {}) } : { id: run.id })
     }) as Rpc<unknown>;
     return result ?? { ok: false, error: 'No response.' };
   }, [pluginId]);
@@ -157,13 +163,13 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     if (previous && previous !== path) release();
   }, [path, release]);
   // Switching project or unmounting ends the run.
-  useEffect(() => release, [projectId, release]);
+  useEffect(() => release, [projectId, props.orgAlias, release]);
 
   // Keep a bounded history of runs (compare / export) and tell the host which run is active.
   useEffect(() => {
     if (!sessionId || !turns.some(t => t.role === 'user')) return;
-    setRuns(prev => appendRun(prev, { runId: sessionId, engine: runEngine, at: Date.now(), file: props.fileLabel, turns, traces }));
-  }, [sessionId, turns, traces, runEngine, props.fileLabel]);
+    setRuns(prev => appendRun(prev, { runId: sessionId, engine: runEngine, at: Date.now(), file: props.fileLabel, turns, traces, ...(runContext.length ? { contextVariables: runContext } : {}), ...(runPreset ? { contextPreset: runPreset } : {}) }));
+  }, [sessionId, turns, traces, runEngine, props.fileLabel, runContext, runPreset]);
   const { onRunChange } = props;
   useEffect(() => {
     onRunChange?.(sessionId ? { runId: sessionId, engine: runEngine, turn: turns.filter(t => t.role === 'user').length } : null);
@@ -196,19 +202,29 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   }
 
   /** `byUser`: a click on Start or Send, which approves the run itself; a host command does not. */
-  async function start(byUser = false) {
+  async function start(byUser = false, initialContext = context.values, contextPreset: AppliedContextPreset | null = context.presetIdentity) {
+    const contextVariables = parsePreviewContext(initialContext);
+    const previous = active.current;
+    const beforeClose = epoch.current;
+    if (previous) {
+      const ended = await close(previous);
+      if (!ended.ok) throw Error(ended.error || 'The current preview could not end. Retry before restarting.');
+      // A scope change may have released the run while End was in flight.
+      if (epoch.current !== beforeClose) return;
+      active.current = null;
+    }
     release();
     setTurns([]); setTraces({}); setOpen({}); setTracing({});
     const started = epoch.current;
-    const owner = { engine, ...(projectId ? { projectId } : {}), ...(path ? { path } : {}), ...(props.threadId ? { threadId: props.threadId } : {}) };
+    const owner = { engine, ...(projectId ? { projectId } : {}), ...(path ? { path } : {}), ...(props.orgAlias ? { orgAlias: props.orgAlias } : {}), ...(props.threadId ? { threadId: props.threadId } : {}) };
     const lab = engineToLab(engine);
     let run: ActiveRun; let first: RunTurn[] = [];
     if (lab) {
-      const res = await rpc<LabSnapshot>('agentLab.start', { engine: lab, source: props.source, ...(path ? { path } : {}), ...(props.threadId ? { threadId: props.threadId } : {}), ...(byUser ? { startedByUser: true } : {}) });
+      const res = await rpc<LabSnapshot>('agentLab.start', { engine: lab, source: props.source, ...(contextVariables.length ? { contextVariables } : {}), ...(path ? { path } : {}), ...(props.threadId ? { threadId: props.threadId } : {}), ...(byUser ? { startedByUser: true } : {}) });
       if (!res.ok || !res.data) throw new Error(res.error || 'The preview could not start.');
       run = { ...owner, id: res.data.id }; first = snapshotTurns(res.data);
     } else {
-      const res = await rpc<{ sessionId?: string | null }>('agentPreview.start', { threadId: props.threadId, orgAlias: props.orgAlias, path, live: true, ...(byUser ? { startedByUser: true } : {}) });
+      const res = await rpc<{ sessionId?: string | null }>('agentPreview.start', { threadId: props.threadId, orgAlias: props.orgAlias, path, live: true, ...(contextVariables.length ? { contextVariables } : {}), ...(byUser ? { startedByUser: true } : {}) });
       const id = res.data?.sessionId;
       if (!res.ok || !id) throw new Error(res.error || 'Live preview could not start.');
       run = { ...owner, id };
@@ -218,6 +234,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     active.current = run;
     setSessionId(run.id); setTurns(first);
     setRunEngine(engine); setRunSource(props.source);
+    setRunContext(contextVariables); setRunPreset(contextPreset); context.markApplied(contextVariables, contextPreset); context.setSetup(false); context.setTab('conversation');
   }
   async function end() {
     const current = active.current;
@@ -240,7 +257,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     if (!current) return;
     if (current.engine === 'live') {
       setTurns(prev => [...prev, { role: 'user', text }]);
-      const res = await rpc<{ response?: string; planId?: string }>('agentPreview.send', { sessionId: current.id, utterance: text, path: current.path, live: true, orgAlias: props.orgAlias, threadId: current.threadId, ...(byUser ? { startedByUser: true } : {}) });
+      const res = await rpc<{ response?: string; planId?: string }>('agentPreview.send', { sessionId: current.id, utterance: text, path: current.path, live: true, orgAlias: current.orgAlias, threadId: current.threadId, ...(byUser ? { startedByUser: true } : {}) });
       if (!res.ok) throw new Error(res.error || 'The agent did not respond.');
       const reply = res.data?.response?.trim();
       if (reply) setTurns(prev => [...prev, { role: 'agent', text: reply, ...(res.data?.planId ? { planId: res.data.planId } : {}) }]);
@@ -262,7 +279,9 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     props.onCommandHandled?.(command.seq);
     void perform(async () => {
       if (liveBlocked) throw new Error('Live preview needs a saved .agent file.');
-      if (command.type === 'start' || !active.current || active.current.engine !== engine) await start();
+      if (!command.contextVariables && context.error) throw Error(context.error);
+      if (command.contextVariables) context.adopt(command.contextVariables);
+      if (command.type === 'start' || !active.current || active.current.engine !== engine) await start(false, command.contextVariables ?? context.values, command.contextVariables ? null : context.presetIdentity);
       if (command.type === 'send') {
         const text = command.text?.trim();
         if (!text) throw new Error('preview.send needs text.');
@@ -320,7 +339,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
 
   return (
     <section className="sf-studio sf-pw" data-testid="preview-workbench" aria-label="Agent preview">
-      <style>{STUDIO_TOKENS}{PREVIEW_WORKBENCH_STYLES}{TRACE_PANEL_STYLES}</style>
+      <style>{STUDIO_TOKENS}{PREVIEW_WORKBENCH_STYLES}{TRACE_PANEL_STYLES}{PREVIEW_CONTEXT_STYLES}</style>
       <div className="sf-pw-bar">
         <div className="sf-pw-seg" role="group" aria-label="Preview engine">
           {PREVIEW_ENGINES.map(e => <button key={e} type="button" aria-pressed={engine === e} disabled={busy || running} title={ENGINE_COPY[e].hint} onClick={() => setEngine(e)}>{ENGINE_COPY[e].title}</button>)}
@@ -328,7 +347,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
         <span className="sf-pw-spacer" />
         {running
           ? <button type="button" className="sf-pw-btn" disabled={busy} onClick={() => void perform(end)}>End</button>
-          : <button type="button" className="sf-pw-btn is-primary" data-testid="pw-start" disabled={busy || liveBlocked || (engine !== 'live' && !props.source.trim())} onClick={() => void perform(() => start(true))}>{busy ? 'Starting…' : 'Start'}</button>}
+          : <button type="button" className="sf-pw-btn is-primary" data-testid="pw-start" disabled={busy || context.loading || liveBlocked || (engine !== 'live' && !props.source.trim())} onClick={() => context.fields.length || context.count || context.discoveryError ? context.setSetup(true) : void perform(() => start(true))}>{busy ? 'Starting…' : 'Start'}</button>}
         {runs.length > 0 && <button type="button" className="sf-pw-btn" onClick={() => currentRun || runs[0] ? download('agentforce-run.json', exportRunPayload(currentRun ?? runs[0]!)) : undefined}>Export run</button>}
         {runs.length > 1 && <button type="button" className="sf-pw-btn" aria-pressed={Boolean(compare)} onClick={() => setCompare(compare ? null : [runs[0]!.runId, runs[1]!.runId])}>Compare runs</button>}
         {running && turns.some(t => t.role === 'user') && <button type="button" className="sf-pw-btn" disabled={!path} title={path ? 'Save this conversation as a scenario' : 'Open a saved .agent file to save scenarios'} onClick={() => setSaving(s => !s)}>Save as scenario</button>}
@@ -338,6 +357,9 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
         {stale && ' Your script changed; start a new run to test the edits.'}
       </div>
       {error && <div className="sf-pw-err" role="alert">{error}</div>}
+      <PreviewContextTabs context={context} />
+      {context.tab === 'context' && <div className="sf-context-panel" id={`${context.id}-context-panel`} role="tabpanel" aria-labelledby={`${context.id}-context`}><PreviewContextEditor context={context} running={running} onRestart={() => context.setSetup(true)} /></div>}
+      <div className="sf-context-conversation" id={`${context.id}-conversation-panel`} role="tabpanel" aria-labelledby={`${context.id}-conversation`} hidden={context.tab !== 'conversation'}>
       {path && (suite || suiteBusy) && (
         <div className="sf-pw-suite" aria-label="Scenario suite">
           <strong>{tally ? `${tally.pass}/${tally.total} pass` : 'Suite'}</strong>
@@ -383,6 +405,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
       {compare && runs.length > 1 && (
         <div className="sf-pw-panel" aria-label="Compare runs">
           <div className="sf-pw-cmp">
+            {JSON.stringify(cmpRuns[0]?.contextVariables ?? []) !== JSON.stringify(cmpRuns[1]?.contextVariables ?? []) && <p className="sf-pw-meta">These runs used different context values. Export each run to inspect its starting context.</p>}
             {[0, 1].map(i => <select key={i} aria-label={`Run ${i === 0 ? 'A' : 'B'}`} value={compare[i]} onChange={e => setCompare(i === 0 ? [e.target.value, compare[1]] : [compare[0], e.target.value])}>
               {runs.map(r => <option key={r.runId} value={r.runId}>{`${r.engine} · ${new Date(r.at).toLocaleTimeString()} · ${r.runId.slice(0, 6)}`}</option>)}
             </select>)}
@@ -397,6 +420,8 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
         <input aria-label="Preview message" placeholder={running ? 'Ask your agent something…' : 'Start a run to talk to your agent'} disabled={!running || busy} value={draft} maxLength={4000} onChange={e => setDraft(e.target.value)} />
         <button type="submit" className="sf-pw-btn is-primary" aria-label="Send preview message" disabled={!running || busy || !draft.trim()}>Send</button>
       </form>
+      </div>
+      {context.setup && <PreviewContextSetup context={context} error={error} busy={busy} running={running} onClose={() => context.setSetup(false)} onStart={() => void perform(() => start(true))} />}
     </section>
   );
 }

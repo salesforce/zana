@@ -1,5 +1,6 @@
 import type { ScenarioCase, ScenarioSuite, StudioEngine, TurnTrace } from '../../lib/studio-contract.js';
 import type { LabEngine } from '../../lib/agentforce-lab-contract.js';
+import { parsePreviewContext, type PreviewContextVariable } from '../../lib/preview-context.js';
 export type PreviewMode = 'simulate' | 'live';
 
 export interface PreviewTurn {
@@ -37,6 +38,8 @@ export function previewErrorMessage(result: { error?: string; code?: string } | 
 
 export interface RunTurn { role: 'user' | 'agent' | 'system'; text: string; latencyMs?: number; planId?: string }
 export interface RunRecord {
+  contextPreset?: import('../../lib/preview-context-preset-contract.js').AppliedContextPreset;
+  contextVariables?: PreviewContextVariable[];
   runId: string; engine: StudioEngine; at: number; file: string;
   turns: RunTurn[];
   /** Fetched traces keyed by planId (only Simulate/Live can have them). */
@@ -98,6 +101,7 @@ export function caseFromRun(run: RunRecord, name: string, criteria?: string): Sc
   const note = criteria?.trim();
   return {
     id, name: trimmed, utterances,
+    ...(run.contextVariables?.length ? { contextVariables: parsePreviewContext(run.contextVariables) } : {}),
     expect: { ...(topic ? { topic } : {}), ...(actions.length ? { actions } : {}), ...(note ? { criteria: note.slice(0, 4000) } : {}) },
     pinned: { runId: run.runId.slice(0, 80), at: run.at }
   };

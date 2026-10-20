@@ -1,4 +1,7 @@
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
+import { ContextPresets, ContextPresetError, contextPresetStorage, registerContextPresets } from './preview-context-presets.js';
+import { CONTEXT_PRESETS_CHANGED } from './preview-context-preset-contract.js';
+import { discoverPreviewContext } from './preview-context-source.js';
 import { SalesforceToolkitAdapter, providerTools, toolProvider, toolkitNativeSchema } from './toolkit-adapter.js';
 import { toolkitRuntimeLoader } from './toolkit-runtime.js';
 import type { SalesforceToolCallContext, ToolkitRuntime } from './tool-provider-contract.js';
@@ -17,7 +20,7 @@ import { registerStudioExplorer } from './studio-explorer.js';
 import { createAgentDraft, draftDestination, DRAFT_PROJECT } from './agent-drafts.js';
 import type { AgentDraftInput } from './agent-draft-contract.js';
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   activateArgs,
   deactivateArgs,
@@ -566,6 +569,40 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return agentFilesFailure(error);
     }
   });
+  registerRpc('agentPreview.context', async (args) => {
+    try {
+      const raw = args && typeof args === 'object' ? args as Record<string, unknown> : {};
+      let source = typeof raw.source === 'string' ? raw.source : '';
+      if (raw.path !== undefined && raw.source === undefined) {
+        const resolved = await resolveAgentFilesRoot(args);
+        source = readAgentFile(resolved.root, rpcString(args, 'path'), deps, resolved.options).content;
+      }
+      return { ok: true, fields: discoverPreviewContext(source) };
+    } catch (error) { return agentFilesFailure(error); }
+  });
+  registerContextPresets({
+    registerRpc,
+    store: new ContextPresets(contextPresetStorage(() => zcc.storage.database()), deps.now),
+    resolveScope: async args => {
+      const projectId = contexts.current()?.projectId;
+      if (!projectId) throw new ContextPresetError('Choose a registered project to save context presets.');
+      const path = rpcString(args, 'path');
+      let agent: string;
+      if (path) {
+        const resolved = await resolveAgentFilesRoot(args);
+        const file = readAgentFile(resolved.root, path, deps, resolved.options);
+        agent = `file:${relative(deps.realpath(resolved.root), deps.realpath(join(resolved.root, file.path))).replace(/\\/g, '/')}`;
+      } else {
+        const apiName = rpcString(args, 'apiName');
+        if (!/^[A-Za-z][A-Za-z0-9_]{0,127}$/.test(apiName)) throw new ContextPresetError('Open a saved agent before using presets.');
+        agent = `api:${apiName}`;
+      }
+      const settings = await readSettings();
+      const org = settings.defaultOrg ? await connections.connect() : null;
+      return { projectId, key: createHash('sha256').update(JSON.stringify([projectId, agent, org?.orgId ?? 'local'])).digest('hex'), orgLabel: org?.alias ?? 'Local drafts' };
+    },
+    changed: projectId => zcc.realtime.publish(CONTEXT_PRESETS_CHANGED, { projectId })
+  });
   registerRpc('agentFiles.create', async (args) => {
     const path = rpcString(args, 'path');
     const content = args && typeof args === 'object' ? (args as { content?: unknown }).content : undefined;
@@ -996,6 +1033,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         column: { type: 'number' },
         sessionId: { type: 'string' },
         utterance: { type: 'string' },
+        contextVariables: { type: 'array', maxItems: 100, description: 'Initial typed preview variables. Linked names use $Context.Name; external agent variables use their developer name. Only preview.start.', items: { type: 'object', required: ['name', 'type', 'value'], properties: { name: { type: 'string' }, type: { type: 'string', enum: ['Text', 'Boolean', 'Number', 'Date', 'DateTime', 'Json', 'List', 'Object', 'Money', 'Ref'] }, value: {} } } },
         specPath: { type: 'string' },
         aiEvaluationDefinitionName: { type: 'string' },
         botVersionId: { type: 'string' },
@@ -1639,6 +1677,7 @@ async function runUiPreview(
     apiName: rpcString(args, 'apiName') || undefined,
     path: rpcString(args, 'path') || undefined,
     sessionId: rpcString(args, 'sessionId') || undefined,
+    ...(args && typeof args === 'object' && 'contextVariables' in args ? { contextVariables: (args as Record<string, unknown>).contextVariables } : {}),
     utterance:
       args && typeof args === 'object' && typeof (args as { utterance?: unknown }).utterance === 'string'
         ? (args as { utterance: string }).utterance
@@ -1738,7 +1777,7 @@ async function runLabPreview(
   try {
     // runAgentPreview already mediated this call, so the lab must not ask again.
     const run = verb === 'start'
-      ? await previewLab.lab.start({ engine: 'preview', source, path: plan.path, live, threadId: ctx.threadId, startedByUser: true })
+      ? await previewLab.lab.start({ engine: 'preview', source, path: plan.path, live, threadId: ctx.threadId, startedByUser: true, contextVariables: plan.contextVariables })
       : verb === 'send'
         ? await previewLab.lab.send({ id: plan.sessionId, text: plan.utterance ?? '' })
         : previewLab.lab.end({ id: plan.sessionId });

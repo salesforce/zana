@@ -3,6 +3,7 @@ import { controlText } from '../useSalesforceControl.js';
 import type { ControlState, UiCommand } from '../../../lib/workbench-control.js';
 import type { ProposalOutcome, ProposeEditInput, StudioEngine } from '../../../lib/studio-contract.js';
 import { validateUiCommandInput } from '../../../lib/ui-command-input.js';
+import { parsePreviewContext, type PreviewContextVariable } from '../../../lib/preview-context.js';
 
 /** Everything the executor needs from the live panel. Getters keep it free of stale closures. */
 export interface StudioCommandTargets {
@@ -24,7 +25,7 @@ export interface StudioCommandTargets {
   };
   /** preview.start / preview.send. */
   preview?: {
-    start(input: { engine?: StudioEngine }): Promise<void | ControlState> | void | ControlState;
+    start(input: { engine?: StudioEngine; contextVariables?: PreviewContextVariable[] }): Promise<void | ControlState> | void | ControlState;
     send(input: { text: string; engine?: StudioEngine }): Promise<void | ControlState> | void | ControlState;
   };
   traceFocus?(input: { runId?: string; turn?: number; step?: number }): Promise<void | ControlState> | void | ControlState;
@@ -63,7 +64,7 @@ export function createStudioCommandExecutor(targets: StudioCommandTargets): Stud
     }
     if (command === 'preview.start' || command === 'preview.send') {
       if (!targets.preview) throw unsupported(command);
-      return command === 'preview.start' ? targets.preview.start({ engine: input.engine as StudioEngine | undefined }) : targets.preview.send({ text: String(input.text), engine: input.engine as StudioEngine | undefined });
+      return command === 'preview.start' ? targets.preview.start({ engine: input.engine as StudioEngine | undefined, ...(input.contextVariables !== undefined ? { contextVariables: parsePreviewContext(input.contextVariables) } : {}) }) : targets.preview.send({ text: String(input.text), engine: input.engine as StudioEngine | undefined });
     }
     if (command === 'trace.focus') {
       if (!targets.traceFocus) throw unsupported(command);

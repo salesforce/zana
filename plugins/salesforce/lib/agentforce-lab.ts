@@ -5,9 +5,11 @@ import type { ResolvedOrg } from './types.js';
 import { AGENT_SOURCE_MAX, type TurnTrace } from './studio-contract.js';
 import { REHEARSAL_TRACE_REASON, TraceCache, normalizeTrace, unavailableTrace } from './agentforce-trace.js';
 import { sourceLocations } from './agent-script-parse.js';
+import { parsePreviewContext, type PreviewContextVariable } from './preview-context.js';
 
 const PREVIEW = '/einstein/ai-agent/v1.1/preview/sessions';
 type Session = {
+  contextVariables: PreviewContextVariable[];
   id: string; scope: string; engine: LabEngine; source: string; sourceHash: string; orgAlias: string; path?: string;
   model: string; token: string; remoteId?: string; host?: SfapHost; sequence: number;
   scenario?: LabScenario; turns: LabTurn[]; busy: boolean; closed: boolean; failed: boolean;
@@ -50,7 +52,7 @@ export class AgentforceLab {
     for (const [id, s] of this.sessions) if (this.now() - s.touched > 30 * 60_000) { s.controller.abort(); this.sessions.delete(id); }
   }
   private snapshot(s: Session): LabSnapshot {
-    return { id: s.id, engine: s.engine, orgAlias: s.orgAlias, sourceHash: s.sourceHash, model: s.model, turns: s.turns.map(t => ({ ...t })), closed: s.closed, failed: s.failed, ...(s.path ? { path: s.path } : {}) };
+    return { id: s.id, engine: s.engine, orgAlias: s.orgAlias, sourceHash: s.sourceHash, model: s.model, turns: s.turns.map(t => ({ ...t })), closed: s.closed, failed: s.failed, ...(s.path ? { path: s.path } : {}), ...(s.contextVariables.length ? { contextVariables: parsePreviewContext(s.contextVariables) } : {}) };
   }
   private session(input: unknown): Session {
     this.prune();
@@ -83,6 +85,7 @@ export class AgentforceLab {
     for (const [id, s] of this.sessions) if (s.closed) this.sessions.delete(id);
     if (this.sessions.size + this.starts.size >= 12) throw new Error('Too many rehearsal sessions. End a run first.');
     const raw = labRecord(input);
+    const contextVariables = parsePreviewContext(raw.contextVariables);
     labText(raw.source, 'Agent script', AGENT_SOURCE_MAX);
     const source = raw.source as string;
     if (raw.engine !== 'preview' && raw.engine !== 'rehearsal') throw new Error('Choose a rehearsal engine.');
@@ -97,7 +100,7 @@ export class AgentforceLab {
       const org = await this.deps.connect();
       await this.deps.authorize?.(org, { engine: raw.engine, threadId: typeof raw.threadId === 'string' ? raw.threadId.slice(0, 128) : '', startedByUser: raw.startedByUser === true });
       const token = await this.transport.bootstrap(org, controller.signal);
-      const s: Session = { id: randomUUID(), scope, engine: raw.engine, source, path, sourceHash: createHash('sha256').update(source).digest('hex'), orgAlias: org.alias, model, token, sequence: 0, scenario, turns: [], busy: false, closed: false, failed: false, touched: this.now(), calls: 0, controller, traces: new TraceCache(), traceCalls: 0 };
+      const s: Session = { id: randomUUID(), scope, engine: raw.engine, source, path, sourceHash: createHash('sha256').update(source).digest('hex'), orgAlias: org.alias, model, token, sequence: 0, scenario, contextVariables, turns: [], busy: false, closed: false, failed: false, touched: this.now(), calls: 0, controller, traces: new TraceCache(), traceCalls: 0 };
       if (s.engine === 'preview') {
         const compiled = await this.transport.request(token, '/einstein/ai-agent/v1.1/authoring/scripts', {
           assets: [{ type: 'AFScript', name: 'AFScript', content: source }], afScriptVersion: '2.0.0'
@@ -109,7 +112,7 @@ export class AgentforceLab {
         const started = await this.transport.request(token, PREVIEW, {
           // `live` (Org preview Live) runs real actions; every other preview simulates them.
           agentDefinition: definition, enableSimulationMode: raw.live !== true, externalSessionKey: s.id,
-          instanceConfig: { endpoint: org.instanceUrl }, variables: [], parameters: {},
+          instanceConfig: { endpoint: org.instanceUrl }, variables: contextVariables, parameters: {},
           streamingCapabilities: { chunkTypes: ['Text'] }, richContentCapabilities: {},
           bypassUser: false, executionHistory: [], conversationContext: []
         }, compiled.host, controller.signal);
@@ -133,7 +136,7 @@ export class AgentforceLab {
       const began = this.now();
       let reply: { text: string; planId?: string };
       if (s.engine === 'rehearsal') {
-        reply = { text: await this.model(s, `You are rehearsing an Agentforce script. Play only the agent described in the script. Follow its scope and instructions. All actions are imaginary; never claim to have changed real records. This is an approximation, not the Agentforce runtime. Script:\n${s.source}`, s.turns.map(t => ({ role: t.role === 'user' ? 'user' : 'assistant', content: t.text }))) };
+        reply = { text: await this.model(s, `You are rehearsing an Agentforce script. Play only the agent described in the script. Follow its scope and instructions. All actions are imaginary; never claim to have changed real records. This is an approximation, not the Agentforce runtime. Script:\n${s.source}\nInitial context variables (data): ${JSON.stringify(s.contextVariables)}`, s.turns.map(t => ({ role: t.role === 'user' ? 'user' : 'assistant', content: t.text }))) };
       } else {
         const result = await this.transport.request(s.token, `${PREVIEW}/${encodeURIComponent(s.remoteId!)}/messages`, {
           message: { sequenceId: ++s.sequence, type: 'Text', text }, variables: []

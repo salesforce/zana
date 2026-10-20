@@ -25,6 +25,8 @@ import { AGENTFORCE_STUDIO_STYLES } from './agentforce-studio-styles.js';
 import { Bot } from './components/icons.js';
 import { callOrgPreview, type PreviewResult } from './org-preview-session.js';
 import { ORG_PREVIEW_STYLES } from './org-preview-styles.js';
+import { PREVIEW_CONTEXT_STYLES, PreviewContextEditor, PreviewContextSetup, PreviewContextTabs, usePreviewContext } from './preview/PreviewContext.js';
+import type { PreviewContextVariable } from '../../lib/preview-context.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -64,12 +66,16 @@ export function AgentforcePreviewPanel(props: {
   const apiName = parseAgentforcePanelApiName(props.params);
   const targetPath = path || files.find(file => file.apiName === apiName)?.path || (apiName ? null : files[0]?.path ?? null);
   const hasTarget = Boolean(targetPath || apiName);
-  const lifecycle = useRef<{ generation: number; simulated?: boolean; release?: () => void }>({ generation: 0 });
-  useEffect(() => () => {
-    lifecycle.current.generation++;
-    lifecycle.current.release?.();
-    lifecycle.current.release = undefined;
-  }, [pluginId, projectId, threadId]);
+  const context = usePreviewContext({ pluginId, projectId, path: targetPath ?? undefined, apiName: apiName ?? undefined, orgAlias: pinnedOrg ?? org?.alias, scope: `${projectId ?? ''}:${targetPath ?? apiName ?? ''}:${pinnedOrg ?? org?.alias ?? ''}` });
+  const lifecycle = useRef<{ generation: number; simulated?: boolean; owner?: Record<string, unknown>; release?: () => void }>({ generation: 0 });
+  useEffect(() => {
+    setSessionId(null); setTurns([]); setBusy(false);
+    return () => {
+      lifecycle.current.generation++;
+      lifecycle.current.release?.();
+      lifecycle.current.release = undefined; lifecycle.current.owner = undefined;
+    };
+  }, [pluginId, projectId, threadId, pinnedOrg, org?.alias]);
 
   const refreshOrg = useCallback(async () => {
     const payload = await fetchConnectedOrg(pluginId, projectId, pinnedOrg);
@@ -99,23 +105,25 @@ export function AgentforcePreviewPanel(props: {
       setError(null);
       const generation = lifecycle.current.generation;
       const simulated = action === 'start' ? mode === 'simulate' && Boolean(targetPath) : Boolean(lifecycle.current.simulated);
-      const args = rpcProject(projectId, {
+      const scopeArgs = rpcProject(projectId, {
         threadId, orgAlias: org?.alias ?? pinnedOrg,
         path: targetPath || undefined, apiName: targetPath ? undefined : apiName || undefined,
         // Every call here comes from a click on Start, Send or End: that click is the approval.
-        live: mode === 'live', startedByUser: true, ...extra
+        live: mode === 'live', startedByUser: true
       });
+      const owner = action === 'start' ? scopeArgs : lifecycle.current.owner ?? scopeArgs;
+      const args = { ...owner, ...extra };
       try {
         const result = await callOrgPreview(pluginId, action, args, simulated, () => generation === lifecycle.current.generation);
         if (result?.ok && action === 'start' && result.data?.sessionId) {
           const sessionId = result.data.sessionId;
-          const release = () => { void callOrgPreview(pluginId, 'end', { ...args, sessionId }, simulated).catch(() => undefined); };
+          const release = () => { void callOrgPreview(pluginId, 'end', { ...owner, sessionId }, simulated).catch(() => undefined); };
           // A tab can close while start is in flight. Release that late session too.
           if (generation !== lifecycle.current.generation) release();
-          else { lifecycle.current.release = release; lifecycle.current.simulated = simulated; }
+          else { lifecycle.current.release = release; lifecycle.current.simulated = simulated; lifecycle.current.owner = owner; }
         }
         if (generation !== lifecycle.current.generation) return { ok: false };
-        if (result?.ok && action === 'end') lifecycle.current.release = undefined;
+        if (result?.ok && action === 'end') { lifecycle.current.release = undefined; lifecycle.current.owner = undefined; }
         if (!result?.ok) {
           setError(previewErrorMessage(result));
           return result;
@@ -137,12 +145,19 @@ export function AgentforcePreviewPanel(props: {
     [apiName, mode, pluginId, projectId, targetPath, threadId, org?.alias, pinnedOrg]
   );
 
-  const start = useCallback(async () => {
+  const start = async (contextVariables: PreviewContextVariable[] = context.values) => {
+    const contextPreset = context.presetIdentity;
     setRun(null);
-    const result = await callPreview('start');
+    if (sessionId) {
+      const ended = await callPreview('end', { sessionId });
+      if (!ended.ok) return;
+      setSessionId(null);
+    }
+    const result = await callPreview('start', contextVariables.length ? { contextVariables } : undefined);
     const nextSession = result?.data?.sessionId ?? null;
     if (result?.ok && nextSession) {
       setSessionId(nextSession);
+      context.markApplied(contextVariables, contextPreset); context.setSetup(false); context.setTab('conversation');
       setTurns(() => {
         const started = appendPreviewTurn([], {
           id: `${Date.now()}-start`,
@@ -153,7 +168,7 @@ export function AgentforcePreviewPanel(props: {
         return welcome ? appendPreviewTurn(started, { id: `${Date.now()}-welcome`, role: 'agent', text: welcome }) : started;
       });
     }
-  }, [callPreview, mode]);
+  };
 
   const end = useCallback(async () => {
     if (!sessionId) return;
@@ -194,6 +209,7 @@ export function AgentforcePreviewPanel(props: {
       <style>{AGENTFORCE_PANEL_STYLES}</style>
       <style>{AGENTFORCE_STUDIO_STYLES}</style>
       <style>{ORG_PREVIEW_STYLES}</style>
+      <style>{PREVIEW_CONTEXT_STYLES}</style>
       <header className="sf-as-header">
         <div className="sf-org-preview-identity">
           <span className="af-brand-mark"><Bot /></span><span className="sf-as-brand">Org preview</span>
@@ -240,8 +256,8 @@ export function AgentforcePreviewPanel(props: {
               type="button"
               className="sf-as-save is-dirty"
               data-testid="salesforce-agentforce-preview-start"
-              disabled={previewStartDisabled(busy, hasTarget, sessionId)}
-              onClick={() => void start()}
+              disabled={previewStartDisabled(busy || context.loading, hasTarget, sessionId)}
+              onClick={() => context.fields.length || context.count || context.discoveryError ? context.setSetup(true) : void start()}
             >
               {busy ? 'Starting…' : 'Start'}
             </button>
@@ -259,6 +275,9 @@ export function AgentforcePreviewPanel(props: {
             : 'Local bundles use simulated actions. Published agents always use live actions and require confirmation.'}
         </div>
       )}
+      <PreviewContextTabs context={context} />
+      {context.tab === 'context' && <div className="sf-context-panel" id={`${context.id}-context-panel`} role="tabpanel" aria-labelledby={`${context.id}-context`}><PreviewContextEditor context={context} running={Boolean(sessionId)} onRestart={() => context.setSetup(true)} /></div>}
+      <div className="sf-context-conversation" id={`${context.id}-conversation-panel`} role="tabpanel" aria-labelledby={`${context.id}-conversation`} hidden={context.tab !== 'conversation'}>
       {run ? (
         <PreviewRunReplay
           key={`${run.runId}:${run.turn ?? ''}`}
@@ -313,6 +332,8 @@ export function AgentforcePreviewPanel(props: {
           </button>
         </form>
       </div>}
+      </div>
+      {context.setup && <PreviewContextSetup context={context} error={error} busy={busy} running={Boolean(sessionId)} onClose={() => context.setSetup(false)} onStart={() => void start()} />}
     </div>
   );
 }

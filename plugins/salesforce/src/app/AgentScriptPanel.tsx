@@ -734,10 +734,10 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       })
     },
     preview: {
-      start: ({ engine }) => {
+      start: ({ engine, contextVariables }) => {
         if (engine) setPreviewEngine(engine);
         openTool('preview');
-        setPreviewCommand({ seq: ++previewSeq.current, type: 'start', engine });
+        setPreviewCommand({ seq: ++previewSeq.current, type: 'start', engine, contextVariables });
       },
       send: ({ text, engine }) => {
         if (engine) setPreviewEngine(engine);

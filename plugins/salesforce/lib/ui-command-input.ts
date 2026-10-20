@@ -1,4 +1,5 @@
 import { AGENT_SOURCE_MAX_LABEL, isProposeEditInput, PREVIEW_ENGINES, type StudioEngine } from './studio-contract.js';
+import { parsePreviewContext } from './preview-context.js';
 
 /** Isomorphic input validation for the Studio UI verbs (server request() and the renderer executor share it). */
 export const STUDIO_UI_COMMANDS = ['editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set'] as const;
@@ -13,7 +14,8 @@ export function validateUiCommandInput(command: string, input: Record<string, un
     case 'editor.proposeEdit':
       return isProposeEditInput(input) ? undefined : `Provide path, a 64-hex expectedSha256, a summary, and exactly one of content (at most ${AGENT_SOURCE_MAX_LABEL}) or 1-50 edits.`;
     case 'preview.start':
-      if (unknownKeys(input, ['engine'])) return 'preview.start accepts only engine.';
+      if (unknownKeys(input, ['engine', 'contextVariables'])) return 'preview.start accepts only engine and contextVariables.';
+      try { parsePreviewContext(input.contextVariables); } catch (error) { return (error as Error).message; }
       return input.engine === undefined || PREVIEW_ENGINES.includes(input.engine as StudioEngine) ? undefined : 'engine must be simulate or live.';
     case 'preview.send':
       if (unknownKeys(input, ['text', 'engine'])) return 'preview.send accepts only text and engine.';

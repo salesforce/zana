@@ -10,6 +10,7 @@ import { basename, join } from 'node:path';
 import { AgentFilesError, sha256Hex } from './agent-files.js';
 import { resolveUnderRoot } from './dx-project.js';
 import { EvalSpecError, GENERATED_SPEC_MARKER, evalSpecCases, suiteToEvalSpec } from './eval-spec.js';
+import { parsePreviewContext } from './preview-context.js';
 import { FixLoopError, FixLoops, type FixLoop } from './fix-loop.js';
 import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseOutcome, type ScenarioCase, type ScenarioSuite, type SuiteEval, type TurnTrace } from './studio-contract.js';
 import { rpcFailure, rpcString, type RpcFailure, type StudioServerContext } from './studio-server-context.js';
@@ -71,6 +72,7 @@ export function parseScenarioCase(value: unknown, index: number): ScenarioCase {
   const runId = text(pinned.runId, 80);
   return {
     id: text(row.id, 80).replace(/[^A-Za-z0-9_.-]/g, '_') || `case-${index + 1}`,
+    ...(row.contextVariables !== undefined ? { contextVariables: parsePreviewContext(row.contextVariables) } : {}),
     name: text(row.name, 200) || `Case ${index + 1}`,
     utterances,
     expect: { ...(topic ? { topic } : {}), ...(actions.length ? { actions } : {}), ...(contains.length ? { contains } : {}), ...(criteria ? { criteria } : {}) },
@@ -297,7 +299,7 @@ export class ScenarioSuites {
     let id = '';
     const detail: CaseRunDetail = { caseId: c.id, outcome: 'inconclusive', runId: '', at: this.o.now(), notes: [], turns: [] };
     try {
-      const started = await lab.start({ engine: input.engine, source: input.source, scenario, ...(input.model ? { model: input.model } : {}), ...(input.threadId ? { threadId: input.threadId } : {}), ...(input.agentPath ? { path: input.agentPath } : {}), ...(input.startedByUser ? { startedByUser: true } : {}) });
+      const started = await lab.start({ engine: input.engine, source: input.source, scenario, ...(c.contextVariables ? { contextVariables: c.contextVariables } : {}), ...(input.model ? { model: input.model } : {}), ...(input.threadId ? { threadId: input.threadId } : {}), ...(input.agentPath ? { path: input.agentPath } : {}), ...(input.startedByUser ? { startedByUser: true } : {}) });
       id = detail.runId = started.id;
       let last = started;
       for (const utterance of c.utterances.slice(0, scenario.maxTurns)) last = await lab.send({ id, text: utterance });

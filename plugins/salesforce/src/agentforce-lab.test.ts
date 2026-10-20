@@ -23,6 +23,23 @@ function setup() {
   return { lab, request, bootstrap, connect, args, setScope: (v: string) => { scope = v; }, advance: () => { time += 31 * 60_000; } };
 }
 describe('Agentforce lab', () => {
+  it('sends initial typed context once, pins a detached snapshot and rejects invalid values before connecting', async () => {
+    const { lab, request, args, connect } = setup();
+    await expect(lab.start({ ...args, contextVariables: [{ name: 'verified', type: 'Boolean', value: 'false' }] })).rejects.toThrow('Boolean');
+    expect(connect).not.toHaveBeenCalled();
+    const contextVariables = [{ name: '$Context.sessionId', type: 'Text', value: '' }, { name: 'verified', type: 'Boolean', value: false }, { name: 'retryCount', type: 'Number', value: 0 }];
+    const run = await lab.start({ ...args, contextVariables });
+    expect(request.mock.calls[1]![2]).toMatchObject({ variables: contextVariables, enableSimulationMode: true });
+    contextVariables[0]!.value = 'changed';
+    expect(run.contextVariables?.[0]!.value).toBe('');
+    run.contextVariables![0]!.value = 'also changed';
+    const reply = await lab.send({ id: run.id, text: 'hello' });
+    expect(request.mock.calls.at(-1)![2]).toMatchObject({ variables: [] });
+    expect(reply.contextVariables?.[0]!.value).toBe('');
+    const rehearsal = await lab.start({ ...args, engine: 'rehearsal', contextVariables });
+    await lab.send({ id: rehearsal.id, text: 'hello' });
+    expect(JSON.stringify(request.mock.calls.at(-1)![2])).toContain('Initial context variables');
+  });
   it('compiles a snapshot, pins its org/host and never exposes credentials or enables actions', async () => {
     const { lab, request, args, connect } = setup();
     const session = await lab.start(args);

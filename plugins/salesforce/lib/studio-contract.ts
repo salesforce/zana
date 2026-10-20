@@ -29,6 +29,7 @@ export interface TraceStep {
 }
 export interface TurnTrace { runId: string; turn: number; planId?: string; available: boolean; reason?: string; steps: TraceStep[] }
 export interface ScenarioCase {
+  contextVariables?: import('./preview-context.js').PreviewContextVariable[];
   id: string; name: string; utterances: string[]; expect: { topic?: string; actions?: string[]; contains?: string[]; criteria?: string };
   /** Set when the case was pinned from a Preview conversation. */
   pinned?: { runId: string; at: number };
