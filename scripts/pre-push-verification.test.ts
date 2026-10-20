@@ -282,6 +282,23 @@ it('creates a private detached snapshot, runs named full union, and cleans it up
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+it.each(['win32', 'darwin'])('starts pnpm through a shell only on %s', (platform) => {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { value: platform });
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-shell-'));
+  const run = vi.fn(() => ({ status: 0 }));
+  try {
+    runFullVerification({ oid: OID, root, run, log: vi.fn() });
+    for (const [command, , options] of run.mock.calls as unknown as [string, string[], { shell?: boolean }][]) {
+      expect(options.shell === true).toBe(command === 'pnpm' && platform === 'win32');
+    }
+    expect(run).toHaveBeenCalledWith('pnpm', ['verify:full'], expect.objectContaining({ cwd: expect.any(String), stdio: 'inherit' }));
+  } finally {
+    Object.defineProperty(process, 'platform', original);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it('cleans snapshots and rejects missing oid or failed commands', () => {
   expect(() => runFullVerification({ oid: '' })).toThrow('no pushed object');
   const root = mkdtempSync(join(tmpdir(), 'zana-push-failure-'));

@@ -7,7 +7,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const ZERO_OID = /^0+$/;
@@ -178,19 +178,25 @@ export function selectedTestFiles(inputs, root) {
   const tests = new Set(inputs.filter(isTestFile));
   for (const input of inputs.filter((path) => !isTestFile(path))) {
     const name = basename(input).replace(/\.[cm]?[jt]sx?$/, '');
-    for (const directory of [dirname(input), join(dirname(input), '__tests__')]) {
+    // Git paths use '/'; keep them that way on Windows so vitest gets repo-style paths.
+    for (const directory of [posix.dirname(input), posix.join(posix.dirname(input), '__tests__')]) {
       const absoluteDirectory = join(root, directory);
       if (!existsSync(absoluteDirectory)) continue;
       for (const entry of readdirSync(absoluteDirectory, { withFileTypes: true })) {
         if (!entry.isFile() || !isTestFile(entry.name)) continue;
         const testName = entry.name.replace(/(?:\.coverage)?\.(?:test|spec)\.[cm]?[jt]sx?$/, '');
         if (testName === name) {
-          tests.add(join(directory, entry.name));
+          tests.add(posix.join(directory, entry.name));
         }
       }
     }
   }
   return [...tests].sort();
+}
+
+// pnpm is a .cmd shim on Windows, which spawnSync can start only through a shell.
+function pnpm(run, args, options) {
+  return run('pnpm', args, { ...options, shell: process.platform === 'win32' });
 }
 
 const SLACK_BRIDGE = 'plugins/slack-bridge-2ff2/';
@@ -199,18 +205,18 @@ const SLACK_BRIDGE = 'plugins/slack-bridge-2ff2/';
 // a fresh snapshot does not have, so build them before any run that includes them.
 function prepareSlackAssets(snapshot, run, log, mode) {
   log(`pre-push: ${mode} (est. Slack runtime assets)`);
-  const assets = run('pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
+  const assets = pnpm(run, ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package'], { cwd: snapshot, stdio: 'inherit' });
   if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
 }
 
 export function runFullVerification({ oid, root = process.cwd(), run = spawnSync, log = console.log }) {
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
     log('pre-push: full (est. install)');
-    const install = run('pnpm', ['install', '--frozen-lockfile'], { cwd: snapshot, stdio: 'inherit' });
+    const install = pnpm(run, ['install', '--frozen-lockfile'], { cwd: snapshot, stdio: 'inherit' });
     if (install.status !== 0) throw new Error('snapshot dependency install failed');
     prepareSlackAssets(snapshot, run, log, 'full');
     log('pre-push: full (est. verify:full)');
-    const result = run('pnpm', ['verify:full'], { cwd: snapshot, stdio: 'inherit' });
+    const result = pnpm(run, ['verify:full'], { cwd: snapshot, stdio: 'inherit' });
     if (result.status !== 0) throw new Error('verification failed: pnpm verify:full');
   });
 }
@@ -225,30 +231,30 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
   if (!base) throw new Error('no base object available for fast verification');
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
     log('pre-push: fast (est. install)');
-    const install = run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
+    const install = pnpm(run, ['install', '--frozen-lockfile', '--prefer-offline'], { cwd: snapshot, stdio: 'inherit' });
     if (install.status !== 0) throw new Error('snapshot dependency install failed');
     log('pre-push: fast (est. typecheck)');
-    const typecheck = run('pnpm', ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' });
+    const typecheck = pnpm(run, ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' });
     if (typecheck.status !== 0) throw new Error('verification failed: pnpm run typecheck');
     const inputs = testInputs(paths);
     if (needsBroadChangedTests(paths)) {
       prepareSlackAssets(snapshot, run, log, 'fast');
       log(`pre-push: fast (est. vitest --changed ${base.slice(0, 12)})`);
-      const changed = run('pnpm', ['exec', 'vitest', 'run', '--changed', base], { cwd: snapshot, stdio: 'inherit' });
+      const changed = pnpm(run, ['exec', 'vitest', 'run', '--changed', base], { cwd: snapshot, stdio: 'inherit' });
       if (changed.status !== 0) throw new Error('verification failed: vitest --changed');
     } else {
       const tests = selectedTestFiles(inputs, snapshot);
       if (tests.some((test) => test.startsWith(SLACK_BRIDGE))) prepareSlackAssets(snapshot, run, log, 'fast');
       if (tests.length) {
         log(`pre-push: fast (est. ${tests.length} changed or colocated test${tests.length === 1 ? '' : 's'})`);
-        const testRun = run('pnpm', ['exec', 'vitest', 'run', ...tests], { cwd: snapshot, stdio: 'inherit' });
+        const testRun = pnpm(run, ['exec', 'vitest', 'run', ...tests], { cwd: snapshot, stdio: 'inherit' });
         if (testRun.status !== 0) throw new Error('verification failed: selected vitest tests');
       }
     }
     const guards = guardTests(snapshot, run);
     if (guards.length) {
       log(`pre-push: fast (est. ${guards.length} source-text guard tests)`);
-      const guardRun = run('pnpm', ['exec', 'vitest', 'run', ...guards], { cwd: snapshot, stdio: 'inherit' });
+      const guardRun = pnpm(run, ['exec', 'vitest', 'run', ...guards], { cwd: snapshot, stdio: 'inherit' });
       if (guardRun.status !== 0) throw new Error('verification failed: source-text guard tests');
     }
   });
