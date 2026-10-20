@@ -83,7 +83,9 @@ export function ensureClaudeSkillPlugin(args: {
   }
   if (current !== args.root.path) {
     rmSync(skillsLink, { recursive: true, force: true });
-    symlinkSync(args.root.path, skillsLink, "dir");
+    // A junction needs no Developer Mode or admin rights on Windows, where a
+    // "dir" symlink fails with EPERM; other platforms ignore the type.
+    symlinkSync(args.root.path, skillsLink, "junction");
   }
   return pluginPath;
 }

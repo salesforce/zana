@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   Options,
   SDKMessage,
@@ -11,6 +14,7 @@ const mockQueryInstance = {
   interrupt: vi.fn(),
   setModel: vi.fn(),
   setPermissionMode: vi.fn(),
+  renameSession: vi.fn(),
   stopTask: vi.fn(),
   [Symbol.asyncIterator]: vi.fn(),
 };
@@ -77,6 +81,14 @@ function keepSdkStreamOpen(): void {
 }
 
 function mockProcessUid(uid: number): void {
+  if (process.getuid === undefined) {
+    // Windows has no process.getuid to spy on; add one for this test only.
+    process.getuid = () => uid;
+    onTestFinished(() => {
+      delete process.getuid;
+    });
+    return;
+  }
   vi.spyOn(process, "getuid").mockReturnValue(uid);
 }
 
@@ -194,6 +206,30 @@ describe("SdkSession", () => {
     const session = new SdkSession(defaultOptions, vi.fn(), vi.fn());
     await expect(session.stopTask("task-1")).resolves.toBe(false);
     expect(mockQueryInstance.stopTask).not.toHaveBeenCalled();
+  });
+
+  it("rename sends the title to the live query for its session", async () => {
+    keepSdkStreamOpen();
+    mockQueryInstance.renameSession.mockResolvedValue(undefined);
+    const session = new SdkSession(
+      { ...defaultOptions, sessionId: "session-rename" },
+      vi.fn(),
+      vi.fn(),
+    );
+    session.start();
+    await expect(session.rename("Reviewer")).resolves.toBe(true);
+    expect(mockQueryInstance.renameSession).toHaveBeenCalledWith(
+      "Reviewer",
+      "session-rename",
+    );
+    session.stop();
+  });
+
+  it("rename returns false without calling the SDK when no query is running", async () => {
+    mockQueryInstance.renameSession.mockClear();
+    const session = new SdkSession(defaultOptions, vi.fn(), vi.fn());
+    await expect(session.rename("Reviewer")).resolves.toBe(false);
+    expect(mockQueryInstance.renameSession).not.toHaveBeenCalled();
   });
 
   it("stop cleans up state", () => {
@@ -478,6 +514,30 @@ describe("SdkSession", () => {
         }),
       }),
     );
+  });
+
+  it("keeps a renamed session's name when resuming it", () => {
+    const configDir = mkdtempSync(path.join(tmpdir(), "claude-config-"));
+    try {
+      const project = path.join(configDir, "projects", "-tmp-test");
+      mkdirSync(project, { recursive: true });
+      writeFileSync(
+        path.join(project, "session-1.jsonl"),
+        `${JSON.stringify({ type: "agent-name", agentName: "Reviewer: docs" })}
+`,
+      );
+      const extraArgs = { chrome: null };
+      const env = { CLAUDE_CONFIG_DIR: configDir };
+      new SdkSession({ ...defaultOptions, env, extraArgs }, vi.fn(), vi.fn()).start("session-1");
+      expect(getLatestQueryCall().options.extraArgs).toEqual({ chrome: null, name: "Reviewer: docs" });
+
+      new SdkSession({ ...defaultOptions, env, extraArgs }, vi.fn(), vi.fn()).start("session-2");
+      expect(getLatestQueryCall().options.extraArgs).toEqual(extraArgs);
+      new SdkSession({ ...defaultOptions, env }, vi.fn(), vi.fn()).start();
+      expect(getLatestQueryCall().options.extraArgs).toBeUndefined();
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 });
 

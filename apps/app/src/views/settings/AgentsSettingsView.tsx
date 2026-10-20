@@ -1,5 +1,12 @@
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
-import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS, SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
+import {
+  AUTO_CLOSE_IDLE_DEFAULTS,
+  HEARTBEAT_DEFAULTS,
+  SESSION_MEMORY_DEFAULTS,
+  THREAD_SESSION_RELEASE_CHOICES,
+  THREAD_SESSION_RELEASE_DEFAULTS,
+  threadSessionReleaseLabel
+} from '@zana-ai/zcc-domain/product';
 import {
   NOTIFICATION_LEVELS,
   NOTIFICATION_LEVEL_LABELS,
@@ -14,6 +21,12 @@ import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 import { AgentGuidanceSettings } from './AgentGuidanceSettings.js';
 
+function threadSessionReleaseOptions(current: number): { value: string; label: string }[] {
+  const choices: number[] = [...THREAD_SESSION_RELEASE_CHOICES];
+  if (!choices.includes(current)) choices.unshift(current);
+  return choices.map((minutes) => ({ value: String(minutes), label: threadSessionReleaseLabel(minutes) }));
+}
+
 export function AgentsSettingsView({
   config,
   onConfigDraft,
@@ -27,6 +40,7 @@ export function AgentsSettingsView({
   // fallback, so we soften its help text while auto mode is on.
   const autoModeOn = config.autoModeEnabled ?? true;
   const notificationDefaults = normalizeNotificationDefaults(config);
+  const threadSessionRelease = config.threadSessionReleaseMinutes ?? THREAD_SESSION_RELEASE_DEFAULTS.minutes;
   return (
     <>
       <AgentGuidanceSettings config={config} onUpdate={onUpdate} />
@@ -558,6 +572,19 @@ export function AgentsSettingsView({
             />
           </>
         )}
+        <Field
+          label="Stop idle thread sessions"
+          searchId="agents.thread-session-release"
+          help="A thread keeps its Claude Code or Codex process running between turns. After it has been idle this long, Zana stops the process to free memory, and your next message resumes it with its history. A thread with a turn in progress or background work still running (such as a backgrounded shell command) is never stopped. While stopped, a session cannot receive messages from other sessions or fire its own scheduled wakeups. Default: after 30 minutes."
+        >
+          <PopoverPicklist
+            value={String(threadSessionRelease)}
+            ariaLabel="Stop idle thread sessions"
+            searchable={false}
+            onChange={(minutes) => onUpdate({ threadSessionReleaseMinutes: Number(minutes) })}
+            options={threadSessionReleaseOptions(threadSessionRelease)}
+          />
+        </Field>
       </Section>
 
       <Section

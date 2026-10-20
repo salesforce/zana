@@ -122,31 +122,21 @@ function intersect(readIds: Record<string, true>, live: Set<string>): Record<str
   return next;
 }
 
+/**
+ * Desktop main and the product server each own an InboxStore over the same
+ * JSONL and only hear their own appends, so live ids are re-asked from the
+ * store (which revalidates against the file) instead of cached here.
+ * Caching would drop ids the other process appended as "unknown".
+ */
 function createLiveIdCache(inbox: IInboxStore): {
   get(): Promise<Set<string>>;
   dispose(): void;
 } {
-  let cached: Set<string> | null = null;
-  const offAppended = inbox.onAppended((entry) => {
-    cached?.add(entry.id);
-  });
-  const offRemoved = inbox.onRemoved((id) => {
-    cached?.delete(id);
-  });
-  const offPruned = inbox.onPruned((removedIds) => {
-    if (!cached) return;
-    for (const id of removedIds) cached.delete(id);
-  });
   return {
     async get() {
-      if (!cached) cached = new Set(await inbox.listIds());
-      return cached;
+      return new Set(await inbox.listIds());
     },
-    dispose() {
-      offAppended();
-      offRemoved();
-      offPruned();
-    }
+    dispose() {}
   };
 }
 

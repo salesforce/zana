@@ -47,6 +47,7 @@ interface ResolveExecutableOnPathArgs {
 
 interface ResolveClaudeCodeExecutableArgs {
   env: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
 }
 
 const READONLY_ALLOWED_TOOLS = new Set([
@@ -277,25 +278,42 @@ function resolveExecutableOnPath(
   return null;
 }
 
-function wellKnownClaudeExecutablePaths(env: NodeJS.ProcessEnv): string[] {
+/**
+ * The SDK spawns the CLI without a shell, so on Windows only a PE image can
+ * launch. Every existing file passes `X_OK` there, so matching the bare name
+ * would accept an extensionless `#!/bin/sh` shim or `.cmd` launcher that
+ * fails at spawn.
+ */
+function claudeExecutableName(platform: NodeJS.Platform): string {
+  return platform === "win32" ? "claude.exe" : "claude";
+}
+
+function wellKnownClaudeExecutablePaths(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): string[] {
   if (process.getuid?.() === 0) {
     return [];
   }
+  const executableName = claudeExecutableName(platform);
   const candidatePaths: string[] = [];
-  const home = env.HOME?.trim();
+  const home = (env.HOME ?? (platform === "win32" ? env.USERPROFILE : undefined))?.trim();
   if (home) {
     candidatePaths.push(
-      join(home, ".local", "bin", "claude"),
-      join(home, ".claude", "local", "claude"),
+      join(home, ".local", "bin", executableName),
+      join(home, ".claude", "local", executableName),
     );
   }
-  candidatePaths.push("/opt/homebrew/bin/claude", "/usr/local/bin/claude");
+  if (platform !== "win32") {
+    candidatePaths.push("/opt/homebrew/bin/claude", "/usr/local/bin/claude");
+  }
   return candidatePaths;
 }
 
 export function resolveClaudeCodeExecutable(
   args: ResolveClaudeCodeExecutableArgs,
 ): string | null {
+  const platform = args.platform ?? process.platform;
   const explicitPath = args.env[CLAUDE_CODE_EXECUTABLE_ENV] ?? args.env.BB_CLAUDE_CODE_EXECUTABLE;
   const trimmedExplicitPath = explicitPath?.trim();
   if (trimmedExplicitPath && trimmedExplicitPath.length > 0) {
@@ -310,14 +328,14 @@ export function resolveClaudeCodeExecutable(
   }
 
   const executableOnPath = resolveExecutableOnPath({
-    executableName: "claude",
-    pathEnv: args.env.PATH,
+    executableName: claudeExecutableName(platform),
+    pathEnv: args.env.PATH ?? (platform === "win32" ? args.env.Path : undefined),
   });
   if (executableOnPath) {
     return executableOnPath;
   }
 
-  for (const candidate of wellKnownClaudeExecutablePaths(args.env)) {
+  for (const candidate of wellKnownClaudeExecutablePaths(args.env, platform)) {
     if (isExecutableFile(candidate)) {
       return candidate;
     }

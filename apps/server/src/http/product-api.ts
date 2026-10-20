@@ -10,7 +10,6 @@ import { registerProductTerminal } from './terminal-retention.js';
 import { readProjectImage, ProjectFsError } from './project-fs-via-host.js';
 import { projectGit } from './project-git.js';
 import { usesConnect } from '../services/hosts/connect-enrollment.js';
-import { reconcileRemoteProjectBindings } from '../services/hosts/host-bootstrap.js';
 import { handleSharedProductApi } from './shared-product-api.js';
 import { handleScopedLinkApi } from '../services/peers/scoped-link-api.js';
 import { handlePeerControlApi } from '../services/peers/peer-control-api.js';
@@ -579,10 +578,6 @@ export async function handleProductHttp(
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {
-      await reconcileRemoteProjectBindings(ctx).catch((error: unknown) => {
-        console.warn(`[zcc] remote project reconcile failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-        return 0;
-      });
       sendJson(response, 200, { projects: ctx.projects.list() });
       return true;
     }
@@ -595,6 +590,7 @@ export async function handleProductHttp(
       }
       const hostId = typeof body.hostId === 'string' && body.hostId.length > 0 ? body.hostId : undefined;
       const project = await ctx.projects.add(body.path, hostId ? { hostId } : undefined);
+      void ctx.remoteProjectReconciler?.request();
       ctx.hub.emit('projects:changed', ctx.projects.list());
       sendJson(response, 200, { project });
       return true;
@@ -635,6 +631,7 @@ export async function handleProductHttp(
         sendJson(response, 404, { error: 'project not found' });
         return true;
       }
+      void ctx.remoteProjectReconciler?.request();
       ctx.hub.emit('projects:changed', ctx.projects.list());
       sendJson(response, 200, { project });
       return true;
@@ -3004,6 +3001,7 @@ export async function handleProductHttp(
           cloned.path,
           persistHostId ? { hostId: persistHostId } : undefined
         );
+        void ctx.remoteProjectReconciler?.request();
         ctx.hub.emit('projects:changed', ctx.projects.list());
         sendJson(response, 201, { ok: true, project, path: cloned.path, gitRemoteUrl: cloned.gitRemoteUrl });
       } catch (error) {

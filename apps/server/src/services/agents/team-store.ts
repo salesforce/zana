@@ -103,7 +103,8 @@ export function sanitizeTeam(raw: unknown): Team | null {
         : undefined,
     initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
     worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined,
-    routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined
+    routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined,
+    defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined
   };
 }
 

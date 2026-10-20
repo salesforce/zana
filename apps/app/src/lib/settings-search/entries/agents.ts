@@ -4,7 +4,13 @@ import {
   NOTIFICATION_LEVEL_LABELS,
   normalizeNotificationDefaults
 } from '@zana-ai/zcc-domain';
-import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS, SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
+import {
+  AUTO_CLOSE_IDLE_DEFAULTS,
+  HEARTBEAT_DEFAULTS,
+  SESSION_MEMORY_DEFAULTS,
+  THREAD_SESSION_RELEASE_DEFAULTS,
+  threadSessionReleaseLabel
+} from '@zana-ai/zcc-domain/product';
 import type { SettingsSearchEntry } from '../types';
 
 // Agents settings page (AgentsSettingsView + AgentGuidanceSettings). Ids match
@@ -491,6 +497,16 @@ export const entries: readonly SettingsSearchEntry[] = [
     kind: 'setting',
     dependsOn: 'agents.auto-close-idle-agents',
     value: (s) => onOff(s.config.autoCloseIdleNotifyInbox ?? false),
+  },
+  {
+    id: 'agents.thread-session-release',
+    section: 'agents',
+    anchor: 'auto-close-idle',
+    label: 'Stop idle thread sessions',
+    help: 'A thread keeps its Claude Code or Codex process running between turns. After it has been idle this long, Zana stops the process to free memory, and your next message resumes it with its history. A thread with a turn in progress or background work still running (such as a backgrounded shell command) is never stopped. While stopped, a session cannot receive messages from other sessions or fire its own scheduled wakeups. Default: after 30 minutes.',
+    keywords: ['idle', 'release', 'reap', 'stop process', 'resume', 'memory', 'session', 'messaging', 'never'],
+    kind: 'setting',
+    value: (s) => threadSessionReleaseLabel(s.config.threadSessionReleaseMinutes ?? THREAD_SESSION_RELEASE_DEFAULTS.minutes),
   },
   {
     id: 'agents.legacy-agent.intro',

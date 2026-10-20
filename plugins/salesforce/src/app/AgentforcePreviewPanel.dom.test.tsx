@@ -129,7 +129,8 @@ describe('AgentforcePreviewPanel', () => {
         threadId: 'thr-1',
         projectId: 'proj-1',
         path: 'force-app/bots/QC.agent',
-        live: false
+        live: false,
+        startedByUser: true
       })
     );
     const input = el.querySelector('[data-testid="salesforce-agentforce-preview-input"]') as HTMLInputElement;
@@ -179,7 +180,20 @@ describe('AgentforcePreviewPanel', () => {
     expect(rpc).toHaveBeenCalledWith(
       'salesforce',
       'agentPreview.start',
-      expect.objectContaining({ live: true, threadId: 'thr-1' })
+      expect.objectContaining({ live: true, threadId: 'thr-1', startedByUser: true })
+    );
+    const input = el.querySelector('[data-testid="salesforce-agentforce-preview-input"]') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'hi');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      (el.querySelector('[data-testid="salesforce-agentforce-preview-send"]') as HTMLButtonElement).click();
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      'salesforce',
+      'agentPreview.send',
+      expect.objectContaining({ sessionId: 'sess-1', utterance: 'hi', live: true, startedByUser: true })
     );
   });
 

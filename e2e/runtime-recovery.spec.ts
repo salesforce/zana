@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test('desktop utility enrollment records non-tunnel provenance', async ({ app }) => {
+  await expect.poll(() => JSON.parse(readFileSync(join(app.home, '.zcc/auth.json'), 'utf8')).provenance).toBe('non-tunnel');
+  const auth = JSON.parse(readFileSync(join(app.home, '.zcc/auth.json'), 'utf8'));
+  expect(readFileSync(join(app.home, '.zcc/host.id'), 'utf8').trim()).toBe(auth.hostId);
+});
 for (const service of ['server', 'host'] as const) {
   test(`${service} crash offers recovery and preserves projects at the Electron boundary`, async ({ app }) => {
     await app.electron.evaluate(({ dialog }) => {
@@ -48,7 +53,7 @@ test('the installed host artifact passes an exit-status protocol probe from Elec
     const root = join(app.getPath('home'), 'artifact-probe');
     await mkdir(root, { recursive: true });
     const run = (bin: string, args: string[]) => new Promise<number | null>((resolve, reject) => {
-      const child = spawn(bin, args, { cwd: root, stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+      const child = spawn(bin, args, { cwd: root, stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ZCC_DATA_DIR: root } });
       const timeout = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Protocol probe timed out')); }, 20_000);
       child.once('error', error => { clearTimeout(timeout); reject(error); });
       child.once('exit', code => { clearTimeout(timeout); resolve(code); });
@@ -60,11 +65,16 @@ test('the installed host artifact passes an exit-status protocol probe from Elec
       const bytes = new Uint8Array(await response.arrayBuffer());
       await writeFile(join(root, 'host.tgz'), bytes, { mode: 0o600 });
       if (await run('/usr/bin/tar', ['-xzf', join(root, 'host.tgz'), '-C', root]) !== 0) throw new Error('Cannot unpack artifact');
+      const safeEnrollment = await run(process.execPath, [join(root, 'join.mjs'), 'join', '--check-enrollment', '--server-url', origin]);
+      await writeFile(join(root, 'auth.json'), JSON.stringify({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'saved-key', serverUrl: 'https://old.example' }));
       return {
         accepted: await run(process.execPath, [join(root, 'join.mjs'), '--check-protocol', String(version.protocolVersion)]),
-        rejected: await run(process.execPath, [join(root, 'join.mjs'), '--check-protocol', String(version.protocolVersion + 1)])
+        rejected: await run(process.execPath, [join(root, 'join.mjs'), '--check-protocol', String(version.protocolVersion + 1)]),
+        safeEnrollment,
+        refusedEnrollment: await run(process.execPath, [join(root, 'join.mjs'), 'join', '--check-enrollment', '--server-url', origin]),
+        consentedEnrollment: await run(process.execPath, [join(root, 'join.mjs'), 'join', '--check-enrollment', '--server-url', origin, '--replace-enrollment'])
       };
     } finally { await rm(root, { recursive: true, force: true }); }
   }, origin);
-  expect(result).toEqual({ accepted: 0, rejected: 1 });
+  expect(result).toEqual({ accepted: 0, rejected: 1, safeEnrollment: 0, refusedEnrollment: 1, consentedEnrollment: 0 });
 });

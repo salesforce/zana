@@ -84,7 +84,8 @@ export interface SyncPlanFile {
 }
 
 export type SyncJob =
-  | { state: 'running'; done: number; total: number }
+  /** `retrieve` while the org copies download, then `compare` while they are matched against the project. */
+  | { state: 'running'; phase: 'retrieve' | 'compare'; done: number; total: number }
   | { state: 'ready'; org: { alias: string; orgId: string }; files: SyncPlanFile[]; components: number; missing: string[] }
   | { state: 'failed'; error: string }
   | { state: 'applied'; written: number; kept: number; skipped: Array<{ path: string; reason: string }> };

@@ -31,6 +31,7 @@ import { join as joinPath, resolve as resolvePath } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   forkSession,
+  renameSession,
   type CanUseTool,
   type HookCallback,
   type PermissionResult,
@@ -68,6 +69,7 @@ import {
   type ThreadStartParams,
   type ThreadStopParams,
   type ThreadBackgroundTaskStopParams,
+  type ThreadNameSetParams,
   type TurnStartParams,
   type TurnSteerParams,
 } from "./commands.js";
@@ -399,6 +401,9 @@ function requireSkillPluginsRoot(): string {
 }
 
 const THREAD_STOP_CLOSE_TIMEOUT_MS = 4_000;
+// The runtime tags provider-facing names `[zcc] <title>` (`[bb] ` on older
+// builds). Host entries cannot import zcc-domain's helper, so strip one tag here.
+const PROVIDER_THREAD_NAME_TAG = /^\[(?:zcc|bb)\] /;
 export const CLAUDE_IDLE_QUERY_GRACE_MS = 30_000;
 const CLAUDE_CHROME_SETTING_RESTART_REASON = "Claude in Chrome setting changed";
 
@@ -2294,7 +2299,7 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
         capabilities: {
           sessionRestore: true,
           threadArchive: false,
-          threadRename: false,
+          threadRename: true,
           threadGoalClear: false,
           backgroundTaskStop: true,
           fork: "checkpoint",
@@ -2382,6 +2387,9 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       break;
     case "thread/backgroundTask/stop":
       await handleBackgroundTaskStop(request.id, request.params);
+      break;
+    case "thread/name/set":
+      await handleThreadNameSet(request.id, request.params);
       break;
     case "skills/configure":
       configuredSkillRoots = assembleSkillPlugins(request.params.roots);
@@ -2822,6 +2830,36 @@ async function handleBackgroundTaskStop(
     // The SDK answers with task_notification{status:"stopped"}, which the
     // translator turns into the item's completion delta.
     sendResult(id, { stopped: await threadSession.session.stopTask(taskId) });
+  } catch (error) {
+    sendError(id, -32000, error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function handleThreadNameSet(
+  id: string | number,
+  params: ThreadNameSetParams,
+): Promise<void> {
+  // Claude sessions address each other by name (SendMessage), so the session
+  // gets the plain thread title without the runtime's provider-facing tag.
+  const title = params.title.replace(PROVIDER_THREAD_NAME_TAG, "").trim();
+  if (!title) {
+    sendError(id, BRIDGE_JSON_RPC_ERRORS.INVALID_PARAMS, "thread/name/set requires a title");
+    return;
+  }
+  const attachment = threadAttachments.get(params.threadId);
+  const threadSession = attachment?.residentSession;
+  try {
+    const renamedLive = threadSession != null && !threadSession.closing
+      && await threadSession.session.rename(title);
+    if (!renamedLive) {
+      // No running query: the next resume picks the name up from the transcript.
+      await renameSession(
+        params.providerThreadId,
+        title,
+        attachment ? { dir: attachment.sessionOptions.cwd } : undefined,
+      );
+    }
+    sendResult(id, { ok: true });
   } catch (error) {
     sendError(id, -32000, error instanceof Error ? error.message : String(error));
   }

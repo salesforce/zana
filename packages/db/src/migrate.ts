@@ -483,34 +483,47 @@ export function migrate(database: SqliteDatabase): void {
     `CREATE INDEX IF NOT EXISTS deferred_thread_messages_edit_hold_idx
        ON deferred_thread_messages(edit_held_until) WHERE edit_held_until IS NOT NULL`
   ]);
-  if (!applied.has(33)) applyVersion(database, 33, [
-    ...(hasColumn(database, 'hosts', 'enrollment_capability')
-      ? []
-      : ["ALTER TABLE hosts ADD COLUMN enrollment_capability TEXT NOT NULL DEFAULT 'execution' CHECK (enrollment_capability IN ('execution', 'peer.forward'))"])
-  ]);
-  // Server-minted: a join code decides the capability its redeemed enrollment receives.
-  if (!applied.has(34)) applyVersion(database, 34, [
-    ...(hasColumn(database, 'host_join_codes', 'enrollment_capability')
-      ? []
-      : ["ALTER TABLE host_join_codes ADD COLUMN enrollment_capability TEXT NOT NULL DEFAULT 'execution' CHECK (enrollment_capability IN ('execution', 'peer.forward'))"])
-  ]);
-  // Host purpose. Display and listing metadata only: no authorization path reads it.
-  // Replayable like 29-33: a repaired lineage may already hold the column or table.
-  if (!applied.has(35)) applyVersion(database, 35, [
-    ...(hasColumn(database, 'hosts', 'purpose_kind')
-      ? []
-      : ["ALTER TABLE hosts ADD COLUMN purpose_kind TEXT NOT NULL DEFAULT 'execution' CHECK (purpose_kind IN ('execution', 'plugin-link'))"]),
-    "UPDATE hosts SET purpose_kind = 'plugin-link' WHERE enrollment_capability = 'peer.forward'",
-    `CREATE TABLE IF NOT EXISTS host_link_uses (
-      host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-      plugin_id TEXT NOT NULL CHECK (length(plugin_id) BETWEEN 1 AND 128),
-      scope TEXT NOT NULL CHECK (length(scope) BETWEEN 1 AND 256),
-      label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 80),
-      since INTEGER NOT NULL,
-      PRIMARY KEY (host_id, plugin_id, scope)
-    )`,
-    'CREATE INDEX IF NOT EXISTS host_link_uses_plugin ON host_link_uses(plugin_id)'
-  ]);
+  // Host name provenance: NULL = legacy unknown, 1 = user-owned, 0 = app/alias-owned.
+  if (!applied.has(33)) applyVersion(database, 33,
+    hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
+  // Some pre-release builds recorded v33 before applying its ALTER TABLE. Keep
+  // this repair separate so opening those databases restores the missing column.
+  if (!applied.has(34)) applyVersion(database, 34,
+    hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
+  // Other pre-release builds subsequently reused v34 and v35. Migration
+  // history alone cannot establish the column, so v36 repairs every lineage
+  // that predates this version.
+  if (!applied.has(36)) applyVersion(database, 36,
+    hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
+  // Branch builds used 33/34 for enrollment capabilities and 35 for host purpose.
+  // Keep 35 replayable, including its prerequisites; v37 repairs main/pre-release
+  // histories that already recorded those IDs without the peer schema. Never
+  // rewrite history or overwrite persisted capabilities, names, or link uses.
+  for (const version of [35, 37]) {
+    if (!applied.has(version)) applyVersion(database, version, [
+      ...(hasColumn(database, 'hosts', 'enrollment_capability')
+        ? []
+        : ["ALTER TABLE hosts ADD COLUMN enrollment_capability TEXT NOT NULL DEFAULT 'execution' CHECK (enrollment_capability IN ('execution', 'peer.forward'))"]),
+      // Server-minted: a join code decides its redeemed enrollment's capability.
+      ...(hasColumn(database, 'host_join_codes', 'enrollment_capability')
+        ? []
+        : ["ALTER TABLE host_join_codes ADD COLUMN enrollment_capability TEXT NOT NULL DEFAULT 'execution' CHECK (enrollment_capability IN ('execution', 'peer.forward'))"]),
+      ...(hasColumn(database, 'hosts', 'purpose_kind')
+        ? []
+        : ["ALTER TABLE hosts ADD COLUMN purpose_kind TEXT NOT NULL DEFAULT 'execution' CHECK (purpose_kind IN ('execution', 'plugin-link'))"]),
+      // Purpose is display metadata, never an authorization source.
+      "UPDATE hosts SET purpose_kind = 'plugin-link' WHERE enrollment_capability = 'peer.forward'",
+      `CREATE TABLE IF NOT EXISTS host_link_uses (
+        host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        plugin_id TEXT NOT NULL CHECK (length(plugin_id) BETWEEN 1 AND 128),
+        scope TEXT NOT NULL CHECK (length(scope) BETWEEN 1 AND 256),
+        label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 80),
+        since INTEGER NOT NULL,
+        PRIMARY KEY (host_id, plugin_id, scope)
+      )`,
+      'CREATE INDEX IF NOT EXISTS host_link_uses_plugin ON host_link_uses(plugin_id)'
+    ]);
+  }
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

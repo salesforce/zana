@@ -344,11 +344,12 @@ describe('registerStudioPreview', () => {
     h.files.set(`${ROOT}/tests/Bot.scenario.json`, JSON.stringify({ cases: [caseA] }));
     h.lab.start.mockResolvedValue({ id: 'run-1', turns: [] } as never);
     h.lab.send.mockResolvedValue({ turns: [{ role: 'user', text: 'q' }, { role: 'agent', text: 'a refund is coming' }] } as never);
-    const out = await h.handlers.get(STUDIO_RPC.suiteRun)!({ agentPath: 'Bot.agent', source: 'config', engine: 'rehearsal', caseIds: ['refund'], threadId: 'owner' }) as { ok: boolean; results: Record<string, { outcome: string }> };
+    const out = await h.handlers.get(STUDIO_RPC.suiteRun)!({ agentPath: 'Bot.agent', source: 'config', engine: 'rehearsal', caseIds: ['refund'], threadId: 'owner', startedByUser: true }) as { ok: boolean; results: Record<string, { outcome: string }> };
     expect(out.ok).toBe(true);
     expect(out.results.refund!.outcome).toBe('pass');
     // The owning thread rides along so a production org can be approved there.
-    expect(h.lab.start.mock.calls[0]![0]).toMatchObject({ engine: 'rehearsal', threadId: 'owner' });
+    // A click on Run is the approval for its own lab runs.
+    expect(h.lab.start.mock.calls[0]![0]).toMatchObject({ engine: 'rehearsal', threadId: 'owner', startedByUser: true });
   });
   it('turns thrown errors into failures', async () => {
     const h = harness();
@@ -407,9 +408,11 @@ describe('registerStudioPreview', () => {
       expect(await h.call(STUDIO_RPC.loopStart, { agentPath, caseIds: ['late', 'ghost', 7] })).toMatchObject({ ok: true, loop: { id: 'loop-1', caseIds: ['late'], budget: 3, status: 'running' } });
       expect(h.published.at(-1)).toEqual(['sf.studio.changed', { projectId: 'p1', path: agentPath, kind: 'loop', loopId: 'loop-1' }]);
       reply(h, 'Sorry, I cannot help');
-      const miss = await h.call(STUDIO_RPC.suiteRun, { agentPath, source: 'candidate 1', loopId: 'loop-1', engine: 'rehearsal', caseIds: ['refund'] });
+      const miss = await h.call(STUDIO_RPC.suiteRun, { agentPath, source: 'candidate 1', loopId: 'loop-1', engine: 'rehearsal', caseIds: ['refund'], startedByUser: true });
       expect(miss).toMatchObject({ ok: true, results: { late: { outcome: 'fail' } }, loop: { attempts: [{ n: 1, pass: 0, failing: ['late'] }] }, next: '2 attempts left. Still failing: late.' });
       expect(h.lab.start.mock.calls[0]![0]).toMatchObject({ engine: 'preview', source: 'candidate 1' });
+      // A fix loop's attempts are agent-driven: they never carry a click's approval.
+      expect(h.lab.start.mock.calls[0]![0]).not.toHaveProperty('startedByUser');
       reply(h, 'Here is your tracking link');
       const hit = await h.call(STUDIO_RPC.suiteRun, { agentPath, source: 'candidate 2', loopId: 'loop-1' });
       expect(hit).toMatchObject({ loop: { status: 'passed' }, next: 'All 1 cases pass. Propose this source with ui.command editor.proposeEdit, then stop.' });

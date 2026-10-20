@@ -15,7 +15,7 @@ it.each(['enroll', 'relaunch'] as const)('returns the enrolled product identity 
   expect(child.listenerCount('message')).toBe(1);
   child.emit('message', { type: 'enrolled', protocolVersion, hostId });
   await expect(result).resolves.toBe(hostId);
-  expect(child.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type, protocolVersion, ...input }));
+  expect(child.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type, protocolVersion, ...input, provenance: 'non-tunnel', replaceEnrollment: false }));
   expect(child.listenerCount('message')).toBe(0);
 });
 

@@ -30,7 +30,7 @@ function baseFs() {
     '/proj/force-app/main/default/lwc/hello/hello.js': 'import { api } from "lwc"; export default class Hello { @api name; }',
     '/proj/force-app/main/default/lwc/hello/hello.html': '<template></template>',
     '/proj/force-app/main/default/classes/Widget.cls': 'public class Widget {}',
-    '/proj/force-app/main/default/agents/MyBot.agent': 'config {\n  name: "MyBot"\n}\nstart_agent {\n}\n',
+    '/proj/force-app/main/default/agents/MyBot.agent': 'config {\n  name: "MyBot"\n  default_agent_user: "bot@example.com"\n}\nstart_agent {\n}\n',
     '/proj/evals/spec.json': JSON.stringify({ tests: [{ utterance: 'hello' }] }),
     '/proj/evals/spec.yaml': 'subjectType: AGENT\ntests:\n  - utterance: hello\n',
     '/proj/evals/spec.yaml': 'subjectName: MyBot\ntests:\n  - utterance: hello\n',
@@ -159,6 +159,24 @@ function mockDeps(options?: {
 const ctx = { threadId: 'thr-1', projectId: 'p1', signal: AbortSignal.abort() };
 
 describe('salesforce family tools', () => {
+  it('lists CLI orgs once across status, org and setting reads until Refresh asks again', async () => {
+    const base = mockDeps();
+    let lists = 0;
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
+    await createSalesforcePlugin(zcc, { ...base, execSf: async (args, opts) => {
+      if (args[0] === 'org' && args[1] === 'list' && args[2] === '--json') lists += 1;
+      return base.execSf(args, opts);
+    } });
+    harness.setSettings({ defaultOrg: '', projectRoot: '/proj' });
+    await Promise.all([harness.callRpc('status'), harness.callRpc('orgs'), harness.callRpc('orgs', { projectId: 'p1' })]);
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    await expect(harness.callRpc('orgs')).resolves.toMatchObject({ ok: true, selectedAlias: 'dev' });
+    expect(lists).toBe(1);
+    await expect(harness.callRpc('orgs', { refresh: true })).resolves.toMatchObject({ ok: true, orgs: [expect.objectContaining({ alias: 'dev' })] });
+    await harness.callRpc('status');
+    expect(lists).toBe(2);
+  });
+
   it('exposes doctor/status/org RPC and CLI help', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps());

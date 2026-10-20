@@ -82,7 +82,7 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     requests.dispose();
     if (pairingForwarder && ctx.origins.pairingPort === pairingForwarder.port) delete ctx.origins.pairingPort;
     const forwarderClosed = pairingForwarder?.close();
-    ctx.dispose();
+    const contextStopped = ctx.dispose();
     ctx.hostHub.close();
     for (const socket of hostWss.clients) socket.terminate();
     for (const socket of wss.clients) socket.terminate();
@@ -94,7 +94,7 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     });
     try { await Promise.all([unregister?.(), forwarderClosed]); }
     finally {
-      try { await stopped; await requests.whenIdle(); await ctx.whenIdle(); }
+      try { await stopped; await requests.whenIdle(); await contextStopped; await ctx.whenIdle(); }
       finally { ctx.db.close(); }
     }
   })();

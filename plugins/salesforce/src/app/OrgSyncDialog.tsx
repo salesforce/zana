@@ -28,6 +28,9 @@ const STYLES = `
 .sf-sync-more { padding:5px 10px; border-top:1px solid var(--border); color:var(--text-muted); font-size:11px; }
 .sf-sync-progress { height:4px; border-radius:2px; background:var(--bg-base); overflow:hidden; }
 .sf-sync-progress > span { display:block; height:100%; background:var(--accent); transition:width .3s; }
+/* Nothing has come back yet: a sweeping bar shows the retrieve is alive. */
+.sf-sync-progress.is-waiting > span { width:30% !important; animation:sf-sync-sweep 1.4s ease-in-out infinite; }
+@keyframes sf-sync-sweep { from { transform:translateX(-100%); } to { transform:translateX(340%); } }
 .sf-sync-choice { display:flex; gap:4px; }
 .sf-sync-choice .sf-btn { padding:3px 8px; font-size:11px; }
 .sf-sync-choice .sf-btn[aria-pressed=true] { background:var(--accent); color:var(--bg-panel); }
@@ -37,12 +40,14 @@ const STYLES = `
 .sf-sync-line.is-del { background:color-mix(in srgb,var(--danger) 14%,transparent); }
 .sf-sync-line.is-gap { color:var(--text-muted); font-style:italic; }
 .sf-sync-ln { flex:0 0 22px; text-align:center; color:var(--text-muted); user-select:none; }
-@media (prefers-reduced-motion:reduce) { .sf-sync-progress > span { transition:none; } }
+@media (prefers-reduced-motion:reduce) { .sf-sync-progress > span { transition:none; } .sf-sync-progress.is-waiting > span { animation:none; width:100% !important; opacity:.4; } }
 `;
 
 const plural = (count: number, word: string) => `${count.toLocaleString('en-US')} ${word}${count === 1 ? '' : 's'}`;
 /** `force-app/main/default/classes/A.cls` → `classes/A.cls`; the full path stays in the tooltip. */
 const short = (path: string) => path.replace(/^(?:.*\/)?main\/default\//, '');
+/** `75` → `1m 15s`. */
+export const elapsed = (seconds: number) => seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const names = (keys: string[]) => `${keys.slice(0, 20).map(key => key.slice(key.indexOf(':') + 1)).join(', ')}${keys.length > 20 ? ` and ${keys.length - 20} more` : ''}`;
 
@@ -81,7 +86,7 @@ export function OrgSyncDialog({ call, agent, rememberKey, onClose }: { call: Cal
   const [agentCheck, setAgentCheck] = useState<SyncCheck | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [remember, setRemember] = useState(true);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; phase: 'retrieve' | 'compare'; started: number } | null>(null);
   const [plan, setPlan] = useState<Ready | null>(null);
   const [take, setTake] = useState<Set<string>>(new Set());
   const [result, setResult] = useState<Applied | null>(null);
@@ -148,7 +153,7 @@ export function OrgSyncDialog({ call, agent, rememberKey, onClose }: { call: Cal
   async function fetchSelected(keys = [...selected]) {
     if (!check || !keys.length) return;
     if (rememberKey && !agent) writeMemory(rememberKey, remember ? memoryOf(check, selected) : null);
-    setBusy(true); setError(''); setProgress({ done: 0, total: keys.length });
+    setBusy(true); setError(''); setProgress({ done: 0, total: keys.length, phase: 'retrieve', started: Date.now() });
     try {
       const started = requireResult<{ jobId: string }>(await call(SYNC_RPC.start, { components: keys, orgId: check.org.orgId }));
       job.current = started.jobId;
@@ -162,7 +167,7 @@ export function OrgSyncDialog({ call, agent, rememberKey, onClose }: { call: Cal
           if (!state.files.some(file => file.action !== 'same')) cancelJob();
           return;
         }
-        if (state.state === 'running') setProgress({ done: state.done, total: state.total });
+        if (state.state === 'running') setProgress(previous => ({ done: state.done, total: state.total, phase: state.phase ?? 'retrieve', started: previous?.started ?? Date.now() }));
         await new Promise(resolve => setTimeout(resolve, POLL_MS));
       }
     } catch (e) {
@@ -214,11 +219,7 @@ export function OrgSyncDialog({ call, agent, rememberKey, onClose }: { call: Cal
         <p>{check ? `${check.org.alias} · ` : ''}Nothing is written until you review the changes.</p>
       </div>
       <div className="sf-login-body">
-        {step === 'fetching' && progress && <div role="status">
-          <p>Retrieving {plural(progress.total, 'component')} into a temporary folder…</p>
-          <div className="sf-sync-progress" aria-hidden="true"><span style={{ width: `${progress.total ? Math.round(progress.done / progress.total * 100) : 0}%` }} /></div>
-          <p className="sf-muted sf-small">{progress.done.toLocaleString('en-US')} of {progress.total.toLocaleString('en-US')} retrieved</p>
-        </div>}
+        {step === 'fetching' && progress && <FetchProgress progress={progress} />}
         {step === 'plan' && plan && <PlanView plan={plan} changes={changes} take={take} onTake={setTake} call={call} jobId={job.current} />}
         {step === 'done' && result && <ResultView result={result} />}
         {error && <p className="sf-login-error" role="alert">{error}</p>}
@@ -232,6 +233,26 @@ export function OrgSyncDialog({ call, agent, rememberKey, onClose }: { call: Cal
       </div>
     </>}
   </dialog>;
+}
+
+function FetchProgress({ progress }: { progress: { done: number; total: number; phase: 'retrieve' | 'compare'; started: number } }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const { done, total, phase } = progress;
+  const comparing = phase === 'compare';
+  const percent = total ? Math.round(done / total * 100) : 0;
+  const time = elapsed(Math.max(0, Math.floor((now - progress.started) / 1000)));
+  return <div role="status">
+    <p>{comparing ? `Comparing ${plural(total, 'component')} with your project…` : `Retrieving ${plural(total, 'component')} into a temporary folder…`}</p>
+    <div className={`sf-sync-progress${!comparing && done === 0 ? ' is-waiting' : ''}`} aria-hidden="true"><span style={{ width: `${comparing ? 100 : percent}%` }} /></div>
+    <p className="sf-muted sf-small">{comparing
+      ? `All retrieved · ${time}`
+      : `${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} retrieved${done ? ` (${percent}%)` : ''} · ${time}`}</p>
+    {!comparing && total > 1000 && <p className="sf-muted sf-small">Large fetches run in parallel batches; Salesforce can take a few minutes for each.</p>}
+  </div>;
 }
 
 function PlanView({ plan, changes, take, onTake, call, jobId }: { plan: Ready; changes: SyncPlanFile[]; take: Set<string>; onTake(next: Set<string>): void; call: Call; jobId: string }) {

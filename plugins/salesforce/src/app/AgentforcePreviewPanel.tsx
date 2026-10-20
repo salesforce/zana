@@ -102,7 +102,8 @@ export function AgentforcePreviewPanel(props: {
       const args = rpcProject(projectId, {
         threadId, orgAlias: org?.alias ?? pinnedOrg,
         path: targetPath || undefined, apiName: targetPath ? undefined : apiName || undefined,
-        live: mode === 'live', ...extra
+        // Every call here comes from a click on Start, Send or End: that click is the approval.
+        live: mode === 'live', startedByUser: true, ...extra
       });
       try {
         const result = await callOrgPreview(pluginId, action, args, simulated, () => generation === lifecycle.current.generation);

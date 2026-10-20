@@ -41,6 +41,7 @@ import {
   isEvalTerminal,
   parseAgentInput,
   parseSfJson,
+  lacksDefaultAgentUser,
   previewArgs,
   probeAgentCapabilities,
   publishArgs,
@@ -75,7 +76,7 @@ import {
   sha256Hex,
   writeAgentFile
 } from './agent-files.js';
-import { createReleaseService, ReadGrants } from './release.js';
+import { clickedSdk, createReleaseService, ReadGrants } from './release.js';
 import { RELEASE_RPC } from './release-contract.js';
 import { parseAgentScriptSource } from './agent-script-parse.js';
 import { readProjectAction } from './action-source.js';
@@ -224,6 +225,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     scope: () => contexts.current()?.projectId ?? contexts.current()?.settings.projectRoot ?? 'global'
   });
   zcc.onDispose(() => lab.dispose());
+  const previewLab: PreviewLab = { lab, sessions: new Set() };
   for (const method of ['start', 'send', 'next', 'evaluate', 'end', 'get'] as const) {
     registerRpc(`agentLab.${method}`, async (args) => ({ ok: true, data: await lab[method](args) }));
   }
@@ -377,8 +379,10 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     }
     return readStatus();
   });
-  registerRpc('orgs', async () => {
+  registerRpc('orgs', async (args) => {
     try {
+      // The roster is cached until sign-in; Refresh picks up orgs added or removed from a terminal.
+      if (args && typeof args === 'object' && (args as { refresh?: unknown }).refresh === true) connections.refreshOrgs();
       const orgs = await sdk.listOrgs();
       const selectedAlias = await sdk.resolveAlias();
       return { ok: true, orgs, selectedAlias, targetSource: contexts.current()?.targetSource ?? 'shared' };
@@ -391,7 +395,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const orgLogin = new OrgLoginService({
     execSf: deps.execSf,
     listOrgs: () => sdk.listOrgs(),
-    invalidate: () => connections.invalidate(),
+    invalidate: () => { connections.invalidate(); connections.refreshOrgs(); },
   });
   zcc.onDispose(() => orgLogin.dispose());
   const runOrgLogin = async (args: unknown) => {
@@ -618,8 +622,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   });
   registerRpc('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
   // A "Load versions" approval also lets Compile reach a production org from the window.
-  registerRpc('agentScript.compile', (args) => runUiCompile(args, readGrants.wrap(sdk, releaseScope()), deps, readSettings));
-  registerRpc('agentBuilder.open', (args) => runOpenInBuilder(args, readGrants.wrap(sdk, releaseScope()), deps, readSettings));
+  registerRpc('agentScript.compile', (args) => runUiCompile(args, clickedSdk(readGrants.wrap(sdk, releaseScope()), args), deps, readSettings));
+  registerRpc('agentBuilder.open', (args) => runOpenInBuilder(args, clickedSdk(readGrants.wrap(sdk, releaseScope()), args), deps, readSettings));
   const release = createReleaseService({
     sdk,
     evidence: evalEvidence,
@@ -652,13 +656,13 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerRpc(RELEASE_RPC.run, args => release.run(args));
   registerRpc(RELEASE_RPC.versionSource, args => release.versionSource(args));
   registerRpc('agentPreview.start', (args) =>
-    runUiPreview('preview.start', args, sdk, artifacts, deps, readSettings)
+    runUiPreview('preview.start', args, sdk, artifacts, deps, readSettings, previewLab)
   );
   registerRpc('agentPreview.send', (args) =>
-    runUiPreview('preview.send', args, sdk, artifacts, deps, readSettings)
+    runUiPreview('preview.send', args, sdk, artifacts, deps, readSettings, previewLab)
   );
   registerRpc('agentPreview.end', (args) =>
-    runUiPreview('preview.end', args, sdk, artifacts, deps, readSettings)
+    runUiPreview('preview.end', args, sdk, artifacts, deps, readSettings, previewLab)
   );
   registerRpc('org', async () => {
     try {
@@ -754,7 +758,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     if (['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent'].includes(name) && await selectedProvider() === 'toolkit') return { ok: false, code: 'provider_disabled', error: 'Built-in family tools are disabled. Use sf_tools describe/call for the toolkit contract, or select Both in plugin settings.' };
     const action = rpcString(input, 'action');
     if (isWorkbenchAction(action)) return invokeAction(action, (input as { input?: unknown }).input ?? input, ctx);
-    if (name === 'sf_agent') return runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence);
+    if (name === 'sf_agent') return runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence, previewLab);
     if (name === 'sf_soql') return runSoql(input, ctx, sdk, artifacts);
     if (name === 'sf_apex') return runApex(input, { threadId: ctx.threadId }, sdk, artifacts, deps, readSettings);
     if (name === 'sf_lwc') return runLwc(input, deps, readSettings, artifacts);
@@ -1316,7 +1320,8 @@ async function runAgent(
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   readSettings: () => Promise<PluginSettingsValues>,
-  evalEvidence: EvalEvidenceStore
+  evalEvidence: EvalEvidenceStore,
+  previewLab?: PreviewLab
 ): Promise<ToolResult> {
   const parsed = parseAgentInput(input);
   if (!parsed.ok) return fail('invalid_input', parsed.error);
@@ -1332,7 +1337,7 @@ async function runAgent(
       return await runAgentEval(parsed.plan, ctx, sdk, artifacts, deps, snapshot, evalEvidence);
     }
     if (parsed.plan.action.startsWith('preview.')) {
-      return await runAgentPreview(parsed.plan, ctx, sdk, artifacts, deps, snapshot);
+      return await runAgentPreview(parsed.plan, ctx, sdk, artifacts, deps, snapshot, false, previewLab);
     }
     if (parsed.plan.action === 'lifecycle.list') {
       return await runAgentList(ctx, sdk);
@@ -1622,7 +1627,8 @@ async function runUiPreview(
   sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
-  readSettings: () => Promise<PluginSettingsValues>
+  readSettings: () => Promise<PluginSettingsValues>,
+  previewLab?: PreviewLab
 ): Promise<ToolResult> {
   const threadId = rpcString(args, 'threadId');
   const parsed = parseAgentInput({
@@ -1646,7 +1652,7 @@ async function runUiPreview(
   };
   try {
     const startedByUser = Boolean(args && typeof args === 'object' && (args as { startedByUser?: unknown }).startedByUser === true);
-    return await runAgentPreview(parsed.plan, ctx, sdk, artifacts, deps, snapshot, startedByUser);
+    return await runAgentPreview(parsed.plan, ctx, sdk, artifacts, deps, snapshot, startedByUser, previewLab);
   } catch (error) {
     return connectionFailure(error);
   }
@@ -1660,11 +1666,15 @@ async function runAgentPreview(
   deps: SalesforceDeps,
   snapshot: PluginSettingsValues,
   /** The user clicked Start or Send in the Studio: that click is the approval, so nothing is asked in a thread. */
-  startedByUser = false
+  startedByUser = false,
+  previewLab?: PreviewLab
 ): Promise<ToolResult> {
   const verb = plan.action === 'preview.start' ? 'start' : plan.action === 'preview.send' ? 'send' : 'end';
   const resolved = await resolvePreviewIdentity(plan, snapshot, deps, verb === 'start');
   if ('ok' in resolved) return resolved;
+  // The CLI cannot start a bundle without default_agent_user, so that preview runs on the Preview API the lab uses.
+  const labSource = verb === 'start' && previewLab && resolved.sourcePath ? deps.readFile(resolved.sourcePath) : null;
+  const viaLab = verb === 'start' ? labSource !== null && lacksDefaultAgentUser(labSource) : Boolean(plan.sessionId && previewLab?.sessions.has(plan.sessionId));
   const label = resolved.identity?.apiName ?? plan.sessionId ?? '';
   const live = plan.live || resolved.identity?.flag === 'api-name';
   // Ending only closes the session and runs no actions, so it keeps the org read gate but needs no Live approval.
@@ -1682,16 +1692,17 @@ async function runAgentPreview(
         ? 'Live runs real actions, so it needs approval in a thread. Open this agent beside a thread to run Live, or use Simulate.'
         : `${org.alias} is not a known sandbox. Preview it beside a thread to approve, or pick a sandbox.`);
   }
+  if (viaLab && previewLab) return runLabPreview(verb, plan, ctx, live, labSource, previewLab, artifacts);
   const result = await sdk.execSf(
     previewArgs(verb, plan, org.alias, resolved.identity),
     agentCliOpts(resolved.projectRoot ?? dxProjectRoot(snapshot, deps))
   );
   const parsedCli = parseSfJson(result.stdout);
   if (result.code !== 0 || parsedCli.status !== 0) {
-    return fail(
-      'preview_failed',
-      parsedCli.message || result.stderr.trim() || result.stdout.trim() || `sf agent preview ${verb} failed`
-    );
+    const message = parsedCli.message || result.stderr.trim() || result.stdout.trim() || `sf agent preview ${verb} failed`;
+    return fail('preview_failed', /reading 'replace'/.test(message)
+      ? `sf agent preview could not start ${label}: its config has no default_agent_user. Add one, or preview the authoring bundle from this project.`
+      : message);
   }
   const digest = compactPreviewDigest(parsedCli.result ?? parsedCli, plan.utterance);
   const sessionId = extractSessionId(parsedCli.result) ?? plan.sessionId ?? digest.sessionId;
@@ -1707,6 +1718,42 @@ async function runAgentPreview(
     data: { ...digest, sessionId },
     artifactId
   };
+}
+
+/** Lab-backed preview sessions, so send and end follow a start that ran on the Preview API. */
+type PreviewLab = { lab: Pick<AgentforceLab, 'start' | 'send' | 'end'>; sessions: Set<string> };
+
+async function runLabPreview(
+  verb: 'start' | 'send' | 'end',
+  plan: AgentPlan,
+  ctx: PluginAgentToolContext,
+  live: boolean,
+  source: string | null,
+  previewLab: PreviewLab,
+  artifacts: ArtifactStore
+): Promise<ToolResult> {
+  try {
+    // runAgentPreview already mediated this call, so the lab must not ask again.
+    const run = verb === 'start'
+      ? await previewLab.lab.start({ engine: 'preview', source, path: plan.path, live, threadId: ctx.threadId, startedByUser: true })
+      : verb === 'send'
+        ? await previewLab.lab.send({ id: plan.sessionId, text: plan.utterance ?? '' })
+        : previewLab.lab.end({ id: plan.sessionId });
+    if (verb === 'end') previewLab.sessions.delete(run.id);
+    else previewLab.sessions.add(run.id);
+    const last = verb === 'end' ? undefined : run.turns.at(-1);
+    const reply = last?.role === 'agent' ? last : undefined;
+    const artifactId = await artifacts.put('agent-preview', run);
+    return {
+      ok: true,
+      summary: verb === 'start' ? `Preview started (${run.id})` : verb === 'end' ? 'Preview ended' : `Preview turn${reply ? `: ${reply.text.slice(0, 80)}` : ''}`,
+      data: { sessionId: run.id, ...(plan.utterance && verb === 'send' ? { utterance: plan.utterance } : {}), ...(reply ? { response: reply.text, ...(reply.planId ? { planId: reply.planId } : {}) } : {}) },
+      artifactId
+    };
+  } catch (error) {
+    if (verb !== 'start' && plan.sessionId) previewLab.sessions.delete(plan.sessionId);
+    return fail('preview_failed', error instanceof Error ? error.message : String(error));
+  }
 }
 
 async function runAgentEval(
@@ -2019,7 +2066,7 @@ async function resolvePreviewIdentity(
   snapshot: PluginSettingsValues,
   deps: SalesforceDeps,
   requireIdentity: boolean
-): Promise<{ identity?: AgentPreviewIdentity; projectRoot?: string } | ToolResult> {
+): Promise<{ identity?: AgentPreviewIdentity; projectRoot?: string; sourcePath?: string } | ToolResult> {
   if (plan.published) {
     const apiName = plan.apiName;
     if (!apiName) return fail('invalid_input', 'published preview requires apiName.');
@@ -2031,7 +2078,8 @@ async function resolvePreviewIdentity(
     if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.path}`);
     return {
       identity: { flag: 'authoring-bundle', apiName: loaded.bundle.apiName },
-      projectRoot: loaded.projectRoot
+      projectRoot: loaded.projectRoot,
+      sourcePath: loaded.bundle.path
     };
   }
   if (plan.apiName) {
@@ -2039,7 +2087,7 @@ async function resolvePreviewIdentity(
     if (projectRoot) {
       const bundle = findAgentBundle(scanAgentBundles(projectRoot, deps), plan.apiName);
       if (bundle) {
-        return { identity: { flag: 'authoring-bundle', apiName: bundle.apiName }, projectRoot };
+        return { identity: { flag: 'authoring-bundle', apiName: bundle.apiName }, projectRoot, sourcePath: bundle.path };
       }
     }
     return { identity: { flag: 'api-name', apiName: plan.apiName }, projectRoot };

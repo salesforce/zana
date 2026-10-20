@@ -43,3 +43,28 @@ export async function openInStudioWindow(args: {
   void args.navigate.openInWindow?.(args.projectId, { tabId: STUDIO_TAB_ID });
   return true;
 }
+
+/** How long a freshly opened Studio window gets to take its lease, and how often to look. */
+export const STUDIO_WINDOW_START_MS = 15000;
+export const STUDIO_WINDOW_POLL_MS = 500;
+
+/**
+ * Opens an agent in this project's Studio window, opening that window first when none runs.
+ * A new window takes its lease once it mounts, so the open is retried until one acknowledges.
+ * Resolves false when the host cannot open the window or no window took the agent in time.
+ */
+export async function openAgentInStudioWindow(args: Parameters<typeof openInStudioWindow>[0] & {
+  startMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<boolean> {
+  if (await openInStudioWindow(args)) return true;
+  if (!args.navigate.openInWindow || !(await args.navigate.openInWindow(args.projectId, { tabId: STUDIO_TAB_ID }))) return false;
+  const sleep = args.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const pollMs = args.pollMs ?? STUDIO_WINDOW_POLL_MS;
+  for (let waited = 0; waited < (args.startMs ?? STUDIO_WINDOW_START_MS); waited += pollMs) {
+    await sleep(pollMs);
+    if (await openInStudioWindow(args)) return true;
+  }
+  return false;
+}

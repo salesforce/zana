@@ -1,7 +1,7 @@
 import { registerSalesforcePanels } from './panels.js';
 import { registerStudioDirectives } from './src/app/directives/index.js';
-import type { ComponentType } from 'react';
-import { definePluginApp, useComposerView, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, useComposerView } from '@zana-ai/zcc-plugin-sdk/app';
+import { AgentFileOpener } from './src/app/AgentFileOpener.js';
 import { AgentforcePlaygroundPanel } from './src/app/AgentScriptPanel.js';
 import { AgentforcePreviewPanel } from './src/app/AgentforcePreviewPanel.js';
 import { CreateSalesforceProjectDialog } from './src/app/CreateSalesforceProjectDialog.js';
@@ -85,62 +85,6 @@ function SalesforceComposerBanner(props: { pluginId?: string }) {
     );
   }
   return null;
-}
-
-function AgentFileOpener(props: {
-  pluginId: string;
-  path: string;
-  source?: { threadId: string | null; projectId: string | null };
-  experimental_Original: ComponentType;
-}) {
-  const React = hostReact();
-  const navigate = useZccNavigate();
-  const context = useZccContext();
-  if (!React) return null;
-  const Original = props.experimental_Original;
-  const canOpen = Boolean(context.threadId);
-  return React.createElement(
-    'div',
-    { className: 'salesforce-agent-opener', style: { display: 'grid', gap: 8, padding: 8 } },
-    React.createElement('p', { style: { margin: 0, color: 'var(--text-muted)' } }, props.path),
-    React.createElement(
-      'button',
-      {
-        type: 'button',
-        disabled: !canOpen,
-        onClick: () => {
-          openAgentforcePlayground({
-            openThreadPanel: (options) => navigate.openThreadPanel(options),
-            projectId: context.projectId ?? props.source?.projectId,
-            path: props.path
-          });
-        }
-      },
-      'Open in Playground'
-    ),
-    React.createElement(
-      'button',
-      {
-        type: 'button',
-        disabled: !canOpen,
-        onClick: () => {
-          openAgentforcePreview({
-            openThreadPanel: (options) => navigate.openThreadPanel(options),
-            path: props.path
-          });
-        }
-      },
-      'Open in Preview'
-    ),
-    canOpen
-      ? null
-      : React.createElement(
-          'p',
-          { style: { margin: 0, color: 'var(--text-muted)' } },
-          'Open a thread to use the Agentforce Playground or Preview side panel.'
-        ),
-    React.createElement(Original)
-  );
 }
 
 export default definePluginApp((app) => {

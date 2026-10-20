@@ -8,14 +8,14 @@ import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserT
 import { PanelAgentTab } from '../../components/thread/secondary-panel/PanelAgentTab.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { onPluginPanelAgentRequest } from '../../plugins/plugin-panel-agent.js';
-import { onPluginPanelToolRequest, PluginPagePanelProvider } from '../../plugins/plugin-page-panel.js';
+import { onPluginPanelToolRequest, PLUGIN_PAGE_PANEL_OWNER_PREFIX, PluginPagePanelProvider } from '../../plugins/plugin-page-panel.js';
 import { useSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import {
   activeClosableTab
 } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 
 export function pluginPanelBrowserOwnerId(pluginId: string, panelPath: string): string {
-  return `plugin-panel:${pluginId}:${panelPath}`;
+  return `${PLUGIN_PAGE_PANEL_OWNER_PREFIX}${pluginId}:${panelPath}`;
 }
 
 export function PluginPanelHostLayout({
@@ -23,6 +23,7 @@ export function PluginPanelHostLayout({
   panelPath,
   subPath,
   scopeId,
+  separateWindow = false,
   launchers = true,
   children
 }: {
@@ -32,6 +33,8 @@ export function PluginPanelHostLayout({
   subPath?: string;
   /** Keeps a separate panel per scope (a project tab's project) for the same page. */
   scopeId?: string;
+  /** Shown in its own window: keeps a panel apart from the main window's panel for the same page. */
+  separateWindow?: boolean;
   /**
    * The floating show-panel / ask-agent buttons. Without them the panel opens
    * only when the page asks (`navigate.openPanelAgent`), so a page with its own
@@ -42,7 +45,7 @@ export function PluginPanelHostLayout({
 }) {
   if (getDesktopBrowserApi() === null) return children;
   return (
-    <PluginPanelBrowserHost pluginId={pluginId} panelPath={panelPath} subPath={subPath} scopeId={scopeId} launchers={launchers}>
+    <PluginPanelBrowserHost pluginId={pluginId} panelPath={panelPath} subPath={subPath} scopeId={scopeId} separateWindow={separateWindow} launchers={launchers}>
       {children}
     </PluginPanelBrowserHost>
   );
@@ -53,6 +56,7 @@ function PluginPanelBrowserHost({
   panelPath,
   subPath,
   scopeId,
+  separateWindow,
   launchers,
   children
 }: {
@@ -60,10 +64,12 @@ function PluginPanelBrowserHost({
   panelPath: string;
   subPath?: string;
   scopeId?: string;
+  separateWindow: boolean;
   launchers: boolean;
   children: ReactNode;
 }) {
-  const ownerId = pluginPanelBrowserOwnerId(pluginId, scopeId ? `${panelPath}@${scopeId}` : panelPath);
+  // Windows share no live panel state, so each keeps its own saved one (the last writer would win otherwise).
+  const ownerId = pluginPanelBrowserOwnerId(pluginId, `${scopeId ? `${panelPath}@${scopeId}` : panelPath}${separateWindow ? '#window' : ''}`);
   const viewRef = useRef<HTMLDivElement>(null);
   const panel = useSecondaryPanel(ownerId, {
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
@@ -135,6 +141,7 @@ function PluginPanelBrowserHost({
         params={closable.params}
         layout={closable.layout}
         surface="plugin-page"
+        page={page}
         tabId={closable.id}
       />
     );

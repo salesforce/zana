@@ -136,7 +136,7 @@ export function useThreadComposerOptions(input: {
     if (hasAcpMode) setAcpModeState(savedAcpMode);
   }, [hasProvider, input.lockedProviderId, savedProvider, hasModel, savedModel, hasReasoning, savedReasoning, hasAcpMode, savedAcpMode]);
 
-  const refreshModels = useCallback(() => hostCatalog.reloadProvider(providerId), [hostCatalog, providerId]);
+  const refreshModels = useCallback(() => hostCatalog.refresh(providerId), [hostCatalog, providerId]);
 
   useEffect(() => {
     if (input.lockedProviderId) setProviderIdState(input.lockedProviderId);

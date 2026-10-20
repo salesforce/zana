@@ -406,17 +406,22 @@ export class WorkbenchService {
     );
     if (!row?.jobId || !/^[a-zA-Z0-9]{15,18}$/.test(row.jobId))
       throw new Error("No Salesforce job is available for this operation.");
+    // `sf project deploy report` must run inside the SFDX project, like start.
+    const settings = await this.deps.contexts.settings();
     const data = this.parseCli(
-      await this.deps.sdk.execSf([
-        "project",
-        "deploy",
-        "report",
-        "--job-id",
-        row.jobId,
-        "--target-org",
-        row.org.alias,
-        "--json",
-      ]),
+      await this.deps.sdk.execSf(
+        [
+          "project",
+          "deploy",
+          "report",
+          "--job-id",
+          row.jobId,
+          "--target-org",
+          row.org.alias,
+          "--json",
+        ],
+        { cwd: settings.projectRoot, timeoutMs: 120_000 },
+      ),
       true,
     );
     const result = inputRecord(data);

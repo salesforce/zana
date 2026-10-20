@@ -105,6 +105,9 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
       const body = await response.json();
       return body.providers.map((provider: { id: string }) => provider.id);
     }), { timeout: 30_000, intervals: [500] }).toContain('acp-opencode');
+    await expect.poll(() => window.evaluate(async () =>
+      (await window.cc.pluginApps.list()).find((plugin) => plugin.id === 'harness-mastracode')?.status
+    ), { timeout: 30_000, intervals: [500] }).toBe('running');
 
     // Create a REAL ACP (Modern) conversation thread as the owner. `plan` is a
     // generic ACP session mode; `fake/default` is the fake agent's own model.

@@ -1,4 +1,5 @@
 import {
+  recoverModelCatalogsAfterWake,
   recoverStaleModelCatalogs,
   recoverUnavailableModelCatalogs,
   refreshThreadProviderModelsFromPush
@@ -479,6 +480,11 @@ function AppShell() {
       useData.getState().refreshAllGitStatus();
     };
     window.addEventListener('focus', onFocus);
+    // A window that stayed focused through sleep gets no focus event, so wake
+    // and becoming visible again are recovery triggers too.
+    const onVisibility = () => { if (document.visibilityState === 'visible') recoverStaleModelCatalogs(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    const offWake = product.terminals.onWake(recoverModelCatalogsAfterWake);
     // Bridge native menu items (File / View / Help submenus) back to the
     // same store actions the in-renderer keyboard shortcuts use.
     const offMenu = product.app.onMenuEvent((event) => {
@@ -615,6 +621,8 @@ function AppShell() {
       offDeepLinks();
       offInboxSync();
       window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      offWake();
     };
   }, [init]);
 

@@ -89,29 +89,27 @@ describe('connection manager', () => {
     expect(exec.mock.calls.every(([args]) => args[0] === 'org' && args[1] === 'list')).toBe(true);
   });
 
-  it('shares one CLI default lookup for 30 seconds, and drops it on invalidate or failure', async () => {
+  it('keeps one roster until refreshOrgs, shares concurrent reads, and drops a failed read', async () => {
     let clock = 0;
     let fail = false;
     const exec = vi.fn((_args: string[]) => fail
       ? { code: 1, stdout: '', stderr: 'boom' }
       : { code: 0, stdout: '{"status":0,"result":{"sandboxes":[{"alias":"dev","username":"dev@example.com","isDefaultUsername":true}]}}', stderr: '' });
     const manager = new ConnectionManager({ ...deps({ exec }), now: () => clock }, async () => ({ defaultOrg: '', apiVersion: '62.0' }));
-    await expect(Promise.all([manager.resolveAlias(), manager.resolveAlias()])).resolves.toEqual(['dev', 'dev']);
-    clock = 29_999;
+    await expect(Promise.all([manager.resolveAlias(), manager.listOrgs(), manager.resolveAlias()])).resolves.toMatchObject(['dev', [{ alias: 'dev' }], 'dev']);
+    clock = 24 * 60 * 60 * 1000;
+    manager.invalidate();
+    manager.invalidate('dev');
     await expect(manager.resolveAlias()).resolves.toBe('dev');
     expect(exec).toHaveBeenCalledTimes(1);
-    clock = 30_000;
-    await manager.resolveAlias();
-    expect(exec).toHaveBeenCalledTimes(2);
-    manager.invalidate('other');
-    await manager.resolveAlias();
-    expect(exec).toHaveBeenCalledTimes(3);
-    manager.invalidate();
+    manager.refreshOrgs();
     fail = true;
+    await expect(manager.listOrgs()).rejects.toMatchObject({ code: 'orgs_failed' });
     await expect(manager.resolveAlias()).rejects.toMatchObject({ code: 'orgs_failed' });
     fail = false;
     await expect(manager.resolveAlias()).resolves.toBe('dev');
-    expect(exec).toHaveBeenCalledTimes(5);
+    await manager.listOrgs();
+    expect(exec).toHaveBeenCalledTimes(4);
   });
 
   it('connects a requested alias without using the default', async () => {

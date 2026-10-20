@@ -254,6 +254,7 @@ describe('OrgPicker and Salesforce project tab', () => {
 
   it('shows refresh and selection errors without changing the shared default', async () => {
     const el = await mount(createElement(OrgPicker, { pluginId: 'salesforce', projectId: 'proj-1' }));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs', { projectId: 'proj-1' });
     rpc.mockImplementation(async (_id, method) => {
       if (method === 'context.select') return { ok: false, error: 'Project unavailable' };
       throw Error('CLI unavailable');
@@ -262,6 +263,7 @@ describe('OrgPicker and Salesforce project tab', () => {
     await act(async () => { [...el.querySelectorAll('button')].find(button => button.textContent === 'Use for this project')!.click(); });
     expect(el.querySelector('[role="alert"]')?.textContent).toBe('Project unavailable');
     await act(async () => { [...el.querySelectorAll('button')].find(button => button.textContent === 'Refresh')!.click(); });
+    expect(rpc).toHaveBeenLastCalledWith('salesforce', 'orgs', { refresh: true, projectId: 'proj-1' });
     expect(el.querySelector('[role="alert"]')?.textContent).toBe('CLI unavailable');
     expect(el.textContent).toContain('No connected orgs yet');
     expect(setSettings).not.toHaveBeenCalled();

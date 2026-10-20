@@ -4,7 +4,7 @@ set -eu
 
 usage() {
   cat >&2 <<'EOF'
-Usage: install.sh --join-code <code> --host-id <host-id> --server <url> [--host-daemon-port <port>]
+Usage: install.sh --join-code <code> --host-id <host-id> --server <url> [--host-daemon-port <port>] [--replace-enrollment]
 
 Installs an enrolled ZCC host daemon for one server. Data lives in
 ~/.zcc-machines/<server-host> and never touches ~/.zcc.
@@ -82,6 +82,7 @@ join_code=
 host_id=
 server_url=
 requested_host_daemon_port=
+replace_enrollment=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -89,6 +90,7 @@ while [ $# -gt 0 ]; do
     --host-id) host_id=${2:-}; shift 2 ;;
     --server) server_url=${2:-}; shift 2 ;;
     --host-daemon-port) requested_host_daemon_port=${2:-}; shift 2 ;;
+    --replace-enrollment) replace_enrollment=--replace-enrollment; shift ;;
     -h|--help) usage ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
@@ -112,7 +114,7 @@ chmod 700 "$data_dir"
 # Never erase another identity to make enrollment succeed.
 if [ -f "$data_dir/host.id" ]; then
   existing_id=$(tr -d '[:space:]' < "$data_dir/host.id")
-  if [ "$existing_id" != "$host_id" ]; then
+  if [ "$existing_id" != "$host_id" ] && [ -z "$replace_enrollment" ]; then
     echo "This installation belongs to another machine. Generate a repair code for it, or use another isolated data directory." >&2
     exit 1
   fi
@@ -182,6 +184,11 @@ if [ -z "$join_bin" ] && command -v zcc-host >/dev/null; then
 fi
 [ -n "$join_bin" ] || { echo "join CLI missing from artifact" >&2; exit 1; }
 
+# Safety refusal must leave the existing service and daemon untouched.
+step=enrollment-safety
+ZCC_DATA_DIR="$data_dir" "$NODE_BIN" "$join_bin" join --check-enrollment \
+  --host-id "$host_id" --server-url "$server_url" ${replace_enrollment:+"$replace_enrollment"}
+
 run_join() {
   # Attempt boundary: readers of host-daemon.log take lines after the last marker.
   printf 'zcc-join: attempt %s host=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$host_id" >>"$data_dir/host-daemon.log"
@@ -192,6 +199,7 @@ run_join() {
       --server-url "$server_url" \
       --host-daemon-port "$port" \
       --auto-update \
+      ${replace_enrollment:+"$replace_enrollment"} \
       >>"$data_dir/host-daemon.log" 2>&1 &
   join_pid=$!
   printf '%s\n' "$join_pid" > "$data_dir/host-daemon.pid"

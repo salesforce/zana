@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatSshPairingCommand,
+  sshPairingRemoteScript,
   isPairingHostUuid,
   isPairingJoinCode,
   localListenPort,
@@ -10,9 +11,22 @@ import {
 } from './machine-pairing.js';
 
 const GOLDEN =
-  "ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:8780 limited-pony 'curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 http://127.0.0.1:18782/install.sh | sh -s -- --join-code zcde_abc --host-id 028c8627-a6d8-4c62-964e-8f6b35cb2335 --server http://127.0.0.1:18782 && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity'";
+  "ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:8780 limited-pony 'curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 http://127.0.0.1:18782/install.sh | ZCC_HOST_ENROLLMENT_PROVENANCE=tunnel sh -s -- --join-code zcde_abc --host-id 028c8627-a6d8-4c62-964e-8f6b35cb2335 --server http://127.0.0.1:18782 && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity'";
 
 describe('ssh pairing argv', () => {
+  it('covers invalid ports and command inputs', () => {
+    for (const host of [undefined, '', 'bad/host']) expect(sanitizeSshHost(host)).toBeNull();
+    expect(localListenPort('http://example.test')).toBe(80); expect(localListenPort('https://example.test')).toBe(443);
+    for (const url of [undefined, 'bad', 'ftp://example.test', 'http://example.test:0']) expect(localListenPort(url)).toBeNull();
+    expect(sshPairingRemoteScript({ joinCode: 'zcde_abc', hostId: 'host', remoteTunnelPort: 0 })).toBeNull();
+    expect(sshPairingArgv({ sshHost: 'box', localListenPort: 0, joinCode: 'zcde_abc', hostId: 'host' })).toBeNull();
+    expect(sshPairingCommand({ sshHost: 'box', localServerUrl: 'bad', joinCode: 'zcde_abc', hostId: 'host' })).toBeNull();
+    expect(sshPairingCommand({ sshHost: 'box', localServerUrl: 'http://localhost:1', joinCode: 'bad', hostId: 'host' })).toBeNull();
+    expect(formatSshPairingCommand({ command: 'ssh', args: [] })).toBe("ssh  ''");
+  });
+  it('records tunnel provenance for the SSH forward command', () => {
+    expect(sshPairingCommand({ sshHost: 'box', localServerUrl: 'http://127.0.0.1:8780', joinCode: 'zcde_abc', hostId: 'host-1' })).toContain('ZCC_HOST_ENROLLMENT_PROVENANCE=tunnel sh');
+  });
   it('matches the copy-paste one-liner', () => {
     const argv = sshPairingArgv({
       sshHost: 'limited-pony',
@@ -28,7 +42,7 @@ describe('ssh pairing argv', () => {
         '-R',
         '18782:127.0.0.1:8780',
         'limited-pony',
-        'curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 http://127.0.0.1:18782/install.sh | sh -s -- --join-code zcde_abc --host-id 028c8627-a6d8-4c62-964e-8f6b35cb2335 --server http://127.0.0.1:18782 && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity'
+        'curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 http://127.0.0.1:18782/install.sh | ZCC_HOST_ENROLLMENT_PROVENANCE=tunnel sh -s -- --join-code zcde_abc --host-id 028c8627-a6d8-4c62-964e-8f6b35cb2335 --server http://127.0.0.1:18782 && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity'
       ]
     });
     expect(formatSshPairingCommand(argv!)).toBe(GOLDEN);

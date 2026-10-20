@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { OrgSyncService, agentReferences, agentVersion, bareVersions, componentName, localLocator, manifest, newestVersions, packageDirectories, renameBundle } from '../lib/org-sync.js';
+import { OrgSyncService, agentReferences, agentVersion, bareVersions, componentName, localLocator, manifest, newestVersions, packageDirectories, renameBundle, retrieveBatches } from '../lib/org-sync.js';
 import { registerOrgSync } from '../lib/org-sync-rpc.js';
 import type { ExecSfOptions, PublicOrgView } from '../lib/types.js';
 import type { SyncJob } from '../lib/org-sync-contract.js';
@@ -107,6 +107,15 @@ describe('fetch latest helpers', () => {
     expect([...newestVersions(rows, new Map([['Support', 1], ['Old_3', 1]]))]).toEqual(['Support_9']);
   });
 
+  it('keeps versions of one agent in different retrieve batches', () => {
+    expect(retrieveBatches(['AiAuthoringBundle:A_1', 'ApexClass:X', 'AiAuthoringBundle:A_2', 'AiAuthoringBundle:B_1', 'AiAuthoringBundle:A', 'ApexClass:Y'], 3)).toEqual([
+      ['AiAuthoringBundle:A_1', 'ApexClass:X', 'AiAuthoringBundle:B_1'],
+      ['AiAuthoringBundle:A_2', 'ApexClass:Y'],
+      ['AiAuthoringBundle:A'],
+    ]);
+    expect(retrieveBatches(Array.from({ length: 5 }, (_, index) => `ApexClass:C${index}`), 2).map(batch => batch.length)).toEqual([2, 2, 1]);
+  });
+
   it('locates where the project keeps a component, in any package directory or folder layout', async () => {
     const root = realpathSync(temp());
     put(root, 'sfdx-project.json', JSON.stringify({ packageDirectories: [{ path: 'force-app', default: true }, { path: 'packages/billing' }, { path: 'gone' }] }));
@@ -185,7 +194,8 @@ describe('fetch latest', () => {
     expect(existsSync(cwd)).toBe(false);
     expect(readdirSync(join(root, D, 'classes')).some(name => name.includes('zcc-sync'))).toBe(false);
     expect(stored.get(`sf:project:p:sync:${org.orgId}:ApexClass`)).toMatchObject({ Edited: { at: '2026-01-01T00:00:00.000Z' } });
-    await expect(service.apply(root, jobId, {})).rejects.toThrow('no plan');
+    // A second click, or a retry after a lost answer, gets the first apply's outcome and writes nothing again.
+    expect(await service.apply(root, jobId, {})).toEqual(applied);
 
     const again = await service.check(root, 'apex');
     expect(again.components).toEqual([]);
@@ -222,6 +232,42 @@ describe('fetch latest', () => {
     expect(await service.apply(root, jobId, {})).toMatchObject({ written: 2 });
     expect(read(root, `${D}/aiAuthoringBundles/Support_4/Support_4.agent`)).toBe(large);
     expect(read(root, `${D}/aiAuthoringBundles/Support/Support.agent`)).toBe('draft');
+  });
+
+  it('fetches several versions of one agent although the org returns each under the base name', async () => {
+    const { service, root, execSf, dates } = fixture();
+    dates['AiAuthoringBundle:Support_4'] = '2026-03-01T00:00:00.000Z';
+    dates['AiAuthoringBundle:Support_5'] = '2026-04-01T00:00:00.000Z';
+    execSf.mockImplementation(async (args, options) => {
+      if (args[0] !== 'project') return ok([]);
+      const xml = readFileSync(join(options!.cwd!, 'package.xml'), 'utf8');
+      const versions = [...xml.matchAll(/<members>(Support_\d+)<\/members>/g)].map(match => match[1]!);
+      // Like the org: every requested version lands in Support/, the last one winning.
+      const files = versions.map(version => {
+        put(options!.cwd!, `${D}/aiAuthoringBundles/Support/Support.agent`, version);
+        return { fullName: 'Support', type: 'AiAuthoringBundle', state: 'Created', filePath: join(options!.cwd!, D, 'aiAuthoringBundles/Support/Support.agent') };
+      });
+      return ok({ success: true, done: true, files: files.slice(-1) });
+    });
+    const { jobId } = await service.start(root, { components: ['AiAuthoringBundle:Support_4', 'AiAuthoringBundle:Support_5'] });
+    const plan = await settle(service, root, jobId);
+    expect(plan).toMatchObject({ state: 'ready', missing: [], components: 2 });
+    expect(execSf).toHaveBeenCalledTimes(2);
+    expect(await service.apply(root, jobId, {})).toMatchObject({ state: 'applied', written: 2 });
+    expect(read(root, `${D}/aiAuthoringBundles/Support_4/Support_4.agent`)).toBe('Support_4');
+    expect(read(root, `${D}/aiAuthoringBundles/Support_5/Support_5.agent`)).toBe('Support_5');
+  });
+
+  it('reports an apply that fails after writing, and returns that outcome to a repeat', async () => {
+    const { service, root, kv } = fixture();
+    const { jobId } = await service.start(root, { components: ['ApexClass:Fresh'] });
+    await settle(service, root, jobId);
+    kv.set = async () => { throw Error('disk full'); };
+    const failed = { state: 'failed', error: 'Wrote 2 files, then failed: disk full' };
+    expect(await service.apply(root, jobId, {})).toEqual(failed);
+    expect(read(root, `${D}/classes/Fresh.cls`)).toBe('class Fresh {}');
+    expect(await service.apply(root, jobId, {})).toEqual(failed);
+    expect(await service.status(root, jobId)).toEqual(failed);
   });
 
   it('separates org changes from local edits after a fetch, and reports deletions', async () => {
@@ -350,6 +396,56 @@ describe('fetch latest', () => {
     expect(await settle(service, root, garbled.jobId)).toMatchObject({ state: 'failed', error: expect.stringContaining('incomplete output') });
   });
 
+  it('retrieves large fetches in parallel batches, each in its own temp project, and reports progress', async () => {
+    const { service, root, execSf } = fixture();
+    const keys = Array.from({ length: 1001 }, (_, index) => `ApexClass:Bulk${index}`);
+    const cwds = new Set<string>();
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let peak = 0;
+    execSf.mockImplementation(async (_args, options) => {
+      cwds.add(options!.cwd!);
+      peak = Math.max(peak, ++active);
+      await new Promise<void>(resolve => releases.push(resolve));
+      active--;
+      return ok({ success: true, done: true, files: [] });
+    });
+    const { jobId } = await service.start(root, { components: keys });
+    expect(await service.status(root, jobId)).toEqual({ state: 'running', phase: 'retrieve', done: 0, total: 1001 });
+    await vi.waitFor(() => expect(releases.length).toBe(3));
+    releases.shift()!();
+    await vi.waitFor(async () => expect(await service.status(root, jobId)).toMatchObject({ done: 250 }));
+    await vi.waitFor(async () => {
+      releases.splice(0).forEach(release => release());
+      expect((await service.status(root, jobId)).state).toBe('ready');
+    });
+    expect(await settle(service, root, jobId)).toMatchObject({ state: 'ready', missing: keys });
+    expect(peak).toBe(3);
+    expect(cwds.size).toBe(3);
+    expect(execSf).toHaveBeenCalledTimes(5);
+    for (const cwd of cwds) expect(existsSync(cwd)).toBe(true);
+    await service.cancel(root, jobId);
+    for (const cwd of cwds) expect(existsSync(cwd)).toBe(false);
+  });
+
+  it('stops the other batches and removes every temp project when one batch fails', async () => {
+    const { service, root, execSf } = fixture();
+    const keys = Array.from({ length: 600 }, (_, index) => `ApexClass:Bulk${index}`);
+    const cwds = new Set<string>();
+    const signals: AbortSignal[] = [];
+    execSf.mockImplementation(async (_args, options) => {
+      cwds.add(options!.cwd!);
+      signals.push(options!.signal!);
+      if (signals.length === 2) return { code: 1, stdout: JSON.stringify({ status: 1, message: 'REQUEST_LIMIT_EXCEEDED' }), stderr: '' };
+      await new Promise<void>((_resolve, reject) => options!.signal!.addEventListener('abort', () => reject(options!.signal!.reason)));
+      return ok({ success: true, done: true });
+    });
+    const { jobId } = await service.start(root, { components: keys });
+    expect(await settle(service, root, jobId)).toEqual({ state: 'failed', error: 'REQUEST_LIMIT_EXCEEDED' });
+    expect(signals[0]!.aborted).toBe(true);
+    for (const cwd of cwds) expect(existsSync(cwd)).toBe(false);
+  });
+
   it('expires unapplied plans and disposes running jobs', async () => {
     const { root, execSf, query, queryMore, connect, kv } = fixture();
     let now = 1_000;
@@ -433,6 +529,8 @@ describe('fetch latest RPCs', () => {
     expect(changed).not.toHaveBeenCalled();
     await call('sync.apply', { jobId: 'j', written: 2 });
     expect(changed).toHaveBeenCalledOnce();
+    changed.mockImplementation(() => { throw Error('no listeners'); });
+    expect(await call('sync.apply', { jobId: 'j', written: 1 })).toMatchObject({ ok: true, data: { state: 'applied', written: 1 } });
     expect(await call('sync.cancel', { jobId: 7 })).toEqual({ ok: true });
     expect(service.cancel).toHaveBeenCalledWith('/project', '');
   });

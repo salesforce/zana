@@ -51,7 +51,7 @@ vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
   )
 }));
 vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
-  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId }: {
+  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId, page }: {
     moduleId: string;
     actionId?: string;
     params?: unknown;
@@ -59,6 +59,7 @@ vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
     surface?: string;
     projectId: string | null;
     tabId?: string;
+    page?: { pluginId: string; page: string };
   }) => (
     <div
       data-testid="plugin-tool"
@@ -68,6 +69,7 @@ vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
       data-surface={surface ?? ''}
       data-project={projectId ?? ''}
       data-tab={tabId ?? ''}
+      data-page={page ? `${page.pluginId}/${page.page}` : ''}
     />
   )
 }));
@@ -79,6 +81,7 @@ vi.mock('../../lib/app-surface.js', () => ({
 import { pluginPanelBrowserOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
 import { parsePanelAgentTarget, requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
 import { requestPluginPanelTool, usePluginPagePanel } from '../../plugins/plugin-page-panel.js';
+import { addClosableTab, loadSecondaryPanelState, persistSecondaryPanelState } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 
 beforeEach(() => {
   class ResizeObserverStub {
@@ -381,6 +384,44 @@ describe('PluginPanelHostLayout', () => {
 
     view.unmount();
     expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph' })).toBe(false);
+    desktop.api = null;
+  });
+
+  it('keeps a separate saved panel for the page in its own window', () => {
+    desktop.api = desktopApi();
+    pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph view', scopes: ['plugin-page'] });
+    const mount = (separateWindow: boolean) => render(
+      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1" separateWindow={separateWindow} launchers={false}>
+        <div>slot</div>
+      </PluginPanelHostLayout>
+    );
+    let view = mount(false);
+    act(() => { requestPluginPanelTool('salesforce', { actionId: 'studio-graph' }); });
+    expect(screen.getByTestId('plugin-tool').dataset.tool).toBe('salesforce/studio-graph');
+    view.unmount();
+    // The detached window starts without the main window's tabs, and what it does stays out of the main window's panel.
+    view = mount(true);
+    expect(screen.queryByTestId('plugin-tool')).toBeNull();
+    act(() => { requestPluginPanelAgent({ pluginId: 'salesforce', threadId: 't-window' }); });
+    expect(tabLabels()).toEqual(['Close Agent']);
+    view.unmount();
+    view = mount(false);
+    expect(tabLabels()).toEqual(['Close Graph view']);
+    view.unmount();
+    desktop.api = null;
+  });
+
+  it('passes its page to a stored tool tab so the tab can check it opens here', () => {
+    desktop.api = desktopApi();
+    const owner = pluginPanelBrowserOwnerId('salesforce', 'salesforce@p1');
+    persistSecondaryPanelState(owner, addClosableTab(loadSecondaryPanelState(owner), { kind: 'plugin', title: 'Graph', moduleId: 'salesforce', actionId: 'studio-graph', params: null }));
+    const view = render(
+      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1" launchers={false}>
+        <div>slot</div>
+      </PluginPanelHostLayout>
+    );
+    expect(screen.getByTestId('plugin-tool').dataset).toMatchObject({ surface: 'plugin-page', page: 'salesforce/salesforce' });
+    view.unmount();
     desktop.api = null;
   });
 

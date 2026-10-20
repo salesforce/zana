@@ -60,6 +60,7 @@ export default function plugin(zcc) {
     },
     displayName: 'Claude Code',
     icon: './icons/claude-code.svg',
+    env: { passthrough: ['ZCC_CLAUDE_CODE_EXECUTABLE', 'BB_CLAUDE_CODE_EXECUTABLE'] },
     capabilities: {
       supportsServiceTier: false,
       supportsNativeUserQuestion: true,

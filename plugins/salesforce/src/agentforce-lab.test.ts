@@ -37,6 +37,13 @@ describe('Agentforce lab', () => {
     expect(lab.end({ id: session.id }).closed).toBe(true);
     await expect(lab.send({ id: session.id, text: 'Again' })).rejects.toThrow('fresh run');
   });
+  it('runs real actions only for an explicit live start', async () => {
+    const { lab, request, args } = setup();
+    await lab.start({ ...args, live: true });
+    expect(request.mock.calls[1][2]).toMatchObject({ enableSimulationMode: false });
+    await lab.start({ ...args, live: 'yes' });
+    expect(request.mock.calls[3][2]).toMatchObject({ enableSimulationMode: true });
+  });
   it('uses AI interpretation separately, reverses no roles and evaluates actual server evidence', async () => {
     const { lab, request, args } = setup();
     const s = await lab.start({ ...args, engine: 'rehearsal' });

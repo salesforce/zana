@@ -30,6 +30,21 @@ async function stop(child: ChildProcess | undefined) {
   await exited;
 }
 
+it('packed enrollment preflight refuses a different server without touching an active daemon lock or auth', () => {
+  const dataDir = join(base, 'preflight'); mkdirSync(dataDir);
+  const hostId = randomUUID(), auth = JSON.stringify({ hostId, hostKey: 'o'.repeat(43), serverUrl: 'https://old.example' });
+  writeFileSync(join(dataDir, 'auth.json'), auth);
+  writeFileSync(join(dataDir, 'daemon.lock'), 'active-owner');
+  const args = [join(unpack, 'join.mjs'), 'join', '--check-enrollment', '--host-id', hostId, '--server-url', 'https://new.example'];
+  const env = { ...process.env, ZCC_DATA_DIR: dataDir };
+  const refused = spawnSync(process.execPath, args, { env, encoding: 'utf8' });
+  expect(refused.status).toBe(1);
+  expect(refused.stderr).toContain('replace-enrollment');
+  expect(spawnSync(process.execPath, [...args, '--replace-enrollment'], { env }).status).toBe(0);
+  expect(readFileSync(join(dataDir, 'auth.json'), 'utf8')).toBe(auth);
+  expect(readFileSync(join(dataDir, 'daemon.lock'), 'utf8')).toBe('active-owner');
+});
+
 it.each(['wrong-host', 'oversized', 'redirect', 'stalled-body', 'invalid-json'] as const)('packed daemon preserves repair credentials after %s enrollment', async mode => {
   const hostId = randomUUID(), token = 'zcde_' + 't'.repeat(24), requests: string[] = [];
   const server = createServer((req, res) => {
@@ -51,7 +66,7 @@ it.each(['wrong-host', 'oversized', 'redirect', 'stalled-body', 'invalid-json'] 
   let child: ChildProcess | undefined;
   try {
     child = spawn(process.execPath, [join(unpack, 'join.mjs'), 'join', '--join-code', token, '--host-id', hostId,
-      '--server-url', serverUrl, '--host-daemon-port', String(await freePort())], {
+      '--server-url', serverUrl, '--replace-enrollment', '--host-daemon-port', String(await freePort())], {
       cwd: home, detached: true, env: { PATH: process.env.PATH, HOME: home, ZCC_DATA_DIR: dataDir }, stdio: ['ignore', 'ignore', 'pipe']
     });
     let stderr = ''; child.stderr!.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-16_384); });

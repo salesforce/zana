@@ -8,20 +8,25 @@ const fixtures = vi.hoisted(() => ({
   compact: false, unread: 0, drawer: vi.fn(),
   pluginChanged: null as null | ((entries: unknown[]) => void),
   navigateFromMain: null as null | ((path: string) => void),
-  recoverCatalogs: vi.fn(), reconcilePlugins: vi.fn().mockResolvedValue(undefined),
+  recoverCatalogs: vi.fn(), recoverStale: vi.fn(), recoverAfterWake: vi.fn(), offWake: vi.fn(),
+  onWake: null as null | (() => void), reconcilePlugins: vi.fn().mockResolvedValue(undefined),
   unsubscribePlugins: vi.fn()
 }));
 vi.mock('./lib/product-client.js', () => ({ product: new Proxy({}, { get: (_target, surface) => new Proxy({}, {
   get: (_target, method) => String(surface) === 'pluginApps' && String(method) === 'onChanged' ? (callback: (entries: unknown[]) => void) => {
     fixtures.pluginChanged = callback;
     return fixtures.unsubscribePlugins;
+  } : String(surface) === 'terminals' && String(method) === 'onWake' ? (callback: () => void) => {
+    fixtures.onWake = callback;
+    return fixtures.offWake;
   } : String(surface) === 'windows' && String(method) === 'onNavigate' ? (callback: (path: string) => void) => {
     fixtures.navigateFromMain = callback;
     return () => {};
   } : String(method).startsWith('on') ? () => () => {} : async () => []
 }) }) }));
 vi.mock('./components/thread/pickers/thread-model-catalog.js', async importOriginal => ({
-  ...await importOriginal<object>(), recoverUnavailableModelCatalogs: fixtures.recoverCatalogs
+  ...await importOriginal<object>(), recoverUnavailableModelCatalogs: fixtures.recoverCatalogs,
+  recoverStaleModelCatalogs: fixtures.recoverStale, recoverModelCatalogsAfterWake: fixtures.recoverAfterWake
 }));
 vi.mock('./store.js', async importOriginal => ({ ...await importOriginal<object>(),
   useUnreadInboxCount: () => fixtures.unread, installInboxCrossWindowSync: () => () => {}
@@ -94,7 +99,7 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup(); localStorage.clear(); fixtures.drawer.mockClear();
   fixtures.pluginChanged = null;
-  fixtures.recoverCatalogs.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
+  fixtures.recoverCatalogs.mockClear(); fixtures.recoverStale.mockClear(); fixtures.recoverAfterWake.mockClear(); fixtures.offWake.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
 });
 
 it('retries unavailable model catalogs on plugin changes and ignores late pushes after unmount', async () => {
@@ -111,6 +116,27 @@ it('retries unavailable model catalogs on plugin changes and ignores late pushes
   await act(async () => { notify([]); });
   expect(fixtures.recoverCatalogs).toHaveBeenCalledOnce();
   expect(fixtures.reconcilePlugins).toHaveBeenCalledOnce();
+});
+
+it('recovers model catalogs when the window becomes visible or the machine wakes', async () => {
+  fixtures.compact = false; fixtures.unread = 0;
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  const visibility = vi.spyOn(document, 'visibilityState', 'get');
+  try {
+    visibility.mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(fixtures.recoverStale).not.toHaveBeenCalled();
+    visibility.mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(fixtures.recoverStale).toHaveBeenCalledOnce();
+    expect(fixtures.onWake).toBe(fixtures.recoverAfterWake);
+    view.unmount();
+    expect(fixtures.offWake).toHaveBeenCalledOnce();
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(fixtures.recoverStale).toHaveBeenCalledOnce();
+  } finally {
+    visibility.mockRestore();
+  }
 });
 
 it('follows links that a plugin view window routes to the main window', async () => {

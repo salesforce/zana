@@ -3,6 +3,7 @@ import {
   createSquadObservers, createTriggeredSquadLauncher, goalSquadInput, goalSquadTrigger, scheduledSquadInput, scheduledSquadTrigger,
   type TriggeredSquadInput
 } from '../triggered-squad.js';
+import { teamHostProblem } from '../ipc/cli-host-guard.js';
 
 const PLAN = [
   '### write: Write output <!-- executable-step -->', '', '- **Depends on:** None', '- **Mode:** Mutating',
@@ -65,6 +66,20 @@ describe('createTriggeredSquadLauncher', () => {
     expect(binding.beginLaunch).toHaveBeenCalledWith('lr1', expect.any(String));
     const slots = ((start.mock.calls[0] as unknown[])[2] as { slots: Array<{ initialTask: string }> }).slots;
     expect(slots[0].initialTask).toContain('invalid');
+  });
+
+  it('starts a bound SSH remote and rejects a secondary checkout through the trigger host gate', async () => {
+    const project = { id: 'p1', hostId: 'secondary', remote: { host: 'ssh-box' } };
+    const hostGate = (candidate: typeof project) => teamHostProblem(candidate, 'primary');
+    const { launch, start } = setup({ projects: { listProjects: () => [project] }, teamHostProblem: hostGate });
+    await expect(launch(input())).resolves.toEqual({ executionId: 'exec1' });
+    expect(start).toHaveBeenCalledOnce();
+    const secondary = setup({
+      projects: { listProjects: () => [{ id: 'p1', hostId: 'secondary' }] },
+      teamHostProblem: (candidate: { hostId?: string; remote?: unknown }) => teamHostProblem(candidate, 'primary')
+    });
+    await expect(secondary.launch(input())).rejects.toThrow('team host is unavailable');
+    expect(secondary.start).not.toHaveBeenCalled();
   });
 
   it('forgets launch binding when start fails', async () => {

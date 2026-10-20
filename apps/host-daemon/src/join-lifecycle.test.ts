@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const deps = vi.hoisted(() => ({
   start: vi.fn(), status: vi.fn(), update: vi.fn(), confirm: vi.fn(), spawn: vi.fn()
 }));
-vi.mock('./enroll-runtime.js', () => ({ startEnrolledHostDaemon: deps.start }));
+vi.mock('./enroll-runtime.js', () => ({ startEnrolledHostDaemon: deps.start, assertEnrollmentSafe: vi.fn() }));
 vi.mock('./local-status.js', () => ({ startLocalStatusServer: deps.status }));
 vi.mock('./protocol-self-update.js', () => ({ handleProtocolMismatch: deps.update, confirmHostUpdate: deps.confirm, rollbackHostUpdate: vi.fn() }));
 vi.mock('@zana-ai/zcc-process-utils', () => ({ installRuntimeLog: vi.fn() }));
 vi.mock('node:child_process', () => ({ spawn: deps.spawn }));
-import { runJoin, restartHostProcess } from './join-cli.js';
+import { runJoin, restartHostProcess, checkEnrollmentOnly } from './join-cli.js';
 const options = { dataDir: '/isolated', hostDaemonPort: 38888, serverUrl: 'http://127.0.0.1:1', joinCode: 'test', autoUpdate: true };
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 function fixture() {
@@ -22,7 +22,38 @@ function fixture() {
   deps.start.mockResolvedValue(daemon); deps.confirm.mockResolvedValue(undefined); deps.update.mockResolvedValue('updated');
   return { readStatus: () => status!(), statusClose, close };
 }
+describe('enrollment pre-flight', () => {
+  it('requires a data dir and delegates to the safety assertion', () => {
+    const assertSafe = vi.fn();
+    expect(() => checkEnrollmentOnly({ ...options, dataDir: '' }, assertSafe)).toThrow('ZCC_DATA_DIR');
+    expect(assertSafe).not.toHaveBeenCalled();
+    checkEnrollmentOnly(options, assertSafe);
+    expect(assertSafe).toHaveBeenCalledWith(options);
+  });
+  it('propagates a refusal so the installer leaves the running daemon alone', () => {
+    expect(() => checkEnrollmentOnly(options, () => { throw new Error('refused'); })).toThrow('refused');
+  });
+  it('defaults an unspecified provenance to non-tunnel without replacement consent', async () => {
+    fixture();
+    const running = await runJoin(options, vi.fn());
+    expect(deps.start.mock.calls[0][0]).toMatchObject({ provenance: 'non-tunnel' });
+    expect(deps.start.mock.calls[0][0].replaceEnrollment).toBeUndefined();
+    await running.close();
+  });
+});
 describe('join lifecycle', () => {
+  it('forwards explicit provenance and replacement consent, then clears restart consent', async () => {
+    fixture(); vi.stubEnv('ZCC_HOST_REPLACE_ENROLLMENT', '1');
+    const argv = process.argv;
+    try {
+      process.argv = [...argv, '--replace-enrollment'];
+      const running = await runJoin({ ...options, provenance: 'tunnel', replaceEnrollment: true });
+      expect(deps.start.mock.calls[0][0]).toMatchObject({ provenance: 'tunnel', replaceEnrollment: true });
+      expect(process.argv).not.toContain('--replace-enrollment');
+      expect(process.env.ZCC_HOST_REPLACE_ENROLLMENT).toBeUndefined();
+      await running.close();
+    } finally { process.argv = argv; }
+  });
   it('reflects disconnect and successful reconnect in the status endpoint', async () => {
     const f = fixture(), running = await runJoin(options, vi.fn());
     const events = deps.start.mock.calls[0]![0];

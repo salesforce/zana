@@ -189,6 +189,19 @@ export class ReadGrants {
   }
 }
 
+/** An sdk for a Studio button the user clicked: that click approves an org read. Explicit kinds (publish, Live) still confirm. */
+export function clickedSdk(sdk: SalesforceSdk, args: unknown): SalesforceSdk {
+  if (!args || typeof args !== 'object' || (args as { startedByUser?: unknown }).startedByUser !== true) return sdk;
+  return {
+    ...sdk,
+    confirm: (envelope, threadId) => {
+      const read = orgReadEnvelope(envelope.orgKind);
+      if (read && (envelope.kind ?? read) === read) return Promise.resolve({ approved: true, reason: 'submitted' });
+      return sdk.confirm(envelope, threadId);
+    }
+  };
+}
+
 export interface ReleaseSource {
   apiName: string;
   /** Project-relative path, as the Studio names it. */

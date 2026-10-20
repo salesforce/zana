@@ -21,6 +21,7 @@ import {
   missingClaudeCliGuidance,
   translateMissingClaudeCliError,
 } from "./missing-cli-error.js";
+import { readResumeSessionName } from "./session-name.js";
 
 export interface SdkSessionOptions {
   cwd: string;
@@ -159,6 +160,10 @@ function buildSdkPermissionOptions(
   };
 }
 
+interface RenamableQuery {
+  renameSession(title: string, sessionId?: string): Promise<void>;
+}
+
 export class SdkSession {
   private query: Query | undefined;
   private sessionId: string | undefined;
@@ -206,6 +211,22 @@ export class SdkSession {
     return true;
   }
 
+  /**
+   * False when the query is not running; the caller then renames the
+   * transcript instead. A live process keeps its title in memory and would
+   * overwrite a transcript-only rename, so it has to be told directly.
+   */
+  async rename(title: string): Promise<boolean> {
+    if (this.query === undefined) return false;
+    // Sends `rename_session` with source "host", which Claude Code records as
+    // a user rename. The SDK implements it but does not type it on Query yet.
+    await (this.query as Query & RenamableQuery).renameSession(
+      title,
+      this.sessionId,
+    );
+    return true;
+  }
+
   async setModel(model: string | undefined): Promise<void> {
     await this.query?.setModel(model);
     this.options.model = model;
@@ -245,6 +266,17 @@ export class SdkSession {
       });
     };
     const recordThreadId = this.options.recordThreadId;
+    const env = this.options.env ?? process.env;
+    const resumeName = resumeSessionId
+      ? readResumeSessionName({
+          sessionId: resumeSessionId,
+          cwd: this.options.cwd,
+          env,
+        })
+      : undefined;
+    const extraArgs = resumeName
+      ? { ...this.options.extraArgs, name: resumeName }
+      : this.options.extraArgs;
     const sdkOptions: Options = {
       abortController: this.abortController,
       cwd: this.options.cwd,
@@ -263,7 +295,7 @@ export class SdkSession {
       includePartialMessages: true,
       settingSources: ["user", "project", "local"],
       persistSession: true,
-      env: this.options.env ?? process.env,
+      env,
       stderr: onStderr,
       ...(this.options.mcpServers
         ? { mcpServers: this.options.mcpServers }
@@ -296,7 +328,7 @@ export class SdkSession {
       ...(this.options.plugins ? { plugins: this.options.plugins } : {}),
       ...(this.options.thinking ? { thinking: this.options.thinking } : {}),
       ...(this.options.settings ? { settings: this.options.settings } : {}),
-      ...(this.options.extraArgs ? { extraArgs: this.options.extraArgs } : {}),
+      ...(extraArgs ? { extraArgs } : {}),
     };
 
     try {

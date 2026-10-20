@@ -13,7 +13,7 @@ vi.mock('electron', () => ({
 }));
 
 const { normalizeConfig, normalizeProjectSettings, store } = await import('../store.js');
-const { AUTO_CLOSE_IDLE_DEFAULTS } = await import('@zana-ai/zcc-domain/product');
+const { AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS } = await import('@zana-ai/zcc-domain/product');
 
 describe('normalizeConfig — provider tiers and plugin safe mode', () => {
   it.each([true, false])('preserves explicitly configured booleans (%s)', value => {
@@ -336,6 +336,20 @@ describe('normalizeConfig — auto-close-idle flags', () => {
     const out = normalizeConfig({});
     expect(out.autoCloseIdleEnabled).toBeUndefined();
     expect(out.autoCloseIdleMinutes).toBeUndefined();
+  });
+
+  it('keeps threadSessionReleaseMinutes in range, 0 as never, and drops junk', () => {
+    expect(normalizeConfig({ threadSessionReleaseMinutes: 120.4 }).threadSessionReleaseMinutes).toBe(120);
+    expect(normalizeConfig({ threadSessionReleaseMinutes: 0 }).threadSessionReleaseMinutes).toBe(0);
+    expect(normalizeConfig({ threadSessionReleaseMinutes: -3 }).threadSessionReleaseMinutes).toBe(0);
+    expect(normalizeConfig({ threadSessionReleaseMinutes: 2 }).threadSessionReleaseMinutes).toBe(
+      THREAD_SESSION_RELEASE_DEFAULTS.minMinutes
+    );
+    expect(normalizeConfig({ threadSessionReleaseMinutes: 1e6 }).threadSessionReleaseMinutes).toBe(
+      THREAD_SESSION_RELEASE_DEFAULTS.maxMinutes
+    );
+    expect(normalizeConfig({ threadSessionReleaseMinutes: Number.NaN }).threadSessionReleaseMinutes).toBeUndefined();
+    expect(normalizeConfig({}).threadSessionReleaseMinutes).toBeUndefined();
   });
 });
 

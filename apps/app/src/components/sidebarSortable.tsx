@@ -118,14 +118,25 @@ export function useSortableSidebarNav(
   const sortableNavIds = orderedNavIds.filter((id) => !pinnedSet.has(id) && !trailingSet.has(id));
   const trailingNavIds = orderedNavIds.filter((id) => trailingSet.has(id));
 
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
-    // pointerup is followed by a click on the source/destination <Link>.
-    // dnd-kit only stopPropagation's that click, so the native href still
-    // navigates — preventDefault at capture, then drop the React fallback.
+  // pointerup is followed by a click on the source/destination <Link>.
+  // dnd-kit only stopPropagation's that click, so the native href still
+  // navigates — preventDefault at capture, then drop the React fallback. A
+  // fresh press or key starts a new gesture, so its click must go through.
+  const releaseNavClick = () => {
     if (suppressNavClickRef.current) suppressPostDragClick();
-    window.setTimeout(() => {
+    const clear = () => {
       suppressNavClickRef.current = false;
-    }, POST_DRAG_CLICK_SUPPRESS_MS);
+      window.clearTimeout(timer);
+      document.removeEventListener('pointerdown', clear, true);
+      document.removeEventListener('keydown', clear, true);
+    };
+    const timer = window.setTimeout(clear, POST_DRAG_CLICK_SUPPRESS_MS);
+    document.addEventListener('pointerdown', clear, true);
+    document.addEventListener('keydown', clear, true);
+  };
+
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    releaseNavClick();
     if (!over || active.id === over.id) return;
     const next = reorderSidebarNavItems(
       orderedNavIds,
@@ -141,12 +152,7 @@ export function useSortableSidebarNav(
     suppressNavClickRef.current = activatorEvent.type === 'pointerdown';
   };
 
-  const onDragCancel = () => {
-    if (suppressNavClickRef.current) suppressPostDragClick();
-    window.setTimeout(() => {
-      suppressNavClickRef.current = false;
-    }, POST_DRAG_CLICK_SUPPRESS_MS);
-  };
+  const onDragCancel = releaseNavClick;
 
   const consumeNavClick = () => {
     if (!suppressNavClickRef.current) return false;

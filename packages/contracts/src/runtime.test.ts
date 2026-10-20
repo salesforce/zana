@@ -9,6 +9,7 @@ import {
   PRODUCT_EVENT_ARGS_MAX_CHARS,
   PRODUCT_EVENT_ARGS_MAX_COUNT,
   MenubarThreadsChangedMessageSchema,
+  ThreadQueueTurnResultSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   ServerRuntimeInboundSchema,
@@ -262,5 +263,28 @@ describe('PluginAppSnapshotSchema peers flag', () => {
   });
   it('rejects a non-boolean peers flag', () => {
     expect(PluginAppSnapshotSchema.safeParse({ ...base, peers: 'yes' }).success).toBe(false);
+  });
+});
+
+describe('thread-queue-turn runtime contract', () => {
+  const base = {
+    type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+    id: '11111111-1111-4111-8111-111111111111', deadlineAt: '2026-09-25T12:00:00.000Z',
+    operation: 'thread-queue-turn', projectId: 'p1'
+  };
+
+  it('accepts a bounded text turn and rejects missing or empty fields', () => {
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, threadId: 't1', text: 'hi' }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, threadId: 't1', text: 'x'.repeat(4096) }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, text: 'hi' }).success).toBe(false);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, threadId: 't1', text: '' }).success).toBe(false);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, threadId: 't1', text: 'x'.repeat(4097) }).success).toBe(false);
+  });
+
+  it('validates the result shape strictly', () => {
+    expect(ThreadQueueTurnResultSchema.safeParse({ ok: true, queued: true }).success).toBe(true);
+    expect(ThreadQueueTurnResultSchema.safeParse({ ok: false, reason: 'not-live' }).success).toBe(true);
+    expect(ThreadQueueTurnResultSchema.safeParse({ ok: 'yes' }).success).toBe(false);
+    expect(ThreadQueueTurnResultSchema.safeParse({ ok: true, extra: 1 }).success).toBe(false);
   });
 });

@@ -14,7 +14,9 @@ Multi-machine sharing is still being qualified. The current implementation
 supports machine pairing, shared desktop access, Threads, ordinary terminals,
 and files/Git on the selected machine. Public testing of recovery across two
 physical machines and rollout qualification remain open. **CLI Agents and
-Squad/Team workers currently execute on the primary machine.**
+Squad/Team workers currently execute on the primary machine. Bound SSH remote
+Projects can run Squad/Team workers through that primary SSH coordinator;
+paired second-machine Project workers remain unsupported.**
 
 ## Choose what you want to do
 
@@ -156,7 +158,7 @@ steps 2 and 3 as well.
 | The provider cannot start or needs sign-in | Install and authenticate that provider on the execution machine; a login on the primary is not copied there. |
 | The browser shows different projects | Verify the account and address. Separately connecting two independent instances creates separate records. |
 | Changes from one laptop are missing on the other | Commit and push/pull with Git, or transfer the files explicitly. Checkouts do not sync automatically. |
-| A CLI Agent or Team launch is unavailable on the second machine | Select the primary machine for those launches; use a Thread for secondary-machine execution. |
+| A CLI Agent or Team launch is unavailable on the second machine | Select the primary machine for those launches; use a Thread for secondary-machine execution. Bound SSH remote Projects remain Team-launchable through the primary SSH coordinator. |
 
 ## Shared projects and data
 

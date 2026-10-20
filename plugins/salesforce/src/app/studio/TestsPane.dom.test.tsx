@@ -103,7 +103,7 @@ it('runs all cases in Simulate, then one, and explains a failing row', async () 
   await screen.findByTestId('tests-table');
   fireEvent.click(button('Run all in Simulate'));
   await waitFor(() => expect(within(screen.getByTestId('tests-row-late')).getByText('Fail')).toBeTruthy());
-  expect(calls(call, 'studio.suites.run')[0]).toEqual({ projectId: 'p1', agentPath: PATH, path: 'tests/MyBot.scenario.json', source: 'config: editor', engine: 'preview', threadId: 't1' });
+  expect(calls(call, 'studio.suites.run')[0]).toEqual({ projectId: 'p1', agentPath: PATH, path: 'tests/MyBot.scenario.json', source: 'config: editor', engine: 'preview', startedByUser: true, threadId: 't1' });
   fireEvent.click(screen.getByTestId('tests-row-late'));
   expect(screen.getByText('Action "Lookup" not called.')).toBeTruthy();
   expect(screen.getByText('I cannot tell.')).toBeTruthy();
@@ -192,7 +192,7 @@ it('runs an open proposal without storing it', async () => {
   expect(screen.getByText('Proposal')).toBeTruthy();
   fireEvent.click(button('Run with proposal'));
   expect(await screen.findByText(/Its results are not saved/)).toBeTruthy();
-  expect(calls(call, 'studio.suites.run')[0]).toMatchObject({ source: 'config: proposed', store: false, engine: 'preview' });
+  expect(calls(call, 'studio.suites.run')[0]).toMatchObject({ source: 'config: proposed', store: false, engine: 'preview', startedByUser: true });
   expect(within(screen.getByTestId('tests-row-late')).getByText('Unclear')).toBeTruthy();
   view.rerender(<TestsPane {...props} proposalSource={null} />);
   expect(screen.queryByText('Proposal')).toBeNull();

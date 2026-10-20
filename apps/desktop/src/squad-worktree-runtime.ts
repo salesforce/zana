@@ -22,7 +22,8 @@ import {
   resolveSquadWorktreePreparation,
   shouldReplaySquadWorktreeTerminalEffects,
   squadWorktreeHasActiveFollowUp,
-  withSquadWorktreeLifecycleLock
+  withSquadWorktreeLifecycleLock,
+  type SquadWorktreeTerminalOutcome
 } from './squad-worktree-lifecycle.js';
 
 export const SQUAD_WORKTREE_ACTION = 'squad-worktree-lifecycle';
@@ -238,8 +239,14 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     });
   }
 
-  async function handleSquadWorktreeTerminal(initial: ExecutionRecord): Promise<void> {
-    await withSquadWorktreeLifecycleLock(initial.id, async () => {
+  /**
+   * Apply a terminal run's worktree policy. Resolves with what was done once the terminal
+   * effects are durably marked ('merged', 'kept' or 'missing'), and `undefined` when this
+   * call applied nothing (no worktree, not terminal, an active follow-up, or team teardown
+   * still pending; a later call applies them).
+   */
+  async function handleSquadWorktreeTerminal(initial: ExecutionRecord): Promise<SquadWorktreeTerminalOutcome | undefined> {
+    return withSquadWorktreeLifecycleLock(initial.id, async (): Promise<SquadWorktreeTerminalOutcome | undefined> => {
       let record = initial;
       const currentTerminal = async () => {
         const current = await executionStore.get(record.id);
@@ -264,7 +271,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       // result, never a reason to retry another terminal policy action.
       if (!fs.existsSync(worktree.path)) {
         await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);
-        return;
+        return 'missing';
       }
       if (project) {
         const protection = await git.setWorktreePushProtection(project.path, worktree.path, false);
@@ -283,7 +290,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
             const removed = await git.removeWorktree(project.path, beforeRemove.squadWorktree!.path, false);
             if (removed.ok) {
               await executionStore.markSquadWorktreeTerminalEffects(beforeRemove.id, beforeRemove.stateVersion);
-              return;
+              return 'merged';
             }
           }
         }
@@ -300,6 +307,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
         worktreePath: worktree.path
       }));
       await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);
+      return 'kept';
     });
   }
 

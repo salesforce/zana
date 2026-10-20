@@ -7,7 +7,7 @@ import { join, basename, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
-import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
+import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
 import { isTerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 import { PROJECT_COLORS, pickProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -1093,6 +1093,13 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     normalized.autoCloseIdleMinutes = Math.max(
       AUTO_CLOSE_IDLE_DEFAULTS.minMinutes,
       Math.min(AUTO_CLOSE_IDLE_DEFAULTS.maxMinutes, Math.round(input.autoCloseIdleMinutes))
+    );
+  }
+  if (typeof input.threadSessionReleaseMinutes === 'number' && Number.isFinite(input.threadSessionReleaseMinutes)) {
+    const minutes = Math.round(input.threadSessionReleaseMinutes);
+    normalized.threadSessionReleaseMinutes = minutes <= 0 ? 0 : Math.max(
+      THREAD_SESSION_RELEASE_DEFAULTS.minMinutes,
+      Math.min(THREAD_SESSION_RELEASE_DEFAULTS.maxMinutes, minutes)
     );
   }
   if (typeof input.autoCloseIdleNotifyInbox === 'boolean') {

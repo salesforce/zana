@@ -322,7 +322,8 @@ describe("workbench evidence and operations", () => {
       operation: { state: "failed", org: { alias: "shared" } },
     });
     expect(f.sdk.execSf).toHaveBeenLastCalledWith(
-      expect.arrayContaining(["--target-org", "shared"]),
+      expect.arrayContaining(["report", "--target-org", "shared"]),
+      { cwd: "/alpha", timeoutMs: 120_000 },
     );
     await expect(
       f.run(() => f.service.report({ operationId: operation.id }), {

@@ -483,7 +483,7 @@ describe('AgentScriptPanel Open in Agentforce Builder', () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
     await click(openButton(el));
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentBuilder.open', { projectId: 'proj-1', path: 'force-app/bots/QC.agent' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentBuilder.open', { projectId: 'proj-1', path: 'force-app/bots/QC.agent', startedByUser: true });
     expect(openButton(el).disabled).toBe(true);
     await act(async () => { answer({ ok: true }); });
     await flush();
@@ -514,7 +514,7 @@ describe('AgentScriptPanel Compile', () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
     await click(compileButton(el));
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentScript.compile', { projectId: 'proj-1', path: 'force-app/bots/QC.agent' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentScript.compile', { projectId: 'proj-1', path: 'force-app/bots/QC.agent', startedByUser: true });
     expect(compileButton(el).disabled).toBe(true);
     expect(compileButton(el).getAttribute('aria-label')).toBe('Compiling…');
     expect(status(el)).toBe('Compiling…');

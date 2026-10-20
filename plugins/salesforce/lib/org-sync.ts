@@ -47,7 +47,10 @@ const SOQL: Partial<Record<SyncType, { from: string; field: string; tooling?: bo
 /** Most components one agent check names per type, so its SOQL `IN` lists stay short. */
 const AGENT_REFS = 500;
 const NAME = /^[A-Za-z][A-Za-z0-9_]{0,254}$/;
-const BATCH = 1000;
+/** Components per retrieve. Smaller batches report progress more often and run side by side. */
+const BATCH = 250;
+/** Retrieves running at once, each into its own temp project so CLI processes never share a folder. */
+const RETRIEVERS = 3;
 const LIST_ROWS = 20_000;
 const RESULT_ROWS = 10_000;
 const WALK_ENTRIES = 200_000;
@@ -68,8 +71,10 @@ type Job = {
   org: PublicOrgView;
   at: number;
   controller: AbortController;
-  temporary?: string;
+  temporary: string[];
   plan?: PlanEntry[];
+  /** The one apply of this plan, shared by any repeat. */
+  applying?: Promise<SyncJob>;
   dates: Map<string, string | null>;
   result: SyncJob;
 };
@@ -161,6 +166,47 @@ export function renameBundle(rest: string, from: string, to: string): string {
 }
 
 export { manifest } from './org-retrieve.js';
+
+/**
+ * Retrieve batches of at most `size` keys. The org returns every agent version under its base folder, so two
+ * versions of one agent in a retrieve overwrite each other: each batch holds at most one version per agent.
+ */
+export function retrieveBatches(keys: string[], size = BATCH): string[][] {
+  const batches: Array<{ keys: string[]; agents: Set<string> }> = [];
+  for (const key of keys) {
+    const agent = key.startsWith('AiAuthoringBundle:') ? agentVersion(key.slice('AiAuthoringBundle:'.length)).base : undefined;
+    let batch = batches.find(row => row.keys.length < size && (agent === undefined || !row.agents.has(agent)));
+    if (!batch) batches.push(batch = { keys: [], agents: new Set() });
+    batch.keys.push(key);
+    if (agent !== undefined) batch.agents.add(agent);
+  }
+  return batches.map(batch => batch.keys);
+}
+
+/**
+ * Moves one batch's files out of the retrieve folder, so a later batch that returns the same folder cannot replace
+ * them, and files an agent version the org returned under its base name under the requested version.
+ */
+async function stage(project: string, index: number, keys: string[], files: RetrievedFile[]): Promise<RetrievedFile[]> {
+  const aliases = bareVersions(files.filter(file => file.type === 'AiAuthoringBundle').map(file => file.fullName.split('/')[0]!), new Set(keys));
+  const staged: RetrievedFile[] = [];
+  for (const file of files) {
+    let fullName = file.fullName;
+    let rest = file.rest;
+    const name = fullName.split('/')[0]!;
+    const alias = file.type === 'AiAuthoringBundle' ? aliases.get(name) : undefined;
+    if (alias) {
+      const [folder, ...more] = rest.split('/');
+      rest = `${folder}/${renameBundle(more.join('/'), name, alias)}`;
+      fullName = alias;
+    }
+    const path = join(project, 'batches', String(index), ...rest.split('/'));
+    await mkdir(dirname(path), { recursive: true });
+    await rename(file.path, path);
+    staged.push({ ...file, fullName, rest, path });
+  }
+  return staged;
+}
 
 /**
  * Fetch latest. A check compares org modification dates with the last fetch recorded here.
@@ -272,7 +318,7 @@ export class OrgSyncService {
     const running = [...this.jobs.values()].filter(job => job.result.state === 'running');
     if (running.length >= 2 || running.some(job => job.root === root)) throw Error('A fetch is already running. Wait for it to finish.');
     const jobId = randomUUID();
-    const job: Job = { root, org, at: (this.deps.now ?? Date.now)(), controller: new AbortController(), dates: new Map(this.checks.get(`${root}\0${org.orgId}`) ?? []), result: { state: 'running', done: 0, total: keys.length } };
+    const job: Job = { root, org, at: (this.deps.now ?? Date.now)(), controller: new AbortController(), temporary: [], dates: new Map(this.checks.get(`${root}\0${org.orgId}`) ?? []), result: { state: 'running', phase: 'retrieve', done: 0, total: keys.length } };
     this.jobs.set(jobId, job);
     void this.fetch(job, keys as string[]).then(
       result => { if (this.jobs.get(jobId) === job) job.result = result; },
@@ -298,14 +344,23 @@ export class OrgSyncService {
     return { path, local: local!.slice(0, DIFF_CHARS), org: org!.slice(0, DIFF_CHARS), ...(truncated ? { truncated } : {}) };
   }
 
-  /** Writes safe files and the conflicts the operator chose to replace, then records what was fetched. */
+  /**
+   * Writes safe files and the conflicts the operator chose to replace, then records what was fetched.
+   * A repeated apply (a second click, or a retry after a lost answer) gets the first one's outcome.
+   */
   async apply(projectRoot: string, jobId: string, input: unknown): Promise<SyncJob> {
     const job = await this.job(projectRoot, jobId);
+    if (job.applying) return job.applying;
     if (job.result.state !== 'ready' || !job.plan) throw Error('This fetch has no plan to apply.');
     const chosen = record(input).take;
     const take = new Set(Array.isArray(chosen) ? chosen.filter((path): path is string => typeof path === 'string') : []);
     const plan = job.plan;
     job.plan = undefined;
+    job.applying = this.write(job, plan, take);
+    return job.applying;
+  }
+
+  private async write(job: Job, plan: PlanEntry[], take: Set<string>): Promise<SyncJob> {
     const skipped: Array<{ path: string; reason: string }> = [];
     const failed = new Set<string>();
     let written = 0, kept = 0;
@@ -327,10 +382,12 @@ export class OrgSyncService {
       const fetched = new Map<string, Record<string, string>>();
       for (const entry of plan) if (!failed.has(entry.key)) fetched.set(entry.key, { ...fetched.get(entry.key), [entry.path]: entry.orgSha });
       await this.record(job.org.orgId, [...fetched].map(([key, files]) => ({ key, mark: { at: job.dates.get(key) ?? null, files } })));
+      job.result = { state: 'applied', written, kept, skipped };
+    } catch (error) {
+      job.result = { state: 'failed', error: `Wrote ${written.toLocaleString('en-US')} file${written === 1 ? '' : 's'}, then failed: ${errorText(error, 'could not record the fetch.')}` };
     } finally {
       await this.clean(job);
     }
-    job.result = { state: 'applied', written, kept, skipped };
     return job.result;
   }
 
@@ -340,22 +397,43 @@ export class OrgSyncService {
   }
 
   private async fetch(job: Job, keys: string[]): Promise<SyncJob> {
-    const { signal } = job.controller;
     let text: string | undefined;
     try { text = await readFile(join(job.root, 'sfdx-project.json'), 'utf8'); } catch { /* the org's version */ }
     const apiVersion = sourceApiVersion(text) ?? job.org.apiVersion;
-    const temporary = job.temporary = await tempProject(apiVersion, 'zcc-sf-sync-');
-    const files: RetrievedFile[] = [];
-    for (let index = 0; index < keys.length; index += BATCH) {
-      const batch = keys.slice(index, index + BATCH);
-      signal.throwIfAborted();
-      const result = await retrieveInto(this.deps.execSf, temporary, batch, { alias: job.org.alias, apiVersion, timeoutMs: RETRIEVE_TIMEOUT, signal });
-      files.push(...result.files);
-      for (const [key, at] of result.modified) if (at && !job.dates.get(key)) job.dates.set(key, at);
-      if (job.result.state === 'running') job.result = { ...job.result, done: Math.min(keys.length, index + batch.length) };
+    const batches = retrieveBatches(keys);
+    // One failed retrieve stops the others instead of leaving CLI processes running.
+    const stop = new AbortController();
+    const signal = AbortSignal.any([job.controller.signal, stop.signal]);
+    const retrieved: RetrievedFile[][] = [];
+    let next = 0;
+    let done = 0;
+    let failure: unknown;
+    const retriever = async () => {
+      const temporary = await tempProject(apiVersion, 'zcc-sf-sync-');
+      job.temporary.push(temporary);
+      while (next < batches.length) {
+        signal.throwIfAborted();
+        const index = next++;
+        const batch = batches[index]!;
+        const result = await retrieveInto(this.deps.execSf, temporary, batch, { alias: job.org.alias, apiVersion, timeoutMs: RETRIEVE_TIMEOUT, signal });
+        retrieved[index] = await stage(temporary, index, batch, result.files);
+        for (const [key, at] of result.modified) if (at && !job.dates.get(key)) job.dates.set(key, at);
+        done += batch.length;
+        if (job.result.state === 'running') job.result = { ...job.result, done };
+      }
+    };
+    // Every retriever settles before a failure surfaces, so cleanup never races a CLI still writing.
+    await Promise.all(Array.from({ length: Math.min(RETRIEVERS, batches.length) }, () => retriever().catch(error => {
+      failure ??= error;
+      stop.abort();
+    })));
+    if (failure !== undefined) {
+      await this.clean(job);
+      throw failure;
     }
-    const plan = await this.plan(job, new Set(keys), files);
-    signal.throwIfAborted();
+    if (job.result.state === 'running') job.result = { ...job.result, phase: 'compare' };
+    const plan = await this.plan(job, new Set(keys), retrieved.flat());
+    job.controller.signal.throwIfAborted();
     job.plan = plan;
     const found = new Set(plan.map(file => file.key));
     return {
@@ -369,19 +447,10 @@ export class OrgSyncService {
 
   /** Each retrieved file goes where the project already keeps that component, else under the default package directory. */
   private async plan(job: Job, keys: Set<string>, files: RetrievedFile[]): Promise<PlanEntry[]> {
-    const aliases = bareVersions(files.filter(file => file.type === 'AiAuthoringBundle').map(file => file.fullName), keys);
     const byKey = new Map<string, Array<{ source: string; rest: string }>>();
     for (const file of files) {
-      let name = file.fullName.split('/')[0]!;
-      let rest = file.rest;
-      const alias = file.type === 'AiAuthoringBundle' ? aliases.get(name) : undefined;
-      if (alias) {
-        const [folder, ...more] = rest.split('/');
-        rest = `${folder}/${renameBundle(more.join('/'), name, alias)}`;
-        name = alias;
-      }
-      const key = `${file.type}:${name}`;
-      if (keys.has(key)) byKey.set(key, [...(byKey.get(key) ?? []), { source: file.path, rest }]);
+      const key = `${file.type}:${file.fullName.split('/')[0]}`;
+      if (keys.has(key)) byKey.set(key, [...(byKey.get(key) ?? []), { source: file.path, rest: file.rest }]);
     }
     const locate = await localLocator(job.root);
     const target = await defaultFolder(job.root);
@@ -524,10 +593,9 @@ export class OrgSyncService {
   }
 
   private async clean(job: Job) {
-    const temporary = job.temporary;
-    job.temporary = undefined;
+    const temporary = job.temporary.splice(0);
     job.plan = undefined;
-    await removeTemp(temporary);
+    await Promise.all(temporary.map(removeTemp));
   }
 }
 

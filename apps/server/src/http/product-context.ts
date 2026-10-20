@@ -61,7 +61,8 @@ import { createPluginApprovalVerifier, signPluginApproval } from './plugin-appro
 import { createNativeToolPolicyVerifier } from './native-tool-policy-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import { createDbTunnelHostStore, createTunnelHostReopener, type TunnelHostStore } from '../services/hosts/tunnel-hosts.js';
-import { repairHost, tunnelLocalPort } from '../services/hosts/host-bootstrap.js';
+import { reconcileRemoteProjectBindings, repairHost, tunnelLocalPort } from '../services/hosts/host-bootstrap.js';
+import { createCoalescedReconciler, type CoalescedReconciler } from '../services/hosts/coalesced-reconciler.js';
 import { PairStore, type PeerKeyProvider } from '../services/peers/pair-store.js';
 import { PeerReplayWindow } from '../services/peers/peer-replay-window.js';
 import { PluginStorageEpochs } from '../services/peers/plugin-storage-epochs.js';
@@ -113,6 +114,7 @@ export interface ProductHttpContext {
   projects: ProjectStore;
   /** Per-project settings (Settings → Project), read from disk on every call. */
   projectSettings: Pick<ProjectSettingsStore, 'get'>;
+  remoteProjectReconciler?: CoalescedReconciler;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
   inboxRead: IInboxReadStore;
@@ -177,7 +179,7 @@ export interface ProductHttpContext {
   verifyNativeToolPolicy?: (token: unknown, body: string) => boolean;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
-  dispose(): void;
+  dispose(): void | Promise<void>;
   /** Call after dispose to await peer recovery and admitted private-storage writes. */
   whenIdle(): Promise<void>;
 }
@@ -278,6 +280,7 @@ export function createProductHttpContext(
       // A peer's connector into a forward-only host this app minted drives the invitation bootstrap.
       ctx.peerLinks?.onInboundConnected(hostId);
       if (getHost(db, hostId)?.enrollmentCapability !== 'execution') return;
+      void ctx.remoteProjectReconciler?.request();
       tunnelReopener.hostConnected(hostId);
       ctx.remoteEnvironment.hostConnected(hostId);
       void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
@@ -571,6 +574,10 @@ export function createProductHttpContext(
   }) : undefined;
   const sweepLinks = () => { if (!disposed) void peerLinks?.sweep().catch(error => console.warn(`[zcc] peer links sweep failed: ${error instanceof Error ? error.message : String(error)}`)); };
   let disposed = false;
+  const remoteProjectReconciler = createCoalescedReconciler(
+    () => reconcileRemoteProjectBindings(ctx),
+    (error) => console.warn(`[zcc] remote project reconcile failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+  );
   ctx = {
     productInstanceId,
     origins: options.origins,
@@ -584,6 +591,7 @@ export function createProductHttpContext(
     remoteEnvironment,
     projects,
     projectSettings,
+    remoteProjectReconciler,
     config,
     inbox,
     inboxRead,
@@ -617,7 +625,7 @@ export function createProductHttpContext(
     verifyNativeToolPolicy,
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
-      if (disposed) return;
+      if (disposed) return remoteProjectReconciler.dispose();
       disposed = true;
       stopPeerAuthority();
       ctx.peerInstaller?.dispose();
@@ -635,6 +643,7 @@ export function createProductHttpContext(
       ctx.peerControlReplay.dispose();
       ctx.pluginStorageEpochs?.dispose();
       options.peerKeyProvider?.dispose?.();
+      const reconcilerStopped = remoteProjectReconciler.dispose();
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);
       disposePreviews(ctx);
       disposeEnvironmentRetireTimers(ctx);
@@ -649,8 +658,10 @@ export function createProductHttpContext(
       promptRegistry.stop();
       remoteEnvironment.dispose();
       ctx.plugins?.stop?.();
+      return reconcilerStopped;
     },
     whenIdle: async () => {
+      if (disposed) await remoteProjectReconciler.dispose();
       await ctx.peerInstaller?.whenIdle();
       await ctx.peerLinks?.whenIdle();
       await peerSsh?.whenIdle();
@@ -689,5 +700,6 @@ export function createProductHttpContext(
   if (peerInstaller) void peerInstaller.start().catch(warnPeer('installer start'));
   peerInvitations?.start();
   if (peerLinks) void peerLinks.start().catch(warnPeer('links start'));
+  void remoteProjectReconciler.request();
   return ctx;
 }

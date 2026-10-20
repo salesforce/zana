@@ -2,6 +2,7 @@ import { mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Locator } from '@playwright/test';
 import { test, expect, type AppHandle } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, isolateBundledCatalog: true });
 
@@ -59,7 +60,7 @@ test('an expanded long prompt cannot cover the completed agent reply (#201)', as
   await user.getByRole('button', { name: 'Show more', exact: true }).click();
   await expect(user).toContainText(prompt);
   await expectReplyUncovered(timeline);
-  await detail.screenshot({ path: testInfo.outputPath('expanded-prompt-reply.png') });
+  await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('expanded-prompt-reply.png'), detail);
   await user.getByRole('button', { name: 'Show less', exact: true }).click();
   await expect(user.getByRole('button', { name: 'Show more', exact: true })).toBeVisible();
   await expectReplyUncovered(timeline);
@@ -84,4 +85,24 @@ test('prompt pinning adapts to viewport height even below the text truncation li
   await window.setViewportSize({ width: 1100, height: 1400 });
   await expect(userItem).toHaveCSS('position', 'sticky');
   await expectReplyUncovered(timeline);
+});
+
+test('a short-text prompt collapses by rendered height, not character count', async ({ app }) => {
+  const { detail, threadId } = await openThread(app);
+  const timeline = detail.getByTestId('thread-timeline');
+  const prompt = Array.from({ length: 30 }, (_, i) => `Step ${i + 1}`).join('\n');
+  await detail.getByTestId('thread-command-input').fill(prompt);
+  await detail.getByTestId('thread-command-send').click();
+  await expect(timeline.getByTestId('thread-assistant-text').last()).toContainText('Response to: Step 1');
+  await waitForCompletion(app, threadId);
+  const user = timeline.getByTestId('thread-user-text').last();
+  const body = user.locator('.thread-message-collapsible');
+  const collapsedHeight = await body.evaluate((el) => el.getBoundingClientRect().height);
+  // 15 lines of 15px / 1.55 line-height, not the 30 lines the prompt renders.
+  expect(collapsedHeight).toBeGreaterThan(300);
+  expect(collapsedHeight).toBeLessThan(400);
+  await user.getByRole('button', { name: 'Show more', exact: true }).click();
+  await expect(user).toContainText('Step 30');
+  expect(await body.evaluate((el) => el.getBoundingClientRect().height)).toBeGreaterThan(collapsedHeight * 1.5);
+  await expect(timeline.getByTestId('thread-assistant-text').last().getByTestId('thread-message-overflow')).toHaveCount(0);
 });

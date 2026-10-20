@@ -1,4 +1,5 @@
 import type { HostEventEnvelope } from '@zana-ai/zcc-contracts/host-rpc';
+import { THREAD_SESSION_RELEASE_DEFAULTS, type AppConfig } from '@zana-ai/zcc-domain/product';
 import {
   createAgentRuntimeAdapter,
   type CreateAgentRuntimeFn
@@ -7,7 +8,7 @@ import type { ThreadRuntimeAdapter } from './thread-runtime-types.js';
 
 export type { ThreadRuntimeAdapter } from './thread-runtime-types.js';
 
-export const IDLE_PROVIDER_SESSION_REAP_AFTER_MS = 30 * 60 * 1000;
+export const IDLE_PROVIDER_SESSION_REAP_AFTER_MS = THREAD_SESSION_RELEASE_DEFAULTS.minutes * 60 * 1000;
 export const IDLE_PROVIDER_SESSION_REAP_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
@@ -33,15 +34,17 @@ export function createRuntimeManager(options: {
   onProcessExit?: Parameters<typeof createAgentRuntimeAdapter>[0]['onProcessExit'];
   /** Set 0 to disable. Defaults to 5 minutes. */
   idleReapIntervalMs?: number;
+  /** Overrides Settings `threadSessionReleaseMinutes`. */
   idleReapAfterMs?: number;
 }): ThreadRuntimeAdapter {
   const adapter = createAgentRuntimeAdapter(options);
   const intervalMs = options.idleReapIntervalMs ?? IDLE_PROVIDER_SESSION_REAP_INTERVAL_MS;
-  const idleForMs = options.idleReapAfterMs ?? IDLE_PROVIDER_SESSION_REAP_AFTER_MS;
   let timer: ReturnType<typeof setInterval> | null = null;
   if (intervalMs > 0) {
     timer = setInterval(() => {
       void adapter.refreshSkillCatalog();
+      const idleForMs = options.idleReapAfterMs ?? idleReapAfterMsFromConfig(options.loadConfig);
+      if (idleForMs === null) return;
       void adapter.reapIdleProviderSessions({
         idleForMs,
         nowMs: Date.now(),
@@ -60,4 +63,25 @@ export function createRuntimeManager(options: {
       adapter.dispose();
     }
   };
+}
+
+/**
+ * Settings `threadSessionReleaseMinutes`, read on every sweep so a change
+ * applies without restarting the daemon. `null` means never release. The
+ * daemon reads config.json directly, so the value is validated here too.
+ */
+export function idleReapAfterMsFromConfig(loadConfig?: () => AppConfig): number | null {
+  let minutes: unknown;
+  try {
+    minutes = loadConfig?.().threadSessionReleaseMinutes;
+  } catch {
+    minutes = undefined;
+  }
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return IDLE_PROVIDER_SESSION_REAP_AFTER_MS;
+  if (minutes <= 0) return null;
+  const clamped = Math.max(
+    THREAD_SESSION_RELEASE_DEFAULTS.minMinutes,
+    Math.min(THREAD_SESSION_RELEASE_DEFAULTS.maxMinutes, Math.round(minutes))
+  );
+  return clamped * 60 * 1000;
 }

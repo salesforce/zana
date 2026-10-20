@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { OrgSyncDialog, agentSelection, initialSelection, memoryOf } from './OrgSyncDialog.js';
+import { OrgSyncDialog, agentSelection, elapsed, initialSelection, memoryOf } from './OrgSyncDialog.js';
 import type { SyncCheck, SyncComponent, SyncJob } from '../../lib/org-sync-contract.js';
 
 const call = vi.fn();
@@ -104,10 +104,11 @@ it('checks, fetches the chosen components, resolves a conflict with its diff and
 });
 
 it('polls a running fetch and cancels it when the dialog closes', async () => {
-  status = [{ state: 'running', done: 1, total: 3 }, ready];
+  status = [{ state: 'running', phase: 'retrieve', done: 1, total: 3 }, ready];
   show();
   fireEvent.click(await compare(3));
-  await screen.findByText('1 of 3 retrieved', {}, { timeout: 2000 });
+  await screen.findByText(/^1 of 3 retrieved \(33%\) · \d+s$/, {}, { timeout: 2000 });
+  expect(document.querySelector('.sf-sync-progress.is-waiting')).toBeNull();
   await screen.findByText(/1 in conflict/, {}, { timeout: 2500 });
   expect(calls('sync.fetch.status').length).toBe(2);
   fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
@@ -116,12 +117,38 @@ it('polls a running fetch and cancels it when the dialog closes', async () => {
 });
 
 it('stops polling and releases the job when unmounted mid-fetch', async () => {
-  status = [{ state: 'running', done: 0, total: 3 }];
+  status = [{ state: 'running', phase: 'retrieve', done: 0, total: 3 }];
   const mounted = show();
   fireEvent.click(await compare(3));
-  await screen.findByText('0 of 3 retrieved');
+  await screen.findByText(/^0 of 3 retrieved · \d+s$/);
+  expect(document.querySelector('.sf-sync-progress.is-waiting')).toBeTruthy();
   mounted.unmount();
   expect(calls('sync.cancel')).toEqual([{ jobId: 'job1' }]);
+});
+
+it('ticks elapsed time, explains large fetches and shows the compare step', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    status = [{ state: 'running', phase: 'retrieve', done: 0, total: 4726 }, { state: 'running', phase: 'compare', done: 4726, total: 4726 }];
+    show();
+    fireEvent.click(await compare(3));
+    await screen.findByText(/^0 of 4,726 retrieved · 0s$/);
+    expect(screen.getByText(/parallel batches/)).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+    await screen.findByText('Comparing 4,726 components with your project…');
+    expect(screen.getByText(/^All retrieved · [1-9]s$/)).toBeTruthy();
+    expect(screen.queryByText(/parallel batches/)).toBeNull();
+    expect(document.querySelector('.sf-sync-progress.is-waiting')).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('formats elapsed time', () => {
+  expect(elapsed(0)).toBe('0s');
+  expect(elapsed(59)).toBe('59s');
+  expect(elapsed(75)).toBe('1m 15s');
+  expect(elapsed(600)).toBe('10m 00s');
 });
 
 it('reports check and fetch failures and the empty states', async () => {
@@ -175,7 +202,7 @@ it('ends a fetch that changes nothing and reports an expired apply', async () =>
   expect((await screen.findByRole('alert')).textContent).toBe('Diff unavailable');
   fireEvent.click(screen.getByText('Write 3 files'));
   await waitFor(() => expect(screen.getAllByRole('alert').map(node => node.textContent)).toContain('Fetch expired'));
-  handlers['sync.apply'] = () => ({ ok: true, data: { state: 'running', done: 0, total: 1 } });
+  handlers['sync.apply'] = () => ({ ok: true, data: { state: 'running', phase: 'retrieve', done: 0, total: 1 } });
   fireEvent.click(screen.getByText('Write 3 files'));
   await waitFor(() => expect(calls('sync.apply')).toHaveLength(1));
   expect(screen.getByText('Write 3 files')).toHaveProperty('disabled', false);

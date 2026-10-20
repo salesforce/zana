@@ -22,16 +22,25 @@ import {
   type ThreadEvent,
 } from "@zana-ai/zcc-domain/thread-runtime";
 
-const { forkSessionMock, queryMock } = vi.hoisted(() => ({
+const { forkSessionMock, queryMock, renameSessionMock } = vi.hoisted(() => ({
   forkSessionMock: vi.fn(),
   queryMock: vi.fn(),
+  renameSessionMock: vi.fn(),
 }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
   forkSession: forkSessionMock,
+  renameSession: renameSessionMock,
   createSdkMcpServer: vi.fn(() => ({})),
   tool: vi.fn((_name, _desc, _schema, handler) => handler),
+}));
+
+vi.mock("../provider-maintenance.js", () => ({
+  getClaudeProviderHealth: vi.fn(async () => ({ probe: "health" })),
+  getClaudeProviderUsage: vi.fn(async () => ({ probe: "usage" })),
+  getClaudeProviderInstallationStatus: vi.fn(async () => ({ probe: "status" })),
+  getClaudeProviderInstallationRun: vi.fn(async (action: string) => ({ probe: action })),
 }));
 
 import { CLAUDE_IDLE_QUERY_GRACE_MS, handleLine } from "../bridge.js";
@@ -137,6 +146,7 @@ interface ControlledClaudeQuery {
   finish(): void;
   initializationResult: ReturnType<typeof vi.fn>;
   setModel: ReturnType<typeof vi.fn>;
+  renameSession: ReturnType<typeof vi.fn>;
   setPermissionMode: ReturnType<typeof vi.fn>;
   stopTask: ReturnType<typeof vi.fn>;
   [Symbol.asyncIterator](): AsyncIterator<SDKMessage>;
@@ -366,6 +376,7 @@ function createControlledClaudeQuery(): ControlledClaudeQuery {
       pushResult({ value: undefined, done: true });
     },
     initializationResult: vi.fn(),
+    renameSession: vi.fn().mockResolvedValue(undefined),
     setModel: vi.fn().mockResolvedValue(undefined),
     setPermissionMode: vi.fn().mockResolvedValue(undefined),
     stopTask: vi.fn().mockResolvedValue(undefined),
@@ -547,10 +558,13 @@ function createAssistantToolUseMessage(
   };
 }
 
+// Windows discovery only accepts a spawnable PE image, never a bare shim.
+const CLAUDE_EXECUTABLE_NAME = process.platform === "win32" ? "claude.exe" : "claude";
+
 function createTempClaudeExecutable(): TempClaudeExecutable {
   const binDir = mkdtempSync(join(tmpdir(), "bb-claude-path-"));
   tempDirs.push(binDir);
-  const executablePath = join(binDir, "claude");
+  const executablePath = join(binDir, CLAUDE_EXECUTABLE_NAME);
   writeFileSync(executablePath, "#!/bin/sh\nexit 0\n");
   chmodSync(executablePath, 0o755);
   return { binDir, executablePath };
@@ -1063,7 +1077,7 @@ describe("bridge", () => {
     tempDirs.push(homeDir);
     const localBinDir = join(homeDir, ".local", "bin");
     mkdirSync(localBinDir, { recursive: true });
-    const executablePath = join(localBinDir, "claude");
+    const executablePath = join(localBinDir, CLAUDE_EXECUTABLE_NAME);
     writeFileSync(executablePath, "#!/bin/sh\nexit 0\n");
     chmodSync(executablePath, 0o755);
 
@@ -6223,6 +6237,245 @@ describe("thread/backgroundTask/stop", () => {
       });
     } finally {
       await shutdown(bridge, query);
+    }
+  });
+});
+
+describe("thread/name/set", () => {
+  const providerThreadId = "provider-thread-rename";
+  const threadId = "thread-rename";
+
+  beforeEach(() => {
+    renameSessionMock.mockReset();
+    renameSessionMock.mockResolvedValue(undefined);
+  });
+
+  async function startWithRunningQuery(): Promise<{
+    bridge: BridgeJsonRpcTestHarness;
+    query: ControlledClaudeQuery;
+  }> {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const query = createControlledClaudeQuery();
+    queryMock.mockReturnValue(query);
+    sendResumeThread({ bridge, providerThreadId, requestId: 1, threadId });
+    await bridge.waitForResponse(1);
+    bridge.sendRequest(
+      2,
+      "turn/start",
+      canonicalTurnParams({
+        threadId,
+        providerThreadId,
+        input: [{ type: "text", text: "hello" }],
+      }),
+    );
+    await readNextPromptText(getLatestQueryCall());
+    await bridge.waitForResponse(2);
+    return { bridge, query };
+  }
+
+  async function renameRequest(
+    bridge: BridgeJsonRpcTestHarness,
+    id: number,
+    params: { threadId: string; title: string },
+  ): Promise<BridgeJsonRpcOutputMessage> {
+    bridge.sendRequest(id, "thread/name/set", { ...params, providerThreadId });
+    return bridge.waitForResponse(id);
+  }
+
+  async function shutdown(
+    bridge: BridgeJsonRpcTestHarness,
+    query: ControlledClaudeQuery,
+  ): Promise<void> {
+    bridge.sendRequest(90, "thread/stop", {
+      threadId,
+      providerThreadId,
+      intent: "interrupt",
+      activeTurnId: null,
+    });
+    await bridge.flushWork();
+    query.finish();
+    await bridge.waitForResponse(90);
+    bridge.restore();
+  }
+
+  it("advertises threadRename in the handshake", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    try {
+      bridge.sendRequest(1, "initialize", {
+        protocolVersion: PROVIDER_BRIDGE_PROTOCOL_VERSION,
+        client: { name: "test", version: "0" },
+      });
+      const response = await bridge.waitForResponse(1);
+      expect(response.result).toMatchObject({
+        capabilities: { threadRename: true },
+      });
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("renames a running session in place, without the zcc tag", async () => {
+    const { bridge, query } = await startWithRunningQuery();
+    try {
+      const response = await renameRequest(bridge, 3, {
+        threadId,
+        title: "[zcc] Reviewer: docs",
+      });
+      expect(query.renameSession).toHaveBeenCalledExactlyOnceWith(
+        "Reviewer: docs",
+        providerThreadId,
+      );
+      expect(renameSessionMock).not.toHaveBeenCalled();
+      expect(response.result).toEqual({ ok: true });
+    } finally {
+      await shutdown(bridge, query);
+    }
+  });
+
+  it("renames the transcript of a session whose query was released", async () => {
+    vi.useFakeTimers();
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const query = createControlledClaudeQuery();
+    queryMock.mockReturnValue(query);
+    try {
+      sendResumeThread({
+        bridge,
+        idleQueryReleaseEnabled: true,
+        providerThreadId,
+        requestId: 1,
+        threadId,
+      });
+      await waitForFakeTimerBridgeResponse(bridge, 1);
+      bridge.sendRequest(
+        2,
+        "turn/start",
+        canonicalTurnParams({
+          threadId,
+          providerThreadId,
+          input: [{ type: "text", text: "before idle release" }],
+          providerOptions: { idleQueryReleaseEnabled: true },
+        }),
+      );
+      await readNextPromptText(getLatestQueryCall());
+      await waitForFakeTimerBridgeResponse(bridge, 2);
+      query.emit(createSuccessfulResultMessage(providerThreadId));
+      await flushFakeTimerBridgeWork(bridge);
+      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_QUERY_GRACE_MS);
+      expect(query.close).toHaveBeenCalledOnce();
+
+      bridge.sendRequest(3, "thread/name/set", {
+        threadId,
+        providerThreadId,
+        title: "[zcc] Planner: release",
+      });
+      const response = await waitForFakeTimerBridgeResponse(bridge, 3);
+      expect(query.renameSession).not.toHaveBeenCalled();
+      expect(renameSessionMock).toHaveBeenCalledExactlyOnceWith(
+        providerThreadId,
+        "Planner: release",
+        { dir: "/tmp/worktree" },
+      );
+      expect(response.result).toEqual({ ok: true });
+    } finally {
+      vi.useRealTimers();
+      bridge.sendRequest(4, "thread/stop", {
+        threadId,
+        providerThreadId,
+        intent: "interrupt",
+        activeTurnId: null,
+      });
+      await bridge.waitForResponse(4);
+      bridge.restore();
+    }
+  });
+
+  it("renames the transcript of a thread the bridge has not attached", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    try {
+      const response = await renameRequest(bridge, 1, {
+        threadId: "thread-never-started",
+        title: "Tester: smoke",
+      });
+      expect(renameSessionMock).toHaveBeenCalledExactlyOnceWith(
+        providerThreadId,
+        "Tester: smoke",
+        undefined,
+      );
+      expect(response.result).toEqual({ ok: true });
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("rejects a title that is only the zcc tag", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    try {
+      const response = await renameRequest(bridge, 1, {
+        threadId,
+        title: "[zcc]  ",
+      });
+      expect(response.error).toMatchObject({
+        code: BRIDGE_JSON_RPC_ERRORS.INVALID_PARAMS,
+      });
+      expect(renameSessionMock).not.toHaveBeenCalled();
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("returns a JSON-RPC error when the live rename rejects", async () => {
+    const { bridge, query } = await startWithRunningQuery();
+    try {
+      query.renameSession.mockRejectedValueOnce(new Error("session moved"));
+      const response = await renameRequest(bridge, 3, {
+        threadId,
+        title: "Reviewer",
+      });
+      expect(response.error).toMatchObject({
+        code: -32000,
+        message: "session moved",
+      });
+    } finally {
+      await shutdown(bridge, query);
+    }
+  });
+
+  it("stringifies non-Error transcript rename rejections", async () => {
+    renameSessionMock.mockRejectedValueOnce("no transcript");
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    try {
+      const response = await renameRequest(bridge, 1, {
+        threadId: "thread-never-started",
+        title: "Reviewer",
+      });
+      expect(response.error).toMatchObject({
+        code: -32000,
+        message: "no transcript",
+      });
+    } finally {
+      bridge.restore();
+    }
+  });
+});
+
+describe("request routing", () => {
+  it("answers provider maintenance and thread/discard requests", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    try {
+      const params = { providerId: "claude-code" };
+      const requests = [
+        ["provider/health", params, { probe: "health" }],
+        ["provider/usage", params, { probe: "usage" }],
+        ["provider/installation/status", params, { probe: "status" }],
+        ["provider/installation/run", { ...params, action: "update" }, { probe: "update" }],
+        ["thread/discard", { threadId: "thread-unknown", providerThreadId: "provider-unknown" }, { ok: true }],
+      ] as const;
+      for (const [index, [method, requestParams, result]] of requests.entries()) {
+        bridge.sendRequest(index + 1, method, requestParams);
+        expect((await bridge.waitForResponse(index + 1)).result).toEqual(result);
+      }
+    } finally {
+      bridge.restore();
     }
   });
 });

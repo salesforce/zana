@@ -73,11 +73,12 @@ export function OrgPicker(props: OrgPickerProps) {
   const selected = selectedOrg ? selectedOrg.alias || selectedOrg.username : settingAlias;
   useEffect(() => { if (props.loginRequest !== undefined) setLoginOpen(Boolean(props.loginRequest)); }, [props.loginRequest]);
 
-  const refresh = useCallback(async () => {
+  /** `force` re-reads the CLI roster; otherwise the server's cached list answers. */
+  const refresh = useCallback(async (force = false) => {
     const current = ++generation.current;
     setBusy(true);
     try {
-      const payload = parseOrgsRpc(await call('orgs'));
+      const payload = parseOrgsRpc(await call('orgs', force ? { refresh: true } : undefined));
       if (current !== generation.current) return;
       setOrgs(payload.orgs ?? []);
       setResolvedAlias(payload.selectedAlias ?? null);
@@ -234,7 +235,7 @@ export function OrgPicker(props: OrgPickerProps) {
           >
             Connect org
           </button>}
-          <button type="button" className="sf-btn" disabled={busy || loginBusy} onClick={() => void refresh()}>
+          <button type="button" className="sf-btn" disabled={busy || loginBusy} onClick={() => void refresh(true)}>
             {busy ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>

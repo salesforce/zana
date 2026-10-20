@@ -127,12 +127,13 @@ and **Comments** next to agent conversations. Only this page's tools are listed
 there; they never appear beside a thread or another plugin's page. Close, hide
 and resize the panel with its own controls. A tool keeps its state (preview
 conversation, test results) while you switch to another tab; closing its tab and
-opening it again starts it fresh. The detached Studio window has the same side
-panel. When the panel leaves Studio narrow, its tool strip opens tools in the
+opening it again starts it fresh. The detached Studio window has its own side
+panel, with its own saved tabs, so it never takes over the main window's. When the panel leaves Studio narrow, its tool strip opens tools in the
 panel and the editor stays put; in a narrow window the panel covers the page
 until you close it. Through the CLI, `panel.open` and `panel.show` open tools in
 the side panel, while `panel.close` and `panel.hide` report that the side panel
-owns closing them.
+owns closing them. `view.state` lists the shown tools under `panels.tabs` and
+switched-away tools that keep their state under `panels.kept`.
 
 **Agents** browses Agent Script authoring bundles in the selected org. The bot
 button beside the filename opens it directly. Search for an agent, choose its

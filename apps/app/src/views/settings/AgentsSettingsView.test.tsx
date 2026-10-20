@@ -313,3 +313,27 @@ describe('AgentsTab scheduled run limit', () => {
     }
   });
 });
+
+describe('AgentsTab idle thread sessions', () => {
+  it('defaults to 30 minutes, offers Never, and saves the picked minutes', () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    render(<AgentsTab config={config} onConfigDraft={vi.fn()} onUpdate={onUpdate} />);
+    const picker = screen.getByLabelText('Stop idle thread sessions') as HTMLSelectElement;
+    expect(picker.value).toBe('30');
+    expect([...picker.options].map((option) => option.textContent)).toEqual([
+      'After 30 minutes', 'After 1 hour', 'After 2 hours', 'After 4 hours', 'After 8 hours', 'Never'
+    ]);
+    fireEvent.change(picker, { target: { value: '0' } });
+    expect(onUpdate).toHaveBeenCalledWith({ threadSessionReleaseMinutes: 0 });
+  });
+
+  it('keeps a hand-edited value selectable and labels it in search', () => {
+    render(<AgentsTab config={{ ...config, threadSessionReleaseMinutes: 45 }} onConfigDraft={vi.fn()} onUpdate={vi.fn()} />);
+    const picker = screen.getByLabelText('Stop idle thread sessions') as HTMLSelectElement;
+    expect(picker.value).toBe('45');
+    expect(picker.options[0]?.textContent).toBe('After 45 minutes');
+    const entry = agentsEntries.find((row) => row.id === 'agents.thread-session-release');
+    expect(entry?.value?.({ config } as never)).toBe('After 30 minutes');
+    expect(entry?.value?.({ config: { ...config, threadSessionReleaseMinutes: 0 } } as never)).toBe('Never');
+  });
+});

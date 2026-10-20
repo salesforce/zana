@@ -204,14 +204,53 @@ it('explains a preview refused for lack of a thread instead of naming the intern
   expect(await harness.callRpc('agentPreview.start', { projectId: 'p', path: draft.file.path })).toMatchObject({ ok: false, code: 'refused', error: 'dev is not a known sandbox. Preview it beside a thread to approve, or pick a sandbox.' });
   expect(await harness.callRpc('agentPreview.start', { projectId: 'p', path: draft.file.path, live: true })).toMatchObject({ ok: false, code: 'refused', error: expect.stringMatching(/^Live runs real actions/) });
 });
+function previewApi() {
+  const request = vi.fn(async (_token: string, path: string) => ({
+    host: 'test.api.salesforce.com',
+    body: path.endsWith('/authoring/scripts') ? { status: 'success', compiledArtifact: { globalConfiguration: {} } }
+      : path.endsWith('/preview/sessions') ? { sessionId: 'remote-1', messages: [{ message: 'Welcome' }] }
+        : { messages: [{ message: 'Hello there', planId: 'plan-1' }] }
+  }));
+  return { request, transport: { bootstrap: async () => 'JWT', request } as unknown as AgentforceTransport };
+}
 it('starts and talks to a Live preview from the user\'s own clicks without a thread', async () => {
-  const { action, harness, zcc, exec } = await fixture(true);
+  const { request, transport } = previewApi();
+  const { action, harness, zcc, exec } = await fixture(true, transport);
   const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
   const confirmation = vi.spyOn(zcc.ui, 'requestInput');
-  expect(await harness.callRpc('agentPreview.start', { projectId: 'p', path: draft.file.path, live: true, startedByUser: true })).toMatchObject({ ok: true });
-  expect(await harness.callRpc('agentPreview.send', { projectId: 'p', path: draft.file.path, live: true, sessionId: 'preview', utterance: 'hi', startedByUser: true })).toMatchObject({ ok: true });
+  // A new draft has no default_agent_user, which sf agent preview cannot start, so Live runs on the Preview API.
+  const started = await harness.callRpc('agentPreview.start', { projectId: 'p', path: draft.file.path, live: true, startedByUser: true }) as any;
+  expect(started).toMatchObject({ ok: true, data: { response: 'Welcome' } });
+  expect(request.mock.calls[1][2]).toMatchObject({ enableSimulationMode: false });
+  const sessionId = started.data.sessionId;
+  expect(await harness.callRpc('agentPreview.send', { projectId: 'p', path: draft.file.path, live: true, sessionId, utterance: 'hi', startedByUser: true })).toMatchObject({ ok: true, data: { sessionId, utterance: 'hi', response: 'Hello there', planId: 'plan-1' } });
+  expect(await harness.callRpc('agentPreview.end', { projectId: 'p', path: draft.file.path, live: true, sessionId, startedByUser: true })).toMatchObject({ ok: true, data: { sessionId } });
+  // An ended session is gone from the lab, so a late send cannot reach it.
+  expect(await harness.callRpc('agentPreview.send', { projectId: 'p', path: draft.file.path, live: true, sessionId, utterance: 'again', startedByUser: true })).toMatchObject({ ok: true });
   expect(confirmation).not.toHaveBeenCalled();
-  expect(exec.mock.calls.filter(([args]) => args[0] === 'agent' && args[1] === 'preview').map(([args]) => args[2])).toEqual(['start', 'send']);
+  expect(exec.mock.calls.filter(([args]) => args[0] === 'agent' && args[1] === 'preview').map(([args]) => args[2])).toEqual(['send']);
+});
+it('asks before an agent-driven Live preview on the Preview API, and explains the CLI default_agent_user crash', async () => {
+  const { request, transport } = previewApi();
+  const { action, harness, zcc, exec, root } = await fixture(true, transport);
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  const agent = harness.agentTools.find(tool => tool.name === 'sf_agent')!;
+  const started = agent.execute({ action: 'preview.start', path: draft.file.path, live: true }, { ...ctx, threadId: 'thread' });
+  await vi.waitFor(() => expect(confirmation).toHaveBeenCalledOnce());
+  harness.submitInteraction({ approved: true });
+  expect(await started).toMatchObject({ ok: true, data: { response: 'Welcome' } });
+  request.mockRejectedValueOnce(new Error('Salesforce session expired'));
+  const sessionId = ((await started) as any).data.sessionId;
+  const sent = agent.execute({ action: 'preview.send', path: draft.file.path, live: true, sessionId, utterance: 'hi' }, { ...ctx, threadId: 'thread' });
+  await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(2));
+  harness.submitInteraction({ approved: true });
+  expect(await sent).toMatchObject({ ok: false, code: 'preview_failed', error: 'Salesforce session expired' });
+  // A bundle that names a default_agent_user goes to the CLI; its crash still reads as a fix, not a stack trace.
+  const source = join(root, draft.file.path);
+  writeFileSync(source, readFileSync(source, 'utf8').replace('config:\n', 'config:\n    default_agent_user: "bot@example.com"\n'));
+  exec.mockImplementationOnce(async () => ({ code: 1, stderr: '', stdout: JSON.stringify({ status: 1, message: "Cannot read properties of undefined (reading 'replace')" }) }));
+  expect(await harness.callRpc('agentPreview.start', { projectId: 'p', path: draft.file.path, startedByUser: true })).toMatchObject({ ok: false, code: 'preview_failed', error: expect.stringContaining('no default_agent_user') });
 });
 it('asks before opening Agentforce Builder on an org that is not a known sandbox', async () => {
   const { action, harness, zcc, exec } = await fixture(true);
@@ -276,6 +315,9 @@ it('uses the managed DX child for compile, preview, evaluation and confirmed pub
   expect(await cli(['lint', created.file.path])).toMatchObject({ exitCode: 0, stdout: expect.stringContaining(': ok') });
   expect(await cli(['lint'])).toMatchObject({ exitCode: 0, stdout: expect.stringContaining(created.file.path) });
   expect(await run({ action: 'compile', path: created.file.path })).toMatchObject({ ok: true });
+  // The CLI previews a bundle that names its default_agent_user; others run on the Preview API.
+  const source = join(root, created.file.path);
+  writeFileSync(source, readFileSync(source, 'utf8').replace('config:\n', 'config:\n    default_agent_user: "bot@example.com"\n'));
   expect(await run({ action: 'preview.start', path: created.file.path })).toMatchObject({ ok: true, data: { sessionId: 'preview' } });
   const specPath = 'agentforce-drafts/evals/spec.json';
   mkdirSync(join(root, 'agentforce-drafts/evals'));

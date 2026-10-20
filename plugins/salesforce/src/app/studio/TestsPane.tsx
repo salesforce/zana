@@ -186,7 +186,7 @@ export function TestsPane(props: TestsPaneProps) {
   }, []);
 
   const simulate = (caseIds?: string[]) => perform(caseIds ? `case:${caseIds[0]}` : 'simulate', async () => {
-    const reply = await rpc(STUDIO_RPC.suiteRun, { path: suite?.path, source, engine: 'preview', ...(threadId ? { threadId } : {}), ...(caseIds ? { caseIds } : {}) });
+    const reply = await rpc(STUDIO_RPC.suiteRun, { path: suite?.path, source, engine: 'preview', startedByUser: true, ...(threadId ? { threadId } : {}), ...(caseIds ? { caseIds } : {}) });
     if (reply.ok === false || !reply.suite) return { tone: 'error', text: reply.error || 'The suite could not run.' };
     if (!alive.current) return null;
     setSuite(current => ({ ...(reply.suite as Suite), sha256: current?.sha256 ?? (reply.suite as Suite).sha256 }));
@@ -196,7 +196,7 @@ export function TestsPane(props: TestsPaneProps) {
   });
 
   const runProposal = () => perform('proposal', async () => {
-    const reply = await rpc(STUDIO_RPC.suiteRun, { path: suite?.path, source: proposalSource, engine: 'preview', store: false, ...(threadId ? { threadId } : {}) });
+    const reply = await rpc(STUDIO_RPC.suiteRun, { path: suite?.path, source: proposalSource, engine: 'preview', store: false, startedByUser: true, ...(threadId ? { threadId } : {}) });
     if (reply.ok === false) return { tone: 'error', text: reply.error || 'The proposal could not run.' };
     const results = (reply.results ?? {}) as Record<string, { outcome: CaseOutcome }>;
     if (alive.current) setProposal(Object.fromEntries(Object.entries(results).map(([id, row]) => [id, row.outcome])));

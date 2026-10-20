@@ -57,7 +57,8 @@ import { createTeamProductOps } from './team-product-ops.js';
 import { jobCoordinatorPrompt } from './team-coordinator-prompt.js';
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
-  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse
+  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
+  withRenewedSources, scopedSourceRenewal
 } from './team-launch-support.js';
 import { openExecutionStorage } from './execution-storage.js';
 import { createPlanCorrectionHandoff, createPlanCorrectionHost } from './plan-correction/host.js';
@@ -113,7 +114,7 @@ import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from 
 import { createExecutionStore, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
-import { KeyedColdStartSemaphore, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
+import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
 import type { ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector, suppressesInteractiveBlocked } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
@@ -123,7 +124,7 @@ import { createExecutionHandoffStore } from '@zana-ai/zcc-server/services/execut
 import { createResumeGrantStore } from '@zana-ai/zcc-server/services/execution/resume-grant-store';
 import { createResumeTokenStore } from '@zana-ai/zcc-server/services/execution/resume-token-store';
 import { createInboxActionRegistry } from './inbox-actions/registry.js';
-import { squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock } from './squad-worktree-lifecycle.js';
+import { squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock, type SquadWorktreeTerminalOutcome } from './squad-worktree-lifecycle.js';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
 import { preflightWorkflowProfile } from '@zana-ai/zcc-server/services/agents/squad-bundle';
 import { expandTeamSlots } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
@@ -282,7 +283,11 @@ import { SkillBundlesStore } from '@zana-ai/zcc-server/services/skills/skill-bun
 import { listCommands } from '@zana-ai/zcc-server/services/skills/commands';
 import { ScheduleGroupsStore } from '@zana-ai/zcc-server/services/scheduler/schedule-groups-store';
 import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
-import { realpath, rm } from 'node:fs/promises';
+import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
+import { personaCanWriteFiles, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
+import { createSquadProposalStore } from './squad-proposals/store.js';
+import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
+import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
 import { parseSshConfig } from '@zana-ai/zcc-server/services/projects/ssh-config';
 import {
   SshHostProviderRegistry,
@@ -428,8 +433,7 @@ import type {
 import { MAIN_MODULES } from './modules/index.js';
 import { homedir } from 'node:os';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
-import { readPersistedHostId } from '@zana-ai/zcc-host-daemon/identity';
-import { createLocalHostIdResolver } from './runtime/local-host-id.js';
+import { createLocalHostIdResolver, createPersistedHostIdDeps } from './runtime/local-host-id.js';
 import {
   AUTO_CLOSE_IDLE_DEFAULTS,
   HEARTBEAT_DEFAULTS,
@@ -2994,7 +2998,7 @@ let runtimeSupervisor: RuntimeSupervisor | null = null;
 const localHostId = createLocalHostIdResolver({
   supervisorHostId: () => runtimeSupervisor?.hostId,
   devAttach: () => Boolean(process.env.ELECTRON_RENDERER_URL),
-  readPersistedHostId: () => readPersistedHostId(resolveZccDataDir(process.env, app.getPath('home')))
+  ...createPersistedHostIdDeps(() => resolveZccDataDir(process.env, app.getPath('home')))
 });
 export function discoveryForRegisteredLaunch(
   supervisor: Pick<RuntimeSupervisor, 'cliDiscovery' | 'hostId'> | null,
@@ -4813,7 +4817,9 @@ export function jobWorkerPrompt(input: {
 export async function goalExecutionSourcePaths(
   goal: string,
   home: string,
-  userHome: string = homedir()
+  userHome: string = homedir(),
+  /** `includeHome: false` keeps the project as the only base (agent-written goals, D3). */
+  opts: { includeHome?: boolean } = {}
 ): Promise<ExecutionSourcePathDescriptor[]> {
   const paths = new Map<string, ExecutionSourcePathDescriptor>();
   // Allowed READ bases follow Rule 2's trust anchors: the target project root and
@@ -4830,7 +4836,7 @@ export async function goalExecutionSourcePaths(
   let realUserHome: string | undefined;
   try {
     realUserHome = await realpath(userHome);
-    bases.push(realUserHome);
+    if (opts.includeHome !== false) bases.push(realUserHome);
   } catch {
     // No resolvable HOME base either.
   }
@@ -5224,7 +5230,7 @@ async function prepareCoordinatorHandoff(args: {
   return { planFilePath };
 }
 
-const squadWorktreeRuntime = createSquadWorktreeRuntime({
+export const squadWorktreeRuntime = createSquadWorktreeRuntime({
   executionStore,
   inboxStore,
   inboxActionRegistry,
@@ -5904,6 +5910,173 @@ function flushStaleWorkerInjections(): void {
 // POSITIVE `dead`.
 const workerLivenessCache = new AgentLivenessCache((sessionId) => ptys.probeAgentLiveness(sessionId));
 
+
+// ---- Squad launch proposals (an agent prepares a Squad; the user reviews it in the Inbox) ----
+export const squadProposalStore = createSquadProposalStore({
+  filePath: join(app.getPath('userData'), 'squad-proposals.json')
+});
+
+/** Live-thread probe shared by proposer lookup and report-back: in-process supervisor in prod, loopback server in dev. */
+async function isConversationThreadLive(threadId: string, projectId: string): Promise<boolean> {
+  if (runtimeSupervisor) return (await runtimeSupervisor.isThreadLive(threadId, projectId)) === true;
+  return probeConversationThreadLive(threadId, projectId);
+}
+
+/** A live Modern thread's title for the proposal card ("Prepared in …"); undefined when unknown. */
+async function liveThreadTitle(threadId: string): Promise<string | undefined> {
+  try {
+    const title = (await listMenubarThreads()).find((agent) => agent.threadId === threadId)?.title?.trim();
+    return title || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function lookupProposer(sessionId: string, projectId: string) {
+  const session = ptys.getSession(sessionId);
+  if (session && session.status !== 'exited' && session.projectId === projectId) {
+    const origin = resolveInboxOrigin(sessionId);
+    return {
+      kind: 'pty' as const,
+      id: sessionId,
+      ...(session.title ? { title: session.title } : {}),
+      squadMember: !!session.cohort,
+      ...(origin ? { origin } : {})
+    };
+  }
+  if (await isConversationThreadLive(sessionId, projectId)) {
+    const title = await liveThreadTitle(sessionId);
+    return { kind: 'thread' as const, id: sessionId, ...(title ? { title } : {}), squadMember: false, origin: { threadId: sessionId } };
+  }
+  return null;
+}
+
+export function findExecutionForProposal(projectId: string, proposalId: string): Promise<string | undefined> {
+  return findProposalExecution(executionStore, projectId, proposalId);
+}
+
+/** Queue one text turn into a Modern thread (utility child in prod, loopback product server in dev). */
+export async function queueThreadTurnForProposal(threadId: string, projectId: string, text: string): Promise<{ ok: boolean; reason?: string }> {
+  if (runtimeSupervisor) {
+    try {
+      const result = await runtimeSupervisor.queueThreadTurn(threadId, projectId, text);
+      return { ok: result.ok, ...(result.reason ? { reason: result.reason } : {}) };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  try {
+    const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(threadId)}/send`, productServerUrl()), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: [{ type: 'text', text, mentions: [] }], mode: 'queue-if-active' }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (response.ok) return { ok: true };
+    const body = await response.json().catch(() => ({})) as { code?: unknown };
+    return { ok: false, reason: typeof body.code === 'string' ? body.code : `http-${response.status}` };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+const squadProposalServiceDeps: SquadProposalServiceDeps = {
+  store: squadProposalStore,
+  enabled: teamExecutionEnabled,
+  lookupProposer,
+  projects: { get: (id) => store.listProjects().find((project) => project.id === id) },
+  teams: { get: (id) => teams.list().find((team) => team.id === id) },
+  personas: { get: (id) => personas.list().find((persona) => persona.id === id) },
+  teamHostProblem: (project) => teamHostProblem(project as Project, localHostId()),
+  expandTeamSlots,
+  resolveSquadPlan: (planSource, texts) => resolveSquadPlan(planSource, texts),
+  fs: { realpath, lstat, open: (path, flags) => openFile(path, flags) },
+  inbox: { appendOnce: (input) => inboxStore.appendOnce(input) },
+  actions: {
+    bind: (entry, action) => inboxActionRegistry.bind(entry, action),
+    markUnavailable: (kind, ref, message) => inboxActionRegistry.markUnavailable(kind, ref, message)
+  },
+  issueSources: (windowId, projectId, paths, withinRoot) => executionSources.issue({ windowId: windowId as number, projectId, paths, withinRoot }),
+  now: () => Date.now(),
+  newId: () => randomUUID(),
+  findLaunchedExecution: findExecutionForProposal,
+  logError: (context, error) => logMainError(context, error)
+};
+export const squadProposalService = createSquadProposalService(squadProposalServiceDeps);
+// squad_plan_check's route carries no session id: the MCP tool has already
+// proven the caller live (fail closed), so this view skips the second lookup.
+const squadPlanCheckService = createSquadProposalService({
+  ...squadProposalServiceDeps,
+  lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false })
+});
+
+export const squadProposalNotifier = createSquadProposalNotifier({
+  getRecord: (executionId) => executionStore.get(executionId),
+  markReported: (executionId, attempt) => executionStore.markProposalReported(executionId, attempt),
+  listUnreported: () => executionStore.listUnreportedProposalExecutions(),
+  reply: (sessionId, text) => ptys.reply(sessionId, text),
+  ptyLive: (id) => { const session = ptys.getSession(id); return !!session && session.status !== 'exited'; },
+  ptyState: (id) => agentStatus.get(id),
+  lastInputAt: (id) => ptys.getSession(id)?.lastInputAt,
+  deliverableWhenWaiting: (id) => suppressesInteractiveBlocked(ptys.getSession(id)),
+  threadLive: isConversationThreadLive,
+  queueThreadTurn: queueThreadTurnForProposal,
+  // appendOnce: a replayed report must not re-surface the result entry as a new occurrence.
+  appendInbox: (input) => inboxStore.appendOnce(input),
+  pathExists: existsSync,
+  now: () => Date.now(),
+  setTimer: (fn, ms) => { const handle = setTimeout(fn, ms); handle.unref?.(); return handle; },
+  clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  log: (message, error) => logMainError(message, error)
+});
+inboxActionRegistry.register(SQUAD_LAUNCH_PROPOSAL_ACTION, squadProposalService.handleAction);
+
+/**
+ * Worktree lifecycle first, then the report-back, so the report never nests inside the
+ * lifecycle lock and can name what actually happened to the worktree. The report is not
+ * awaited: delivery (thread liveness, queued turns) must never hold up the engine's
+ * terminal path. The notifier never throws.
+ */
+export async function handleSquadTerminalWithReport(
+  record: Parameters<typeof squadWorktreeRuntime.handleSquadWorktreeTerminal>[0]
+): Promise<SquadWorktreeTerminalOutcome | undefined> {
+  let worktree: SquadWorktreeTerminalOutcome | undefined;
+  let failed = false;
+  try {
+    worktree = await squadWorktreeRuntime.handleSquadWorktreeTerminal(record);
+    return worktree;
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    // A handler that threw applied nothing and the checkout is still there: report it as kept
+    // instead of leaving the report waiting for effects that will not be applied.
+    const outcome = worktree ?? (failed && record.squadWorktree ? 'kept' as const : undefined);
+    void squadProposalNotifier.onTerminal(record, outcome ? { worktree: outcome } : undefined);
+  }
+}
+
+export function canInferPlanForTeam(team: { orchestratorPersonaId?: string }): boolean {
+  const orchestrator = team.orchestratorPersonaId
+    ? personas.list().find((persona) => persona.id === team.orchestratorPersonaId)
+    : undefined;
+  return !!orchestrator && personaCanWriteFiles(orchestrator);
+}
+
+/** `list_teams` MCP output: the summary plus whether the orchestrator can write a plan. */
+export function listTeamSummariesForMcp() {
+  return teams.list().map((team) => ({ ...toTeamSummary(team), canInferPlan: canInferPlanForTeam(team) }));
+}
+
+/** MCP deps for squad_propose / squad_plan_check; empty while Team jobs are off. */
+export function squadProposalMcpDeps() {
+  if (!teamExecutionEnabled()) return {};
+  return {
+    proposeSquad: (route: { projectId: string; sessionId: string }, input: SquadProposalInput) => squadProposalService.propose(route, input),
+    checkSquadPlan: (route: { projectId: string }, input: { path?: string; text?: string }) => squadPlanCheckService.checkPlan({ ...route, sessionId: '' }, input)
+  };
+}
+
 const squadExecutionService = new SquadExecutionService({
   store: executionStore,
   artifacts: executionArtifacts,
@@ -5932,7 +6105,8 @@ const squadExecutionService = new SquadExecutionService({
   withExecutionLifecycleLock: withSquadWorktreeLifecycleLock,
   mayResumeRetainedWorktree: (executionId) => !squadWorktreeHasActiveFollowUp(executionId),
   prepareSquadWorktree: squadWorktreeRuntime.prepareSquadWorktree,
-  onTerminal: squadWorktreeRuntime.handleSquadWorktreeTerminal,
+  onTerminal: async (record) => { await handleSquadTerminalWithReport(record); },
+  onHumanBlocker: (record, blocker) => squadProposalNotifier.onHumanBlocker(record, blocker),
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
   preflightWorkflow: (teamId, workflow) => {
@@ -6115,7 +6289,7 @@ teamPlanHandoff = new TeamPlanHandoff({
 });
 const squadSessionExit = {
   executionStore,
-  handleSquadWorktreeTerminal: squadWorktreeRuntime.handleSquadWorktreeTerminal,
+  handleSquadWorktreeTerminal: handleSquadTerminalWithReport,
   teamPlanHandoff,
   inferredPlanCorrection,
   projects: store,
@@ -6209,51 +6383,124 @@ export async function startTeamJobFromUi(
   if (sourceCapabilityIds.length && !sourceContext) {
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Execution source capabilities require a trusted window' };
   }
-  const goalSourceDescriptors = await goalExecutionSourcePaths(originalGoal, project.path);
+  // A proposed launch's goal is agent-written: only files inside the project may be attached
+  // from it (D3), so the HOME base is dropped. Without a proposal it applies exactly as before.
+  const proposed = input.proposalId !== undefined;
+  const goalSourceDescriptors = await goalExecutionSourcePaths(originalGoal, project.path, undefined, { includeHome: !proposed });
   if (goalSourceDescriptors.length && !sourceContext) {
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Goal execution sources require a trusted window' };
   }
-  // Mint identity before snapshotting: source content lands in a dedicated,
-  // immutable content store and execution ledger carries only bounded metadata.
-  const launchRequestId = `ui:${randomUUID()}`;
-  let sourceBundle: Awaited<ReturnType<typeof executionSources.resolve>> | undefined;
-  try {
-    const goalSourceCapabilities = goalSourceDescriptors.length
-      ? await executionSources.issue({ windowId: sourceContext!.windowId, projectId, paths: goalSourceDescriptors.map(({ exactPath }) => exactPath) })
-      : [];
-    const allSourceCapabilityIds = [...new Set([...sourceCapabilityIds, ...goalSourceCapabilities.map(({ id }) => id)])];
-    if (allSourceCapabilityIds.length) {
-      sourceBundle = await executionSources.resolve({
-        windowId: sourceContext!.windowId,
-        projectId,
-        capabilityIds: allSourceCapabilityIds,
-        snapshotKey: launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_')
-      });
+  // A proposed launch is bound to its stored proposal and must come from a trusted window.
+  if (proposed && !sourceContext) {
+    return { ok: false, code: 'INVALID_CAPABILITY', message: 'Proposed Squad launches must be opened from the desktop app window.' };
+  }
+  const proposalId = proposed ? (typeof input.proposalId === 'string' ? input.proposalId.trim() : '') : undefined;
+  const renewal = scopedSourceRenewal(executionSources, sourceContext?.windowId, projectId);
+  return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, async (proposal) => {
+    // Mint identity before snapshotting: source content lands in a dedicated,
+    // immutable content store and execution ledger carries only bounded metadata.
+    const launchRequestId = `ui:${randomUUID()}`;
+    const snapshot = await snapshotTeamJobSources({
+      windowId: sourceContext?.windowId, projectId, launchRequestId, sourceCapabilityIds, goalSourceDescriptors,
+      // Re-checked against the realpath issue() takes, so a symlink swapped in after discovery can't escape.
+      ...(proposal ? { withinRoot: project.path } : {})
+    });
+    if (!snapshot.ok) return snapshot;
+    const { sourceBundle } = snapshot;
+    const built = await buildTeamJobStartRequest({
+      teamId, projectId, projectName: project.name, launchRequestId, coordinationMode, slots, attended: !!sourceContext,
+      goal: originalGoal, title: originalJobTitle, summary: originalSummary, sourceBundle, goalSourceDescriptors
+    });
+    if (!built.ok) return built.response;
+    const result = proposal
+      ? await squadExecutionService.start('interactive:local', projectId, built.request, { proposal })
+      : await squadExecutionService.start('interactive:local', projectId, built.request);
+    if (!result.ok && sourceBundle) await executionSources.removeSnapshot(sourceBundle.contentRef);
+    if (!result.ok) {
+      planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
+      return teamJobFailureResponse(result);
     }
+    return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
+  }), sourceCapabilityIds, renewal.reissue, logMainError, renewal.discardRetired);
+}
+
+const proposalLaunchDeps: ProposalLaunchDeps<NonNullable<ExecutionRecord['proposal']>> = {
+  beginLaunch: (proposalId, projectId) => squadProposalService.beginLaunch(proposalId, projectId),
+  markLaunched: (proposalId, executionId) => squadProposalService.markLaunched(proposalId, executionId),
+  releaseLaunch: (proposalId) => squadProposalService.releaseLaunch(proposalId),
+  logError: (context, error) => logMainError(context, error)
+};
+
+type TeamJobSourceBundle = Awaited<ReturnType<typeof executionSources.resolve>>;
+
+/** Issue capabilities for the goal-named paths, then snapshot every source of a Team job launch. */
+async function snapshotTeamJobSources(args: {
+  windowId: number | undefined;
+  projectId: string;
+  launchRequestId: string;
+  sourceCapabilityIds: string[];
+  goalSourceDescriptors: ExecutionSourcePathDescriptor[];
+  withinRoot?: string;
+}): Promise<{ ok: true; sourceBundle?: TeamJobSourceBundle } | { ok: false; code: string; message: string }> {
+  const { windowId, projectId } = args;
+  try {
+    const goalSourceCapabilities = args.goalSourceDescriptors.length
+      ? await executionSources.issue({
+        windowId: windowId!, projectId, paths: args.goalSourceDescriptors.map(({ exactPath }) => exactPath),
+        ...(args.withinRoot ? { withinRoot: args.withinRoot } : {})
+      })
+      : [];
+    const capabilityIds = [...new Set([...args.sourceCapabilityIds, ...goalSourceCapabilities.map(({ id }) => id)])];
+    if (!capabilityIds.length) return { ok: true };
+    const sourceBundle = await executionSources.resolve({
+      windowId: windowId!, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_')
+    });
+    return { ok: true, sourceBundle };
   } catch (error) {
     return error instanceof ExecutionSourceError
       ? { ok: false, code: error.code, message: error.message }
       : { ok: false, code: 'SOURCE_SNAPSHOT_FAILED', message: error instanceof Error ? error.message : String(error) };
   }
-  const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...goalSourceDescriptors];
-  const sanitizedGoal = (redactCapturedExecutionSourcePaths(originalGoal, capturedPathDescriptors) ?? originalGoal).slice(0, 4_000);
-  const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(originalJobTitle, capturedPathDescriptors)?.slice(0, 256) || undefined;
-  const sanitizedSummary = redactCapturedExecutionSourcePaths(originalSummary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
+}
+
+/**
+ * Redact captured source paths, resolve the plan and build the Squad start request. An
+ * invalid provided plan parks for correction (attended) or is refused (unattended).
+ */
+async function buildTeamJobStartRequest(args: {
+  teamId: string;
+  projectId: string;
+  projectName: string;
+  launchRequestId: string;
+  coordinationMode: 'structured' | 'freeform';
+  slots: ReturnType<typeof expandTeamSlots>;
+  attended: boolean;
+  goal: string;
+  title?: string;
+  summary?: string;
+  sourceBundle?: TeamJobSourceBundle;
+  goalSourceDescriptors: ExecutionSourcePathDescriptor[];
+}): Promise<{ ok: true; request: ExecutionRequestV1 } | { ok: false; response: TeamJobLaunchResponse }> {
+  const { sourceBundle, launchRequestId } = args;
+  const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...args.goalSourceDescriptors];
+  const sanitizedGoal = (redactCapturedExecutionSourcePaths(args.goal, capturedPathDescriptors) ?? args.goal).slice(0, 4_000);
+  const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(args.title, capturedPathDescriptors)?.slice(0, 256) || undefined;
+  const sanitizedSummary = redactCapturedExecutionSourcePaths(args.summary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
   // One resolver for interactive and triggered launches: "Plan provided in goal"
   // (structured) must yield a complete durable DAG or park for plan correction;
   // "Infer plan from goal" (freeform) leaves planning to the coordinator.
   const resolvedPlan = resolveSquadPlan(
-    coordinationMode === 'structured' ? 'provided' : 'infer',
-    [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), originalGoal]
+    args.coordinationMode === 'structured' ? 'provided' : 'infer',
+    [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), args.goal]
   );
   const plannedWorkUnits = resolvedPlan.workUnits;
   const providedPlanError = resolvedPlan.planError;
   const planRefusal = await gateInvalidProvidedPlan(
     { inboxStore, planCorrectionLaunchBinding },
-    { planError: providedPlanError, unattended: !sourceContext, projectId, projectName: project.name, launchRequestId }
+    { planError: providedPlanError, unattended: !args.attended, projectId: args.projectId, projectName: args.projectName, launchRequestId }
   );
-  if (planRefusal) return planRefusal;
+  if (planRefusal) return { ok: false, response: planRefusal };
   const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,
@@ -6261,35 +6508,32 @@ export async function startTeamJobFromUi(
     providedPlanError ? PlanCorrectionService.correctionPrompt(providedPlanError) : '',
     'Work toward this goal. Coordinate through the Team orchestrator when one is present.'
   ].filter(Boolean).join('\n\n');
-  const initialTask = slots.map((slot) => ({
+  const initialTask = args.slots.map((slot) => ({
     initialTask: slot.role === 'orchestrator'
       ? `${sharedTask}\n\nCoordinate workers, delegate role-specific work, and explicitly report execution completion with a summary when goal is met.`
       : `${sharedTask}\n\nCheck orchestrator instructions and report progress or blockers to it.`
   }));
-  const result = await squadExecutionService.start('interactive:local', projectId, {
-    version: 1,
-    teamId,
-    launchRequestId,
-    coordinationMode,
-    origin: 'explicit',
-    jobTitle: sanitizedJobTitle,
-    objective: sanitizedGoal,
-    summary: sanitizedSummary,
-    slots: initialTask,
-    ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
-    ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
-    policy: {
-      ...(store.getConfig().autonomousTimeoutMs === 0
-        ? {}
-        : { deadlineMs: store.getConfig().autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })
+  return {
+    ok: true,
+    request: {
+      version: 1,
+      teamId: args.teamId,
+      launchRequestId,
+      coordinationMode: args.coordinationMode,
+      origin: 'explicit',
+      jobTitle: sanitizedJobTitle,
+      objective: sanitizedGoal,
+      summary: sanitizedSummary,
+      slots: initialTask,
+      ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
+      ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
+      policy: {
+        ...(store.getConfig().autonomousTimeoutMs === 0
+          ? {}
+          : { deadlineMs: store.getConfig().autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })
+      }
     }
-  });
-  if (!result.ok && sourceBundle) await executionSources.removeSnapshot(sourceBundle.contentRef);
-  if (!result.ok) {
-    planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
-    return teamJobFailureResponse(result);
-  }
-  return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
+  };
 }
 
 /**
@@ -6688,6 +6932,7 @@ function wireBridgeListeners() {
   });
   ptys.on('exit', (sessionId: string, code: number, signal?: number | null, reason?: string | null) => {
     safeSend(IPC.terminals.onExit, sessionId, code);
+    squadProposalNotifier.forget(sessionId);
     const ledgerEntryId = launchLedgerEntriesBySession.get(sessionId);
     launchLedgerEntriesBySession.delete(sessionId);
     const authorizationId = launchAuthorizationBySession.get(sessionId);
@@ -6922,6 +7167,7 @@ function wireBridgeListeners() {
     // (see `workerInjector`): the moment it lands on idle its next unit's task is
     // safe to inject. Cheap no-op for non-idle states or an empty queue.
     workerInjector.onState(sessionId, state);
+    squadProposalNotifier.onState(sessionId, state);
     const session = ptys.getSession(sessionId);
     if (session) captureNativeRecoverySnapshot(session);
     if (state === 'idle' && session) {
@@ -7226,6 +7472,7 @@ function registerIpc() {
     get executionResumeGrants() { return executionResumeGrants; },
     get executionResumeTokens() { return executionResumeTokens; },
     get executionSources() { return executionSources; },
+    get squadProposals() { return squadProposalService; },
     get executionStore() { return executionStore; },
     get exitedSessionStats() { return exitedSessionStats; },
     get extProcessHost() { return extProcessHost; },
@@ -7639,6 +7886,7 @@ async function bootstrapNormal() {
       });
     } finally {
       await recoverSquadStateAtBoot({ squadFollowUpClaims, squadWorktreeRuntime, squadExecutionService, planCorrection, logError: logMainError });
+      await squadProposalService.sweepExpired().catch((error) => logMainError('squad proposals sweepExpired', error));
     }
   } catch (error) {
     // A corrupt recovery record must surface the repair flow, not permanently
@@ -8541,7 +8789,8 @@ async function bootstrapNormal() {
     listPersonas: () => personas.list().map(toPersonaSummary),
     // Team discovery (list_teams) — read-only metadata; lets an agent enumerate
     // the launchable teams the app surfaces.
-    listTeams: () => teams.list().map(toTeamSummary),
+    listTeams: listTeamSummariesForMcp,
+    ...squadProposalMcpDeps(),
     // Team launch (launch_team) — the agent-driven counterpart of the Teams
     // panel's Launch button. Gated behind the off-by-default `teamLaunchEnabled`
     // flag, read at boot (toggling takes effect on next launch), mirroring the
@@ -8870,7 +9119,10 @@ async function bootstrapNormal() {
         flushStaleWorkerInjections();
       }, EXECUTION_CLAIM_RECONCILE_INTERVAL_MS);
       await squadExecutionService.pruneRetainedSources();
-    })().catch((err) => logMainError('teamLifecycle.reconcileStartup', err));
+    })().catch((err) => logMainError('teamLifecycle.reconcileStartup', err))
+      // Report-back replay waits until sessions are restored and the server runtime is up, and
+      // runs even if a step above failed; until then the notifier leaves runs unreported.
+      .finally(() => squadProposalNotifier.replayUnreported().catch((error) => logMainError('squad proposals replayUnreported', error)));
   }, store.getConfig().tmuxScope === 'off' ? 0 : TMUX_REAP_GRACE_MS);
   // Auto-update: build the updater (a no-op shim in dev), kick one check on
   // boot, and arm the periodic background poll (every 30 min, cleared in
@@ -9207,6 +9459,7 @@ app.on('before-quit', (event) => {
   goals.stopAll();
   followups.stopWatching();
   squadExecutionService.dispose();
+  squadProposalNotifier.dispose();
   executionStorage.close();
   if (executionClaimReconcileTimer) {
     clearInterval(executionClaimReconcileTimer);

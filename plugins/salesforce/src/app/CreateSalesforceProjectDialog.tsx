@@ -52,9 +52,9 @@ export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogPr
     setError(null);
     setName(current => current || value.split('@')[0].replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+/, '').slice(0, 80) || 'salesforce-project');
   };
-  const loadOrgs = () => run('Loading connected orgs…', async () => {
+  const loadOrgs = (refresh = false) => run('Loading connected orgs…', async () => {
     setExisting(true);
-    const result = requireResult<{ orgs: PublicListedOrg[] }>(await call('orgs'));
+    const result = requireResult<{ orgs: PublicListedOrg[] }>(await call('orgs', refresh ? { refresh: true } : undefined));
     if (alive.current) setOrgs(result.orgs);
   });
   const signIn = () => run('Waiting for sign-in…', async () => {
@@ -122,7 +122,7 @@ export function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogPr
             </label>
             {!busy && !orgs.length && <p className="sf-muted">No connected orgs yet. Log in to continue.</p>}
             <div><button type="button" className="sf-btn quiet" disabled={!!busy} onClick={() => { setExisting(false); setError(null); }}>Log in to another org</button>
-              <button type="button" className="sf-btn quiet" disabled={!!busy} onClick={() => void loadOrgs()}>Refresh</button></div>
+              <button type="button" className="sf-btn quiet" disabled={!!busy} onClick={() => void loadOrgs(true)}>Refresh</button></div>
           </> : <>
             <OrgLoginFields instance={instance} url={url} alias={alias} busy={!!busy}
               onInstance={setInstance} onUrl={setUrl} onAlias={setAlias} />

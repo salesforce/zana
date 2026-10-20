@@ -135,7 +135,7 @@ export function PluginViewApp({ target }: { target: PluginViewSurfaceTarget }) {
           </PaneEmptyState>
         ) : (
           // The same side panel as in the main window, so agents and page tools open beside the tab here too.
-          <PluginPanelHostLayout pluginId={state.tab.pluginId} panelPath={state.tab.id} scopeId={target.projectId} launchers={false}>
+          <PluginPanelHostLayout pluginId={state.tab.pluginId} panelPath={state.tab.id} scopeId={target.projectId} separateWindow launchers={false}>
             <PluginSlotBoundary pluginId={state.tab.pluginId} generation={state.tab.generation}>
               {(() => {
                 const Component = state.tab.component;

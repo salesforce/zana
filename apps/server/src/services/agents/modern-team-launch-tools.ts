@@ -32,6 +32,12 @@ import { controlCredentialForSession } from '@zana-ai/zcc-host-daemon/control-cr
 import type { PluginAgentToolContext } from '@zana-ai/zcc-plugin-sdk/server';
 import { jsonSchemaAgentToolRecord } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import { LAUNCH_TEAM_DESCRIPTION } from './launch-team-mcp-tool.js';
+import {
+  SQUAD_PLAN_CHECK_DESCRIPTION,
+  SQUAD_PLAN_CHECK_JSON_SCHEMA,
+  SQUAD_PROPOSE_DESCRIPTION,
+  SQUAD_PROPOSE_JSON_SCHEMA
+} from '../squad-proposals/squad-proposal-mcp-tools.js';
 import type { PluginAgentToolSource } from '../../plugins/plugin-agent-tools.js';
 
 /** Internal, colon-free id (kept out of the wire `PluginIdSchema` surface). */
@@ -50,7 +56,10 @@ export const MODERN_TEAM_LAUNCH_TOOL_NAMES = [
 export const MODERN_OWNER_EXECUTION_TOOL_NAMES = [
   'execution_start',
   'execution_snapshot',
-  'execution_resume_binding'
+  'execution_resume_binding',
+  'squad_propose',
+  'squad_plan_check',
+  'list_teams'
 ] as const;
 
 export interface ModernTeamLaunchConfig {
@@ -222,6 +231,24 @@ const OWNER_EXECUTION_TOOL_DEFS: readonly ToolDef[] = [
     mcpName: 'execution.resume_binding',
     description: 'Bind this fresh session to an execution using a durable resume grant. Retry same token after a transient binding failure.',
     inputSchema: OWNER_RESUME_SCHEMA
+  },
+  {
+    name: 'squad_propose',
+    mcpName: 'squad_propose',
+    description: SQUAD_PROPOSE_DESCRIPTION,
+    inputSchema: SQUAD_PROPOSE_JSON_SCHEMA
+  },
+  {
+    name: 'squad_plan_check',
+    mcpName: 'squad_plan_check',
+    description: SQUAD_PLAN_CHECK_DESCRIPTION,
+    inputSchema: SQUAD_PLAN_CHECK_JSON_SCHEMA
+  },
+  {
+    name: 'list_teams',
+    mcpName: 'list_teams',
+    description: 'List the Squads you can propose, with defaultPlanning and canInferPlan.',
+    inputSchema: { type: 'object', properties: {} }
   }
 ];
 

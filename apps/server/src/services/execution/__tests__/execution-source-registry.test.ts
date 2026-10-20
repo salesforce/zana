@@ -140,6 +140,29 @@ describe('execution source registry', () => {
     await expect(stat(join(dir, 'store', 'escape-heavy', 'sources.json'))).rejects.toThrow();
   }));
 
+  it('confines sources to withinRoot against the realpath it issues', async () => fixture(async (dir) => {
+    const project = join(dir, 'project');
+    const outside = join(dir, 'outside');
+    await mkdir(join(project, 'cfg'), { recursive: true });
+    await mkdir(outside);
+    await writeFile(join(project, 'cfg', 'plan.md'), 'inside');
+    await writeFile(join(outside, 'plan.md'), 'secret');
+    const registry = createExecutionSourceRegistry({ rootDir: join(dir, 'store') });
+    // Inside the root: issued as usual.
+    await expect(issue(registry, [join(project, 'cfg', 'plan.md')], { withinRoot: project })).resolves.toHaveLength(1);
+    // A directory swapped to a symlink pointing outside after an earlier check is caught here.
+    await rename(join(project, 'cfg'), join(project, 'cfg-real'));
+    await symlink(outside, join(project, 'cfg'));
+    await expect(issue(registry, [join(project, 'cfg', 'plan.md')], { withinRoot: project }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE', message: 'Execution source is outside the project' });
+    // The root itself is not a source, and an unavailable root is refused.
+    await expect(issue(registry, [project], { withinRoot: project })).rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE' });
+    await expect(issue(registry, [join(project, 'cfg-real', 'plan.md')], { withinRoot: join(dir, 'missing') }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE', message: 'Execution source root is unavailable' });
+    // Without withinRoot the existing picker behaviour is unchanged.
+    await expect(issue(registry, [join(outside, 'plan.md')])).resolves.toHaveLength(1);
+  }));
+
   it('rolls back capabilities created before a later source issue fails', async () => fixture(async (dir) => {
     const good = join(dir, 'good.txt'); const second = join(dir, 'second.txt'); const oversized = join(dir, 'oversized.txt');
     await writeFile(good, 'ok'); await writeFile(second, 'ok'); await writeFile(oversized, 'too large');

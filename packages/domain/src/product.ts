@@ -10,6 +10,7 @@ import type { TerminalThemeId } from './terminal-themes.js';
 import type { WorkflowArgument } from './workflow-args.js';
 import type { MenubarAgent } from './menubar-agent.js';
 import type { NotificationLevel, OwnNotificationLevel } from './notification-levels.js';
+import type { SquadPlanning } from './squad-proposal.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
 export type { TerminalThemeId } from './terminal-themes.js';
@@ -676,7 +677,12 @@ export interface InboxEntry {
    * routes these to Squad details instead of the generic reply box; it is
    * presentation only and never authorizes an action (main does).
    */
-  squadNotice?: 'worktree-lifecycle';
+  squadNotice?: 'worktree-lifecycle' | 'proposal-result';
+  /**
+   * Host-stamped marker linking this entry to a pending Squad launch proposal.
+   * Never agent-supplied; presentation only (main re-authorizes on review).
+   */
+  squadProposal?: { proposalId: string };
   /**
    * Optional host-authored decision context. Main content stays plain-language;
    * technical material appears only after the user opens its Details disclosure.
@@ -2472,6 +2478,17 @@ export interface AppConfig {
    */
   autoCloseIdleMinutes?: number;
   /**
+   * Minutes a thread's provider session (the Claude Code or Codex process
+   * behind a non-terminal thread) may sit idle before the host daemon stops it
+   * to free memory; the next turn resumes it with its history. A stopped
+   * session cannot receive messages from other sessions or fire its own
+   * scheduled wakeups until then. A session with an active turn or open
+   * background work (such as a backgrounded shell) is never stopped. `0` ⇒
+   * never. Absent ⇒ {@link THREAD_SESSION_RELEASE_DEFAULTS.minutes} (30).
+   * Clamped in {@link normalizeConfig}; read live on each sweep.
+   */
+  threadSessionReleaseMinutes?: number;
+  /**
    * When an idle agent is auto-closed (see {@link autoCloseIdleEnabled}), also
    * drop a folded breadcrumb into the inbox's collapsed "Agent closed" section.
    * Default OFF — an idle auto-close is routine bookkeeping already recorded in
@@ -2904,6 +2921,21 @@ export const AUTO_CLOSE_IDLE_DEFAULTS = {
   minMinutes: 1,
   maxMinutes: 240
 } as const;
+
+export const THREAD_SESSION_RELEASE_DEFAULTS = {
+  minutes: 30,
+  minMinutes: 5,
+  maxMinutes: 1440
+} as const;
+
+/** Settings choices for {@link AppConfig.threadSessionReleaseMinutes}; `0` ⇒ never. */
+export const THREAD_SESSION_RELEASE_CHOICES = [30, 60, 120, 240, 480, 0] as const;
+
+export function threadSessionReleaseLabel(minutes: number): string {
+  if (minutes <= 0) return 'Never';
+  if (minutes % 60 === 0) return `After ${minutes / 60} hour${minutes === 60 ? '' : 's'}`;
+  return `After ${minutes} minutes`;
+}
 
 /** Launch-surface default revision. See {@link AppConfig.composerLaunchSurfacesRev}. */
 export const COMPOSER_LAUNCH_SURFACES_REV = 2;
@@ -4351,6 +4383,8 @@ export interface Team {
   worktreeIsolation?: boolean;
   /** Override global structured-work routing enforcement for this Team. */
   routingEnforced?: boolean;
+  /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
+  defaultPlanning?: SquadPlanning;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -4412,6 +4446,10 @@ export interface TeamSummary {
   /** Number of slot rows (NOT the total tab count — slots may have quantity > 1). */
   slotCount: number;
   source?: PersonaSource;
+  /** Planning mode preselected for this Squad. Absent ⇒ the global default. */
+  defaultPlanning?: SquadPlanning;
+  /** Whether the orchestrator can write files, so it can infer a plan. Computed by main, not by `toTeamSummary`. */
+  canInferPlan?: boolean;
 }
 
 /**
@@ -4616,7 +4654,8 @@ export function toTeamSummary(t: Team): TeamSummary {
     name: t.name,
     description: t.description,
     slotCount: Array.isArray(t.slots) ? t.slots.length : 0,
-    source: t.source
+    source: t.source,
+    ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {})
   };
 }
 
@@ -5953,6 +5992,8 @@ export interface ExecutionBoardProjection {
   jobTitle: string;
   /** Main-owned coordination contract, so Job UI never infers its mode from a title. */
   coordinationMode?: TeamCoordinationMode;
+  /** The PTY or thread conversation this run was started from, when launched from a Squad proposal. */
+  startedFrom?: { kind: 'pty' | 'thread'; id: string; title?: string };
   origin?: LaunchOrigin;
   state: 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
   attempt: number;
@@ -6146,6 +6187,8 @@ export interface TeamJobLaunchInput {
   summary?: string;
   sourceCapabilityIds?: string[];
   coordinationMode?: Extract<TeamCoordinationMode, 'structured' | 'freeform'>;
+  /** Main-held Squad proposal id. Only valid from a desktop window; main re-authorizes it. */
+  proposalId?: string;
 }
 
 /** Safe renderer projection for a main-owned, short-lived selected-file capability. */
@@ -6191,16 +6234,29 @@ export interface TeamAvailabilityUnknown {
   failedSources: Array<'skills' | 'mcpServers'>;
 }
 
-export type TeamJobLaunchResponse = Result<TeamJobLaunchResult> | {
+/** Fresh capabilities for the files a failed launch consumed, plus any that could not be renewed. */
+export interface TeamJobRenewedSources {
+  renewed: Array<{ previousId: string; source: ExecutionSourceCapabilityView; changed: boolean }>;
+  dropped: Array<{ previousId: string; name?: string; reason: 'moved' | 'unreadable' | 'too-large' | 'unknown' }>;
+}
+
+export type TeamJobLaunchResponse = { ok: true; value: TeamJobLaunchResult } | {
+  ok: false;
+  code: string;
+  message: string;
+  sources?: TeamJobRenewedSources;
+} | {
   ok: false;
   code: 'REQUIREMENT_UNAVAILABLE';
   message: string;
   requirementFailure: TeamRequirementFailure;
+  sources?: TeamJobRenewedSources;
 } | {
   ok: false;
   code: 'CAPABILITY_AVAILABILITY_UNKNOWN';
   message: string;
   availabilityUnknown: TeamAvailabilityUnknown;
+  sources?: TeamJobRenewedSources;
 };
 
 export const TEAM_ID_MAX_CHARS = 256;
