@@ -243,7 +243,6 @@ function AppShell() {
   // `/projects/:id` segment.
   const focusedProjectId = route.focusedProjectId ?? storeFocusedProjectId;
   const launcherOpen = useUi((s) => s.launcherOpen);
-  const launcherProjectId = useUi((s) => s.launcherProjectId);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const projects = useData((s) => s.projects);
@@ -859,7 +858,6 @@ function AppShell() {
         <GlobalAgentLauncher
           open
           project={focusedProject}
-          initialProjectId={launcherProjectId ?? undefined}
           onClose={() => useUi.getState().setLauncherOpen(false)}
           onLaunched={(session, projectId) => stayOnAgentsBoard(session, projectId, navigate)}
         />

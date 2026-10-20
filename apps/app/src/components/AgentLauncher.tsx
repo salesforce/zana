@@ -121,7 +121,15 @@ export const AgentLauncher = memo(function AgentLauncher({
   squadPrefill
 }: Props) {
   // A reviewed proposal gets its own draft, so a retained launcher draft never overrides it.
-  const sessionKey = JSON.stringify(['launcher', project?.id ?? null, squadPrefill?.proposalId ?? null]);
+  // A row "+" open gets its own draft too, so its project pick never carries into
+  // a generic open (whose unpinned default deliberately stays local).
+  const rowProjectId = project ? undefined : initialProjectId;
+  const sessionKey = JSON.stringify([
+    'launcher',
+    project?.id ?? null,
+    squadPrefill?.proposalId ?? null,
+    ...(rowProjectId ? [rowProjectId] : [])
+  ]);
   const session = useMemo(() => composerSession(sessionKey), [sessionKey]);
   const restoreTerminal = useData((s) => s.restoreTerminal);
   const loadProjects = useData((s) => s.loadProjects);

@@ -54,6 +54,17 @@ describe('AgentLauncher initialProjectId', () => {
     expect(state.teamProps.at(-1)).toMatchObject({ composerProjectId: 'remote-1' });
   });
 
+  it('keeps a row "+" pick out of the generic launcher draft', () => {
+    render(<AgentLauncher onClose={vi.fn()} />);
+    act(() => { (state.teamProps.at(-1)!.onComposerProjectIdChange as (id: string) => void)('local-1'); });
+    cleanup();
+    render(<AgentLauncher onClose={vi.fn()} initialProjectId="remote-1" />);
+    expect(state.teamProps.at(-1)).toMatchObject({ composerProjectId: 'remote-1' });
+    cleanup();
+    render(<AgentLauncher onClose={vi.fn()} />);
+    expect(state.teamProps.at(-1)).toMatchObject({ composerProjectId: 'local-1' });
+  });
+
   it('lets a pinned project win over initialProjectId', () => {
     const project = { id: 'pinned', name: 'Pinned', path: '/p' } as never;
     render(<AgentLauncher project={project} onClose={vi.fn()} initialProjectId="remote-1" />);
