@@ -69,28 +69,23 @@ test('Settings presents grouped preferences and keeps search, persistence, and r
   await expect(win).toHaveURL(/\/inbox$/);
 });
 
-test('Peers settings stay hidden until opted in from Experimental, and a deep link falls back to Preferences', async ({ app }) => {
+test('Peers settings are always listed in Settings, and the deep link opens the Peers page', async ({ app }) => {
   const win = app.window;
   await win.getByRole('link', { name: 'Settings', exact: true }).click();
   await win.getByTestId('settings-nav-global').click();
   await expect(win.getByTestId('settings-nav-machines')).toBeVisible();
-  await expect(win.getByTestId('settings-nav-peers')).toHaveCount(0);
+  // Peers is global: no Experimental opt-in and no peer-capable plugin is required.
+  await expect(win.getByTestId('settings-nav-peers')).toBeVisible();
+
+  await win.getByTestId('settings-nav-experimental').click();
+  await expect(win.getByRole('switch', { name: 'Show Peers in Settings' })).toHaveCount(0);
 
   await win.evaluate(() => {
     window.history.pushState({}, '', '/settings/peers');
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
-  await expect(win.locator('.settings-panel--preferences').getByRole('heading', { name: 'Preferences', exact: true })).toBeVisible();
-  await expect(win.getByRole('heading', { name: 'Peers', exact: true })).toHaveCount(0);
-
-  await win.getByTestId('settings-nav-experimental').click();
-  const toggle = win.getByRole('switch', { name: 'Show Peers in Settings' });
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await expect.poll(() => win.evaluate(() => window.cc.config.get())).toMatchObject({ peersSettingsEnabled: true });
-  // The opt-in alone reveals Peers; no peer-capable plugin is required.
-  await expect(win.getByTestId('settings-nav-peers')).toBeVisible();
+  await expect(win.getByRole('heading', { name: 'Peers', exact: true, level: 3 })).toBeVisible();
+  await expect(win.getByTestId('settings-nav-peers')).toHaveAttribute('aria-current', 'page');
 });
 
 test('Inbox keeps readable titles, report markers, and keyboard selection in both themes', async ({ home }, testInfo) => {

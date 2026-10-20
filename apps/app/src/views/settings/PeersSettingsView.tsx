@@ -211,12 +211,13 @@ export function PeersSettingsView() {
 
   return (
     <div id="settings-anchor-peers" data-settings-target="peers.links" className="peers-page">
+      <h3 className="peers-page-title">Peers</h3>
       <div className="peers-actions peers-page-actions">
         <button type="button" className="btn primary" onClick={() => setPanel(panel === 'add' ? null : 'add')}>Add computer</button>
-        <button type="button" className="btn" onClick={() => setPanel(panel === 'join' ? null : 'join')}>Accept invitation</button>
+        <button type="button" className="btn" onClick={() => setPanel(panel === 'join' ? null : 'join')}>Join computer</button>
       </div>
       {panel === 'add' && <PeerDialog title="Add a computer"><AddComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
-      {panel === 'join' && <PeerDialog title="Accept invitation"><JoinComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
+      {panel === 'join' && <PeerDialog title="Join computer"><JoinComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
       {inProgress.length > 0 && (
         <ul className="peers-list" aria-label="Connections in progress">
           {inProgress.map((connection) => (
@@ -245,10 +246,12 @@ export function PeersSettingsView() {
             {groups.map((group) => {
               const primary = group.links[0]!;
               const many = group.links.length > 1;
+              const linked = group.links.some((link) => link.state === 'linked');
               return (
                 <li key={group.id} className="peers-link peers-computer" data-testid="peer-computer">
                   <div className="peers-link-header">
                     <h4 className="peers-link-name">{group.name}</h4>
+                    {linked && <span className="peers-linked" data-testid="peer-linked">Linked</span>}
                     <LinkStatuses link={primary} />
                     {!many && !flow && (
                       <div className="peers-link-actions">

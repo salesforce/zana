@@ -1036,9 +1036,6 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.classicSessionViewEnabled === 'boolean') {
     normalized.classicSessionViewEnabled = input.classicSessionViewEnabled;
   }
-  if (typeof input.peersSettingsEnabled === 'boolean') {
-    normalized.peersSettingsEnabled = input.peersSettingsEnabled;
-  }
   if (typeof input.providerServiceTiersDisabled === 'boolean') normalized.providerServiceTiersDisabled = input.providerServiceTiersDisabled;
   if (typeof input.pluginSafeMode === 'boolean') normalized.pluginSafeMode = input.pluginSafeMode;
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {

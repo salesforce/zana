@@ -92,7 +92,6 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'followupsFromIdle',
     'autoOpenThreadPlanPanel',
     'classicSessionViewEnabled',
-    'peersSettingsEnabled',
     'inAppAgentTerminalsEnabled',
     'nativeAgentDiscoveryEnabled'
   ] as const)('persists %s', (flag) => {

@@ -8,7 +8,7 @@ import { test, expect, type AppHandle } from './fixtures/app.js';
  * ZCC_E2E_DEEP_LINK_SCHEME names the only scheme this build accepts.
  */
 test.use({
-  initialConfig: { sponsorPromptDismissed: true, peersSettingsEnabled: true, mobileGatewayEnabled: false },
+  initialConfig: { sponsorPromptDismissed: true, mobileGatewayEnabled: false },
   launchEnv: { ZCC_E2E_DEEP_LINK_SCHEME: 'zana-e2e' }
 });
 

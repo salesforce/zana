@@ -100,7 +100,7 @@ export function AddComputer({ connections, onChange, onClose }: AddComputerProps
       )}
       {phase.kind === 'ready' && (
         <>
-          <p>Copy this invitation, then open Accept invitation on the other computer.</p>
+          <p>Copy this invitation, then open Join computer on the other computer.</p>
           <label className="peers-approve-label">Invitation
             <textarea className="peers-token" readOnly rows={2} aria-label="Invitation" value={phase.token} onFocus={(event) => event.currentTarget.select()} />
           </label>

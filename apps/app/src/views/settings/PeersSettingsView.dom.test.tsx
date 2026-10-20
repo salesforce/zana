@@ -39,6 +39,12 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('PeersSettingsView', () => {
+  it('renders the Peers h3 heading the e2e fixture waits for', async () => {
+    render(<PeersSettingsView />);
+    expect(screen.getByRole('heading', { name: 'Peers', level: 3 })).toBeTruthy();
+    await screen.findByText('Studio laptop');
+  });
+
   it('shows the empty state', async () => {
     api.list.mockResolvedValue({ links: [] });
     render(<PeersSettingsView />);
@@ -83,7 +89,10 @@ describe('PeersSettingsView', () => {
     render(<PeersSettingsView />);
     const header = (await screen.findByText('Studio laptop')).closest('.peers-link-header') as HTMLElement;
     expect(within(header).getByText('Connected')).toBeTruthy();
+    // A linked computer shows a computer-level "Linked" badge in the header, outside the live-status group.
+    expect(within(header).getByTestId('peer-linked').textContent).toBe('Linked');
     const statuses = header.querySelector('.peers-link-statuses') as HTMLElement;
+    expect(within(statuses).queryByTestId('peer-linked')).toBeNull();
     expect(within(statuses).getAllByRole('status').map((el) => el.textContent)).toEqual(['Connected']);
     expect(within(statuses).queryByRole('button')).toBeNull();
     expect(screen.getByRole('heading', { name: 'Used by' })).toBeTruthy();
@@ -311,10 +320,10 @@ describe('PeersSettingsView', () => {
     });
   });
 
-  it('opens Add and Accept invitation panels from the section buttons', async () => {
+  it('opens Add and Join computer panels from the section buttons', async () => {
     conn.checkRemoteLogin.mockResolvedValue({ ok: false, reason: 'ssh_remote_login_off' });
     render(<PeersSettingsView />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Accept invitation' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Join computer' }));
     expect(screen.getByTestId('join-computer')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Add computer' }));
     expect((await screen.findByRole('button', { name: 'Add computer' })).className).toContain('primary');

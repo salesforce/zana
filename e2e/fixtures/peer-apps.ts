@@ -206,8 +206,8 @@ export function hostCapabilities(app: AppHandle): { execution: number; forward: 
   } finally { db.close(); }
 }
 
-/** Config that reveals Settings → Peers (the Experimental opt-in) and keeps the mobile gateway out of the way. */
-export const corePeerConfig = { peersSettingsEnabled: true, mobileGatewayEnabled: false } as const;
+/** Config for peer-pairing apps: keeps the mobile gateway out of the way. */
+export const corePeerConfig = { mobileGatewayEnabled: false } as const;
 
 /** Opens the core Settings → Peers hub in `app`. */
 export async function openCorePeers(app: AppHandle) {
