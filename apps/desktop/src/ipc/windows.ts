@@ -3,6 +3,7 @@ import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import type { PluginViewHost } from '../window/plugin-view-host.js';
+import type { ThreadViewHost } from '../window/thread-view-host.js';
 
 export function registerWindowsIpc(): void {
   
@@ -31,4 +32,18 @@ export function registerPluginViewIpc(
   safeHandle(IPC.windows.closePluginView, (target: unknown) => views.close(target), () => false);
   safeHandle(IPC.windows.listPluginViews, () => views.list(), () => []);
   safeHandle(IPC.windows.showInMain, (path: unknown) => views.showPath(path), () => false);
+}
+
+/**
+ * Thread view windows. Trust gate (CLAUDE.md #1): main parses every
+ * renderer-supplied target itself (window/thread-view-host.ts) before it opens
+ * or closes a window.
+ */
+export function registerThreadViewIpc(
+  safeHandle: (channel: string, handler: (...args: any[]) => unknown, fallback: () => unknown) => void,
+  views: Pick<ThreadViewHost, 'open' | 'close' | 'list'>
+): void {
+  safeHandle(IPC.windows.openThreadView, (target: unknown) => views.open(target), () => false);
+  safeHandle(IPC.windows.closeThreadView, (target: unknown) => views.close(target), () => false);
+  safeHandle(IPC.windows.listThreadViews, () => views.list(), () => []);
 }

@@ -579,6 +579,19 @@ function normalizePluginViewWindowBounds(
   return Object.fromEntries(entries.slice(0, PLUGIN_VIEW_BOUNDS_LIMIT));
 }
 
+function normalizeThreadViewWindowBounds(
+  input: unknown
+): AppConfig['threadViewWindowBounds'] | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const { bounds, maximized } = input as Record<string, unknown>;
+  const normalizedBounds = normalizeBounds(bounds as AppConfig['windowBounds'], 720, 480);
+  if (!normalizedBounds && maximized !== true) return undefined;
+  return {
+    ...(normalizedBounds ? { bounds: normalizedBounds } : {}),
+    ...(maximized === true ? { maximized: true } : {})
+  };
+}
+
 /** Clamp bounds for a non-zero {@link AppConfig.executionPlanStartupGraceMs} (0 disables). */
 const MIN_STARTUP_GRACE_MS = 30_000;
 const MAX_STARTUP_GRACE_MS = 3_600_000;
@@ -1311,6 +1324,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (Object.prototype.hasOwnProperty.call(input, 'pluginViewWindowBounds')) {
     normalized.pluginViewWindowBounds = normalizePluginViewWindowBounds(input.pluginViewWindowBounds);
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'threadViewWindowBounds')) {
+    normalized.threadViewWindowBounds = normalizeThreadViewWindowBounds(input.threadViewWindowBounds);
   }
 
   // Autonomous team run backstops: support 0-means-disabled for both timeout and

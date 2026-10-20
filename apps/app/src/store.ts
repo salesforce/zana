@@ -50,6 +50,7 @@ import { resolveRestartProfile } from './lib/sessionRestore.js';
 import { closeFollowupProgressMessage, runCloseIdleAgents } from './lib/close-idle-agents.js';
 
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
+import { isThreadViewSurface } from './lib/threadViewSurface.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { projectSplitScopeKey } from './lib/split-layout/scope.js';
 import { useSplitWorkspace } from './lib/split-layout/store.js';
@@ -2457,8 +2458,9 @@ export const useData = create<DataState>((set, get) => ({
       //
       // SKIPPED in a per-project window — tmux restore spans every project and
       // belongs to the unscoped main window. The scoped window already hydrated
-      // its own live ptys above (display only).
-      if (!isScopedWindow() && hasDesktopBridge()) {
+      // its own live ptys above (display only). A thread view window may have
+      // no project, so it is checked on its own.
+      if (!isScopedWindow() && !isThreadViewSurface() && hasDesktopBridge()) {
         await get().restoreSessions(hydrationFailed);
       }
     } catch (err) {

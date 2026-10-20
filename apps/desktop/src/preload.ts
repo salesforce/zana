@@ -14,7 +14,8 @@ import type {
   DesktopBrowserTabRef,
   DesktopBrowserViewBounds,
   PluginApprovalSheetRequest,
-  PluginViewTarget
+  PluginViewTarget,
+  ThreadViewTarget
 } from '@zana-ai/zcc-desktop-contract';
 import {
   parseDesktopBrowserAutomationOpenRequest,
@@ -1333,6 +1334,16 @@ const api: CcApi = {
       const handler = (_e: unknown, views: PluginViewTarget[]) => cb(views);
       ipcRenderer.on(IPC.windows.onPluginViewsChanged, handler);
       return () => ipcRenderer.off(IPC.windows.onPluginViewsChanged, handler);
+    },
+    openThreadView: (target: ThreadViewTarget) =>
+      ipcRenderer.invoke(IPC.windows.openThreadView, target),
+    closeThreadView: (target: ThreadViewTarget) =>
+      ipcRenderer.invoke(IPC.windows.closeThreadView, target),
+    listThreadViews: () => ipcRenderer.invoke(IPC.windows.listThreadViews),
+    onThreadViewsChanged: (cb: (views: ThreadViewTarget[]) => void) => {
+      const handler = (_e: unknown, views: ThreadViewTarget[]) => cb(views);
+      ipcRenderer.on(IPC.windows.onThreadViewsChanged, handler);
+      return () => ipcRenderer.off(IPC.windows.onThreadViewsChanged, handler);
     },
     showInMain: (path: string) => ipcRenderer.invoke(IPC.windows.showInMain, path),
     onNavigate: (cb: (path: string) => void) => {

@@ -55,3 +55,25 @@ it('subscribes to open plugin views and to main-window navigation, and unsubscri
   expect(electron.off).toHaveBeenCalledWith(IPC.windows.onPluginViewsChanged, handler(IPC.windows.onPluginViewsChanged));
   expect(electron.off).toHaveBeenCalledWith(IPC.windows.onNavigate, handler(IPC.windows.onNavigate));
 });
+
+it('opens, closes, lists and subscribes to thread view windows through their IPC channels', async () => {
+  const cc = await api();
+  const target = { threadId: 't1', projectId: 'p1' };
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue(true);
+  await cc.windows.openThreadView(target);
+  await cc.windows.closeThreadView(target);
+  await cc.windows.listThreadViews();
+  expect(electron.invoke.mock.calls).toEqual([
+    [IPC.windows.openThreadView, target],
+    [IPC.windows.closeThreadView, target],
+    [IPC.windows.listThreadViews]
+  ]);
+  const views = vi.fn();
+  const off = cc.windows.onThreadViewsChanged(views);
+  const handler = electron.on.mock.calls.find(([name]) => name === IPC.windows.onThreadViewsChanged)![1];
+  handler({}, [target]);
+  expect(views).toHaveBeenCalledWith([target]);
+  off();
+  expect(electron.off).toHaveBeenCalledWith(IPC.windows.onThreadViewsChanged, handler);
+});
