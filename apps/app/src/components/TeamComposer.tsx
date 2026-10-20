@@ -22,6 +22,7 @@ import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
 import { useComposerSession, useComposerSetting } from './composer/ComposerDraft.js';
+import { applyRenewedSources } from './team-composer-sources.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { defaultAutonomousTeamId } from './autonomous-team-composer.js';
 import {
@@ -75,6 +76,8 @@ export function TeamComposer({
   const [pickingSources, setPickingSources] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const jobSourcesRef = useRef(jobSources);
+  jobSourcesRef.current = jobSources;
   const [requirementFailure, setRequirementFailure] = useState<TeamRequirementFailure | null>(null);
   const [availabilityUnknown, setAvailabilityUnknown] = useState<TeamAvailabilityUnknown | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -238,17 +241,27 @@ export function TeamComposer({
         ...(jobSources.length ? { sourceCapabilityIds: jobSources.map(({ id }) => id) } : {})
       });
       if (!res.ok) {
+        // The failed launch consumed the attached files; swap in the re-issued ones so Launch/Retry work.
+        let notices: string[] = [];
+        if (res.sources) {
+          notices = applyRenewedSources(jobSourcesRef.current, res.sources).notices;
+          const renewal = res.sources;
+          setJobSources((current) => applyRenewedSources(current, renewal).sources);
+        }
         if (res.code === 'REQUIREMENT_UNAVAILABLE' && 'requirementFailure' in res) {
           setRequirementFailure(res.requirementFailure);
+          for (const notice of notices) pushToast(notice, 'error');
           return;
         }
         if (res.code === 'CAPABILITY_AVAILABILITY_UNKNOWN' && 'availabilityUnknown' in res) {
           setAvailabilityUnknown(res.availabilityUnknown);
+          for (const notice of notices) pushToast(notice, 'error');
           return;
         }
         const message = `Squad launch failed: ${res.message ?? res.code}`;
-        setError(message);
+        setError([notices.length ? message.replace(/[.!?]?$/, '.') : message, ...notices].join(' '));
         pushToast(message, 'error');
+        for (const notice of notices) pushToast(notice, 'error');
         return;
       }
       field.clearIfRevision(revision);

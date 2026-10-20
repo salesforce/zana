@@ -193,7 +193,7 @@ describe('startTeamJobFromUi validation', () => {
     expect(await startTeamJobFromUi(input({ sourceCapabilityIds: ['ok', 7] }))).toMatchObject({ ok: false, code: 'INVALID', message: 'invalid execution source capability' });
     expect(await startTeamJobFromUi(input({ sourceCapabilityIds: ['cap-1'] }))).toMatchObject({ ok: false, code: 'INVALID_CAPABILITY' });
     const result = await startTeamJobFromUi(input({ sourceCapabilityIds: ['cap-1'] }), { windowId: 1 });
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, sources: { renewed: [], dropped: [{ previousId: 'cap-1', reason: 'unknown' }] } });
   });
 
   it('requires a trusted window for goal-referenced source files', async () => {

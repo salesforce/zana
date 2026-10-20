@@ -6226,16 +6226,29 @@ export interface TeamAvailabilityUnknown {
   failedSources: Array<'skills' | 'mcpServers'>;
 }
 
-export type TeamJobLaunchResponse = Result<TeamJobLaunchResult> | {
+/** Fresh capabilities for the files a failed launch consumed, plus any that could not be renewed. */
+export interface TeamJobRenewedSources {
+  renewed: Array<{ previousId: string; source: ExecutionSourceCapabilityView; changed: boolean }>;
+  dropped: Array<{ previousId: string; name?: string; reason: 'moved' | 'unreadable' | 'too-large' | 'unknown' }>;
+}
+
+export type TeamJobLaunchResponse = { ok: true; value: TeamJobLaunchResult } | {
+  ok: false;
+  code: string;
+  message: string;
+  sources?: TeamJobRenewedSources;
+} | {
   ok: false;
   code: 'REQUIREMENT_UNAVAILABLE';
   message: string;
   requirementFailure: TeamRequirementFailure;
+  sources?: TeamJobRenewedSources;
 } | {
   ok: false;
   code: 'CAPABILITY_AVAILABILITY_UNKNOWN';
   message: string;
   availabilityUnknown: TeamAvailabilityUnknown;
+  sources?: TeamJobRenewedSources;
 };
 
 export const TEAM_ID_MAX_CHARS = 256;

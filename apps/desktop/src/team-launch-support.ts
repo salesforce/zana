@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { LaunchProfileId, Persona, Project, Team, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
+import type { LaunchProfileId, Persona, Project, Team, TeamJobLaunchResponse, TeamJobRenewedSources } from '@zana-ai/zcc-domain/product';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { compatibleNativeRecoverySnapshots, nativeRecoveryLaunchSlot } from './team-native-recovery.js';
@@ -227,4 +227,72 @@ export function runSpawnLifecycle<T>(
   spawn: () => Promise<T>
 ): Promise<T> {
   return lifecycle?.withSpawnLock ? lifecycle.withSpawnLock(spawn) : spawn();
+}
+
+type ScopedSourceInput = { windowId: number; projectId: string; capabilityIds: string[] };
+
+/** Bind the registry's re-issue and discard to one window and Project for `withRenewedSources`. */
+export function scopedSourceRenewal(
+  registry: { reissue(input: ScopedSourceInput): Promise<TeamJobRenewedSources>; discardRetired(input: ScopedSourceInput): void },
+  windowId: number | undefined,
+  projectId: string
+): { reissue: (ids: string[]) => Promise<TeamJobRenewedSources>; discardRetired: (ids: string[]) => void } {
+  // Ids reach the helper only from a trusted window (startTeamJobFromUi checks this first).
+  return {
+    reissue: (ids) => registry.reissue({ windowId: windowId!, projectId, capabilityIds: ids }),
+    discardRetired: (ids) => registry.discardRetired({ windowId: windowId!, projectId, capabilityIds: ids })
+  };
+}
+
+/** Ids of launches still running, so an overlapping launch cannot trade a replayed id for a new one. */
+const inFlightSourceIds = new Set<string>();
+/** In-flight ids another launch also submitted; whichever launch consumed them, neither may renew them. */
+const contestedSourceIds = new Set<string>();
+
+/**
+ * A failed launch may already have consumed the attached source capabilities, so the
+ * renderer would be left with dead chips. Hand back freshly re-issued ones with every
+ * failure; a throwing launch with attachments becomes a LAUNCH_FAILED response.
+ * A second launch that reuses ids of one still running gets its failure back unchanged,
+ * and the first then renews nothing either, whichever of the two consumed the ids.
+ */
+export async function withRenewedSources(
+  launch: () => Promise<TeamJobLaunchResponse>,
+  capabilityIds: readonly string[],
+  reissue: (ids: string[]) => Promise<TeamJobRenewedSources>,
+  logError: (context: string, error: unknown) => void,
+  discardRetired?: (ids: string[]) => void
+): Promise<TeamJobLaunchResponse> {
+  const overlapping = capabilityIds.some((id) => inFlightSourceIds.has(id));
+  const owned = overlapping ? [] : [...new Set(capabilityIds)];
+  for (const id of owned) inFlightSourceIds.add(id);
+  if (overlapping) for (const id of capabilityIds) if (inFlightSourceIds.has(id)) contestedSourceIds.add(id);
+  try {
+    let failure: Exclude<TeamJobLaunchResponse, { ok: true }>;
+    try {
+      const result = await launch();
+      if (result.ok) {
+        // The files were consumed for good; forget them so a replayed id cannot be exchanged for a new one.
+        if (capabilityIds.length) {
+          try { discardRetired?.([...capabilityIds]); } catch (error) { logError('team-job-discard-sources', error); }
+        }
+        return result;
+      }
+      if (!capabilityIds.length) return result;
+      failure = result;
+    } catch (error) {
+      if (!capabilityIds.length) throw error;
+      logError('team-job-launch', error);
+      failure = { ok: false, code: 'LAUNCH_FAILED', message: error instanceof Error ? error.message : String(error) };
+    }
+    if (overlapping || owned.some((id) => contestedSourceIds.has(id))) return failure;
+    try {
+      return { ...failure, sources: await reissue([...capabilityIds]) };
+    } catch (error) {
+      logError('team-job-renew-sources', error);
+      return failure;
+    }
+  } finally {
+    for (const id of owned) { inFlightSourceIds.delete(id); contestedSourceIds.delete(id); }
+  }
 }
