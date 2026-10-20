@@ -166,7 +166,7 @@ function PluginPageSidePanelHost({
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
       <div className="split-plugin-main">
-        <PluginPagePanelProvider page={page}>{children}</PluginPagePanelProvider>
+        <PluginPagePanelProvider page={page} open={panelOpen}>{children}</PluginPagePanelProvider>
       </div>
       {panelOpen ? null : (
         <div className="plugin-panel-host-launchers" role="toolbar" aria-label="Side panel">

@@ -35,7 +35,7 @@ import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
 import { claimPluginViewTitle, sanitizePluginViewTitle, type PluginViewTitleSlot } from './plugin-view-title.js';
 import { requestPluginPanelAgent } from './plugin-panel-agent.js';
-import { requestPluginPanelTool, usePluginPagePanel } from './plugin-page-panel.js';
+import { requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from './plugin-page-panel.js';
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
 
@@ -115,7 +115,10 @@ function useZccContextImpl(): ZccContext {
   const route = useRouteState();
   const { pluginId } = usePluginRuntimeContext();
   // Only the page's own plugin gets its side panel; another plugin's slot nested in it does not.
-  const sidePanel = usePluginPagePanel()?.pluginId === pluginId ? { sidePanel: true } : {};
+  const panelOpen = usePluginPagePanelOpen();
+  const sidePanel = usePluginPagePanel()?.pluginId === pluginId
+    ? { sidePanel: true, ...(panelOpen === undefined ? {} : { sidePanelOpen: panelOpen }) }
+    : {};
   const view = getPluginViewTarget();
   // A plugin view window shows one project tab and has no routes of its own.
   if (view) return { projectId: view.projectId, threadId: null, surface: 'plugin-view', ...sidePanel };

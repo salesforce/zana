@@ -330,6 +330,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     patch({ tool: id });
   }, [hostCapable, hostTool, layout, patch, tools.openTool]);
   const panelShown = hostPanel ? hostTool !== null : tools.state.open;
+  // The toggle shows only while the side panel is hidden: a host panel showing another tab (a thread) is still open.
+  const panelVisible = hostPanel && typeof context.sidePanelOpen === 'boolean' ? context.sidePanelOpen : panelShown;
   const showPanel = useCallback(() => {
     if (hostPanel) openTool(lastHostTool.current);
     else tools.toggle();
@@ -900,7 +902,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const activeBundle = bundleName(activePath);
   const documentBar = (
       <AgentScriptDocumentBar path={activePath} dirty={dirty} busy={busy} issues={issues}
-        saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={panelShown}
+        saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={panelVisible}
         {...(stripOwnsWorkspace ? {} : { headerActions: <>{askAgentMenu}{props.headerActions}</>, follow: followChip, orgPicker })}
         onBrowse={() => browseAgents()} onSave={() => void save()}
         onPreview={() => openTool('preview')}
@@ -920,7 +922,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     {props.headerActions}
     <button type="button" className="icon-btn" title="Go to file (⌘P)" aria-label="Go to file" onClick={() => setQuickOpen(true)}><Search size={15} aria-hidden="true" /></button>
     {orgPicker && <div className="af-document-org">{orgPicker}</div>}
-    {!panelShown && !compact && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={showPanel}><PanelRight size={15} aria-hidden="true" /></button>}
+    {!panelVisible && !compact && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={showPanel}><PanelRight size={15} aria-hidden="true" /></button>}
   </> : undefined;
 
   const showTargetTab = layout !== 'legacy' && activeEditorTab !== null && activeEditorTab.kind !== 'agent';

@@ -82,7 +82,7 @@ vi.mock('../../lib/app-surface.js', () => ({
 
 import { pluginPanelOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
 import { parsePanelAgentTarget, requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
-import { requestPluginPanelTool, usePluginPagePanel } from '../../plugins/plugin-page-panel.js';
+import { requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from '../../plugins/plugin-page-panel.js';
 import { addClosableTab, loadSecondaryPanelState, persistSecondaryPanelState } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 
 beforeEach(() => {
@@ -139,6 +139,23 @@ describe('PluginPanelHostLayout', () => {
     expect(screen.queryByTestId('thread-new-tab-browser')).toBeNull();
     fireEvent.click(screen.getByTestId('thread-new-tab-agent'));
     expect(screen.getByTestId('agent-composer')).toBeTruthy();
+    view.unmount();
+  });
+
+  it('tells the page whether its side panel is showing', () => {
+    function Probe() {
+      return <output data-testid="panel-open">{String(usePluginPagePanelOpen())}</output>;
+    }
+    const view = render(
+      <PluginPanelHostLayout pluginId="docs" panelPath="panel">
+        <Probe />
+      </PluginPanelHostLayout>
+    );
+    expect(screen.getByTestId('panel-open').textContent).toBe('false');
+    fireEvent.click(screen.getByTestId('plugin-panel-secondary-show'));
+    expect(screen.getByTestId('panel-open').textContent).toBe('true');
+    fireEvent.click(screen.getByTestId('thread-secondary-hide'));
+    expect(screen.getByTestId('panel-open').textContent).toBe('false');
     view.unmount();
   });
 

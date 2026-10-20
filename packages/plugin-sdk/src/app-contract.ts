@@ -854,6 +854,11 @@ export interface ZccContext {
    * plugin windows share the host's rail and tabbed panel, including web hosts.
    */
   sidePanel?: boolean;
+  /**
+   * With `sidePanel`, whether that panel is showing right now, whatever tab it
+   * shows. Absent on hosts that predate it.
+   */
+  sidePanelOpen?: boolean;
 }
 
 /** How much a window badge should stand out: `danger` for work that could hurt, `warning` for the unknown. */
