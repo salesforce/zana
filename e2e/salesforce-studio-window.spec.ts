@@ -64,6 +64,61 @@ async function route(page: Page, path: string) {
   await page.evaluate((next) => { history.pushState({}, '', next); window.dispatchEvent(new PopStateEvent('popstate')); }, path);
 }
 
+test('Salesforce hub: project tools, recent agents, themes, narrow layout and Studio window', async ({ app, home }, testInfo) => {
+  const { window: main, electron } = app;
+  const errors: string[] = [];
+  main.on('pageerror', error => errors.push(error.message));
+  expect(await main.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = main.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => main.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await main.evaluate(async path => {
+    const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id;
+  }, join(home, 'dx'));
+  await main.evaluate(() => window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' }));
+  const hub = main.getByTestId('salesforce-orgs-panel');
+  const openHub = async () => {
+    await route(main, '/plugins/salesforce/orgs');
+    await expect(hub.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(projectId);
+  };
+  await openHub();
+  for (const [tile, tab] of [['Data', 'Data'], ['Apex & logs', 'Apex & logs'], ['Deployments', 'Deployments'], ['Project home', 'Overview']] as const) {
+    await hub.locator('.sf-hub-tile').filter({ has: main.getByText(tile, { exact: true }) }).click();
+    await expect(main.getByTestId('salesforce-workbench').getByRole('tab', { name: tab, exact: true })).toHaveAttribute('aria-selected', 'true');
+    await openHub();
+  }
+  await hub.getByRole('button', { name: 'Open Studio', exact: true }).click();
+  await expect(main.getByTestId('salesforce-agent-script-panel')).toBeVisible();
+  await main.getByTestId('salesforce-agent-script-file:force-app/Help.agent').click();
+  await expect(main.frameLocator('iframe[title="Agentforce playground"]').locator('.view-lines')).toContainText('Support_Concierge');
+  await openHub();
+  await expect(hub.getByRole('list', { name: 'Recent agents' }).getByRole('button')).toContainText('Help');
+  for (const theme of ['dark', 'light']) {
+    await main.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    for (const width of [1440, 760, 480]) {
+      await main.setViewportSize({ width, height: 900 });
+      const overflow = await hub.evaluate(el => {
+        const right = el.getBoundingClientRect().right;
+        return { pixels: el.scrollWidth - el.clientWidth, elements: Array.from(el.querySelectorAll('*')).filter(child => child.getBoundingClientRect().right > right + 1).map(child => ({ tag: child.tagName, className: child.className, text: child.textContent?.slice(0, 100), right: child.getBoundingClientRect().right, width: child.getBoundingClientRect().width })) };
+      });
+      expect(overflow.pixels, JSON.stringify(overflow.elements)).toBeLessThanOrEqual(1);
+      expect(await hub.locator(':scope > h3').first().evaluate(el => getComputedStyle(el).marginTop)).toBe('28px');
+      await main.screenshot({ path: testInfo.outputPath(`salesforce-hub-${theme}-${width}.png`) });
+    }
+  }
+  await main.setViewportSize({ width: 1440, height: 900 });
+  await hub.getByRole('list', { name: 'Recent agents' }).getByRole('button').click();
+  await expect(main.getByTestId('salesforce-agent-script-panel').locator('.af-document-name')).toHaveText('Help.agent');
+  await openHub();
+  await hub.getByRole('button', { name: 'Open in own window' }).click();
+  const studio = await waitForStudio(electron);
+  await expect(studio.getByTestId('salesforce-workbench')).toHaveAttribute('data-surface', 'studio-window');
+  await expect(studio.getByRole('tab', { name: 'Agents', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await studio.getByTestId('plugin-view-bring-back').click();
+  await expect.poll(() => liveStudioWindows(electron)).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test('Salesforce Studio window: one owner, status card, cross-window org sync and bring back', async ({ app, home }) => {
   const { window: main, electron } = app;
   const errors: string[] = [];
