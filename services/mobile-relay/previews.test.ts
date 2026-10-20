@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createRelay } from './server.mjs';
 import { connectRelay } from './client.mjs';
-import { PREVIEW_TARGET, PREVIEW_TTL, parsePreviewLabel, previewHeaders, previewTargets } from './preview-policy.mjs';
+import { PREVIEW_TARGET, PREVIEW_TTL, edgeCookies, parsePreviewLabel, previewHeaders, previewTargets } from './preview-policy.mjs';
 
 const clean: Array<() => unknown | Promise<unknown>> = [];
 afterEach(async () => { for (const fn of clean.splice(0).reverse()) await fn(); });
@@ -119,4 +119,11 @@ it('a preview client rejects undeclared targets even when its authenticated gate
   clean.push(() => client.close());
   await expect.poll(() => replies).toContainEqual({ type: 'error', id: 1 });
   expect(replies).toContainEqual({ type: 'preview-targets', id: 0, targets: [] });
+});
+it('keeps an edge\'s session cookies off the tunnel and drops cookie Domain widening', () => {
+  expect(edgeCookies({ cookie: 'zcc_mobile_session=a; theme=dark;; zcc_connect_session=b', accept: '*/*' })).toEqual({ cookie: 'theme=dark', accept: '*/*' });
+  expect(edgeCookies({ cookie: 'zcc_mobile_session=a' })).toEqual({});
+  expect(edgeCookies({ accept: '*/*' })).toEqual({ accept: '*/*' });
+  expect(edgeCookies({ 'set-cookie': 'app=1; Domain=.example.com; Path=/' }, true)).toEqual({ 'set-cookie': ['app=1; Path=/'] });
+  expect(edgeCookies({ 'set-cookie': ['zcc_connect_session=forged', '__Host-x=1'] }, true)).toEqual({});
 });
