@@ -12,11 +12,50 @@ import { flowSnapshotXml } from '../plugins/salesforce/lib/flow-visualizer.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const toolbarFile = 'force-app/main/default/aiAuthoringBundles/Customer_Service_Agent_With_A_Long_Name/Customer_Service_Agent_With_A_Long_Name.agent';
+const ORG_TEST_CASES = [
+  { n: 1, utterance: 'Where is my order?', topic: 'Orders', actions: "[&apos;Lookup&apos;]", reply: 'Asks for the order number' },
+  { n: 2, utterance: 'I want a refund', topic: 'Returns', actions: '[]', reply: 'Explains the refund policy' },
+  { n: 3, utterance: 'Cancel my subscription', topic: 'Billing', actions: '[]', reply: 'Confirms the cancellation' },
+];
+const ORG_TEST_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<AiEvaluationDefinition xmlns="http://soap.sforce.com/2006/04/metadata">
+  <name>Support regression</name>
+  <subjectName>Support</subjectName>
+  <subjectType>AGENT</subjectType>
+  <subjectVersion>v1</subjectVersion>
+${ORG_TEST_CASES.map(c => `  <testCase>
+    <expectation><name>topic_sequence_match</name><expectedValue>${c.topic}</expectedValue></expectation>
+    <expectation><name>action_sequence_match</name><expectedValue>${c.actions}</expectedValue></expectation>
+    <expectation><name>bot_response_rating</name><expectedValue>${c.reply}</expectedValue></expectation>
+    <expectation><name>completeness</name></expectation>
+    <inputs><utterance>${c.utterance}</utterance></inputs>
+    <number>${c.n}</number>
+  </testCase>`).join('\n')}
+</AiEvaluationDefinition>`;
+const ORG_TEST_RESULTS = {
+  status: 'COMPLETED', startTime: '2026-10-20T10:00:00.000Z', endTime: '2026-10-20T10:01:30.000Z', subjectName: 'Support',
+  testCases: ORG_TEST_CASES.map(c => {
+    const failing = c.n === 3;
+    const topic = failing ? 'General_FAQ' : c.topic;
+    return {
+      status: 'COMPLETED', testNumber: c.n, startTime: '2026-10-20T10:00:00.000Z', endTime: '2026-10-20T10:00:30.000Z',
+      inputs: { utterance: c.utterance },
+      generatedData: { topic, actionsSequence: c.n === 1 ? ['Lookup'] : [], outcome: c.reply + '.', sessionId: 'sess-' + c.n, invokedActions: '[]' },
+      testResults: [
+        { name: 'topic_sequence_match', expectedValue: c.topic, actualValue: topic, score: failing ? 0 : 1, result: failing ? 'FAILURE' : 'PASS', status: 'COMPLETED',
+          metricExplainability: failing ? 'The agent routed to General_FAQ instead of Billing.' : 'Topic matched.' },
+        { name: 'bot_response_rating', expectedValue: c.reply, actualValue: c.reply + '.', score: 0.9, result: 'PASS', status: 'COMPLETED', metricExplainability: 'The reply covers the expectation.' },
+        { name: 'completeness', score: 0.8, result: null, status: 'COMPLETED' },
+      ],
+    };
+  }),
+};
 // Replace only the upstream network in the installed fixture. The real transport,
 // session service, plugin RPC, Monaco iframe and Electron UI all run unchanged.
 const test = base.extend({
   launchEnv: async ({ home }, use) => {
     const requests: Array<{ path: string; host: string; body: Record<string, unknown> }> = [];
+    let evalPolls = 0;
     const server = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -50,6 +89,11 @@ const test = base.extend({
       } else if (path.endsWith('/chat-generations')) {
         const system = body.messages[0].content as string;
         result = { generationDetails: { generations: [{ content: system.startsWith('Evaluate') ? JSON.stringify({ outcome: 'pass', reason: 'The agent stayed within scope and asked for the missing order details.', evidence: ['The agent asked for an order number before proceeding.'] }) : system.includes('CUSTOMER') ? 'My order is ORD-1042. Can you check the delivery date?' : 'I can help with that. What is your order number?' }] } };
+      } else if (path.includes('/einstein/ai-evaluations/runs')) {
+        // Testing Center: a run starts NEW, reads IN_PROGRESS once, then COMPLETED with 2 passing and 1 failing case.
+        if (req.method === 'POST' && path.endsWith('/runs')) result = { id: '4KB000000000001AAA', status: 'NEW' };
+        else if (path.endsWith('/results')) result = ORG_TEST_RESULTS;
+        else { evalPolls++; result = { id: '4KB000000000001AAA', status: evalPolls < 2 ? 'IN_PROGRESS' : 'COMPLETED' }; }
       } else { res.writeHead(404); res.end('{}'); return; }
       res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result));
     });
@@ -99,6 +143,19 @@ if (args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata') {
   while (state() === 'hold' && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   if (state() === 'empty') result = [];
   if (state() === 'denied') { console.log(JSON.stringify({ status: 1, message: 'Metadata API access denied for this org.' })); process.exit(1); }
+}
+// Testing Center definitions: listed by metadata type, retrieved by manifest in source format.
+if (args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata' && args.includes('AiEvaluationDefinition')) result = [
+  { fullName: 'Support_Regression', createdByName: 'Ada Admin', lastModifiedDate: '2026-10-01T10:00:00.000Z' },
+  { fullName: 'Billing_Smoke', createdByName: 'Bo Builder', lastModifiedDate: '2026-09-01T10:00:00.000Z' },
+];
+if (args[0] === 'project' && args[1] === 'retrieve' && args.includes('--manifest') && fs.readFileSync(path.join(process.cwd(), 'package.xml'), 'utf8').includes('<name>AiEvaluationDefinition</name>')) {
+  const fullName = /<members>([^<]+)<\\/members>/.exec(fs.readFileSync(path.join(process.cwd(), 'package.xml'), 'utf8'))[1];
+  const file = path.join(process.cwd(), 'force-app/main/default/aiEvaluationDefinitions', fullName + '.aiEvaluationDefinition-meta.xml');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, ${JSON.stringify(ORG_TEST_XML)});
+  console.log(JSON.stringify({ status: 0, result: { success: true, done: true, files: [{ fullName, type: 'AiEvaluationDefinition', state: 'Created', filePath: file }], fileProperties: [] } }));
+  process.exit(0);
 }
 // Implementation source, retrieved by manifest like the real CLI: files land in the temp project and are reported in files[].
 if (args[0] === 'project' && args[1] === 'retrieve' && args.includes('--manifest')) {
@@ -1545,4 +1602,95 @@ test('Salesforce illustrated states: editor and agents loading, empty results, r
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-data-empty-light.png'));
     expect(errors).toEqual([]);
   } finally { releaseEditor(); writeFileSync(metadataState, 'empty'); }
+});
+
+test('Agentforce Studio: Org tests list Testing Center definitions, run one in the org and import its failures', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const errors: string[] = [];
+  // A recorded demo pauses between steps so each one can be followed.
+  const beat = () => process.env.ZCC_E2E_RECORD_VIDEO ? page.waitForTimeout(1500) : Promise.resolve();
+  page.on('pageerror', e => errors.push(e.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await expect(studio.getByTestId('salesforce-agent-script-no-file')).toHaveCount(0);
+  await beat();
+
+  await openTool(studio, 'Tests');
+  const tests = studio.getByTestId('studio-tests-pane');
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Org tests' }).click();
+  const view = tests.getByTestId('org-tests-view');
+  const table = view.getByTestId('org-tests-table');
+  await expect(table.getByRole('button', { name: 'Support_Regression', exact: true })).toBeVisible();
+  await expect(table.getByRole('button', { name: 'Billing_Smoke', exact: true })).toBeVisible();
+  await beat();
+  await view.getByLabel('Filter org tests').fill('billing');
+  await expect(table.getByRole('button', { name: 'Support_Regression', exact: true })).toHaveCount(0);
+  await beat();
+  await view.getByLabel('Filter org tests').fill('');
+
+  // The definition's cases, read from the retrieved AiEvaluationDefinition; the row then shows its label and agent.
+  await table.getByRole('button', { name: 'Support_Regression', exact: true }).click();
+  const detail = view.getByTestId('org-def-detail');
+  const cases = detail.getByRole('list', { name: 'Test cases' });
+  await expect(cases.getByRole('listitem')).toHaveCount(3);
+  await expect(cases).toContainText('Where is my order?');
+  await expect(cases).toContainText("action_sequence_match: ['Lookup']");
+  await expect(detail.getByRole('heading', { name: 'Support regression' })).toBeVisible();
+  await expect(view.getByTestId('org-def-Support_Regression')).toContainText('Support');
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
+  await beat();
+
+  // An invalid run id is rejected before any org call.
+  await view.getByLabel('Attach run by id').fill('not a run');
+  await view.getByRole('button', { name: 'Attach', exact: true }).click();
+  await expect(view.getByRole('alert')).toHaveText('A run id is 15 to 18 letters and digits.');
+  await beat();
+  await view.getByLabel('Attach run by id').fill('');
+
+  // Run in the org: confirm, poll IN_PROGRESS -> COMPLETED, then read the results.
+  await detail.getByRole('button', { name: 'Run in org' }).click();
+  await beat();
+  await detail.getByRole('group', { name: 'Confirm run' }).getByRole('button', { name: 'Start run' }).click();
+  const run = view.getByTestId('org-run-detail');
+  await expect(run.getByTestId('org-run-counts')).toContainText('2 pass · 1 fail · 0 error of 3', { timeout: 30_000 });
+  await expect(run).toContainText('completed');
+  await beat();
+  const filters = run.getByRole('tablist', { name: 'Case filter' });
+  await filters.getByRole('tab', { name: /Failing/ }).click();
+  await expect(filters.getByRole('tab', { name: /Failing/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(run.getByRole('button', { name: 'Cancel my subscription' })).toBeVisible();
+  await expect(run.getByRole('button', { name: 'Where is my order?' })).toHaveCount(0);
+  await beat();
+  await run.getByRole('button', { name: 'Cancel my subscription' }).click();
+  const metrics = run.getByRole('table', { name: 'Case 3 metrics' });
+  await expect(metrics).toContainText('General_FAQ');
+  await expect(metrics).toContainText('The agent routed to General_FAQ instead of Billing.');
+  await beat();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-org-tests-dark.png'));
+
+  // The failing case becomes a local scenario case.
+  await run.getByRole('button', { name: 'Import failing to suite' }).click();
+  await expect(view.getByRole('status')).toHaveText('Imported 1 case into the suite.');
+  await beat();
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Cases' }).click();
+  await expect(tests.getByTestId('tests-table')).toContainText('Cancel my subscription');
+  await beat();
+
+  const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, unknown> }>;
+  expect(requests.filter(r => r.path.endsWith('/einstein/ai-evaluations/runs')).map(r => r.body)).toEqual([{ aiEvaluationDefinitionName: 'Support_Regression' }]);
+  expect(requests.some(r => r.path.includes('/einstein/ai-evaluations/runs/4KB000000000001AAA/results'))).toBe(true);
+  expect(errors).toEqual([]);
 });

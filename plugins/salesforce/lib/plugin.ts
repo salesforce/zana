@@ -17,6 +17,7 @@ import { registerStudioComments } from './studio-comments.js';
 import { registerStudioPreview, type SuiteEvalReply } from './scenario-suites.js';
 import { evalCaseOutcomes } from './eval-spec.js';
 import { registerStudioExplorer } from './studio-explorer.js';
+import { registerOrgTests } from './org-tests.js';
 import { createAgentDraft, draftDestination, DRAFT_PROJECT } from './agent-drafts.js';
 import type { AgentDraftInput } from './agent-draft-contract.js';
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
@@ -827,6 +828,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     }
   });
   registerStudioExplorer(studio);
+  // Org tests read the org through the Studio read grants, like Release "Load versions"; a Studio click approves the read.
+  registerOrgTests(studio, { sdkFor: args => clickedSdk(readGrants.wrap(sdk, releaseScope()), args) });
   zcc.agents.registerTool({
     desktopOnly: ['ui.views', 'ui.command', 'ui.result'],
     name: 'sf_workbench',
