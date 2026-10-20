@@ -41,8 +41,19 @@ describe('bounded relay protocol', () => {
     vi.useFakeTimers(); const ws = socket(); heartbeat(ws, 100);
     vi.advanceTimersByTime(100); expect(ws.ping).toHaveBeenCalledOnce();
     ws.emit('pong'); vi.advanceTimersByTime(100); expect(ws.ping).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(100); expect(ws.terminate).not.toHaveBeenCalled();
     vi.advanceTimersByTime(100); expect(ws.terminate).toHaveBeenCalledOnce();
     ws.emit('close'); expect(vi.getTimerCount()).toBe(0); expect(ws.listenerCount('pong')).toBe(0);
+  });
+  it('tolerates a single missed pong and resets the miss count on a pong', () => {
+    vi.useFakeTimers(); const ws = socket(); heartbeat(ws, 100);
+    vi.advanceTimersByTime(200); expect(ws.terminate).not.toHaveBeenCalled();
+    ws.emit('pong'); vi.advanceTimersByTime(200); expect(ws.terminate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100); expect(ws.terminate).toHaveBeenCalledOnce();
+  });
+  it('terminates on the first missed pong when maxMisses is 0', () => {
+    vi.useFakeTimers(); const ws = socket(); heartbeat(ws, 100, 0);
+    vi.advanceTimersByTime(100); expect(ws.terminate).toHaveBeenCalledOnce();
   });
   it('waits for each response frame to flush and stops on cancellation or send failure', async () => {
     const ws = socket(); const active = vi.fn(() => true);

@@ -127,13 +127,14 @@ export function bytes(frame, max = LIMITS.chunk) {
   return data;
 }
 /** Ping frames count as traffic at Heroku's router, including on idle phones. */
-export function heartbeat(socket, interval = 20_000) {
-  let alive = true;
-  const pong = () => { alive = true; };
+export function heartbeat(socket, interval = 20_000, maxMisses = 2) {
+  let misses = 0;
+  const pong = () => { misses = 0; };
   socket.on('pong', pong);
   const timer = setInterval(() => {
-    if (!alive) { socket.terminate(); return; }
-    alive = false;
+    // Tolerate one missed pong so a brief event-loop stall doesn't tear down a healthy tunnel.
+    if (misses >= maxMisses) { socket.terminate(); return; }
+    misses++;
     if (socket.readyState === WebSocket.OPEN) socket.ping();
   }, interval);
   timer.unref();
