@@ -254,6 +254,7 @@ import {
   writeThreadViewBounds
 } from './window/thread-view-windows.js';
 import { createThreadViewHost } from './window/thread-view-host.js';
+import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { createPluginApprovalHandler } from './ipc/plugin-approvals.js';
@@ -899,8 +900,8 @@ const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateCon
 const rendererReadiness = new RendererReadiness();
 
 function markRendererReady(win: BrowserWindow): void {
-  const registered = windows.get(win.id);
-  if (!registered || registered.win !== win || registered.projectId || registered.threadView) return;
+  /* v8 ignore next -- registry wiring; isUnscopedRegistration is unit-tested */
+  if (!isUnscopedRegistration(windows.get(win.id), win)) return;
   rendererReadiness.markReady(win.id);
 }
 /**
@@ -914,10 +915,8 @@ function mainWindow(): BrowserWindow | null {
 }
 /** The live unscoped (full-shell) window, or null if only scoped ones exist. */
 function unscopedWindow(): BrowserWindow | null {
-  for (const { win, projectId, threadView } of windows.values()) {
-    if (!projectId && !threadView && !win.isDestroyed()) return win;
-  }
-  return null;
+  /* v8 ignore next -- registry wiring; findUnscopedWindow is unit-tested */
+  return findUnscopedWindow(windows.values());
 }
 /** Any live window, scoped or not. */
 function anyWindow(): BrowserWindow | null {
