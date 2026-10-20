@@ -151,6 +151,18 @@ describe('Stop using', () => {
 });
 
 describe('Repair and unsynced', () => {
+  it('shows temporary capability reads as progress and recovers automatically', async () => {
+    let status = { ...EMPTY, lifecycleAvailable: false, lifecycleChecking: true };
+    fakePolling();
+    mount({ connections: async () => [used({ syncing: false })], groupStatus: async () => status });
+    expect(await screen.findByText('Checking sync status')).toBeTruthy();
+    expect(screen.queryByText(/Database sync cannot start/)).toBeNull();
+    expect(screen.queryByText(/Enable Database Sync stay off/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Repair' })).toBeNull();
+    status = { ...EMPTY, lifecycleAvailable: true, lifecycleChecking: false };
+    await tick(PEER_PENDING_POLL_MS);
+    expect(await screen.findByRole('button', { name: 'Repair' })).toBeTruthy();
+  });
   it('a used, connected computer that is not syncing says so and Repair retries setup', async () => {
     const repair = vi.fn(async () => ({ outcome: 'sync-enabled', detail: null, reason: null }));
     mount({ connections: async () => [used({ syncing: false })], repairPeer: repair });

@@ -122,6 +122,9 @@ interface ComputerBadge { state: 'setting-up' | 'unsynced' | 'connected' | 'reco
 
 function computerStatus(c: ConnectionView, status: GroupStatus | null): ComputerBadge {
   if (c.retiring) return { state: 'removing', label: 'Being removed', detail: 'Waiting for committed frontier; data sync disabled' };
+  if (c.usedByThisPlugin && status?.lifecycleChecking) {
+    return { state: 'setting-up', label: 'Checking sync status', detail: 'Sync status is updating. Keep both computers open; no action needed.' };
+  }
   if (c.usedByThisPlugin && status?.setup?.peerId === c.computerId) {
     return { state: 'setting-up', label: 'Setting up sync', detail: 'Waiting for the other computer to finish setup.' };
   }
@@ -209,9 +212,9 @@ export function PeerSettings() {
       loadConnections();
     };
     load();
-    const timer = setInterval(load, waiting ? PEER_PENDING_POLL_MS : PEER_CONNECTIONS_POLL_MS);
+    const timer = setInterval(load, waiting || status?.lifecycleChecking ? PEER_PENDING_POLL_MS : PEER_CONNECTIONS_POLL_MS);
     return () => { active = false; clearInterval(timer); };
-  }, [api, waiting, loadConnections]);
+  }, [api, waiting, status?.lifecycleChecking, loadConnections]);
   const configured = !!status?.configured;
   // Boolean only. A dismissed (Cancel) notice stays away until the sides converge once, so a later drift shows it again.
   const checkDrift = useCallback((isActive: () => boolean = () => true) => {
@@ -381,7 +384,7 @@ export function PeerSettings() {
       {status ? (
         <>
           <div className="dd-peers-block">
-            {!status.configured ? <p>No sync group configured.</p> : null}
+            {!status.configured && !status.lifecycleChecking ? <p>No sync group configured.</p> : null}
             {status.setup && !connectionIds.has(status.setup.peerId) ? (
               <p role="status">Setup {status.setup.state}: {nameOf(status.setup.peerId)}{setupReason(status.setup)}</p>
             ) : null}
@@ -411,7 +414,9 @@ export function PeerSettings() {
               </select>
             </label>
           ) : null}
-          {!status.lifecycleAvailable ? (
+          {status.lifecycleChecking ? (
+            !list.some((connection) => connection.usedByThisPlugin) && <p className="dd-peers-hint" role="status">Checking sync status. This updates automatically; no action needed.</p>
+          ) : !status.lifecycleAvailable ? (
             <p className="dd-peers-hint" role="status">{lifecycleText(status.lifecycleReason)} Using a computer and Enable Database Sync stay off until it is ready.</p>
           ) : !status.introductionsAvailable ? (
             <p className="dd-peers-hint">Automatic introductions are unavailable on this app, so new members are not introduced to the rest of the group.</p>

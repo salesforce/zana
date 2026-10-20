@@ -629,6 +629,23 @@ const failure = async (app: PairApp) => { await app.pairing.reconcile(); return 
 describe('DD core connection pairing', () => {
   const TRANSIENT = 'peer enrollment changed or revoked';
 
+  it.each(['peer enrollment changed', TRANSIENT])('status treats %s as an enrollment transition and recovers', async (message) => {
+    const net = network(), a = net.app('a');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      a.peers.list.mockRejectedValueOnce(new Error(message));
+      expect(await a.pairing.status()).toMatchObject({ lifecycleAvailable: false, lifecycleChecking: true, peers: [], enrolled: [] });
+      expect(warn).not.toHaveBeenCalled();
+      expect(await a.pairing.status()).toMatchObject({ lifecycleAvailable: true, lifecycleChecking: false });
+    } finally { warn.mockRestore(); }
+  });
+
+  it('explicit key failures are not classified as temporary status checks', async () => {
+    const net = network(), a = net.app('a');
+    a.peers.list.mockRejectedValueOnce(new Error('key unavailable [reason=keychain-denied]'));
+    expect(await a.pairing.status()).toMatchObject({ lifecycleAvailable: false, lifecycleChecking: false, lifecycleReason: 'keychain-denied' });
+  });
+
   it('reconcile survives a transient pair-store error during auto-enable and retries on the next call', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
     withConnections(b, { list: [conn('a')] });

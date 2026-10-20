@@ -78,6 +78,8 @@ export interface GroupStatus {
   enrolled: Array<{ id: string; name: string; connected: boolean }>;
   setup: { peerId: string; repoId: string; state: 'pending' | 'joining'; error: string | null } | null;
   lifecycleAvailable: boolean;
+  /** Capability reads are incomplete; no grants are inferred while core refreshes enrollment. */
+  lifecycleChecking?: boolean;
   /** Set when `lifecycleAvailable` is false: the real cause, when core reported one. */
   lifecycleReason?: PeerLifecycleReason | null;
   introductionsAvailable: boolean;

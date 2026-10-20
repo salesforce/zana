@@ -33,7 +33,8 @@ export function lifecycleReasonOf(error: unknown): PeerLifecycleReason {
   const code = /\[reason=([a-z-]+)\]/.exec(error instanceof Error ? error.message : String(error))?.[1];
   return LIFECYCLE_REASONS.find((reason) => reason === code) ?? 'unknown';
 }
-const isTransient = (error: unknown): boolean => error instanceof Error && error.message === TRANSIENT_PEER_ERROR;
+const isTransient = (error: unknown): boolean => error instanceof Error &&
+  (error.message === TRANSIENT_PEER_ERROR || error.message === 'peer enrollment changed');
 /** Cap for the follower's backoff between failed probes of an unreachable initiator. */
 const FOLLOWER_PROBE_MAX_MS = 5 * 60 * 1000;
 /** An unfrozen setup with a computer that has no connection is dropped after this long (and two looks). */
@@ -603,6 +604,7 @@ export class DesignDocPairing {
       throw new PeerProtocolError('invalid', 'no connection to that computer; connect it in Settings first');
     }
     const status = await this.status();
+    if (status.lifecycleChecking) return { outcome: 'pending', detail: 'Checking sync status. Setup will retry automatically; no action needed.', reason: null };
     if (syncedWith(status, peerId)) return { outcome: 'already-synced', detail: null, reason: null };
     if (!status.lifecycleAvailable) {
       // Re-linking cannot help while the key is unusable; say why instead of churning the connection.
@@ -725,6 +727,7 @@ export class DesignDocPairing {
     const features = await this.peers.features();
     let peers: Awaited<ReturnType<PluginSdkPeers['list']>> = [], enrolled: Awaited<ReturnType<PluginSdkPeers['enrolled']>> = [];
     let available = features.lifecycle;
+    let checking = false;
     let reason: PeerLifecycleReason | null = available ? null : 'core-unsupported';
     try {
       [peers, enrolled] = await Promise.all([this.peers.list({ signal: this.abort.signal }), this.peers.enrolled({ signal: this.abort.signal })]);
@@ -732,8 +735,11 @@ export class DesignDocPairing {
       this.abort.signal.throwIfAborted();
       const text = error instanceof Error ? error.message : String(error);
       reason = lifecycleReasonOf(error);
-      if (text !== this.lifecycleWarning) console.warn(`[design-docs] peer lifecycle unavailable (${reason}): ${text}`);
-      this.lifecycleWarning = text;
+      checking = features.lifecycle && reason === 'unknown';
+      if (!isTransient(error)) {
+        if (text !== this.lifecycleWarning) console.warn(`[design-docs] peer lifecycle unavailable (${reason}): ${text}`);
+        this.lifecycleWarning = text;
+      }
       available = false;
     }
     if (available) this.lifecycleWarning = null;
@@ -748,7 +754,7 @@ export class DesignDocPairing {
       }), jobs: this.group.jobs().map(({ payload: _payload, ...job }) => job), peers,
       enrolled: enrolled.map(({ id, name, connected }) => ({ id, name, connected })),
       setup: consent ? { peerId: consent.peerId, repoId: consent.repoId, state: consent.state, error: consent.error } : null,
-      lifecycleAvailable: available, lifecycleReason: this.lifecycleReason, introductionsAvailable: available && features.introductions, installerAvailable: false };
+      lifecycleAvailable: available, lifecycleChecking: checking, lifecycleReason: this.lifecycleReason, introductionsAvailable: available && features.introductions, installerAvailable: false };
   }
 
   /** Explicit owner action: also lifts a local Disable Link. */
