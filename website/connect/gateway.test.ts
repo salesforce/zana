@@ -50,12 +50,13 @@ function socket(server: any, path: string, headers: Record<string, string>) {
 }
 async function laptop(server: any, name: string) {
   const ws = socket(server, '/_relay/connect', { authorization: `Bearer ${server.credential}` });
-  const hello = once(ws, 'message'); await once(ws, 'open'); await hello;
+  // Answer from the first frame: a held visitor's request can arrive in the same chunk as hello.
   ws.on('message', raw => {
     const frame = JSON.parse(raw.toString());
     if (frame.type === 'request-end') for (const value of [{ type: 'response', status: 200, headers: { 'content-type': 'text/plain' } }, { type: 'response-data', data: Buffer.from(name.repeat(9000)).toString('base64') }, { type: 'response-end' }]) ws.send(JSON.stringify({ id: frame.id, ...value }));
     if (frame.type === 'ws-data') ws.send(JSON.stringify({ ...frame, data: Buffer.from(`${name}:${Buffer.from(frame.data, 'base64')}`).toString('base64') }));
-  }); return ws;
+  });
+  const hello = once(ws, 'message'); await once(ws, 'open'); await hello; return ws;
 }
 it('opens a dashboard domain through redirects into the live app without another approval', async () => {
   const a = await enroll('alice'); await laptop(a, 'Zana');
