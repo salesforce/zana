@@ -34,8 +34,8 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
 const HUNK_ROW_PX = 26;
 /** Height of the inline comment composer: label, two-line box, buttons. */
 const COMMENT_COMPOSE_PX = 104;
-/** How many 16 ms ticks the composer waits for Monaco to show its zone before giving up on focus. */
-const COMPOSE_FOCUS_TRIES = 30;
+/** Monaco reports a hidden view zone's top about a million pixels above the viewport. */
+const HIDDEN_ZONE_TOP = -100_000;
 
 export class StudioLayer {
   private session: ProposalSession | null = null;
@@ -324,16 +324,17 @@ export class StudioLayer {
     // Monaco sets the zone node's display, so the form lays out inside a plain wrapper.
     const zone = el('div', 'sf-comment-compose-zone');
     zone.appendChild(node);
-    this.editor.changeViewZones(accessor => {
-      this.composeZoneId = accessor.addZone({ afterLineNumber: Math.min(endLine, model.getLineCount()), ordinal: 2, heightInPx: COMMENT_COMPOSE_PX, domNode: zone, suppressMouseDown: true });
-    });
-    // Monaco attaches the zone hidden and shows it on a later render; focus() is a no-op until then, so retry (bounded) until it lands.
-    const focusWhenAttached = (attempt: number): void => {
-      if (input.isConnected) input.focus();
-      if (input.ownerDocument.activeElement === input) return;
-      if (attempt < COMPOSE_FOCUS_TRIES && this.composeZoneId) setTimeout(() => focusWhenAttached(attempt + 1), 16);
+    // Monaco adds the zone hidden and shows it on a later render (which an unfocused window can delay a lot), so the
+    // box takes focus the first time Monaco places it. onDomNodeTop runs just before Monaco sets the zone's display.
+    let focused = false;
+    const onDomNodeTop = (top: number): void => {
+      if (focused || top < HIDDEN_ZONE_TOP) return;
+      focused = true;
+      queueMicrotask(() => { if (input.isConnected) input.focus(); });
     };
-    setTimeout(() => focusWhenAttached(0), 0);
+    this.editor.changeViewZones(accessor => {
+      this.composeZoneId = accessor.addZone({ afterLineNumber: Math.min(endLine, model.getLineCount()), ordinal: 2, heightInPx: COMMENT_COMPOSE_PX, domNode: zone, suppressMouseDown: true, onDomNodeTop });
+    });
   }
 
   closeCommentComposer(): void {

@@ -283,36 +283,37 @@ it('dispose clears visuals, the chip and pending cursor reports', () => {
   new StudioLayer(fake.monaco, fake.editor, post).dispose();
 });
 
-it('keeps focusing the comment box until Monaco shows its zone', () => {
-  vi.useFakeTimers();
+it('focuses the comment box the first time Monaco shows its zone', async () => {
   document.body.appendChild(fake.parent);
-  layer.openCommentComposer(1, 1, 'a');
-  const zone = Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'));
-  fake.parent.appendChild(zone.domNode);
-  const input: HTMLTextAreaElement = zone.domNode.querySelector('textarea');
-  // A hidden zone ignores focus(), as Monaco's does before its next render.
-  const real = input.focus.bind(input);
-  let hidden = true;
-  input.focus = () => { if (!hidden) real(); };
-  vi.advanceTimersByTime(48);
-  expect(document.activeElement).not.toBe(input);
-  hidden = false;
-  vi.advanceTimersByTime(16);
-  expect(document.activeElement).toBe(input);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-it('stops waiting to focus the comment box once it is closed or never attaches', () => {
-  vi.useFakeTimers();
   const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
   layer.openCommentComposer(1, 1, 'a');
-  vi.advanceTimersByTime(16 * 40);
+  const zone = Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'));
+  const input: HTMLTextAreaElement = zone.domNode.querySelector('textarea');
+  // Hidden: Monaco reports the zone far above the viewport, so the box waits.
+  zone.onDomNodeTop(-1_000_000);
+  await Promise.resolve();
   expect(focus).not.toHaveBeenCalled();
-  expect(vi.getTimerCount()).toBe(0);
+  // Shown (even partly scrolled above the top): focus lands after Monaco sets its display.
+  fake.parent.appendChild(zone.domNode);
+  zone.onDomNodeTop(-12);
+  expect(focus).not.toHaveBeenCalled();
+  await Promise.resolve();
+  expect(document.activeElement).toBe(input);
+  // Later renders and scrolling never pull focus back into the box.
+  input.blur();
+  zone.onDomNodeTop(40);
+  await Promise.resolve();
+  expect(focus).toHaveBeenCalledTimes(1);
+  focus.mockRestore();
+});
+
+it('skips focus when the comment box is gone before Monaco shows it', async () => {
+  const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
   layer.openCommentComposer(1, 1, 'a');
-  layer.closeCommentComposer();
-  vi.advanceTimersByTime(32);
-  expect(vi.getTimerCount()).toBe(0);
+  const zone = Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'));
+  zone.onDomNodeTop(10);
+  await Promise.resolve();
+  expect(focus).not.toHaveBeenCalled();
   focus.mockRestore();
 });
 
@@ -330,12 +331,8 @@ it('the inline comment box submits, cancels and keeps its keys from the editor',
   const add = Array.from(form.querySelectorAll('button')).find(b => b.textContent === 'Add comment')!;
   expect(form.textContent).toContain('Comment on lines 3-9');
   expect(input.maxLength).toBe(2000);
-  // Monaco attaches the zone a few frames later; focus waits for it.
-  vi.advanceTimersByTime(40);
-  expect(document.activeElement).not.toBe(input);
   fake.parent.appendChild(form);
-  vi.advanceTimersByTime(16);
-  expect(document.activeElement).toBe(input);
+  input.focus();
   expect(add.disabled).toBe(true);
   const outside = vi.fn();
   fake.parent.addEventListener('keydown', outside);
