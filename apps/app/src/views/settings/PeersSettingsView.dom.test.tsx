@@ -96,10 +96,11 @@ describe('PeersSettingsView', () => {
     await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
   });
 
-  it('keeps the global Remove link action only for unused connections', async () => {
+  it('does not show a normal Remove action; recovery owns forced removal', async () => {
     api.list.mockResolvedValue({ links: [link({ uses: [] })] });
     render(<PeersSettingsView />);
-    expect(await screen.findByRole('button', { name: 'Remove link' })).toBeTruthy();
+    await screen.findByText('No plugin uses this computer.');
+    expect(screen.queryByRole('button', { name: /Remove link|Remove\.\.\./ })).toBeNull();
   });
 
   it('groups links of one computer and disambiguates equal names', async () => {
@@ -158,11 +159,11 @@ describe('PeersSettingsView', () => {
     await waitFor(() => expect(api.repair).toHaveBeenCalledWith('h2'));
   });
 
-  it('offers no Pause, Resume or Reconnect for an unclaimed link', async () => {
+  it('offers no ordinary actions for an unclaimed link', async () => {
     api.list.mockResolvedValue({ links: [link({ state: 'unclaimed', connected: false, uses: [] })] });
     render(<PeersSettingsView />);
-    expect(await screen.findByRole('button', { name: 'Remove link' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Pause|Resume|Reconnect/ })).toBeNull();
+    await screen.findByText('Unclaimed');
+    expect(screen.queryByRole('button', { name: /Pause|Resume|Reconnect|Remove link|Remove\.\.\./ })).toBeNull();
   });
 
   it('surfaces a disconnect failure', async () => {
@@ -170,20 +171,6 @@ describe('PeersSettingsView', () => {
     render(<PeersSettingsView />);
     fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
     expect((await screen.findByRole('alert')).textContent).toBe('busy');
-  });
-
-  it('requires confirmation before removing a link, and can back out', async () => {
-    api.list.mockResolvedValue({ links: [link({ uses: [] })] });
-    render(<PeersSettingsView />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove link' }));
-    expect(await screen.findByText(/Delete this connection for all plugins and remove this machine's access\?/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
-    expect(api.removeLink).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove link' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(api.removeLink).toHaveBeenCalledWith('h1'));
-    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
   });
 
   it('surfaces a list failure', async () => {

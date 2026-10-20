@@ -156,7 +156,7 @@ function ComputerRow({ c, label, status, busy, note, denied, onUse, onStop, onRe
           {badge.state === 'unsynced' ? <button type="button" className="btn dd-btn-secondary" disabled={busy} onClick={onRepair}
             title="Retry Design Docs sync setup. Reconnect the computer from Settings → Peers if its connection needs repair.">Repair</button> : null}
           {c.usedByThisPlugin ? (
-            <button type="button" className="btn" disabled={busy || settingUp} onClick={onStop}>Stop using</button>
+            <button type="button" className="btn dd-btn-remove" disabled={busy || settingUp} onClick={onStop}>Stop using</button>
           ) : (
             <button type="button" className="btn primary" disabled={busy || pending} onClick={onUse}>Use for Design Docs</button>
           )}
@@ -318,8 +318,17 @@ export function PeerSettings() {
   };
   const self = status?.members.find((member) => member.replicaId === status.replicaId);
   // Each connected computer owns its setup state in its card. Keep global work only for computers no longer in the list.
-  const usedConnectionIds = new Set(list.filter((connection) => connection.usedByThisPlugin).map((connection) => connection.computerId));
-  const backgroundJobs = pendingJobs.filter((job) => !usedConnectionIds.has(job.peerId));
+  const connectionIds = new Set(list.map((connection) => connection.computerId));
+  const jobNotes = new Map<string, RowNote>();
+  for (const job of pendingJobs) {
+    if (!connectionIds.has(job.peerId) || jobNotes.has(job.peerId)) continue;
+    const detail = ownerText(job.error) ?? 'waiting for this computer';
+    jobNotes.set(job.peerId, { text: `${job.state === 'failed' ? 'Sync setup stopped' : 'Sync setup waiting'}: ${detail}`, ok: false });
+  }
+  if (status?.setup && connectionIds.has(status.setup.peerId) && !jobNotes.has(status.setup.peerId)) {
+    jobNotes.set(status.setup.peerId, { text: `Sync setup waiting${setupReason(status.setup)}`, ok: false });
+  }
+  const backgroundJobs = pendingJobs.filter((job) => !connectionIds.has(job.peerId));
   // The durable roster can retain a removed member until every computer seals its retirement. The connection list is the
   // current authority for what this computer is actually syncing with.
   const groupSize = status?.configured ? 1 + list.filter((connection) => connection.usedByThisPlugin && connection.syncing && connection.state === 'connected' && !connection.retiring).length : 0;
@@ -335,7 +344,7 @@ export function PeerSettings() {
             <ul className="dd-peers-list dd-peers-cards" aria-label="Computers">
               {list.map((c) => (
                 <ComputerRow key={c.computerId} c={c} label={labels.get(c.computerId)!} status={status} busy={busy}
-                  note={notes[c.computerId]} denied={denied.includes(c.computerId)}
+                  note={notes[c.computerId] ?? jobNotes.get(c.computerId)} denied={denied.includes(c.computerId)}
                   onUse={() => requestUse(c.computerId)} onStop={() => stopUsing(c.computerId)} onRepair={() => repairComputer(c.computerId)} />
               ))}
             </ul>
@@ -372,7 +381,7 @@ export function PeerSettings() {
         <>
           <div className="dd-peers-block">
             {!status.configured ? <p>No sync group configured.</p> : null}
-            {status.setup && !usedConnectionIds.has(status.setup.peerId) ? (
+            {status.setup && !connectionIds.has(status.setup.peerId) ? (
               <p role="status">Setup {status.setup.state}: {nameOf(status.setup.peerId)}{setupReason(status.setup)}</p>
             ) : null}
           </div>

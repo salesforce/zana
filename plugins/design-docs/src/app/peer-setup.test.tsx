@@ -74,6 +74,7 @@ describe('Peers screen: connected computers', () => {
     expect(rows[1]!.textContent).toBe('TwoDisconnectedStop usingSync resumes when the connection is back.');
     expect(rows[2]!.textContent).toBe('ThreeBeing removedStop usingWaiting for committed frontier; data sync disabled');
     expect(within(rows[2]!).getByRole('button', { name: 'Stop using' })).toHaveProperty('disabled', false);
+    expect(within(rows[1]!).getByRole('button', { name: 'Stop using' }).className).toContain('dd-btn-remove');
   });
 });
 
@@ -179,6 +180,14 @@ describe('Repair and unsynced', () => {
     expect(within(card).getByText('Setting up sync')).toBeTruthy();
     expect(screen.queryByRole('list', { name: 'Pending work' })).toBeNull();
     expect(screen.queryByText(/Setup pending:/)).toBeNull();
+  });
+
+  it('keeps a connection job with its computer before Design Docs use is approved', async () => {
+    const status = { ...EMPTY, jobs: [{ id: 'setup', kind: 'roster', peerId: 'app-b', state: 'blocked', attempts: 1, error: 'peer enrollment changed or revoked' }] };
+    mount({ connections: async () => [conn()], groupStatus: async () => status });
+    const card = await screen.findByRole('listitem');
+    expect(within(card).getByText('Sync setup waiting: peer enrollment changed or revoked')).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Pending work' })).toBeNull();
   });
 
   it('an unused computer or a syncing one has no Repair', async () => {
@@ -385,7 +394,7 @@ describe('group status, jobs and lifecycle', () => {
     const { restore } = withConfirm(true);
     try {
       const harness = mount({ connections: async () => [conn({ hostname: 'Studio' })], groupStatus: async () => status, resetPeerSync: reset });
-      expect(await screen.findByText('Studio: stopped: the other computer no longer keeps this sync group')).toBeTruthy();
+      expect(await screen.findByText('Sync setup stopped: the other computer no longer keeps this sync group')).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'Reset sync with Studio' }));
       expect((await screen.findByRole('alert')).textContent).toBe('sync setup is in progress; try again in a moment');
       await waitFor(() => expect(screen.getByRole('button', { name: 'Reset sync with Studio' })).toHaveProperty('disabled', false));
@@ -416,7 +425,7 @@ describe('group status, jobs and lifecycle', () => {
   it('with a live connection the wording is a plain wait; a joining setup has no Cancel', async () => {
     const orphan = { ...EMPTY, setup: { peerId: 'app-b', repoId: 'database', state: 'pending' as const, error: 'mutual enrollment unavailable' } };
     mount({ groupStatus: async () => orphan, connections: async () => [conn()] });
-    expect(await screen.findByText('Setup pending: Laptop: waiting for Laptop to connect; no link to this computer right now')).toBeTruthy();
+    expect(await screen.findByText('Sync setup waiting: waiting for Laptop to connect; no link to this computer right now')).toBeTruthy();
     cleanup();
     mount({ groupStatus: async () => ({ ...EMPTY, setup: { ...orphan.setup, state: 'joining' as const, error: null } }) });
     await screen.findByText('Setup joining: Unnamed computer');

@@ -26,7 +26,6 @@ const STATE_LABELS: Record<PeerLinkState, string> = {
 
 type ActiveEntry = { pluginId: string; label: string };
 type Flow =
-  | { kind: 'link'; hostId: string; step: 'confirm' }
   | { kind: 'link'; hostId: string; step: 'force' }
   | { kind: 'link'; hostId: string; step: 'failed'; failures: PeerLinkHookFailure[] }
   | { kind: 'use'; key: string };
@@ -68,12 +67,6 @@ function errorText(error: unknown): string {
 function sinceText(since: number): string {
   const date = new Date(since);
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
-}
-
-function removeText(link: PeerLink): string {
-  const names = [...new Set(link.uses.map((use) => use.label))];
-  const using = names.length ? ` Plugins using it: ${names.join(', ')}.` : '';
-  return `Delete this connection for all plugins and remove this machine's access?${using}`;
 }
 
 /**
@@ -187,7 +180,6 @@ export function PeersSettingsView() {
       return [];
     }
   };
-  const startRemove = (link: PeerLink) => setFlow({ kind: 'link', hostId: link.hostId, step: 'confirm' });
   const startStopUse = async (hostId: string, pluginId: string, scope: string, key: string) => {
     const active = await fetchActive(hostId);
     if (disposed.current) return;
@@ -265,7 +257,6 @@ export function PeersSettingsView() {
                         {primary.state === 'linked' && !primary.paused && (
                           <button type="button" className="btn peers-btn-secondary" disabled={busy !== null} onClick={() => void pause(primary.hostId)}>Pause</button>
                         )}
-                        {primary.uses.length === 0 && <button type="button" className="btn peers-btn-remove" disabled={busy !== null} aria-label="Remove link" onClick={() => void startRemove(primary)}>Remove...</button>}
                       </div>
                     )}
                   </div>
@@ -286,7 +277,6 @@ export function PeersSettingsView() {
                                 {link.state === 'linked' && !link.paused && (
                                   <button type="button" className="btn peers-btn-secondary" disabled={busy !== null} onClick={() => void pause(link.hostId)}>Pause</button>
                                 )}
-                                {link.uses.length === 0 && <button type="button" className="btn peers-btn-remove" disabled={busy !== null} onClick={() => void startRemove(link)}>Remove link</button>}
                               </div>
                             )}
                           </div>
@@ -346,7 +336,7 @@ export function PeersSettingsView() {
         if (!link) return null;
         if (flow.step === 'force') return <PeerDialog title={`Remove ${link.peerName}?`}><RemovePluginsConfirm text={forceRemoveText(link)} busy={busy !== null} onConfirm={() => void removeLink(link.hostId, true)} onCancel={() => setFlow(null)} /></PeerDialog>;
         if (flow.step === 'failed') return <PeerDialog title="Plugin cleanup did not finish"><HookFailureDialog failures={flow.failures} busy={busy !== null} onRetry={() => void removeLink(link.hostId)} onRemoveAnyway={() => void removeLink(link.hostId, true)} onCancel={() => setFlow(null)} /></PeerDialog>;
-        return <PeerDialog title={`Remove ${link.peerName}?`}><RemovePluginsConfirm text={removeText(link)} busy={busy !== null} onConfirm={() => void removeLink(link.hostId)} onCancel={() => setFlow(null)} /></PeerDialog>;
+        return null;
       })()}
     </div>
   );
