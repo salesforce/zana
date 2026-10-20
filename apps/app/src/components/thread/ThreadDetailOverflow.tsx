@@ -152,6 +152,15 @@ export function canOpenInWindow(): boolean {
   return hasDesktopBridge() && !isThreadViewSurface();
 }
 
+/** The menu's "Open in new window" action, or undefined where it does not apply. */
+export function threadOpenInWindowAction(threadId: string, projectId: string | null, closeMenu: () => void): (() => void) | undefined {
+  if (!canOpenInWindow()) return undefined;
+  return () => {
+    closeMenu();
+    void openThreadViewWindow(projectId ? { threadId, projectId } : { threadId });
+  };
+}
+
 export function ThreadDetailOverflow({
   threadId,
   title,
@@ -217,10 +226,7 @@ export function ThreadDetailOverflow({
       extraActions={extraActions}
       notificationsThreadId={threadId}
       canStop={canStop}
-      onOpenInWindow={canOpenInWindow() ? () => {
-        close();
-        void openThreadViewWindow(projectId ? { threadId, projectId } : { threadId });
-      } : undefined}
+      onOpenInWindow={threadOpenInWindowAction(threadId, projectId, close)}
       onUnread={() => {
         close();
         void product.threads.unread(threadId).then(() => onUnread?.()).catch((error) => reportFailure(error, 'Failed to mark agent unread'));
