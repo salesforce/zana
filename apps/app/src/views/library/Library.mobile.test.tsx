@@ -118,8 +118,16 @@ it('retains desktop folder toggling and document context actions with native tre
   expect(folder.getAttribute('aria-expanded')).toBe('true');
   fireEvent.contextMenu(view.getByRole('button', { name: 'reading.md' }), { clientX: 100, clientY: 200 });
   expect(view.getByRole('button', { name: 'Rename / move…' })).toBeTruthy();
+  expect(view.getByText('Reveal in Finder')).toBeTruthy();
   fireEvent.click(document.body);
   expect(view.queryByRole('button', { name: 'Rename / move…' })).toBeNull();
   fireEvent.click(folder);
   expect(view.queryByRole('button', { name: 'reading.md' })).toBeNull();
+});
+
+it('offers Reveal in the project library tree context menu', () => {
+  state.compact = false;
+  const view = render(<MemoryRouter><LibraryView project={project} /></MemoryRouter>);
+  fireEvent.contextMenu(view.getByRole('button', { name: 'reading.md' }), { clientX: 100, clientY: 200 });
+  expect(view.getByText('Reveal in Finder')).toBeTruthy();
 });

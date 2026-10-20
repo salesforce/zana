@@ -6,9 +6,9 @@ import type { FsEntry } from '@zana-ai/zcc-domain/product';
 // Opener labels are read at module load, so pretend to be Windows before importing.
 const h = vi.hoisted(() => {
   Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
-  return { open: vi.fn(async () => ({ ok: true })), toast: vi.fn() };
+  return { open: vi.fn(async () => ({ ok: true })), revealDir: vi.fn(async () => undefined), toast: vi.fn() };
 });
-vi.mock('../lib/product-client.js', () => ({ product: { openers: { openIn: h.open } } }));
+vi.mock('../lib/product-client.js', () => ({ product: { openers: { openIn: h.open }, personas: { revealDir: h.revealDir } } }));
 vi.mock('../store.js', () => ({
   useData: (selector: (state: unknown) => unknown) => selector({ openerHiddenTargets: [] }),
   useUi: (selector: (state: unknown) => unknown) => selector({ pushToast: h.toast })
@@ -16,6 +16,7 @@ vi.mock('../store.js', () => ({
 
 import { OpenerButtons } from './OpenerButtons.js';
 import { ExplorerContextMenu } from './explorer/ExplorerContextMenu.js';
+import { RevealPersonasButton } from './PersonaEditor.js';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
@@ -47,5 +48,11 @@ describe('Reveal labels on Windows', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Reveal in Explorer' }));
     expect(reveal).toHaveBeenCalledOnce();
+  });
+
+  it('names Explorer on the personas folder button', () => {
+    render(<RevealPersonasButton />);
+    fireEvent.click(screen.getByTitle('Open the personas directory in Explorer'));
+    expect(h.revealDir).toHaveBeenCalledOnce();
   });
 });
