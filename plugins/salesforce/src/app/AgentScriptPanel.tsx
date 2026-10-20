@@ -980,8 +980,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   // Like Org agents, the Org tests tab stays mounted while open so a followed run keeps its place.
   const orgTestsView = layout !== 'legacy' && studio.tabs.some(tab => tab.id === ORG_TESTS_TAB.id) ? (
     <div className="sf-etab-view" data-testid="studio-org-tests-view" style={orgTestsActive ? undefined : { display: 'none' }}>
-      <section className="sf-tp" aria-label="Org tests"><style>{TESTS_PANE_STYLES}</style>
-        <div className="sf-tp-head"><h2>Org tests</h2><span className="sf-tp-sub">Testing Center definitions and runs in {org?.alias ?? 'the selected org'}</span></div>
+      <section className="sf-tp is-org-tests" aria-label="Org tests"><style>{TESTS_PANE_STYLES}</style>
         <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={activePath} visible={orgTestsActive}
           onAskAgent={composeFor} focus={orgTestsFocus} onFocusHandled={orgTestsFocusHandled} />
       </section>

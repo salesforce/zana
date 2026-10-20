@@ -8,7 +8,7 @@ import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../../../lib/studio-contract
 import { RELEASE_RPC, type ReleasePrepared } from '../../../lib/release-contract.js';
 import { declined, type Message } from './ReleasePane.js';
 import { OrgRunDetail } from './OrgRunDetail.js';
-import { agentNameFromPath, filterDefinitions, passRate, percent, relativeTime, sparkSeries } from './org-tests-model.js';
+import { agentNameFromPath, filterDefinitions, groupDefinitions, passRate, percent, relativeTime, sameAgent, sparkSeries } from './org-tests-model.js';
 
 /** The Org tests view: the org's Testing Center definitions, their runs, and one run's results. */
 export interface OrgTestsViewProps {
@@ -37,40 +37,121 @@ const RUN_ID = /^[A-Za-z0-9]{15,18}$/;
 const DEFINITION_NAME = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
 
 const STYLES = `
-.sf-ot { display: flex; flex-direction: column; gap: 10px; }
-.sf-ot .sf-tp-bar { align-items: center; }
-.sf-ot .sf-tp-head h3 { margin: 0; font-size: 13px; }
+.sf-tp.is-org-tests { padding: 0; gap: 0; overflow: hidden; }
+.sf-ot { display: flex; flex-direction: column; flex: 1; min-height: 0; container-type: inline-size; color: var(--sf-text); }
+.sf-ot-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--sf-border); }
+.sf-ot-top h2 { margin: 0; font-size: 13px; }
+.sf-ot-org { font-size: 11px; color: var(--sf-muted); border: 1px solid var(--sf-border); border-radius: 999px; padding: 0 8px; white-space: nowrap; }
+.sf-ot-org.is-production { border-color: var(--sf-warn, var(--sf-danger)); color: var(--sf-warn, var(--sf-danger)); }
+.sf-ot-search { width: 240px; max-width: 100%; font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 3px 8px; }
+.sf-ot-search:focus { outline: none; border-color: var(--sf-accent); }
+.sf-ot-toggle[aria-pressed="true"] { background: var(--sf-soft); border-color: var(--sf-accent); color: var(--sf-accent); }
+.sf-ot-icon { min-width: 26px; padding: 3px 6px; }
+.sf-ot-menu { position: relative; }
+.sf-ot-pop { position: absolute; right: 0; top: calc(100% + 4px); width: 300px; z-index: 5; background: var(--sf-elevated); border: 1px solid var(--sf-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.sf-ot-pop label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--sf-muted); }
+.sf-ot-pop input { font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 3px 6px; }
+.sf-ot-notices { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 0; }
+.sf-ot-notices:empty { display: none; }
+.sf-ot-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 420px) minmax(0, 1fr); }
+.sf-ot-side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--sf-border); background: var(--sf-surface, transparent); }
+.sf-ot-list { flex: 1; min-height: 0; overflow: auto; }
+.sf-ot-scope { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--sf-border); }
+.sf-ot-scope strong { font-size: 12px; }
+.sf-ot-group { border-bottom: 1px solid var(--sf-border); }
+.sf-ot-ghead { display: flex; width: 100%; align-items: center; gap: 6px; padding: 6px 12px; border: 0; background: none; color: var(--sf-muted); font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .04em; cursor: pointer; text-align: left; }
+.sf-ot-ghead:hover { color: var(--sf-text); }
+.sf-ot-chev { width: 10px; font-size: 9px; transition: transform .12s; }
+.sf-ot-ghead[aria-expanded="false"] .sf-ot-chev { transform: rotate(-90deg); }
+.sf-ot-count { margin-left: auto; font-weight: 500; letter-spacing: 0; white-space: nowrap; }
+.sf-ot-badge { font-size: 10px; font-weight: 500; letter-spacing: 0; border-radius: 999px; padding: 0 6px; border: 1px solid var(--sf-accent); color: var(--sf-accent); }
+.sf-ot-rows { list-style: none; margin: 0; padding: 0; }
+.sf-ot-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 6px 12px 6px 26px; border-left: 2px solid transparent; cursor: pointer; }
+.sf-ot-flat .sf-ot-row { padding-left: 12px; }
+.sf-ot-row:hover { background: var(--sf-soft); }
+.sf-ot-row[aria-selected="true"] { background: var(--sf-soft); border-left-color: var(--sf-accent); }
+.sf-ot-link { border: 0; background: none; color: var(--sf-text); font: inherit; font-weight: 500; text-align: left; cursor: pointer; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sf-ot-rowsub { grid-column: 1; display: flex; gap: 8px; align-items: center; min-width: 0; font-size: 11px; color: var(--sf-muted); }
+.sf-ot-api { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-ot-right { grid-row: 1 / span 2; grid-column: 2; display: flex; align-items: center; gap: 8px; }
+.sf-ot-chip { font-size: 10.5px; border-radius: 999px; padding: 0 7px; line-height: 17px; white-space: nowrap; color: var(--sf-muted); }
+.sf-ot-chip.is-good { color: var(--sf-success); border: 1px solid var(--sf-success); font-weight: 600; }
+.sf-ot-chip.is-bad { color: var(--sf-danger); border: 1px solid var(--sf-danger); font-weight: 600; }
+.sf-ot-chip.is-live { color: var(--sf-accent); border: 1px solid var(--sf-accent); font-weight: 600; }
+.sf-ot-spark { display: inline-flex; gap: 2px; align-items: flex-end; height: 16px; }
+.sf-ot-spark > i { width: 3px; border-radius: 1px; background: var(--sf-success); opacity: .85; }
+.sf-ot-spark > i.is-low { background: var(--sf-danger); }
+.sf-ot-shim { display: inline-block; height: 9px; border-radius: 4px; background: var(--sf-soft); animation: sf-ot-pulse 1.2s ease-in-out infinite; }
+@keyframes sf-ot-pulse { 50% { opacity: .45; } }
+.sf-ot-more { padding: 10px 12px; font-size: 12px; color: var(--sf-muted); border-top: 1px dashed var(--sf-border); }
+.sf-ot-textbtn { border: 0; background: none; padding: 0; font: inherit; color: var(--sf-accent); cursor: pointer; }
+.sf-ot-blank { padding: 32px 20px; text-align: center; color: var(--sf-muted); }
+.sf-ot-blank h4 { margin: 0 0 6px; font-size: 13px; color: var(--sf-text); }
+.sf-ot-blank p { margin: 0 auto 12px; max-width: 300px; font-size: 12px; }
+.sf-ot-foot { display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 11px; color: var(--sf-muted); border-top: 1px solid var(--sf-border); }
+.sf-ot-prog { width: 80px; height: 4px; border-radius: 2px; background: var(--sf-border); overflow: hidden; }
+.sf-ot-prog > span { display: block; height: 100%; background: var(--sf-accent); transition: width .2s; }
+.sf-ot-detail { min-width: 0; min-height: 0; overflow: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; }
+.sf-ot-dhead { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+.sf-ot-dhead h3 { margin: 0; font-size: 15px; }
+.sf-ot-meta { display: flex; gap: 22px; flex-wrap: wrap; margin: 0; padding: 10px 14px; border: 1px solid var(--sf-border); border-radius: 8px; }
+.sf-ot-meta > div { display: flex; flex-direction: column; gap: 2px; }
+.sf-ot-meta dt { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--sf-muted); }
+.sf-ot-meta dd { margin: 0; font-size: 13px; font-weight: 600; }
+.sf-ot-sec { margin: 4px 0 -4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--sf-muted); }
+.sf-ot-runs { display: flex; gap: 6px; flex-wrap: wrap; }
+.sf-ot-runcard { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 110px; border: 1px solid var(--sf-border); border-radius: 6px; padding: 5px 9px; background: none; color: var(--sf-text); font: inherit; font-size: 11px; cursor: pointer; text-align: left; }
+.sf-ot-runcard:hover, .sf-ot-runcard[aria-pressed="true"] { border-color: var(--sf-accent); }
+.sf-ot-runcard strong { font-size: 13px; }
+.sf-ot-runcard small { color: var(--sf-muted); }
+.sf-ot-cases { list-style: none; margin: 0; padding: 0; border: 1px solid var(--sf-border); border-radius: 8px; overflow: hidden; }
+.sf-ot-cases li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 2px 8px; padding: 7px 12px; border-top: 1px solid var(--sf-border); }
+.sf-ot-cases li:first-child { border-top: 0; }
+.sf-ot-num { color: var(--sf-muted); font-size: 11px; text-align: right; }
+.sf-ot-exp { grid-column: 2; display: flex; gap: 4px; flex-wrap: wrap; font-size: 11px; color: var(--sf-muted); }
+.sf-ot-empty { height: 100%; display: grid; place-items: center; color: var(--sf-muted); text-align: center; }
 .sf-ot-run { display: flex; flex-direction: column; gap: 10px; }
-.sf-ot-field { display: inline-flex; align-items: center; gap: 6px; color: var(--sf-muted); }
-.sf-ot-field input, .sf-ot-field select { font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 3px 6px; }
-.sf-ot-check { display: inline-flex; gap: 4px; align-items: center; }
-.sf-ot-link { border: 0; background: none; color: var(--sf-text); font: inherit; text-align: left; cursor: pointer; padding: 0; }
 .sf-ot-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .sf-ot-metrics { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .sf-ot-metrics li { display: flex; gap: 8px; align-items: center; }
 .sf-ot-metrics li > span:first-child { width: 150px; color: var(--sf-muted); }
 .sf-ot-bar { display: inline-block; width: 120px; height: 6px; border-radius: 3px; background: var(--sf-sunken); overflow: hidden; }
 .sf-ot-bar > span { display: block; height: 100%; background: var(--sf-success); }
-.sf-ot-spark { vertical-align: middle; }
 .sf-ot-confirm { border: 1px solid var(--sf-accent); border-radius: 8px; padding: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.sf-ot-cases { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.sf-ot-cases li { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 .sf-ot-case { display: flex; flex-direction: column; gap: 6px; }
 .sf-ot-case p { margin: 0; }
 .sf-tp-chip.is-pending, .sf-tp-chip.is-status-in_progress, .sf-tp-chip.is-status-new { border-color: var(--sf-accent); color: var(--sf-accent); }
 .sf-tp-chip.is-status-completed { border-color: var(--sf-success); color: var(--sf-success); }
 .sf-tp-chip.is-status-error, .sf-tp-chip.is-status-terminated { border-color: var(--sf-danger); color: var(--sf-danger); }
+@container (max-width: 720px) {
+  .sf-ot-body { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; }
+  .sf-ot-side { border-right: 0; border-bottom: 1px solid var(--sf-border); }
+  .sf-ot-list { max-height: 50vh; }
+  .sf-ot-detail { overflow: visible; padding: 12px; }
+  .sf-ot-search { width: 100%; order: 10; }
+}
 `;
 export const ORG_TESTS_STYLES = STYLES;
 
+/** A pass rate of at least this reads as healthy. */
+const GOOD_RATE = 0.8;
+
 function Spark({ rates }: { rates: number[] }) {
   if (rates.length < 2) return null;
-  const w = 60, h = 16;
-  const points = rates.map((r, i) => `${Math.round((i / (rates.length - 1)) * w)},${Math.round((1 - r) * (h - 2)) + 1}`).join(' ');
-  return <svg className="sf-ot-spark" width={w} height={h} role="img" aria-label={`Pass rate trend: ${rates.map(rate => percent(rate)).join(', ')}`}>
-    <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.5" />
-  </svg>;
+  return <span className="sf-ot-spark" role="img" aria-label={`Pass rate trend: ${rates.map(rate => percent(rate)).join(', ')}`}>
+    {rates.map((rate, i) => <i key={i} className={rate < GOOD_RATE ? 'is-low' : undefined} style={{ height: `${Math.max(2, Math.round(rate * 16))}px` }} />)}
+  </span>;
 }
+
+function LastRun({ run }: { run: OrgRunRecord | undefined }) {
+  if (!run) return <span className="sf-ot-chip">No runs</span>;
+  if (!isOrgRunTerminal(run.status)) return <span className="sf-ot-chip is-live">Running…</span>;
+  const rate = passRate(run.counts);
+  if (rate === null) return <span className="sf-ot-chip">{run.status.replace('_', ' ')}</span>;
+  return <span className={`sf-ot-chip ${rate >= GOOD_RATE ? 'is-good' : 'is-bad'}`} title={`${run.status.replace('_', ' ')} · ${relativeTime(run.startedAt)}`}>{percent(rate)}</span>;
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export function OrgTestsView(props: OrgTestsViewProps) {
   const { pluginId, projectId, threadId, path, visible, onAskAgent } = props;
@@ -84,7 +165,14 @@ export function OrgTestsView(props: OrgTestsViewProps) {
   const [listError, setListError] = useState<string | null>(null);
   const [runs, setRuns] = useState<OrgRunRecord[]>([]);
   const [query, setQuery] = useState('');
-  const [thisAgent, setThisAgent] = useState(false);
+  const [scope, setScope] = useState<'this' | 'all'>('this');
+  const [hasRuns, setHasRuns] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  /** Groups the user opened or closed; the rest follow the default (only the first group open). */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  /** Definitions whose agent is still being read, and those it could not be read for. */
+  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  const [progress, setProgress] = useState<{ done: number; total: number; unread: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [definition, setDefinition] = useState<OrgTestDefinition | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
@@ -114,6 +202,47 @@ export function OrgTestsView(props: OrgTestsViewProps) {
     } catch { /* the list still works without history */ }
   }, [rpc]);
 
+  /**
+   * Reads the agent, label and case count of every definition the list does not know yet, a batch per retrieve and two
+   * retrieves at a time. A newer list load abandons it.
+   */
+  const loadDetails = useCallback(async (rows: readonly OrgTestDefinitionSummary[], seq: number) => {
+    const names = rows.filter(row => !row.subjectName).map(row => row.name);
+    const current = () => alive.current && seq === listSeq.current;
+    setPending(new Set(names));
+    setProgress(names.length ? { done: 0, total: names.length, unread: 0 } : null);
+    if (!names.length) return;
+    const batches: string[][] = [];
+    for (let at = 0; at < names.length; at += ORG_TESTS_LIMITS.detailsBatch) batches.push(names.slice(at, at + ORG_TESTS_LIMITS.detailsBatch));
+    let next = 0;
+    let done = 0;
+    let unread = 0;
+    const worker = async () => {
+      while (next < batches.length) {
+        const batch = batches[next++]!;
+        let found: OrgTestDefinitionSummary[] = [];
+        try {
+          const reply = await rpc(ORG_TESTS_RPC.details, { names: batch });
+          if (reply.ok !== false && Array.isArray(reply.definitions)) found = reply.definitions as OrgTestDefinitionSummary[];
+          // Reads were refused for this org: the rest would be refused too.
+          else if (reply.code === 'refused') next = batches.length;
+        } catch { /* the batch stays unread; the others still load */ }
+        if (!current()) return;
+        const byName = new Map(found.map(row => [row.name, row]));
+        setDefs(list => list?.map(row => { const known = byName.get(row.name); return known ? { ...row, ...known } : row; }) ?? list);
+        setPending(left => { const rest = new Set(left); for (const name of batch) rest.delete(name); return rest; });
+        done += batch.length;
+        unread += batch.filter(name => !byName.has(name)).length;
+        setProgress({ done, total: names.length, unread });
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    if (!current()) return;
+    // Batches skipped after a refusal count as unread.
+    setPending(new Set());
+    setProgress({ done: names.length, total: names.length, unread: unread + names.length - done });
+  }, [rpc]);
+
   const loadList = useCallback(async (refresh = false) => {
     const seq = ++listSeq.current;
     try {
@@ -131,11 +260,13 @@ export function OrgTestsView(props: OrgTestsViewProps) {
       setListError(null);
       setNotice(current => (current?.allowReads ? null : current));
       setOrg((reply.org as OrgInfo | undefined) ?? null);
-      setDefs(Array.isArray(reply.definitions) ? reply.definitions as OrgTestDefinitionSummary[] : []);
+      const rows = Array.isArray(reply.definitions) ? reply.definitions as OrgTestDefinitionSummary[] : [];
+      setDefs(rows);
+      void loadDetails(rows, seq);
     } catch (error) {
       if (alive.current && seq === listSeq.current) { setListError(error instanceof Error ? error.message : String(error)); setDefs(current => current ?? []); }
     }
-  }, [rpc]);
+  }, [rpc, loadDetails]);
 
   useEffect(() => { if (visible) { void loadList(); void loadRuns(); } }, [visible, loadList, loadRuns]);
 
@@ -305,6 +436,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
       const attached = reply.run as OrgRunResults;
       if (!alive.current) return null;
       setAttachId('');
+      setMenuOpen(false);
       void loadRuns();
       const notice: Notice = { tone: 'ok', text: `Attached run ${attached.runId}.` };
       // The user picked something else while the attach was in flight: keep their choice.
@@ -335,77 +467,180 @@ export function OrgTestsView(props: OrgTestsViewProps) {
     });
   };
 
-  const visibleDefs = filterDefinitions(defs ?? [], { query, agent: thisAgent ? agent : null });
   const active = run && !isOrgRunTerminal(run.status);
   const working = busy !== null;
   const history = selected ? runsFor(selected) : [];
+  const all = defs ?? [];
+  const scoped = Boolean(agent) && scope === 'this';
+  const matching = filterDefinitions(all, { query }).filter(def => !hasRuns || runsFor(def.name).length > 0);
+  const mine = agent ? matching.filter(def => sameAgent(def, agent)) : [];
+  const shown = scoped ? mine : matching;
+  const loadingAgents = pending.size > 0;
+  const withRuns = (rows: readonly OrgTestDefinitionSummary[]) => rows.filter(def => runsFor(def.name).length > 0).length;
+  const others = agent ? all.filter(def => def.subjectName && !sameAgent(def, agent)).length : 0;
+  const groups = scoped ? [] : groupDefinitions(matching, pending, agent);
+  // A search shows every match; otherwise groups the user toggled keep their state, and only the pinned or first one opens.
+  const groupOpen = (key: string, index: number) => Boolean(query.trim()) || (expanded[key] ?? (agent ? key === agent.toLowerCase() : index === 0));
+  const selectedDef = selected ? all.find(def => def.name === selected) : undefined;
+  const lastRun = history[0];
+  const filtered = Boolean(query.trim()) || hasRuns;
+
+  const row = (def: OrgTestDefinitionSummary) => {
+    const runsOf = runsFor(def.name);
+    const reading = !def.subjectName && pending.has(def.name);
+    const cases = def.caseCount ?? (definition?.name === def.name ? definition.testCases.length : undefined);
+    return <li key={def.name} className="sf-ot-row" data-testid={`org-def-${def.name}`} aria-selected={selected === def.name} onClick={() => void select(def.name)}>
+      <button type="button" className="sf-ot-link" aria-pressed={selected === def.name} onClick={event => { event.stopPropagation(); void select(def.name); }}>{def.label || def.name}</button>
+      <span className="sf-ot-rowsub">
+        {def.label && def.label !== def.name && <span className="sf-ot-api">{def.name}</span>}
+        {cases !== undefined ? <span>{plural(cases, 'case')}</span> : reading ? <span className="sf-ot-shim" style={{ width: 44 }} aria-label="Reading definition" /> : null}
+      </span>
+      <span className="sf-ot-right"><Spark rates={sparkSeries(runsOf)} /><LastRun run={runsOf[0]} /></span>
+    </li>;
+  };
+
+  const blank = (() => {
+    if (!defs || listError) return null;
+    if (!all.length) return <div className="sf-ot-blank"><h4>No org tests</h4><p>This org has no test definitions.</p></div>;
+    if (scoped && !mine.length) {
+      if (filtered) return <div className="sf-ot-blank"><p>No org tests for {agent} match.</p></div>;
+      if (loadingAgents) return <div className="sf-ot-blank"><p>Looking for tests of {agent}…</p></div>;
+      return <div className="sf-ot-blank" data-testid="org-tests-none-for-agent">
+        <h4>No org tests for {agent} yet</h4>
+        <p>None of the {plural(all.length, 'definition')} in {org?.alias ?? 'this org'} test this agent. Tests for other agents are still available.</p>
+        <button type="button" className="sf-tp-btn" onClick={() => setScope('all')}>Browse all agents</button>
+      </div>;
+    }
+    if (!scoped && !matching.length) return <div className="sf-ot-blank"><p>No org tests match.</p></div>;
+    return null;
+  })();
 
   return (
     <div className="sf-ot" data-testid="org-tests-view">
       <style>{STYLES}</style>
-      <div className="sf-tp-bar">
-        <label className="sf-ot-field">Filter org tests<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Name, label or agent" /></label>
-        <label className="sf-ot-check"><input type="checkbox" checked={thisAgent} disabled={!agent} onChange={e => setThisAgent(e.target.checked)} /> This agent{agent ? ` (${agent})` : ''}</label>
-        <button type="button" className="sf-tp-btn" onClick={() => void loadList(true)}>Refresh</button>
+      <div className="sf-ot-top">
+        <h2>Org tests</h2>
+        {org && <span className={`sf-ot-org${org.isProduction ? ' is-production' : ''}`} title={org.isProduction ? 'Production org' : undefined}>{org.alias}{org.isProduction ? ' (production)' : ''}</span>}
         <span className="sf-tp-spacer" />
-        <span className="sf-tp-sub">{org ? `${org.alias}${org.isProduction ? ' (production)' : ''} · ` : ''}{defs ? `${visibleDefs.length} of ${defs.length} tests` : 'Loading…'}</span>
-      </div>
-      <div className="sf-tp-bar">
-        <label className="sf-ot-field">Attach run by id<input value={attachId} onChange={e => setAttachId(e.target.value)} placeholder="Run id from Testing Center or CI" /></label>
-        <button type="button" className="sf-tp-btn" disabled={working} onClick={attachRun}>Attach</button>
-      </div>
-      {listError && <div className="sf-tp-message is-error" role="alert">{listError}</div>}
-      {notice && <div className={`sf-tp-message is-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>
-        <span>{notice.text}</span>
-        {notice.allowReads && <button type="button" className="sf-tp-btn" disabled={working} onClick={() => void allowReads()}>Allow reads…</button>}
-      </div>}
-      {defs && !visibleDefs.length && !listError && <div className="sf-tp-empty">{defs.length ? 'No org tests match.' : 'This org has no test definitions.'}</div>}
-      {visibleDefs.length > 0 && <table className="sf-tp-table" data-testid="org-tests-table">
-        <thead><tr><th>Test</th><th>Agent</th><th>Cases</th><th>Last run</th><th>Trend</th></tr></thead>
-        <tbody>{visibleDefs.map(def => {
-          const mine = runsFor(def.name);
-          const last = mine[0];
-          return <tr key={def.name} className="sf-tp-row" data-testid={`org-def-${def.name}`} aria-selected={selected === def.name}>
-            <td><button type="button" className="sf-ot-link sf-tp-name" aria-pressed={selected === def.name} onClick={() => void select(def.name)}>{def.label || def.name}</button>
-              {def.label && def.label !== def.name && <div className="sf-tp-sub">{def.name}</div>}</td>
-            <td className="sf-tp-sub">{def.subjectName ?? '—'}</td>
-            <td>{def.caseCount ?? '—'}</td>
-            <td>{last ? <>{last.status.replace('_', ' ')} · {percent(passRate(last.counts))} · <span className="sf-tp-sub">{relativeTime(last.startedAt)}</span></> : <span className="sf-tp-sub">No runs</span>}</td>
-            <td><Spark rates={sparkSeries(mine)} /></td>
-          </tr>;
-        })}</tbody>
-      </table>}
-
-      {selected && <section className="sf-ot" aria-label={`Test ${selected}`} data-testid="org-def-detail">
-        <div className="sf-tp-head">
-          <h3>{definition?.label || selected}</h3>
-          {definition && <span className="sf-tp-sub">{definition.testCases.length} case{definition.testCases.length === 1 ? '' : 's'}{definition.truncated ? ' (truncated)' : ''}</span>}
-          <span className="sf-tp-spacer" />
-          <button type="button" className="sf-tp-btn is-primary" disabled={working || Boolean(active)} onClick={() => setConfirming(true)}>{busy === 'start' || busy === 'reads' ? 'Starting…' : 'Run in org'}</button>
-          <button type="button" className="sf-tp-btn" disabled={working || !definition?.testCases.length || !path}
-            title={!path ? 'Open an agent file to import into its suite.' : undefined}
-            onClick={() => definition && importCases(definition.name, definition.label, definition.testCases, 'import')}>Import to suite</button>
-          {active && <button type="button" className="sf-tp-btn" disabled={working} onClick={() => void cancelRun()}>Cancel run</button>}
+        <input type="search" className="sf-ot-search" aria-label="Filter org tests" value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by name or label" />
+        {agent && <div className="sf-tp-seg" role="group" aria-label="Scope">
+          <button type="button" aria-pressed={scope === 'this'} onClick={() => setScope('this')} title={`Tests of ${agent}`}>This agent</button>
+          <button type="button" aria-pressed={scope === 'all'} onClick={() => setScope('all')}>All agents</button>
+        </div>}
+        <button type="button" className="sf-tp-btn sf-ot-toggle" aria-pressed={hasRuns} onClick={() => setHasRuns(on => !on)}>Has runs</button>
+        <button type="button" className="sf-tp-btn sf-ot-icon" aria-label="Refresh" title="Refresh the list from the org" onClick={() => void loadList(true)}>↻</button>
+        <div className="sf-ot-menu">
+          <button type="button" className="sf-tp-btn sf-ot-icon" aria-label="More actions" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>⋯</button>
+          {menuOpen && <div className="sf-ot-pop" role="dialog" aria-label="Attach a run" onKeyDown={e => { if (e.key === 'Escape') setMenuOpen(false); }}>
+            <label>Attach run by id<input autoFocus value={attachId} onChange={e => setAttachId(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') attachRun(); }} placeholder="Run id from Testing Center or CI" /></label>
+            <span className="sf-tp-sub">Adds a run started in Testing Center or CI to the history.</span>
+            <div className="sf-tp-bar"><span className="sf-tp-spacer" /><button type="button" className="sf-tp-btn is-primary" disabled={working} onClick={attachRun}>Attach</button></div>
+          </div>}
         </div>
-        {confirming && <div className="sf-ot-confirm" role="group" aria-label="Confirm run">
-          <span>Run {selected} in {org?.alias ?? 'the org'}? This uses org evaluation resources.</span>
-          <button type="button" className="sf-tp-btn is-primary" onClick={confirmRun}>Start run</button>
-          <button type="button" className="sf-tp-btn" onClick={() => setConfirming(false)}>Not now</button>
+      </div>
+      <div className="sf-ot-notices">
+        {listError && <div className="sf-tp-message is-error" role="alert">{listError}</div>}
+        {notice && <div className={`sf-tp-message is-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>
+          <span>{notice.text}</span>
+          {notice.allowReads && <button type="button" className="sf-tp-btn" disabled={working} onClick={() => void allowReads()}>Allow reads…</button>}
         </div>}
-        {history.length > 0 && <div className="sf-tp-bar" role="group" aria-label="Run history">
-          {history.slice(0, 8).map(r => <button key={r.runId} type="button" className="sf-tp-btn" aria-pressed={runId === r.runId} onClick={() => void openRun(r.runId)}>
-            {r.runId} · {r.status.replace('_', ' ')} · {percent(passRate(r.counts))} · {relativeTime(r.startedAt)}
-          </button>)}
-        </div>}
-        {definition && <ul className="sf-ot-cases" aria-label="Test cases">{definition.testCases.slice(0, 50).map(c => <li key={c.number}>
-          <strong>#{c.number}</strong> {c.utterance}
-          {c.expectations.map((e, i) => <span key={i} className="sf-tp-chip" title={e.expectedValue}>{e.name}{e.expectedValue ? `: ${e.expectedValue.slice(0, 40)}` : ''}</span>)}
-          {c.contextVariables.length > 0 && <span className="sf-tp-sub"> · context {c.contextVariables.map(v => v.name).join(', ')}</span>}
-        </li>)}</ul>}
-      </section>}
-      {run && <OrgRunDetail run={run} previous={previous} definitionCases={definition?.testCases} path={path} busy={working}
-        onImport={cases => importCases(run.definition, definition?.label, cases, 'import-run')} onAskAgent={onAskAgent} />}
+      </div>
+      <div className="sf-ot-body">
+        <div className="sf-ot-side">
+          <div className="sf-ot-list" data-testid="org-tests-table">
+            {!defs && <div className="sf-ot-blank"><p>Loading org tests…</p></div>}
+            {scoped && <div className="sf-ot-scope" data-testid="org-tests-scope">
+              <strong>{agent}</strong><span className="sf-tp-sub">· {plural(mine.length, 'test')} · {withRuns(mine)} with runs</span>
+            </div>}
+            {blank}
+            {scoped && mine.length > 0 && <ul className="sf-ot-rows sf-ot-flat" aria-label={`Org tests for ${agent}`}>{mine.map(row)}</ul>}
+            {scoped && others > 0 && <div className="sf-ot-more">
+              {plural(others, 'more test')} for other agents. <button type="button" className="sf-ot-textbtn" onClick={() => setScope('all')}>Show all agents</button>
+            </div>}
+            {groups.map((group, index) => {
+              const open = groupOpen(group.key, index);
+              return <section key={group.key} className="sf-ot-group" data-testid={`org-tests-group-${group.key}`}>
+                <button type="button" className="sf-ot-ghead" aria-expanded={open} onClick={() => setExpanded(state => ({ ...state, [group.key]: !open }))}>
+                  <span className="sf-ot-chev" aria-hidden="true">▼</span>
+                  <span>{group.label}</span>
+                  {agent && group.key === agent.toLowerCase() && <span className="sf-ot-badge">open in Studio</span>}
+                  <span className="sf-ot-count">{group.state === 'agent' ? `${plural(group.defs.length, 'test')} · ${withRuns(group.defs)} with runs` : plural(group.defs.length, 'test')}</span>
+                </button>
+                {open && <ul className="sf-ot-rows" aria-label={group.label}>{group.defs.map(row)}</ul>}
+              </section>;
+            })}
+          </div>
+          {defs && <div className="sf-ot-foot" aria-live="polite">
+            <span>{shown.length} of {plural(all.length, 'test')}</span>
+            {progress && progress.done < progress.total && <>
+              <span className="sf-tp-spacer" />
+              <span>Reading definitions {progress.done}/{progress.total}</span>
+              <span className="sf-ot-prog" role="progressbar" aria-label="Reading definitions" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.done}>
+                <span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+              </span>
+            </>}
+            {progress && progress.done >= progress.total && progress.unread > 0 && <><span className="sf-tp-spacer" /><span title="Their agent is unknown; select one to read it.">{progress.unread} could not be read</span></>}
+          </div>}
+        </div>
 
+        <div className="sf-ot-detail">
+          {!selected && !run && <div className="sf-ot-empty">Pick a test to see its cases and runs.</div>}
+          {!selected && run && <OrgRunDetail run={run} previous={previous} path={path} busy={working}
+            onImport={cases => importCases(run.definition, undefined, cases, 'import-run')} onAskAgent={onAskAgent} />}
+          {selected && <section className="sf-ot-run" aria-label={`Test ${selected}`} data-testid="org-def-detail">
+            <div className="sf-ot-dhead">
+              <div>
+                <h3>{definition?.label || selectedDef?.label || selected}</h3>
+                <span className="sf-ot-api sf-tp-sub">{selected}</span>
+              </div>
+              <span className="sf-tp-spacer" />
+              {active && <button type="button" className="sf-tp-btn" disabled={working} onClick={() => void cancelRun()}>Cancel run</button>}
+              <button type="button" className="sf-tp-btn is-primary" disabled={working || Boolean(active)} onClick={() => setConfirming(true)}>{busy === 'start' || busy === 'reads' ? 'Starting…' : 'Run in org'}</button>
+            </div>
+            {confirming && <div className="sf-ot-confirm" role="group" aria-label="Confirm run">
+              <span>Run {selected} in {org?.alias ?? 'the org'}? This uses org evaluation resources.</span>
+              <button type="button" className="sf-tp-btn is-primary" onClick={confirmRun}>Start run</button>
+              <button type="button" className="sf-tp-btn" onClick={() => setConfirming(false)}>Not now</button>
+            </div>}
+            <dl className="sf-ot-meta">
+              <div><dt>Agent</dt><dd>{definition?.subjectName ?? selectedDef?.subjectName ?? '—'}</dd></div>
+              <div><dt>Cases</dt><dd>{definition ? `${definition.testCases.length}${definition.truncated ? '+' : ''}` : selectedDef?.caseCount ?? '—'}</dd></div>
+              <div><dt>Last run</dt><dd>{lastRun ? `${percent(passRate(lastRun.counts))} · ${relativeTime(lastRun.startedAt)}` : 'Never'}</dd></div>
+              <div><dt>Trend</dt><dd>{sparkSeries(history).length > 1 ? <Spark rates={sparkSeries(history)} /> : '—'}</dd></div>
+            </dl>
+            {history.length > 0 && <>
+              <div className="sf-ot-sec">Recent runs</div>
+              <div className="sf-ot-runs" role="group" aria-label="Run history">
+                {history.slice(0, 8).map(r => <button key={r.runId} type="button" className="sf-ot-runcard" aria-pressed={runId === r.runId} title={r.runId}
+                  aria-label={`${r.runId} · ${r.status.replace('_', ' ')} · ${percent(passRate(r.counts))} · ${relativeTime(r.startedAt)}`} onClick={() => void openRun(r.runId)}>
+                  <strong>{isOrgRunTerminal(r.status) ? percent(passRate(r.counts)) : 'Running…'}</strong>
+                  <small>{r.status.replace('_', ' ')} · {relativeTime(r.startedAt)}</small>
+                </button>)}
+              </div>
+            </>}
+            {run && <OrgRunDetail run={run} previous={previous} definitionCases={definition?.testCases} path={path} busy={working}
+              onImport={cases => importCases(run.definition, definition?.label, cases, 'import-run')} onAskAgent={onAskAgent} />}
+            <div className="sf-ot-dhead">
+              <div className="sf-ot-sec">Cases{definition?.truncated ? ' (truncated)' : ''}</div>
+              <span className="sf-tp-spacer" />
+              <button type="button" className="sf-tp-btn" disabled={working || !definition?.testCases.length || !path}
+                title={!path ? 'Open an agent file to import into its suite.' : 'Copy these cases into the agent\'s local test suite.'}
+                onClick={() => definition && importCases(definition.name, definition.label, definition.testCases, 'import')}>Import to suite</button>
+            </div>
+            {!definition && <div className="sf-tp-empty">Reading the definition…</div>}
+            {definition && !definition.testCases.length && <div className="sf-tp-empty">This definition has no cases.</div>}
+            {definition && definition.testCases.length > 0 && <ul className="sf-ot-cases" aria-label="Test cases">{definition.testCases.slice(0, 50).map(c => <li key={c.number}>
+              <span className="sf-ot-num">{c.number}</span>
+              <span>{c.utterance}</span>
+              {(c.expectations.length > 0 || c.contextVariables.length > 0) && <span className="sf-ot-exp">
+                {c.expectations.map((e, i) => <span key={i} className="sf-tp-chip" title={e.expectedValue}>{e.name}{e.expectedValue ? `: ${e.expectedValue.slice(0, 40)}` : ''}</span>)}
+                {c.contextVariables.length > 0 && <span>context {c.contextVariables.map(v => v.name).join(', ')}</span>}
+              </span>}
+            </li>)}</ul>}
+            {definition && definition.testCases.length > 50 && <div className="sf-tp-sub">Showing 50 of {definition.testCases.length} cases.</div>}
+          </section>}
+        </div>
+      </div>
     </div>
   );
 }

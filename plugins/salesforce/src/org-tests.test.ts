@@ -34,7 +34,7 @@ function org(kind = 'sandbox') {
   return { alias: 'dev', username: 'u', orgId: '00D1', instanceUrl: 'https://x', apiVersion: '63.0', kind, isDefault: true };
 }
 
-function setup(opts: { kind?: string; approved?: boolean; xml?: string | null; wrap?: (sdk: any) => any; cli?: Partial<{ code: number; stdout: string }>; ttl?: number } = {}) {
+function setup(opts: { kind?: string; approved?: boolean; xml?: string | null; xmlFor?: (name: string) => string | null | undefined; wrap?: (sdk: any) => any; cli?: Partial<{ code: number; stdout: string }>; ttl?: number } = {}) {
   const kvMap = new Map<string, unknown>();
   const handlers = new Map<string, (args: unknown) => Promise<any>>();
   const publish = vi.fn();
@@ -59,12 +59,15 @@ function setup(opts: { kind?: string; approved?: boolean; xml?: string | null; w
         dirs.push(o.cwd);
         if (opts.xml !== null) {
           const manifestXml = await readFile(join(o.cwd, 'package.xml'), 'utf8');
-          const name = /<members>([^<]+)<\/members>/.exec(manifestXml)![1]!;
           const dir = join(o.cwd, 'force-app', 'main', 'default', 'aiEvaluationDefinitions');
           await mkdir(dir, { recursive: true });
-          const filePath = join(dir, `${name}.aiEvaluationDefinition-meta.xml`);
-          await writeFile(filePath, opts.xml ?? XML);
-          files = [{ type: 'AiEvaluationDefinition', fullName: name, filePath, state: 'Created' }];
+          for (const [, name] of manifestXml.matchAll(/<members>([^<]+)<\/members>/g)) {
+            const xml = opts.xmlFor ? opts.xmlFor(name!) : undefined;
+            if (xml === null) continue;
+            const filePath = join(dir, `${name}.aiEvaluationDefinition-meta.xml`);
+            await writeFile(filePath, xml ?? opts.xml ?? XML);
+            files.push({ type: 'AiEvaluationDefinition', fullName: name, filePath, state: 'Created' });
+          }
         }
       }
       return { code: opts.cli?.code ?? 0, stderr: '', stdout: opts.cli?.stdout ?? JSON.stringify({ status: 0, result: args[0] === 'org' ? [
@@ -296,6 +299,79 @@ describe('org tests RPCs', () => {
     const t = setup({ xml: `<AiEvaluationDefinition>${'<!-- -->'.repeat(ORG_TESTS_LIMITS.definitionBytes / 8 + 10)}</AiEvaluationDefinition>` });
     expect(await t.call(ORG_TESTS_RPC.definition, { name: 'Huge' })).toMatchObject({ ok: false, code: 'too_large' });
     expect((await readdir(tmpdir())).includes(t.dirs[0]!.split('/').pop()!)).toBe(false);
+  });
+
+  describe('details', () => {
+    const subject = (agent: string) => XML.replace('Billing_Agent', agent);
+
+    it('reads a batch in one retrieve, reports what the org did not return, and enriches the list', async () => {
+      const t = setup({ xmlFor: name => (name === 'Gone' ? null : name === 'Old_Test' ? subject('Other_Agent') : undefined) });
+      await t.call(ORG_TESTS_RPC.list);
+      const reply = await t.call(ORG_TESTS_RPC.details, { names: ['New_Test', 'Old_Test', 'Gone', 'New_Test'] });
+      expect(reply).toEqual({
+        ok: true, missing: ['Gone'],
+        definitions: [
+          { name: 'New_Test', label: 'Billing & Refunds', subjectName: 'Billing_Agent', subjectType: 'AGENT', subjectVersion: 'v18', caseCount: 2 },
+          { name: 'Old_Test', label: 'Billing & Refunds', subjectName: 'Other_Agent', subjectType: 'AGENT', subjectVersion: 'v18', caseCount: 2 },
+        ],
+      });
+      const retrieves = t.cliCalls.filter(c => c.args[0] === 'project');
+      expect(retrieves).toHaveLength(1);
+      expect(t.dirs).toHaveLength(1);
+      expect((await readdir(tmpdir())).includes(t.dirs[0]!.split('/').pop()!)).toBe(false);
+      const list = await t.call(ORG_TESTS_RPC.list);
+      expect(list.definitions.map((d: any) => d.subjectName)).toEqual(['Billing_Agent', 'Other_Agent']);
+    });
+
+    it('serves known names from the cache, retrieves only the rest, and re-reads on refresh', async () => {
+      const t = setup();
+      await t.call(ORG_TESTS_RPC.definition, { name: 'A_Test' });
+      await t.call(ORG_TESTS_RPC.details, { names: ['A_Test'] });
+      expect(t.sdk.execSf).toHaveBeenCalledTimes(1);
+      await t.call(ORG_TESTS_RPC.details, { names: ['A_Test', 'B_Test'] });
+      const manifests: string[] = [];
+      const inner = t.sdk.execSf.getMockImplementation()!;
+      t.sdk.execSf.mockImplementation(async (args: string[], o: any) => {
+        if (args[0] === 'project') manifests.push(await readFile(join(o.cwd, 'package.xml'), 'utf8'));
+        return inner(args, o);
+      });
+      await t.call(ORG_TESTS_RPC.details, { names: ['A_Test', 'B_Test'], refresh: true });
+      expect(t.sdk.execSf).toHaveBeenCalledTimes(3);
+      expect(manifests[0]).toContain('<members>A_Test</members>');
+      expect(manifests[0]).toContain('<members>B_Test</members>');
+    });
+
+    it('keeps the readable definitions of a batch when one is unreadable or too large', async () => {
+      const t = setup({ xmlFor: name => (name === 'Bad' ? '<nope/>' : name === 'Huge' ? `<AiEvaluationDefinition>${'<!-- -->'.repeat(ORG_TESTS_LIMITS.definitionBytes / 8 + 10)}</AiEvaluationDefinition>` : undefined) });
+      const reply = await t.call(ORG_TESTS_RPC.details, { names: ['Good', 'Bad', 'Huge'] });
+      expect(reply.definitions.map((d: any) => d.name)).toEqual(['Good']);
+      expect(reply.missing).toEqual(['Bad', 'Huge']);
+    });
+
+    it('validates the names, and fails a batch the CLI cannot retrieve', async () => {
+      const t = setup();
+      for (const args of [undefined, {}, { names: [] }, { names: 'A' }, { names: ['ok', 'bad name'] }, { names: [1] }, { names: Array.from({ length: ORG_TESTS_LIMITS.detailsBatch + 1 }, (_, i) => `N${i}`) }]) {
+        expect(await t.call(ORG_TESTS_RPC.details, args)).toMatchObject({ ok: false, code: 'invalid_input' });
+      }
+      expect(t.sdk.connect).not.toHaveBeenCalled();
+      const failing = setup({ cli: { code: 1, stdout: JSON.stringify({ status: 1, message: 'UNKNOWN_EXCEPTION' }) } });
+      expect(await failing.call(ORG_TESTS_RPC.details, { names: ['A'] })).toEqual({ ok: false, code: 'cli_error', error: 'UNKNOWN_EXCEPTION' });
+      expect((await readdir(tmpdir())).includes(failing.dirs[0]!.split('/').pop()!)).toBe(false);
+      const refused = setup({ kind: 'production', approved: false });
+      expect(await refused.call(ORG_TESTS_RPC.details, { names: ['A'] })).toMatchObject({ ok: false, code: 'refused' });
+      expect(refused.cliCalls).toHaveLength(0);
+    });
+
+    it('bounds the summary cache', async () => {
+      const t = setup();
+      const names = (from: number) => Array.from({ length: ORG_TESTS_LIMITS.detailsBatch }, (_, i) => `S${from + i}`);
+      for (let at = 0; at <= 5_000; at += ORG_TESTS_LIMITS.detailsBatch) await t.call(ORG_TESTS_RPC.details, { names: names(at) });
+      const calls = t.sdk.execSf.mock.calls.length;
+      await t.call(ORG_TESTS_RPC.details, { names: names(0) });
+      expect(t.sdk.execSf.mock.calls.length).toBe(calls + 1);
+      await t.call(ORG_TESTS_RPC.details, { names: names(5_000) });
+      expect(t.sdk.execSf.mock.calls.length).toBe(calls + 1);
+    });
   });
 
   describe('runs', () => {

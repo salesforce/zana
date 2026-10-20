@@ -29,6 +29,37 @@ export function filterDefinitions(defs: readonly OrgTestDefinitionSummary[], fil
   });
 }
 
+export const sameAgent = (def: Pick<OrgTestDefinitionSummary, 'subjectName'>, agent: string | null | undefined) =>
+  Boolean(agent && def.subjectName && def.subjectName.toLowerCase() === agent.toLowerCase());
+
+export interface DefinitionGroup {
+  /** The lowercased agent name, or `loading` / `unknown` for definitions whose agent is not known (yet). */
+  key: string;
+  label: string;
+  state: 'agent' | 'loading' | 'unknown';
+  defs: OrgTestDefinitionSummary[];
+}
+
+/**
+ * Definitions by the agent they test: the pinned agent first, then the largest groups, then by name. Definitions whose
+ * agent is still being read come next, and those it could not be read for last.
+ */
+export function groupDefinitions(defs: readonly OrgTestDefinitionSummary[], pending: ReadonlySet<string>, pinned?: string | null): DefinitionGroup[] {
+  const agents = new Map<string, DefinitionGroup>();
+  const loading: DefinitionGroup = { key: 'loading', label: 'Reading agent…', state: 'loading', defs: [] };
+  const unknown: DefinitionGroup = { key: 'unknown', label: 'Agent unknown', state: 'unknown', defs: [] };
+  for (const def of defs) {
+    if (!def.subjectName) { (pending.has(def.name) ? loading : unknown).defs.push(def); continue; }
+    const key = def.subjectName.toLowerCase();
+    const group = agents.get(key) ?? { key, label: def.subjectName, state: 'agent' as const, defs: [] };
+    group.defs.push(def);
+    agents.set(key, group);
+  }
+  const first = pinned?.toLowerCase();
+  const sorted = [...agents.values()].sort((a, b) => Number(b.key === first) - Number(a.key === first) || b.defs.length - a.defs.length || a.label.localeCompare(b.label));
+  return [...sorted, loading, unknown].filter(group => group.defs.length > 0);
+}
+
 /** 0..1, or null when nothing was graded. Errors count against the rate; pending cases do not count. */
 export function passRate(counts: OrgRunCounts | undefined): number | null {
   if (!counts) return null;

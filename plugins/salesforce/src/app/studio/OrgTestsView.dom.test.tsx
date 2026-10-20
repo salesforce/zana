@@ -55,25 +55,137 @@ function setup(overrides: Partial<OrgTestsViewProps> = {}, handlers: Record<stri
 }
 const button = (name: RegExp | string) => screen.getByRole('button', { name }) as HTMLButtonElement;
 const calls = (call: ReturnType<typeof setup>['call'], method: string) => call.mock.calls.filter(([, m]) => m === method).map(([, , a]) => a as Record<string, unknown>);
+/** Attach lives in the ⋯ menu. */
+const openMenu = () => { if (!screen.queryByLabelText('Attach run by id')) fireEvent.click(button('More actions')); };
+/** With MyBot open the list shows its tests; this shows every agent's, with OtherBot's group open. */
+const everyAgent = () => { fireEvent.click(button('All agents')); fireEvent.click(button(/^OtherBot/)); };
 
-it('lists definitions, filters them, and toggles this agent', async () => {
+it('scopes the list to the open agent, then groups every agent with this one pinned and open', async () => {
   const { call } = setup({}, { 'studio.orgTests.runs': () => ({ ok: true, runs: [
     toRecord(results('r2', 'completed', [rcase(1, 'pass'), rcase(2, 'fail')])), toRecord(results('r1', 'completed', [rcase(1, 'fail'), rcase(2, 'fail')]))
   ] }) });
   expect(await screen.findByTestId('org-def-RefundTests')).toBeTruthy();
-  expect(screen.getByText('2 of 2 tests', { exact: false })).toBeTruthy();
-  expect(within(screen.getByTestId('org-def-RefundTests')).getByText(/50%/)).toBeTruthy();
-  expect(screen.getByRole('img', { name: /Pass rate trend/ })).toBeTruthy();
-  expect(within(screen.getByTestId('org-def-OtherTests')).getByText('No runs')).toBeTruthy();
-  fireEvent.change(screen.getByLabelText('Filter org tests'), { target: { value: 'other' } });
-  expect(screen.queryByTestId('org-def-RefundTests')).toBeNull();
-  fireEvent.change(screen.getByLabelText('Filter org tests'), { target: { value: '' } });
-  fireEvent.click(screen.getByLabelText(/This agent/));
+  expect(screen.getByTestId('org-tests-scope').textContent).toBe('MyBot· 1 test · 1 with runs');
   expect(screen.queryByTestId('org-def-OtherTests')).toBeNull();
+  expect(screen.getByText('1 of 2 tests')).toBeTruthy();
+  expect(screen.getByText(/1 more test for other agents/)).toBeTruthy();
+  const refund = screen.getByTestId('org-def-RefundTests');
+  expect(within(refund).getByText('50%').className).toContain('is-bad');
+  expect(within(refund).getByText('2 cases')).toBeTruthy();
+  expect(within(refund).getByText('RefundTests')).toBeTruthy();
+  expect(screen.getByRole('img', { name: 'Pass rate trend: 0%, 50%' })).toBeTruthy();
+  expect(calls(call, 'studio.orgTests.details')).toHaveLength(0);
+
+  fireEvent.click(button('Show all agents'));
+  expect(button('All agents').getAttribute('aria-pressed')).toBe('true');
+  const groups = screen.getAllByTestId(/^org-tests-group-/).map(g => g.getAttribute('data-testid'));
+  expect(groups).toEqual(['org-tests-group-mybot', 'org-tests-group-otherbot']);
+  expect(within(screen.getByTestId('org-tests-group-mybot')).getByText('open in Studio')).toBeTruthy();
+  expect(screen.queryByTestId('org-def-OtherTests')).toBeNull();
+  fireEvent.click(button(/^OtherBot/));
+  expect(within(screen.getByTestId('org-def-OtherTests')).getByText('No runs')).toBeTruthy();
+  fireEvent.click(button(/^MyBot/));
+  expect(screen.queryByTestId('org-def-RefundTests')).toBeNull();
+  expect(screen.getByText('2 of 2 tests')).toBeTruthy();
+
+  fireEvent.click(button('Has runs'));
+  expect(screen.queryByTestId('org-tests-group-otherbot')).toBeNull();
+  fireEvent.click(button('Has runs'));
+  fireEvent.change(screen.getByLabelText('Filter org tests'), { target: { value: 'refund' } });
+  // A search opens every group it matches.
+  expect(screen.getByTestId('org-def-RefundTests')).toBeTruthy();
+  expect(screen.queryByTestId('org-tests-group-otherbot')).toBeNull();
   fireEvent.change(screen.getByLabelText('Filter org tests'), { target: { value: 'zzz' } });
   expect(screen.getByText('No org tests match.')).toBeTruthy();
+  fireEvent.click(button('This agent'));
+  expect(screen.getByText('No org tests for MyBot match.')).toBeTruthy();
   fireEvent.click(button('Refresh'));
   await waitFor(() => expect(calls(call, 'studio.orgTests.list').at(-1)).toEqual({ projectId: 'p1', refresh: true }));
+});
+
+it('groups by agent with only the largest group open when no agent is open', async () => {
+  setup({ path: null }, { 'studio.orgTests.list': () => ({ ok: true, org: { alias: 'dev' }, definitions: [...DEFS, { name: 'OtherMore', subjectName: 'OtherBot' }] }) });
+  await screen.findByTestId('org-tests-group-otherbot');
+  expect(screen.queryByRole('group', { name: 'Scope' })).toBeNull();
+  expect(screen.getAllByTestId(/^org-tests-group-/).map(g => g.getAttribute('data-testid'))).toEqual(['org-tests-group-otherbot', 'org-tests-group-mybot']);
+  expect(screen.getByTestId('org-def-OtherMore')).toBeTruthy();
+  expect(screen.queryByTestId('org-def-RefundTests')).toBeNull();
+  expect(button(/^OtherBot/).textContent).toContain('2 tests · 0 with runs');
+  expect(screen.getByText('Pick a test to see its cases and runs.')).toBeTruthy();
+});
+
+it('reads the agent of unknown definitions in batches, two at a time, with progress', async () => {
+  const names = Array.from({ length: 60 }, (_, i) => `Bare_${i}`);
+  const gates: Array<{ names: string[]; open: () => void }> = [];
+  const { call } = setup({}, {
+    'studio.orgTests.list': () => ({ ok: true, org: { alias: 'dev' }, definitions: names.map(name => ({ name })) }),
+    'studio.orgTests.details': a => new Promise(resolve => {
+      const batch = a.names as string[];
+      gates.push({ names: batch, open: () => resolve(batch.includes('Bare_0')
+        ? { ok: true, definitions: batch.filter(n => n !== 'Bare_1').map((name, i) => ({ name, label: `Label ${name}`, subjectName: i % 2 ? 'OtherBot' : 'MyBot', caseCount: 3 })), missing: ['Bare_1'] }
+        : batch.includes('Bare_25') ? { ok: false, error: 'UNKNOWN_EXCEPTION' } : { ok: true, definitions: batch.map(name => ({ name, subjectName: 'MyBot' })), missing: [] }) });
+    }),
+  });
+  await waitFor(() => expect(gates).toHaveLength(2));
+  expect(gates.map(g => g.names.length)).toEqual([25, 25]);
+  expect(screen.getByText('Looking for tests of MyBot…')).toBeTruthy();
+  expect(screen.getByText('Reading definitions 0/60')).toBeTruthy();
+  await act(async () => { gates[0]!.open(); });
+  await waitFor(() => expect(gates).toHaveLength(3));
+  expect(gates[2]!.names).toHaveLength(10);
+  expect(screen.getByRole('progressbar', { name: 'Reading definitions' }).getAttribute('aria-valuenow')).toBe('25');
+  expect(screen.getByTestId('org-def-Bare_0').textContent).toContain('Label Bare_0');
+  fireEvent.click(button('All agents'));
+  expect(screen.getAllByTestId(/^org-tests-group-/).map(g => g.getAttribute('data-testid'))).toEqual(['org-tests-group-mybot', 'org-tests-group-otherbot', 'org-tests-group-loading', 'org-tests-group-unknown']);
+  fireEvent.click(button(/^Reading agent/));
+  expect(screen.getByTestId('org-def-Bare_30').querySelector('[aria-label="Reading definition"]')).toBeTruthy();
+  await act(async () => { gates[1]!.open(); gates[2]!.open(); });
+  await waitFor(() => expect(screen.getByText('26 could not be read')).toBeTruthy());
+  expect(screen.queryByTestId('org-tests-group-loading')).toBeNull();
+  expect(button(/^Agent unknown/).textContent).toContain('26 tests');
+  expect(calls(call, 'studio.orgTests.details').flatMap(a => a.names as string[]).sort()).toEqual([...names].sort());
+});
+
+it('stops reading agents when the org refuses, and when a batch throws keeps the others', async () => {
+  const names = Array.from({ length: 80 }, (_, i) => `N${i}`);
+  const { call } = setup({ path: null }, {
+    'studio.orgTests.list': () => ({ ok: true, definitions: names.map(name => ({ name })) }),
+    'studio.orgTests.details': () => ({ ok: false, code: 'refused' }),
+  });
+  await waitFor(() => expect(screen.getByText('80 could not be read')).toBeTruthy());
+  expect(calls(call, 'studio.orgTests.details')).toHaveLength(2);
+  cleanup();
+  let n = 0;
+  setup({ path: null }, {
+    'studio.orgTests.list': () => ({ ok: true, definitions: names.slice(0, 30).map(name => ({ name })) }),
+    'studio.orgTests.details': a => { if (n++ === 0) throw new Error('down'); return { ok: true, definitions: (a.names as string[]).map(name => ({ name, subjectName: 'MyBot' })) }; },
+  });
+  await waitFor(() => expect(screen.getByText('25 could not be read')).toBeTruthy());
+  expect(button(/^MyBot/).textContent).toContain('5 tests');
+});
+
+it('a newer list abandons the agent reads of the previous one', async () => {
+  const slow = deferred<unknown>();
+  let lists = 0;
+  const { call } = setup({ path: null }, {
+    'studio.orgTests.list': () => (++lists === 1 ? { ok: true, definitions: [{ name: 'Old_One' }] } : { ok: true, definitions: [{ name: 'New_One', subjectName: 'MyBot' }] }),
+    'studio.orgTests.details': () => slow.promise,
+  });
+  await waitFor(() => expect(calls(call, 'studio.orgTests.details')).toHaveLength(1));
+  fireEvent.click(button('Refresh'));
+  await screen.findByTestId('org-def-New_One');
+  await act(async () => { slow.resolve({ ok: true, definitions: [{ name: 'Old_One', subjectName: 'Ghost' }] }); await Promise.resolve(); });
+  expect(screen.queryByTestId('org-tests-group-ghost')).toBeNull();
+  expect(screen.queryByText(/Reading definitions/)).toBeNull();
+});
+
+it('offers every agent when the open agent has no org tests', async () => {
+  setup({ path: 'force-app/main/default/aiAuthoringBundles/Lonely/Lonely.agent' });
+  const none = await screen.findByTestId('org-tests-none-for-agent');
+  expect(none.textContent).toContain('No org tests for Lonely yet');
+  expect(none.textContent).toContain('None of the 2 definitions in dev test this agent.');
+  fireEvent.click(within(none).getByRole('button', { name: 'Browse all agents' }));
+  expect(screen.getByTestId('org-tests-group-mybot')).toBeTruthy();
 });
 
 it('shows list errors and the empty org', async () => {
@@ -85,6 +197,7 @@ it('shows list errors and the empty org', async () => {
   cleanup();
   setup({}, { 'studio.orgTests.list': () => ({ ok: true, definitions: [] }) });
   expect(await screen.findByText('This org has no test definitions.')).toBeTruthy();
+  expect(screen.getByText('0 of 0 tests')).toBeTruthy();
 });
 
 it('does not load while hidden', () => {
@@ -99,18 +212,41 @@ it('selects a definition and shows its cases', async () => {
   expect(within(cases).getByText('I want a refund')).toBeTruthy();
   expect(within(cases).getByText(/topic_sequence_match: Billing/)).toBeTruthy();
   expect(within(cases).getByText(/context Region/)).toBeTruthy();
+  const detail = within(screen.getByTestId('org-def-detail'));
+  expect(detail.getByRole('heading', { name: 'Refund tests' })).toBeTruthy();
+  expect(detail.getByText('MyBot')).toBeTruthy();
+  expect(screen.getByTestId('org-def-RefundTests').getAttribute('aria-selected')).toBe('true');
+});
+
+it('selects from a click anywhere on the row and says when a definition has no cases', async () => {
+  setup({}, { 'studio.orgTests.definition': () => ({ ok: true, definition: { ...definition(), testCases: [], truncated: true } }) });
+  fireEvent.click(await screen.findByTestId('org-def-RefundTests'));
+  expect(screen.getByText('Reading the definition…')).toBeTruthy();
+  expect(await screen.findByText('This definition has no cases.')).toBeTruthy();
+  expect(screen.getByText('Cases (truncated)')).toBeTruthy();
+});
+
+it('shows up to 50 cases', async () => {
+  const many: OrgTestDefinition = { ...definition(), testCases: Array.from({ length: 55 }, (_, i) => ({ number: i + 1, utterance: `u${i + 1}`, conversationHistory: [], contextVariables: [], expectations: [] })) };
+  setup({}, { 'studio.orgTests.definition': () => ({ ok: true, definition: many }) });
+  fireEvent.click(await screen.findByRole('button', { name: 'Refund tests' }));
+  expect(within(await screen.findByRole('list', { name: 'Test cases' })).getAllByRole('listitem')).toHaveLength(50);
+  expect(screen.getByText('Showing 50 of 55 cases.')).toBeTruthy();
 });
 
 it('fills a bare list row from its loaded definition', async () => {
-  setup({}, {
+  setup({ path: null }, {
     'studio.orgTests.list': () => ({ ok: true, org: { alias: 'dev' }, definitions: [{ name: 'Bare_Test' }], at: 1 }),
     'studio.orgTests.definition': () => ({ ok: true, definition: { ...definition(), name: 'Bare_Test', label: 'Bare label', subjectName: 'BareBot', caseCount: undefined } }),
   });
   fireEvent.click(await screen.findByRole('button', { name: 'Bare_Test' }));
-  const row = await screen.findByTestId('org-def-Bare_Test');
-  await waitFor(() => expect(row.textContent).toContain('BareBot'));
+  await waitFor(() => expect(screen.getByTestId('org-tests-group-barebot')).toBeTruthy());
+  const row = screen.getByTestId('org-def-Bare_Test');
   expect(within(row).getByRole('button', { name: 'Bare label' })).toBeTruthy();
-  expect(row.textContent).toContain(String(definition().testCases.length));
+  expect(row.textContent).toContain('2 cases');
+  const meta = within(screen.getByTestId('org-def-detail'));
+  expect(meta.getByText('BareBot')).toBeTruthy();
+  expect(meta.getByText('Never')).toBeTruthy();
 });
 
 it('reports a definition load failure', async () => {
@@ -232,6 +368,7 @@ it('attaches a run by id, with validation and errors', async () => {
   const { call } = setup({}, { 'studio.orgTests.run.attach': a => (a.runId === 'bad0000000000000' ? { ok: false, error: 'Unknown run' } : { ok: true, run: attached }) });
   fireEvent.click(await screen.findByRole('button', { name: 'Refund tests' }));
   await screen.findByRole('list', { name: 'Test cases' });
+  openMenu();
   fireEvent.click(button('Attach'));
   expect(screen.getByText('Enter a run id.')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Attach run by id'), { target: { value: 'short' } });
@@ -241,10 +378,15 @@ it('attaches a run by id, with validation and errors', async () => {
   fireEvent.click(button('Attach'));
   expect(await screen.findByText('Unknown run')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Attach run by id'), { target: { value: ' ext9ABCDEFGHIJKL ' } });
-  fireEvent.click(button('Attach'));
+  fireEvent.keyDown(screen.getByLabelText('Attach run by id'), { key: 'Enter' });
   expect(await screen.findByText('Attached run ext9ABCDEFGHIJKL.')).toBeTruthy();
   expect(calls(call, 'studio.orgTests.run.attach')[1]).toEqual({ projectId: 'p1', runId: 'ext9ABCDEFGHIJKL' });
   expect(screen.getByTestId('org-run-detail')).toBeTruthy();
+  // A successful attach closes the menu; Escape closes it too.
+  expect(screen.queryByLabelText('Attach run by id')).toBeNull();
+  openMenu();
+  fireEvent.keyDown(screen.getByRole('dialog', { name: 'Attach a run' }), { key: 'Escape' });
+  expect(screen.queryByLabelText('Attach run by id')).toBeNull();
 });
 
 it('imports a definition into the suite and tells when cases were left out', async () => {
@@ -270,7 +412,7 @@ it('reports an import failure and requires an open agent', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Refund tests' }));
   await screen.findByRole('list', { name: 'Test cases' });
   expect(button('Import to suite').disabled).toBe(true);
-  expect((screen.getByLabelText(/This agent/) as HTMLInputElement).disabled).toBe(true);
+  expect(screen.queryByRole('group', { name: 'Scope' })).toBeNull();
 });
 
 it('opens a run from history with the previous run as the diff base, and reacts to realtime', async () => {
@@ -407,6 +549,7 @@ it('attaches without a selected test; an unknown definition is not looked up', a
   const attached = results('ext9ABCDEFGHIJKL', 'completed', [rcase(1, 'pass')], { definition: 'unknown', startedBy: 'attached' });
   const { call } = setup({}, { 'studio.orgTests.run.attach': () => ({ ok: true, run: attached }) });
   await screen.findByTestId('org-def-RefundTests');
+  openMenu();
   fireEvent.change(screen.getByLabelText('Attach run by id'), { target: { value: 'ext9ABCDEFGHIJKL' } });
   fireEvent.click(button('Attach'));
   expect(await screen.findByTestId('org-run-detail')).toBeTruthy();
@@ -420,6 +563,7 @@ it('attaching a run of another known test selects that test', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Refund tests' }));
   await screen.findByRole('list', { name: 'Test cases' });
   fireEvent.click(await screen.findByRole('button', { name: 'Refund tests' }));
+  openMenu();
   fireEvent.change(screen.getByLabelText('Attach run by id'), { target: { value: 'ext9ABCDEFGHIJKL' } });
   fireEvent.click(button('Attach'));
   expect(await screen.findByText('Attached run ext9ABCDEFGHIJKL.')).toBeTruthy();
@@ -432,6 +576,7 @@ it('ignores a late definition reply for a test the user left', async () => {
   const slow = deferred<unknown>();
   const { } = setup({}, { 'studio.orgTests.definition': a => (a.name === 'RefundTests' ? slow.promise : { ok: true, definition: { ...definition(), name: 'OtherTests', label: 'Other label', testCases: [] } }) });
   fireEvent.click(await screen.findByRole('button', { name: 'Refund tests' }));
+  everyAgent();
   fireEvent.click(await screen.findByRole('button', { name: 'OtherTests' }));
   expect(await screen.findByRole('heading', { name: 'Other label' })).toBeTruthy();
   await act(async () => { slow.resolve({ ok: true, definition: definition() }); await Promise.resolve(); });
@@ -448,6 +593,7 @@ it('ignores a late run reply after switching tests', async () => {
   });
   fireEvent.click(await screen.findByRole('button', { name: 'Refund tests' }));
   fireEvent.click(await screen.findByRole('button', { name: /^FGHIJKLM|ABCDEFGHIJKLM|JKLM|·/ }).catch(() => screen.getByRole('group', { name: 'Run history' }).querySelector('button')!));
+  everyAgent();
   fireEvent.click(screen.getByRole('button', { name: 'OtherTests' }));
   await act(async () => { slow.resolve({ ok: true, run: results('r2ABCDEFGHIJKLM', 'completed', [rcase(1, 'pass')]) }); await Promise.resolve(); });
   expect(screen.queryByTestId('org-run-detail')).toBeNull();
@@ -463,6 +609,7 @@ it('does not override a later choice when an attach finishes, and presses the at
     'studio.orgTests.definition': a => ({ ok: true, definition: { ...definition(), name: a.name, label: String(a.name), testCases: [] } })
   });
   await screen.findByTestId('org-def-RefundTests');
+  openMenu();
   fireEvent.change(screen.getByLabelText('Attach run by id'), { target: { value: id } });
   fireEvent.click(button('Attach'));
   fireEvent.click(screen.getByRole('button', { name: 'Refund tests' }));
@@ -481,6 +628,7 @@ it('selects the attached run definition and marks the run pressed', async () => 
     'studio.orgTests.definition': a => ({ ok: true, definition: { ...definition(), name: a.name, label: 'Other label', testCases: [] } })
   });
   await screen.findByTestId('org-def-RefundTests');
+  openMenu();
   fireEvent.change(screen.getByLabelText('Attach run by id'), { target: { value: id } });
   fireEvent.click(button('Attach'));
   expect(await screen.findByTestId('org-run-detail')).toBeTruthy();

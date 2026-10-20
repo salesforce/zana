@@ -360,6 +360,7 @@ it('treats a missing reply as an error', async () => {
 it('switches to the Org tests view', async () => {
   const { call } = setup({}, {
     'studio.orgTests.list': () => ({ ok: true, org: { alias: 'dev' }, definitions: [{ name: 'RefundTests' }], at: 1 }),
+    'studio.orgTests.details': () => ({ ok: true, definitions: [{ name: 'RefundTests', subjectName: 'MyBot', caseCount: 3 }], missing: [] }),
     'studio.orgTests.runs': () => ({ ok: true, runs: [] })
   });
   await screen.findByTestId('tests-table');

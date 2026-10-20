@@ -245,7 +245,9 @@ describe('AgentScriptPanel studio layout', () => {
     expect([...el.querySelectorAll('[role="tab"] .sf-etab-name')].map(tab => tab.textContent)).toContain('Org tests');
     expect(stubView().getAttribute('data-visible')).toBe('true');
     expect(stubView().getAttribute('data-focus')).toBe('');
-    expect(el.querySelector('[data-testid="studio-org-tests-view"]')!.textContent).toContain('Testing Center definitions and runs in dev');
+    // The view brings its own title bar, so the host adds none.
+    expect(el.querySelector('[data-testid="studio-org-tests-view"] > section.sf-tp.is-org-tests')).toBeTruthy();
+    expect(el.querySelector('[data-testid="studio-org-tests-view"] .sf-tp-head')).toBeNull();
     expect(el.querySelector('[data-testid="studio-org-agents-view"]')).toBeNull();
 
     // Back on the agent the tab stays mounted, hidden; an agent's orgTests.open brings it back on a run.

@@ -25,6 +25,8 @@ const NAME = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
 const RUN_ID = /^[A-Za-z0-9]{15,18}$/;
 const LIST_TTL_MS = 5 * 60_000;
 const DEFINITION_CACHE = 30;
+/** Summaries kept across orgs: a few large orgs' worth of definitions. */
+const SUMMARY_CACHE = 5_000;
 const RETRIEVE_TIMEOUT_MS = 120_000;
 const KEY_RUNS = 'orgTests:runs';
 const keyResult = (runId: string) => `orgTests:result:${runId}`;
@@ -212,6 +214,13 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
   const ttl = deps.listTtlMs ?? LIST_TTL_MS;
   const listCache = new Map<string, { at: number; definitions: OrgTestDefinitionSummary[] }>();
   const definitions = new Map<string, OrgTestDefinition>();
+  /** What a retrieve told us about each definition, keyed `${org}\n${name}`; the list rows are enriched from it. */
+  const summaries = new Map<string, Pick<OrgTestDefinitionSummary, 'label' | 'subjectName' | 'subjectType' | 'subjectVersion' | 'caseCount'>>();
+  const remember = (key: string, definition: OrgTestDefinition) => {
+    summaries.delete(key);
+    summaries.set(key, { label: definition.label, subjectName: definition.subjectName, subjectType: definition.subjectType, subjectVersion: definition.subjectVersion, caseCount: definition.caseCount ?? definition.testCases.length });
+    while (summaries.size > SUMMARY_CACHE) summaries.delete(summaries.keys().next().value!);
+  };
   let chain: Promise<unknown> = Promise.resolve();
   /** Serializes read-modify-write of the stored history (one in-process queue). */
   const locked = <T>(work: () => Promise<T>): Promise<T> => {
@@ -243,6 +252,38 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
   const orgView = (org: PublicOrgView) => ({ alias: org.alias, id: org.orgId, isProduction: org.kind === 'production' });
   const apiFail = (response: { status: number; json: unknown; text: string }) => new OrgTestsError('api_error', compactError(response.status, response.json, response.text));
   const cacheKey = (org: PublicOrgView) => `${org.orgId || org.alias}`;
+
+  /**
+   * Retrieves the named definitions in one retrieve and parses each. A definition the org did not return is absent;
+   * one too large or unreadable maps to its error, so a batch still yields the others.
+   */
+  const retrieveDefinitions = async (sdk: SalesforceSdk, org: PublicOrgView, names: string[]) => {
+    const out = new Map<string, OrgTestDefinition | OrgTestsError>();
+    let project: string | undefined;
+    try {
+      // AiEvaluationDefinition needs API 63.0+; an older org default silently retrieves nothing.
+      const apiVersion = Number(org.apiVersion) >= Number(EVAL_API_VERSION) ? org.apiVersion! : EVAL_API_VERSION;
+      project = await tempProject(apiVersion, 'zcc-sf-orgtest-');
+      // Source format through retrieveInto, the retrieve already proven in the app; --target-metadata-dir leaves no file there.
+      const retrieved = await retrieveInto(sdk.execSf.bind(sdk), project, names.map(name => `AiEvaluationDefinition:${name}`), {
+        alias: org.alias, apiVersion, timeoutMs: deps.retrieveTimeoutMs ?? RETRIEVE_TIMEOUT_MS,
+      }).catch((error: unknown) => { throw new OrgTestsError('cli_error', error instanceof Error ? error.message : String(error)); });
+      for (const name of names) {
+        const file = retrieved.files.find(row => row.type === 'AiEvaluationDefinition' && row.fullName === name)?.path;
+        if (!file) continue;
+        try {
+          const size = (await stat(file)).size;
+          if (size > ORG_TESTS_LIMITS.definitionBytes) throw new OrgTestsError('too_large', `${name} is larger than ${Math.round(ORG_TESTS_LIMITS.definitionBytes / 1_000_000)} MB.`);
+          out.set(name, parseDefinitionXml((await readFile(file)).toString('utf8'), name));
+        } catch (error) {
+          out.set(name, error instanceof OrgTestsError ? error : new OrgTestsError('invalid_definition', error instanceof Error ? error.message : String(error)));
+        }
+      }
+      return out;
+    } finally {
+      await removeTemp(project).catch(() => undefined);
+    }
+  };
 
   const readRuns = async () => runRecords(await kv.get<unknown>(studio.contexts.key(KEY_RUNS)));
   /**
@@ -338,8 +379,8 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
       listCache.set(key, entry);
     }
     const enriched = entry.definitions.map(summary => {
-      const known = definitions.get(`${key}\n${summary.name}`);
-      return known ? { ...summary, label: known.label, subjectName: known.subjectName, subjectType: known.subjectType, subjectVersion: known.subjectVersion, caseCount: known.caseCount } : summary;
+      const known = summaries.get(`${key}\n${summary.name}`);
+      return known ? { ...summary, ...known } : summary;
     });
     return { ok: true, org: orgView(org), definitions: enriched, at: entry.at };
   }));
@@ -350,27 +391,35 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
     const key = `${cacheKey(org)}\n${name}`;
     const cached = definitions.get(key);
     if (cached && !rec(args).refresh) return { ok: true, definition: cached };
-    let project: string | undefined;
-    try {
-      // AiEvaluationDefinition needs API 63.0+; an older org default silently retrieves nothing.
-      const apiVersion = Number(org.apiVersion) >= Number(EVAL_API_VERSION) ? org.apiVersion! : EVAL_API_VERSION;
-      project = await tempProject(apiVersion, 'zcc-sf-orgtest-');
-      // Source format through retrieveInto, the retrieve already proven in the app; --target-metadata-dir leaves no file there.
-      const retrieved = await retrieveInto(sdk.execSf.bind(sdk), project, [`AiEvaluationDefinition:${name}`], {
-        alias: org.alias, apiVersion, timeoutMs: deps.retrieveTimeoutMs ?? RETRIEVE_TIMEOUT_MS,
-      }).catch((error: unknown) => { throw new OrgTestsError('cli_error', error instanceof Error ? error.message : String(error)); });
-      const file = retrieved.files.find(row => row.type === 'AiEvaluationDefinition' && row.fullName === name)?.path;
-      if (!file) throw new OrgTestsError('not_found', `${name} was not found in ${org.alias}.`);
-      const size = (await stat(file)).size;
-      if (size > ORG_TESTS_LIMITS.definitionBytes) throw new OrgTestsError('too_large', `${name} is larger than ${Math.round(ORG_TESTS_LIMITS.definitionBytes / 1_000_000)} MB.`);
-      const definition = parseDefinitionXml((await readFile(file)).toString('utf8'), name);
-      definitions.delete(key);
-      definitions.set(key, definition);
-      while (definitions.size > DEFINITION_CACHE) definitions.delete(definitions.keys().next().value!);
-      return { ok: true, definition };
-    } finally {
-      await removeTemp(project).catch(() => undefined);
+    const read = (await retrieveDefinitions(sdk, org, [name])).get(name);
+    if (!read) throw new OrgTestsError('not_found', `${name} was not found in ${org.alias}.`);
+    if (read instanceof OrgTestsError) throw read;
+    definitions.delete(key);
+    definitions.set(key, read);
+    while (definitions.size > DEFINITION_CACHE) definitions.delete(definitions.keys().next().value!);
+    remember(key, read);
+    return { ok: true, definition: read };
+  }));
+
+  studio.registerRpc(ORG_TESTS_RPC.details, guard(async args => {
+    const raw = rec(args).names;
+    const names = Array.isArray(raw) ? [...new Set(raw)] : [];
+    if (!names.length || names.length > ORG_TESTS_LIMITS.detailsBatch || !names.every(name => typeof name === 'string' && NAME.test(name))) {
+      throw new OrgTestsError('invalid_input', `names must be 1 to ${ORG_TESTS_LIMITS.detailsBatch} AI evaluation definition API names.`);
     }
+    const { sdk, org } = await access(args, 'orgTests.details');
+    const prefix = cacheKey(org);
+    const wanted = (names as string[]).filter(name => rec(args).refresh || !summaries.has(`${prefix}\n${name}`));
+    if (wanted.length) {
+      for (const [name, read] of await retrieveDefinitions(sdk, org, wanted)) if (!(read instanceof OrgTestsError)) remember(`${prefix}\n${name}`, read);
+    }
+    const found: OrgTestDefinitionSummary[] = [];
+    const missing: string[] = [];
+    for (const name of names as string[]) {
+      const known = summaries.get(`${prefix}\n${name}`);
+      if (known) found.push({ name, ...known }); else missing.push(name);
+    }
+    return { ok: true, definitions: found, missing };
   }));
 
   studio.registerRpc(ORG_TESTS_RPC.start, guard(async args => {

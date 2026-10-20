@@ -12,6 +12,12 @@ export const ORG_TESTS_RPC = {
   /** {name} -> {ok, definition: OrgTestDefinition} */
   definition: 'studio.orgTests.definition',
   /**
+   * {names: string[] (1..detailsBatch), refresh?} -> {ok, definitions: OrgTestDefinitionSummary[], missing: string[]}.
+   * One metadata retrieve for the batch: the agent (subjectName), label and case count of each definition. The org fails
+   * a retrieve of about a hundred definitions at once, so callers page through the list in batches.
+   */
+  details: 'studio.orgTests.details',
+  /**
    * {name, threadId?, via?} -> {ok, run: OrgRunRecord}. startedBy is 'studio' when via === 'studio', else 'thread' when a
    * threadId is present, else 'studio'. On a production or unknown org the start confirms as org.write (a read grant never covers it).
    */
@@ -31,6 +37,8 @@ export const ORG_TESTS_LIMITS = {
   storedRuns: 60,
   /** Definition XML read per file. */
   definitionBytes: 4_000_000,
+  /** Definitions read per orgTests.details call (one retrieve). */
+  detailsBatch: 25,
   /** Test cases returned per definition. */
   cases: 1_000,
   /** Characters kept per text field (utterance, expected/actual values, explanations). */

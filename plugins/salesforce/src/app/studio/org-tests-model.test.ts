@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import type { OrgCaseResult, OrgMetricResult, OrgRunRecord, OrgRunResults } from '../../../lib/org-tests-contract.js';
 import {
-  agentNameFromPath, casesForImport, casesToCsv, changedCases, diffRuns, filterCases, filterDefinitions, fixPrompt, formatDuration, metricRates,
-  pageOf, passRate, percent, relativeTime, searchCases, sortCases, sparkSeries
+  agentNameFromPath, casesForImport, casesToCsv, changedCases, diffRuns, filterCases, filterDefinitions, fixPrompt, formatDuration, groupDefinitions, metricRates,
+  pageOf, sameAgent, passRate, percent, relativeTime, searchCases, sortCases, sparkSeries
 } from './org-tests-model.js';
 
 const metric = (extra: Partial<OrgMetricResult> = {}): OrgMetricResult => ({ name: 'topic_sequence_match', expected: 'Billing', actual: 'Billing', result: 'pass', ...extra });
@@ -145,4 +145,21 @@ it('selects cases to import and builds the fix prompt', () => {
   expect(prompt).toContain('- #2 "utterance 2" -> error');
   expect(prompt).toContain('(+1 more)');
   expect(fixPrompt(run([]), [failing[1]], 'a/b.agent')).toContain('for a/b.agent (run r1, definition Def): 1 case.');
+});
+
+it('groups definitions by agent, pinned first, then by size, with unread agents last', () => {
+  const defs = [
+    { name: 'A1', subjectName: 'Alpha' }, { name: 'B1', subjectName: 'Beta' }, { name: 'B2', subjectName: 'beta' },
+    { name: 'C1', subjectName: 'Gamma' }, { name: 'P1' }, { name: 'U1' },
+  ];
+  const groups = groupDefinitions(defs, new Set(['P1']));
+  expect(groups.map(g => [g.key, g.label, g.state, g.defs.map(d => d.name)])).toEqual([
+    ['beta', 'Beta', 'agent', ['B1', 'B2']], ['alpha', 'Alpha', 'agent', ['A1']], ['gamma', 'Gamma', 'agent', ['C1']],
+    ['loading', 'Reading agent…', 'loading', ['P1']], ['unknown', 'Agent unknown', 'unknown', ['U1']],
+  ]);
+  expect(groupDefinitions(defs, new Set(), 'GAMMA').map(g => g.key)).toEqual(['gamma', 'beta', 'alpha', 'unknown']);
+  expect(groupDefinitions([], new Set())).toEqual([]);
+  expect(sameAgent({ subjectName: 'Beta' }, 'beta')).toBe(true);
+  expect(sameAgent({ subjectName: 'Beta' }, null)).toBe(false);
+  expect(sameAgent({}, 'beta')).toBe(false);
 });

@@ -53,6 +53,7 @@ export const WORKBENCH_ACTIONS = {
   'suites.list': ['studio.suites.list', 'local', 'List scenario suites and last results'],
   'suites.run': ['studio.suites.run', 'org', 'Run a scenario suite in Simulate: agentPath; optional source (a candidate, else the saved file), caseIds, loopId. With loopId, each run spends one attempt of a fix loop the user started, runs only its cases and is not stored; follow the returned next'],
   'orgTests.list': ['studio.orgTests.list', 'org', 'List the org\'s Testing Center definitions (AiEvaluationDefinition): optional refresh. Returns name, subject, case count when known'],
+  'orgTests.details': ['studio.orgTests.details', 'org', 'Read the agent (subjectName), label and case count of up to 25 org test definitions in one retrieve: names. Returns definitions and missing'],
   'orgTests.definition': ['studio.orgTests.definition', 'org', 'Read one org test definition and its cases (utterance, history, context variables, expectations): name'],
   'orgTests.run': ['studio.orgTests.run.start', 'org', 'Start an org test run of a definition in the org (runs the real agent and consumes org eval capacity): name. Returns runId; poll orgTests.result. To show it to the user, ui.command orgTests.open {runId}'],
   'orgTests.result': ['studio.orgTests.run.get', 'org', 'Read an org test run: runId. Per-case verdict (pass/fail/error/pending), topic, actions, reply and metric results; refreshes while running'],

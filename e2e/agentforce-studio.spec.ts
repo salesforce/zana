@@ -150,11 +150,15 @@ if (args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata' && args.in
   { fullName: 'Billing_Smoke', createdByName: 'Bo Builder', lastModifiedDate: '2026-09-01T10:00:00.000Z' },
 ];
 if (args[0] === 'project' && args[1] === 'retrieve' && args.includes('--manifest') && fs.readFileSync(path.join(process.cwd(), 'package.xml'), 'utf8').includes('<name>AiEvaluationDefinition</name>')) {
-  const fullName = /<members>([^<]+)<\\/members>/.exec(fs.readFileSync(path.join(process.cwd(), 'package.xml'), 'utf8'))[1];
-  const file = path.join(process.cwd(), 'force-app/main/default/aiEvaluationDefinitions', fullName + '.aiEvaluationDefinition-meta.xml');
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, ${JSON.stringify(ORG_TEST_XML)});
-  console.log(JSON.stringify({ status: 0, result: { success: true, done: true, files: [{ fullName, type: 'AiEvaluationDefinition', state: 'Created', filePath: file }], fileProperties: [] } }));
+  // Every member of the manifest, as the real CLI does; Billing_Smoke tests another agent.
+  const files = [...fs.readFileSync(path.join(process.cwd(), 'package.xml'), 'utf8').matchAll(/<members>([^<]+)<\\/members>/g)].map(([, fullName]) => {
+    const file = path.join(process.cwd(), 'force-app/main/default/aiEvaluationDefinitions', fullName + '.aiEvaluationDefinition-meta.xml');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const xml = ${JSON.stringify(ORG_TEST_XML)};
+    fs.writeFileSync(file, fullName === 'Billing_Smoke' ? xml.replace('<name>Support regression</name>', '<name>Billing smoke</name>').replace('<subjectName>Support</subjectName>', '<subjectName>Billing</subjectName>') : xml);
+    return { fullName, type: 'AiEvaluationDefinition', state: 'Created', filePath: file };
+  });
+  console.log(JSON.stringify({ status: 0, result: { success: true, done: true, files, fileProperties: [] } }));
   process.exit(0);
 }
 // Implementation source, retrieved by manifest like the real CLI: files land in the temp project and are reported in files[].
@@ -1648,32 +1652,42 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
   await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Org tests' }).click();
   const view = tests.getByTestId('org-tests-view');
   const table = view.getByTestId('org-tests-table');
-  await expect(table.getByRole('button', { name: 'Support_Regression', exact: true })).toBeVisible();
-  await expect(table.getByRole('button', { name: 'Billing_Smoke', exact: true })).toBeVisible();
+  // One retrieve reads each definition's agent and label: Support.agent is open, so the list shows its test only.
+  await expect(table.getByTestId('org-tests-scope')).toContainText('Support· 1 test · 0 with runs');
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
+  await expect(view.getByTestId('org-def-Support_Regression')).toContainText('3 cases');
+  await expect(table.getByTestId('org-def-Billing_Smoke')).toHaveCount(0);
+  await beat();
+  // Every agent, grouped: Support's group is pinned and open, Billing's opens on a click.
+  await table.getByRole('button', { name: 'Show all agents' }).click();
+  await expect(table.getByTestId('org-tests-group-support')).toContainText('open in Studio');
+  await table.getByRole('button', { name: /^Billing/ }).click();
+  await expect(table.getByRole('button', { name: 'Billing smoke', exact: true })).toBeVisible();
   await beat();
   await view.getByLabel('Filter org tests').fill('billing');
-  await expect(table.getByRole('button', { name: 'Support_Regression', exact: true })).toHaveCount(0);
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toHaveCount(0);
   await beat();
   await view.getByLabel('Filter org tests').fill('');
+  await view.getByRole('group', { name: 'Scope' }).getByRole('button', { name: 'This agent' }).click();
 
-  // The definition's cases, read from the retrieved AiEvaluationDefinition; the row then shows its label and agent.
-  await table.getByRole('button', { name: 'Support_Regression', exact: true }).click();
+  // The definition's cases, read from the retrieved AiEvaluationDefinition.
+  await table.getByRole('button', { name: 'Support regression', exact: true }).click();
   const detail = view.getByTestId('org-def-detail');
   const cases = detail.getByRole('list', { name: 'Test cases' });
   await expect(cases.getByRole('listitem')).toHaveCount(3);
   await expect(cases).toContainText('Where is my order?');
   await expect(cases).toContainText("action_sequence_match: ['Lookup']");
   await expect(detail.getByRole('heading', { name: 'Support regression' })).toBeVisible();
-  await expect(view.getByTestId('org-def-Support_Regression')).toContainText('Support');
-  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
   await beat();
 
-  // An invalid run id is rejected before any org call.
+  // An invalid run id is rejected before any org call; attach lives in the ⋯ menu.
+  await view.getByRole('button', { name: 'More actions' }).click();
   await view.getByLabel('Attach run by id').fill('not a run');
   await view.getByRole('button', { name: 'Attach', exact: true }).click();
   await expect(view.getByRole('alert')).toHaveText('A run id is 15 to 18 letters and digits.');
   await beat();
-  await view.getByLabel('Attach run by id').fill('');
+  await view.getByLabel('Attach run by id').press('Escape');
+  await expect(view.getByLabel('Attach run by id')).toHaveCount(0);
 
   // Run in the org: confirm, poll IN_PROGRESS -> COMPLETED, then read the results.
   await detail.getByRole('button', { name: 'Run in org' }).click();
@@ -1763,10 +1777,15 @@ test('Agentforce Studio window: Org tests sit in the activity rail, and an agent
   await rail.getByRole('button', { name: 'Org tests' }).click();
   const tab = panel.getByTestId('studio-org-tests-view');
   await expect(panel.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Org tests/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(tab).toContainText('Testing Center definitions and runs in studio');
+  await expect(tab.getByRole('heading', { name: 'Org tests' })).toBeVisible();
+  await expect(tab).toContainText('studio');
   const table = tab.getByTestId('org-tests-table');
-  await expect(table.getByRole('button', { name: 'Support_Regression', exact: true })).toBeVisible();
-  await expect(table.getByRole('button', { name: 'Billing_Smoke', exact: true })).toBeVisible();
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
+  await expect(tab.getByText('Pick a test to see its cases and runs.')).toBeVisible();
+  await caption('You: switch to All agents to see every agent\'s org tests');
+  await tab.getByRole('group', { name: 'Scope' }).getByRole('button', { name: 'All agents' }).click();
+  await table.getByRole('button', { name: /^Billing/ }).click();
+  await expect(table.getByRole('button', { name: 'Billing smoke', exact: true })).toBeVisible();
   await beat();
   // Going back to the agent keeps the tab mounted behind it.
   await caption('You: go back to editing Support.agent');
