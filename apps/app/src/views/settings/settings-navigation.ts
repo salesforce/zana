@@ -19,7 +19,7 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import type { SettingsTab } from '@/store';
-import { fileManagerName } from '@/lib/file-manager';
+import { fileManagerTitle } from '@/lib/file-manager';
 
 /**
  * Settings sections. The section *picker* now lives in the list pane (column 2,
@@ -140,7 +140,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'editor-cursor', label: 'Cursor' },
     { id: 'editor-code', label: 'VS Code' },
     { id: 'editor-intellij', label: 'IntelliJ IDEA' },
-    { id: 'editor-finder', label: fileManagerName() },
+    { id: 'editor-finder', label: fileManagerTitle() },
     { id: 'editor-terminal', label: 'Terminal' }
   ],
   machines: [

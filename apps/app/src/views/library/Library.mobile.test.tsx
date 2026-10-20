@@ -6,6 +6,7 @@ import type { LibraryDoc, Project } from '@zana-ai/zcc-domain/product';
 import { LibraryPanel } from './LibraryPanel.js';
 import { LibraryView } from './LibraryView.js';
 import type { LibraryDeepLink } from './library-deep-link.js';
+import { fileManagerName } from '../../lib/file-manager.js';
 
 const state = vi.hoisted(() => ({
   compact: true,
@@ -53,7 +54,7 @@ for (const kind of ['global', 'project'] as const) {
       expect(view.getByRole('article').textContent).toContain('Readable note content');
       const back = view.getByRole('button', { name: 'Back to documents' });
       expect(document.activeElement).toBe(back);
-      expect(view.queryByRole('button', { name: 'Reveal in Finder' })).toBeNull();
+      expect(view.queryByRole('button', { name: `Reveal in ${fileManagerName()}` })).toBeNull();
       tree.scrollTop = 0; // A browser may reset a hidden scroller.
       fireEvent.click(back);
       expect(root.getAttribute('data-mobile-pane')).toBe('documents');
@@ -77,7 +78,7 @@ for (const kind of ['global', 'project'] as const) {
       expect(view.getByRole('textbox')).toBeTruthy();
       expect(view.getByRole('article')).toBeTruthy();
       expect(view.queryByRole('button', { name: 'Back to documents' })).toBeNull();
-      expect(view.getByRole('button', { name: 'Reveal in Finder' })).toBeTruthy();
+      expect(view.getByRole('button', { name: `Reveal in ${fileManagerName()}` })).toBeTruthy();
       state.compact = true;
       view.rerender(element());
       expect(root.getAttribute('data-mobile-pane')).toBe('document');
@@ -118,7 +119,7 @@ it('retains desktop folder toggling and document context actions with native tre
   expect(folder.getAttribute('aria-expanded')).toBe('true');
   fireEvent.contextMenu(view.getByRole('button', { name: 'reading.md' }), { clientX: 100, clientY: 200 });
   expect(view.getByRole('button', { name: 'Rename / move…' })).toBeTruthy();
-  expect(view.getByText('Reveal in Finder')).toBeTruthy();
+  expect(view.getByText(`Reveal in ${fileManagerName()}`)).toBeTruthy();
   fireEvent.click(document.body);
   expect(view.queryByRole('button', { name: 'Rename / move…' })).toBeNull();
   fireEvent.click(folder);
@@ -129,5 +130,5 @@ it('offers Reveal in the project library tree context menu', () => {
   state.compact = false;
   const view = render(<MemoryRouter><LibraryView project={project} /></MemoryRouter>);
   fireEvent.contextMenu(view.getByRole('button', { name: 'reading.md' }), { clientX: 100, clientY: 200 });
-  expect(view.getByText('Reveal in Finder')).toBeTruthy();
+  expect(view.getByText(`Reveal in ${fileManagerName()}`)).toBeTruthy();
 });

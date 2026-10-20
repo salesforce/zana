@@ -1,5 +1,5 @@
 import type { SettingsSearchEntry } from '../types';
-import { fileManagerBlurb, fileManagerName } from '../../file-manager';
+import { fileManagerBlurb, fileManagerTitle } from '../../file-manager';
 
 const shown = (hidden: readonly string[] | undefined, target: string) => ((hidden ?? []).includes(target) ? 'Off' : 'On');
 
@@ -114,9 +114,9 @@ export const entries: readonly SettingsSearchEntry[] = [
     id: 'editor.finder',
     section: 'editor',
     anchor: 'editor-finder',
-    label: fileManagerName(),
+    label: fileManagerTitle(),
     help: `${fileManagerBlurb()} Show in the opener bar, install status and launcher overrides.`,
-    keywords: ['reveal', 'file manager', 'finder', 'explorer', 'macos', 'windows', 'opener bar'],
+    keywords: ['reveal', 'file manager', 'finder', 'explorer', 'macos', 'windows', 'linux', 'opener bar'],
     kind: 'setting',
     value: (s) => shown(s.config.openerHiddenTargets, 'finder')
   },

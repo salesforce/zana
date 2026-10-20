@@ -17,6 +17,8 @@ vi.mock('../store.js', () => ({
 import { OpenerButtons } from './OpenerButtons.js';
 import { ExplorerContextMenu } from './explorer/ExplorerContextMenu.js';
 import { RevealPersonasButton } from './PersonaEditor.js';
+import { SETTINGS_SUBSECTIONS } from '../views/settings/settings-navigation.js';
+import { entries as editorSearchEntries } from '../lib/settings-search/entries/editor.js';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
@@ -48,6 +50,13 @@ describe('Reveal labels on Windows', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Reveal in Explorer' }));
     expect(reveal).toHaveBeenCalledOnce();
+  });
+
+  it('names Explorer in the Settings → Editor anchor and search entry', () => {
+    expect(SETTINGS_SUBSECTIONS.editor).toContainEqual({ id: 'editor-finder', label: 'Explorer' });
+    const entry = editorSearchEntries.find((e) => e.id === 'editor.finder')!;
+    expect(entry.label).toBe('Explorer');
+    expect(entry.help).toMatch(/^Reveals a path in Windows File Explorer\./);
   });
 
   it('names Explorer on the personas folder button', () => {

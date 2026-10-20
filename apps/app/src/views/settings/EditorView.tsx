@@ -6,7 +6,7 @@ import { CursorIcon } from '@/components/icons/CursorIcon';
 import { IntelliJIcon } from '@/components/icons/IntelliJIcon';
 import { Section, Field, ToggleSwitch } from '@/components/settings/FormFields';
 import { RevealContext } from '@/lib/settings-search/reveal';
-import { fileManagerBlurb, fileManagerName } from '@/lib/file-manager';
+import { fileManagerBlurb, fileManagerTitle } from '@/lib/file-manager';
 
 /**
  * Settings → Editor. Configures the `OpenerButtons` "open in editor / terminal"
@@ -241,7 +241,7 @@ export function EditorView({
           searchId="editor.finder"
           anchorId="editor-finder"
           target="finder"
-          name={fileManagerName()}
+          name={fileManagerTitle()}
           blurb={fileManagerBlurb()}
           shown={isShown('finder')}
           onToggle={(on) => setShown('finder', on)}
