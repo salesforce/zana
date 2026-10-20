@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getThreadProvider, registerThreadProvider } from './thread-provider-catalog.js';
+import { getThreadProvider, registerThreadProvider, trackThreadProviderStartup } from './thread-provider-catalog.js';
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
@@ -2338,6 +2338,24 @@ describe('resuming open sessions after a host restart', () => {
     expect(clearConversationSessionsOpenForHost).toHaveBeenCalledTimes(2);
     expect(listOpenSessionConversationThreadsForHost).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('waits for a provider that is still registering after launch before resuming', async () => {
+    vi.mocked(listOpenSessionConversationThreadsForHost).mockReturnValue([idle]);
+    const declaration = getThreadProvider(idle.providerId)!;
+    for (const handle of providerHandles.splice(0)) handle.unregister();
+    trackThreadProviderStartup(new Promise(() => {}));
+    try {
+      const rpc = vi.fn(async () => ({ threadId: idle.id, resumed: true }));
+      const pass = resumeOpenConversationSessionsAfterHostRestart(ctx(rpc, { threadSessionReleaseMinutes: 0 }), 'host-1');
+      await new Promise(resolve => setImmediate(resolve));
+      expect(rpc).not.toHaveBeenCalled();
+      providerHandles.push(registerThreadProvider('test', declaration));
+      await expect(pass).resolves.toBe(1);
+      expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'thread.resume', threadId: idle.id }) }));
+    } finally {
+      trackThreadProviderStartup(Promise.resolve());
+    }
   });
 
   it('logs and resumes nothing when the open sessions cannot be read', async () => {
