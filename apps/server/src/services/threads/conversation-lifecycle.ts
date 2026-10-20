@@ -5,6 +5,7 @@ import { assertPlanImplementationReady, assertPlanRevision } from './conversatio
 import { withConversationSend, withConversationSendCancellation, type ConversationSendLease } from './conversation-send-guard.js';
 import {
   archiveConversationThread,
+  clearConversationSessionOpen,
   consumeDispatchAdmissionOverride,
   createConversationThread,
   getConversationThread,
@@ -13,6 +14,7 @@ import {
   listConversationThreadEvents,
   listDueDeferredThreadMessages,
   listLiveConversationThreadsForHost,
+  listOpenSessionConversationThreadsForHost,
   setConversationProviderThreadId,
   unarchiveConversationThread,
   type ConversationThreadRow
@@ -518,6 +520,8 @@ async function stopConversationInternal(
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
   pauseConversationQueue(ctx, thread.id);
+  // Stop releases the provider session, so a restart must not bring it back.
+  clearConversationSessionOpen(ctx.db, thread.id);
   await revokeThreadDesktopBrowserControl(ctx, thread.id).catch(() => {});
   const openTurn = findOpenConversationTurn(ctx.db, thread.id);
   const hasLiveRuntime = thread.status === 'active'
@@ -602,6 +606,7 @@ export async function cancelConversationPlan(
   if (!result.cancelled || result.threadId !== thread.id || resolveActivePlanTurn(ctx, refreshed)) {
     throw new ThreadCreateError(409, 'invalid_request', 'The provider did not confirm that Plan mode exited');
   }
+  clearConversationSessionOpen(ctx.db, thread.id);
   recordThreadExecutionMode(ctx.db, {
     threadId: thread.id,
     requestedMode: 'agent',
@@ -658,6 +663,7 @@ async function archiveConversationInternal(
     reason: 'thread-deleted'
   });
   dropDeferredConversationMessages(ctx, thread.id);
+  clearConversationSessionOpen(ctx.db, thread.id);
   try {
     await ctx.hostHub.callHostOnlineRpc({
       hostId: thread.hostId,
@@ -890,6 +896,34 @@ export async function flushDueConversationSendsForHost(
     seen.add(row.threadId);
     await flushHeldConversationSends(ctx, row.threadId, { enforceConcurrencyCap: true });
   }
+}
+
+/** Most sessions one host restart brings back; resumes run one at a time. */
+export const RESTART_SESSION_RESUME_LIMIT = 32;
+
+/**
+ * With idle release set to never, reopen the provider sessions a host daemon
+ * restart cut loose, so those threads are live again without a new message.
+ */
+export async function resumeOpenConversationSessionsAfterHostRestart(
+  ctx: ProductHttpContext,
+  hostId: string
+): Promise<number> {
+  if (ctx.config.getConfig().threadSessionReleaseMinutes !== 0) return 0;
+  let resumed = 0;
+  for (const thread of listOpenSessionConversationThreadsForHost(ctx.db, hostId, RESTART_SESSION_RESUME_LIMIT)) {
+    const current = getConversationThread(ctx.db, thread.id);
+    // A queued send or a user message may already have resumed it.
+    if (!current || current.archivedAt || (current.status !== 'idle' && current.status !== 'error')) continue;
+    try {
+      await resumeConversation(ctx, current.id);
+      resumed += 1;
+    } catch (error) {
+      // One unresumable thread must not block the rest; the next turn retries lazily.
+      if (error instanceof ThreadCreateError && error.code === 'not_resumable') clearConversationSessionOpen(ctx.db, current.id);
+    }
+  }
+  return resumed;
 }
 
 /** Re-dispatch stop for stopping threads still live after a host reconnect. */
