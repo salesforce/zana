@@ -122,7 +122,7 @@ test('Salesforce hub: project tools, recent agents, themes, narrow layout and St
       });
       expect(overflow.pixels, JSON.stringify(overflow.elements)).toBeLessThanOrEqual(1);
       expect(await hub.locator(':scope > h3').first().evaluate(el => getComputedStyle(el).marginTop)).toBe('28px');
-      await main.screenshot({ path: testInfo.outputPath(`salesforce-hub-${theme}-${width}.png`) });
+      await captureElectronScreenshot(electron, main, testInfo.outputPath(`salesforce-hub-${theme}-${width}.png`));
     }
   }
   await main.setViewportSize({ width: 1440, height: 900 });

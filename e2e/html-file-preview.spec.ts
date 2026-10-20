@@ -71,6 +71,10 @@ test('HTML above the source cap renders, refreshes and recovers from a source er
   }, threadId);
   await expect(frame.getByRole('heading', { name: 'Could not open this preview' })).toBeVisible();
   writeFileSync(join(projectPath, 'missing.html'), '<h1>Restored HTML</h1>');
-  await frame.getByRole('button', { name: 'Try again' }).click();
-  await expect(frame.getByRole('heading', { name: 'Restored HTML' })).toBeVisible();
+  // Under xvfb a click right after this sandboxed (out-of-process) frame loads can be dropped before Chromium routes
+  // input to it, so click until the frame reacts.
+  await expect(async () => {
+    await frame.getByRole('button', { name: 'Try again' }).click({ timeout: 2_000 });
+    await expect(frame.getByRole('heading', { name: 'Restored HTML' })).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
 });
