@@ -49,8 +49,7 @@ function Rail({
   onFocusComment,
   selectedRevision,
   onSelectRevision,
-  chatThreadId,
-  onOpenChat,
+  openInPanel,
   onClose
 }: {
   doc: DesignDocDetail;
@@ -65,9 +64,7 @@ function Rail({
   onFocusComment(comment: DesignDocComment): void;
   selectedRevision: number | null;
   onSelectRevision(revision: DesignDocRevision): void;
-  chatThreadId: string | null;
-  /** Absent where the doc already sits beside a thread. */
-  onOpenChat?(threadId: string | null): void;
+  openInPanel: boolean;
   onClose?(): void;
 }) {
   const tabs: Array<{ id: RailTab; label: string; icon: typeof MessageSquare; count?: number }> = [
@@ -75,9 +72,8 @@ function Rail({
     { id: 'history', label: 'History', icon: History },
     { id: 'agents', label: 'Agents', icon: Bot, count: doc.threads.length }
   ];
-  const chatOpen = tab === 'agents' && !!onOpenChat && doc.threads.some((thread) => thread.threadId === chatThreadId);
   return (
-    <aside className={`dd-rail${chatOpen ? ' dd-rail-chat' : ''}`} aria-label="Comments, history and agents">
+    <aside className="dd-rail" aria-label="Comments, history and agents">
       <div className="dd-rail-tabs" role="tablist">
         {tabs.map((entry) => (
           <button
@@ -114,7 +110,7 @@ function Rail({
       ) : tab === 'history' ? (
         <HistoryPane doc={doc} activePath={activePath} now={now} selectedId={selectedRevision} onSelect={onSelectRevision} />
       ) : (
-        <AgentsPane doc={doc} now={now} chatThreadId={chatThreadId} {...(onOpenChat ? { onOpenChat } : {})} />
+        <AgentsPane doc={doc} now={now} openInPanel={openInPanel} />
       )}
     </aside>
   );
@@ -206,7 +202,6 @@ export function DocView({
   const [pendingQuote, setPendingQuote] = useState<PendingQuote | null>(null);
   // Here rather than in the rail so it survives switching tabs or closing a floating rail.
   const [commentDraft, setCommentDraft] = useState('');
-  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
   const [revision, setRevision] = useState<DesignDocRevision | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
@@ -283,12 +278,6 @@ export function DocView({
     latest.current.onDeleted();
   }, [deletedElsewhere]);
 
-  // An unlinked thread's chat closes, so relinking it later does not reopen it.
-  const chatLinked = !!chatThreadId && !!data?.threads.some((thread) => thread.threadId === chatThreadId);
-  useEffect(() => {
-    if (chatThreadId && data && !chatLinked) setChatThreadId(null);
-  }, [chatThreadId, chatLinked, data]);
-
   // Scroll to a comment's quote once its file has rendered (mermaid and images settle late).
   useEffect(() => {
     if (!focus || focus.path !== activePath || revision) return;
@@ -361,8 +350,7 @@ export function DocView({
       onFocusComment={focusComment}
       selectedRevision={revision?.id ?? null}
       onSelectRevision={selectRevision}
-      chatThreadId={chatThreadId}
-      {...(compact ? {} : { onOpenChat: setChatThreadId })}
+      openInPanel={!compact}
       onClose={railInline ? undefined : () => setRailOpen(false)}
     />
   );

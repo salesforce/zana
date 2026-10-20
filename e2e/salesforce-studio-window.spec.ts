@@ -4,6 +4,7 @@ import { join, delimiter } from 'node:path';
 import { test as base, expect } from './fixtures/app.js';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { AGENT_SCRIPT_EXAMPLES } from '../plugins/salesforce/lib/agent-script-model.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 // The Salesforce tab opened in its own window: real plugin, real BrowserWindow,
 // real realtime relay between the two renderers. Orgs come from a fake `sf`
@@ -66,12 +67,15 @@ async function route(page: Page, path: string) {
 
 test('Salesforce hub: project tools, recent agents, themes, narrow layout and Studio window', async ({ app, home }, testInfo) => {
   const { window: main, electron } = app;
+  await main.setViewportSize({ width: 1440, height: 900 });
   const errors: string[] = [];
   main.on('pageerror', error => errors.push(error.message));
   expect(await main.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
   const trust = main.getByRole('button', { name: 'Install with full trust' });
   if (await trust.isVisible().catch(() => false)) await trust.click();
   await expect.poll(() => main.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  // Wait for the complete bundled startup before the test starts an agent.
+  expect(await main.evaluate(() => window.cc.pluginApps.setEnabled('salesforce', true))).toMatchObject({ ok: true });
   const projectId = await main.evaluate(async path => {
     const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id;
   }, join(home, 'dx'));
@@ -81,6 +85,8 @@ test('Salesforce hub: project tools, recent agents, themes, narrow layout and St
     await route(main, '/plugins/salesforce/orgs');
     await expect(hub.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(projectId);
   };
+  // The plugin runtime can be running before its navigation contribution reaches the renderer.
+  await main.getByRole('button', { name: 'Salesforce', exact: true }).click();
   await openHub();
   for (const [tile, tab] of [['Data', 'Data'], ['Apex & logs', 'Apex & logs'], ['Deployments', 'Deployments'], ['Project home', 'Overview']] as const) {
     await hub.locator('.sf-hub-tile').filter({ has: main.getByText(tile, { exact: true }) }).click();
@@ -91,6 +97,19 @@ test('Salesforce hub: project tools, recent agents, themes, narrow layout and St
   await expect(main.getByTestId('salesforce-agent-script-panel')).toBeVisible();
   await main.getByTestId('salesforce-agent-script-file:force-app/Help.agent').click();
   await expect(main.frameLocator('iframe[title="Agentforce playground"]').locator('.view-lines')).toContainText('Support_Concierge');
+  await captureElectronScreenshot(electron, main, testInfo.outputPath('salesforce-project-rail.png'));
+  await main.getByTestId('plugin-panel-agent-show').click();
+  await expect(main.getByTestId('panel-agent-tab-composer')).toBeVisible();
+  await captureElectronScreenshot(electron, main, testInfo.outputPath('salesforce-project-agent.png'));
+  const projectComposer = main.getByTestId('panel-agent-tab-composer');
+  await projectComposer.getByTestId('thread-command-input').fill('Help me understand this agent configuration.');
+  await expect(projectComposer.getByTestId('thread-command-send')).toBeEnabled();
+  await projectComposer.getByTestId('thread-command-send').click();
+  const projectChat = main.getByTestId('panel-agent-tab-chat');
+  await expect(projectChat.getByTestId('thread-command-input')).toBeVisible({ timeout: 30_000 });
+  await expect(projectChat.getByTestId('thread-timeline')).toContainText('Response to: Help me understand this agent configuration.', { timeout: 30_000 });
+  await captureElectronScreenshot(electron, main, testInfo.outputPath('salesforce-project-conversation.png'));
+  await main.getByTestId('thread-secondary-hide').click();
   await openHub();
   await expect(hub.getByRole('list', { name: 'Recent agents' }).getByRole('button')).toContainText('Help');
   for (const theme of ['dark', 'light']) {
@@ -119,7 +138,7 @@ test('Salesforce hub: project tools, recent agents, themes, narrow layout and St
   expect(errors).toEqual([]);
 });
 
-test('Salesforce Studio window: one owner, status card, cross-window org sync and bring back', async ({ app, home }) => {
+test('Salesforce Studio window: one owner, status card, cross-window org sync and bring back', async ({ app, home }, testInfo) => {
   const { window: main, electron } = app;
   const errors: string[] = [];
   main.on('pageerror', (error) => errors.push(`main: ${error.message}`));
@@ -140,6 +159,7 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
   // Open: the Studio window draws an activity bar and opens on Agentforce.
   await tab.getByTestId('plugin-tab-open-in-window').click();
   const studio = await waitForStudio(electron);
+  await studio.setViewportSize({ width: 1440, height: 900 });
   studio.on('pageerror', (error) => errors.push(`studio: ${error.message}`));
   // The Studio titles its own window: the view, then the project and org. A sandbox gets no risk badge.
   const title = studio.getByTestId('plugin-view-title');
@@ -187,14 +207,28 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
   // The window keeps the host side panel beside the tab, so Studio's tools open there too.
   const studioPanel = studio.getByTestId('salesforce-agent-script-panel');
   const sidePanel = studio.getByTestId('plugin-panel-host-layout').getByTestId('thread-secondary-panel');
-  await expect(studio.getByTestId('plugin-panel-agent-show')).toHaveCount(0);
+  await expect(studio.getByTestId('plugin-panel-agent-show')).toBeVisible();
+  await expect(studio.getByTestId('plugin-panel-secondary-show')).toBeVisible();
   await expect(studioPanel.locator('.af-tools')).toHaveCount(0);
+  await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-rail.png'));
   await studioPanel.locator('.af-document-bar').getByRole('button', { name: 'Preview', exact: true }).click();
   await expect(sidePanel).toBeVisible();
   await expect(sidePanel.locator('.thread-secondary-tab.is-active')).toContainText('Preview');
   await expect(sidePanel.locator('.sf-panel-tool[data-studio-tool="preview"]').getByTestId('preview-workbench')).toBeVisible();
+  await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-preview.png'));
   await sidePanel.getByTestId('thread-secondary-new-tab').click();
   await expect(sidePanel.getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toBeVisible();
+  await sidePanel.getByTestId('thread-new-tab-agent').click();
+  const panelComposer = sidePanel.getByTestId('panel-agent-tab-composer');
+  await expect(panelComposer).toBeVisible();
+  await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-agent.png'));
+  await panelComposer.getByTestId('thread-command-input').fill('Help me review this agent before previewing it.');
+  await expect(panelComposer.getByTestId('thread-command-send')).toBeEnabled();
+  await panelComposer.getByTestId('thread-command-send').click();
+  const chat = sidePanel.getByTestId('panel-agent-tab-chat');
+  await expect(chat.getByTestId('thread-command-input')).toBeVisible({ timeout: 30_000 });
+  await expect(chat.getByTestId('thread-timeline')).toContainText('Response to: Help me review this agent before previewing it.', { timeout: 30_000 });
+  await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-conversation.png'));
   await sidePanel.getByTestId('thread-secondary-hide').click();
   await expect(sidePanel).toBeHidden();
 

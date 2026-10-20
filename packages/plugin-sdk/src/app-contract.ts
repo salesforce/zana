@@ -850,7 +850,8 @@ export interface ZccContext {
   /**
    * True when this page sits beside a host side panel, so `openPanelAgent`
    * and `openPanelTool` can show tabs there. Absent or false elsewhere
-   * (thread-panel tabs, older hosts): keep any in-page fallback.
+   * (thread-panel tabs, older hosts). Nav pages, project tabs and detached
+   * plugin windows share the host's rail and tabbed panel, including web hosts.
    */
   sidePanel?: boolean;
 }
@@ -894,8 +895,8 @@ export interface ZccNavigate {
    * focusing its tab when one is already open. With `draft`, open the panel's
    * composer prefilled with `draft.prompt` instead: the user picks the harness
    * and model and sends it, and the thread is bound to this page like any
-   * panel conversation. False when the page has no side panel (outside the
-   * desktop app, or older hosts; hosts before drafts also return false for a
+   * panel conversation. False when the page has no side panel (nested thread
+   * tools or older hosts; hosts before drafts also return false for a
    * draft); fall back to `openThreadPanel`, `toThread` or `toCompose`.
    */
   openPanelAgent(options: ZccPanelAgentOptions): boolean;

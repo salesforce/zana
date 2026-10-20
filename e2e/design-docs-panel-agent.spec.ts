@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
@@ -43,7 +44,9 @@ async function askReviewAndSend(
   await panelComposer.getByTestId('thread-command-send').click();
 
   // The conversation opens beside the doc instead of navigating to a thread.
-  await expect(win.getByTestId('panel-agent-tab-chat')).toBeVisible({ timeout: 30_000 });
+  const chat = win.getByTestId('panel-agent-tab-chat');
+  await expect(chat.getByTestId('thread-command-input')).toBeVisible({ timeout: 30_000 });
+  await expect(chat.getByTestId('thread-timeline')).toContainText('Response to:', { timeout: 30_000 });
   expect(win.url()).toContain(stayOn);
 
   const binding = await win.evaluate(async (prefix) => {
@@ -67,7 +70,7 @@ async function askReviewAndSend(
   return binding.tab.threadId!;
 }
 
-test('Design Docs Ask agent prefills the side panel composer and stays on the doc', async ({ app, home }) => {
+test('Design Docs Ask agent prefills the side panel composer and stays on the doc', async ({ app, home }, testInfo) => {
   test.setTimeout(120_000);
   const win = app.window;
   const { docId } = await setUpDoc(win, home, 'design-docs-panel-project');
@@ -75,11 +78,26 @@ test('Design Docs Ask agent prefills the side panel composer and stays on the do
   await win.getByRole('button', { name: /^Design Docs/ }).click();
   await win.getByText('Panel agent doc').first().click();
   await expect.poll(() => win.url()).toContain(docId);
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-global-rail.png'));
 
   await askReviewAndSend(win, { docId, panel: 'design-docs', stayOn: docId });
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-global-agent.png'));
+
+  // Linked conversations use the same agent tab, never a second embedded chat in the doc rail.
+  await win.getByTestId('thread-secondary-hide').click();
+  const reviewRail = win.getByRole('complementary', { name: 'Comments, history and agents' });
+  if (!await reviewRail.isVisible()) await win.getByRole('button', { name: 'Show comments & history' }).click();
+  await reviewRail.getByRole('tab', { name: /Agents/ }).click();
+  await reviewRail.getByTitle('Open chat beside the doc').first().click();
+  await expect(win.getByTestId('panel-agent-tab-chat')).toBeVisible();
+  await expect(win.getByTestId('panel-agent-open-as-thread')).toBeVisible();
+  await expect(win.locator('.dd-agent-chat')).toHaveCount(0);
+  await expect(win.getByTestId('thread-secondary-chrome').locator('.thread-secondary-tab')).toHaveCount(1);
+  await expect(win.getByTestId('panel-agent-tab-chat').getByTestId('thread-timeline')).toContainText('Response to:', { timeout: 30_000 });
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-linked-agent.png'));
 });
 
-test('Design Docs Ask agent opens the side panel composer from a project tab', async ({ app, home }) => {
+test('Design Docs Ask agent opens the side panel composer from a project tab', async ({ app, home }, testInfo) => {
   test.setTimeout(120_000);
   const win = app.window;
   const { docId, projectId } = await setUpDoc(win, home, 'design-docs-panel-tab-project');
@@ -92,9 +110,12 @@ test('Design Docs Ask agent opens the side panel composer from a project tab', a
   await expect.poll(() => win.url()).toContain(tabPath);
   await win.getByText('Panel agent doc').first().click();
 
-  // The project tab has its own panel, keyed by project, and no floating launchers.
+  // Project tabs use the same rail and panel as global plugin pages, scoped to this project.
   await expect(win.getByTestId('plugin-panel-host-layout')).toBeVisible({ timeout: 30_000 });
-  await expect(win.getByTestId('plugin-panel-agent-show')).toHaveCount(0);
+  await expect(win.getByTestId('plugin-panel-agent-show')).toBeVisible();
+  await expect(win.getByTestId('plugin-panel-secondary-show')).toBeVisible();
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-project-rail.png'));
   // The panel is the project tab's, kept per project; the draft names the doc.
   await askReviewAndSend(win, { docId, panel: 'design', owner: `design@${projectId}`, stayOn: tabPath });
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-project-agent.png'));
 });

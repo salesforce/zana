@@ -264,8 +264,7 @@ export function ProjectModePane({
         )}
         {isExtTab && slotTab && !slotTabDetached && (
           <div className="project-ext-tab">
-            {/* A side panel the page can open for agents (`navigate.openPanelAgent`), one per project. */}
-            <PluginPanelHostLayout pluginId={slotTab.pluginId} panelPath={slotTab.id} scopeId={project.id} launchers={false}>
+            <PluginPanelHostLayout pluginId={slotTab.pluginId} panelPath={slotTab.id} scopeId={project.id}>
               <PluginSlotBoundary pluginId={slotTab.pluginId} generation={slotTab.generation}>
                 {(() => {
                   const Component = slotTab.component;
@@ -287,7 +286,9 @@ export function ProjectModePane({
         )}
         {isExtTab && extModule && !slotTab && (
           <div className="project-ext-tab">
-            <ProjectExtensionTab moduleId={extModule.id} project={project} />
+            <PluginPanelHostLayout pluginId={extModule.id} panelPath={extModule.id} scopeId={project.id}>
+              <ProjectExtensionTab moduleId={extModule.id} project={project} />
+            </PluginPanelHostLayout>
           </div>
         )}
         {isAgents && <AgentsBoard scope={{ kind: 'project', project }} />}
