@@ -353,8 +353,11 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(commentForm).toBeVisible();
   await expect(studio.locator('.sf-comment-form')).toHaveCount(0);
   expect((await commentForm.boundingBox())!.y).toBeGreaterThan(selectionBox!.y);
-  await expect(commentForm.locator('textarea')).toBeFocused();
+  // The box takes focus; toBeFocused also needs the iframe document to report hasFocus(), which headless Linux CI does not.
+  const commentInput = commentForm.locator('textarea');
+  await expect.poll(() => commentInput.evaluate(input => input === input.ownerDocument.activeElement)).toBe(true);
   await page.keyboard.type('Check this line');
+  await expect(commentInput).toHaveValue('Check this line');
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-inline-comment.png'));
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
   await expect(commentForm).toHaveCount(0);
