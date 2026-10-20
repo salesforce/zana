@@ -415,7 +415,7 @@ export function ProjectsList({
   // seeds the launcher's project picker; it does not switch to the workspace.
   const spawnDefaultAgent = (p: Project) => {
     selectProject(p.id);
-    setLauncherOpen(true);
+    setLauncherOpen(true, p.id);
     dismissMobileNav?.();
   };
 

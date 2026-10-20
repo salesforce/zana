@@ -96,6 +96,12 @@ interface Props {
    */
   initialPrompt?: string;
   /**
+   * Preselect this project in an unpinned launcher (a project row's "+"). An
+   * explicit pick, so it applies to remote projects too — the composers' own
+   * unpinned default is local-only. The picker stays editable.
+   */
+  initialProjectId?: string;
+  /**
    * Open on the Squad composer when it is available, ignoring the stored mode.
    * The stored preference is left untouched.
    */
@@ -110,6 +116,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   backgroundTabs,
   onLaunched,
   initialPrompt,
+  initialProjectId,
   initialMode,
   squadPrefill
 }: Props) {
@@ -133,10 +140,11 @@ export const AgentLauncher = memo(function AgentLauncher({
   // Target project for a SCRATCH-mode launch. `null` = the built-in scratch
   // workspace (the default). Unused in project mode (the target is fixed).
   const [targetProjectId] = useState<string | null>(null);
-  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? squadPrefill?.projectId ?? '');
+  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? initialProjectId ?? squadPrefill?.projectId ?? '');
   useEffect(() => {
     if (project?.id) setComposerProjectId(project.id);
-  }, [project?.id]);
+    else if (initialProjectId) setComposerProjectId(initialProjectId);
+  }, [project?.id, initialProjectId]);
   // Launch mode: Modern thread (HTTP), CLI Agent (PTY spawn), or an autonomous
   // team run. Each mode mounts its own composer below. Last-used is the default.
   const [storedMode, setStoredMode] = useLaunchModePreference();
