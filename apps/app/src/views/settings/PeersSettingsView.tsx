@@ -3,7 +3,6 @@ import type { PeerConnection, PeerLink, PeerLinkHookFailure, PeerLinkState, Remo
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { peerConnections, peerLinks, product, type PeerLeftover } from '../../lib/product-client.js';
 import { SearchTarget } from './MachineCard.js';
-import { subscribePeerJoin, takePendingPeerJoin } from '../../lib/peers-join-link.js';
 import { AddComputer } from './peers/AddComputer.js';
 import { JoinComputer } from './peers/JoinComputer.js';
 import { PeerDialog } from './peers/PeerDialog.js';
@@ -92,7 +91,6 @@ export function PeersSettingsView() {
   const [connections, setConnections] = useState<PeerConnection[]>([]);
   const [leftovers, setLeftovers] = useState<PeerLeftover[]>([]);
   const [panel, setPanel] = useState<'add' | 'join' | null>(null);
-  const [joinPrefill, setJoinPrefill] = useState<{ token: string; nonce: number } | null>(null);
   const [plugins, setPlugins] = useState<PluginAppEntry[] | null>(null);
 
   const loadConnections = useCallback(async () => {
@@ -138,14 +136,6 @@ export function PeersSettingsView() {
     });
     return () => { disposed.current = true; offPlugins(); };
   }, [load, loadConnections, loadLeftovers]);
-
-  // A `peers/join` deep link only opens Accept invitation with the token filled in; the user confirms it.
-  useEffect(() => {
-    const open = (token: string) => { setJoinPrefill((prev) => ({ token, nonce: (prev?.nonce ?? 0) + 1 })); setPanel('join'); };
-    const waiting = takePendingPeerJoin();
-    if (waiting) open(waiting);
-    return subscribePeerJoin(open);
-  }, []);
 
   const hasActiveConnection = connections.some((connection) => !TERMINAL_CONNECTION_STATES.has(connection.state));
   useEffect(() => {
@@ -238,7 +228,7 @@ export function PeersSettingsView() {
         <button type="button" className="btn" onClick={() => setPanel(panel === 'join' ? null : 'join')}>Accept invitation</button>
       </div>
       {panel === 'add' && <PeerDialog title="Add a computer"><AddComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
-      {panel === 'join' && <PeerDialog title="Accept invitation"><JoinComputer key={joinPrefill?.nonce ?? 0} initialToken={joinPrefill?.token} connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
+      {panel === 'join' && <PeerDialog title="Accept invitation"><JoinComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
       {inProgress.length > 0 && (
         <ul className="peers-list" aria-label="Connections in progress">
           {inProgress.map((connection) => (

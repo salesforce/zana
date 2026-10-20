@@ -7499,7 +7499,7 @@ const deepLinks = createDeepLinkHost({
     showMainWindow();
     const win = unscopedWindow();
     if (!win || win.isDestroyed() || win.webContents.isDestroyed()) throw new Error('main window is unavailable');
-    win.webContents.send('pluginId' in delivery ? IPC.deepLinks.onLink : IPC.deepLinks.onCoreLink, delivery);
+    win.webContents.send(IPC.deepLinks.onLink, delivery);
   }
 });
 const deepLinkRegistration = registerDeepLinkScheme({

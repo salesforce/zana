@@ -533,7 +533,6 @@ export const IPC = {
     config: 'deepLinks:config',
     open: 'deepLinks:open',
     onLink: 'deepLinks:onLink',
-    onCoreLink: 'deepLinks:onCoreLink'
   },
   app: {
     performance: 'app:performance',

@@ -11,10 +11,9 @@ afterEach(() => {
 });
 
 describe('dev-open-link', () => {
-  it('accepts dev and prod plugin links plus core peer invitation links', () => {
+  it('accepts dev and prod plugin links', () => {
     expect(validateLinkArg('zana-dev://plugin/design-docs/peer/join?d=abc')).toBeNull();
     expect(validateLinkArg('zana://plugin/a/b')).toBeNull();
-    expect(validateLinkArg('zana-dev://peers/join?d=abc')).toBeNull();
   });
 
   it.each([undefined, '', 'https://plugin/a/b', 'zana-dev://other/a', 'evil://plugin/a/b', 'zana-dev://plugin/a/b c', `zana-dev://plugin/a/b?d=${'x'.repeat(9000)}`])(

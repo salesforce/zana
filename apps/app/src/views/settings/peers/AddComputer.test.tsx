@@ -62,21 +62,6 @@ describe('AddComputer', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('denied');
   });
 
-  it('offers a link copy control only when this build owns a scheme, and copies a peers/join link', async () => {
-    (window as unknown as { cc: unknown }).cc = { deepLinks: { config: async () => ({ base: 'zana://', acceptSchemes: ['zana'] }) } };
-    render(<AddComputer connections={[]} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy link' }));
-    await waitFor(() => expect(api.copy).toHaveBeenCalledWith('zana://peers/join?d=tok-123'));
-    expect((await screen.findByRole('button', { name: 'Copy link' })).textContent).toContain('Copied');
-    delete (window as unknown as { cc?: unknown }).cc;
-  });
-
-  it('hides Copy link without a scheme', async () => {
-    render(<AddComputer connections={[]} />);
-    await screen.findByLabelText('Invitation');
-    expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull();
-  });
-
   it('surfaces a create failure and can retry', async () => {
     api.create.mockRejectedValueOnce(new Error('too many'));
     const onClose = vi.fn();
@@ -86,15 +71,14 @@ describe('AddComputer', () => {
     expect(await screen.findByLabelText('Invitation')).toBeTruthy();
   });
 
-  it('renders Approve for a reserved inviter connection and approves / denies', async () => {
-    const onChange = vi.fn();
-    render(<AddComputer connections={[reserved]} onChange={onChange} />);
+  it('renders Approve for a reserved inviter connection, then closes after approval', async () => {
+    const onChange = vi.fn(), onClose = vi.fn();
+    render(<AddComputer connections={[reserved]} onChange={onChange} onClose={onClose} />);
     expect(await screen.findByText('Studio laptop')).toBeTruthy();
     fireEvent.change(screen.getByLabelText(/Code shown/), { target: { value: 'ABCD1234' } });
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(api.approve).toHaveBeenCalledWith(ID, 'ABCD-1234'));
-    fireEvent.click(screen.getByRole('button', { name: 'Deny' }));
-    await waitFor(() => expect(api.deny).toHaveBeenCalledWith(ID));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('shows deny failure', async () => {

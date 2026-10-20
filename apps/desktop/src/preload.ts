@@ -1134,11 +1134,6 @@ const api: CcApi = {
       const handler = (_e: unknown, delivery: Parameters<typeof cb>[0]) => cb(delivery);
       ipcRenderer.on(IPC.deepLinks.onLink, handler);
       return () => ipcRenderer.off(IPC.deepLinks.onLink, handler);
-    },
-    onCoreLink: (cb) => {
-      const handler = (_e: unknown, delivery: Parameters<typeof cb>[0]) => cb(delivery);
-      ipcRenderer.on(IPC.deepLinks.onCoreLink, handler);
-      return () => ipcRenderer.off(IPC.deepLinks.onCoreLink, handler);
     }
   },
   scheduler: {

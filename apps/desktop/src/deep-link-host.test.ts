@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resolveDeepLinkChannel, type CoreDeepLinkDelivery, type DeepLinkDelivery } from '@zana-ai/zcc-desktop-contract';
+import { resolveDeepLinkChannel, type DeepLinkDelivery } from '@zana-ai/zcc-desktop-contract';
 import {
   createDeepLinkHost,
   DEEP_LINK_PENDING_LIMIT,
@@ -9,55 +9,14 @@ import {
 } from './deep-link-host.js';
 
 function makeHost(env: Record<string, string | undefined> = {}, isPackaged = true) {
-  const delivered: Array<DeepLinkDelivery | CoreDeepLinkDelivery> = [];
+  const delivered: DeepLinkDelivery[] = [];
   const logError = vi.fn();
-  const deliver = vi.fn(async (d: DeepLinkDelivery | CoreDeepLinkDelivery) => {
+  const deliver = vi.fn(async (d: DeepLinkDelivery) => {
     delivered.push(d);
   });
   const host = createDeepLinkHost({ channel: resolveDeepLinkChannel({ isPackaged, env }), deliver, logError });
   return { host, delivered, deliver, logError };
 }
-
-describe('core links', () => {
-  it('queues a core link before arm, then delivers it without a plugin id', async () => {
-    const { host, delivered } = makeHost();
-    expect(host.submitOsLink('zana://peers/join?d=tok%2B1')).toBe(true);
-    expect(host.pendingCount()).toBe(1);
-    host.arm();
-    await vi.waitFor(() => expect(delivered).toEqual([{ route: 'peers/join', payload: 'tok+1' }]));
-  });
-
-  it('reads a core link from argv', async () => {
-    const { host, delivered } = makeHost();
-    host.arm();
-    expect(host.submitArgv(['app', 'zana://peers/join?d=z'])).toBe(true);
-    await vi.waitFor(() => expect(delivered).toEqual([{ route: 'peers/join', payload: 'z' }]));
-  });
-
-  it('rejects unknown core routes, missing/oversize payloads, and wrong schemes', () => {
-    const { host, deliver, logError } = makeHost();
-    host.arm();
-    expect(host.submitOsLink('zana://peers/admin?d=x')).toBe(false);
-    expect(host.submitOsLink('zana://peers/join')).toBe(false);
-    expect(host.submitOsLink(`zana://peers/join?d=${'a'.repeat(5000)}`)).toBe(false);
-    expect(host.submitOsLink('zana-dev://peers/join?d=x')).toBe(false);
-    expect(deliver).not.toHaveBeenCalled();
-    expect(logError.mock.calls.map(([, d]) => d)).toEqual(['bad-route', 'bad-query', 'payload-too-long', 'wrong-scheme']);
-  });
-
-  it('bounds core links in the pre-arm queue with plugin links', () => {
-    const { host } = makeHost();
-    for (let i = 0; i < DEEP_LINK_PENDING_LIMIT + 2; i++) host.submitOsLink(`zana://peers/join?d=t${i}`);
-    expect(host.pendingCount()).toBe(DEEP_LINK_PENDING_LIMIT);
-  });
-
-  it('does not route core links through the plugin-facing open() paste path', async () => {
-    const { host, deliver } = makeHost();
-    host.arm();
-    await expect(host.open('zana://peers/join?d=x')).resolves.toEqual({ ok: false, reason: 'bad-route' });
-    expect(deliver).not.toHaveBeenCalled();
-  });
-});
 
 describe('createDeepLinkHost', () => {
   it('queues links that arrive before arm and flushes them in order', async () => {

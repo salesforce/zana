@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({ checkRemoteLogin: vi.fn(), join: vi.fn() }));
 vi.mock('../../../lib/product-client.js', () => ({ peerConnections: api }));
 
-import { invitationTokenFrom, JoinComputer } from './JoinComputer';
+import { JoinComputer } from './JoinComputer';
 
 const ID = '22222222-2222-4222-8222-222222222222';
 const base = { invitationId: ID, role: 'redeemer', state: 'redeeming', expiresAt: 1, awaitingApproval: false };
@@ -14,13 +14,6 @@ beforeEach(() => { api.checkRemoteLogin.mockReset(); api.join.mockReset().mockRe
 afterEach(cleanup);
 
 describe('JoinComputer', () => {
-  it('extracts an invitation token from a core peer link', () => {
-    expect(invitationTokenFrom(' zana-dev://peers/join?d=tok%2B1 ')).toBe('tok+1');
-    expect(invitationTokenFrom('zana://peers/join?d=tok')).toBe('tok');
-    expect(invitationTokenFrom('zccinv.token')).toBe('zccinv.token');
-    expect(invitationTokenFrom('https://example.test/?d=token')).toBe('https://example.test/?d=token');
-  });
-
   it('trims the pasted token, joins, and never checks Remote Login', async () => {
     const onChange = vi.fn();
     render(<JoinComputer connections={[]} onChange={onChange} />);
@@ -32,22 +25,6 @@ describe('JoinComputer', () => {
     expect(await screen.findByText(/Status: redeeming/)).toBeTruthy();
     expect(onChange).toHaveBeenCalled();
     expect(api.checkRemoteLogin).not.toHaveBeenCalled();
-  });
-
-  it('prefills from a link but never joins until the user presses Join', async () => {
-    render(<JoinComputer connections={[]} initialToken="tok-link" />);
-    expect((screen.getByLabelText(/Invitation/) as HTMLTextAreaElement).value).toBe('tok-link');
-    expect(screen.getByText(/Filled in from a link/)).toBeTruthy();
-    expect(api.join).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
-    await waitFor(() => expect(api.join).toHaveBeenCalledWith('tok-link'));
-  });
-
-  it('accepts a pasted core peer link', async () => {
-    render(<JoinComputer connections={[]} />);
-    fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'zana-dev://peers/join?d=tok%2B1' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
-    await waitFor(() => expect(api.join).toHaveBeenCalledWith('tok+1'));
   });
 
   it('shows the pairing code large with the connects-out note', async () => {
@@ -75,6 +52,16 @@ describe('JoinComputer', () => {
     await screen.findByText(/Status/);
     rerender(<JoinComputer connections={[{ ...base, state: 'reserved', pairingCode: 'WXYZ-2345' } as never]} />);
     expect((await screen.findByTestId('pairing-code')).textContent).toBe('WXYZ-2345');
+  });
+
+  it('closes after the other computer approves', async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<JoinComputer connections={[]} onClose={onClose} />);
+    fireEvent.change(screen.getByLabelText(/Invitation/), { target: { value: 'tok' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
+    await screen.findByText(/Status/);
+    rerender(<JoinComputer connections={[{ ...base, state: 'ready' } as never]} onClose={onClose} />);
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 
   it('shows the failure reason when no code', async () => {

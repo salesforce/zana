@@ -3,7 +3,6 @@ import {
   DEEP_LINK_MAX_LENGTH,
   DEEP_LINK_MAX_PAYLOAD_LENGTH,
   findDeepLinkInArgv,
-  formatCoreDeepLink,
   formatDeepLink,
   parseAnyDeepLink,
   parseDeepLink,
@@ -136,48 +135,14 @@ describe('findDeepLinkInArgv', () => {
   });
 });
 
-describe('parseAnyDeepLink (core routes)', () => {
-  it('parses peers/join and round-trips formatCoreDeepLink', () => {
-    const link = formatCoreDeepLink('zana://', 'peers/join', 'tok+/=1');
-    expect(link).toBe('zana://peers/join?d=tok%2B%2F%3D1');
-    expect(parseAnyDeepLink(link, accept)).toEqual({ ok: true, kind: 'core', link: { scheme: 'zana', route: 'peers/join', payload: 'tok+/=1' } });
-    expect(parseAnyDeepLink('ZANA://Peers/Join/?d=abc', accept)).toMatchObject({ ok: true, kind: 'core', link: { route: 'peers/join', payload: 'abc' } });
-  });
-
-  it('keeps plugin links working', () => {
+describe('parseAnyDeepLink', () => {
+  it('keeps plugin links working and rejects non-plugin links', () => {
     expect(parseAnyDeepLink('zana://plugin/notes/open?d=x', accept)).toEqual({
       ok: true,
       kind: 'plugin',
       link: { scheme: 'zana', pluginId: 'notes', route: 'open', payload: 'x' }
     });
     expect(parseAnyDeepLink('zana://plugin/Bad_Id/open', accept)).toEqual({ ok: false, reason: 'bad-plugin-id' });
-  });
-
-  it.each([
-    ['zana://peers/other?d=x', 'bad-route'],
-    ['zana://peers?d=x', 'bad-route'],
-    ['zana://peers/join/extra?d=x', 'bad-route'],
-    ['zana://peers/join', 'bad-query'],
-    ['zana://peers/join?d=', 'bad-query'],
-    ['zana://peers/join?x=1', 'bad-query'],
-    ['zana://peers/join?d=a&e=b', 'bad-query'],
-    ['zana://peers/join?d=%E0%A4%A', 'bad-encoding'],
-    ['zana://peers/join?d=%00', 'bad-encoding'],
-    ['zana-dev://peers/join?d=x', 'wrong-scheme'],
-    ['zana://peers/join?d=a b', 'control-characters'],
-    ['zana://settings/join?d=x', 'malformed']
-  ])('rejects %s as %s', (raw, reason) => {
-    expect(parseAnyDeepLink(raw, { acceptSchemes: ['zana'] })).toEqual({ ok: false, reason });
-  });
-
-  it('rejects oversize links and payloads and never throws', () => {
-    expect(parseAnyDeepLink(`zana://peers/join?d=${'a'.repeat(DEEP_LINK_MAX_LENGTH)}`, accept)).toEqual({ ok: false, reason: 'too-long' });
-    expect(parseAnyDeepLink(`zana://peers/join?d=${'a'.repeat(DEEP_LINK_MAX_PAYLOAD_LENGTH + 1)}`, accept)).toEqual({ ok: false, reason: 'payload-too-long' });
-    for (const v of [undefined, null, 5, {}, []]) expect(parseAnyDeepLink(v, accept)).toEqual({ ok: false, reason: 'not-a-string' });
-  });
-
-  it('findDeepLinkInArgv also finds core links', () => {
-    expect(findDeepLinkInArgv(['app', '"zana://peers/join?d=x"'], ['zana'])).toBe('zana://peers/join?d=x');
-    expect(findDeepLinkInArgv(['zana://peers/nope?d=x'], ['zana'])).toBeNull();
+    expect(parseAnyDeepLink('zana://peers/join?d=x', accept)).toEqual({ ok: false, reason: 'malformed' });
   });
 });

@@ -201,25 +201,6 @@ describe('bridge and runtime hook', () => {
     expect(off).toHaveBeenCalled();
   });
 
-  it('subscribes to core links, routes them to the peers join handler, and unsubscribes', async () => {
-    let pushCore: (d: unknown) => void = () => undefined;
-    const offCore = vi.fn();
-    installCc({
-      config: async () => ({ base: 'test-scheme://', acceptSchemes: ['test-scheme'] }),
-      open: async () => ({ ok: false, reason: 'unavailable' }),
-      onLink: () => () => undefined,
-      onCoreLink: (cb) => {
-        pushCore = cb as never;
-        return offCore;
-      }
-    });
-    const stop = installDeepLinkBridge();
-    pushCore({ route: 'nope', payload: 'x' });
-    stop();
-    expect(offCore).toHaveBeenCalled();
-    expect(pushCore).toBeTypeOf('function');
-  });
-
   it('ignores a bad config and a failing config call', async () => {
     installCc({ config: async () => ({ base: 5 as never, acceptSchemes: [] }), open: async () => ({ ok: false, reason: 'unavailable' }), onLink: () => () => undefined });
     installDeepLinkBridge();

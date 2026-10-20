@@ -83,26 +83,3 @@ test('a link for a plugin that is not installed toasts and does nothing', async 
   await expect(win.getByText("That link is for a plugin that isn't installed.")).toBeVisible({ timeout: 20_000 });
   expect(new URL(win.url()).pathname).not.toContain('not-installed');
 });
-
-test('the core peers/join link opens Settings → Peers with the invitation prefilled and never joins by itself', async ({ app }) => {
-  const win = app.window;
-  await recordDeliveries(app);
-  const token = 'zccinv1.e2e-prefill-only_-123';
-  await openUrl(app, `zana-e2e://peers/join?d=${token}`);
-  await expect.poll(() => new URL(win.url()).pathname).toBe('/settings/peers');
-  const join = win.getByTestId('join-computer');
-  await expect(join).toBeVisible({ timeout: 20_000 });
-  await expect(join.getByRole('textbox')).toHaveValue(token);
-  // Prefill only: the user still presses Join, so no pairing started and nothing reached plugins.
-  await expect(join.getByTestId('pairing-code')).toHaveCount(0);
-  expect(await deliveries(app)).toEqual([]);
-
-  // Malformed core links are dropped in main: no payload, wrong channel scheme, unknown core route.
-  await openUrl(app, 'zana-e2e://peers/join');
-  await openUrl(app, 'zana://peers/join?d=x');
-  await openUrl(app, 'zana-e2e://peers/other?d=x');
-  await openUrl(app, 'zana-e2e://plugin/docs/sentinel');
-  await expect.poll(() => deliveries(app).then((rows) => rows.at(-1)?.route)).toBe('sentinel');
-  expect((await deliveries(app)).map((row) => row.route)).toEqual(['sentinel']);
-  await expect(join.getByRole('textbox')).toHaveValue(token);
-});

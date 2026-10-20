@@ -47,11 +47,10 @@ function makeDeps(home: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe('validateDevLink', () => {
-  it('accepts zana-dev plugin and core peer invitation links', () => {
+  it('accepts zana-dev plugin links', () => {
     expect(validateDevLink('zana-dev://plugin/design-docs/join?d=abc_-%3D')).toBeNull();
     expect(validateDevLink('zana-dev://plugin/a/b/c/')).toBeNull();
     expect(validateDevLink('ZANA-DEV://plugin/a/b')).toBeNull();
-    expect(validateDevLink('zana-dev://peers/join?d=abc_-%3D')).toBeNull();
   });
 
   it.each([
@@ -82,7 +81,7 @@ describe('buildAppleScript / buildPlistEdits', () => {
     expect(src).toContain('property buildEntry : "/work/zana/out-dev/main/index.js"');
     expect(src).toContain('on open location theURL');
     expect(src).toContain('quoted form of theURL');
-    expect(src).toContain('does not start with "zana-dev://plugin/" and theURL does not start with "zana-dev://peers/join?d="');
+    expect(src).toContain('theURL does not start with "zana-dev://plugin/"');
     expect(src).toContain('Run pnpm run dev first');
     expect(src).toContain(`property allowedChars : "${APPLESCRIPT_ALLOWED_CHARS}"`);
   });

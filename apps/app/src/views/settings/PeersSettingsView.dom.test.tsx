@@ -9,7 +9,6 @@ vi.mock('../../lib/product-client.js', () => ({ peerLinks: api, peerConnections:
 } }));
 
 import { PeersSettingsView } from './PeersSettingsView';
-import { resetPeerJoinForTests, routeCoreDeepLink } from '../../lib/peers-join-link';
 
 const link = (over: Record<string, unknown> = {}) => ({
   hostId: 'h1',
@@ -37,7 +36,7 @@ beforeEach(() => {
   api.leftovers.mockReset().mockResolvedValue({ leftovers: [] });
   api.forgetLeftover.mockReset().mockResolvedValue({ ok: true });
 });
-afterEach(() => { cleanup(); resetPeerJoinForTests(); });
+afterEach(cleanup);
 
 describe('PeersSettingsView', () => {
   it('shows the empty state', async () => {
@@ -431,18 +430,4 @@ describe('PeersSettingsView', () => {
     }
   });
 
-  it('opens Accept invitation prefilled from a parked peers/join link, without joining', async () => {
-    await routeCoreDeepLink({ route: 'peers/join', payload: 'tok-parked' });
-    render(<PeersSettingsView />);
-    expect((await screen.findByLabelText(/Invitation/) as HTMLTextAreaElement).value).toBe('tok-parked');
-    expect(conn.join).not.toHaveBeenCalled();
-  });
-
-  it('prefills when a link arrives while the view is mounted', async () => {
-    render(<PeersSettingsView />);
-    await screen.findByText('Studio laptop');
-    await act(async () => { await routeCoreDeepLink({ route: 'peers/join', payload: 'tok-live' }); });
-    expect((await screen.findByLabelText(/Invitation/) as HTMLTextAreaElement).value).toBe('tok-live');
-    expect(conn.join).not.toHaveBeenCalled();
-  });
 });

@@ -42,17 +42,6 @@ export type DeepLinkRejectReason =
   | 'bad-encoding'
   | 'payload-too-long';
 
-/** Routes handled by the app itself, with no plugin id: `<scheme>://<route>?d=<payload>`. */
-export const CORE_DEEP_LINK_ROUTES = ['peers/join'] as const;
-export type CoreDeepLinkRoute = (typeof CORE_DEEP_LINK_ROUTES)[number];
-
-/** A core link. `peers/join` always carries a payload (an invitation token or link payload). */
-export interface CoreDeepLink {
-  scheme: string;
-  route: CoreDeepLinkRoute;
-  payload: string;
-}
-
 export type DeepLinkParseResult = { ok: true; link: DeepLink } | { ok: false; reason: DeepLinkRejectReason };
 
 export interface ParseDeepLinkOptions {
@@ -60,7 +49,6 @@ export interface ParseDeepLinkOptions {
   acceptSchemes: readonly string[];
 }
 
-const CORE_LINK_PATTERN = /^([a-z][a-z0-9+.-]*):\/\/(peers(?:\/[^?#]*)?)(?:\?([^#]*))?$/i;
 const LINK_PATTERN = /^([a-z][a-z0-9+.-]*):\/\/plugin\/([^/?#]*)(\/[^?#]*)?(?:\?([^#]*))?$/i;
 const PLUGIN_ID_PATTERN = /^[a-z0-9-]+$/;
 const ROUTE_PATTERN = /^[a-z0-9-]+(?:\/[a-z0-9-]+)*$/;
@@ -95,32 +83,15 @@ export function parseDeepLink(raw: unknown, options: ParseDeepLinkOptions): Deep
 
 const rejectAny = (reason: DeepLinkRejectReason): AnyDeepLinkParseResult => ({ ok: false, reason });
 
-export type AnyDeepLinkParseResult =
-  | { ok: true; kind: 'plugin'; link: DeepLink }
-  | { ok: true; kind: 'core'; link: CoreDeepLink }
-  | { ok: false; reason: DeepLinkRejectReason };
+export type AnyDeepLinkParseResult = { ok: true; kind: 'plugin'; link: DeepLink } | { ok: false; reason: DeepLinkRejectReason };
 
 /**
- * Parse a plugin link or a core link (`<scheme>://peers/join?d=<payload>`).
- * Unknown core routes are rejected (`bad-route`) and a core link must carry a payload (`bad-query`).
- * Never throws.
+ * Parse a plugin link. Never throws.
  */
 export function parseAnyDeepLink(raw: unknown, options: ParseDeepLinkOptions): AnyDeepLinkParseResult {
   try {
     const plugin = parseDeepLink(raw, options);
-    if (plugin.ok) return { ok: true, kind: 'plugin', link: plugin.link };
-    if (plugin.reason !== 'malformed') return rejectAny(plugin.reason);
-    const text = raw as string;
-    const match = CORE_LINK_PATTERN.exec(text);
-    if (!match) return rejectAny(plugin.reason);
-    const scheme = match[1]!.toLowerCase();
-    if (!options.acceptSchemes.includes(scheme)) return rejectAny('wrong-scheme');
-    const route = match[2]!.toLowerCase().replace(/\/+$/, '');
-    if (!(CORE_DEEP_LINK_ROUTES as readonly string[]).includes(route)) return rejectAny('bad-route');
-    const payload = parsePayload(match[3]);
-    if (!payload.ok) return rejectAny(payload.reason);
-    if (payload.value === null || payload.value === '') return rejectAny('bad-query');
-    return { ok: true, kind: 'core', link: { scheme, route: route as CoreDeepLinkRoute, payload: payload.value } };
+    return plugin.ok ? { ok: true, kind: 'plugin', link: plugin.link } : rejectAny(plugin.reason);
   } catch {
     return rejectAny('malformed');
   }
@@ -144,11 +115,6 @@ function parsePayload(query: string | undefined): { ok: true; value: string | nu
   if (decoded.length > DEEP_LINK_MAX_PAYLOAD_LENGTH) return { ok: false, reason: 'payload-too-long' };
   if (CONTROL_PATTERN.test(decoded)) return { ok: false, reason: 'bad-encoding' };
   return { ok: true, value: decoded };
-}
-
-/** Build a core link; the payload is percent-encoded. */
-export function formatCoreDeepLink(base: string, route: CoreDeepLinkRoute, payload: string): string {
-  return `${base}${route}?${DEEP_LINK_PAYLOAD_PARAM}=${encodeURIComponent(payload)}`;
 }
 
 /** Build a plugin link (host-side helper for tests and docs; payload is percent-encoded). */
@@ -212,12 +178,6 @@ export interface DeepLinkDelivery {
   pluginId: string;
   route: string;
   payload: string | null;
-}
-
-/** Main to renderer push for a core link (own channel, no plugin id). */
-export interface CoreDeepLinkDelivery {
-  route: CoreDeepLinkRoute;
-  payload: string;
 }
 
 export interface DeepLinkConfig {
