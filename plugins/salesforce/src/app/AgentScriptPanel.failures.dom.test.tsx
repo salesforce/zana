@@ -119,19 +119,16 @@ describe('AgentScriptPanel failure paths', () => {
     const el = await mount();
     await ready(el);
     expect(alert(el)).toBe('');
-    await post(el, { type: 'commentAction', kind: 'add', line: 2, endLine: 3, quote: 'a\nb' });
-    const submit = async (body: string) => {
-      const textarea = el.querySelector('form[aria-label="Add comment"] textarea') as HTMLTextAreaElement;
-      await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, body); textarea.dispatchEvent(new Event('input', { bubbles: true })); });
-      await act(async () => { (el.querySelector('form[aria-label="Add comment"]') as HTMLFormElement).requestSubmit(); });
+    // The playground owns the comment box; the host gets the finished comment.
+    const submit = async (body: string, line: number, endLine: number, quote: string) => {
+      await post(el, { type: 'commentAction', kind: 'submit', line, endLine, quote, body });
       await flush();
     };
     overrides['studio.comments.add'] = () => ({ ok: false, error: 'Comment store unavailable.' });
-    await submit('please fix');
+    await submit('please fix', 2, 3, 'a\nb');
     expect(alert(el)).toContain('Comment store unavailable.');
-    await post(el, { type: 'commentAction', kind: 'add', line: 2, endLine: 2, quote: 'a' });
     overrides['studio.comments.add'] = () => { throw new Error('add exploded'); };
-    await submit('again');
+    await submit('again', 2, 2, 'a');
     expect(alert(el)).toContain('add exploded');
     expect(rpc.mock.calls.filter(c => c[1] === 'studio.comments.add')).toHaveLength(2);
   });
