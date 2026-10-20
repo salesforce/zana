@@ -6325,3 +6325,6 @@ export interface ExecutionBoardSnapshot {
   artifacts: Array<{ id: string; name: string; mediaType: string; contentDigest: string; attempt: number; createdAt: number; producerRole?: 'worker' | 'orchestrator'; producerSlotId?: string }>;
   artifactsTruncated: boolean;
 }
+
+/** Stable text main raises when Zana Connect rejects this computer's credential (401/403). Survives IPC serialization. */
+export const CONNECT_ACCESS_REVOKED_MESSAGE = "This computer's access was revoked. Sign in again to reconnect.";

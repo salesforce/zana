@@ -30,6 +30,10 @@ it('rejects redirects, malformed responses, errors and unbounded bodies', async 
   const redirected = reply({}); Object.defineProperty(redirected, 'url', { value: 'https://evil.com/' });
   await expect(connectRequest(origin, '/test', undefined, undefined, vi.fn(async () => redirected))).rejects.toThrow('redirected');
 });
+it('raises the stable revoked message for 401/403 only', async () => {
+  for (const status of [401, 403]) await expect(connectRequest(origin, '/test', 'tok', undefined, vi.fn(async () => new Response('no', { status })))).rejects.toThrow("This computer's access was revoked. Sign in again to reconnect.");
+  await expect(connectRequest(origin, '/test', 'tok', undefined, vi.fn(async () => new Response('no', { status: 503 })))).rejects.toThrow('Connect returned 503');
+});
 it('wires enrollment, a local capability, cloud pairing, device revocation and disconnection', async () => {
   const store = new MobileConnectionStore();
   const fetcher = vi.fn(async (url: any) => {

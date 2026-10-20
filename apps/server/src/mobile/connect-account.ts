@@ -1,4 +1,5 @@
 import { hostname } from 'node:os';
+import { CONNECT_ACCESS_REVOKED_MESSAGE } from '@zana-ai/zcc-domain/product';
 import { validateMobileConnection, type MobileConnectionInput } from './connection.js';
 
 export interface EnrollmentView { verificationUrl: string; expiresAt: number }
@@ -6,7 +7,7 @@ export type ConnectFetch = typeof fetch;
 
 export class ConnectRequestError extends Error {
   constructor(readonly status: number) {
-    super(status === 401 || status === 403 ? 'Enrollment denied or access revoked. Sign in again.' : `Connect returned ${status}. Check the service and try again.`);
+    super(status === 401 || status === 403 ? CONNECT_ACCESS_REVOKED_MESSAGE : `Connect returned ${status}. Check the service and try again.`);
   }
 }
 

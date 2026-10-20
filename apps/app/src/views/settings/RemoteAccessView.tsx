@@ -6,13 +6,15 @@ import { Link } from 'react-router-dom';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
+import { ipcErrorMessage, isConnectAccessRevoked } from '../../lib/ipc-error.js';
+import { PhoneAccountConnection } from './PhoneAccountConnection.js';
 import { ConnectCodePairing } from './ConnectCodePairing.js';
 import { ToggleSwitch } from '../../components/settings/FormFields.js';
 import { SearchTarget } from './MachineCard.js';
 import './remote-access.css';
 
 type Status = Awaited<ReturnType<typeof product.mobile.status>>;
-const errorText = (error: unknown) => error instanceof Error ? error.message : 'Could not update remote access. Try again.';
+const errorText = (error: unknown) => ipcErrorMessage(error, 'Could not update remote access. Try again.');
 
 export function RemoteAccessView({ config, onConfigDraft }: {
   config: AppConfig;
@@ -26,6 +28,7 @@ export function RemoteAccessView({ config, onConfigDraft }: {
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [browserUrl, setBrowserUrl] = useState<string | null>(null);
   const [addressError, setAddressError] = useState('');
+  const [revoked, setRevoked] = useState(false);
   const [copied, setCopied] = useState(false);
   const [disconnected, setDisconnected] = useState(false);
   const generation = useRef(0);
@@ -54,7 +57,7 @@ export function RemoteAccessView({ config, onConfigDraft }: {
   const accountUrl = linked ? status.connection?.accountUrl : undefined;
   const serverUrl = linked ? status.connection?.publicUrl : undefined;
   useEffect(() => {
-    setBrowserUrl(null); setAddressError(''); setCopied(false);
+    setBrowserUrl(null); setAddressError(''); setRevoked(false); setCopied(false);
     if (!accountUrl) return;
     let cancelled = false;
     let loading = false;
@@ -63,9 +66,9 @@ export function RemoteAccessView({ config, onConfigDraft }: {
       loading = true;
       try {
         const url = await product.mobile.browserAddress();
-        if (!cancelled) { setBrowserUrl(url); setAddressError(''); }
+        if (!cancelled) { setBrowserUrl(url); setAddressError(''); setRevoked(false); }
       } catch (err) {
-        if (!cancelled) { setBrowserUrl(null); setAddressError(errorText(err)); }
+        if (!cancelled) { setBrowserUrl(null); setRevoked(isConnectAccessRevoked(err)); setAddressError(errorText(err)); }
       } finally { loading = false; }
     };
     void load();
@@ -130,7 +133,8 @@ export function RemoteAccessView({ config, onConfigDraft }: {
         <a className="btn" href={`${accountUrl}/connect/`} target="_blank" rel="noreferrer">Choose your address <ExternalLink size={14} aria-hidden="true" /></a>
       </div>}
       </SearchTarget>
-      {addressError && <p role="alert">{addressError}</p>}
+      {revoked ? <PhoneAccountConnection status={status} onSaved={async () => { setRevoked(false); await refresh(); }} browserAccess revoked />
+      : addressError && <p role="alert">{addressError}</p>}
       <SearchTarget searchId="remote-access.account-links" block>
       <div className="remote-access-actions">
         <a className="btn" href={`${accountUrl}/connect/`} target="_blank" rel="noreferrer">Manage account</a>
