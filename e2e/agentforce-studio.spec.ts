@@ -347,6 +347,16 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   expect(Math.abs(commentBox!.y - askBox!.y)).toBeLessThan(2);
   const selectionBox = await frame.locator('.selected-text').first().boundingBox();
   expect((await chip.boundingBox())!.y + (await chip.boundingBox())!.height).toBeLessThanOrEqual(selectionBox!.y + 1);
+  // TEMP diagnostic: record who moves focus in the playground on Linux CI.
+  await chip.evaluate(() => {
+    const log: string[] = ((window as any).__focusLog = []);
+    const name = (el: any) => `${el?.tagName}.${String(el?.className ?? '').slice(0, 60)}`;
+    const orig = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (this: HTMLElement, ...args: any[]) { log.push(`focus() ${name(this)} @ ${String(new Error().stack).split('\n').slice(2, 9).map(l => l.trim().slice(0, 140)).join(' | ')}`); return orig.apply(this, args as []); };
+    document.addEventListener('focusin', e => log.push(`focusin ${name(e.target)} t=${Math.round(performance.now())}`), true);
+    document.addEventListener('focusout', e => log.push(`focusout ${name(e.target)} t=${Math.round(performance.now())}`), true);
+    window.addEventListener('blur', () => log.push(`window blur t=${Math.round(performance.now())}`));
+  });
   await chip.getByRole('button', { name: 'Comment', exact: true }).click();
   // Monaco hides its view zones from the accessibility tree, so find the box by its markup.
   const commentForm = frame.locator('form[aria-label="Add comment"]');
@@ -355,7 +365,12 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   expect((await commentForm.boundingBox())!.y).toBeGreaterThan(selectionBox!.y);
   // The box takes focus; toBeFocused also needs the iframe document to report hasFocus(), which headless Linux CI does not.
   const commentInput = commentForm.locator('textarea');
-  await expect.poll(() => commentInput.evaluate(input => input === input.ownerDocument.activeElement)).toBe(true);
+  try {
+    await expect.poll(() => commentInput.evaluate(input => input === input.ownerDocument.activeElement), { timeout: 5_000 }).toBe(true);
+  } catch (error) {
+    const log = await commentInput.evaluate(input => [`active=${input.ownerDocument.activeElement?.tagName}.${input.ownerDocument.activeElement?.className} hasFocus=${input.ownerDocument.hasFocus()}`, ...((window as any).__focusLog ?? [])]);
+    throw new Error(`focus diagnostic:\n${log.join('\n')}\n${String(error)}`);
+  }
   await page.keyboard.type('Check this line');
   await expect(commentInput).toHaveValue('Check this line');
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-inline-comment.png'));
