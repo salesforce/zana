@@ -110,6 +110,20 @@ describe('createThreadTitleNamer', () => {
     expect(applyTitle).not.toHaveBeenCalled();
   });
 
+  it('skips the namer call once the thread has a final title', async () => {
+    const run = vi.fn(async () => ok('Named'));
+    const applyTitle = vi.fn();
+    const canAutoTitle = vi.fn(() => false);
+    const namer = createThreadTitleNamer({
+      autoRenameEnabled: () => true, getEntry: () => entry, run, applyTitle, canAutoTitle
+    });
+    namer.request('thr-1', 'work');
+    await Promise.resolve();
+    expect(canAutoTitle).toHaveBeenCalledWith('thr-1');
+    expect(run).not.toHaveBeenCalled();
+    expect(applyTitle).not.toHaveBeenCalled();
+  });
+
   it('does not apply a title after the thread is gone', async () => {
     const applyTitle = vi.fn();
     const namer = createThreadTitleNamer({

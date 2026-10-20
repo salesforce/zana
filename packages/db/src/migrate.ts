@@ -503,6 +503,10 @@ export function migrate(database: SqliteDatabase): void {
       opened_at INTEGER NOT NULL
     )`
   ]);
+  // Thread title provenance: 'prompt' = placeholder the auto-namer may replace,
+  // 'auto' = auto-named, 'user' = explicit. NULL (legacy, forks, plugin threads) is fixed.
+  if (!applied.has(38)) applyVersion(database, 38,
+    hasColumn(database, 'threads', 'title_source') ? [] : ['ALTER TABLE threads ADD COLUMN title_source TEXT']);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

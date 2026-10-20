@@ -7,6 +7,8 @@ import {
 
 export type ConversationThreadStatus = 'idle' | 'starting' | 'active' | 'stopping' | 'error';
 export type ConversationThreadVisibility = 'visible' | 'hidden';
+/** 'prompt' is a placeholder the auto-namer may replace; 'auto' and 'user' are final. */
+export type ConversationThreadTitleSource = 'prompt' | 'auto' | 'user';
 
 export interface ConversationThreadRow {
   id: string;
@@ -80,6 +82,8 @@ export function createConversationThread(
     providerId: string;
     status?: ConversationThreadStatus;
     title?: string | null;
+    /** Omitted: the title is fixed and never auto-named. */
+    titleSource?: ConversationThreadTitleSource | null;
     visibility?: ConversationThreadVisibility;
     parentThreadId?: string | null;
     originKind?: 'fork' | null;
@@ -91,9 +95,9 @@ export function createConversationThread(
   db.sqlite.prepare(
     `INSERT INTO threads (
        id, project_id, host_id, environment_id, provider_id, status, origin_kind,
-       origin_plugin_id, visibility, title, provider_thread_id, parent_thread_id, archived_at,
+       origin_plugin_id, visibility, title, title_source, provider_thread_id, parent_thread_id, archived_at,
        pinned_at, pin_order, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)`
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)`
   ).run(
     id,
     input.projectId,
@@ -105,6 +109,7 @@ export function createConversationThread(
     input.originPluginId ?? null,
     input.visibility ?? 'visible',
     input.title ?? null,
+    input.titleSource ?? null,
     input.parentThreadId ?? null,
     now,
     now
@@ -431,14 +436,29 @@ export function updateConversationThreadParent(
   return getConversationThread(db, id);
 }
 
+/**
+ * A 'user' title always wins. An 'auto' title only replaces a 'prompt'
+ * placeholder, so it can never overwrite a rename; null when nothing changed.
+ */
 export function updateConversationThreadTitle(
   db: ZccDatabase,
   id: string,
-  title: string
+  title: string,
+  source: Exclude<ConversationThreadTitleSource, 'prompt'> = 'user'
 ): ConversationThreadRow | null {
   const now = Date.now();
-  db.sqlite.prepare('UPDATE threads SET title = ?, updated_at = ? WHERE id = ?').run(title, now, id);
-  return getConversationThread(db, id);
+  const result = db.sqlite.prepare(
+    `UPDATE threads SET title = ?, title_source = ?, updated_at = ?
+     WHERE id = ?${source === 'auto' ? " AND title_source = 'prompt'" : ''}`
+  ).run(title, source, now, id);
+  return result.changes > 0 ? getConversationThread(db, id) : null;
+}
+
+/** True while the thread still carries a placeholder title the auto-namer may replace. */
+export function conversationThreadTitleIsPlaceholder(db: ZccDatabase, id: string): boolean {
+  const row = db.sqlite.prepare('SELECT title_source FROM threads WHERE id = ?').get(id) as
+    { title_source: string | null } | undefined;
+  return row?.title_source === 'prompt';
 }
 
 /** Show a hidden thread in the Agents list ("Open as thread"). One-way. */

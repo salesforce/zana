@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flattenThreadInput, requestAutoThreadTitle, threadTitle } from './conversation-create.js';
+import { flattenThreadInput, requestAutoThreadTitle, threadTitle, threadTitleSource } from './conversation-create.js';
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import {
   bridgeLaunchForProvider,
@@ -32,6 +32,12 @@ describe('threadTitle', () => {
     expect(threadTitle({}, ['  Fix   the login  '])).toBe('Fix the login');
     expect(threadTitle({}, ['a'.repeat(41)])).toBe(`${'a'.repeat(40)}…`);
     expect(threadTitle({}, [])).toBe('Thread');
+  });
+
+  it('marks an explicit title as user-set and a prompt snippet as a placeholder', () => {
+    expect(threadTitleSource({ title: '  My Name  ' })).toBe('user');
+    expect(threadTitleSource({ title: '   ' })).toBe('prompt');
+    expect(threadTitleSource({})).toBe('prompt');
   });
 });
 
@@ -336,7 +342,8 @@ describe('unmanaged environment reuse', () => {
 describe('thread title namer wiring', () => {
   it('persists a successful namer title and emits threads:updated', () => {
     const source = readFileSync(new URL('../../http/product-context.ts', import.meta.url), 'utf8');
-    expect(source).toContain('updateConversationThreadTitle(db, threadId, title)');
+    expect(source).toContain("updateConversationThreadTitle(db, threadId, title, 'auto')");
+    expect(source).toContain('canAutoTitle: (threadId) => conversationThreadTitleIsPlaceholder(db, threadId)');
     expect(source).toContain("hub.emit('threads:updated', conversationThreadView(ctx, updated))");
     expect(source).toContain('autoRenameTabs !== false');
     expect(source).toContain('join(dataDir, \'llm-prompts\')');

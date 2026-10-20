@@ -34,6 +34,7 @@ import {
   updateConversationThreadParent,
   updateConversationThreadStatus,
   updateConversationThreadTitle,
+  conversationThreadTitleIsPlaceholder,
   upsertHost,
   updateHostDefaultWorkspacePath,
   getHost,
@@ -445,6 +446,35 @@ describe('packages/db', () => {
     expect(updated?.title).toBe('Hello 2');
     expect(getConversationThread(db, thread.id)?.title).toBe('Hello 2');
     expect(updateConversationThreadTitle(db, 'missing', 'Nope')).toBeNull();
+  });
+
+  it('lets an auto title replace only a placeholder, never a user rename', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-title-source-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, { projectId: 'proj-1', hostId: host.id, path: '/tmp/proj' });
+    const create = (titleSource?: 'prompt' | 'user') => createConversationThread(db!, {
+      projectId: 'proj-1', hostId: host.id, environmentId: environment.id, providerId: 'claude-code', title: 'fix the login', titleSource
+    });
+
+    const placeholder = create('prompt');
+    expect(conversationThreadTitleIsPlaceholder(db, placeholder.id)).toBe(true);
+    expect(updateConversationThreadTitle(db, placeholder.id, 'Login Fix', 'auto')?.title).toBe('Login Fix');
+    expect(conversationThreadTitleIsPlaceholder(db, placeholder.id)).toBe(false);
+    expect(updateConversationThreadTitle(db, placeholder.id, 'Add Tests', 'auto')).toBeNull();
+    expect(getConversationThread(db, placeholder.id)?.title).toBe('Login Fix');
+
+    const renamed = create('prompt');
+    updateConversationThreadTitle(db, renamed.id, 'My name');
+    expect(conversationThreadTitleIsPlaceholder(db, renamed.id)).toBe(false);
+    expect(updateConversationThreadTitle(db, renamed.id, 'Login Fix', 'auto')).toBeNull();
+    expect(updateConversationThreadTitle(db, renamed.id, 'My other name')?.title).toBe('My other name');
+
+    // Threads created without a source (legacy rows, forks, plugin threads) keep their title.
+    const fixed = create();
+    expect(conversationThreadTitleIsPlaceholder(db, fixed.id)).toBe(false);
+    expect(updateConversationThreadTitle(db, fixed.id, 'Login Fix', 'auto')).toBeNull();
+    expect(conversationThreadTitleIsPlaceholder(db, 'missing')).toBe(false);
   });
 
   it('lists only starting and running threads as live', () => {
