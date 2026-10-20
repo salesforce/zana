@@ -1,5 +1,5 @@
 import { useData, useUi, usePersonas, sortProjectsForDisplay } from './store.js';
-import { getTerminal } from './lib/findRegistry.js';
+import { getActiveTerminalId, getTerminal } from './lib/findRegistry.js';
 import { projectDefaultLaunch, type ProjectDefaultLaunch } from './lib/launchProfile.js';
 import { cliAgentDeleteConfirm, cliAgentRestartConfirm } from './components/agentCardActions.js';
 import { shortcutForCommand } from './lib/keyboard-shortcut-settings.js';
@@ -163,9 +163,10 @@ export function installShortcuts(): () => void {
     }
     // cmd+k — clear active terminal scrollback
     if (e.key === 'k' && !e.shiftKey) {
-      if (!projectId || !activeTabId) return;
+      const target = getActiveTerminalId();
+      if (!target) return;
       e.preventDefault();
-      getTerminal(activeTabId)?.clear();
+      getTerminal(target)?.clear();
       return;
     }
     // cmd+t — new tab using the project's one-click default: a pinned default
