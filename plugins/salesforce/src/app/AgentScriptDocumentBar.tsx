@@ -21,7 +21,7 @@ type DocumentBarProps = {
   onShowPanel: () => void;
   /** Open the current agent's Preview tool, retaining any running conversation. */
   onPreview?: () => void;
-  /** Studio layout: Compile runs the compiler on the saved file, Publish opens the Release tool; QuickOpen is the compact file switcher. */
+  /** Studio layout: Compile runs the compiler on the saved file, Publish (under Save's arrow) opens the Release tool; QuickOpen is the compact file switcher. */
   onCompile?: () => void;
   /** A compile is in flight. */
   compiling?: boolean;
@@ -43,8 +43,6 @@ export function AgentScriptDocumentBar(props: DocumentBarProps) {
   const segments = breadcrumbSegments(props.path);
   const name = segments.at(-1) ?? 'No agent open';
   const folder = segments.slice(0, -1).join(' / ');
-  // One filled action at a time: Save while there are edits, then Publish.
-  const publishReady = Boolean(props.path) && !props.dirty && !props.busy;
   const state = props.busy ? 'Saving…' : props.dirty ? 'Unsaved draft' : props.path ? 'Saved' : 'Open or create an agent';
   return <div className="af-document-bar">
     <div className="af-document-identity">
@@ -73,13 +71,12 @@ export function AgentScriptDocumentBar(props: DocumentBarProps) {
         ? <SaveSplit {...props} />
         : <button type="button" className={`sf-as-save${props.dirty && !props.saveAsDisabled ? ' is-dirty' : ''}`} title="Save as a new project file" disabled={props.saveAsDisabled} onClick={props.onSaveAs}><CopyPlus size={13} aria-hidden="true" />Save as…</button>}
       {props.onPreview && <button type="button" className="sf-as-save" data-testid="salesforce-agent-script-preview" aria-label="Preview" title="Open Preview for this agent" disabled={!props.path} onClick={props.onPreview}><Play size={13} aria-hidden="true" />Preview</button>}
-      {props.onPublish && <button type="button" className={`sf-as-save${publishReady ? ' is-primary' : ''}`} data-testid="salesforce-agent-script-publish" title="Open Release: publish, activate and roll back versions" disabled={!props.path || props.dirty} onClick={props.onPublish}><Rocket size={13} aria-hidden="true" />Publish</button>}
       {!props.panelOpen && !props.hidePanelToggle && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={props.onShowPanel}><PanelRight size={15} aria-hidden="true" /></button>}
     </div>
   </div>;
 }
 
-/** Save, with Save as… under its arrow. */
+/** Save, with Save as… and Publish… under its arrow. */
 function SaveSplit(props: DocumentBarProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -92,17 +89,21 @@ function SaveSplit(props: DocumentBarProps) {
     document.addEventListener('pointerdown', away);
     return () => document.removeEventListener('pointerdown', away);
   }, [open]);
-  // A menu left open while Save as… becomes unavailable closes instead of offering a dead item.
-  useEffect(() => { if (props.saveAsDisabled) setOpen(false); }, [props.saveAsDisabled]);
+  // Publish signs the file on disk, so it waits for unsaved edits to be saved.
+  const publishDisabled = props.dirty || props.busy;
+  const menuDisabled = props.saveAsDisabled && (!props.onPublish || publishDisabled);
+  // A menu left open while its items become unavailable closes instead of offering dead items.
+  useEffect(() => { if (menuDisabled) setOpen(false); }, [menuDisabled]);
   return <div className="sf-as-split" ref={root} onKeyDown={event => {
     if (event.key !== 'Escape' || !open) return;
     event.stopPropagation(); setOpen(false);
     root.current?.querySelector<HTMLButtonElement>('.sf-as-save-more')?.focus();
   }}>
     <button type="button" className={`sf-as-save${primary}`} data-testid="salesforce-agent-script-save" aria-label="Save Agentforce file" title={`Save Agentforce file (${modShortcut('S')})`} disabled={props.saveDisabled} onClick={props.onSave}><Save size={13} aria-hidden="true" />{props.busy ? 'Saving…' : 'Save'}{props.shortcutHint && <kbd className="sf-kbd">⌘S</kbd>}</button>
-    <button type="button" className={`sf-as-save sf-as-save-more${primary}`} aria-label="More save options" title="More save options" aria-haspopup="menu" aria-expanded={open} disabled={props.saveAsDisabled} onClick={() => setOpen(value => !value)}><ChevronDown size={13} aria-hidden="true" /></button>
+    <button type="button" className={`sf-as-save sf-as-save-more${primary}`} aria-label="More save options" title="More save options" aria-haspopup="menu" aria-expanded={open} disabled={menuDisabled} onClick={() => setOpen(value => !value)}><ChevronDown size={13} aria-hidden="true" /></button>
     {open && <div className="sf-as-save-menu" role="menu" aria-label="Save options">
-      <button ref={item} type="button" role="menuitem" onClick={() => { setOpen(false); props.onSaveAs(); }}><CopyPlus size={13} aria-hidden="true" />Save as…</button>
+      <button ref={props.saveAsDisabled ? undefined : item} type="button" role="menuitem" disabled={props.saveAsDisabled} onClick={() => { setOpen(false); props.onSaveAs(); }}><CopyPlus size={13} aria-hidden="true" />Save as…</button>
+      {props.onPublish && <button ref={props.saveAsDisabled ? item : undefined} type="button" role="menuitem" data-testid="salesforce-agent-script-publish" title={publishDisabled ? 'Save first: Publish uses the file on disk' : 'Open Release: publish, activate and roll back versions'} disabled={publishDisabled} onClick={() => { setOpen(false); props.onPublish?.(); }}><Rocket size={13} aria-hidden="true" />Publish…</button>}
     </div>}
   </div>;
 }

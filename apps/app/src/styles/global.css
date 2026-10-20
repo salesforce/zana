@@ -5126,18 +5126,6 @@ body.resizing-col {
   flex: 1;
   min-height: 0;
 }
-/* The tab's page inside its side-panel host (main or its own window) fills the same column. */
-.project-ext-tab .plugin-panel-host-layout > .split-plugin-main,
-.plugin-view-body .plugin-panel-host-layout > .split-plugin-main {
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
-}
-.project-ext-tab .plugin-panel-host-layout > .split-plugin-main > *,
-.plugin-view-body .plugin-panel-host-layout > .split-plugin-main > * {
-  flex: 1;
-  min-height: 0;
-}
 /* Library clips to this box and scrolls inside .explorer-md-preview. A parent
    overflow:auto would compete with that pane and, with .library-view's
    overflow:hidden, trap the wheel with nothing to scroll. */
@@ -38519,10 +38507,15 @@ body.split-frame-guard webview {
 }
 
 .plugin-panel-host-layout {
+  position: relative;
   display: flex;
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   height: 100%;
+  overflow: hidden;
+  /* The host rail or open panel owns this space; plugin content needs no gutter. */
+  --shell-trailing-reserve: 0px;
 }
 
 .plugin-panel-host-layout > .module-panel-host,
@@ -38532,21 +38525,50 @@ body.split-frame-guard webview {
   min-height: 0;
 }
 
-/* With the secondary panel open the launchers are hidden and shell right-edge
-   controls sit over that panel, so the trailing reserve would only leave an
-   empty gutter between the plugin and the panel. */
-.plugin-panel-host-layout.is-secondary-open > .split-plugin-main .module-panel-slot {
-  padding-right: 0;
+.plugin-panel-host-layout > .split-plugin-main {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.plugin-panel-host-layout > .split-plugin-main > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.plugin-panel-host-layout:is(.is-secondary-maximized, .is-compact.is-secondary-open) > .split-plugin-main {
+  display: none;
+}
+
+.plugin-panel-host-layout.is-secondary-maximized > .thread-secondary-panel {
+  flex: 1 1 0;
+  border-left: 0;
+}
+
+.plugin-panel-host-layout.is-secondary-maximized > .thread-secondary-panel > .thread-secondary-resizer {
+  display: none;
+}
+
+.plugin-panel-host-layout.is-compact > .thread-secondary-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  height: var(--mobile-viewport-height, 100dvh);
+  width: 100%;
+  max-width: 100%;
+  border-left: 0;
 }
 
 .plugin-panel-host-launchers {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
   display: flex;
+  flex: 0 0 36px;
   flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
   gap: 4px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
 }
 
 .panel-agent-tab {

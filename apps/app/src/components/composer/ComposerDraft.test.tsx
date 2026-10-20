@@ -2,7 +2,7 @@
 import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
 import { EditorContent, type JSONContent } from '@tiptap/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ComposerDraftProvider, useComposerSession, useComposerSetting } from './ComposerDraft.js';
+import { ComposerDraftProvider, useComposerSession, useComposerSetting, useRetainedText } from './ComposerDraft.js';
 import { ComposerSession, composerSession, resetComposerSessions, MAX_COMPOSER_SESSIONS } from './composer-session.js';
 import { useComposerPromptField } from './use-composer-prompt-field.js';
 import { mentionAttrsForSuggestion } from './mention-attrs.js';
@@ -251,5 +251,33 @@ describe('composer session ownership', () => {
     view.unmount();
     expect(revoke).toHaveBeenCalledWith('blob:overflow');
     revoke.mockRestore();
+  });
+});
+
+describe('retained reply text', () => {
+  it('keeps unsent text per key through unmount and frees it once cleared', () => {
+    const first = renderHook(({ id }) => useRetainedText(JSON.stringify(['inbox-reply', id])), { initialProps: { id: 'a' } });
+    expect(first.result.current[0]).toBe('');
+    act(() => first.result.current[1]('Unsent answer'));
+    first.rerender({ id: 'b' });
+    expect(first.result.current[0]).toBe('');
+    act(() => first.result.current[1](text => `${text}other`));
+    expect(first.result.current[0]).toBe('other');
+    first.unmount();
+    const again = renderHook(() => useRetainedText(JSON.stringify(['inbox-reply', 'a'])));
+    expect(again.result.current[0]).toBe('Unsent answer');
+    expect(composerSession(JSON.stringify(['inbox-reply', 'a'])).reclaimable).toBe(false);
+    act(() => again.result.current[1](''));
+    again.unmount();
+    expect(composerSession(JSON.stringify(['inbox-reply', 'a'])).reclaimable).toBe(true);
+  });
+
+  it('stays instance-local when draft storage is full', () => {
+    for (let index = 0; index < MAX_COMPOSER_SESSIONS; index++) composerSession(`full:${index}`).setSetting('text', 'x', { content: true });
+    const view = renderHook(() => useRetainedText('overflow'));
+    act(() => view.result.current[1]('typed'));
+    expect(view.result.current[0]).toBe('typed');
+    view.unmount();
+    expect(renderHook(() => useRetainedText('overflow')).result.current[0]).toBe('');
   });
 });

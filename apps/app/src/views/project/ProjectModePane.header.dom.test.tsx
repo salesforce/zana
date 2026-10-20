@@ -6,6 +6,7 @@ import type { PluginProjectTabRegistration } from '@zana-ai/zcc-plugin-sdk/app';
 
 const state = vi.hoisted(() => ({
   tabs: [] as PluginProjectTabRegistration[],
+  modules: [] as Array<{ id: string; title: string }>,
   desktop: false,
   open: [] as Array<{ pluginId: string; tabId: string; projectId: string }>
 }));
@@ -15,12 +16,12 @@ vi.mock('@/store', () => ({
   useUi: (select: (state: unknown) => unknown) => select({ selectedTabId: {} }),
   visibleTerminals: () => []
 }));
-vi.mock('@/modules', () => ({ useProjectTabModules: () => [] }));
+vi.mock('@/modules', () => ({ useProjectTabModules: () => state.modules }));
 vi.mock('@/components/TabBar', () => ({ TabBar: () => null }));
 vi.mock('@/components/agentCardActions', () => ({ cliAgentRestartConfirm: () => '' }));
 vi.mock('@/components/FindBar', () => ({ FindBar: () => null }));
 vi.mock('@/views/agents/AgentsBoard', () => ({ AgentsBoard: () => null }));
-vi.mock('@/views/project/ProjectExtensionTab', () => ({ ProjectExtensionTab: () => null }));
+vi.mock('@/views/project/ProjectExtensionTab', () => ({ ProjectExtensionTab: ({ moduleId }: { moduleId: string }) => <section aria-label="Module tab">{moduleId}</section> }));
 vi.mock('@/plugins/PluginSlotBoundary', () => ({ PluginSlotBoundary: ({ children }: { children: ReactNode }) => children }));
 vi.mock('@/plugins/ProjectStatusbarItems', () => ({ ProjectStatusbarItems: () => null }));
 vi.mock('@/plugins/plugin-slots', () => ({
@@ -47,6 +48,7 @@ afterEach(() => {
   cleanup();
   state.desktop = false;
   state.open = [];
+  state.modules = [];
 });
 function open(header?: 'custom', detachable?: boolean) {
   state.tabs = [{ id: 'tools', pluginId: 'example', generation: 1, label: 'Tools', header, detachable,
@@ -92,4 +94,13 @@ it('shows a placeholder, not the tab, while the tab is open in its own window', 
   const header = view.container.querySelector('.project-topbar')!;
   expect(header.contains(screen.getByRole('button', { name: 'Close pane' }))).toBe(true);
   expect(screen.queryByRole('button', { name: 'Open Tools in a new window' })).toBeNull();
+});
+it('gives a built-in module tab the same host side panel as plugin tabs', () => {
+  state.tabs = [];
+  state.modules = [{ id: 'notes', title: 'Notes' }];
+  const view = render(<ProjectModePane projectId="p" mode="notes" paneId="pane" />);
+  const layout = view.container.querySelector('[data-testid="plugin-panel-host-layout"]')!;
+  expect(layout).toBeTruthy();
+  expect(layout.contains(screen.getByRole('region', { name: 'Module tab' }))).toBe(true);
+  expect(screen.getByRole('region', { name: 'Module tab' }).textContent).toBe('notes');
 });

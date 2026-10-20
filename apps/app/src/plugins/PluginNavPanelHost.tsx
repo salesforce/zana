@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { listNavPanels, subscribePluginSlots } from './plugin-slots.js';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { useRouteState } from '../hooks/useRouteState.js';
+import { PluginPanelHostLayout } from '../views/thread-detail/PluginPanelHostLayout.js';
 
 /**
  * Renders the active plugin navPanel (every panel, not only the first) with the
@@ -23,11 +24,13 @@ export function PluginNavPanelHost() {
   const Component = panel.component;
   return (
     <div className="module-panel-host">
-      <div className="module-panel-slot panel-body--full">
-        <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
-          <Component pluginId={panel.pluginId} subPath={route.pluginSubPath} />
-        </PluginSlotBoundary>
-      </div>
+      <PluginPanelHostLayout pluginId={panel.pluginId} panelPath={panel.path ?? panel.id} subPath={route.pluginSubPath}>
+        <div className="module-panel-slot panel-body--full">
+          <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
+            <Component pluginId={panel.pluginId} subPath={route.pluginSubPath} />
+          </PluginSlotBoundary>
+        </div>
+      </PluginPanelHostLayout>
     </div>
   );
 }

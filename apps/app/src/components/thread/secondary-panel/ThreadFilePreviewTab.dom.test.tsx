@@ -2,7 +2,7 @@
 // @vitest-environment-options {"settings":{"disableIframePageLoading":true}}
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { ThreadFilePreviewTab, ThreadFilePreviewView } from './ThreadFilePreviewTab.js';
+import { ThreadFilePreviewTab, ThreadFilePreviewView, ThreadHtmlPreviewFrame } from './ThreadFilePreviewTab.js';
 import { FilePreviewScrollPositionContext } from './filePreviewScrollPositionContext.js';
 
 const mocks = vi.hoisted(() => ({ readFile: vi.fn(), hostFileContent: vi.fn(), storageContent: vi.fn() }));
@@ -224,6 +224,31 @@ it('keeps the existing document and shows a failed-refresh status', async () => 
 });
 
 describe('HTML file preview', () => {
+  it('reloads only its own frame on a retry signal and removes the listener on unmount', () => {
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const view = render(<ThreadHtmlPreviewFrame path="a.html" src="/api/v1/file-preview/html?path=a.html" />);
+    const original = view.getByTestId('thread-file-preview-html') as HTMLIFrameElement;
+    // Page loading is disabled in happy-dom; supply the frame's window identity.
+    const frameWindow = {} as Window;
+    vi.spyOn(original, 'contentWindow', 'get').mockReturnValue(frameWindow);
+    const signal = (source: Window | null, data: unknown) => act(() => {
+      window.dispatchEvent(new MessageEvent('message', { source, data }));
+    });
+    signal(window, { type: 'zcc:html-preview:retry' });
+    signal(null, { type: 'zcc:html-preview:retry' });
+    signal(original.contentWindow, null);
+    signal(original.contentWindow, { type: 'unknown' });
+    expect(view.getByTestId('thread-file-preview-html')).toBe(original);
+    signal(original.contentWindow, { type: 'zcc:html-preview:retry', url: 'https://untrusted.invalid' });
+    const reloaded = view.getByTestId('thread-file-preview-html');
+    expect(reloaded).not.toBe(original);
+    expect(reloaded.getAttribute('src')).toBe('/api/v1/file-preview/html?path=a.html');
+    signal(original.contentWindow, { type: 'zcc:html-preview:retry' });
+    expect(view.getByTestId('thread-file-preview-html')).toBe(reloaded);
+    view.unmount();
+    expect(remove).toHaveBeenCalledWith('message', expect.any(Function));
+  });
+
   it('renders HTML in a sandboxed frame by default and toggles to the source', async () => {
     mocks.hostFileContent.mockResolvedValue({ content: '<h1>Mock</h1>', encoding: 'utf8' });
     const view = render(<ThreadFilePreviewTab path="mockups/page.html" threadId="t1" />);
@@ -233,10 +258,12 @@ describe('HTML file preview', () => {
     expect(frame.getAttribute('srcdoc')).toBeNull();
     expect(frame.getAttribute('src')).toBe('/api/v1/file-preview/html?path=mockups%2Fpage.html&source=workspace&threadId=t1');
     expect(view.getByTestId('thread-file-preview-mode-preview').getAttribute('aria-pressed')).toBe('true');
+    expect(mocks.hostFileContent).not.toHaveBeenCalled();
+    expect(mocks.readFile).not.toHaveBeenCalled();
 
     fireEvent.click(view.getByTestId('thread-file-preview-mode-code'));
     expect(view.queryByTestId('thread-file-preview-html')).toBeNull();
-    expect(view.getByTestId('thread-file-preview').textContent).toContain('<h1>Mock</h1>');
+    expect((await view.findByTestId('thread-file-preview')).textContent).toContain('<h1>Mock</h1>');
     expect(view.getByTestId('thread-file-preview-mode-code').getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.click(view.getByTestId('thread-file-preview-mode-preview'));
@@ -250,6 +277,49 @@ describe('HTML file preview', () => {
     expect(Object.fromEntries(new URL(src, 'http://app').searchParams)).toEqual({
       path: 'out/page.html', source: 'thread-storage', threadId: 't1', projectId: 'p1', rev: '3'
     });
+    expect(mocks.storageContent).not.toHaveBeenCalled();
+    expect(mocks.hostFileContent).not.toHaveBeenCalled();
+    fireEvent.click(view.getByTestId('thread-file-preview-mode-code'));
+    await view.findByTestId('thread-file-preview');
+    expect(mocks.storageContent).toHaveBeenCalledWith('t1', 'out/page.html');
+  });
+
+  it('renders a project HTML file independently of the text read cap and refreshes its URL', () => {
+    mocks.readFile.mockResolvedValue({ ok: false, message: 'file exceeds the read cap' });
+    const view = render(<ThreadFilePreviewTab path="/project/large.HTML" projectId="p1" />);
+    const frame = view.getByTestId('thread-file-preview-html');
+    expect(frame.getAttribute('src')).toContain('projectId=p1');
+    expect(mocks.readFile).not.toHaveBeenCalled();
+    view.rerender(<ThreadFilePreviewTab path="/project/large.HTML" projectId="p1" previewRevision={2} />);
+    expect(view.getByTestId('thread-file-preview-html').getAttribute('src')).toContain('rev=2');
+    expect(mocks.readFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps Preview available after source exceeds the cap and lets a source read retry', async () => {
+    mocks.hostFileContent.mockRejectedValueOnce(new Error('file exceeds the read cap'));
+    const view = render(<ThreadFilePreviewTab path="large.html" threadId="t1" lineNumber={1} />);
+    await view.findByRole('heading', { name: 'Source is too large to display' });
+    expect(view.getByRole('status').textContent).toContain('Switch to Preview');
+    expect(view.queryByText('file exceeds the read cap')).toBeNull();
+    fireEvent.click(view.getByTestId('thread-file-preview-mode-preview'));
+    expect(view.getByTestId('thread-file-preview-html')).toBeTruthy();
+    expect(view.queryByRole('status')).toBeNull();
+    expect(mocks.hostFileContent).toHaveBeenCalledTimes(1);
+
+    mocks.hostFileContent.mockRejectedValueOnce(new Error('temporarily offline'));
+    fireEvent.click(view.getByTestId('thread-file-preview-mode-code'));
+    await view.findByText('temporarily offline');
+    mocks.hostFileContent.mockResolvedValueOnce({ content: '<p>Recovered</p>' });
+    fireEvent.click(view.getByRole('button', { name: 'Try again' }));
+    expect((await view.findByTestId('thread-file-preview')).textContent).toContain('Recovered');
+    expect(view.queryByRole('status')).toBeNull();
+    expect(mocks.hostFileContent).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives a readable size error for non-HTML source files', () => {
+    const view = render(<ThreadFilePreviewView path="large.txt" content={null} error="file exceeds the read cap" />);
+    expect(view.getByRole('status').textContent).toContain('Try opening a smaller file');
+    expect(view.queryByRole('button', { name: 'Try again' })).toBeNull();
   });
 
   it('opens on the source when a line is targeted and forgets the choice for another file', async () => {

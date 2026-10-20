@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createServer, request, type Server } from 'node:http';
 import { once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -105,4 +105,20 @@ it('bounds queued socket messages before the local gateway has accepted a socket
   ws.send(JSON.stringify({ type: 'ws-data', id: 1, data: Buffer.alloc(128 * 1024).toString('base64'), binary: true }));
   expect(JSON.parse((await reply)[0].toString())).toEqual({ type: 'error', id: 1 });
   expect(client.state()).toBe('connected');
+});
+
+it.each([
+  { random: 0, delay: 500 },
+  { random: 0.999999, delay: 999 }
+])('spreads each reconnect delay over [0.5x, 1x] of the backoff (random=$random)', async ({ random, delay }) => {
+  const server = createServer(); const wss = new WebSocketServer({ server }); const port = await listen(server);
+  cleanup.push(async () => { for (const ws of wss.clients) ws.terminate(); wss.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  wss.on('connection', ws => ws.terminate());
+  const delays: number[] = []; const realSetTimeout = globalThis.setTimeout;
+  const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number, ...args: unknown[]) => { if (ms === delay) delays.push(ms); return realSetTimeout(fn, ms === delay ? 60_000 : ms, ...args); }) as typeof setTimeout);
+  cleanup.push(() => spy.mockRestore());
+  const client = connectRelay({ publicUrl: `http://127.0.0.1:${port}`, allowLocal: true, token, gatewayPort: port, retryMs: 1000, random: () => random });
+  cleanup.push(() => client.close());
+  await expect.poll(() => delays.length).toBeGreaterThan(0);
+  expect(delays[0]).toBe(delay);
 });

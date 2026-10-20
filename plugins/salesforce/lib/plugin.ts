@@ -93,6 +93,7 @@ import { OrgLoginService } from './org-login-service.js';
 import { OrgAgentService } from './org-agent-service.js';
 import { OrgSyncService } from './org-sync.js';
 import { registerOrgSync } from './org-sync-rpc.js';
+import { listHubProjects } from './hub-projects.js';
 import { parseOrgLoginInput } from './org-login.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
 import { SoqlExplorer } from './soql-explorer.js';
@@ -507,6 +508,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const orgAgents = new OrgAgentService({ execSf: deps.execSf, connect: () => sdk.connect() });
   zcc.onDispose(() => orgAgents.dispose());
   registerRpc('agents.list', async () => ({ ok: true, data: await orgAgents.list() }));
+  // The global Salesforce page picks the project to open the Studio in.
+  registerRpc('hub.projects', async () => ({ ok: true, projects: await listHubProjects(await zcc.sdk.projects.list(), zcc.storage.kv, deps) }));
   registerRpc('agents.draft.destination', async args => {
     const { root } = await resolveAgentFilesRoot(args);
     const { directory, initializesProject } = draftDestination(root);

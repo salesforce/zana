@@ -40,6 +40,7 @@ import { buildFollowUpPrompt, followUpAgentTitle } from '@/lib/followUpPrompt';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { useNowTick } from '@/hooks/useNowTick';
 import { platformShortcut } from '../../lib/platformShortcut.js';
+import { useRetainedText } from '../../components/composer/ComposerDraft.js';
 
 /** Status → pill label / class suffix. Reuses the scheduler pill palette. */
 const STATUS_META: Record<FollowUpStatus, { label: string; cls: string }> = {
@@ -753,7 +754,7 @@ function FollowUpAnswerBox({
   /** True while the post-spawn lock is active — mirrors the spawn buttons. */
   spawnDisabled: boolean;
 }) {
-  const [text, setText] = useState('');
+  const [text, setText] = useRetainedText(JSON.stringify(['follow-up-answer', followUp.id]));
   const [sending, setSending] = useState(false);
   // Live terminals for this project drive the tier preview: an alive originating
   // tab means the answer will inject (tier 1) rather than resume/spawn.

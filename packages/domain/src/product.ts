@@ -2028,6 +2028,11 @@ export interface AppConfig {
     string,
     { bounds?: { x?: number; y?: number; width: number; height: number }; maximized?: boolean; at: number }
   >;
+  /**
+   * Geometry of the last thread view window, shared by every thread so a new
+   * one opens where the previous one was. Main owns it.
+   */
+  threadViewWindowBounds?: { bounds?: { x?: number; y?: number; width: number; height: number }; maximized?: boolean };
   /** Global default model passed to claude CLI (absent = let claude decide). */
   defaultModel?: 'opus' | 'sonnet' | 'haiku' | 'default';
   /** Global default permission mode for new claude sessions. */
@@ -6325,3 +6330,6 @@ export interface ExecutionBoardSnapshot {
   artifacts: Array<{ id: string; name: string; mediaType: string; contentDigest: string; attempt: number; createdAt: number; producerRole?: 'worker' | 'orchestrator'; producerSlotId?: string }>;
   artifactsTruncated: boolean;
 }
+
+/** Stable text main raises when Zana Connect rejects this computer's credential (401/403). Survives IPC serialization. */
+export const CONNECT_ACCESS_REVOKED_MESSAGE = "This computer's access was revoked. Sign in again to reconnect.";

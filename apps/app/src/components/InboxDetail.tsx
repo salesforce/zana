@@ -61,6 +61,7 @@ import type {
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
 import { platformShortcut } from '../lib/platformShortcut.js';
+import { useRetainedText } from './composer/ComposerDraft.js';
 
 interface InboxDetailProps {
   /**
@@ -1209,7 +1210,7 @@ function ReplyBox({
 }) {
   const answered = useInboxAnswered((s) => !!s.answeredIds[entry.id]);
   const blockerState = useExecutionInboxBlockerState(entry, answered);
-  const [text, setText] = useState('');
+  const [text, setText] = useRetainedText(JSON.stringify(['inbox-reply', entry.id]));
   const [sending, setSending] = useState(false);
   const [reopened, setReopened] = useState(false);
 

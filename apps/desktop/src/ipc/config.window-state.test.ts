@@ -48,7 +48,8 @@ describe('config.set window state', () => {
       theme: 'light',
       windowBounds: { x: 0, y: 0, width: 1000, height: 700 },
       windowMaximized: true,
-      pluginViewWindowBounds: { 'salesforce/salesforce@p-1': { bounds: { width: 1, height: 1 }, at: 1 } }
+      pluginViewWindowBounds: { 'salesforce/salesforce@p-1': { bounds: { width: 1, height: 1 }, at: 1 } },
+      threadViewWindowBounds: { bounds: { width: 1, height: 1 }, maximized: true }
     });
     expect(h.setConfig).toHaveBeenCalledWith({ theme: 'light' });
     expect(next).toEqual({ theme: 'light' });

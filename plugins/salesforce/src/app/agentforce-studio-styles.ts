@@ -20,7 +20,8 @@ ${STUDIO_TOKENS}.sf-as { container-type: inline-size; background:var(--sf-surfac
 .sf-as .af-document-bar .sf-as-save-more.is-dirty { border-left:1px solid color-mix(in srgb,var(--sf-on-accent) 35%,transparent); }
 .af-document-bar .sf-as-save-menu { position:absolute; top:calc(100% + 4px); right:0; z-index:30; min-width:170px; padding:4px; border:1px solid var(--sf-border); border-radius:8px; background:var(--sf-bg); box-shadow:0 8px 24px rgba(0,0,0,.14); }
 .af-document-bar .sf-as-save-menu [role=menuitem] { display:flex; align-items:center; gap:8px; width:100%; border:0; border-radius:5px; background:transparent; color:var(--sf-text); font:inherit; font-size:12px; padding:6px 8px; text-align:left; cursor:pointer; white-space:nowrap; }
-.af-document-bar .sf-as-save-menu [role=menuitem]:hover, .af-document-bar .sf-as-save-menu [role=menuitem]:focus-visible { background:var(--sf-soft); outline:none; }
+.af-document-bar .sf-as-save-menu [role=menuitem]:not(:disabled):hover, .af-document-bar .sf-as-save-menu [role=menuitem]:focus-visible { background:var(--sf-soft); outline:none; }
+.af-document-bar .sf-as-save-menu [role=menuitem]:disabled { opacity:.5; cursor:default; }
 .af-document-bar .af-document-compile.is-busy svg { animation:sf-compile-pulse 1s ease-in-out infinite; }
 @keyframes sf-compile-pulse { 50% { opacity:.35; } }
 /* Org switcher: a readable label (alias, kind, chevron) over an invisible native select. */
@@ -241,9 +242,6 @@ button.af-agent-row-main { cursor:pointer; }button.af-agent-row-main:disabled { 
 
 .sf-main-col { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; }
 .sf-main-col>.af-workspace { flex:1 1 0; min-height:0; }
-.sf-comment-form { display:flex; align-items:flex-end; gap:8px; padding:8px 12px; border-bottom:1px solid var(--sf-border); background:var(--sf-bg); color:var(--sf-text); font-size:12px; }
-.sf-comment-form label { display:flex; flex-direction:column; gap:4px; flex:1; }
-.sf-comment-form textarea { font:inherit; color:inherit; background:transparent; border:1px solid var(--sf-border); border-radius:6px; padding:4px 6px; resize:vertical; }
 
 .sf-as-no-file { position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:24px; background:var(--sf-surface); }
 .sf-as .sf-as-explorer-top { display:flex; align-items:center; gap:4px; margin-top:10px; }

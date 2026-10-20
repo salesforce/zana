@@ -337,6 +337,32 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   expect(codeBox!.height).toBeGreaterThan(editorBox!.height - statusBox!.height - 24);
   const explorerBox = await studio.getByTestId('salesforce-agent-script-explorer').boundingBox();
   expect(explorerBox!.x + explorerBox!.width).toBeLessThanOrEqual(editorBox!.x + 1);
+  // A selection gets a one-row chip above it, and its Comment box opens in the editor under the lines.
+  await frame.locator('.monaco-editor').click({ position: { x: 120, y: 45 } });
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Shift+End');
+  const chip = frame.locator('.sf-selection-chip');
+  await expect(chip).toBeVisible();
+  const [commentBox, askBox] = await Promise.all(['Comment', 'Ask agent'].map(name => chip.getByRole('button', { name, exact: true }).boundingBox()));
+  expect(Math.abs(commentBox!.y - askBox!.y)).toBeLessThan(2);
+  const selectionBox = await frame.locator('.selected-text').first().boundingBox();
+  expect((await chip.boundingBox())!.y + (await chip.boundingBox())!.height).toBeLessThanOrEqual(selectionBox!.y + 1);
+  await chip.getByRole('button', { name: 'Comment', exact: true }).click();
+  // Monaco hides its view zones from the accessibility tree, so find the box by its markup.
+  const commentForm = frame.locator('form[aria-label="Add comment"]');
+  await expect(commentForm).toBeVisible();
+  await expect(studio.locator('.sf-comment-form')).toHaveCount(0);
+  expect((await commentForm.boundingBox())!.y).toBeGreaterThan(selectionBox!.y);
+  // The box takes focus; toBeFocused also needs the iframe document to report hasFocus(), which headless Linux CI does not.
+  const commentInput = commentForm.locator('textarea');
+  await expect.poll(() => commentInput.evaluate(input => input === input.ownerDocument.activeElement)).toBe(true);
+  await page.keyboard.type('Check this line');
+  await expect(commentInput).toHaveValue('Check this line');
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-inline-comment.png'));
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
+  await expect(commentForm).toHaveCount(0);
+  await expect(frame.locator('.sf-comment-glyph')).toHaveCount(1);
+  await expect(frame.locator('.view-lines')).not.toContainText('Check this line');
   // "Show side panel" opens the host side panel beside the tab; its New Tab page lists only Studio's tools.
   await studioPanel(page).getByRole('button', { name: 'Show side panel', exact: true }).first().click();
   await expect(sidePanel(page)).toBeVisible();
@@ -1107,6 +1133,7 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
   })()`)).toBeNull();
 
   // Publish opens the Release tool on the file's org and versions.
+  await studio.getByRole('button', { name: 'More save options' }).click();
   await studio.getByTestId('salesforce-agent-script-publish').click();
   const release = studio.getByTestId('studio-release-pane');
   await expect(release.getByTestId('release-org')).toHaveText('studio (sandbox)');

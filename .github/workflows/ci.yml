@@ -149,6 +149,46 @@ jobs:
 
   # Merge every shard's coverage before applying the changed-code floor:
   # scripts/ci-verification.mjs sums hit counts per location across reports.
+  # Production Connect runs on Postgres (advisory locks, concurrent claims);
+  # the root suite only covers SQLite, so these files skip there.
+  connect-postgres:
+    name: Connect on Postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: connect
+          POSTGRES_DB: connect
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Connect Postgres tests
+        env:
+          ZCC_CONNECT_TEST_DATABASE_URL: postgres://postgres:connect@127.0.0.1:5432/connect
+        run: pnpm exec vitest run website/connect/postgres.test.ts website/connect/machines.postgres.test.ts
+
   coverage:
     name: Changed-code coverage
     runs-on: ubuntu-latest
@@ -245,7 +285,7 @@ jobs:
   verify:
     name: Typecheck and test
     runs-on: ubuntu-latest
-    needs: [unit, unit-packages, coverage, e2e]
+    needs: [unit, unit-packages, coverage, e2e, connect-postgres]
     if: always()
     steps:
       - name: Require unit and production-boundary verification
@@ -254,8 +294,10 @@ jobs:
           PACKAGES_RESULT: ${{ needs.unit-packages.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           BOUNDARY_RESULT: ${{ needs.e2e.result }}
+          POSTGRES_RESULT: ${{ needs.connect-postgres.result }}
         run: |
           test "$UNIT_RESULT" = success
           test "$PACKAGES_RESULT" = success
           test "$COVERAGE_RESULT" = success
           test "$BOUNDARY_RESULT" = success
+          test "$POSTGRES_RESULT" = success

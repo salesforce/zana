@@ -49,3 +49,49 @@ it('shows every path when no file is open', () => {
   render(<CommentsPane pluginId="s" path={null} comments={[c('x', 1, { path: 'z.agent' })]} />);
   expect(screen.getByText('body x')).toBeTruthy();
 });
+
+it('edits own open comments and deletes after confirming', () => {
+  const onEdit = vi.fn(); const onDelete = vi.fn();
+  const agent = c('g', 4, { author: { kind: 'agent', threadId: 't', name: 'Agent' } });
+  render(<CommentsPane {...props} comments={[c('a', 2, { editedAt: 3 }), agent, c('r', 6, { resolved: { at: 1, note: 'n', by: 'user' } })]} onEdit={onEdit} onDelete={onDelete} />);
+  expect(screen.getByText('(edited)')).toBeTruthy();
+  // Only the user's own comment offers Edit.
+  expect(screen.getAllByText('Edit')).toHaveLength(1);
+  fireEvent.click(screen.getByText('Edit'));
+  const box = screen.getByLabelText('Edit comment') as HTMLTextAreaElement;
+  expect(box.value).toBe('body a');
+  // Unchanged text closes without a call; Escape cancels.
+  fireEvent.click(screen.getByText('Save'));
+  expect(onEdit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText('Edit'));
+  fireEvent.keyDown(screen.getByLabelText('Edit comment'), { key: 'Escape' });
+  expect(screen.queryByLabelText('Edit comment')).toBeNull();
+  fireEvent.click(screen.getByText('Edit'));
+  fireEvent.change(screen.getByLabelText('Edit comment'), { target: { value: '   ' } });
+  expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.keyDown(screen.getByLabelText('Edit comment'), { key: 'Enter', metaKey: true });
+  expect(onEdit).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Edit comment'), { target: { value: ' reworded ' } });
+  fireEvent.keyDown(screen.getByLabelText('Edit comment'), { key: 'Enter', ctrlKey: true });
+  expect(onEdit).toHaveBeenCalledWith('a', 'reworded');
+  fireEvent.click(screen.getByText('Edit'));
+  fireEvent.click(screen.getByText('Cancel'));
+  expect(screen.queryByLabelText('Edit comment')).toBeNull();
+  fireEvent.click(screen.getAllByText('Delete')[1]!);
+  expect(screen.getByText('Delete this comment?')).toBeTruthy();
+  fireEvent.click(screen.getByText('Cancel'));
+  expect(onDelete).not.toHaveBeenCalled();
+  fireEvent.click(screen.getAllByText('Delete')[1]!);
+  fireEvent.click(screen.getAllByText('Delete').find(n => n.className.includes('is-danger'))!);
+  expect(onDelete).toHaveBeenCalledWith('g');
+  // Resolved comments can be deleted but not edited.
+  fireEvent.click(screen.getByText('Resolved (1)'));
+  expect(screen.queryByText('Edit')).toBeNull();
+  expect(screen.getByText('Delete')).toBeTruthy();
+});
+
+it('hides Edit and Delete without handlers', () => {
+  render(<CommentsPane {...props} comments={[c('a', 2)]} />);
+  expect(screen.queryByText('Edit')).toBeNull();
+  expect(screen.queryByText('Delete')).toBeNull();
+});

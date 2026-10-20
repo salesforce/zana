@@ -137,9 +137,9 @@ export const SALESFORCE_STYLES = `
 .sf-connection-status { flex-basis:100%; order:1; margin:0; color:var(--text-muted); font-size:12px; }
 .sf-org-rows { list-style:none; margin:0; padding:0; }
 .sf-org-rows > li { border-bottom:1px solid var(--border); }
-.sf-org-row { display:flex; gap:10px; align-items:center; padding:12px; width:100%; background:none; color:var(--text-primary); border:0; text-align:left; cursor:pointer; }
+.sf-org-row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; width:100%; background:none; color:var(--text-primary); border:0; text-align:left; cursor:pointer; }
 .sf-org-row[aria-pressed=true] { background:var(--bg-elevated); }
-.sf-org-row span:first-child { flex:1; min-width:0; overflow-wrap:anywhere; }
+.sf-org-row span:first-child { flex:1 1 140px; min-width:0; overflow-wrap:anywhere; }
 .sf-org-row small { display:block; font-size:12px; color:var(--text-muted); }
 .sf-login-dialog { width:540px; max-width:calc(100vw - 32px); max-height:calc(100dvh - 32px); margin:auto; padding:0; border:1px solid var(--border); border-radius:16px; color:var(--text-primary); background:var(--bg-panel); box-shadow:0 24px 80px #0004,0 4px 16px #0001; overflow:auto; text-align:left; font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
 .sf-login-dialog::backdrop { background:#0b14225c; backdrop-filter:blur(4px); }

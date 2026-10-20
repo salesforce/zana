@@ -37,6 +37,7 @@ function createFake(initial: string) {
     onDidChangeModelContent: (cb: () => void) => { contentListeners.push(cb); return { dispose: vi.fn() }; },
     onMouseDown: (cb: (e: any) => void) => { mouseListeners.push(cb); return { dispose: vi.fn() }; },
     addCommand: vi.fn(),
+    focus: vi.fn(),
     getModel: () => model,
     changeViewZones: (fn: (a: any) => void) => fn({
       addZone: (zone: any) => { const id = `z${++zoneSeq}`; zones.set(id, zone); return id; },
@@ -206,37 +207,48 @@ it('renders comment glyphs, toggles inline bodies on gutter click and posts comm
   expect(zone.domNode.textContent).toContain('fix this');
   gutter(2);
   expect(fake.zones.size).toBe(0);
+  // A line without comments opens the inline comment box under it.
   gutter(4);
-  expect(post).toHaveBeenLastCalledWith({ type: 'commentAction', kind: 'add', line: 4, endLine: 4, quote: 'd' });
+  expect(Array.from(fake.zones.values()).map(row => [row.afterLineNumber, row.domNode.firstElementChild.getAttribute('aria-label')])).toEqual([[4, 'Add comment']]);
+  layer.closeCommentComposer();
+  expect(fake.zones.size).toBe(0);
   gutter(undefined);
   fake.mouseListeners[0]!({ target: { type: 6, position: { lineNumber: 1 } } });
-  expect(post).toHaveBeenCalledTimes(3);
+  expect(post).toHaveBeenCalledTimes(2);
   // single-line comment label and empty quote fallback
   layer.setComments([{ ...comment, line: 1, endLine: 1, quote: '' }]);
   gutter(1);
   expect(post).toHaveBeenLastCalledWith({ type: 'commentAction', kind: 'open', line: 1, endLine: 1, quote: 'a' });
-  expect(Array.from(fake.zones.values())[0].domNode.textContent).toContain('Ann - L1fix');
+  expect(Array.from(fake.zones.values())[0].domNode.textContent).toContain('Ann - L1EditDeletefix');
   layer.setHits([3]);
   expect(fake.marks().set.mock.calls.at(-1)![0]).toHaveLength(2);
 });
 
 it('debounces cursor reports and shows a selection chip with actions', () => {
   vi.useFakeTimers();
-  const selection = { isEmpty: () => false, text: 'sel', startLineNumber: 1, endLineNumber: 2, getEndPosition: () => ({ lineNumber: 2, column: 2 }) };
+  const selection = { isEmpty: () => false, text: 'sel', startLineNumber: 1, endLineNumber: 2, getStartPosition: () => ({ lineNumber: 1, column: 1 }) };
   fake.setSelection(selection, { lineNumber: 2, column: 2 });
   fake.cursorListeners[0]!(); fake.cursorListeners[0]!();
   vi.advanceTimersByTime(CURSOR_DEBOUNCE_MS);
   expect(post).toHaveBeenCalledTimes(1);
   expect(post).toHaveBeenCalledWith({ type: 'cursor', line: 2, column: 2, selection: { startLine: 1, endLine: 2, text: 'sel' } });
   const chip = Array.from(fake.widgets).find(w => w.getId() === 'sf.selection.chip');
-  expect(chip.getPosition().position).toEqual({ lineNumber: 2, column: 2 });
+  // Above the selection, so it never covers the lines that follow.
+  expect(chip.getPosition()).toEqual({ position: { lineNumber: 1, column: 1 }, preference: [1, 2] });
   const node: HTMLElement = chip.getDomNode();
   const labels = Array.from(node.querySelectorAll('button')).map(b => b.textContent!);
   expect(labels.length).toBeGreaterThanOrEqual(2);
   node.querySelectorAll('button')[0]!.dispatchEvent(new MouseEvent('mousedown', { cancelable: true }));
+  // The chip keeps its pointer presses from Monaco, which would otherwise take focus back from the comment box.
+  const outside = vi.fn();
+  fake.parent.addEventListener('mousedown', outside);
+  fake.parent.addEventListener('pointerdown', outside);
+  fake.parent.appendChild(node);
+  for (const type of ['mousedown', 'pointerdown']) node.querySelector('button')!.dispatchEvent(new Event(type, { bubbles: true }));
+  expect(outside).not.toHaveBeenCalled();
   for (const button of Array.from(node.querySelectorAll('button'))) button.click();
   const types = post.mock.calls.map((c: any[]) => c[0] as any);
-  expect(types.some((t: any) => t.type === 'commentAction' && t.kind === 'add' && t.quote === 'sel')).toBe(true);
+  expect(Array.from(fake.zones.values()).map(row => [row.afterLineNumber, row.domNode.textContent])).toEqual([[2, 'Comment on lines 1-2Add commentCancel']]);
   expect(types.some((t: any) => t.type === 'askSelection')).toBe(true);
   expect(fake.widgets.size).toBe(0);
   // collapsed selection clears the chip; missing position is ignored
@@ -257,14 +269,159 @@ it('debounces cursor reports and shows a selection chip with actions', () => {
 it('dispose clears visuals, the chip and pending cursor reports', () => {
   vi.useFakeTimers();
   propose('a\nB\nc\nd');
-  fake.setSelection({ isEmpty: () => false, text: 's', startLineNumber: 1, endLineNumber: 1, getEndPosition: () => ({ lineNumber: 1, column: 1 }) }, { lineNumber: 1, column: 1 });
+  fake.setSelection({ isEmpty: () => false, text: 's', startLineNumber: 1, endLineNumber: 1, getStartPosition: () => ({ lineNumber: 1, column: 1 }) }, { lineNumber: 1, column: 1 });
   fake.cursorListeners[0]!(); vi.advanceTimersByTime(CURSOR_DEBOUNCE_MS);
+  layer.openCommentComposer(1, 1, 'a');
   post.mockClear();
   fake.cursorListeners[0]!();
   layer.dispose();
+  expect(fake.zones.size).toBe(0);
   vi.advanceTimersByTime(CURSOR_DEBOUNCE_MS);
   expect(post).not.toHaveBeenCalled();
   expect(fake.widgets.size).toBe(0);
   expect(bar()).toBeNull();
   new StudioLayer(fake.monaco, fake.editor, post).dispose();
+});
+
+it('focuses the comment box the first time Monaco shows its zone', async () => {
+  document.body.appendChild(fake.parent);
+  const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
+  layer.openCommentComposer(1, 1, 'a');
+  const zone = Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'));
+  const input: HTMLTextAreaElement = zone.domNode.querySelector('textarea');
+  // Hidden: Monaco reports the zone far above the viewport, so the box waits.
+  zone.onDomNodeTop(-1_000_000);
+  await Promise.resolve();
+  expect(focus).not.toHaveBeenCalled();
+  // Shown (even partly scrolled above the top): focus lands after Monaco sets its display.
+  fake.parent.appendChild(zone.domNode);
+  zone.onDomNodeTop(-12);
+  expect(focus).not.toHaveBeenCalled();
+  await Promise.resolve();
+  expect(document.activeElement).toBe(input);
+  // Later renders and scrolling never pull focus back into the box.
+  input.blur();
+  zone.onDomNodeTop(40);
+  await Promise.resolve();
+  expect(focus).toHaveBeenCalledTimes(1);
+  focus.mockRestore();
+});
+
+it('skips focus when the comment box is gone before Monaco shows it', async () => {
+  const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
+  layer.openCommentComposer(1, 1, 'a');
+  const zone = Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'));
+  zone.onDomNodeTop(10);
+  await Promise.resolve();
+  expect(focus).not.toHaveBeenCalled();
+  focus.mockRestore();
+});
+
+it('the inline comment box submits, cancels and keeps its keys from the editor', () => {
+  vi.useFakeTimers();
+  document.body.appendChild(fake.parent);
+  const box = () => Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'));
+  layer.openCommentComposer(3, 9, 'c');
+  const zone = box();
+  // The zone clamps to the model and sits after any comments shown on that line.
+  expect(zone).toMatchObject({ afterLineNumber: 4, ordinal: 2, heightInPx: 104, suppressMouseDown: true });
+  const form: HTMLFormElement = zone.domNode.firstElementChild;
+  const input = form.querySelector('textarea')!;
+  expect(input.getAttribute('aria-label')).toBe('Comment');
+  const add = Array.from(form.querySelectorAll('button')).find(b => b.textContent === 'Add comment')!;
+  expect(form.textContent).toContain('Comment on lines 3-9');
+  expect(input.maxLength).toBe(2000);
+  fake.parent.appendChild(form);
+  input.focus();
+  expect(add.disabled).toBe(true);
+  const outside = vi.fn();
+  fake.parent.addEventListener('keydown', outside);
+  fake.parent.addEventListener('mousedown', outside);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  form.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  expect(outside).not.toHaveBeenCalled();
+  // Blank text does nothing; Cmd/Ctrl+Enter sends the trimmed body.
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+  expect(post).not.toHaveBeenCalled();
+  input.value = '  fix this ';
+  input.dispatchEvent(new Event('input'));
+  expect(add.disabled).toBe(false);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  expect(post).not.toHaveBeenCalled();
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+  expect(post).toHaveBeenCalledWith({ type: 'commentAction', kind: 'submit', line: 3, endLine: 9, quote: 'c', body: 'fix this' });
+  expect(box()).toBeUndefined();
+  expect(fake.editor.focus).toHaveBeenCalledTimes(1);
+  // A form submit (the button) sends too; reopening replaces the open box.
+  layer.openCommentComposer(1, 1, 'a');
+  layer.openCommentComposer(2, 2, 'b');
+  expect(fake.zones.size).toBe(1);
+  const second: HTMLFormElement = box().domNode.firstElementChild;
+  second.querySelector('textarea')!.value = 'again';
+  second.dispatchEvent(new Event('submit', { cancelable: true }));
+  expect(post).toHaveBeenLastCalledWith({ type: 'commentAction', kind: 'submit', line: 2, endLine: 2, quote: 'b', body: 'again' });
+  // Escape and Cancel close without sending; so does switching files.
+  layer.openCommentComposer(1, 1, 'a');
+  box().domNode.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  expect(box()).toBeUndefined();
+  layer.openCommentComposer(1, 1, 'a');
+  click(box().domNode, 'Cancel');
+  expect(box()).toBeUndefined();
+  layer.openCommentComposer(1, 1, 'a');
+  layer.onFileSwitched();
+  expect(box()).toBeUndefined();
+  expect(post).toHaveBeenCalledTimes(2);
+  // No model: nothing opens; closing twice is harmless.
+  fake.editor.getModel = () => null;
+  layer.openCommentComposer(1, 1, 'a');
+  expect(fake.zones.size).toBe(0);
+  layer.closeCommentComposer();
+  fake.parent.remove();
+});
+
+it('inline comments edit through the composer and delete after a confirming click', () => {
+  vi.useFakeTimers();
+  const comment = { id: 'c1', path: 'x', line: 2, endLine: 3, quote: 'q', body: 'fix this', author: { kind: 'user', name: 'Ann' }, createdAt: 1, editedAt: 5 } as any;
+  const agentComment = { ...comment, id: 'c2', line: 4, endLine: 4, author: { kind: 'agent', threadId: 't', name: 'Agent' }, editedAt: undefined };
+  layer.setComments([comment, agentComment]);
+  const gutter = (line: number) => fake.mouseListeners[0]!({ target: { type: 2, position: { lineNumber: line } } });
+  gutter(2); gutter(4);
+  const rows = () => Array.from(fake.zones.values()).filter(row => row.domNode.className === 'sf-comment-zone').map(row => row.domNode as HTMLElement);
+  const [mine, theirs] = rows();
+  expect(mine!.textContent).toContain('Ann - L2-3 (edited)');
+  // Agent comments can be deleted but not reworded.
+  expect(Array.from(theirs!.querySelectorAll('button')).map(b => b.textContent)).toEqual(['Delete']);
+  // The row keeps its clicks from the editor.
+  const outside = vi.fn();
+  fake.parent.appendChild(mine!);
+  fake.parent.addEventListener('mousedown', outside);
+  mine!.querySelector('button')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  expect(outside).not.toHaveBeenCalled();
+  post.mockClear();
+  click(mine!, 'Edit');
+  const form = Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'))!.domNode.firstElementChild as HTMLFormElement;
+  expect(form.getAttribute('aria-label')).toBe('Edit comment');
+  expect(form.textContent).toContain('Edit comment on lines 2-3');
+  const input = form.querySelector('textarea')!;
+  expect(input.value).toBe('fix this');
+  const save = Array.from(form.querySelectorAll('button')).find(b => b.textContent === 'Save')!;
+  expect(save.disabled).toBe(false);
+  // Saving unchanged text just closes the box.
+  save.click();
+  expect(post).not.toHaveBeenCalled();
+  expect(Array.from(fake.zones.values()).some(row => row.domNode.querySelector('form'))).toBe(false);
+  click(rows()[0]!, 'Edit');
+  const again = Array.from(fake.zones.values()).find(row => row.domNode.querySelector('form'))!.domNode.firstElementChild as HTMLFormElement;
+  again.querySelector('textarea')!.value = ' fix this now ';
+  click(again, 'Save');
+  expect(post).toHaveBeenLastCalledWith({ type: 'commentAction', kind: 'update', id: 'c1', line: 2, endLine: 3, quote: 'q', body: 'fix this now' });
+  post.mockClear();
+  const del = Array.from(rows()[0]!.querySelectorAll('button')).find(b => b.textContent === 'Delete')!;
+  del.click();
+  expect(post).not.toHaveBeenCalled();
+  expect(del.textContent).toBe('Confirm delete');
+  del.dispatchEvent(new FocusEvent('blur'));
+  expect(del.textContent).toBe('Delete');
+  del.click(); del.click();
+  expect(post).toHaveBeenCalledWith({ type: 'commentAction', kind: 'delete', id: 'c1', line: 2, endLine: 3, quote: 'q' });
 });

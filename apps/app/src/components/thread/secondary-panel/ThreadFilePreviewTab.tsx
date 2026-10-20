@@ -29,6 +29,7 @@ import {
   type ThreadPlanDocument,
   planDocumentBadge
 } from './thread-plan-document.js';
+import './file-preview-error.css';
 
 const HostPreviewContext = createContext<ReactNode>(null);
 
@@ -45,7 +46,8 @@ export function ThreadFilePreviewView({
   threadId,
   projectId,
   storage = false,
-  lineNumber = null
+  lineNumber = null,
+  onRetry
 }: {
   path: string;
   content: string | null;
@@ -54,9 +56,24 @@ export function ThreadFilePreviewView({
   projectId?: string | null;
   storage?: boolean;
   lineNumber?: number | null;
+  onRetry?: () => void;
 }) {
   const retainScroll = useRetainedFilePreviewScroll();
-  if (error && content === null) return <p className="thread-detail-empty">{error}</p>;
+  if (error && content === null) {
+    const tooLarge = /exceeds the read cap|too.large/i.test(error);
+    return (
+      <div className="thread-file-preview-error" role="status">
+        <FileText size={28} strokeWidth={1.5} aria-hidden />
+        <h3>{tooLarge ? 'Source is too large to display' : 'Could not open this file'}</h3>
+        <p>{tooLarge
+          ? isHtmlPreviewPath(path)
+            ? 'Switch to Preview to view the page.'
+            : 'Try opening a smaller file or a shorter excerpt.'
+          : error}</p>
+        {onRetry ? <button type="button" onClick={onRetry}>Try again</button> : null}
+      </div>
+    );
+  }
   if (content === null) {
     return (
       <StencilLines
@@ -150,11 +167,27 @@ export function htmlPreviewUrl(
 }
 
 export function ThreadHtmlPreviewFrame({ path, src }: { path: string; src: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [retryRevision, setRetryRevision] = useState(0);
+  useEffect(() => {
+    const retry = (event: MessageEvent) => {
+      // Sandboxed documents have an opaque origin. Accept only this frame's
+      // retry signal, and keep its authorized URL entirely under host control.
+      if (event.source && event.source === frameRef.current?.contentWindow
+        && event.data?.type === 'zcc:html-preview:retry') {
+        setRetryRevision(revision => revision + 1);
+      }
+    };
+    window.addEventListener('message', retry);
+    return () => window.removeEventListener('message', retry);
+  }, []);
   // A srcdoc frame inherits the app CSP, which blocks inline and CDN scripts.
   // The server sends the file with its own sandboxing CSP, so scripts run in an
   // opaque origin with no same-origin access to the app or its IPC.
   return (
     <iframe
+      ref={frameRef}
+      key={retryRevision}
       className="thread-file-preview-html"
       data-testid="thread-file-preview-html"
       title={path}
@@ -282,6 +315,7 @@ export function ThreadFilePreviewTab({
   const override = selection.scope === openerScope ? selection.key : openerKey ?? null;
   const contentScope = JSON.stringify([path, threadId, projectId, storage]);
   const [loaded, setLoaded] = useState<{ scope: string; content: string | null; error: string | null }>({ scope: contentScope, content: null, error: null });
+  const [retryRevision, setRetryRevision] = useState(0);
   const content = loaded.scope === contentScope ? loaded.content : null;
   const error = loaded.scope === contentScope ? loaded.error : null;
   const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
@@ -314,7 +348,9 @@ export function ThreadFilePreviewTab({
     : null;
 
   useEffect(() => {
-    if (livePlan || videoSrc) return;
+    // Render HTML directly through the bounded HTML endpoint. Reading its source
+    // first applies the smaller text cap and can prevent a valid page opening.
+    if (livePlan || videoSrc || htmlMode === 'preview') return;
     setLoaded(previous => previous.scope === contentScope
       ? { ...previous, error: null }
       : { scope: contentScope, content: null, error: null });
@@ -341,7 +377,7 @@ export function ThreadFilePreviewTab({
         error: 'error' in result ? result.error : null }));
     });
     return () => { cancelled = true; };
-  }, [path, storage, threadId, projectId, livePlan, videoSrc, previewRevision, contentScope]);
+  }, [path, storage, threadId, projectId, livePlan, videoSrc, htmlMode, previewRevision, retryRevision, contentScope]);
 
   const chrome = (
     <ThreadFilePreviewChrome
@@ -374,7 +410,7 @@ export function ThreadFilePreviewTab({
   }
   const hostPreview = videoSrc ? (
     <ThreadVideoPreview key={`${videoSrc}:${previewRevision}`} src={videoSrc} path={path} />
-  ) : htmlMode === 'preview' && content !== null ? (
+  ) : htmlMode === 'preview' ? (
     <ThreadHtmlPreviewFrame
       path={path}
       src={htmlPreviewUrl(path, threadId, storage, projectId, previewRevision)}
@@ -388,6 +424,7 @@ export function ThreadFilePreviewTab({
       projectId={projectId}
       storage={storage}
       lineNumber={lineNumber}
+      onRetry={() => setRetryRevision(revision => revision + 1)}
     />
   );
   const preview = !opener || !OpenerComponent ? (

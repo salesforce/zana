@@ -55,7 +55,7 @@ it('routes validated playground messages to the latest handlers and drops foreig
   deliver({ type: 'persist', path: 'p', content: 'c' });
   deliver({ type: 'cursor', line: 2, column: 3, selection: { startLine: 2, endLine: 2, text: 'ab' } });
   deliver({ type: 'proposalResolved', proposalId: 'p', outcome: 'partial', acceptedHunks: 1, rejectedHunks: 1, content: 'z' });
-  deliver({ type: 'commentAction', kind: 'add', line: 1, endLine: 2, quote: 'q' });
+  deliver({ type: 'commentAction', kind: 'open', line: 1, endLine: 2, quote: 'q' });
   deliver({ type: 'askSelection', action: 'explain-selection', startLine: 1, endLine: 1, text: 't' });
   deliver({ type: 'saveRequest' });
   for (const [name, fn] of Object.entries(h)) expect([name, fn.mock.calls.length]).toEqual([name, 1]);

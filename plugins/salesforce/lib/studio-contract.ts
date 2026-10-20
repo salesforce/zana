@@ -19,7 +19,7 @@ export type ThreadRole = 'author' | 'editor' | 'reviewer' | 'tester' | 'assistan
 export interface StudioThreadLink { threadId: string; title: string; role: ThreadRole; action?: string; path: string; lastActivityAt: number }
 export interface StudioComment {
   id: string; path: string; line: number; endLine: number; quote: string; body: string;
-  author: { kind: 'user' | 'agent'; threadId?: string; name: string }; createdAt: number; resolved?: { at: number; note: string; by: string };
+  author: { kind: 'user' | 'agent'; threadId?: string; name: string }; createdAt: number; editedAt?: number; resolved?: { at: number; note: string; by: string };
 }
 export interface ProposeEditInput { path: string; expectedSha256: string; content?: string; edits?: Array<{ startLine: number; endLine: number; text: string }>; summary: string }
 export type ProposalOutcome = { outcome: 'accepted' | 'rejected' | 'partial'; acceptedHunks: number; rejectedHunks: number; sha256?: string; note?: string };
@@ -58,6 +58,7 @@ export const STUDIO_RPC = {
   askAgent: 'studio.askAgent', draftAgent: 'studio.draftAgent', threads: 'studio.threads', unlink: 'studio.unlinkThread',
   viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType',
   comments: 'studio.comments.list', commentAdd: 'studio.comments.add', commentResolve: 'studio.comments.resolve',
+  commentUpdate: 'studio.comments.update', commentDelete: 'studio.comments.delete',
   trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run',
   suiteImport: 'studio.suites.import', suiteSpec: 'studio.suites.spec', suiteEval: 'studio.suites.eval',
   loopStart: 'studio.loop.start', loopStop: 'studio.loop.stop', loopGet: 'studio.loop.get',
@@ -77,7 +78,7 @@ export function contextOrigin(args: unknown): string | null {
 export const AGENT_SOURCE_MAX = 10 * 1024 * 1024;
 export const AGENT_SOURCE_MAX_LABEL = '10 MB';
 
-export const STUDIO_LIMITS = { diagnostics: 50, selectionText: 2000, quote: 2000 } as const;
+export const STUDIO_LIMITS = { diagnostics: 50, selectionText: 2000, quote: 2000, commentBody: 2000 } as const;
 export const STUDIO_TOOLS: readonly StudioTool[] = ['code', 'preview', 'tests', 'graph', 'actions', 'data', 'deploy', 'assistant', 'comments', 'agents'];
 export const STUDIO_ENGINES: readonly StudioEngine[] = ['rehearse', 'simulate', 'live'];
 /** The engines Preview offers. Rehearse is hidden for now; saved Rehearse runs still load and replay. */
@@ -115,7 +116,7 @@ export function isStudioComment(value: unknown): value is StudioComment {
   return typeof value.id === 'string' && typeof value.path === 'string' && isPos(value.line) && isPos(value.endLine) && Number(value.endLine) >= Number(value.line)
     && typeof value.quote === 'string' && value.quote.length <= STUDIO_LIMITS.quote && typeof value.body === 'string' && value.body.length <= 4000
     && (author.kind === 'user' || author.kind === 'agent') && typeof author.name === 'string' && (author.threadId === undefined || typeof author.threadId === 'string')
-    && typeof value.createdAt === 'number'
+    && typeof value.createdAt === 'number' && (value.editedAt === undefined || typeof value.editedAt === 'number')
     && (resolved === undefined || (isRecord(resolved) && typeof resolved.at === 'number' && typeof resolved.note === 'string' && typeof resolved.by === 'string'));
 }
 

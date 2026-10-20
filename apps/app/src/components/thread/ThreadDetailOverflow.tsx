@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Archive, GitFork, Mail, MailCheck, MoreHorizontal, Pencil, Search, Square } from 'lucide-react';
+import { AppWindow, Archive, GitFork, Mail, MailCheck, MoreHorizontal, Pencil, Search, Square } from 'lucide-react';
 import { product } from '../../lib/product-client.js';
+import { hasDesktopBridge } from '../../lib/app-surface.js';
+import { isThreadViewSurface } from '../../lib/threadViewSurface.js';
+import { openThreadViewWindow } from '../../lib/thread-view-windows.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { useThreads } from '../../thread-store.js';
@@ -47,6 +50,7 @@ export function ThreadDetailOverflowMenu({
   onStop,
   onArchive,
   onCloseFollowup,
+  onOpenInWindow,
   menuRef,
   onSearch,
   extraActions,
@@ -60,6 +64,8 @@ export function ThreadDetailOverflowMenu({
   onStop: () => void;
   onArchive: () => void;
   onCloseFollowup: () => void;
+  /** When set, the menu offers to move the thread into its own window. */
+  onOpenInWindow?: () => void;
   menuRef?: Ref<HTMLDivElement>;
   onSearch?: () => void;
   extraActions?: ReactNode;
@@ -79,6 +85,17 @@ export function ThreadDetailOverflowMenu({
     >
       {onSearch && <button type="button" role="menuitem" onClick={onSearch}><Search size={16} /> Search in thread</button>}
       {extraActions}
+      {onOpenInWindow ? (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={onOpenInWindow}
+          title="Move this agent and its side panel into a separate window"
+          data-testid="thread-open-in-window"
+        >
+          <AppWindow size={13} /> Open in new window
+        </button>
+      ) : null}
       {SHOW_THREAD_UNREAD ? (
         <button type="button" role="menuitem" onClick={onUnread}>
           <Mail size={13} /> Mark unread
@@ -128,6 +145,20 @@ export function ThreadDetailOverflowMenu({
       </button>
     </div>
   );
+}
+
+/** Desktop only, and not from the thread's own window. */
+export function canOpenInWindow(): boolean {
+  return hasDesktopBridge() && !isThreadViewSurface();
+}
+
+/** The menu's "Open in new window" action, or undefined where it does not apply. */
+export function threadOpenInWindowAction(threadId: string, projectId: string | null, closeMenu: () => void): (() => void) | undefined {
+  if (!canOpenInWindow()) return undefined;
+  return () => {
+    closeMenu();
+    void openThreadViewWindow(projectId ? { threadId, projectId } : { threadId });
+  };
 }
 
 export function ThreadDetailOverflow({
@@ -195,6 +226,7 @@ export function ThreadDetailOverflow({
       extraActions={extraActions}
       notificationsThreadId={threadId}
       canStop={canStop}
+      onOpenInWindow={threadOpenInWindowAction(threadId, projectId, close)}
       onUnread={() => {
         close();
         void product.threads.unread(threadId).then(() => onUnread?.()).catch((error) => reportFailure(error, 'Failed to mark agent unread'));

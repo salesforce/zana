@@ -342,15 +342,11 @@ describe('AgentScriptPanel failure paths', () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
     const add = async (body: string) => {
-      await post(el, { type: 'commentAction', kind: 'add', line: 2, endLine: 2, quote: 'a' });
-      const form = el.querySelector('form[aria-label="Add comment"]')!;
-      expect(form.textContent).toContain('line 2');
-      await act(async () => { fireEvent.change(form.querySelector('textarea')!, { target: { value: body } }); });
-      await act(async () => { fireEvent.submit(form); });
+      await post(el, { type: 'commentAction', kind: 'submit', line: 2, endLine: 2, quote: 'a', body });
       await flush();
     };
+    // The bridge drops a blank body before the panel sees it.
     await add('   ');
-    expect(el.querySelector('form[aria-label="Add comment"]')).toBeTruthy();
     expect(rpc.mock.calls.some(c => c[1] === 'studio.comments.add')).toBe(false);
     overrides['studio.comments.add'] = () => ({ ok: false, error: 'locked' });
     await add('real');
@@ -385,6 +381,31 @@ describe('AgentScriptPanel failure paths', () => {
     expect(banner(el)).toBe('bad');
     await click(el.querySelector('button[aria-label="Jump to line 2"]'));
     expect(sent(el).some((m: any) => m.type === 'revealLine' && m.line === 2)).toBe(true);
+  });
+
+  it('edits and deletes comments from the editor and the pane, reporting failures', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await post(el, { type: 'commentAction', kind: 'update', id: 'c1', line: 2, endLine: 2, quote: 'a', body: 'reworded' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.comments.update', expect.objectContaining({ projectId: expect.any(String), id: 'c1', body: 'reworded' }));
+    await post(el, { type: 'commentAction', kind: 'delete', id: 'c1', line: 2, endLine: 2, quote: 'a' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.comments.delete', expect.objectContaining({ id: 'c1' }));
+    overrides['studio.comments.delete'] = () => ({ ok: false, error: 'Agents can only delete their own comments.' });
+    await post(el, { type: 'commentAction', kind: 'delete', id: 'c1', line: 2, endLine: 2, quote: 'a' });
+    expect(banner(el)).toBe('Agents can only delete their own comments.');
+    overrides['studio.comments.update'] = () => ({ ok: false });
+    await post(el, { type: 'commentAction', kind: 'update', id: 'c1', line: 2, endLine: 2, quote: 'a', body: 'again' });
+    expect(banner(el)).toBe('Could not edit the comment.');
+    overrides['studio.comments.delete'] = () => { throw new Error('offline'); };
+    await post(el, { type: 'commentAction', kind: 'open', line: 1, endLine: 1, quote: '' });
+    await click(byText(el, '.sf-cm-actions button', /^Delete$/));
+    await click(byText(el, '.sf-cm-actions button.is-danger', /^Delete$/));
+    expect(banner(el)).toBe('offline');
+    overrides['studio.comments.update'] = () => ({ ok: true });
+    await click(byText(el, '.sf-cm-actions button', /^Edit$/));
+    await act(async () => { fireEvent.change(el.querySelector('textarea[aria-label="Edit comment"]')!, { target: { value: 'pane edit' } }); });
+    await click(byText(el, '.sf-cm-actions button.is-primary', /^Save$/));
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.comments.update', expect.objectContaining({ id: 'c1', body: 'pane edit' }));
   });
 
   it('surfaces save failures and opens Save As for an unsaved draft', async () => {

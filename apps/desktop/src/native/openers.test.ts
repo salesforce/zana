@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Every spawn is recorded; `failing` commands emit ENOENT like a missing binary.
 // `/usr/bin/open -a <app>` exits 0 only for an app listed in `macApps`.
@@ -160,5 +160,77 @@ describe('openIn editors elsewhere', () => {
     h.failing.add('cursor');
     expect(await openIn('cursor', '/work')).toEqual({ ok: false, message: expect.stringContaining('Cursor.app is in /Applications') });
     expect(h.spawns.at(-1)).toMatchObject({ cmd: '/usr/bin/open', args: ['-a', 'Cursor', '-n', '/work'] });
+  });
+});
+
+describe('openIn editors with a project root', () => {
+  // Main passes an already-trusted realpath root; the file sits in a subfolder
+  // whose names carry a space and a curly apostrophe.
+  let root = '';
+  let file = '';
+  beforeEach(() => {
+    vi.clearAllMocks();
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-openers-root-')));
+    mkdirSync(join(root, 'src dir'));
+    file = join(root, 'src dir', 'it’s here.ts');
+    writeFileSync(file, '');
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('opens the file in the project window from the CLI shim', async () => {
+    onPlatform('linux');
+    await openIn('code', file, {}, root);
+    await openIn('cursor', file, {}, root);
+    await openIn('intellij', file, {}, root);
+    expect(h.spawns.map((s) => [s.cmd, s.args])).toEqual([
+      ['code', ['-n', root, file]],
+      ['cursor', ['-n', root, file]],
+      ['idea', [root, file]]
+    ]);
+  });
+
+  it('passes both paths on Windows, through cli.js and to a bare exe', async () => {
+    onPlatform('win32');
+    h.exes.set('code', { exe: 'C:\\VSC\\Code.exe', cliJs: 'C:\\VSC\\cli.js' });
+    h.exes.set('cursor', { exe: 'C:\\Cursor\\Cursor.exe' });
+    h.exes.set('idea', { exe: 'C:\\IDEA\\idea64.exe' });
+    await openIn('code', file, {}, root);
+    await openIn('cursor', file, {}, root);
+    await openIn('intellij', file, {}, root);
+    expect(h.spawns.map((s) => s.args)).toEqual([['C:\\VSC\\cli.js', '-n', root, file], [root, file], [root, file]]);
+  });
+
+  it('hands both paths to the macOS open -a fallback', async () => {
+    onPlatform('darwin');
+    h.failing.add('code');
+    h.macApps.add('Visual Studio Code');
+    expect(await openIn('code', file, {}, root)).toEqual({ ok: true });
+    expect(h.spawns.at(-1)).toMatchObject({ cmd: '/usr/bin/open', args: ['-a', 'Visual Studio Code', '-n', root, file] });
+  });
+
+  it('opens just the path when it is not a file inside the root', async () => {
+    onPlatform('linux');
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-openers-out-')));
+    try {
+      writeFileSync(join(outside, 'x.ts'), '');
+      await openIn('code', join(outside, 'x.ts'), {}, root);
+      await openIn('code', join(root, 'src dir'), {}, root);
+      await openIn('code', join(root, 'gone.ts'), {}, root);
+      await openIn('code', file, {}, null);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+    expect(h.spawns.map((s) => s.args)).toEqual([
+      ['-n', join(outside, 'x.ts')],
+      ['-n', join(root, 'src dir')],
+      ['-n', join(root, 'gone.ts')],
+      ['-n', file]
+    ]);
+  });
+
+  it('leaves Reveal acting on the file itself', async () => {
+    expect(await openIn('finder', file, {}, root)).toEqual({ ok: true });
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(file);
+    expect(shell.openPath).not.toHaveBeenCalled();
   });
 });

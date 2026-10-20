@@ -218,7 +218,7 @@ export function FileViewer({
           {isRemote ? (
             <span className="explorer-viewer-warn">remote · {project.remote?.host}</span>
           ) : (
-            nativeFiles ? <OpenerButtons path={explorerFile} editorPath={viewRoot} /> : null
+            nativeFiles ? <OpenerButtons path={explorerFile} projectRoot={viewRoot} /> : null
           )}
         </span>
       </div>

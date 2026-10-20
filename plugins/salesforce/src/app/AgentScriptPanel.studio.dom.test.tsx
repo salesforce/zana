@@ -159,14 +159,9 @@ describe('AgentScriptPanel studio layout', () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
     await post(el, { type: 'cursor', line: 2, column: 3, selection: { startLine: 2, endLine: 2, text: 'a' } });
-    await post(el, { type: 'commentAction', kind: 'add', line: 2, endLine: 3, quote: 'a b' });
-    const form = el.querySelector('form[aria-label="Add comment"]')!;
-    expect(form.textContent).toContain('lines 2-3');
-    await act(async () => { fireEvent.change(form.querySelector('textarea')!, { target: { value: 'Needs work' } }); });
-    await act(async () => { fireEvent.submit(form); });
+    // The comment box lives in the editor; the host only stores what it submits.
+    await post(el, { type: 'commentAction', kind: 'submit', line: 2, endLine: 3, quote: 'a b', body: ' Needs work ' });
     expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.comments.add', expect.objectContaining({ projectId: 'proj-1', body: 'Needs work', line: 2, endLine: 3, quote: 'a b' }));
-    await post(el, { type: 'commentAction', kind: 'add', line: 1, endLine: 1, quote: 'x' });
-    await act(async () => { fireEvent.click([...el.querySelectorAll('form button')].find(b => b.textContent === 'Cancel')!); });
     expect(el.querySelector('form[aria-label="Add comment"]')).toBeNull();
     await post(el, { type: 'commentAction', kind: 'open', line: 1, endLine: 1, quote: '' });
     await post(el, { type: 'askSelection', action: 'explain-selection', startLine: 1, endLine: 2, text: 'a' });
@@ -258,7 +253,7 @@ describe('AgentScriptPanel studio layout', () => {
     await act(async () => { fireEvent.click(apex!); });
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
     // The agent's document bar belongs to the agent tab; the strip keeps the workspace controls.
-    expect(el.querySelector('[data-testid="salesforce-agent-script-publish"]')).toBeNull();
+    expect(el.querySelector('[aria-label="Save Agentforce file"]')).toBeNull();
     const goTo = el.querySelector<HTMLButtonElement>('.sf-etabs-actions [aria-label="Go to file"]');
     expect(goTo).toBeTruthy();
     await act(async () => { fireEvent.click(goTo!); });
@@ -268,7 +263,7 @@ describe('AgentScriptPanel studio layout', () => {
     expect(back?.textContent).toBe('← QC.agent');
     await act(async () => { fireEvent.click(back!); });
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeNull();
-    expect(el.querySelector('[data-testid="salesforce-agent-script-publish"]')).toBeTruthy();
+    expect(el.querySelector('[aria-label="Save Agentforce file"]')).toBeTruthy();
     await act(async () => { fireEvent.click(el.querySelector('[aria-label="Browse org agents"]')!); });
     await act(async () => { fireEvent.click(apex!); });
     const scenario = [...el.querySelectorAll('.sf-as-explorer button')].find(n => n.textContent?.includes('a.scenario') || n.textContent?.trim().startsWith('a'));
@@ -503,6 +498,7 @@ describe('AgentScriptPanel follows the driving thread', () => {
     rpc.mockImplementation(baseRpc);
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
+    await act(async () => { fireEvent.click(el.querySelector('[aria-label="More save options"]')!); });
     await act(async () => { fireEvent.click(el.querySelector('[data-testid="salesforce-agent-script-publish"]')!); });
     await flush();
     const pane = el.querySelector('[data-testid="studio-release-pane"]')!;

@@ -114,7 +114,8 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     ...(options.context?.surface !== undefined ? { surface: options.context.surface } : {}),
     ...(options.panelTools === true || options.context?.sidePanel !== undefined
       ? { sidePanel: options.context?.sidePanel ?? true }
-      : {})
+      : {}),
+    ...(options.context?.sidePanelOpen !== undefined ? { sidePanelOpen: options.context.sidePanelOpen } : {})
   };
   let composerText = options.composer?.text ?? '';
   const composerScope = options.composer?.scope ?? defaultComposerScope(context);

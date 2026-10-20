@@ -979,3 +979,32 @@ describe('afcode configuration', () => {
     expect(store.getConfig().harnesses?.byId?.afcode?.enabled).toBe(true);
   });
 });
+
+describe('normalizeConfig — thread view window state', () => {
+  it('does not add omitted thread view state', () => {
+    expect(normalizeConfig({})).not.toHaveProperty('threadViewWindowBounds');
+  });
+
+  it('keeps well-formed bounds, rounding and clamping to the view minimum', () => {
+    expect(normalizeConfig({
+      threadViewWindowBounds: { bounds: { x: 10.4, y: -3.6, width: 300, height: 1000.2 }, maximized: true }
+    }).threadViewWindowBounds).toEqual({ bounds: { x: 10, y: -4, width: 720, height: 1000 }, maximized: true });
+  });
+
+  it('keeps a maximize flag without bounds and drops a false one', () => {
+    expect(normalizeConfig({ threadViewWindowBounds: { maximized: true } }).threadViewWindowBounds).toEqual({ maximized: true });
+    expect(normalizeConfig({
+      threadViewWindowBounds: { bounds: { width: 800, height: 600 }, maximized: false }
+    }).threadViewWindowBounds).toEqual({ bounds: { width: 800, height: 600 } });
+  });
+
+  it.each([null, 'x', ['a'], {}, { bounds: { width: Number.NaN, height: 1 } }])('clears malformed state %j', (value) => {
+    expect(normalizeConfig({ threadViewWindowBounds: value as never })).toMatchObject({ threadViewWindowBounds: undefined });
+  });
+
+  it('retains thread view state through unrelated config writes', () => {
+    store.setConfig({ threadViewWindowBounds: { bounds: { width: 1000, height: 700 } } });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig().threadViewWindowBounds).toEqual({ bounds: { width: 1000, height: 700 } });
+  });
+});
