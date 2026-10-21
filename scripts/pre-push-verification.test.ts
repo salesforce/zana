@@ -866,8 +866,8 @@ it('restores a reused snapshot to exactly the pushed tree with real Git', () => 
     const reused = withSnapshot({ oid: third, root, run, log, cacheRoot }, (snapshot: string) => {
       expect(readFileSync(join(snapshot, 'src/a.txt'), 'utf8')).toBe('third\n');
       expect(existsSync(join(snapshot, 'node_modules/keep/index.js'))).toBe(true);
-      expect(() => plainGit(snapshot, ['config', '--get-all', 'core.hooksPath'])).toThrow();
-      expect(() => plainGit(snapshot, ['config', '--get-regexp', '^(filter|include)\\.'])).toThrow();
+      expect(() => plainGit(snapshot, ['config', '--local', '--get-all', 'core.hooksPath'])).toThrow();
+      expect(() => plainGit(snapshot, ['config', '--local', '--get-regexp', '^(filter|include)\\.'])).toThrow();
       expect(existsSync(join(snapshot, '.git/info'))).toBe(false);
       return snapshot;
     });
