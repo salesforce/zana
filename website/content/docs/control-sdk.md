@@ -163,7 +163,7 @@ const cycle = await runDesktopBrowserLeaseCycle(browser, { probeCdp: true });
 | `acquire({ tabIds, controllerLabel, ttlMs?, allowPersonal? })` | Exclusive lease. Personal tabs need `allowPersonal`. |
 | `connection(leaseId)` | Loopback `ws://127.0.0.1` only; non-loopback throws. |
 | `capture(tabId)` | Bounded JPEG (no focus required). |
-| `reveal(tabId)` / `close(tabId)` / `release(leaseId)` | Reveal is a no-op unless that thread is already focused. |
+| `reveal(tabId)` / `close(tabId)` / `release(leaseId)` | Reveal waits until that thread is focused; it never switches threads. |
 
 `runDesktopBrowserLeaseCycle` (create → acquire → CDP `Browser.getVersion` →
 capture → release → close) is the live-test helper.

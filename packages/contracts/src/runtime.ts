@@ -477,6 +477,7 @@ export const PluginAppSnapshotSchema = z.object({
   enabled: z.boolean(),
   provenance: z.enum(['builtin', 'direct', 'catalog']),
   sourceKind: z.enum(['builtin', 'path', 'git', 'npm']).optional(),
+  collection: z.literal('coding-agents').optional(),
   status: z.enum(['running', 'disabled', 'degraded', 'needs-configuration']),
   statusDetail: z.string().max(4096).nullable().optional(),
   appUrl: z.string().max(4096).nullable(),

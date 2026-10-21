@@ -121,16 +121,14 @@ describe('canOpenGlobalPanel', () => {
 });
 
 describe('Installed collection chrome', () => {
-  it('renders a BB-style collection instead of the authoring tutorial', () => {
-    const source = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
+  it('renders an installed-card collection with a single add menu', () => {
+    const source = ['ExtensionsHub.tsx', 'InstalledPluginCard.tsx', 'InstalledPluginCollection.tsx']
+      .map((file) => readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')).join('\n');
     expect(source).toContain('ext-installed-row');
     expect(source).toContain('Search installed plugins');
-    expect(source).toContain('New plugin');
-    expect(source).toContain('ext-install-split');
-    expect(source).toContain('ext-install-split-toggle');
-    expect(source).toContain('Install or open a plugin');
+    expect(source).toContain('Add plugin');
+    expect(source).toContain('aria-label="Add a plugin"');
     expect(source).toContain('CREATE_PLUGIN_PROMPT');
-    expect(source).not.toContain('Create plugin');
     expect(source).toContain('shouldMountHostSettings');
     expect(source).toContain('moduleHostCallReady');
     expect(source).toContain('ext-installed-switch-spacer');
@@ -142,7 +140,8 @@ describe('Installed collection chrome', () => {
 });
 
 describe('Extensions hub More menu', () => {
-  const source = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
+  const source = ['ExtensionsHub.tsx', 'InstalledPluginCard.tsx', 'InstalledPluginCollection.tsx']
+      .map((file) => readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')).join('\n');
 
   it('dismisses on outside mousedown and Escape', () => {
     expect(source).toContain('if (!moreOpen) return;');
@@ -161,7 +160,8 @@ describe('Extensions hub More menu', () => {
     expect(source).toContain('applyHubPluginUpdate');
     expect(
       source.split('toolbarExtra={showTabs ? undefined : maintenanceActions}').length - 1
-    ).toBe(2);
+    ).toBe(1);
+    expect(source).toContain('toolbarExtra={maintenanceActions}');
     expect(source).not.toContain('ext-hub-top-actions');
   });
 });

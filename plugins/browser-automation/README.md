@@ -132,8 +132,8 @@ file reads/writes still occur on the browser's host; scripts are not run in the
 workspace directory.
 
 Desktop sessions create a tab in a dedicated automation profile. Acquiring
-control opens the side panel and selects its browser tab only when the owning
-thread is already focused. New or activated controller pages follow
+control opens the side panel and selects its browser tab when the owning
+thread is focused, or the next time the user opens that thread. New or activated controller pages follow
 the same rule. Automation does not switch threads or bring the desktop window
 forward. Pass
 `--tab <tab-id>` only for an explicit handoff of an existing tab. This grants the

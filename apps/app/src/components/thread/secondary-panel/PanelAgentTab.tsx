@@ -4,6 +4,7 @@ import { ExternalLink, MessageSquare } from 'lucide-react';
 import { ThreadCommandComposer } from '../../ThreadCommandComposer.js';
 import { ComposerDraftProvider } from '../../composer/ComposerDraft.js';
 import { product } from '../../../lib/product-client.js';
+import { useData } from '../../../store.js';
 import { getThreadRoutePath } from '../../../lib/route-paths.js';
 import { getPluginViewTarget } from '../../../lib/pluginViewSurface.js';
 import { showInMainWindow } from '../../../plugins/plugin-view-windows.js';
@@ -44,6 +45,7 @@ export function PanelAgentTab({
   threadId,
   draft,
   draftProjectId,
+  projectId,
   pluginPanel,
   onCreated,
   onOpenConversation
@@ -53,10 +55,13 @@ export function PanelAgentTab({
   draft?: string;
   /** Project the prefilled composer starts on; the user can still change it. */
   draftProjectId?: string;
+  /** The page's own project: new threads run there, with no project or machine to pick. */
+  projectId?: string;
   pluginPanel?: { pluginId: string; panel: string; view?: string };
   onCreated: (threadId: string) => void;
   onOpenConversation?: (conversation: PanelConversation) => void;
 }) {
+  const project = useData((s) => (projectId ? s.projects.find((row) => row.id === projectId) : undefined));
   if (threadId) {
     return (
       <div className="panel-agent-tab is-chat" data-testid="panel-agent-tab-chat">
@@ -82,7 +87,8 @@ export function PanelAgentTab({
         autoFocus
         navigateOnCreate={false}
         initialText={draft}
-        composerProjectId={draftProjectId}
+        project={project}
+        composerProjectId={draftProjectId ?? projectId}
         pluginPanel={pluginPanel}
         onCreated={onCreated}
       />

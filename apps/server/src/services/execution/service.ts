@@ -1270,6 +1270,12 @@ export class ExecutionService {
     return this.readSnapshot(execution, executions, projectId, after, checkDeadline);
   }
 
+  /** Whether the bound run's work unit declares an `output` (so `structuredResult` is accepted for it). */
+  async workUnitDeclaresOutput(binding: ExecutionCohortBinding, workUnitId: string): Promise<boolean> {
+    const record = await this.getBound(binding);
+    return !!record?.workUnits?.find((unit) => unit.id === workUnitId)?.output;
+  }
+
   async snapshotBound(binding: ExecutionCohortBinding, after = 0) {
     const now = this.deps.monotonicNow ?? (() => performance.now());
     const deadline = now() + SNAPSHOT_TIMEOUT_MS;

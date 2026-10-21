@@ -101,6 +101,17 @@ export function trackThreadProviderStartup(startup: Promise<unknown>): void {
 }
 
 /**
+ * A host can connect as soon as the server listens, before plugin startup has
+ * begun. Call this before listening so provider waits hold from then on; call
+ * the returned release once plugin startup settles.
+ */
+export function holdThreadProviderStartup(): () => void {
+  let release!: () => void;
+  trackThreadProviderStartup(new Promise<void>((resolve) => { release = resolve; }));
+  return release;
+}
+
+/**
  * Bundled plugins load one at a time after launch, and a provider joins the
  * catalog only once its plugin has loaded. Resolves when `providerId` registers,
  * plugin startup settles, or `timeoutMs` passes, so a thread created right after

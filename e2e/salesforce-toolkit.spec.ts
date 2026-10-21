@@ -27,7 +27,8 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.SF_TOOLKIT_TRACE, JSON.stringify({ args, cwd:process.cwd(), home:process.env.HOME }) + '\\n');
 const mode = fs.readFileSync(process.env.SF_TOOLKIT_MODE, 'utf8');
 if(args[0] === 'plugins') {
-  if(mode === 'failure') { console.error('Fixture plugin missing'); process.exitCode=1; }
+  if(args[2] !== '@salesforce/plugin-code-analyzer') { console.error('Short plugin names require an unavailable npm registry'); process.exitCode=1; }
+  else if(mode === 'failure') { console.error('Fixture plugin missing'); process.exitCode=1; }
   else if(mode === 'timeout') setTimeout(()=>console.log('too late'),20000);
   else console.log(JSON.stringify([{ padding:'Realistic plugin metadata '.repeat(1600), version:'9.8.7-tail' }]));
 } else if(args[0] === '--version') console.log('@salesforce/cli/2.fixture');
@@ -56,7 +57,7 @@ test('Salesforce toolkit: compiled SDK, realistic CLI capture, isolated context 
   const lwc = await invoke('sf_lwc',{ action:'file.diagnose',file:'broken.js' }); expect(lwc,JSON.stringify(lwc)).toMatchObject({ tool:'sf_lwc' }); expect(lwc.diagnostics.length).toBeGreaterThan(0);
   const agent = await invoke('agentscript_authoring',{ verb:'compile',mode:'check',agent_file:'Example.agent' }); expect(agent,JSON.stringify(agent)).toMatchObject({ ok:true,data:{ clean:true,compiled_via:'local' } });
   const doctor = await invoke('code_analyzer',{ action:'doctor' }); expect(doctor,JSON.stringify(doctor)).toMatchObject({ ok:true }); expect(doctor.data.doctor.plugin.version).toBe('9.8.7-tail'); expect(doctor.data.doctor.python.detail).toMatch(/Python/);
-  const trace = readFileSync(join(home,'sf-toolkit-trace.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line)); expect(trace.find(r=>r.args[0]==='plugins')).toMatchObject({ cwd:realpathSync(join(home,'dx')), home });
+  const trace = readFileSync(join(home,'sf-toolkit-trace.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line)); expect(trace.find(r=>r.args[0]==='plugins')).toMatchObject({ args:['plugins','inspect','@salesforce/plugin-code-analyzer','--json'], cwd:realpathSync(join(home,'dx')), home });
   expect(await invoke('sf_lwc',{ action:'file.diagnose',file:'../outside.html' })).toMatchObject({ ok:false });
   expect(await invoke('sf_soql',{ action:'query.run',target_org:'other' })).toMatchObject({ ok:false });
   expect(await invoke('sf_flow',{ action:'fix.apply',file:'broken.js' })).toMatchObject({ code:'refused' });

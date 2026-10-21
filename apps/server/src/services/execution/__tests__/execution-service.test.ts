@@ -931,6 +931,21 @@ describe('execution usage and typed completion', () => {
     await expect(service.completeWork({ executionId: record.id, projectId: record.projectId, role: 'worker', slotId: 'slot-1', principalId: 'worker' }, 'unit', 'done', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true)).resolves.toMatchObject({ ok: true });
   }));
 
+  it('says whether a bound work unit declares an output', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, { store }));
+    await service.start('owner', 'project-1', request);
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [
+      { id: 'typed', title: 'Typed', task: 'Work', dependencies: [], readOnly: true, output: { version: 1, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false } } },
+      { id: 'prose', title: 'Prose', task: 'Work', dependencies: [], readOnly: true }
+    ]);
+    const binding = { executionId: record.id, projectId: record.projectId, role: 'worker' as const, slotId: 'slot-1', principalId: 'worker-1' };
+    await expect(service.workUnitDeclaresOutput(binding, 'typed')).resolves.toBe(true);
+    await expect(service.workUnitDeclaresOutput(binding, 'prose')).resolves.toBe(false);
+    await expect(service.workUnitDeclaresOutput(binding, 'missing')).resolves.toBe(false);
+  }));
+
   it('requests bounded typed repairs without closing claim then completes valid structured output', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const replies: string[] = [];

@@ -89,6 +89,7 @@ test('shipped providers register and reload without a compiler', async ({ app, h
 
   await win.getByTestId('nav-extensions').click();
   await win.getByTestId('extensions-nav-installed').click();
+  await win.getByRole('button', { name: /^Coding agents/ }).click();
   for (const id of PROVIDERS) {
     const row = win.getByTestId(`plugin-row-${id}`);
     await expect(row).toBeVisible();
@@ -132,6 +133,8 @@ test.describe('unavailable provider recovery', () => {
     await expect.poll(provider).toMatchObject({ id: 'codex', available: false, unavailableReason: expect.stringContaining('digest') });
     await win.getByTestId('nav-extensions').click();
     await win.getByTestId('extensions-nav-installed').click();
+    await win.getByRole('button', { name: /^Coding agents/ }).click();
+    await expect(win.getByTestId('plugin-row-provider-codex')).toBeVisible();
     await expect(win.getByTestId('plugin-row-provider-codex')).toContainText('Degraded');
     const options = await win.evaluate(async () => (await fetch('/api/v1/system/execution-options?providerId=codex')).json());
     expect(options.models).toEqual([]);

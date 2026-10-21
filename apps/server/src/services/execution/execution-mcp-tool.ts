@@ -131,7 +131,11 @@ const executionWorkHeartbeatSchema = {
   turnCount: z.number().int().min(0).max(10_000).optional()
 };
 const executionWorkAssignSchema = { ...executionIdSchema, workUnitId: z.string().min(1).max(2048), assignedSlotId: z.string().min(1).max(2048) };
-const executionWorkResultSchema = { ...executionWorkSchema, result: z.string().min(1).max(2048), structuredResult: z.unknown().optional() };
+// No schema max on `result`: any over-cap result must reach the handler so it names the real limit.
+// A schema max never bounded memory (the transport parses the body before validation), and the
+// store keeps at most MAX_STRING characters, so dropping the old 64 KiB bound loses no protection.
+const EXECUTION_RESULT_MAX_CHARS = 2048;
+const executionWorkResultSchema = { ...executionWorkSchema, result: z.string().min(1), structuredResult: z.unknown().optional() };
 const executionWorkFailureSchema = {
   ...executionWorkSchema,
   failure: z.string().min(1).max(EXECUTION_FAILURE_DETAIL_MAX_CHARS),
@@ -309,6 +313,22 @@ export async function readStartRequestFile(
   return parsed.data;
 }
 
+/** Compact reply for the work outcome tools: the full record is 80-113 KB in real runs. */
+export function outcomeAck(record: ExecutionRecord, workUnitId: string) {
+  const units = record.workUnits ?? [];
+  const unit = units.find((candidate) => candidate.id === workUnitId);
+  const count = (...states: string[]) => units.filter((candidate) => states.includes(candidate.state)).length;
+  return {
+    ok: true as const,
+    executionId: record.id,
+    executionState: record.state,
+    workUnitId,
+    status: unit?.state ?? null,
+    claimGeneration: unit?.claimGeneration ?? null,
+    remaining: { claimed: count('CLAIMED'), pending: count('PENDING', 'READY'), blocked: count('BLOCKED') }
+  };
+}
+
 export function registerExecutionTools(server: McpServer, options: RegisterExecutionToolOptions): void {
   const authorized = (): boolean => !!options.sessionId
     && (options.validateRouteIdentity?.(options.sessionId, options.projectId) ?? false);
@@ -336,6 +356,12 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   const boundResult = (name: string, value: { ok: boolean; value?: unknown; message?: string }) => value.ok
     ? { content: [{ type: 'text' as const, text: JSON.stringify(value.value && typeof value.value === 'object' && 'id' in value.value ? toMcpSafeExecution(value.value as ExecutionRecord) : value.value) }] }
     : { isError: true, content: [{ type: 'text' as const, text: `${name} failed: ${value.message}` }] };
+  const outcomeResult = (name: string, workUnitId: string, value: { ok: boolean; value?: unknown; message?: string }) => {
+    const record = value.value as ExecutionRecord | undefined;
+    return value.ok && record && typeof record === 'object' && 'id' in record && Array.isArray(record.workUnits)
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(outcomeAck(record, workUnitId)) }] }
+      : boundResult(name, value);
+  };
 
   // Shared registration wrapper: any handler that throws is logged with tool +
   // project context and returned to the caller as a SANITIZED MCP error, so an
@@ -390,18 +416,27 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
   register('execution.work.complete', { description: 'Complete one assigned work unit. Preserve required prose result and include structuredResult when plan declares bounded output schema.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result, structuredResult, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
-    return boundResult('execution.work.complete', await options.service.completeWork(bound, workUnitId, result, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true, structuredResult));
+    if (result.length > EXECUTION_RESULT_MAX_CHARS) {
+      // structuredResult is only accepted for a unit that declares an output, so only then is it advice that works.
+      const declaresOutput = await options.service.workUnitDeclaresOutput(bound, workUnitId).catch((error: unknown) => {
+        console.error(`[execution-mcp] tool execution.work.complete could not check declared output for execution ${executionId} work unit ${workUnitId}`, error);
+        return false;
+      });
+      const hint = declaresOutput ? ' Put the detail in structuredResult.' : '';
+      return { isError: true, content: [{ type: 'text' as const, text: `execution.work.complete failed: result is ${result.length} chars; max ${EXECUTION_RESULT_MAX_CHARS}. Shorten it to a summary of at most ${EXECUTION_RESULT_MAX_CHARS} characters.${hint}` }] };
+    }
+    return outcomeResult('execution.work.complete', workUnitId, await options.service.completeWork(bound, workUnitId, result, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true, structuredResult));
   });
   register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure, failureCode, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.fail'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.fail');
     const claim = claimId && claimGeneration ? { claimId, claimGeneration } : undefined;
-    return boundResult('execution.work.fail', await (claim
+    return outcomeResult('execution.work.fail', workUnitId, await (claim
       ? options.service.failWork(bound, workUnitId, failure, failureCode, claim, true)
       : options.service.failWork(bound, workUnitId, failure, failureCode, undefined, true)));
   });
   register('execution.work.block', { description: 'Block one assigned work unit with a durable question. audience "human" (default) routes to a human via the inbox; audience "coordinator" is a self-heal ask — it wakes the coordinator (no human) to decide a plan/spec detail and answer with execution.work.answer. options must be complete answers the recipient can submit verbatim. Omit options when the answer requires free-form data such as an absolute path, identifier, or explanation.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices, audience, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.block'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.block');
-    return boundResult('execution.work.block', await options.service.blockWork(bound, workUnitId, { id: blockerId, question, options: choices, ...(audience ? { audience } : {}) }, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
+    return outcomeResult('execution.work.block', workUnitId, await options.service.blockWork(bound, workUnitId, { id: blockerId, question, options: choices, ...(audience ? { audience } : {}) }, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
   });
   register('execution.work.answer', { description: 'Coordinator answers a coordinator-directed blocker (one raised with audience "coordinator"). The answer is delivered to the blocked worker, which resumes automatically. Not for human-audience blockers.', inputSchema: executionWorkAnswerSchema }, async ({ executionId, blockerId, answer }) => {
     if (!authorized()) return denied('execution.work.answer'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.answer');
@@ -409,7 +444,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
   register('execution.work.release', { description: 'Release one assigned work unit.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.release'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.release');
-    return boundResult('execution.work.release', await options.service.releaseWork(bound, workUnitId, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
+    return outcomeResult('execution.work.release', workUnitId, await options.service.releaseWork(bound, workUnitId, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
   });
   register('execution.work.retry', { description: 'Coordinator retries and optionally reassigns failed or blocked work.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!authorized()) return denied('execution.work.retry'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.retry');

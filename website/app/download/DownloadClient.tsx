@@ -1,41 +1,75 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { site } from '@/lib/site';
+import { site } from '../../lib/site';
+import { detectPlatform, type Platform, type ReleaseAssets } from '../../lib/downloads';
 import { AuroraGrid } from '../components/AuroraGrid';
 
-/** Minimal latest-mac.yml fields we surface. */
-interface FeedInfo {
-  version: string;
-  releaseDate?: string;
+const releasesPage = `${site.releasesRepo}/releases/latest`;
+
+interface NavigatorWithHints extends Navigator {
+  userAgentData?: { platform?: string };
 }
 
-/** Parse the few fields we need out of electron-updater's YAML (no yaml dep). */
-function parseFeed(text: string): FeedInfo | null {
-  const version = /^version:\s*(.+)$/m.exec(text)?.[1]?.trim();
-  const releaseDate = /^releaseDate:\s*['"]?([^'"\n]+)/m.exec(text)?.[1]?.trim();
-  if (!version) return null;
-  return { version, releaseDate };
-}
-
-export function DownloadClient() {
-  const [version, setVersion] = useState(site.latestVersion);
-  const [date, setDate] = useState<string | undefined>();
+export function DownloadClient({ release }: { release: ReleaseAssets }) {
+  const [platform, setPlatform] = useState<Platform>('other');
 
   useEffect(() => {
-    if (!site.updateFeedUrl) return;
-    const url = site.updateFeedUrl.replace(/\/?$/, '/') + 'latest-mac.yml';
-    fetch(url, { cache: 'no-store' })
-      .then((r) => (r.ok ? r.text() : Promise.reject()))
-      .then((t) => {
-        const info = parseFeed(t);
-        if (info) {
-          setVersion(info.version);
-          setDate(info.releaseDate);
-        }
-      })
-      .catch(() => {});
+    const nav = navigator as NavigatorWithHints;
+    setPlatform(detectPlatform(nav.userAgent, nav.userAgentData?.platform));
   }, []);
+
+  const version = release.version ?? site.latestVersion;
+  // Windows visitors see Windows first; everyone else (incl. Linux and phones) sees macOS first.
+  const windowsFirst = platform === 'windows';
+
+  const mac = (
+    <div key="mac" className={`zcc-panel dl-card${windowsFirst ? '' : ' dl-card-primary'}`} data-reveal>
+      <h2>macOS</h2>
+      <p>Apple Silicon or Intel · signed and notarized · .dmg · auto-updates in-app</p>
+      <div className="dl-card-actions">
+        <a
+          className={`zcc-btn ${windowsFirst ? 'zcc-btn-ghost' : 'zcc-btn-primary'}`}
+          data-analytics="download"
+          data-platform="macOS"
+          href={release.macArm ?? releasesPage}
+        >
+          Download for Apple Silicon
+        </a>
+        <a
+          className="zcc-btn zcc-btn-ghost"
+          data-analytics="download"
+          data-platform="macOS"
+          href={release.macIntel ?? releasesPage}
+        >
+          Download for Intel
+        </a>
+      </div>
+      <p className="dl-hint">Not sure? Apple menu → About This Mac. “Chip: Apple M…” means Apple Silicon.</p>
+    </div>
+  );
+
+  const windows = (
+    <div key="windows" className={`zcc-panel dl-card${windowsFirst ? ' dl-card-primary' : ''}`} data-reveal>
+      <h2>
+        Windows <span className="new-badge">New</span>
+      </h2>
+      <p>x64 · NSIS installer · .exe · auto-updates in-app</p>
+      <div className="dl-card-actions">
+        <a
+          className={`zcc-btn ${windowsFirst ? 'zcc-btn-primary' : 'zcc-btn-ghost'}`}
+          data-analytics="download"
+          data-platform="Windows"
+          href={release.windows ?? releasesPage}
+        >
+          Download for Windows
+        </a>
+      </div>
+      <p className="dl-hint">
+        If Windows SmartScreen shows “Windows protected your PC”, choose <strong>More info → Run anyway</strong>.
+      </p>
+    </div>
+  );
 
   return (
     <div className="zcc-page aurora-host">
@@ -46,31 +80,25 @@ export function DownloadClient() {
           <h1>Get Zana Command Center</h1>
           <p>
             Latest version <strong>v{version}</strong>
-            {date ? ` · released ${new Date(date).toLocaleDateString()}` : ''}. macOS builds auto-update in-app
-            after the first install.
+            {release.releaseDate ? ` · released ${new Date(release.releaseDate).toLocaleDateString()}` : ''}. Free and
+            open source for macOS and Windows. Updates install in-app after the first download.
           </p>
         </div>
 
-        <div className="zcc-panel dl-primary" data-reveal>
-          <h2>macOS</h2>
-          <p>Apple Silicon or Intel · signed and notarized · .dmg</p>
-          <a className="zcc-btn zcc-btn-primary" data-analytics="download" href={`${site.releasesRepo}/releases/latest`}>
-            Download for macOS
-          </a>
-        </div>
+        <div className="dl-grid">{windowsFirst ? [windows, mac] : [mac, windows]}</div>
 
         <div className="dl-soon" data-reveal-stagger>
-          <div className="zcc-panel dl-soon-row">
-            <h3>Windows</h3>
-            <p>NSIS installer · .exe</p>
-            <span className="wip-badge">Coming soon</span>
-          </div>
           <div className="zcc-panel dl-soon-row">
             <h3>Linux</h3>
             <p>AppImage</p>
             <span className="wip-badge">Coming soon</span>
           </div>
         </div>
+
+        <p className="dl-all">
+          Release notes, checksums, and older versions are on{' '}
+          <a href={releasesPage}>GitHub Releases</a>.
+        </p>
 
         <div className="source-split zcc-panel">
           <div>

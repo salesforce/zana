@@ -74,7 +74,7 @@ import { startLiveTurnCommand } from './conversation-live-turn.js';
 import { LIVE_TURN_COMMAND_TIMEOUT_MS } from '../../http/host-hub.js';
 import { archiveConversationOnHost, unarchiveConversationOnHost } from './thread-host-commands.js';
 import { collectConversationArchiveDescendants } from './conversation-child-ops.js';
-import { bridgeLaunchForProvider, getThreadProvider } from './thread-provider-catalog.js';
+import { bridgeLaunchForProvider, getThreadProvider, waitForThreadProvider } from './thread-provider-catalog.js';
 import { readLastThreadExecution } from './thread-last-execution.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import { threadPermissionMode } from './thread-permission-mode.js';
@@ -926,6 +926,8 @@ export async function resumeOpenConversationSessionsAfterHostRestart(
   }
   let resumed = 0;
   for (const thread of open) {
+    // The daemon reconnects before plugins finish registering providers at launch.
+    await waitForThreadProvider(thread.providerId);
     const current = getConversationThread(ctx.db, thread.id);
     // A queued send or a user message may already have resumed it.
     if (!current || current.archivedAt || (current.status !== 'idle' && current.status !== 'error')) continue;

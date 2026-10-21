@@ -37,4 +37,16 @@ describe('GlobalAgentLauncher', () => {
     render(<GlobalAgentLauncher open onClose={vi.fn()} onLaunched={vi.fn()} />);
     expect(h.props.at(-1)).toMatchObject({ initialProjectId: undefined });
   });
+
+  it('uses the clicked row instead of a previously focused project', () => {
+    h.ui.launcherProjectId = 'clicked';
+    render(<GlobalAgentLauncher open project={{ id: 'previous', name: 'Previous' } as never} onClose={vi.fn()} onLaunched={vi.fn()} />);
+    expect(h.props.at(-1)).toMatchObject({ project: undefined, initialProjectId: 'clicked' });
+  });
+
+  it('keeps a generic project launch pinned to its project', () => {
+    const project = { id: 'focused', name: 'Focused' } as never;
+    render(<GlobalAgentLauncher open project={project} onClose={vi.fn()} onLaunched={vi.fn()} />);
+    expect(h.props.at(-1)).toMatchObject({ project, initialProjectId: undefined });
+  });
 });

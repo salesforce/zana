@@ -63,7 +63,7 @@ describe('Fairy page journeys', () => {
     const metadata = JSON.parse(
       dom.querySelector('script[type="application/ld+json"]')!.textContent!
     );
-    expect(metadata.operatingSystem).toBe('macOS');
+    expect(metadata.operatingSystem).toBe('macOS, Windows');
     expect(metadata.offers.price).toBe('0');
   });
   it('offers separate paths to find and build plugins with an explicit trust explanation', () => {

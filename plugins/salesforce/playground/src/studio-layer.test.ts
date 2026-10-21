@@ -251,6 +251,10 @@ it('debounces cursor reports and shows a selection chip with actions', () => {
   expect(Array.from(fake.zones.values()).map(row => [row.afterLineNumber, row.domNode.textContent])).toEqual([[2, 'Comment on lines 1-2Add commentCancel']]);
   expect(types.some((t: any) => t.type === 'askSelection')).toBe(true);
   expect(fake.widgets.size).toBe(0);
+  // A delayed cursor report must not put the chip back over an open composer.
+  fake.cursorListeners[0]!(); vi.advanceTimersByTime(CURSOR_DEBOUNCE_MS);
+  expect(fake.widgets.size).toBe(0);
+  layer.closeCommentComposer();
   // collapsed selection clears the chip; missing position is ignored
   fake.setSelection({ ...selection, isEmpty: () => true });
   fake.cursorListeners[0]!(); vi.advanceTimersByTime(CURSOR_DEBOUNCE_MS);
@@ -264,6 +268,16 @@ it('debounces cursor reports and shows a selection chip with actions', () => {
   const before = post.mock.calls.length;
   fake.cursorListeners[0]!(); vi.advanceTimersByTime(CURSOR_DEBOUNCE_MS);
   expect(post.mock.calls.length).toBe(before);
+});
+
+it('opening a comment from the gutter dismisses an existing selection chip', () => {
+  vi.useFakeTimers();
+  fake.setSelection({ isEmpty: () => false, text: 'a', startLineNumber: 1, endLineNumber: 1, getStartPosition: () => ({ lineNumber: 1, column: 1 }) });
+  fake.cursorListeners[0]!(); vi.advanceTimersByTime(CURSOR_DEBOUNCE_MS);
+  expect(fake.widgets.size).toBe(1);
+  fake.mouseListeners[0]!({ target: { type: 2, position: { lineNumber: 3 } } });
+  expect(fake.widgets.size).toBe(0);
+  expect(Array.from(fake.zones.values()).some(row => row.domNode.querySelector('form'))).toBe(true);
 });
 
 it('dispose clears visuals, the chip and pending cursor reports', () => {

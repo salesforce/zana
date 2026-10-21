@@ -41,9 +41,8 @@ export function GoogleAnalytics({ measurementId }: { measurementId?: string }) {
       lastPath.current = pathname;
     }
     function onClick(event: MouseEvent) {
-      if (event.target instanceof Element && event.target.closest('a[data-analytics="download"]')) {
-        trackDownloadClick(id!);
-      }
+      const link = event.target instanceof Element ? event.target.closest('a[data-analytics="download"]') : null;
+      if (link) trackDownloadClick(id!, link.getAttribute('data-platform') ?? undefined);
     }
     document.addEventListener('click', onClick);
     return () => document.removeEventListener('click', onClick);

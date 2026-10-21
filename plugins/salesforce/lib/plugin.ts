@@ -99,7 +99,7 @@ import { OrgSyncService } from './org-sync.js';
 import { registerOrgSync } from './org-sync-rpc.js';
 import { listHubProjects } from './hub-projects.js';
 import { parseOrgLoginInput } from './org-login.js';
-import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
+import { applyLimit, parseSoqlInput, previewRecords, searchSObjects } from './soql.js';
 import { SoqlExplorer } from './soql-explorer.js';
 import {
   DEFAULT_API_VERSION,
@@ -377,6 +377,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   };
   registerRpc('status', async (args) => {
     const input = args && typeof args === 'object' ? args as Record<string, unknown> : {};
+    if (input.refresh === true) connections.refreshOrgs();
     if (!input.projectId && typeof input.threadId === 'string' && input.threadId) {
       const thread = await zcc.sdk.threads.get({ threadId: input.threadId });
       if (!thread?.projectId) throw new ProjectContextError('The thread project is unavailable.');
@@ -616,13 +617,17 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     delete data.presetId;
     data.contextVariables = preset.values;
   };
+  const publishAgentFileChanged = (args: unknown, path: string) =>
+    zcc.realtime.publish(STUDIO_CHANGED_CHANNEL, { projectId: rpcString(args, 'projectId') || contexts.current()?.projectId, path, kind: 'files' });
   registerRpc('agentFiles.create', async (args) => {
     const path = rpcString(args, 'path');
     const content = args && typeof args === 'object' ? (args as { content?: unknown }).content : undefined;
     if (!path || typeof content !== 'string') return { ok: false, code: 'invalid_input', error: 'Create requires a path and source.' };
     try {
       const resolved = await resolveAgentFilesRoot(args);
-      return { ok: true, file: createAgentFile(resolved.root, path, content, deps, resolved.options) };
+      const file = createAgentFile(resolved.root, path, content, deps, resolved.options);
+      publishAgentFileChanged(args, file.path);
+      return { ok: true, file };
     } catch (error) { return agentFilesFailure(error); }
   });
   registerRpc('agentFiles.write', async (args) => {
@@ -634,7 +639,10 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     }
     try {
       const resolved = await resolveAgentFilesRoot(args);
-      return { ok: true, file: writeAgentFile(resolved.root, path, content, deps, expectedSha256, resolved.options) };
+      const file = writeAgentFile(resolved.root, path, content, deps, expectedSha256, resolved.options);
+      // An open Studio reloads the file, so an agent's write shows without a refresh.
+      publishAgentFileChanged(args, file.path);
+      return { ok: true, file };
     } catch (error) {
       return agentFilesFailure(error);
     }
@@ -1129,11 +1137,7 @@ async function runSoql(
       const sobjects = Array.isArray((response.json as { sobjects?: unknown })?.sobjects)
         ? ((response.json as { sobjects: Array<{ name?: string; label?: string }> }).sobjects)
         : [];
-      const term = (parsed.plan.term ?? '').toLowerCase();
-      const hits = sobjects
-        .filter((row) => `${row.name ?? ''} ${row.label ?? ''}`.toLowerCase().includes(term))
-        .slice(0, 25)
-        .map((row) => ({ name: row.name, label: row.label }));
+      const hits = searchSObjects(sobjects, parsed.plan.term ?? '', parsed.plan.limit);
       return { ok: true, summary: `${hits.length} sObject(s) matching ${JSON.stringify(parsed.plan.term)}`, data: hits };
     }
     if (parsed.plan.action === 'schema.describe') {

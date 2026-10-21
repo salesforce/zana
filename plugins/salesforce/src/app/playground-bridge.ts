@@ -69,6 +69,8 @@ export type HostToPlayground =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setFiles'; files: PlaygroundFileRef[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setOrg'; org: PublicOrgView | null }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saved'; sha256: string; draftKey?: string; content?: string }
+  /** The open file changed on disk (an agent or another tool wrote it). */
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'fileChanged'; draftKey: string; content: string; sha256: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'flushSave'; path?: string; create?: boolean }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'proposeEdit'; proposalId: string; content: string; summary: string; actor: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'clearProposal'; proposalId: string }
@@ -138,6 +140,7 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     value.type === 'setFiles' ||
     value.type === 'setOrg' ||
     value.type === 'saved' ||
+    (value.type === 'fileChanged' && typeof value.draftKey === 'string' && value.draftKey.length > 0 && value.draftKey.length <= 2000 && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.sha256 === 'string' && /^[0-9a-f]{64}$/.test(value.sha256)) ||
     value.type === 'flushSave' ||
     (value.type === 'proposeEdit' && isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.summary === 'string' && value.summary.length <= 1000 && typeof value.actor === 'string' && value.actor.length <= 200) ||
     (value.type === 'clearProposal' && isProposalId(value.proposalId)) ||

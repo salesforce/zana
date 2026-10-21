@@ -426,11 +426,32 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect.poll(() => commentInput.evaluate(input => input === input.ownerDocument.activeElement)).toBe(true);
   await page.keyboard.type('Check this line');
   await expect(commentInput).toHaveValue('Check this line');
+  await expect(chip).toHaveCount(0);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-inline-comment.png'));
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
+  // Real pointer clicks must reach the form above Monaco's transparent view-lines layer.
+  await commentForm.getByRole('button', { name: 'Cancel', exact: true, includeHidden: true }).click();
+  await expect(commentForm).toHaveCount(0);
+  await expect(frame.locator('.sf-comment-glyph')).toHaveCount(0);
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Shift+End');
+  await chip.getByRole('button', { name: 'Comment', exact: true }).click();
+  await commentInput.fill('Check this line');
+  await commentForm.getByRole('button', { name: 'Add comment', exact: true, includeHidden: true }).click();
   await expect(commentForm).toHaveCount(0);
   await expect(frame.locator('.sf-comment-glyph')).toHaveCount(1);
   await expect(frame.locator('.view-lines')).not.toContainText('Check this line');
+  await frame.locator('.sf-comment-glyph').click();
+  const commentRow = frame.locator('.sf-comment-row').filter({ hasText: 'Check this line' });
+  await commentRow.getByRole('button', { name: 'Edit', exact: true, includeHidden: true }).click();
+  const editComment = frame.locator('form[aria-label="Edit comment"]');
+  await editComment.locator('textarea').fill('Check this line again');
+  await editComment.getByRole('button', { name: 'Save', exact: true, includeHidden: true }).click();
+  await expect(editComment).toHaveCount(0);
+  await expect(commentRow).toContainText('Check this line again');
+  await commentRow.getByRole('button', { name: 'Delete', exact: true, includeHidden: true }).click();
+  await commentRow.getByRole('button', { name: 'Confirm delete', exact: true, includeHidden: true }).click();
+  await expect(frame.locator('.sf-comment-glyph')).toHaveCount(0);
   // "Show side panel" opens the host side panel beside the tab; its New Tab page lists only Studio's tools.
   await studioPanel(page).getByRole('button', { name: 'Show side panel', exact: true }).first().click();
   await expect(sidePanel(page)).toBeVisible();

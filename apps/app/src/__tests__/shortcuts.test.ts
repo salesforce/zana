@@ -33,7 +33,14 @@ vi.mock('../store', () => ({
   usePersonas: { getState: () => ({ personas: [] }) },
   sortProjectsForDisplay: (p: unknown[]) => p
 }));
-vi.mock('../lib/findRegistry', () => ({ getTerminal: () => undefined }));
+const { getTerminalMock, getActiveTerminalIdMock } = vi.hoisted(() => ({
+  getTerminalMock: vi.fn((_id?: string): { clear: () => void } | null => null),
+  getActiveTerminalIdMock: vi.fn((): string | null => null)
+}));
+vi.mock('../lib/findRegistry', () => ({
+  getTerminal: getTerminalMock,
+  getActiveTerminalId: getActiveTerminalIdMock
+}));
 vi.mock('../lib/launchProfile', () => ({
   projectDefaultLaunch: () => ({ profile: 'claude' })
 }));
@@ -146,5 +153,58 @@ describe('shortcuts: round-trip and dashboard chords', () => {
     const { preventDefault } = kb.press('r', { meta: true });
     expect(uiState.setResumeOpen).not.toHaveBeenCalled();
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe('shortcuts: ⌘K clears the active terminal', () => {
+  let kb: KeyboardHarness;
+  let uninstall: () => void;
+
+  beforeEach(() => {
+    kb = installKeyboardHarness();
+    uninstall = installShortcuts();
+    getTerminalMock.mockReset().mockReturnValue(null);
+    getActiveTerminalIdMock.mockReset().mockReturnValue(null);
+    uiState.selectedProjectId = undefined;
+    uiState.selectedTabId = {};
+  });
+
+  afterEach(() => {
+    uninstall();
+    kb.teardown();
+    uiState.selectedProjectId = 'p1';
+  });
+
+  it('clears the handle of the active terminal id, with no project/tab selected', () => {
+    const clear = vi.fn();
+    getActiveTerminalIdMock.mockReturnValue('s1');
+    getTerminalMock.mockImplementation((id) => (id === 's1' ? { clear } : null));
+    const { preventDefault } = kb.press('k', { meta: true });
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores selectedTabId and uses only the active terminal id', () => {
+    const clear = vi.fn();
+    uiState.selectedProjectId = 'p1';
+    uiState.selectedTabId = { p1: 'other' };
+    getActiveTerminalIdMock.mockReturnValue('s1');
+    getTerminalMock.mockImplementation((id) => (id === 's1' ? { clear } : null));
+    kb.press('k', { meta: true });
+    expect(getTerminalMock).toHaveBeenCalledWith('s1');
+    expect(getTerminalMock).not.toHaveBeenCalledWith('other');
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op without preventDefault when no terminal is active', () => {
+    const { preventDefault } = kb.press('k', { meta: true });
+    expect(getTerminalMock).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when the active id has no registered handle', () => {
+    getActiveTerminalIdMock.mockReturnValue('stale');
+    expect(() => kb.press('k', { meta: true })).not.toThrow();
+    expect(getTerminalMock).toHaveBeenCalledWith('stale');
   });
 });

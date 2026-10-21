@@ -5,6 +5,7 @@ import { envelopeTitle } from '../lib/guardrail.js';
 import { ARTIFACT_RETENTION, createKvArtifactStore } from '../lib/artifacts.js';
 import { compactError } from '../lib/dx-project.js';
 import { AGENT_SCRIPT_EXAMPLES } from '../lib/agent-script-model.js';
+import { STUDIO_CHANGED_CHANNEL } from '../lib/studio-contract.js';
 import type { SalesforceDeps, SalesforceRequest } from '../lib/types.js';
 
 function orgDisplay(kind: 'sandbox' | 'production' = 'sandbox') {
@@ -190,6 +191,9 @@ describe('salesforce family tools', () => {
     await expect(harness.callRpc('orgs', { refresh: true })).resolves.toMatchObject({ ok: true, orgs: [expect.objectContaining({ alias: 'dev' })] });
     await harness.callRpc('status');
     expect(lists).toBe(2);
+    await harness.callRpc('status', { refresh: true, projectId: 'p1' });
+    await harness.callRpc('orgs', { projectId: 'p1' });
+    expect(lists).toBe(3);
   });
 
   it('exposes doctor/status/org RPC and CLI help', async () => {
@@ -233,6 +237,8 @@ describe('salesforce family tools', () => {
       content: 'config:\n    agent_name: "MyBot"\nstart_agent:\n    reasoning:\n        instructions: "hi"\n'
     });
     expect(written).toMatchObject({ ok: true });
+    // An open Studio hears the write and reloads the file.
+    expect(harness.published).toContainEqual({ event: STUDIO_CHANGED_CHANNEL, payload: expect.objectContaining({ path: 'force-app/main/default/agents/MyBot.agent', kind: 'files' }) });
     const reread = await harness.callRpc('agentFiles.read', { path: 'force-app/main/default/agents/MyBot.agent' });
     expect(reread).toMatchObject({ ok: true, file: { apiName: 'MyBot' } });
     await expect(harness.callRpc('agentFiles.read', { path: '/etc/passwd' })).resolves.toMatchObject({
@@ -307,6 +313,17 @@ describe('salesforce family tools', () => {
     await expect(
       soql.execute({ action: 'query.validate', query: 'SELECT Id FROM Account ALL ROWS' }, ctx)
     ).resolves.toMatchObject({ ok: true, summary: expect.stringMatching(/ALL ROWS/) });
+  });
+
+  it('includes exact sObjects in a large org and honors schema search limits', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
+    const sobjects = [...Array.from({ length: 30 }, (_, i) => ({ name: `ns__Account_${i}__c` })), { name: 'Account', label: 'Account' }];
+    await createSalesforcePlugin(zcc, mockDeps({ rest: () => ({ status: 200, json: { sobjects }, text: '{}' }) }));
+    harness.setSettings({ defaultOrg: 'dev' });
+    const soql = harness.agentTools.find(row => row.name === 'sf_soql')!;
+    await expect(soql.execute({ action: 'schema.search', term: 'Account', limit: 1 }, ctx)).resolves.toMatchObject({
+      ok: true, data: [{ name: 'Account', label: 'Account' }],
+    });
   });
 
   it('diagnoses Apex, runs targeted tests, and fetches logs on a sandbox', async () => {

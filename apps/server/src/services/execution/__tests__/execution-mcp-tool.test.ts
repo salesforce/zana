@@ -419,13 +419,14 @@ describe('execution MCP tools', () => {
     const execution = service();
     execution.completeWork.mockResolvedValueOnce({ ok: true, value: {
       id: 'execution-1', state: 'RUNNING', deliveries: [], usageObservations: [{ cumulative: { inputTokens: 9 } }], usageBaseline: { inputTokens: 5 },
-      workUnits: [{ id: 'unit-1', structuredResult: { raw: 'secret' } }]
+      workUnits: [{ id: 'unit-1', state: 'COMPLETED', claimGeneration: 2, structuredResult: { raw: 'secret' } }]
     } } as never);
     const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'slot-1', role: 'worker' as const };
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'worker', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
     const payload = JSON.parse(text(await tools.get('execution.work.complete')!({ executionId: 'execution-1', workUnitId: 'unit-1', result: 'done' })));
-    expect(payload.workUnits[0]).not.toHaveProperty('structuredResult');
+    expect(payload).toMatchObject({ ok: true, workUnitId: 'unit-1', status: 'COMPLETED', claimGeneration: 2 });
+    expect(payload).not.toHaveProperty('workUnits');
     expect(payload).not.toHaveProperty('usageObservations');
     expect(payload).not.toHaveProperty('usageBaseline');
   });

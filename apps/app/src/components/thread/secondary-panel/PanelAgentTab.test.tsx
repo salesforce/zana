@@ -25,6 +25,8 @@ vi.mock('../../../views/threads/ThreadDetailView.js', () => ({
 }));
 vi.mock('../../../lib/product-client.js', () => ({ product: { threads } }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigate }));
+const store = vi.hoisted(() => ({ projects: [{ id: 'dx', name: 'dx', path: '/tmp/dx' }] }));
+vi.mock('../../../store.js', () => ({ useData: (select: (state: unknown) => unknown) => select(store) }));
 const viewWindow = vi.hoisted(() => ({ target: null as null | { pluginId: string }, show: vi.fn(async (_to: string) => undefined) }));
 vi.mock('../../../lib/pluginViewSurface.js', () => ({ getPluginViewTarget: () => viewWindow.target }));
 vi.mock('../../../plugins/plugin-view-windows.js', () => ({ showInMainWindow: viewWindow.show }));
@@ -60,6 +62,16 @@ describe('PanelAgentTab', () => {
     render(<PanelAgentTab pluginPanel={binding} draft="Review this doc" draftProjectId="proj-1" onCreated={vi.fn()} />);
     expect(composerProps.last).toMatchObject({ initialText: 'Review this doc', composerProjectId: 'proj-1', pluginPanel: binding });
     expect(composerProps.last).not.toHaveProperty('providerId');
+  });
+
+  it('pins new threads to the page project', () => {
+    render(<PanelAgentTab pluginPanel={binding} projectId="dx" onCreated={vi.fn()} />);
+    expect(composerProps.last).toMatchObject({ project: store.projects[0], composerProjectId: 'dx', pluginPanel: binding });
+  });
+
+  it('pins nothing on a page without a project', () => {
+    render(<PanelAgentTab pluginPanel={binding} onCreated={vi.fn()} />);
+    expect(composerProps.last?.project).toBeUndefined();
   });
 
   it('keeps the generic hint and skips the lookup without a plugin binding', () => {

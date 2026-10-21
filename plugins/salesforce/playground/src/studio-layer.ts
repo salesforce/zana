@@ -288,6 +288,7 @@ export class StudioLayer {
     this.closeCommentComposer();
     const model = this.model;
     if (!model) return;
+    this.showChip(null, '');
     const node = el('form', 'sf-comment-compose');
     node.setAttribute('aria-label', editing ? 'Edit comment' : 'Add comment');
     const lines = `line${endLine > line ? `s ${line}-${endLine}` : ` ${line}`}`;
@@ -362,7 +363,7 @@ export class StudioLayer {
   private showChip(selection: Monaco.Selection | null, text: string): void {
     if (this.chip) { this.editor.removeContentWidget(this.chip); this.chip = null; }
     const model = this.model;
-    if (!selection || !model) return;
+    if (!selection || !model || this.composeZoneId) return;
     const lines = model.getValue().split('\n');
     const actions = selectionChipActions(topicAtLine(lines, selection.startLineNumber));
     const node = el('div', 'sf-selection-chip');
