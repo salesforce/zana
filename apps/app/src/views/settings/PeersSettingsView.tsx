@@ -127,7 +127,11 @@ export function PeersSettingsView() {
     const offPlugins = product.pluginApps.onChanged((next) => {
       if (!disposed.current) setPlugins(next);
     });
-    return () => { disposed.current = true; offPlugins(); };
+    // A torn-down link destroys its host after its connection is already terminal (polling has stopped), so host changes reload the list.
+    const offHosts = product.hosts.onChanged(() => {
+      if (!disposed.current) void load(true);
+    });
+    return () => { disposed.current = true; offPlugins(); offHosts(); };
   }, [load, loadConnections, loadLeftovers]);
 
   const hasActiveConnection = connections.some((connection) => !TERMINAL_CONNECTION_STATES.has(connection.state));

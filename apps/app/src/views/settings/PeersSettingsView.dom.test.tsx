@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({ activity: vi.fn(), list: vi.fn(), removeUse: vi.fn(), removeLink: vi.fn(), disconnect: vi.fn(), reconnect: vi.fn(), repair: vi.fn(), leftovers: vi.fn(), forgetLeftover: vi.fn() }));
 const conn = vi.hoisted(() => ({ list: vi.fn(), cancel: vi.fn(), checkRemoteLogin: vi.fn(), create: vi.fn(), join: vi.fn(), approve: vi.fn(), deny: vi.fn() }));
+const hostsEvents = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
 vi.mock('../../lib/product-client.js', () => ({ peerLinks: api, peerConnections: conn, product: {
-  pluginApps: { list: vi.fn(async () => []), onChanged: () => () => {} }
+  pluginApps: { list: vi.fn(async () => []), onChanged: () => () => {} },
+  hosts: { onChanged: (cb: () => void) => { hostsEvents.listeners.add(cb); return () => { hostsEvents.listeners.delete(cb); }; } }
 } }));
 
 import { PeersSettingsView } from './PeersSettingsView';
@@ -43,6 +45,17 @@ describe('PeersSettingsView', () => {
     render(<PeersSettingsView />);
     expect(screen.getByRole('heading', { name: 'Peers', level: 3 })).toBeTruthy();
     await screen.findByText('Studio laptop');
+  });
+
+  it('reloads links when hosts change after the connection is already terminal', async () => {
+    conn.list.mockResolvedValue({ connections: [{ invitationId: 'i1', state: 'cancelled' }] });
+    const { unmount } = render(<PeersSettingsView />);
+    await screen.findByText('Studio laptop');
+    api.list.mockResolvedValue({ links: [] });
+    act(() => { for (const cb of hostsEvents.listeners) cb(); });
+    expect(await screen.findByText(/No installed plugin uses peers yet/)).toBeTruthy();
+    unmount();
+    expect(hostsEvents.listeners.size).toBe(0);
   });
 
   it('shows the empty state', async () => {
