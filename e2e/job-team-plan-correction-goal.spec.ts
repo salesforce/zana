@@ -149,7 +149,7 @@ async function activate(window: Page, s: Setup, goalId: string): Promise<string>
 }
 
 async function requestCorrection(window: Page, s: Setup, executionId: string): Promise<void> {
-  await openCorrectionCard(window, 'No valid revised plan is ready to review');
+  await openCorrectionCard(window, 'Plan requires revisions to proceed');
   expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
   expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
   await choose(window, 'Request changes');

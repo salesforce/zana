@@ -38,7 +38,7 @@ function planReviewSummary(reason: string, units: ExecutionWorkUnitInput[], norm
   const repaired = normalizations.length
     ? `\n\nAutomatically normalized in the proposed plan:\n${normalizations.map((note) => `- ${note}`).join('\n')}`
     : '';
-  return `Correction needed: ${reason}\n\nProposed plan: ${units.length} step${units.length === 1 ? '' : 's'}.\n\n${steps.join('\n')}${repaired}`;
+  return `Problem with the supplied plan: ${reason}\n\nProposed corrected plan: ${units.length} step${units.length === 1 ? '' : 's'}.\n\n${steps.join('\n')}${repaired}`;
 }
 
 interface PlanCorrectionActionRef {
@@ -137,14 +137,16 @@ export class PlanCorrectionService {
     });
   }
 
-  async reviewInvalid(ctx: CoordinatorHandoffContext, reason: string): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined> {
+  async reviewInvalid(ctx: CoordinatorHandoffContext, _reason: string): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined> {
     return this.serialize(ctx.executionId, async () => {
       const current = await this.deps.store.get(ctx.executionId);
       // This invalid plan is not a rejected provided plan. Let normal handoff
       // nudges recover inferred or coordinator-authored plans.
       if (!current) return undefined;
       current.ctx = ctx;
-      current.reason = reason;
+      // Keep the launch defect from begin(). `_reason` only says why the handoff found
+      // no authored plan (a parked coordinator never writes one), not what is wrong
+      // with the supplied plan.
       const corrected = await this.deps.readCorrectedPlan(ctx.projectRoot, ctx.executionId);
       return this.reviewCorrected(current, corrected);
     });
@@ -234,7 +236,7 @@ export class PlanCorrectionService {
       subject: 'Plan correction required',
       comments: reviewReady
         ? `${planReviewSummary(current.reason, current.offeredUnits ?? [], notes)}\n\nReview the proposed corrected plan below before work can continue. Approve starts work using this exact revision. Request changes sends it back for revision. Cancel stops this run.`
-        : `${stalled ? 'The coordinator finished its turn without writing a corrected plan. ' : ''}No valid revised plan is ready to review. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.`,
+        : `${stalled ? 'The coordinator finished its turn without writing a corrected plan. ' : ''}Plan requires revisions to proceed. Problem with the supplied plan: ${current.reason.replace(/\.$/, '')}. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.`,
       decisionGuidance: {
         kind: 'plan-correction',
         diagnostic: current.reason,

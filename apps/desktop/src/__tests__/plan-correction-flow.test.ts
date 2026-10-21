@@ -241,7 +241,9 @@ describe('Squad plan-correction flow (real service, wake queue, handoff and exec
       await ctx.idleEdge();
       expect(ctx.inbox).toHaveLength(1);
       expect(ctx.optionIds(0)).toEqual(['changes', 'cancel']);
-      expect(ctx.inbox[0]!.comments).toContain('No valid revised plan is ready to review');
+      expect(ctx.inbox[0]!.comments).toContain('Plan requires revisions to proceed');
+      expect(ctx.inbox[0]!.comments).toContain('Problem with the supplied plan: mutating work unit requires file scope');
+      expect(ctx.inbox[0]!.comments).not.toContain('no plan file found');
       expect(JSON.parse(ctx.bound.get('inbox-1')!.ref)).toMatchObject({ executionId: EXECUTION_ID, digest: '' });
       expect(await ctx.workUnits()).toHaveLength(0);
 
@@ -257,7 +259,7 @@ describe('Squad plan-correction flow (real service, wake queue, handoff and exec
       await ctx.idleEdge();
       expect(ctx.inbox).toHaveLength(2);
       expect(ctx.optionIds(1)).toEqual(['approve', 'changes', 'cancel']);
-      expect(ctx.inbox[1]!.comments).toContain('Proposed plan: 1 step');
+      expect(ctx.inbox[1]!.comments).toContain('Proposed corrected plan: 1 step');
       expect(await ctx.workUnits()).toHaveLength(0);
 
       // Approve -> schedule persisted, resume re-enters the handoff, plan registered.

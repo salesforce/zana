@@ -244,8 +244,8 @@ describe('PlanCorrectionService', () => {
     await service.review(ctx, source);
 
     const entry = appendInbox.mock.calls[0]![0];
-    expect(entry.comments).toContain('Correction needed: parser expected a dependency');
-    expect(entry.comments).toContain('Proposed plan: 1 step.');
+    expect(entry.comments).toContain('Problem with the supplied plan: parser expected a dependency');
+    expect(entry.comments).toContain('Proposed corrected plan: 1 step.');
     expect(entry.comments).toContain('1. **Source** (`source`). No declared file writes.');
     expect(entry.comments).toContain('Review the proposed corrected plan below');
     expect(entry.decisionGuidance).toEqual({
@@ -675,6 +675,11 @@ describe('PlanCorrectionService', () => {
     const pending = records.get(ctx.executionId);
     expect(appendInbox).toHaveBeenCalledOnce();
     expect(pending).toMatchObject({ status: 'pending', offeredUnits: source.units });
+    // The card names the launch defect, not the handoff's "no plan file found" reason.
+    expect(pending.reason).toBe('bad plan');
+    expect(appendInbox.mock.calls[0]![0].comments).toContain('Problem with the supplied plan: bad plan');
+    expect(appendInbox.mock.calls[0]![0].comments).not.toContain('authored plan is invalid');
+    expect(appendInbox.mock.calls[0]![0].decisionGuidance).toMatchObject({ diagnostic: 'bad plan' });
 
     expect(await service.reviewInvalid(ctx, 'still invalid')).toBe('wait');
     expect(appendInbox).toHaveBeenCalledOnce();
