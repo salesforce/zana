@@ -67,6 +67,16 @@ describe('readAuthoredPlan / writeSourceMirror (filesystem)', () => {
     expect(await readAuthoredPlan(root, 'exec-1')).toEqual({ status: 'missing' });
   });
 
+  it('omits normalizations for a clean plan and reports them for a recoverable one', async () => {
+    await mkdir(join(root, '.zana'), { recursive: true });
+    await writeFile(join(root, authoredPlanRelPath('exec-1')), VALID_PLAN, 'utf8');
+    expect(await readAuthoredPlan(root, 'exec-1')).not.toHaveProperty('normalizations');
+    await writeFile(join(root, authoredPlanRelPath('exec-1')), VALID_PLAN.replace('### home:', '### Home:'), 'utf8');
+    const read = await readAuthoredPlan(root, 'exec-1');
+    expect(read).toMatchObject({ status: 'ok', normalizations: ['step "Home" id normalized to "home"'] });
+    if (read.status === 'ok') expect(read.units[0].id).toBe('home');
+  });
+
   it('returns invalid (with reason) for a present-but-incomplete plan', async () => {
     await mkdir(join(root, '.zana'), { recursive: true });
     // Mutating step with no Write scope fails DAG completeness normalization.
@@ -480,6 +490,65 @@ describe('TeamPlanHandoff review verdicts', () => {
     } as never);
     return { handoff, nudge, register, cleanup };
   };
+
+  it('registers a recoverable-only authored plan once with normalized ids, never review, and logs the repair', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'zana-handoff-norm-'));
+    try {
+      await mkdir(join(root, '.zana'), { recursive: true });
+      await writeFile(join(root, authoredPlanRelPath('exec-1')), VALID_PLAN.replace('### home:', '### Home:'), 'utf8');
+      const reviewInvalid = vi.fn(async () => 'wait' as const);
+      const logError = vi.fn();
+      const { handoff, register, cleanup } = build({
+        readAuthoredPlan: () => readAuthoredPlan(root, 'exec-1'), reviewInvalid, logError
+      });
+      await handoff.onCoordinatorIdle({ ...ctx, projectRoot: root });
+      await handoff.onCoordinatorIdle({ ...ctx, projectRoot: root });
+      expect(register).toHaveBeenCalledOnce();
+      expect((register.mock.calls[0] as unknown[])[1]).toMatchObject([{ id: 'home' }]);
+      expect(reviewInvalid).not.toHaveBeenCalled();
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(logError).toHaveBeenCalledOnce();
+      expect(logError).toHaveBeenCalledWith(
+        'team plan handoff exec-1: registered plan after normalizing',
+        'step "Home" id normalized to "home"'
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('joins several repair notes and does not log when registration is rejected', async () => {
+    const notes = ['n1', 'n2'];
+    const logged = vi.fn();
+    const ok = build({ readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/r', normalizations: notes }), logError: logged });
+    await ok.handoff.onCoordinatorIdle(ctx);
+    expect(logged).toHaveBeenCalledWith(expect.any(String), 'n1; n2');
+
+    const logError = vi.fn();
+    const rejected = build({ readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/r', normalizations: notes }), logError }, { ok: false });
+    await rejected.handoff.onCoordinatorIdle(ctx);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it('does not log for a clean plan', async () => {
+    const logError = vi.fn();
+    const { handoff, register } = build({ logError });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it('does not log when the accepted plan is a corrected-plan verdict without normalizations', async () => {
+    const logError = vi.fn();
+    const { handoff, register } = build({
+      readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad' }),
+      reviewInvalid: async () => ({ status: 'ok', units, realPath: '/r' }),
+      logError
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
+    expect(logError).not.toHaveBeenCalled();
+  });
 
   it('latches done without registering when review rejects the plan', async () => {
     const { handoff, register } = build({ review: async () => 'reject' });

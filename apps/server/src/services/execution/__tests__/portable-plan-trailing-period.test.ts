@@ -7,7 +7,7 @@ import { parsePortablePlan } from '../portable-plan.js';
 // unknown and strands plan correction on an `invalid` corrected plan).
 const step = (id: string, depends: string, write = '`output.md`') => `### ${id}: Title <!-- executable-step -->
 - Depends on: ${depends}
-- Execution class: low
+- Execution class: Routine
 - Mode: Mutating
 - Read scope: Workspace root.
 - Write scope: ${write}

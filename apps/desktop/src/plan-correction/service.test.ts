@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { PLAN_CORRECTION_MAX_RETRIES, PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction } from './service.js';
 
 const ctx = { sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'e-1', slotId: 'lead' };
@@ -258,6 +259,70 @@ describe('PlanCorrectionService', () => {
       { id: 'changes', label: 'Request changes' },
       { id: 'cancel', label: 'Cancel' }
     ]);
+  });
+
+  describe('automatic normalization notes', () => {
+    const normalized = {
+      ...source,
+      units: [{ id: 'u1', title: 'First', task: 'do it', dependencies: [] }],
+      normalizations: ['step "U1" id normalized to "u1"', 'step u2 dependency "U1" normalized to "u1"']
+    };
+
+    it('lists repairs on the gated offer without changing options, gating, or digest', async () => {
+      const { service, appendInbox, bindInboxAction, readCorrectedPlan } = create();
+      readCorrectedPlan.mockResolvedValue(normalized);
+      await service.begin(ctx.executionId, 'parser expected a dependency', false);
+
+      await expect(service.review(ctx, normalized)).resolves.toBe('wait');
+
+      const entry = appendInbox.mock.calls[0]![0];
+      expect(entry.hostActionRequired).toBe(true);
+      expect(entry.comments).toContain('Automatically normalized in the proposed plan:');
+      expect(entry.comments).toContain('- step "U1" id normalized to "u1"');
+      expect(entry.comments).toContain('- step u2 dependency "U1" normalized to "u1"');
+      expect(entry.questions[0]?.options).toEqual([
+        { id: 'approve', label: 'Approve' },
+        { id: 'changes', label: 'Request changes' },
+        { id: 'cancel', label: 'Cancel' }
+      ]);
+      expect(latestOffer(bindInboxAction).digest).toBe(launchDigest(normalized.units));
+    });
+
+    it('approves the normalized offer and returns the normalized units', async () => {
+      const { service, bindInboxAction, readCorrectedPlan } = create();
+      readCorrectedPlan.mockResolvedValue(normalized);
+      await service.begin(ctx.executionId, 'bad plan', false);
+      await service.review(ctx, normalized);
+
+      await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('approve');
+      expect(await service.review(ctx, normalized)).toMatchObject({ status: 'ok', units: normalized.units });
+    });
+
+    it('omits the section when the corrected plan needed no repair', async () => {
+      const { service, appendInbox } = create();
+      await service.begin(ctx.executionId, 'bad plan', false);
+      await service.review(ctx, source);
+      expect(appendInbox.mock.calls[0]![0].comments).not.toContain('Automatically normalized');
+    });
+
+    it('omits the section for an empty notes array', async () => {
+      const { service, appendInbox, readCorrectedPlan } = create();
+      readCorrectedPlan.mockResolvedValue({ ...source, normalizations: [] });
+      await service.begin(ctx.executionId, 'bad plan', false);
+      await service.review(ctx, source);
+      expect(appendInbox.mock.calls[0]![0].comments).not.toContain('Automatically normalized');
+    });
+
+    it('republishes a persisted pending offer with the notes from the fresh read', async () => {
+      const { service, appendInbox, readCorrectedPlan } = create();
+      readCorrectedPlan.mockResolvedValue(normalized);
+      appendInbox.mockRejectedValueOnce(new Error('inbox unavailable'));
+      await service.begin(ctx.executionId, 'bad plan', false);
+      await expect(service.review(ctx, normalized)).rejects.toThrow('inbox unavailable');
+
+      await expect(service.review(ctx, normalized)).resolves.toBe('wait');
+      expect(appendInbox.mock.calls.at(-1)![0].comments).toContain('step "U1" id normalized to "u1"');
+    });
   });
 
   it('requests revision without changing the source plan', async () => {

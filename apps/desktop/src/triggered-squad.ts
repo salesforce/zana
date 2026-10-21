@@ -1,6 +1,6 @@
 import type { Persona, Project, Team } from '@zana-ai/zcc-domain/product';
 import type { SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
-import { invalidProvidedPlanHold, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
+import { invalidProvidedPlanHold, planNormalizationNote, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
 import { startTriggeredSquadExecution, triggeredSquadSlotTasks } from './scheduled-plan-correction.js';
 
 export interface TriggeredSquadInput {
@@ -41,7 +41,9 @@ export function createTriggeredSquadLauncher(deps: TriggeredSquadDeps) {
     if (!team.orchestratorPersonaId || !deps.personas.list().some(persona => persona.id === team.orchestratorPersonaId)) throw new Error('team requires an available orchestrator');
     const slots = deps.expandTeamSlots(team);
     if (!slots.length || slots.length > 32) throw new Error('team has no launchable slots');
-    const { coordinationMode, workUnits, planError } = resolveTriggeredSquadPlan(input.planSource, input.objective);
+    const { coordinationMode, workUnits, idRenames, planError } = resolveTriggeredSquadPlan(input.planSource, input.objective);
+    const normalizationNote = planNormalizationNote(idRenames);
+    const slotInput = normalizationNote ? { ...input, objective: `${input.objective}\n\n${normalizationNote}` } : input;
     // An invalid supplied plan follows the same parked-Squad correction path as an
     // interactive provided plan (binding begun in triggeredSquadSlotTasks): the
     // durable execution gives Inbox a real run to open; no Claude fallback agent
@@ -50,7 +52,7 @@ export function createTriggeredSquadLauncher(deps: TriggeredSquadDeps) {
     return startTriggeredSquadExecution(input.launchRequestId, () => deps.squadExecutionService.start(input.callerPrincipalId, project.id, {
       version: 1, teamId: team.id, launchRequestId: input.launchRequestId, coordinationMode, origin: input.origin,
       jobTitle: input.title, objective: input.objective,
-      slots: triggeredSquadSlotTasks(input, slots, planError, invalidProvidedPlanHold, deps.planCorrectionLaunchBinding),
+      slots: triggeredSquadSlotTasks(slotInput, slots, planError, invalidProvidedPlanHold, deps.planCorrectionLaunchBinding),
       ...(workUnits ? { workUnits } : {}),
       ...(input.maxDurationMinutes && input.maxDurationMinutes > 0 ? { policy: { deadlineMs: input.maxDurationMinutes * 60 * 1000 } } : {})
     }), deps.planCorrectionLaunchBinding);

@@ -103,7 +103,7 @@ import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
-import { resolveSquadPlan } from './team-trigger-semantics.js';
+import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
@@ -6553,6 +6553,7 @@ async function buildTeamJobStartRequest(args: {
     `Shared job goal: ${sanitizedGoal}`,
     sanitizedSummary ? `Context: ${sanitizedSummary}` : '',
     providedPlanError ? PlanCorrectionService.correctionPrompt(providedPlanError) : '',
+    planNormalizationNote(resolvedPlan.idRenames),
     'Work toward this goal. Coordinate through the Team orchestrator when one is present.'
   ].filter(Boolean).join('\n\n');
   const initialTask = args.slots.map((slot) => ({
