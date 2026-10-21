@@ -151,6 +151,29 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     expect(resume[0].getAttribute('aria-describedby')).toBe(reason.id);
   });
 
+  it('links each mounted instance to its own recovery reason', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'STOPPED';
+    snapshot.execution.timeoutReason = 'plan-correction-cancelled';
+    snapshot.execution.currentBlocker = undefined;
+    snapshot.execution.recovery = { status: 'terminal', actions: {
+      freshPlan: { available: false, reason: 'RECOVERY_NOT_ALLOWED' },
+      exactNative: { available: false, restorableSlots: 0, reason: 'RECOVERY_NOT_ALLOWED' }
+    } };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<>
+      <ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />
+      <ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />
+    </>);
+
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Resume existing Squad' })).toHaveLength(2));
+    const buttons = screen.getAllByRole('button', { name: 'Resume existing Squad' });
+    const reasons = screen.getAllByText('Cancelled at plan correction. Start a new Squad to try again.');
+    expect(reasons).toHaveLength(2);
+    expect(reasons[0].id).not.toBe(reasons[1].id);
+    expect(buttons.map((button) => button.getAttribute('aria-describedby'))).toEqual(reasons.map((reason) => reason.id));
+  });
+
   it('does not show the cancelled-correction explanation once a successor exists', async () => {
     const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
     snapshot.execution.state = 'STOPPED';
