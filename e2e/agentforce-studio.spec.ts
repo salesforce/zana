@@ -836,7 +836,12 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   await expect(orgSetup.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
   await orgSetup.getByLabel('Context preset', { exact: true }).selectOption('');
 
-  await orgSetup.getByRole('checkbox', { name: 'Set verified', exact: true }).check();
+  // The context dialog scrolls its own body; on a short CI window the "Set verified" toggle (a 1px
+  // opacity:0 input) can land below the fold, so scroll it in before checking to avoid a viewport-
+  // actionability timeout.
+  const setVerified = orgSetup.getByRole('checkbox', { name: 'Set verified', exact: true });
+  await setVerified.scrollIntoViewIfNeeded();
+  await setVerified.check();
   await orgSetup.getByRole('button', { name: 'Start preview', exact: true }).click();
   await expect(orgPreview.getByRole('log')).toContainText('support concierge');
   await orgPreview.getByTestId('salesforce-agentforce-preview-end').click();

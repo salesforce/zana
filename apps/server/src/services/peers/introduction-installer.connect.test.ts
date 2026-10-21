@@ -22,7 +22,10 @@ const CREDENTIAL = 'c'.repeat(43);
 const peerCode = Array(8).fill('BEEF').join('-');
 const ordered = (first: string) => () => `${first}${randomUUID().slice(1)}`;
 const lower = ordered('0'), middle = ordered('8'), higher = ordered('f');
-const SECRET_PATTERN = /[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}|zcde_|c{20}|enrollToken|credential/;
+// The Connect-code branch requires an uppercase A-F within the 14-char span: real codes (BEEF-…) always
+// carry letters, while a lowercase randomUUID never does. Without this, an all-digit UUID group window
+// (DDDD-DDDD-DDDD) matched the uppercase-hex class and flaked as a false "leak" on unlucky seeds.
+const SECRET_PATTERN = /(?=[-A-F0-9]{0,13}[A-F])[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}|zcde_|c{20}|enrollToken|credential/;
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 

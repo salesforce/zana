@@ -178,7 +178,9 @@ it.each(['abort', 'dispose'] as const)('cancels in-flight %s before activation a
   const call = vi.spyOn(a.server.ctx.hostHub, 'callHostOnlineRpc').mockImplementation(() => new Promise(() => {}));
   const controller = new AbortController();
   const pending = expect(handle.api.sdk.peers.enable(peerId, { scope, signal: controller.signal })).rejects.toThrow(mode === 'abort' ? 'caller cancelled' : 'stale');
-  await vi.waitFor(() => expect(call).toHaveBeenCalled());
+  // waitFor defaults to a 1s window; under full parallel-suite load the enable() round-trip can take
+  // longer to reach the spied call, so give these spy gates explicit headroom.
+  await vi.waitFor(() => expect(call).toHaveBeenCalled(), { timeout: 15_000 });
   if (mode === 'abort') controller.abort(new Error('caller cancelled')); else await handle.dispose();
   await pending;
   expect(await a.server.ctx.peerAuthority.proposals('test-plugin', peerId, scope)).toEqual([]);
@@ -201,13 +203,15 @@ it.each(['abort', 'dispose'] as const)('stops %s during credential import; delay
   const activated = vi.spyOn(b.server.ctx.peerAuthority, 'acceptActivation');
   const controller = new AbortController();
   const pending = expect(handle.api.sdk.peers.enable(peerId, { scope, signal: controller.signal })).rejects.toThrow(mode === 'abort' ? 'cancelled' : /cancelled|stale/);
-  await vi.waitFor(() => expect(imported).toHaveBeenCalled());
+  // waitFor defaults to a 1s window; under full parallel-suite load the enable() round-trip can take
+  // longer to reach the mocked import, so give these spy gates explicit headroom.
+  await vi.waitFor(() => expect(imported).toHaveBeenCalled(), { timeout: 15_000 });
   if (mode === 'abort') controller.abort(new Error('caller cancelled')); else await handle.dispose();
   await pending;
   const [proposal] = await a.server.ctx.peerAuthority.proposals('test-plugin', peerId, scope);
   expect(proposal).toBeDefined();
   release();
-  await vi.waitFor(() => expect(imported.mock.settledResults[0]?.type).toBe('fulfilled'));
+  await vi.waitFor(() => expect(imported.mock.settledResults[0]?.type).toBe('fulfilled'), { timeout: 15_000 });
   expect(activated).not.toHaveBeenCalled();
   expect(await a.server.ctx.peerPairs.list('test-plugin')).toEqual([]);
   expect(await b.server.ctx.peerPairs.list('test-plugin')).toEqual([]);
