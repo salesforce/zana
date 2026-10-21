@@ -267,9 +267,13 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const execution = snapshot.execution;
   const isTerminal = terminal.has(execution.state);
   const retainedRecovery = execution.recovery?.actions;
-  const exactNativeUnavailableReason = retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
-    ? 'Existing Squad sessions cannot be restored on this device.'
-    : undefined;
+  const planCorrectionCancelled = execution.state === 'STOPPED'
+    && execution.timeoutReason === 'plan-correction-cancelled' && !execution.successorExecutionId;
+  const exactNativeUnavailableReason = planCorrectionCancelled
+    ? 'Cancelled at plan correction. Start a new Squad to try again.'
+    : retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
+      ? 'Existing Squad sessions cannot be restored on this device.'
+      : undefined;
   const recoveryActions = <div className="execution-details-actions execution-details-primary-actions">
     {execution.state === 'STOPPED' && execution.timeoutReason === 'unresolved-blocker' && !execution.successorExecutionId && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverTimedOut(projectId, executionId, execution.stateVersion ?? 0, crypto.randomUUID()))}>Recover timed-out run</button>}
     {retainedRecovery?.freshPlan.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'fresh-plan'))}>Relaunch Squad from retained plan</button>}

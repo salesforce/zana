@@ -128,7 +128,7 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     await waitFor(() => expect(window.cc.executionBoard.recoverRetainedSquad).toHaveBeenCalledWith('project-1', 'execution-1', 2, 'exact-native'));
   });
 
-  it('hides retained recovery for plan-correction cancellation', async () => {
+  it('explains why plan-correction cancellation cannot resume and offers no enabled recovery', async () => {
     const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
     snapshot.execution.state = 'STOPPED';
     snapshot.execution.timeoutReason = 'plan-correction-cancelled';
@@ -142,6 +142,26 @@ describe('ExecutionJobDetails phase 5 projection', () => {
 
     await screen.findByText('final result');
     expect(screen.queryByRole('button', { name: 'Relaunch Squad from retained plan' })).toBeNull();
+    const resume = screen.getAllByRole('button', { name: 'Resume existing Squad' });
+    expect(resume).toHaveLength(1);
+    expect((resume[0] as HTMLButtonElement).disabled).toBe(true);
+    expect(resume[0].getAttribute('title')).toBe('Cancelled at plan correction. Start a new Squad to try again.');
+  });
+
+  it('does not show the cancelled-correction explanation once a successor exists', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'STOPPED';
+    snapshot.execution.timeoutReason = 'plan-correction-cancelled';
+    snapshot.execution.successorExecutionId = 'execution-successor';
+    snapshot.execution.currentBlocker = undefined;
+    snapshot.execution.recovery = { status: 'terminal', actions: {
+      freshPlan: { available: false, reason: 'RECOVERY_NOT_ALLOWED' },
+      exactNative: { available: false, restorableSlots: 0, reason: 'RECOVERY_NOT_ALLOWED' }
+    } };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+
+    await screen.findByText('final result');
     expect(screen.queryByRole('button', { name: 'Resume existing Squad' })).toBeNull();
   });
 
