@@ -3,6 +3,8 @@ import type { Duplex } from 'node:stream';
 
 export interface RelayOptions {
   preview?: boolean;
+  /** Strip the edge's own session cookies and `Domain=` from traffic crossing the tunnel. */
+  edge?: boolean;
   token: string;
   publicUrl: string;
   allowLocal?: boolean;

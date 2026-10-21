@@ -3,6 +3,7 @@ import { FILE_RANGE_MAX_BYTES } from '@zana-ai/zcc-domain';
 import type { ProductHttpContext } from './product-context.js';
 import { ProjectFsError } from './project-fs-via-host.js';
 import { previewFileReader, previewFileSize } from './video-preview.js';
+import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 
 export const HTML_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -23,6 +24,45 @@ export function isHtmlPreviewFile(path: string): boolean {
 
 /** Origin-guarded by product HTTP. Reads the confined file in bounded host reads. */
 export async function sendHtmlPreview(
+  request: IncomingMessage, response: ServerResponse, ctx: ProductHttpContext, params: URLSearchParams
+): Promise<void> {
+  try {
+    await sendHtmlDocument(request, response, ctx, params);
+  } catch (error) {
+    const status = error instanceof ProjectFsError ? error.status
+      : error instanceof HostUnavailableError ? 503
+        : error instanceof AmbiguousHostError ? 409 : 500;
+    const message = status === 413 ? 'This HTML file exceeds the 20 MB preview limit.'
+      : status === 404 ? 'The file may have been moved or deleted.'
+        : status === 403 ? 'This file is not available in this preview.'
+          : status === 409 ? 'The file changed or its host could not be selected. Try again.'
+            : status === 503 ? 'The project host is unavailable. Reconnect and try again.'
+              : 'The file could not be loaded. Try again when it is available.';
+    // Use fixed copy: host errors can contain paths or untrusted file names.
+    const body = Buffer.from(`<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Could not open this preview</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,sans-serif;background:Canvas;color:CanvasText}
+body{box-sizing:border-box;min-height:100vh;margin:0;padding:32px 24px;display:grid;place-content:center;text-align:center}
+h1{font-size:14px;font-weight:600}p{max-width:36ch;font-size:12px;line-height:1.6;color:GrayText}
+button{justify-self:center;margin-top:8px;padding:6px 12px;border:1px solid GrayText;border-radius:6px;background:Canvas;color:CanvasText;cursor:pointer}
+</style><body><h1>Could not open this preview</h1><p>${message}</p>
+<button type="button" onclick="if(parent===window)location.reload();else parent.postMessage({type:'zcc:html-preview:retry'},'*')">Try again</button></body></html>`);
+    response.writeHead(status, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-length': String(body.length),
+      'content-security-policy': HTML_PREVIEW_CSP,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'cross-origin-resource-policy': 'same-origin',
+      'referrer-policy': 'no-referrer'
+    });
+    response.end(request.method === 'HEAD' ? undefined : body);
+  }
+}
+
+async function sendHtmlDocument(
   request: IncomingMessage, response: ServerResponse, ctx: ProductHttpContext, params: URLSearchParams
 ): Promise<void> {
   if (!isHtmlPreviewFile(params.get('path') ?? '')) {

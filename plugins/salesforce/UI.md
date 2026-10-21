@@ -12,6 +12,12 @@ Native panels have their own target selector, which does not change the project.
 They inherit the owning thread or CLI agent's project even when opened from the
 global Agents view. An explicit resource descriptor can override that context.
 
+The sidebar's Salesforce button opens the global Salesforce page. Pick a project
+there and open the Agentforce Studio (in the tab or its own window) or another
+tool; each opens that project's Salesforce tab on the matching view. Agents the
+Studio opened lately are listed for one-click reopening, and the connected-org
+manager below sets the shared default.
+
 ## Add native panels to another plugin
 
 Add `@zcc-ext/salesforce` as a source dependency (`workspace:*` in this repository)

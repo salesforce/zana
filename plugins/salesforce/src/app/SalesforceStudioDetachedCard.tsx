@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { PluginDetachedTabProps } from "@zana-ai/zcc-plugin-sdk/app";
-import { STUDIO_RPC, type StudioViewState } from "../../lib/studio-contract.js";
+import { STUDIO_RPC, countProblems, type StudioViewState } from "../../lib/studio-contract.js";
 import type { WorkbenchStatus } from "../../lib/workbench-contract.js";
 import { AppWindow } from "./components/icons.js";
 import { useSalesforceCall } from "./components/client.js";
@@ -49,7 +49,7 @@ export function SalesforceStudioDetachedCard(props: PluginDetachedTabProps) {
   const alias = status.data?.selectedAlias || status.data?.defaultOrg || "";
   const org = status.data?.orgs?.find((row) => row.alias === alias || row.username === alias) ?? null;
   const view = shared.data?.shared ? shared.data.state ?? null : null;
-  const problems = view?.diagnostics.length ?? 0;
+  const problems = view ? countProblems(view.diagnostics) : 0;
 
   return (
     <section className="sf-surface sf-detached-surface" data-testid="salesforce-studio-detached">

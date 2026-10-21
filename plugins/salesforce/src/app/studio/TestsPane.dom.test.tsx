@@ -356,3 +356,16 @@ it('treats a missing reply as an error', async () => {
   expect(call.mock.calls[0]![2]).toEqual({ agentPath: PATH });
   expect(screen.queryByText(/Make these pass/)).toBeNull();
 });
+
+it('switches to the Org tests view', async () => {
+  const { call } = setup({}, {
+    'studio.orgTests.list': () => ({ ok: true, org: { alias: 'dev' }, definitions: [{ name: 'RefundTests' }], at: 1 }),
+    'studio.orgTests.details': () => ({ ok: true, definitions: [{ name: 'RefundTests', subjectName: 'MyBot', caseCount: 3 }], missing: [] }),
+    'studio.orgTests.runs': () => ({ ok: true, runs: [] })
+  });
+  await screen.findByTestId('tests-table');
+  fireEvent.click(button('Org tests'));
+  expect(await screen.findByTestId('org-def-RefundTests')).toBeTruthy();
+  expect(screen.queryByTestId('tests-table')).toBeNull();
+  expect(calls(call, 'studio.orgTests.list')).toHaveLength(1);
+});

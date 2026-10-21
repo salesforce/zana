@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef } from 'react';
 import { Bot, PanelRight } from 'lucide-react';
-import { getDesktopBrowserApi } from '../../lib/desktop-browser.js';
+import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
@@ -14,7 +14,7 @@ import {
   activeClosableTab
 } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 
-export function pluginPanelBrowserOwnerId(pluginId: string, panelPath: string): string {
+export function pluginPanelOwnerId(pluginId: string, panelPath: string): string {
   return `${PLUGIN_PAGE_PANEL_OWNER_PREFIX}${pluginId}:${panelPath}`;
 }
 
@@ -24,7 +24,6 @@ export function PluginPanelHostLayout({
   subPath,
   scopeId,
   separateWindow = false,
-  launchers = true,
   children
 }: {
   pluginId: string;
@@ -35,29 +34,21 @@ export function PluginPanelHostLayout({
   scopeId?: string;
   /** Shown in its own window: keeps a panel apart from the main window's panel for the same page. */
   separateWindow?: boolean;
-  /**
-   * The floating show-panel / ask-agent buttons. Without them the panel opens
-   * only when the page asks (`navigate.openPanelAgent`), so a page with its own
-   * right-hand chrome is left as it was.
-   */
-  launchers?: boolean;
   children: ReactNode;
 }) {
-  if (getDesktopBrowserApi() === null) return children;
   return (
-    <PluginPanelBrowserHost pluginId={pluginId} panelPath={panelPath} subPath={subPath} scopeId={scopeId} separateWindow={separateWindow} launchers={launchers}>
+    <PluginPageSidePanelHost key={JSON.stringify([pluginId, panelPath, scopeId, separateWindow])} pluginId={pluginId} panelPath={panelPath} subPath={subPath} scopeId={scopeId} separateWindow={separateWindow}>
       {children}
-    </PluginPanelBrowserHost>
+    </PluginPageSidePanelHost>
   );
 }
 
-function PluginPanelBrowserHost({
+function PluginPageSidePanelHost({
   pluginId,
   panelPath,
   subPath,
   scopeId,
   separateWindow,
-  launchers,
   children
 }: {
   pluginId: string;
@@ -65,12 +56,12 @@ function PluginPanelBrowserHost({
   subPath?: string;
   scopeId?: string;
   separateWindow: boolean;
-  launchers: boolean;
   children: ReactNode;
 }) {
   // Windows share no live panel state, so each keeps its own saved one (the last writer would win otherwise).
-  const ownerId = pluginPanelBrowserOwnerId(pluginId, `${scopeId ? `${panelPath}@${scopeId}` : panelPath}${separateWindow ? '#window' : ''}`);
+  const ownerId = pluginPanelOwnerId(pluginId, `${scopeId ? `${panelPath}@${scopeId}` : panelPath}${separateWindow ? '#window' : ''}`);
   const viewRef = useRef<HTMLDivElement>(null);
+  const compact = useCompactLayout();
   const panel = useSecondaryPanel(ownerId, {
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
   });
@@ -86,12 +77,13 @@ function PluginPanelBrowserHost({
   // The page asked to show a conversation (`navigate.openPanelAgent`); an open
   // tab for it is focused, not duplicated. A draft prefills the composer so the
   // user picks the harness before anything starts.
-  const { activateTab, addTab, openAgentDraft, openPluginTool } = panel;
+  const { activateTab, addTab, openAgentDraft, openPluginTool, openNewTab } = panel;
   // This panel has no Info / Diff / Plan pins: when the shown tab closes, the last tab left takes over.
   const fallbackTabId = panelOpen && !closable ? panel.state.tabs.at(-1)?.id : undefined;
   useEffect(() => {
     if (fallbackTabId) activateTab(fallbackTabId);
-  }, [activateTab, fallbackTabId]);
+    else if (panelOpen && !closable) openNewTab();
+  }, [activateTab, closable, fallbackTabId, openNewTab, panelOpen]);
   // The page's own side-panel tools (`navigate.openPanelTool`, `'plugin-page'` scope).
   const page = useMemo(() => ({ pluginId, page: panelPath }), [pluginId, panelPath]);
   useEffect(
@@ -169,37 +161,37 @@ function PluginPanelBrowserHost({
   return (
     <div
       ref={viewRef}
-      className={`plugin-panel-host-layout${panelOpen ? ' is-secondary-open' : ''}`}
+      className={`plugin-panel-host-layout${panelOpen ? ' is-secondary-open' : ''}${panelOpen && panel.state.isMaximized ? ' is-secondary-maximized' : ''}${compact ? ' is-compact' : ''}`}
       data-testid="plugin-panel-host-layout"
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
       <div className="split-plugin-main">
-        <PluginPagePanelProvider page={page}>{children}</PluginPagePanelProvider>
-        {panelOpen || !launchers ? null : (
-          <div className="plugin-panel-host-launchers">
-            <button
-              type="button"
-              className="icon-btn"
-              title="Show right panel"
-              aria-label="Show right panel"
-              data-testid="plugin-panel-secondary-show"
-              onClick={panel.open}
-            >
-              <PanelRight size={14} />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title="Ask an agent"
-              aria-label="Ask an agent"
-              data-testid="plugin-panel-agent-show"
-              onClick={showAgent}
-            >
-              <Bot size={14} />
-            </button>
-          </div>
-        )}
+        <PluginPagePanelProvider page={page} open={panelOpen}>{children}</PluginPagePanelProvider>
       </div>
+      {panelOpen ? null : (
+        <div className="plugin-panel-host-launchers" role="toolbar" aria-label="Side panel">
+          <button
+            type="button"
+            className="icon-btn"
+            title="Show right panel"
+            aria-label="Show right panel"
+            data-testid="plugin-panel-secondary-show"
+            onClick={panel.open}
+          >
+            <PanelRight size={14} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Ask an agent"
+            aria-label="Ask an agent"
+            data-testid="plugin-panel-agent-show"
+            onClick={showAgent}
+          >
+            <Bot size={14} />
+          </button>
+        </div>
+      )}
       {panelOpen ? (
         <ThreadSecondaryPanel
           state={panel.state}

@@ -7,6 +7,24 @@
  * tildify the home dir and keep the *distinguishing tail* instead.
  */
 
+const WINDOWS_ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+
+/**
+ * Example absolute path for a folder-path input, in the target machine's
+ * format. The daemon-reported home dir decides when it is known; otherwise a
+ * local machine falls back to the renderer's platform and a remote one to
+ * POSIX (SSH remotes are almost always Linux/macOS).
+ */
+export function folderPathPlaceholder(
+  host: { homeDir?: string | null; isPrimary: boolean } | undefined,
+  platform = typeof navigator === 'undefined' ? '' : navigator.platform
+): string {
+  const windows = host?.homeDir
+    ? WINDOWS_ABSOLUTE_PATH.test(host.homeDir)
+    : (host?.isPrimary ?? true) && platform.toUpperCase().startsWith('WIN');
+  return windows ? 'C:\\path\\to\\project' : '/path/to/project';
+}
+
 /** Replace a leading home-dir prefix with `~`. No-op if `home` is empty. */
 export function tildify(path: string, home: string | undefined): string {
   if (!home) return path;

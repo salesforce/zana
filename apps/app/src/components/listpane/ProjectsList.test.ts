@@ -27,7 +27,7 @@ describe('project-row workspace actions', () => {
     expect(start).toBeGreaterThan(-1);
     const body = source.slice(start, end);
     expect(body).toContain('selectProject(p.id);');
-    expect(body).toContain('setLauncherOpen(true);');
+    expect(body).toContain('setLauncherOpen(true, p.id);');
     expect(body).not.toContain('enterProjectFocus');
   });
 

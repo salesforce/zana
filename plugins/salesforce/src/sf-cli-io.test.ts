@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
-import { createContainedSpawner, createExecSf, salesforceRestRequest } from '../lib/sf-cli.js';
+import { createContainedSpawner, createExecSf, NODE_CLI_PROCESS, salesforceRestRequest } from '../lib/sf-cli.js';
 import type { ResolvedOrg } from '../lib/types.js';
 
 vi.mock('node:child_process', () => ({
-  execFile: vi.fn()
+  execFile: vi.fn(),
+  spawn: vi.fn()
 }));
 
 const mocked = vi.mocked(execFile);
@@ -22,40 +23,60 @@ function org(): ResolvedOrg {
   };
 }
 
-describe('sf CLI process wrappers', () => {
+describe('default CLI process deps', () => {
   afterEach(() => {
     mocked.mockReset();
   });
 
-  it('treats a missing binary as exit 127', async () => {
-    mocked.mockImplementation((_cmd, _args, _opts, cb) => {
-      const fn = cb as (error: Error | null, stdout: string, stderr: string) => void;
-      fn(Object.assign(new Error('missing'), { code: 'ENOENT' }), '', '');
-      return undefined as never;
-    });
-    await expect(createExecSf()(['--version'])).resolves.toEqual({ code: 127, stdout: '', stderr: '' });
+  it('kills a Windows process tree with taskkill and resolves sf from the real environment', () => {
+    NODE_CLI_PROCESS.killTree(42);
+    expect(mocked).toHaveBeenCalledWith('taskkill', ['/pid', '42', '/T', '/F'], { windowsHide: true }, expect.any(Function));
+    (mocked.mock.calls[0]![3] as () => void)();
+    const launch = NODE_CLI_PROCESS.resolveWindowsSf();
+    expect(launch === null || typeof launch.command === 'string').toBe(true);
+  });
+});
+
+describe('sf on macOS and Linux', () => {
+  const execSf = createExecSf({ ...NODE_CLI_PROCESS, platform: 'linux' });
+
+  afterEach(() => {
+    mocked.mockReset();
   });
 
-  it('reads numeric status when code is absent', async () => {
-    mocked.mockImplementation((_cmd, _args, _opts, cb) => {
-      const fn = cb as (error: Error | null, stdout: string, stderr: string) => void;
-      fn(Object.assign(new Error('killed'), { status: 9 }), '', 'killed');
-      return undefined as never;
-    });
-    await expect(createExecSf()(['--version'])).resolves.toEqual({ code: 9, stdout: '', stderr: 'killed' });
-  });
-
-  it('returns numeric exit codes and spawns contained bins with cwd', async () => {
+  it('runs sf through execFile with the timeout, buffer cap, signal and cwd', async () => {
+    const controller = new AbortController();
     mocked.mockImplementation((cmd, args, opts, cb) => {
-      const fn = cb as (error: Error | null, stdout: string, stderr: string) => void;
-      if (cmd === 'sf') fn(Object.assign(new Error('fail'), { code: 2 }), 'out', 'err');
-      else {
-        expect(opts).toMatchObject({ cwd: '/proj' });
-        fn(null, 'ok', '');
-      }
+      expect([cmd, args]).toEqual(['sf', ['agent', 'validate', 'authoring-bundle']]);
+      expect(opts).toEqual({ timeout: 120_000, maxBuffer: 2_000_000, windowsHide: true, signal: controller.signal, cwd: '/proj' });
+      (cb as (error: Error | null, stdout: string, stderr: string) => void)(null, '{"status":0}', '');
       return undefined as never;
     });
-    await expect(createExecSf()(['org', 'list'])).resolves.toEqual({ code: 2, stdout: 'out', stderr: 'err' });
+    await expect(execSf(['agent', 'validate', 'authoring-bundle'], { cwd: '/proj', timeoutMs: 120_000, signal: controller.signal }))
+      .resolves.toEqual({ code: 0, stdout: '{"status":0}', stderr: '' });
+  });
+
+  it('maps execFile errors to exit codes and defaults missing output', async () => {
+    mocked.mockImplementation((_cmd, _args, opts, cb) => {
+      expect(opts).toEqual({ timeout: 30_000, maxBuffer: 2_000_000, windowsHide: true });
+      (cb as (error: Error | null, stdout?: string, stderr?: string) => void)(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+      return undefined as never;
+    });
+    await expect(execSf(['--version'])).resolves.toEqual({ code: 127, stdout: '', stderr: '' });
+  });
+});
+
+describe('contained bin spawner', () => {
+  afterEach(() => {
+    mocked.mockReset();
+  });
+
+  it('spawns contained bins with cwd', async () => {
+    mocked.mockImplementation((_cmd, _args, opts, cb) => {
+      expect(opts).toMatchObject({ cwd: '/proj' });
+      (cb as (error: Error | null, stdout: string, stderr: string) => void)(null, 'ok', '');
+      return undefined as never;
+    });
     await expect(createContainedSpawner()('/proj/node_modules/.bin/sfdx-lwc-jest', ['--', 'hello'], '/proj')).resolves.toEqual({
       code: 0,
       stdout: 'ok',
@@ -63,26 +84,22 @@ describe('sf CLI process wrappers', () => {
     });
   });
 
-  it('passes cwd and a longer timeout for agent CLI calls', async () => {
-    const controller = new AbortController();
-    mocked.mockImplementation((_cmd, _args, opts, cb) => {
-      expect(opts).toMatchObject({ cwd: '/proj', timeout: 120_000, signal: controller.signal });
-      const fn = cb as (error: Error | null, stdout: string, stderr: string) => void;
-      fn(null, '{"status":0}', '');
-      return undefined as never;
-    });
-    await expect(
-      createExecSf()(['agent', 'validate', 'authoring-bundle'], { cwd: '/proj', timeoutMs: 120_000, signal: controller.signal })
-    ).resolves.toMatchObject({ code: 0 });
-  });
-
-  it('defaults to exit 1 when the process error has no code', async () => {
-    mocked.mockImplementation((_cmd, _args, _opts, cb) => {
-      const fn = cb as (error: Error | null, stdout: string, stderr: string) => void;
-      fn(new Error('fail'), '', '');
-      return undefined as never;
-    });
-    await expect(createExecSf()(['--version'])).resolves.toEqual({ code: 1, stdout: '', stderr: '' });
+  it('maps contained-bin errors to exit codes', async () => {
+    const errors = [
+      Object.assign(new Error('missing'), { code: 'ENOENT' }),
+      Object.assign(new Error('killed'), { status: 9 }),
+      Object.assign(new Error('fail'), { code: 2 }),
+      new Error('fail')
+    ];
+    const codes: number[] = [];
+    for (const error of errors) {
+      mocked.mockImplementationOnce((_cmd, _args, _opts, cb) => {
+        (cb as (error: Error | null, stdout: string, stderr: string) => void)(error, '', '');
+        return undefined as never;
+      });
+      codes.push((await createContainedSpawner()('/bin/x', [], '/proj')).code);
+    }
+    expect(codes).toEqual([127, 9, 2, 1]);
   });
 });
 

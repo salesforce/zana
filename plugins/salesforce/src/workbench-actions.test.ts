@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
+import { createSqliteDatabase } from '@zana-ai/zcc-db';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import { createNodeDeps } from '../lib/node-deps.js';
 import type { SalesforceDeps } from '../lib/types.js';
@@ -12,9 +13,9 @@ const roots: string[] = [];
 const disposals: Array<() => unknown> = [];
 const ctx = { projectId: 'p', threadId: '', signal: new AbortController().signal };
 afterEach(async () => { for (const dispose of disposals.splice(0)) await dispose(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
-async function fixture(production = false, labTransport?: AgentforceTransport) {
+async function fixture(production = false, labTransport?: AgentforceTransport, database?: Parameters<typeof createFakePluginHost>[0]['database']) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'sf-actions-'))); roots.push(root);
-  const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p', name: 'Project', path: root }, { id: 'other', name: 'Other', path: root }] });
+  const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', ...(database ? { database } : {}), listProjects: async () => [{ id: 'p', name: 'Project', path: root }, { id: 'other', name: 'Other', path: root }] });
   const org = { alias: 'dev', username: 'test@example.com', id: '00D000000000001', orgId: '00D000000000001', instanceUrl: 'https://example.salesforce.com', accessToken: 'TEST_TOKEN', isSandbox: !production };
   const deps = createNodeDeps();
   const exec = vi.fn<SalesforceDeps['execSf']>(async args => ({ code: 0, stderr: '', stdout: JSON.stringify({ status: 0, result: args[0] === 'agent' ? { sessionId: 'preview', success: true, passedCount: 1, failedCount: 0, botVersionId: 'version-1' } : args.includes('display') ? org : args.includes('metadata') ? [{ fullName: 'Help_v1' }] : { [production ? 'nonScratchOrgs' : 'sandboxes']: [org] } }) }));
@@ -114,6 +115,36 @@ it('runs Agentforce lab rehearsals on a sandbox without asking', async () => {
   expect(await harness.callRpc('agentLab.start', { projectId: 'p', engine: 'rehearsal', source: 'config:\n  agent_name: Help' })).toMatchObject({ ok: true, data: { engine: 'rehearsal', orgAlias: 'dev' } });
   expect(confirmation).not.toHaveBeenCalled();
   expect(bootstrap).toHaveBeenCalledOnce();
+});
+it('lets an agent read the preview context, manage presets and start a run from one', async () => {
+  const { request, transport } = previewApi();
+  const db = createSqliteDatabase(':memory:');
+  disposals.push(() => db.close());
+  const { action, harness } = await fixture(false, transport,
+    { runScript: sql => { db.exec(sql); }, prepare: sql => db.prepare(sql), migrate: statements => statements.forEach(sql => db.exec(sql)), transaction: fn => db.transaction(fn)() } as never);
+  const draft = await action('draft.create', { name: 'Help', apiName: 'Help' });
+  const path = draft.file.path;
+  const read = await action('files.read', { path });
+  const source = 'config:\n  agent_name: "Help"\nvariables:\n  verified: mutable boolean = False\n    visibility: "External"\n';
+  expect(await action('files.write', { path, content: source, expectedSha256: read.file.sha256 })).toMatchObject({ ok: true });
+  const fields = await action('context.fields', { path });
+  expect(fields).toMatchObject({ ok: true, fields: expect.arrayContaining([expect.objectContaining({ name: 'verified', type: 'Boolean' })]) });
+  // An agent's save needs no field definitions or scope: it types values from the agent's declarations.
+  const saved = await action('contextPresets.save', { path, name: 'Verified', values: [{ name: 'verified', value: true }] }, { ...ctx, threadId: 'thread-1' });
+  expect(saved).toMatchObject({ ok: true, preset: { name: 'Verified', savedBy: 'agent', values: [{ name: 'verified', type: 'Boolean', value: true }] } });
+  expect((await action('contextPresets.list', { path })).presets).toHaveLength(1);
+  // studio.start and sf_agent preview.start take the preset in place of contextVariables.
+  expect(await action('studio.start', { engine: 'rehearsal', source, path, presetId: saved.preset.id })).toMatchObject({ ok: true, data: { contextVariables: [{ name: 'verified', type: 'Boolean', value: true }] } });
+  expect(await action('studio.start', { engine: 'rehearsal', source, path, presetId: saved.preset.id, contextVariables: [] })).toMatchObject({ ok: false, error: expect.stringContaining('not both') });
+  expect(await action('studio.start', { engine: 'rehearsal', source, presetId: saved.preset.id })).toMatchObject({ ok: false, error: expect.stringContaining('agent path') });
+  expect(await action('studio.start', { engine: 'rehearsal', source, path, presetId: 'missing' })).toMatchObject({ ok: false, error: expect.stringContaining('contextPresets.list') });
+  expect(await action('studio.start', { engine: 'rehearsal', source, path, presetId: 7 })).toMatchObject({ ok: false, error: expect.stringContaining('presetId must be') });
+  const sfAgent = harness.agentTools.find(t => t.name === 'sf_agent')!;
+  expect(await sfAgent.execute({ action: 'preview.start', path, presetId: saved.preset.id }, ctx)).toMatchObject({ ok: true });
+  const previewed = request.mock.calls.find(([, path]) => path.endsWith('/preview/sessions')) as unknown[] | undefined;
+  expect((previewed?.[2] as { variables?: unknown })?.variables).toEqual([{ name: 'verified', type: 'Boolean', value: true }]);
+  expect(await action('contextPresets.remove', { path, id: saved.preset.id, expectedRevision: 1 })).toEqual({ ok: true, id: saved.preset.id });
+  expect((await action('contextPresets.list', { path })).presets).toEqual([]);
 });
 it('compiles from the Studio button behind the same org gate as every other org read', async () => {
   const { action, harness, zcc, exec } = await fixture(true);

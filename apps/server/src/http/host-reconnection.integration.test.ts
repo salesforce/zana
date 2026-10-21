@@ -5,13 +5,19 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import WebSocket from 'ws';
-import { appendConversationThreadEvent, createConversationThread, createEnvironment, getConversationThread, getThreadTabs, replaceThreadTabs, openHostSession, upsertHost } from '@zana-ai/zcc-db';
+import { appendConversationThreadEvent, createConversationThread, createEnvironment, getConversationThread, getThreadTabs, markConversationSessionOpen, replaceThreadTabs, openHostSession, setConversationProviderThreadId, upsertHost } from '@zana-ai/zcc-db';
 import { HOST_RPC_PROTOCOL_VERSION, type HostEventEnvelope, type HostRuntimeSnapshot } from '@zana-ai/zcc-contracts/host-rpc';
 import { startProductServer } from './product-server.js';
 import { hashHostKey } from './host-hub.js';
 import { createHostServerSocket } from '../../../host-daemon/src/server-socket.js';
 import { healDisconnectedConversationThreadsForHost } from '../services/threads/conversation-host-recovery.js';
 import * as plans from '../services/threads/conversation-plan.js';
+import { resumeOpenConversationSessionsAfterHostRestart } from '../services/threads/conversation-lifecycle.js';
+
+vi.mock('../services/threads/conversation-lifecycle.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/threads/conversation-lifecycle.js')>();
+  return { ...actual, resumeOpenConversationSessionsAfterHostRestart: vi.fn(actual.resumeOpenConversationSessionsAfterHostRestart) };
+});
 
 const key = 'fixture-key-with-enough-characters';
 let dir: string, server: Awaited<ReturnType<typeof startProductServer>>;
@@ -25,7 +31,7 @@ beforeEach(async () => {
   openHostSession(server.ctx.db, { hostId, instanceId, hostName: host.name });
   environmentId = createEnvironment(server.ctx.db, { projectId: 'fixture', hostId, path: dir }).id;
 });
-afterEach(async () => { vi.restoreAllMocks(); connections.forEach(c => c.close()); await server.close(); rmSync(dir, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); connections.forEach(c => c.close()); await server.close(); rmSync(dir, { recursive: true, force: true }); });
 function connect(overrides: Partial<Parameters<typeof createHostServerSocket>[0]> = {}) {
   const c = createHostServerSocket({ serverUrl: server.url, hostId, hostKey: key, instanceId,
     onHello: async () => {}, onMessage: () => {}, onConnectionChange: () => {}, ...overrides });
@@ -185,6 +191,32 @@ it('delivers pending Stop only after reconciliation and readiness, including bey
   finish(); await c.ready;
   await vi.waitFor(() => expect(getConversationThread(server.ctx.db, stopping.id)?.status).toBe('idle'));
   expect(received).toEqual(['thread.stop']);
+});
+
+it('reopens open sessions only after a daemon restart when idle release is never', async () => {
+  const config = server.ctx.config.getConfig();
+  vi.spyOn(server.ctx.config, 'getConfig').mockReturnValue({ ...config, threadSessionReleaseMinutes: 0 });
+  vi.stubEnv('ZCC_FAKE_PROVIDER', '1');
+  const open = thread('idle'), released = thread('idle');
+  for (const row of [open, released]) setConversationProviderThreadId(server.ctx.db, row.id, `provider-${row.id}`);
+  markConversationSessionOpen(server.ctx.db, open.id);
+  const resumed: string[] = [];
+  const onMessage = (raw: unknown, reply: (text: string) => void) => {
+    const message = raw as any;
+    if (message.command?.type === 'thread.resume') resumed.push(message.command.threadId);
+    reply(JSON.stringify({ type: 'host-rpc.response', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: message.requestId,
+      commandType: message.command.type, ok: true, result: { threadId: message.command.threadId, resumed: true } }));
+  };
+  const pass = vi.mocked(resumeOpenConversationSessionsAfterHostRestart);
+  pass.mockClear();
+  // The same daemon reconnecting still holds its sessions. The server decides
+  // in onHostConnected, in the same tick that sends ready-ok.
+  await connect({ onMessage }).ready;
+  expect(pass).not.toHaveBeenCalled();
+  await connect({ instanceId: randomUUID(), onMessage }).ready;
+  expect(pass).toHaveBeenCalledTimes(1);
+  await expect(pass.mock.results[0]!.value).resolves.toBe(1);
+  expect(resumed).toEqual([open.id]);
 });
 
 it('a superseded daemon releases ownership instead of reclaiming the host', async () => {

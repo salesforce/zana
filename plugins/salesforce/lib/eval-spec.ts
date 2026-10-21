@@ -31,6 +31,7 @@ function outcomeText(expect: ScenarioCase['expect']): string {
  * multi-turn case exports its opening turn; `multiTurn` names those cases.
  */
 export function suiteToEvalSpec(cases: readonly ScenarioCase[], meta: { apiName: string; name: string; from: string }): { text: string; multiTurn: string[] } {
+  if (cases.some(c => c.contextVariables?.length)) throw new EvalSpecError('This suite uses preview context overrides. Run it with Simulate; exporting to an org evaluation spec would lose those values.');
   const lines = [
     `${GENERATED_SPEC_MARKER} from ${meta.from}. Edits here are overwritten: change the scenario suite instead.`,
     `name: ${quote(meta.name)}`,

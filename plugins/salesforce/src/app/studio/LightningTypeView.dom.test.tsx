@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const rpc = vi.hoisted(() => vi.fn());
 vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({ callPluginRpc: rpc }));
 const { LightningTypeView } = await import('./LightningTypeView.js');
+const { clearReadCache } = await import('./read-cache.js');
 
-afterEach(() => { cleanup(); rpc.mockReset(); });
+afterEach(() => { cleanup(); rpc.mockReset(); clearReadCache(); });
 
 const READY = {
   ref: 'c__OrderRequest', standard: false, status: 'ready', path: 'force-app/main/default/lightningTypes/OrderRequest', title: 'Order request', description: 'What the agent sends.',
@@ -18,6 +19,18 @@ const READY = {
 };
 
 describe('LightningTypeView', () => {
+  it('shows its last answer at once when it remounts', async () => {
+    rpc.mockResolvedValue({ ok: true, data: READY });
+    const first = render(<LightningTypeView pluginId="sf" projectId="p1" typeRef="c__OrderRequest" onOpenAgent={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Order request' })).toBeTruthy();
+    first.unmount();
+    render(<LightningTypeView pluginId="sf" projectId="p1" typeRef="c__OrderRequest" onOpenAgent={vi.fn()} />);
+    expect(screen.queryByText('Loading…')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Order request' })).toBeTruthy();
+    // Another project has its own answers.
+    render(<LightningTypeView pluginId="sf" projectId="p2" typeRef="c__OrderRequest" onOpenAgent={vi.fn()} />);
+    expect(screen.getByText('Loading…')).toBeTruthy();
+  });
   it('shows properties, used-by links and bundle files', async () => {
     rpc.mockResolvedValue({ ok: true, data: READY });
     const onOpenAgent = vi.fn();
@@ -30,11 +43,31 @@ describe('LightningTypeView', () => {
     expect(screen.getByTitle('Required')).toBeTruthy();
     expect(screen.getByText('Order number')).toBeTruthy();
     expect(screen.getByText('—')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Orders.agent' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Orders' }));
     expect(onOpenAgent).toHaveBeenCalledWith('force-app/bots/Orders.agent');
     expect(screen.getByLabelText(/Source of .*schema\.json/).textContent).toBe('{"title":"Order request"}');
     fireEvent.click(screen.getByRole('button', { name: 'lightningDesktopGenAi/renderer.json' }));
     expect(screen.getByLabelText(/Source of .*renderer\.json/).textContent).toMatch(/larger than 256 KB/);
+  });
+  it('lists the components the type renders and edits with, openable when the host allows it', async () => {
+    const components = [
+      { ref: 'c/orderCard', namespace: 'c', name: 'orderCard', role: 'renderer', channel: 'lightningDesktopGenAi', target: '$', path: 'force-app/main/default/lwc/orderCard' },
+      { ref: 'acme/noteChip', namespace: 'acme', name: 'noteChip', role: 'editor', channel: '', target: 'notes' }
+    ];
+    rpc.mockResolvedValue({ ok: true, data: { ...READY, components } });
+    const onOpenComponent = vi.fn();
+    const { rerender } = render(<LightningTypeView pluginId="sf" typeRef="c__OrderRequest" onOpenAgent={vi.fn()} onOpenComponent={onOpenComponent} />);
+    const table = await screen.findByRole('table', { name: 'Components' });
+    expect(table.textContent).toContain('Whole type');
+    expect(table.textContent).toContain('Renderer');
+    expect(table.textContent).toContain('Editor');
+    expect(table.textContent).toContain('Not in this project');
+    expect(table.querySelector('tbody tr:nth-child(2) td:nth-child(3)')!.textContent).toBe('—');
+    fireEvent.click(screen.getByRole('button', { name: 'acme/noteChip' }));
+    expect(onOpenComponent).toHaveBeenCalledWith('acme/noteChip');
+    rerender(<LightningTypeView pluginId="sf" typeRef="c__OrderRequest" onOpenAgent={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'c/orderCard' })).toBeNull();
+    expect(screen.getByText('c/orderCard').tagName).toBe('CODE');
   });
   it('explains standard and missing types without a properties table', async () => {
     rpc.mockResolvedValueOnce({ ok: true, data: { ref: 'lightning__textType', standard: true, status: 'standard', properties: [], files: [], message: 'A standard Lightning Type.' } });

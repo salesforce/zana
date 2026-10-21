@@ -46,6 +46,29 @@ describe('StudioCommentStore', () => {
     await s.resolve('p', { id: c.id, note: 'n' }, 'u');
     await expect(s.resolve('p', { id: c.id, note: 'n' }, 'u')).rejects.toMatchObject({ code: 'already_resolved' });
   });
+  it('edits and deletes with ownership rules', async () => {
+    const { s } = store();
+    const agent = { kind: 'agent' as const, threadId: 't1', name: 'Agent' };
+    const mine = await s.add('p', { path: 'f', line: 1, body: 'mine' }, user);
+    const theirs = await s.add('p', { path: 'f', line: 2, body: 'theirs' }, agent);
+    expect(await s.update('p', { id: mine.id, body: ' better ' }, user)).toMatchObject({ body: 'better', editedAt: 1000 });
+    await expect(s.update('p', { id: mine.id, body: ' ' }, user)).rejects.toMatchObject({ code: 'invalid' });
+    await expect(s.update('p', { id: mine.id, body: 'x'.repeat(4001) }, user)).rejects.toMatchObject({ code: 'invalid' });
+    await expect(s.update('p', { id: 'missing', body: 'x' }, user)).rejects.toMatchObject({ code: 'not_found' });
+    // The user cannot reword an agent's comment, and agents only touch their own.
+    await expect(s.update('p', { id: theirs.id, body: 'x' }, user)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(s.update('p', { id: mine.id, body: 'x' }, agent)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(s.update('p', { id: theirs.id, body: 'x' }, { ...agent, threadId: 't2' })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(s.remove('p', { id: theirs.id }, { kind: 'agent', name: 'Agent' })).rejects.toMatchObject({ code: 'forbidden' });
+    expect(await s.update('p', { id: theirs.id, body: 'reworded' }, agent)).toMatchObject({ body: 'reworded' });
+    await s.resolve('p', { id: mine.id, note: 'n' }, 'user');
+    await expect(s.update('p', { id: mine.id, body: 'late' }, user)).rejects.toMatchObject({ code: 'already_resolved' });
+    // The user may delete any comment, open or resolved.
+    expect((await s.remove('p', { id: mine.id }, user)).id).toBe(mine.id);
+    expect(await s.remove('p', { id: theirs.id }, user)).toMatchObject({ id: theirs.id });
+    await expect(s.remove('p', { id: mine.id }, user)).rejects.toMatchObject({ code: 'not_found' });
+    expect(await s.list('p', { includeResolved: true })).toEqual([]);
+  });
   it('serializes concurrent adds', async () => {
     const { s } = store();
     await Promise.all(Array.from({ length: 20 }, (_, i) => s.add('p', { path: 'f', line: i + 1, body: `c${i}` }, user)));
@@ -96,9 +119,9 @@ describe('registerStudioComments', () => {
     registerStudioComments(studio as never);
     return { call: (name: string, args: unknown) => handlers.get(name)!(args) as Promise<any>, publish, handlers };
   }
-  it('registers all three RPCs and round-trips add/list/resolve with change events', async () => {
+  it('registers every RPC and round-trips add/list/resolve with change events', async () => {
     const { call, publish, handlers } = setup();
-    expect([...handlers.keys()].sort()).toEqual([STUDIO_RPC.commentAdd, STUDIO_RPC.commentResolve, STUDIO_RPC.comments].sort());
+    expect([...handlers.keys()].sort()).toEqual([STUDIO_RPC.commentAdd, STUDIO_RPC.commentResolve, STUDIO_RPC.commentUpdate, STUDIO_RPC.commentDelete, STUDIO_RPC.comments].sort());
     const added = await call(STUDIO_RPC.commentAdd, { path: 'f.agent', line: 2, body: 'hi', content: 'a\nb\nc', threadId: 't9' });
     expect(added).toMatchObject({ ok: true, comment: { quote: 'b', author: { kind: 'agent', threadId: 't9' } } });
     expect(publish).toHaveBeenCalledWith(STUDIO_CHANGED_CHANNEL, { projectId: 'p1', path: 'f.agent', kind: 'comments' });
@@ -110,6 +133,20 @@ describe('registerStudioComments', () => {
     expect(await call(STUDIO_RPC.comments, { includeResolved: true })).toMatchObject({ openCount: 0, comments: [expect.anything()] });
     expect((await call(STUDIO_RPC.commentAdd, { path: 'f', line: 1, body: 'u' })).comment.author).toEqual({ kind: 'user', name: 'You' });
     expect(await call(STUDIO_RPC.commentResolve, { id: 'zzz', note: 'x' })).toMatchObject({ ok: false, code: 'not_found' });
+  });
+  it('edits and deletes through the RPCs with change events and typed failures', async () => {
+    const { call, publish } = setup();
+    const added = (await call(STUDIO_RPC.commentAdd, { path: 'f.agent', line: 1, body: 'typo' })).comment;
+    publish.mockClear();
+    expect(await call(STUDIO_RPC.commentUpdate, { id: added.id, body: 'fixed typo' })).toMatchObject({ ok: true, comment: { body: 'fixed typo' } });
+    expect(publish).toHaveBeenCalledWith(STUDIO_CHANGED_CHANNEL, { projectId: 'p1', path: 'f.agent', kind: 'comments' });
+    expect(await call(STUDIO_RPC.commentUpdate, { id: added.id })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(await call(STUDIO_RPC.commentUpdate, { id: added.id, body: 'x', threadId: 't1' })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await call(STUDIO_RPC.commentDelete, { id: added.id, threadId: 't1' })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await call(STUDIO_RPC.commentDelete, { id: added.id })).toEqual({ ok: true, id: added.id });
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(await call(STUDIO_RPC.commentDelete, { id: added.id })).toMatchObject({ ok: false, code: 'not_found' });
+    expect(await call(STUDIO_RPC.comments, { includeResolved: true })).toMatchObject({ comments: [] });
   });
   it('requires a project, ignores oversized or unreadable sources', async () => {
     expect(await setup({ projectId: '' }).call(STUDIO_RPC.comments, {})).toMatchObject({ ok: false, code: 'project_required' });

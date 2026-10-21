@@ -62,3 +62,10 @@ it('shows account-linked and reconnecting states accurately', () => {
   view.rerender(<PhoneAccountConnection status={{ running: true, relayState: 'reconnecting', connection: { mode: 'connect' } } as any} onSaved={async () => {}} />);
   expect(screen.getByRole('status').textContent).toContain('Reconnecting');
 });
+
+it('shows only the revoked message and a sign-in action when access was revoked', () => {
+  render(<PhoneAccountConnection status={{ running: true, relayState: 'connected', connection: { mode: 'connect', accountUrl: 'https://example.com' } } as any} onSaved={async () => {}} revoked />);
+  expect(screen.getByRole('alert').textContent).toBe("This computer's access was revoked. Sign in again to reconnect.");
+  expect(screen.queryByRole('button', { name: 'Disconnect this computer' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Sign in again' })).toBeTruthy();
+});

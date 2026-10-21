@@ -39,6 +39,8 @@ export interface ProjectActionIndex {
   files: Map<string, string[]>;
   /** Lightning Type bundle name (the folder under `lightningTypes/`) to project-relative bundle paths. */
   lightningTypes: Map<string, string[]>;
+  /** LWC bundle name (the folder under `lwc/`) to project-relative bundle paths: the components Lightning Types render with. */
+  lwc: Map<string, string[]>;
   incomplete: boolean;
   /**
    * Set when the walk stopped early: the project-relative paths of `main/default/<path>` in every package root that has it.
@@ -60,6 +62,7 @@ export function indexProjectActions(root: string, deps: SalesforceDeps): Project
   const seen = new Set<string>();
   const files = new Map<string, string[]>();
   const lightningTypes = new Map<string, string[]>();
+  const lwc = new Map<string, string[]>();
   let visited = 0;
   let incomplete = false;
   while (queue.length && visited < 6000) {
@@ -77,11 +80,12 @@ export function indexProjectActions(root: string, deps: SalesforceDeps): Project
       const child = resolveUnderRoot(realRoot, join(path, name), deps.realpath);
       if (!child) continue;
       if (deps.stat(child) === 'dir') {
-        // A bundle is a leaf: record it without spending the walk budget on its channel folders.
-        if (basename(path) === 'lightningTypes') {
-          const paths = lightningTypes.get(name) ?? [];
+        // A bundle is a leaf: record it without spending the walk budget on its channel folders or component files.
+        const bundles = basename(path) === 'lightningTypes' ? lightningTypes : basename(path) === 'lwc' ? lwc : null;
+        if (bundles) {
+          const paths = bundles.get(name) ?? [];
           paths.push(relative(realRoot, child).split('\\').join('/'));
-          lightningTypes.set(name, paths);
+          bundles.set(name, paths);
         } else queue.push({ path: child, depth: next.depth + 1 });
       }
       else if (ACTION_SUFFIXES.some(suffix => name.endsWith(suffix))) {
@@ -92,7 +96,7 @@ export function indexProjectActions(root: string, deps: SalesforceDeps): Project
     }
   }
   if (queue.length) incomplete = true;
-  const index: ProjectActionIndex = { realRoot, namespace, files, lightningTypes, incomplete };
+  const index: ProjectActionIndex = { realRoot, namespace, files, lightningTypes, lwc, incomplete };
   if (incomplete) index.probe = (path, kind) => packageRoots.flatMap(root => {
     try {
       const absolute = resolveUnderRoot(realRoot, join(realRoot, root, 'main', 'default', path), deps.realpath);

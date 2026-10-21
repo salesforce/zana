@@ -340,7 +340,10 @@ export function registerFsIpc(): void {
   );
   ctx.safeHandle(
     IPC.openers.openIn,
-    (target: OpenTarget, p: string) => {
+    async (target: OpenTarget, p: string, options?: { projectRoot?: unknown }) => {
+      // An editor's project window is a trust anchor only once it realpath-
+      // matches a registered project or one of its worktrees (Rule 2).
+      const projectRoot = typeof options?.projectRoot === 'string' ? await trustedProjectRoot(options.projectRoot) : null;
       // Resolve the user's per-editor / terminal overrides from main's own
       // config (Rule 1 — never a renderer-supplied binary path).
       const cfg = store.getConfig();
@@ -352,7 +355,7 @@ export function registerFsIpc(): void {
         intellijBinary: cfg.editorIntellijBinary,
         intellijApp: cfg.editorIntellijApp,
         terminalApp: cfg.terminalApp
-      });
+      }, projectRoot);
     },
     () => ({ ok: false, message: 'Open failed' })
   );

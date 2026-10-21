@@ -68,6 +68,14 @@ describe('suite paths', () => {
 });
 
 describe('case parsing', () => {
+  it('replays the saved context for each case and rejects invalid saved overrides', async () => {
+    const { suites, lab } = store();
+    const contextVariables = [{ name: 'verified', type: 'Boolean', value: false }];
+    await suites.save({ path: 'tests/A.scenario.json', cases: [{ ...caseA, contextVariables }] });
+    await suites.run({ path: 'tests/A.scenario.json', source: 'source', engine: 'preview' });
+    expect(lab.start).toHaveBeenCalledWith(expect.objectContaining({ contextVariables }));
+    expect(() => parseScenarioCases([{ ...caseA, contextVariables: [{ name: 'bad', type: 'Number', value: '0' }] }])).toThrow();
+  });
   it('normalizes and bounds cases', () => {
     const [c] = parseScenarioCases([{ id: 'a b!', name: ' N ', utterances: ['hi', '', 5, ...Array(20).fill('x')], expect: { topic: 't', actions: ['A'], contains: ['c'], criteria: 'crit', junk: 1 } }]);
     expect(c).toMatchObject({ id: 'a_b_', name: 'N', expect: { topic: 't', actions: ['A'], contains: ['c'], criteria: 'crit' } });

@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
 const desktop = vi.hoisted(() => ({
-  api: null as object | null
+  api: null as object | null,
+  compact: false
 }));
 const emptyActions = vi.hoisted(() => [] as never[]);
 const pageActions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
+vi.mock('../../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => desktop.compact }));
 vi.mock('../../lib/desktop-browser.js', () => ({
   getDesktopBrowserApi: () => desktop.api
 }));
@@ -78,9 +80,9 @@ vi.mock('../../lib/app-surface.js', () => ({
   getAppSurface: () => 'desktop'
 }));
 
-import { pluginPanelBrowserOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
+import { pluginPanelOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
 import { parsePanelAgentTarget, requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
-import { requestPluginPanelTool, usePluginPagePanel } from '../../plugins/plugin-page-panel.js';
+import { requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from '../../plugins/plugin-page-panel.js';
 import { addClosableTab, loadSecondaryPanelState, persistSecondaryPanelState } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 
 beforeEach(() => {
@@ -93,6 +95,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
+  desktop.compact = false;
   vi.unstubAllGlobals();
   localStorage.clear();
   pageActions.length = 0;
@@ -112,16 +116,16 @@ const desktopApi = () => ({
   onOpenTab: () => () => undefined
 });
 
-describe('pluginPanelBrowserOwnerId', () => {
+describe('pluginPanelOwnerId', () => {
   it('namespaces the secondary-panel owner by plugin and path', () => {
-    expect(pluginPanelBrowserOwnerId('docs', 'panel')).toBe('plugin-panel:docs:panel');
+    expect(pluginPanelOwnerId('docs', 'panel')).toBe('plugin-panel:docs:panel');
   });
 });
 
 const tabLabels = () => screen.getAllByRole('button', { name: /^Close / }).map((row) => row.getAttribute('aria-label'));
 
 describe('PluginPanelHostLayout', () => {
-  it('renders children without a host panel when the desktop browser is unavailable', () => {
+  it('keeps the shared panel available without the native browser', () => {
     desktop.api = null;
     const view = render(
       <PluginPanelHostLayout pluginId="docs" panelPath="panel">
@@ -129,7 +133,29 @@ describe('PluginPanelHostLayout', () => {
       </PluginPanelHostLayout>
     );
     expect(view.getByText('slot:docs')).toBeTruthy();
-    expect(view.queryByTestId('plugin-panel-host-layout')).toBeNull();
+    expect(view.getByTestId('plugin-panel-host-layout')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('plugin-panel-secondary-show'));
+    expect(screen.getByTestId('thread-new-tab-page')).toBeTruthy();
+    expect(screen.queryByTestId('thread-new-tab-browser')).toBeNull();
+    fireEvent.click(screen.getByTestId('thread-new-tab-agent'));
+    expect(screen.getByTestId('agent-composer')).toBeTruthy();
+    view.unmount();
+  });
+
+  it('tells the page whether its side panel is showing', () => {
+    function Probe() {
+      return <output data-testid="panel-open">{String(usePluginPagePanelOpen())}</output>;
+    }
+    const view = render(
+      <PluginPanelHostLayout pluginId="docs" panelPath="panel">
+        <Probe />
+      </PluginPanelHostLayout>
+    );
+    expect(screen.getByTestId('panel-open').textContent).toBe('false');
+    fireEvent.click(screen.getByTestId('plugin-panel-secondary-show'));
+    expect(screen.getByTestId('panel-open').textContent).toBe('true');
+    fireEvent.click(screen.getByTestId('thread-secondary-hide'));
+    expect(screen.getByTestId('panel-open').textContent).toBe('false');
     view.unmount();
   });
 
@@ -303,16 +329,16 @@ describe('PluginPanelHostLayout', () => {
     desktop.api = null;
   });
 
-  it('keeps a launcher-less panel per scope that opens only when the page asks', () => {
+  it('keeps the same launchers and a separate panel per project', () => {
     desktop.api = desktopApi();
     const mount = (scopeId: string) => render(
-      <PluginPanelHostLayout pluginId="design-docs" panelPath="design-docs" scopeId={scopeId} launchers={false}>
+      <PluginPanelHostLayout pluginId="design-docs" panelPath="design-docs" scopeId={scopeId}>
         <div>slot:docs</div>
       </PluginPanelHostLayout>
     );
     let view = mount('p1');
-    expect(screen.queryByTestId('plugin-panel-secondary-show')).toBeNull();
-    expect(screen.queryByTestId('plugin-panel-agent-show')).toBeNull();
+    expect(screen.getByTestId('plugin-panel-secondary-show')).toBeTruthy();
+    expect(screen.getByTestId('plugin-panel-agent-show')).toBeTruthy();
     act(() => {
       requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: 'Review dd_1' }, title: 'Doc' });
     });
@@ -344,7 +370,7 @@ describe('PluginPanelHostLayout', () => {
       return <div data-testid="page-panel">{JSON.stringify(usePluginPagePanel())}</div>;
     }
     const view = render(
-      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1" launchers={false}>
+      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1">
         <Page />
       </PluginPanelHostLayout>
     );
@@ -391,7 +417,7 @@ describe('PluginPanelHostLayout', () => {
     desktop.api = desktopApi();
     pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph view', scopes: ['plugin-page'] });
     const mount = (separateWindow: boolean) => render(
-      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1" separateWindow={separateWindow} launchers={false}>
+      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1" separateWindow={separateWindow}>
         <div>slot</div>
       </PluginPanelHostLayout>
     );
@@ -413,10 +439,10 @@ describe('PluginPanelHostLayout', () => {
 
   it('passes its page to a stored tool tab so the tab can check it opens here', () => {
     desktop.api = desktopApi();
-    const owner = pluginPanelBrowserOwnerId('salesforce', 'salesforce@p1');
+    const owner = pluginPanelOwnerId('salesforce', 'salesforce@p1');
     persistSecondaryPanelState(owner, addClosableTab(loadSecondaryPanelState(owner), { kind: 'plugin', title: 'Graph', moduleId: 'salesforce', actionId: 'studio-graph', params: null }));
     const view = render(
-      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1" launchers={false}>
+      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p1">
         <div>slot</div>
       </PluginPanelHostLayout>
     );
@@ -438,8 +464,8 @@ describe('PluginPanelHostLayout', () => {
       return null;
     }
     const view = render(<>
-      <div data-testid="pane-a"><PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="pa" launchers={false}><Page name="a" /></PluginPanelHostLayout></div>
-      <div data-testid="pane-b"><PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="pb" launchers={false}><Page name="b" /></PluginPanelHostLayout></div>
+      <div data-testid="pane-a"><PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="pa"><Page name="a" /></PluginPanelHostLayout></div>
+      <div data-testid="pane-b"><PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="pb"><Page name="b" /></PluginPanelHostLayout></div>
     </>);
     act(() => asks.b());
     const paneA = screen.getByTestId('pane-a');
@@ -451,19 +477,70 @@ describe('PluginPanelHostLayout', () => {
     desktop.api = null;
   });
 
-  it('gives a page without a host panel no side-panel context', () => {
+  it('gives a browserless page a shared panel for tools and agents', () => {
     desktop.api = null;
     function Page() {
-      return <div data-testid="page-panel">{String(usePluginPagePanel())}</div>;
+      return <div data-testid="page-panel">{String(usePluginPagePanel()?.pluginId)}</div>;
     }
-    render(
-      <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce">
-        <Page />
-      </PluginPanelHostLayout>
-    );
-    expect(screen.getByTestId('page-panel').textContent).toBe('null');
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce"><Page /></PluginPanelHostLayout>);
+    expect(screen.getByTestId('page-panel').textContent).toBe('salesforce');
     pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph', scopes: ['plugin-page'] });
-    expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph' })).toBe(false);
+    act(() => { expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph' })).toBe(true); });
+    expect(screen.getByTestId('plugin-tool').dataset.tool).toBe('salesforce/studio-graph');
+    act(() => { expect(requestPluginPanelAgent({ pluginId: 'salesforce', threadId: 'browserless' })).toBe(true); });
+    expect(screen.getByTestId('agent-chat').textContent).toBe('browserless');
+  });
+
+  it('maximizes and restores the shared host, and resets maximization on hide', () => {
+    desktop.api = null;
+    render(<PluginPanelHostLayout pluginId="docs" panelPath="panel"><div>page</div></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    const host = screen.getByTestId('plugin-panel-host-layout');
+    fireEvent.click(screen.getByTestId('thread-secondary-maximize'));
+    expect(host.classList.contains('is-secondary-maximized')).toBe(true);
+    fireEvent.click(screen.getByTestId('thread-secondary-maximize'));
+    expect(host.classList.contains('is-secondary-maximized')).toBe(false);
+    fireEvent.click(screen.getByTestId('thread-secondary-maximize'));
+    fireEvent.click(screen.getByTestId('thread-secondary-hide'));
+    expect(host.classList.contains('is-secondary-maximized')).toBe(false);
+    expect(screen.getByRole('toolbar', { name: 'Side panel' })).toBeTruthy();
+  });
+
+  it('shows the New Tab picker after closing the final tab', () => {
+    desktop.api = null;
+    render(<PluginPanelHostLayout pluginId="docs" panelPath="panel"><div>page</div></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Agent' }));
+    expect(screen.getByTestId('thread-new-tab-page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close New Tab' }));
+    expect(screen.getByTestId('thread-new-tab-page')).toBeTruthy();
+  });
+
+  it('uses the shared compact navigation and returns to the page on close', () => {
+    desktop.api = null;
+    desktop.compact = true;
+    render(<PluginPanelHostLayout pluginId="docs" panelPath="panel"><div>page</div></PluginPanelHostLayout>);
+    expect(screen.getByTestId('plugin-panel-host-layout').classList.contains('is-compact')).toBe(true);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('thread-secondary-panel').dataset.mobilePanel).toBe('true');
+    expect(screen.getByTestId('agent-composer')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel' }));
+    expect(screen.queryByTestId('thread-secondary-panel')).toBeNull();
+    expect(screen.getByTestId('plugin-panel-secondary-show')).toBeTruthy();
+  });
+
+  it('restores each project when its scope changes in place without copying tabs', () => {
+    desktop.api = null;
+    const page = (scopeId: string) => <PluginPanelHostLayout pluginId="docs" panelPath="panel" scopeId={scopeId}><div>{scopeId}</div></PluginPanelHostLayout>;
+    const view = render(page('p1'));
+    act(() => { requestPluginPanelAgent({ pluginId: 'docs', threadId: 'project-one' }); });
+    view.rerender(page('p2'));
+    expect(screen.queryByTestId('agent-chat')).toBeNull();
+    act(() => { requestPluginPanelAgent({ pluginId: 'docs', threadId: 'project-two' }); });
+    view.rerender(page('p1'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('project-one');
+    view.rerender(page('p2'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('project-two');
   });
 
   it('refuses an empty or oversized draft', () => {

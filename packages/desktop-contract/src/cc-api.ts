@@ -214,6 +214,13 @@ export interface PluginViewTarget {
   projectId: string;
 }
 
+/** One thread and its side panel shown in its own window (`windows.openThreadView`). */
+export interface ThreadViewTarget {
+  threadId: string;
+  /** The thread's project, when it has one. */
+  projectId?: string;
+}
+
 export interface CcApi {
   /** Isolated in-app browser overlay. Present only in the desktop preload. */
   browser: DesktopBrowserApi;
@@ -1178,7 +1185,13 @@ export interface CcApi {
     pick(projectId: string): Promise<Result<ExecutionSourceCapabilityView[]>>;
   };
   openers: {
-    openIn(target: OpenTarget, path: string): Promise<OpenResult>;
+    /**
+     * `projectRoot` (editor targets only) opens the file at `path` inside that
+     * project's editor window. Main honours it only for a registered project
+     * (or one of its worktrees) that contains the file; otherwise the editor
+     * opens `path` alone.
+     */
+    openIn(target: OpenTarget, path: string, options?: { projectRoot?: string }): Promise<OpenResult>;
   };
   clipboard: {
     /**
@@ -1337,7 +1350,7 @@ export interface CcApi {
     /** Quit the whole app (footer power button). */
     quit(): Promise<void>;
   };
-  /** Multi-window control surface (project windows and plugin view windows). */
+  /** Multi-window control surface (project, plugin view and thread view windows). */
   windows: {
     /**
      * Open (or focus) a window locked to a single project — the renderer-side
@@ -1357,6 +1370,18 @@ export interface CcApi {
     listPluginViews(): Promise<PluginViewTarget[]>;
     /** Pushed to every window when a plugin view window opens or closes. */
     onPluginViewsChanged(cb: (views: PluginViewTarget[]) => void): () => void;
+    /**
+     * Open (or focus) a window showing one thread with its side panel. Main
+     * checks the target's shape and project; the window's renderer shows a
+     * missing state for a thread that is gone. Resolves `false` when main refuses.
+     */
+    openThreadView(target: ThreadViewTarget): Promise<boolean>;
+    /** Close the window showing this thread, if one is open. */
+    closeThreadView(target: ThreadViewTarget): Promise<boolean>;
+    /** The thread view windows open now. */
+    listThreadViews(): Promise<ThreadViewTarget[]>;
+    /** Pushed to every window when a thread view window opens or closes. */
+    onThreadViewsChanged(cb: (views: ThreadViewTarget[]) => void): () => void;
     /** Route the main window to a relative in-app path and bring it forward. */
     showInMain(path: string): Promise<boolean>;
     /** Main window only: main asks the renderer to navigate to `path`. */

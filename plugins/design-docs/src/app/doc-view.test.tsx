@@ -910,8 +910,8 @@ describe('history', () => {
 });
 
 describe('agents', () => {
-  it('lists linked threads, opens and unlinks them', async () => {
-    const harness = createHarness();
+  it('opens linked threads in the shared host panel and keeps the agent list usable', async () => {
+    const harness = createHarness({ panelAgent: true });
     const doc = simpleDoc(harness);
     harness.store.linkThread(doc.id, 'thread-9', 'Reviewer run', 'reviewer');
     harness.store.linkThread(doc.id, 'thread-8', 'Drafting', 'author');
@@ -919,35 +919,15 @@ describe('agents', () => {
     await findPane('README.md');
     fireEvent.click(screen.getByRole('tab', { name: /Agents/ }));
     const rail = screen.getByRole('complementary', { name: 'Comments, history and agents' });
-    const opens = within(rail).getAllByTitle('Open chat beside the doc');
-    expect(opens).toHaveLength(2);
-    expect(within(rail).getByText('Reviewer')).toBeTruthy();
-
-    // The chat opens in the rail and the doc stays open.
+    expect(within(rail).getAllByTitle('Open chat beside the doc')).toHaveLength(2);
     fireEvent.click(within(rail).getByText('Reviewer run').closest('button')!);
-    expect(within(rail).getByTestId('plugin-thread-chat').getAttribute('data-thread-id')).toBe('thread-9');
-    expect(rail.classList.contains('dd-rail-chat')).toBe(true);
-    expect(pane('README.md')).not.toBeNull();
-    expect(harness.navigateCalls).toEqual([]);
-    fireEvent.click(within(rail).getByRole('button', { name: 'Open full thread' }));
-    expect(harness.navigateCalls.at(-1)).toEqual({ method: 'toThread', threadId: 'thread-9' });
-
-    // The open chat survives switching tabs, and Back returns to the list.
-    fireEvent.click(screen.getByRole('tab', { name: /History/ }));
-    expect(rail.classList.contains('dd-rail-chat')).toBe(false);
-    fireEvent.click(screen.getByRole('tab', { name: /Agents/ }));
-    expect(within(rail).getByTestId('plugin-thread-chat')).toBeTruthy();
-    fireEvent.click(within(rail).getByRole('button', { name: 'All agents' }));
+    expect(harness.navigateCalls.at(-1)).toEqual({ method: 'openPanelAgent', options: { threadId: 'thread-9', title: doc.title } });
     expect(within(rail).queryByTestId('plugin-thread-chat')).toBeNull();
+    expect(pane('README.md')).not.toBeNull();
+    expect(within(rail).getByText('Drafting')).toBeTruthy();
 
-    // Unlinking the open thread drops its chat.
     fireEvent.click(within(rail).getByText('Drafting').closest('button')!);
-    await harness.asAgent((store) => store.unlinkThread(doc.id, 'thread-8'));
-    await waitFor(() => expect(within(rail).queryByTestId('plugin-thread-chat')).toBeNull());
-    harness.store.linkThread(doc.id, 'thread-8', 'Drafting', 'author');
-    harness.emit({ docId: doc.id });
-    await within(rail).findByText('Drafting');
-
+    expect(harness.navigateCalls.at(-1)).toEqual({ method: 'openPanelAgent', options: { threadId: 'thread-8', title: doc.title } });
     harness.fail('unlinkThread', 'nope');
     fireEvent.click(within(rail).getAllByRole('button', { name: 'Unlink thread' })[0]!);
     await waitFor(() => expect(harness.toasts).toContainEqual({ message: 'Could not unlink: nope', kind: 'error' }));

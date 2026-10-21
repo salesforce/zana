@@ -15,6 +15,7 @@ vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) =
 vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: (p: any) => <div data-testid="stub-agents"><button data-testid="stub-agents-publish" onClick={() => p.onPublish?.('force-app/bots/Help.agent')}>publish</button></div> }));
 vi.mock('./AgentforceLabPanel.js', () => ({ AgentforceLabPanel: () => <div data-testid="stub-lab" /> }));
 vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data-testid="stub-ops" /> }));
+vi.mock('./studio/OrgTestsView.js', () => ({ OrgTestsView: (p: any) => <div data-testid="stub-org-tests" data-visible={String(p.visible)} data-focus={p.focus ? JSON.stringify(p.focus) : ''}><button data-testid="stub-org-tests-handled" onClick={() => p.onFocusHandled?.(p.focus?.seq ?? -1)}>handled</button></div> }));
 const { AgentScriptPanel } = await import('./AgentScriptPanel.js');
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -159,14 +160,9 @@ describe('AgentScriptPanel studio layout', () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
     await post(el, { type: 'cursor', line: 2, column: 3, selection: { startLine: 2, endLine: 2, text: 'a' } });
-    await post(el, { type: 'commentAction', kind: 'add', line: 2, endLine: 3, quote: 'a b' });
-    const form = el.querySelector('form[aria-label="Add comment"]')!;
-    expect(form.textContent).toContain('lines 2-3');
-    await act(async () => { fireEvent.change(form.querySelector('textarea')!, { target: { value: 'Needs work' } }); });
-    await act(async () => { fireEvent.submit(form); });
+    // The comment box lives in the editor; the host only stores what it submits.
+    await post(el, { type: 'commentAction', kind: 'submit', line: 2, endLine: 3, quote: 'a b', body: ' Needs work ' });
     expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.comments.add', expect.objectContaining({ projectId: 'proj-1', body: 'Needs work', line: 2, endLine: 3, quote: 'a b' }));
-    await post(el, { type: 'commentAction', kind: 'add', line: 1, endLine: 1, quote: 'x' });
-    await act(async () => { fireEvent.click([...el.querySelectorAll('form button')].find(b => b.textContent === 'Cancel')!); });
     expect(el.querySelector('form[aria-label="Add comment"]')).toBeNull();
     await post(el, { type: 'commentAction', kind: 'open', line: 1, endLine: 1, quote: '' });
     await post(el, { type: 'askSelection', action: 'explain-selection', startLine: 1, endLine: 2, text: 'a' });
@@ -215,6 +211,37 @@ describe('AgentScriptPanel studio layout', () => {
     expect(stub().getAttribute('data-dirty')).toBe('false');
   });
 
+  it('resolves context presets for preview.start and context.set, and fills the Context tab', async () => {
+    const preset = { id: 'p1', name: 'Gold', revision: 2, updatedAt: 1, values: [{ name: 'tier', type: 'Text', value: 'gold' }], fields: [] };
+    rpc.mockImplementation(async (p, method, args) => method === 'agentPreview.presets.list' ? { ok: true, scopeKey: 's', presets: [preset] } : baseRpc(p, method, args));
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    const command = () => JSON.parse(el.querySelector('[data-testid="stub-preview"]')!.getAttribute('data-command')!);
+    let result: unknown;
+    await act(async () => { result = await exec('preview.start', { presetId: 'p1' }); });
+    expect(result).toEqual({ presetId: 'p1', preset: 'Gold' });
+    expect(command()).toMatchObject({ type: 'start', preset: { id: 'p1' } });
+    expect(rpc.mock.calls.find(c => c[1] === 'agentPreview.presets.list')![2]).toMatchObject({ path: 'force-app/bots/QC.agent', orgAlias: 'dev' });
+    await act(async () => { result = await exec('context.set', { presetId: 'p1' }); });
+    expect(result).toEqual({ context: 'preset', presetId: 'p1', preset: 'Gold', variables: 1 });
+    expect(command()).toMatchObject({ type: 'context', preset: { id: 'p1' } });
+    const values = [{ name: 'tier', type: 'Text', value: 'silver' }];
+    await act(async () => { result = await exec('context.set', { values, merge: true }); });
+    expect(result).toEqual({ context: 'merged', variables: 1 });
+    expect(command()).toMatchObject({ type: 'context', contextVariables: values, merge: true });
+    await act(async () => { result = await exec('context.set', { values }); });
+    expect(result).toEqual({ context: 'replaced', variables: 1 });
+    await expect(exec('context.set', { presetId: 'nope' })).rejects.toThrow(/No context preset nope .*contextPresets\.list/);
+    rpc.mockImplementation(async (p, method, args) => method === 'agentPreview.presets.list' ? { ok: false, error: 'Store down' } : baseRpc(p, method, args));
+    await expect(exec('preview.start', { presetId: 'p1' })).rejects.toThrow('Store down');
+    rpc.mockImplementation(baseRpc);
+  });
+
+  it('refuses a context preset before an agent is open', async () => {
+    await mount();
+    await expect(exec('context.set', { presetId: 'p1' })).rejects.toThrow('Open an agent before using a context preset.');
+  });
+
   it('wires preview, trace, graph and layout command targets', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
@@ -238,6 +265,45 @@ describe('AgentScriptPanel studio layout', () => {
     expect(control.options.state().layout).toBeDefined();
   });
 
+  it('opens Org tests from the activity rail and from orgTests.open, as a kept-mounted editor tab', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    expect(control.options.commands).toContain('orgTests.open');
+    const rail = el.querySelector('[aria-label="Studio activity"]')!;
+    await act(async () => { fireEvent.click(rail.querySelector('[aria-label="Org tests"]')!); });
+    await flush();
+    const stubView = () => el.querySelector('[data-testid="stub-org-tests"]')!;
+    expect([...el.querySelectorAll('[role="tab"] .sf-etab-name')].map(tab => tab.textContent)).toContain('Org tests');
+    expect(stubView().getAttribute('data-visible')).toBe('true');
+    expect(stubView().getAttribute('data-focus')).toBe('');
+    // The view brings its own title bar, so the host adds none.
+    expect(el.querySelector('[data-testid="studio-org-tests-view"] > section.sf-tp.is-org-tests')).toBeTruthy();
+    expect(el.querySelector('[data-testid="studio-org-tests-view"] .sf-tp-head')).toBeNull();
+    expect(el.querySelector('[data-testid="studio-org-agents-view"]')).toBeNull();
+
+    // Back on the agent the tab stays mounted, hidden; an agent's orgTests.open brings it back on a run.
+    await act(async () => { fireEvent.click([...el.querySelectorAll('[role="tab"]')].find(tab => tab.textContent?.includes('QC.agent'))!); });
+    await flush();
+    expect(stubView().getAttribute('data-visible')).toBe('false');
+    let reply: unknown;
+    await act(async () => { reply = await exec('orgTests.open', { runId: '4KB000000000001AAA' }); });
+    await flush();
+    expect(reply).toEqual({ runId: '4KB000000000001AAA' });
+    expect(stubView().getAttribute('data-visible')).toBe('true');
+    expect(JSON.parse(stubView().getAttribute('data-focus')!)).toEqual({ runId: '4KB000000000001AAA', seq: 1 });
+    await act(async () => { fireEvent.click(el.querySelector('[data-testid="stub-org-tests-handled"]')!); });
+    expect(stubView().getAttribute('data-focus')).toBe('');
+    // A bare open keeps the next request's seq counting.
+    await act(async () => { await exec('orgTests.open', {}); });
+    expect(stubView().getAttribute('data-focus')).toBe('');
+    await act(async () => { await exec('orgTests.open', { name: 'Support_Regression' }); });
+    expect(JSON.parse(stubView().getAttribute('data-focus')!)).toEqual({ name: 'Support_Regression', seq: 2 });
+    // Closing the tab unmounts the view (and keeps the saved layout from carrying it into the next mount).
+    await act(async () => { fireEvent.click(el.querySelector('[aria-label="Close Org tests"]')!); });
+    await flush();
+    expect(el.querySelector('[data-testid="stub-org-tests"]')).toBeNull();
+  });
+
   it('compact trace focus opens Preview', async () => {
     width = 500;
     const el = await mount();
@@ -258,7 +324,7 @@ describe('AgentScriptPanel studio layout', () => {
     await act(async () => { fireEvent.click(apex!); });
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeTruthy();
     // The agent's document bar belongs to the agent tab; the strip keeps the workspace controls.
-    expect(el.querySelector('[data-testid="salesforce-agent-script-publish"]')).toBeNull();
+    expect(el.querySelector('[aria-label="Save Agentforce file"]')).toBeNull();
     const goTo = el.querySelector<HTMLButtonElement>('.sf-etabs-actions [aria-label="Go to file"]');
     expect(goTo).toBeTruthy();
     await act(async () => { fireEvent.click(goTo!); });
@@ -268,7 +334,7 @@ describe('AgentScriptPanel studio layout', () => {
     expect(back?.textContent).toBe('← QC.agent');
     await act(async () => { fireEvent.click(back!); });
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeNull();
-    expect(el.querySelector('[data-testid="salesforce-agent-script-publish"]')).toBeTruthy();
+    expect(el.querySelector('[aria-label="Save Agentforce file"]')).toBeTruthy();
     await act(async () => { fireEvent.click(el.querySelector('[aria-label="Browse org agents"]')!); });
     await act(async () => { fireEvent.click(apex!); });
     const scenario = [...el.querySelectorAll('.sf-as-explorer button')].find(n => n.textContent?.includes('a.scenario') || n.textContent?.trim().startsWith('a'));
@@ -292,7 +358,7 @@ describe('AgentScriptPanel studio layout', () => {
     expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.lightningType', { projectId: 'proj-1', ref: 'c__Order' });
     const view = el.querySelector('[data-testid="lightning-type-view"]')!;
     expect(view.querySelector('h2')!.textContent).toBe('Order');
-    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'Help.agent')!); });
+    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'Help')!); });
     await flush();
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
     // Fold and unfold a section.
@@ -314,6 +380,66 @@ describe('AgentScriptPanel studio layout', () => {
     await act(async () => { fireEvent.click(pick!); });
     await flush();
     expect(el.querySelector('[data-testid="lightning-type-view"]')).toBeTruthy();
+    rpc.mockImplementation(base);
+  });
+
+  it('opens a type\'s component and walks back to the type', async () => {
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => {
+      if (method === 'studio.explorer') return { ok: true, nodes: [
+        { kind: 'agent', path: 'force-app/bots/QC.agent', apiName: 'QC', uses: [{ kind: 'lightning-type', apiName: 'c__Order' }, { kind: 'lwc', apiName: 'c/orderCard' }] },
+        { kind: 'lightning-type', apiName: 'c__Order', path: 'lightningTypes/Order', usedBy: ['force-app/bots/QC.agent'] },
+        { kind: 'lwc', apiName: 'c/orderCard', path: 'lwc/orderCard', usedBy: ['force-app/bots/Help.agent'], via: ['c__Order'] }
+      ] };
+      if (method === 'studio.lightningType') return { ok: true, data: { ref: args.ref, standard: false, status: 'ready', title: 'Order', properties: [], files: [], components: [{ ref: 'c/orderCard', namespace: 'c', name: 'orderCard', role: 'renderer', channel: 'lightningDesktopGenAi', target: '$', path: 'lwc/orderCard' }, { ref: 'c/ghost', namespace: 'c', name: 'ghost', role: 'editor', channel: 'lightningDesktopGenAi', target: '$' }] } };
+      if (method === 'studio.lwc') return { ok: true, data: { ref: args.ref, name: args.ref.split('/')[1], status: 'ready', path: `lwc/${args.ref.split('/')[1]}`, files: [{ path: 'lwc/orderCard/orderCard.html', content: '<template></template>' }] } };
+      return base(p, method, args);
+    });
+    const el = await mount();
+    await ready(el);
+    await openReferences(el);
+    const explorer = () => el.querySelector('[data-testid="salesforce-agent-script-explorer"]')!;
+    const lwcNode = [...explorer().querySelectorAll('button')].find(n => n.textContent?.includes('c/orderCard'))!;
+    await act(async () => { fireEvent.click(lwcNode); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.lwc', { projectId: 'proj-1', ref: 'c/orderCard' });
+    let view = el.querySelector('[data-testid="lwc-bundle-view"]')!;
+    expect(view.querySelector('.sf-lt-source')!.textContent).toBe('<template></template>');
+    expect(el.querySelector('.sf-etab.is-active')!.textContent).toContain('LWC');
+    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'Help')!); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
+    // From the component to its type, and from the type to a component the explorer does not list.
+    await act(async () => { fireEvent.click(lwcNode); });
+    await flush();
+    view = el.querySelector('[data-testid="lwc-bundle-view"]')!;
+    await act(async () => { fireEvent.click([...view.querySelectorAll('button')].find(n => n.textContent === 'c__Order')!); });
+    await flush();
+    const typeView = el.querySelector('[data-testid="lightning-type-view"]')!;
+    await act(async () => { fireEvent.click([...typeView.querySelectorAll('button')].find(n => n.textContent === 'c/ghost')!); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.lwc', { projectId: 'proj-1', ref: 'c/ghost' });
+    expect(el.querySelector('[data-testid="lwc-bundle-view"] h2')!.textContent).toBe('ghost');
+    rpc.mockImplementation(base);
+  });
+
+  it('lists an unfolded agent the explorer had not scanned', async () => {
+    const base = rpc.getMockImplementation()!;
+    const help = 'force-app/bots/Help.agent';
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => {
+      if (method === 'studio.explorer') return { ok: true, nodes: [
+        { kind: 'agent', path: 'force-app/bots/QC.agent', apiName: 'QC', uses: [] },
+        ...(args?.expand?.includes(help) ? [{ kind: 'agent', path: help, apiName: 'Help', uses: [{ kind: 'apex', apiName: 'Foo' }] }, { kind: 'apex', apiName: 'Foo', path: 'force-app/classes/Foo.cls', usedBy: [help] }] : [])
+      ] };
+      return base(p, method, args);
+    });
+    const el = await mount();
+    await ready(el);
+    const twisty = () => el.querySelector<HTMLButtonElement>('button[aria-label$="what Help uses"]')!;
+    await act(async () => { fireEvent.click(twisty()); });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.explorer', { projectId: 'proj-1', expand: [help] });
+    expect(el.querySelector('[aria-label="Help references"]')!.textContent).toContain('Foo');
     rpc.mockImplementation(base);
   });
 
@@ -503,6 +629,7 @@ describe('AgentScriptPanel follows the driving thread', () => {
     rpc.mockImplementation(baseRpc);
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
+    await act(async () => { fireEvent.click(el.querySelector('[aria-label="More save options"]')!); });
     await act(async () => { fireEvent.click(el.querySelector('[data-testid="salesforce-agent-script-publish"]')!); });
     await flush();
     const pane = el.querySelector('[data-testid="studio-release-pane"]')!;

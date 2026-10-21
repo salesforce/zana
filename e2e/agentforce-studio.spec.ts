@@ -12,11 +12,57 @@ import { flowSnapshotXml } from '../plugins/salesforce/lib/flow-visualizer.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const toolbarFile = 'force-app/main/default/aiAuthoringBundles/Customer_Service_Agent_With_A_Long_Name/Customer_Service_Agent_With_A_Long_Name.agent';
+const ORG_TEST_CASES = [
+  { n: 1, utterance: 'Where is my order?', topic: 'Orders', actions: "[&apos;Lookup&apos;]", reply: 'Asks for the order number' },
+  // A form submission after an earlier turn, written with the CSV-doubled quotes Testing Center exports keep.
+  { n: 2, utterance: '{&quot;&quot;orderNumber&quot;&quot;: &quot;&quot;00012345&quot;&quot;, &quot;&quot;reason&quot;&quot;: &quot;&quot;Damaged&quot;&quot;, &quot;&quot;refundTo&quot;&quot;: &quot;&quot;Card&quot;&quot;}', topic: 'Returns', actions: '[]', reply: 'Explains the refund policy',
+    inputs: `<conversationHistory><index>0</index><message>I want a refund</message><role>user</role></conversationHistory>
+      <conversationHistory><index>1</index><message>Which order should I refund?</message><role>agent</role></conversationHistory>
+      <contextVariable><variableName>currentObjectApiName</variableName><variableValue>Order</variableValue></contextVariable>
+      <contextVariable><variableName>channel</variableName><variableValue>Web</variableValue></contextVariable>` },
+  { n: 3, utterance: 'Cancel my subscription', topic: 'Billing', actions: '[]', reply: 'Confirms the cancellation' },
+];
+const ORG_TEST_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<AiEvaluationDefinition xmlns="http://soap.sforce.com/2006/04/metadata">
+  <name>Support regression</name>
+  <subjectName>Support</subjectName>
+  <subjectType>AGENT</subjectType>
+  <subjectVersion>v1</subjectVersion>
+${ORG_TEST_CASES.map(c => `  <testCase>
+    <expectation><name>topic_sequence_match</name><expectedValue>${c.topic}</expectedValue></expectation>
+    <expectation><name>action_sequence_match</name><expectedValue>${c.actions}</expectedValue></expectation>
+    <expectation><name>bot_response_rating</name><expectedValue>${c.reply}</expectedValue></expectation>
+    <expectation><name>completeness</name></expectation>
+    <expectation><name>coherence</name></expectation>
+    <inputs>${'inputs' in c ? c.inputs : ''}<utterance>${c.utterance}</utterance></inputs>
+    <number>${c.n}</number>
+  </testCase>`).join('\n')}
+</AiEvaluationDefinition>`;
+const ORG_TEST_RESULTS = {
+  status: 'COMPLETED', startTime: '2026-10-20T10:00:00.000Z', endTime: '2026-10-20T10:01:30.000Z', subjectName: 'Support',
+  testCases: ORG_TEST_CASES.map(c => {
+    const failing = c.n === 3;
+    const topic = failing ? 'General_FAQ' : c.topic;
+    return {
+      status: 'COMPLETED', testNumber: c.n, startTime: '2026-10-20T10:00:00.000Z', endTime: '2026-10-20T10:00:30.000Z',
+      inputs: { utterance: c.utterance.replace(/&quot;/g, '"') },
+      generatedData: { topic, actionsSequence: c.n === 1 ? ['Lookup'] : [], outcome: c.reply + '.', sessionId: 'sess-' + c.n, invokedActions: '[]' },
+      testResults: [
+        { name: 'topic_sequence_match', expectedValue: c.topic, actualValue: topic, score: failing ? 0 : 1, result: failing ? 'FAILURE' : 'PASS', status: 'COMPLETED',
+          metricExplainability: failing ? 'The agent routed to General_FAQ instead of Billing.' : 'Topic matched.' },
+        { name: 'bot_response_rating', expectedValue: c.reply, actualValue: c.reply + '.', score: 0.9, result: 'PASS', status: 'COMPLETED', metricExplainability: 'The reply covers the expectation.' },
+        { name: 'completeness', score: 0.8, result: null, status: 'COMPLETED' },
+        { name: 'coherence', score: 0.9, result: null, status: 'COMPLETED' },
+      ],
+    };
+  }),
+};
 // Replace only the upstream network in the installed fixture. The real transport,
 // session service, plugin RPC, Monaco iframe and Electron UI all run unchanged.
 const test = base.extend({
   launchEnv: async ({ home }, use) => {
     const requests: Array<{ path: string; host: string; body: Record<string, unknown> }> = [];
+    let evalPolls = 0;
     const server = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -50,6 +96,11 @@ const test = base.extend({
       } else if (path.endsWith('/chat-generations')) {
         const system = body.messages[0].content as string;
         result = { generationDetails: { generations: [{ content: system.startsWith('Evaluate') ? JSON.stringify({ outcome: 'pass', reason: 'The agent stayed within scope and asked for the missing order details.', evidence: ['The agent asked for an order number before proceeding.'] }) : system.includes('CUSTOMER') ? 'My order is ORD-1042. Can you check the delivery date?' : 'I can help with that. What is your order number?' }] } };
+      } else if (path.includes('/einstein/ai-evaluations/runs')) {
+        // Testing Center: a run starts NEW, reads IN_PROGRESS once, then COMPLETED with 2 passing and 1 failing case.
+        if (req.method === 'POST' && path.endsWith('/runs')) result = { id: '4KB000000000001AAA', status: 'NEW' };
+        else if (path.endsWith('/results')) result = ORG_TEST_RESULTS;
+        else { evalPolls++; result = { id: '4KB000000000001AAA', status: evalPolls < 2 ? 'IN_PROGRESS' : 'COMPLETED' }; }
       } else { res.writeHead(404); res.end('{}'); return; }
       res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result));
     });
@@ -99,6 +150,23 @@ if (args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata') {
   while (state() === 'hold' && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   if (state() === 'empty') result = [];
   if (state() === 'denied') { console.log(JSON.stringify({ status: 1, message: 'Metadata API access denied for this org.' })); process.exit(1); }
+}
+// Testing Center definitions: listed by metadata type, retrieved by manifest in source format.
+if (args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata' && args.includes('AiEvaluationDefinition')) result = [
+  { fullName: 'Support_Regression', createdByName: 'Ada Admin', lastModifiedDate: '2026-10-01T10:00:00.000Z' },
+  { fullName: 'Billing_Smoke', createdByName: 'Bo Builder', lastModifiedDate: '2026-09-01T10:00:00.000Z' },
+];
+if (args[0] === 'project' && args[1] === 'retrieve' && args.includes('--manifest') && fs.readFileSync(path.join(process.cwd(), 'package.xml'), 'utf8').includes('<name>AiEvaluationDefinition</name>')) {
+  // Every member of the manifest, as the real CLI does; Billing_Smoke tests another agent.
+  const files = [...fs.readFileSync(path.join(process.cwd(), 'package.xml'), 'utf8').matchAll(/<members>([^<]+)<\\/members>/g)].map(([, fullName]) => {
+    const file = path.join(process.cwd(), 'force-app/main/default/aiEvaluationDefinitions', fullName + '.aiEvaluationDefinition-meta.xml');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const xml = ${JSON.stringify(ORG_TEST_XML)};
+    fs.writeFileSync(file, fullName === 'Billing_Smoke' ? xml.replace('<name>Support regression</name>', '<name>Billing smoke</name>').replace('<subjectName>Support</subjectName>', '<subjectName>Billing</subjectName>') : xml);
+    return { fullName, type: 'AiEvaluationDefinition', state: 'Created', filePath: file };
+  });
+  console.log(JSON.stringify({ status: 0, result: { success: true, done: true, files, fileProperties: [] } }));
+  process.exit(0);
 }
 // Implementation source, retrieved by manifest like the real CLI: files land in the temp project and are reported in files[].
 if (args[0] === 'project' && args[1] === 'retrieve' && args.includes('--manifest')) {
@@ -197,7 +265,7 @@ const studioIn = (page: Page) => studioPanel(page).or(page.locator('.sf-panel-to
 const sidePanel = (page: Page) => page.getByTestId('plugin-panel-host-layout').getByTestId('thread-secondary-panel');
 const sidePanelTab = (page: Page, name: string) => sidePanel(page).locator('.thread-secondary-tabs').getByRole('button', { name, exact: true });
 const activeSidePanelTab = (page: Page) => sidePanel(page).locator('.thread-secondary-tab.is-active .thread-secondary-tab-label');
-const TOOL_IDS: Record<string, string> = { Agents: 'agents', 'Graph view': 'graph', Preview: 'preview', Tests: 'test', Release: 'release', Actions: 'actions', 'Org preview': 'org-preview', Comments: 'comments' };
+const TOOL_IDS: Record<string, string> = { 'Graph view': 'graph', Preview: 'preview', Tests: 'test', Release: 'release', Actions: 'actions', 'Org preview': 'org-preview', Comments: 'comments' };
 
 /** Opens a Studio tool in the host side panel: its tab when open, else from the panel's New Tab page. */
 async function openTool(studio: Locator, name: string) {
@@ -337,6 +405,32 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   expect(codeBox!.height).toBeGreaterThan(editorBox!.height - statusBox!.height - 24);
   const explorerBox = await studio.getByTestId('salesforce-agent-script-explorer').boundingBox();
   expect(explorerBox!.x + explorerBox!.width).toBeLessThanOrEqual(editorBox!.x + 1);
+  // A selection gets a one-row chip above it, and its Comment box opens in the editor under the lines.
+  await frame.locator('.monaco-editor').click({ position: { x: 120, y: 45 } });
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Shift+End');
+  const chip = frame.locator('.sf-selection-chip');
+  await expect(chip).toBeVisible();
+  const [commentBox, askBox] = await Promise.all(['Comment', 'Ask agent'].map(name => chip.getByRole('button', { name, exact: true }).boundingBox()));
+  expect(Math.abs(commentBox!.y - askBox!.y)).toBeLessThan(2);
+  const selectionBox = await frame.locator('.selected-text').first().boundingBox();
+  expect((await chip.boundingBox())!.y + (await chip.boundingBox())!.height).toBeLessThanOrEqual(selectionBox!.y + 1);
+  await chip.getByRole('button', { name: 'Comment', exact: true }).click();
+  // Monaco hides its view zones from the accessibility tree, so find the box by its markup.
+  const commentForm = frame.locator('form[aria-label="Add comment"]');
+  await expect(commentForm).toBeVisible();
+  await expect(studio.locator('.sf-comment-form')).toHaveCount(0);
+  expect((await commentForm.boundingBox())!.y).toBeGreaterThan(selectionBox!.y);
+  // The box takes focus; toBeFocused also needs the iframe document to report hasFocus(), which headless Linux CI does not.
+  const commentInput = commentForm.locator('textarea');
+  await expect.poll(() => commentInput.evaluate(input => input === input.ownerDocument.activeElement)).toBe(true);
+  await page.keyboard.type('Check this line');
+  await expect(commentInput).toHaveValue('Check this line');
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-inline-comment.png'));
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
+  await expect(commentForm).toHaveCount(0);
+  await expect(frame.locator('.sf-comment-glyph')).toHaveCount(1);
+  await expect(frame.locator('.view-lines')).not.toContainText('Check this line');
   // "Show side panel" opens the host side panel beside the tab; its New Tab page lists only Studio's tools.
   await studioPanel(page).getByRole('button', { name: 'Show side panel', exact: true }).first().click();
   await expect(sidePanel(page)).toBeVisible();
@@ -582,6 +676,151 @@ test('Org preview: searchable agent picker, employee-agent simulation and an unc
   expect(starts).toHaveLength(2);
   expect(starts.every(row => row.body.enableSimulationMode === true && row.body.bypassUser === false)).toBe(true);
   expect(existsSync(join(home, 'agent-cli.jsonl'))).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test('Preview context: Context tab, setup, typed snapshots and restart work in both preview surfaces', async ({ app, home }, testInfo) => {
+  const contextSource = `variables:
+    sessionId: linked string
+        source: @MessagingSession.Id
+        label: "Session"
+    verified: mutable boolean = False
+        visibility: "External"
+    retryCount: mutable number = 0
+        visibility: "External"
+`;
+  writeFileSync(join(home, 'dx', toolbarFile), `${AGENT_SCRIPT_EXAMPLES[0].source}\n${contextSource}`);
+  const page = app.window;
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
+  await showAllAgents(studio);
+  await studio.getByTestId(`salesforce-agent-script-file:${toolbarFile}`).click();
+  await openTool(studio, 'Preview');
+  const workbench = page.getByTestId('preview-workbench');
+  await workbench.getByRole('tab', { name: 'Context 0', exact: true }).click();
+  await expect(workbench.getByRole('checkbox', { name: 'Set Session', exact: true })).toBeVisible();
+  await expect(workbench.getByRole('region', { name: 'Agent variables' })).toBeVisible();
+  await expect(workbench.getByRole('region', { name: 'Session context' })).toBeVisible();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-defaults.png'));
+  await workbench.getByRole('button', { name: '+ Add variable', exact: true }).click();
+  await expect(workbench.getByLabel('Variable name', { exact: true })).toBeFocused();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-add.png'));
+  await workbench.getByRole('button', { name: 'Cancel adding variable', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(workbench.getByLabel('Variable name', { exact: true })).toBeHidden();
+  await workbench.getByLabel('Session value', { exact: true }).fill('context-e2e-session');
+  await expect(workbench.getByRole('checkbox', { name: 'Set Session', exact: true })).toBeChecked();
+  await workbench.getByLabel('verified value', { exact: true }).selectOption('false');
+  await workbench.getByLabel('retryCount value', { exact: true }).fill('0');
+  // Real RPC + isolated SQLite persistence; validation never sends a partial context.
+  await expect(workbench.getByLabel('Context preset', { exact: true })).toBeEnabled();
+  await workbench.getByRole('button', { name: 'Save as…', exact: true }).click();
+  await workbench.getByLabel('Preset name', { exact: true }).fill('Unverified customer');
+  await workbench.getByRole('button', { name: 'Save preset', exact: true }).click();
+  await expect(workbench.getByLabel('Preset name', { exact: true })).toBeHidden();
+  const presetId = await workbench.getByLabel('Context preset', { exact: true }).inputValue();
+  await workbench.getByLabel('retryCount value', { exact: true }).fill('-');
+  await workbench.getByLabel('Session value', { exact: true }).focus();
+  await expect(workbench.getByRole('alert')).toContainText('Enter a number');
+  await expect(workbench.getByRole('button', { name: 'Save as…', exact: true })).toBeDisabled();
+  await workbench.getByTestId('pw-start').click();
+  await expect(workbench.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true })).toBeDisabled();
+  await workbench.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await workbench.getByLabel('Context preset', { exact: true }).selectOption('');
+  await expect(workbench.getByLabel('retryCount value', { exact: true })).toHaveValue('');
+  await workbench.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(workbench.getByLabel('retryCount value', { exact: true })).toHaveValue('-');
+  await workbench.getByLabel('Context preset', { exact: true }).selectOption(presetId);
+  await expect(workbench.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
+  await expect(workbench.getByRole('alert')).toHaveCount(0);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-preset.png'));
+
+  await workbench.getByLabel('Options for Session', { exact: true }).click();
+  await expect(workbench.getByRole('button', { name: 'Set Session to null', exact: true })).toBeVisible();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-options.png'));
+  await page.keyboard.press('Escape');
+  await expect(workbench.getByRole('button', { name: 'Set Session to null', exact: true })).toBeHidden();
+  await workbench.getByTestId('pw-start').click();
+  const setup = workbench.getByRole('dialog', { name: 'Start a conversation' });
+  await expect(setup).toBeVisible();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-setup.png'));
+  await setup.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(existsSync(join(home, 'sfap-requests.json')) && readFileSync(join(home, 'sfap-requests.json'), 'utf8').includes('/preview/sessions')).toBe(false);
+  await workbench.getByTestId('pw-start').click();
+  await setup.getByRole('button', { name: 'Start preview', exact: true }).click();
+  await expect(workbench.getByRole('log')).toContainText('support concierge');
+  await workbench.getByRole('tab', { name: 'Context 3', exact: true }).click();
+  await workbench.getByLabel('Session value', { exact: true }).fill('next-session');
+  await expect(workbench.getByText(/keeps its original context/)).toBeVisible();
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    expect(await workbench.locator('.sf-context-editor').evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`preview-context-${theme}.png`));
+  }
+  const originalSize = await app.electron.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]; const size = window.getSize(); window.setSize(900, 850); return size;
+  });
+  await expect(workbench.getByLabel('Session value', { exact: true })).toBeVisible();
+  expect(await workbench.locator('.sf-context-editor').evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-narrow.png'));
+  await app.electron.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(size[0], size[1]), originalSize);
+  await workbench.getByRole('button', { name: 'Review & restart', exact: true }).click();
+  await workbench.getByRole('dialog').getByRole('button', { name: 'Restart preview', exact: true }).click();
+  await expect(workbench.getByRole('log')).toContainText('support concierge');
+  await workbench.getByRole('button', { name: 'End', exact: true }).click();
+  // Exercise the real Electron child-process boundary too. Only this private fixture CLI runs.
+  const saved = readFileSync(join(home, 'dx', toolbarFile), 'utf8');
+  writeFileSync(join(home, 'dx', toolbarFile), saved.replace('config:\n', 'config:\n    default_agent_user: "fixture@example.com"\n'));
+  await workbench.getByRole('button', { name: 'Live', exact: true }).click();
+  await workbench.getByTestId('pw-start').click();
+  await workbench.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true }).click();
+  await expect(workbench.getByRole('button', { name: 'End', exact: true })).toBeVisible();
+  await workbench.getByLabel('Preview message', { exact: true }).fill('Large fixture response');
+  await workbench.getByRole('button', { name: 'Send preview message', exact: true }).click();
+  await expect(workbench.getByRole('log')).toContainText('CLI_END_OF_RESPONSE');
+  await workbench.getByRole('button', { name: 'End', exact: true }).click();
+  await openTool(studio, 'Org preview');
+  const orgPreview = page.getByTestId('salesforce-agentforce-preview');
+  await orgPreview.getByTestId('salesforce-agentforce-preview-start').click();
+  const orgSetup = orgPreview.getByRole('dialog');
+  await expect(orgSetup).toBeVisible();
+  await expect(orgSetup.getByRole('option', { name: 'Unverified customer', exact: true })).toBeAttached();
+  await orgSetup.getByLabel('Context preset', { exact: true }).selectOption(presetId);
+  await expect(orgSetup.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
+  await orgSetup.getByLabel('Context preset', { exact: true }).selectOption('');
+
+  await orgSetup.getByRole('checkbox', { name: 'Set verified', exact: true }).check();
+  await orgSetup.getByRole('button', { name: 'Start preview', exact: true }).click();
+  await expect(orgPreview.getByRole('log')).toContainText('support concierge');
+  await orgPreview.getByTestId('salesforce-agentforce-preview-end').click();
+  const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, any> }>;
+  const starts = requests.filter(r => r.path.endsWith('/preview/sessions'));
+  expect(starts).toHaveLength(3);
+  expect(starts[0]!.body.variables).toEqual([{ name: '$Context.sessionId', type: 'Text', value: 'context-e2e-session' }, { name: 'verified', type: 'Boolean', value: false }, { name: 'retryCount', type: 'Number', value: 0 }]);
+  expect(starts[1]!.body.variables[0].value).toBe('next-session');
+  expect(starts[2]!.body.variables).toEqual([{ name: 'verified', type: 'Boolean', value: false }]);
+  expect(starts.every(r => r.body.enableSimulationMode === true)).toBe(true);
+  const cliCalls = readFileSync(join(home, 'agent-cli.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  expect(cliCalls.map(call => call.args.slice(0, 3))).toEqual([['agent', 'preview', 'start'], ['agent', 'preview', 'send'], ['agent', 'preview', 'end']]);
+  expect(cliCalls.every(call => realpathSync(call.cwd) === realpathSync(join(home, 'dx')) && realpathSync(call.home) === realpathSync(home))).toBe(true);
+  const startArgs: string[] = cliCalls[0].args;
+  expect(JSON.parse(startArgs[startArgs.indexOf('--context-variables-json') + 1]!)).toEqual(starts[1]!.body.variables);
+  expect(cliCalls.slice(1).every(call => !call.args.includes('--context-variables-json'))).toBe(true);
   expect(errors).toEqual([]);
 });
 
@@ -858,7 +1097,12 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   await agents.getByRole('textbox', { name: 'Search org agents' }).fill('Support');
   await agents.getByRole('combobox', { name: 'Source version for Support' }).selectOption('Support_v1');
   await retrieveOrgAgent(agents, 'Support');
-  await expect(agents.getByRole('status')).toContainText('Retrieved to your project', { timeout: 30_000 });
+  // The retrieved agent opens in its own tab; the Org agents tab keeps the result.
+  const files = studio.getByRole('tablist', { name: 'Open files' });
+  await expect(files.getByRole('tab', { name: /Support_v1\.agent/ })).toHaveAttribute('aria-selected', 'true', { timeout: 30_000 });
+  await files.getByRole('tab', { name: /Org agents/ }).click();
+  await expect(agents.getByRole('status')).toContainText('Retrieved to your project');
+  await files.getByRole('tab', { name: /Support_v1\.agent/ }).click();
   const imported = join(home, 'dx', 'agentforce', '00D000000000001', 'Support_v1', 'Support_v1.agent');
   expect(readFileSync(imported, 'utf8')).toContain('ORG_AGENT_SOURCE_COMPLETE');
   expect(readFileSync(imported.replace('.agent', '.bundle-meta.xml'), 'utf8')).toContain('Support.v1');
@@ -867,7 +1111,10 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
   await page.keyboard.type('\n# MY_LOCAL_AGENT_EDIT');
   await studio.getByRole('button', { name: 'Save Agentforce file' }).click();
   await expect.poll(() => readFileSync(imported, 'utf8')).toContain('MY_LOCAL_AGENT_EDIT');
+  await files.getByRole('tab', { name: /Org agents/ }).click();
   await retrieveOrgAgent(agents, 'Support');
+  await expect(files.getByRole('tab', { name: /Support_v1\.agent/ })).toHaveAttribute('aria-selected', 'true');
+  await files.getByRole('tab', { name: /Org agents/ }).click();
   await expect(agents.getByRole('status')).toContainText('Existing edits were preserved');
   expect(readFileSync(imported, 'utf8')).toContain('MY_LOCAL_AGENT_EDIT');
   const retrievals = readFileSync(join(home, 'agent-retrievals.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -902,7 +1149,9 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', 'wide');
   const noFile = studio.getByTestId('salesforce-agent-script-no-file');
   await expect(noFile).toBeVisible({ timeout: 30_000 });
-  const agentsTab = sidePanelTab(page, 'Agents');
+  // Org agents pick what to edit, so they open as an editor tab instead of a side-panel tool.
+  const agentsTab = studio.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Org agents/ });
+  const openAgents = () => studio.getByRole('toolbar', { name: 'Studio activity' }).getByRole('button', { name: 'Agents', exact: true }).click();
   const search = studio.getByRole('region', { name: 'Org agents' }).getByRole('textbox', { name: 'Search org agents' });
 
   // The empty state's actions sit with its message instead of floating far below it.
@@ -910,7 +1159,7 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   const openOrgAgents = noFile.getByRole('button', { name: 'Open org agents', exact: true });
   expect((await openOrgAgents.boundingBox())!.y - (message!.y + message!.height)).toBeLessThan(48);
   await openOrgAgents.click();
-  await expect(activeSidePanelTab(page)).toHaveText('Agents');
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
   await expect(search).toBeFocused();
 
   // An empty graph is a single readable hint, not one row per text run and code chip.
@@ -920,14 +1169,18 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   expect(await hint.evaluate(el => [...el.childNodes].map(node => node.nodeName))).toEqual(['P']);
   expect((await hint.locator('p').boundingBox())!.height).toBeLessThan(80);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('empty-graph-hint.png'));
+  // The side panel's New Tab lists Studio tools only; org agents are not one of them.
+  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toBeVisible();
+  await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-agents')).toHaveCount(0);
 
-  // The explorer link switches back to Agents, and re-asking while Agents is already open still lands focus in its search.
+  // The explorer link switches back to Org agents, and re-asking while it is already open still lands focus in its search.
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
   // No local file matches, so the project section offers the org instead, next to the matching org agent row.
   await explorer.getByRole('textbox', { name: 'Filter Agentforce files' }).fill('Agent_0');
   const browse = explorer.getByRole('button', { name: 'Browse agents in your org', exact: true });
   await browse.click();
-  await expect(activeSidePanelTab(page)).toHaveText('Agents');
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
   await expect(search).toBeFocused();
   await search.blur();
   await expect(search).not.toBeFocused();
@@ -936,26 +1189,27 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
 
   // An org agent row retrieves and opens that agent rather than only showing the list.
   await openTool(studio, 'Graph view');
-  // The explorer only links to the org; the Agents panel lists org agents and retrieves them per row.
+  // The explorer only links to the org; the Org agents tab lists them and retrieves them per row.
   await expect(explorer.getByTestId('sf-explorer-org-agent')).toHaveCount(0);
-  await openTool(studio, 'Agents');
-  await expect(activeSidePanelTab(page)).toHaveText('Agents');
+  await openAgents();
+  await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
   await search.fill('Agent_0');
   await retrieveOrgAgent(studio.getByRole('region', { name: 'Org agents' }), 'Agent_0');
-  await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toContainText('Retrieved to your project', { timeout: 30_000 });
-  await expect(studio.locator('.af-document-name')).toHaveText('Agent_0_v1.agent');
+  await expect(studio.locator('.af-document-name')).toHaveText('Agent_0_v1.agent', { timeout: 30_000 });
   await expect(noFile).toBeHidden();
   const retrievals = readFileSync(join(home, 'agent-retrievals.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(retrievals.map(row => row.args.join(' '))).toEqual([expect.stringContaining('AiAuthoringBundle:Agent_0_v1')]);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('explorer-org-agent-opened.png'));
 
   // Reopening a closed Agents tab starts clean instead of replaying the last request.
-  await sidePanel(page).getByRole('button', { name: 'Close Agents', exact: true }).click();
+  await agentsTab.click();
+  await studio.getByRole('tablist', { name: 'Open files' }).getByRole('button', { name: 'Close Org agents', exact: true }).click();
   await expect(agentsTab).toHaveCount(0);
-  await openTool(studio, 'Agents');
+  await openAgents();
   await expect(studio.getByRole('region', { name: 'Org agents' }).getByText('Z Last', { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(search).toHaveValue('');
   await expect(studio.getByRole('region', { name: 'Org agents' }).getByRole('status')).toHaveCount(0);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('org-agents-editor-tab.png'));
   expect(errors).toEqual([]);
 });
 
@@ -1008,15 +1262,20 @@ test('Agentforce Studio: create local agents and control the visible workbench t
   expect(await cli(['lint', created.file.path], false)).toMatchObject({ exitCode: 0, stdout: expect.stringContaining(': ok') });
   const agent = (input: object) => cli(['tool', 'sf_agent', '--input', JSON.stringify(input)]);
   expect(await agent({ action: 'compile', path: created.file.path })).toMatchObject({ ok: true });
-  expect(await agent({ action: 'preview.start', path: created.file.path })).toMatchObject({ ok: true, data: { sessionId: 'cli-preview' } });
-  expect(await agent({ action: 'preview.end', sessionId: 'cli-preview' })).toMatchObject({ ok: true });
+  // A new draft has no default_agent_user, so its preview runs on the Preview API, not `sf agent preview`.
+  const preview = await agent({ action: 'preview.start', path: created.file.path });
+  expect(preview).toMatchObject({ ok: true, data: { sessionId: expect.any(String) } });
+  expect(preview.data.sessionId).not.toBe('cli-preview');
+  expect(await agent({ action: 'preview.end', sessionId: preview.data.sessionId })).toMatchObject({ ok: true });
   const specPath = 'agentforce-drafts/evals.json';
   writeFileSync(join(projectRoot, specPath), JSON.stringify({ tests: [{ utterance: 'Hello' }] }));
   expect(await agent({ action: 'eval.run', specPath })).toMatchObject({ ok: true, data: { passed: true } });
   expect(await agent({ action: 'lifecycle.publish', path: created.file.path })).toMatchObject({ ok: false, code: 'refused' });
   const cliCalls = readFileSync(join(home, 'agent-cli.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(cliCalls.some(call => call.args[1] === 'publish')).toBe(false);
-  for (const verb of ['validate', 'preview', 'test']) {
+  // The draft's preview went through the Preview API, so `sf agent preview` never ran.
+  expect(cliCalls.some(call => call.args[1] === 'preview')).toBe(false);
+  for (const verb of ['validate', 'test']) {
     expect(cliCalls.find(call => call.args[1] === verb)).toMatchObject({ cwd: realpathSync(join(projectRoot, 'agentforce-drafts')), home });
   }
   async function view(surface: string) {
@@ -1102,6 +1361,7 @@ test('Agentforce Release: a Zana-drawn sheet approves Publish and Activate; canc
   })()`)).toBeNull();
 
   // Publish opens the Release tool on the file's org and versions.
+  await studio.getByRole('button', { name: 'More save options' }).click();
   await studio.getByTestId('salesforce-agent-script-publish').click();
   const release = studio.getByTestId('studio-release-pane');
   await expect(release.getByTestId('release-org')).toHaveText('studio (sandbox)');
@@ -1262,8 +1522,8 @@ test('Salesforce readiness: local authoring without CLI, project org selection a
   await dialog.getByRole('button', { name: 'Create agent', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(editor.locator('.view-lines')).toContainText('Offline_support');
-  // The org agents opened in the host side panel; hide it to check the workbench on its own.
-  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  // Org browsing can stay in the explorer; hide a host panel only if it opened.
+  if (await sidePanel(page).isVisible()) await sidePanel(page).getByTestId('thread-secondary-hide').click();
   expect(existsSync(join(projectRoot, 'agentforce-drafts/force-app/main/default/aiAuthoringBundles/Offline_support/Offline_support.agent'))).toBe(true);
   await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
   await expect(workbench.getByRole('button', { name: 'Sign in to an org' })).toBeVisible();
@@ -1287,7 +1547,9 @@ test('Salesforce readiness: local authoring without CLI, project org selection a
   await workbench.getByRole('tab', { name: 'Overview' }).click();
   await expect(workbench).toContainText('Project target');
   writeFileSync(statePath, 'expired');
-  // A real project-scoped refresh, without editing shared settings.
+  // The roster is cached until sign-in or Refresh, so drop it, then do a real
+  // project-scoped refresh without editing shared settings.
+  await page.evaluate(id => window.cc.pluginApps.callRpc('salesforce', 'orgs', { refresh: true, projectId: id }), projectId);
   await page.evaluate(id => window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: id } })), projectId);
   await expect(workbench.getByRole('heading', { name: 'Reconnect your org' })).toBeVisible();
   await page.setViewportSize({ width: 760, height: 900 });
@@ -1359,11 +1621,275 @@ test('Salesforce illustrated states: editor and agents loading, empty results, r
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-agents-unavailable-narrow-light.png'));
     const state = studio.locator('.sf-state[data-kind=error]');
     expect(await state.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
-    // The narrow window's side panel covers the page until it is closed.
-    await sidePanel(page).getByTestId('thread-secondary-hide').click();
+    // Org agents open in Studio itself, so no side panel covers the narrow page.
+    await expect(sidePanel(page)).toBeHidden();
     await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Run a query to see records.' })).toBeVisible();
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-data-empty-light.png'));
     expect(errors).toEqual([]);
   } finally { releaseEditor(); writeFileSync(metadataState, 'empty'); }
+});
+
+test('Agentforce Studio: Org tests list Testing Center definitions, run one in the org and import its failures', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const errors: string[] = [];
+  // A recorded demo pauses between steps so each one can be followed.
+  const beat = () => process.env.ZCC_E2E_RECORD_VIDEO ? page.waitForTimeout(1500) : Promise.resolve();
+  page.on('pageerror', e => errors.push(e.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await expect(studio.getByTestId('salesforce-agent-script-no-file')).toHaveCount(0);
+  await beat();
+
+  await openTool(studio, 'Tests');
+  const tests = studio.getByTestId('studio-tests-pane');
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Org tests' }).click();
+  const view = tests.getByTestId('org-tests-view');
+  const table = view.getByTestId('org-tests-table');
+  // One retrieve reads each definition's agent and label: Support.agent is open, so the list shows its test only.
+  // No run yet, so no "0 with runs": the org cannot list runs, and the detail says so.
+  await expect(table.getByTestId('org-tests-scope')).toHaveText('Support· 1 test');
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
+  await expect(view.getByTestId('org-def-Support_Regression')).toContainText('3 cases');
+  await expect(table.getByTestId('org-def-Billing_Smoke')).toHaveCount(0);
+  await beat();
+  // Every agent, grouped: Support's group is pinned and open, Billing's opens on a click.
+  await table.getByRole('button', { name: 'Show all agents' }).click();
+  await expect(table.getByTestId('org-tests-group-support')).toContainText('open in Studio');
+  await table.getByRole('button', { name: /^Billing/ }).click();
+  await expect(table.getByRole('button', { name: 'Billing smoke', exact: true })).toBeVisible();
+  await beat();
+  await view.getByLabel('Filter org tests').fill('billing');
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toHaveCount(0);
+  await beat();
+  await view.getByLabel('Filter org tests').fill('');
+  await view.getByRole('group', { name: 'Scope' }).getByRole('button', { name: 'This agent' }).click();
+
+  // The definition's cases, read from the retrieved AiEvaluationDefinition.
+  await table.getByRole('button', { name: 'Support regression', exact: true }).click();
+  const detail = view.getByTestId('org-def-detail');
+  const cases = detail.getByRole('table', { name: 'Test cases' });
+  await expect(cases.locator('tr.sf-oc-row')).toHaveCount(3);
+  await expect(cases).toContainText('Where is my order?');
+  await expect(cases.locator('.sf-oc-tag.is-action', { hasText: 'Lookup' }).first()).toBeVisible();
+  await expect(detail.getByTestId('org-runs-note')).toContainText("Runs started in Testing Center aren't visible here.");
+  await expect(detail.getByRole('heading', { name: 'Support regression' })).toBeVisible();
+  await beat();
+
+  // An invalid run id is rejected before any org call; attach lives in the ⋯ menu.
+  await view.getByRole('button', { name: 'More actions' }).click();
+  await view.getByLabel('Attach run by id').fill('not a run');
+  await view.getByRole('button', { name: 'Attach', exact: true }).click();
+  await expect(view.getByRole('alert')).toHaveText('A run id is 15 to 18 letters and digits.');
+  await beat();
+  await view.getByLabel('Attach run by id').press('Escape');
+  await expect(view.getByLabel('Attach run by id')).toHaveCount(0);
+
+  // Run in the org: confirm, poll IN_PROGRESS -> COMPLETED, then read the results.
+  await detail.getByRole('button', { name: 'Run in org' }).click();
+  await beat();
+  await detail.getByRole('group', { name: 'Confirm run' }).getByRole('button', { name: 'Start run' }).click();
+  const run = view.getByTestId('org-run-detail');
+  await expect(run.getByTestId('org-run-counts')).toContainText('2 pass · 1 fail · 0 error of 3', { timeout: 30_000 });
+  await expect(run).toContainText('completed');
+  await beat();
+  const filters = run.getByRole('tablist', { name: 'Case filter' });
+  await filters.getByRole('tab', { name: /Failing/ }).click();
+  await expect(filters.getByRole('tab', { name: /Failing/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(run.getByRole('button', { name: 'Cancel my subscription' })).toBeVisible();
+  await expect(run.getByRole('button', { name: 'Where is my order?' })).toHaveCount(0);
+  await beat();
+  await run.getByRole('button', { name: 'Cancel my subscription' }).click();
+  const metrics = run.getByRole('table', { name: 'Case 3 metrics' });
+  await expect(metrics).toContainText('General_FAQ');
+  await expect(metrics).toContainText('The agent routed to General_FAQ instead of Billing.');
+  await beat();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-org-tests-dark.png'));
+
+  // The definition's cases next to the run: a verdict per row, the form read back as fields, and the last run per case.
+  await expect(cases.getByRole('button', { name: 'Case 3 · fail' })).toBeVisible();
+  await expect(cases).toContainText('{ } Form · orderNumber, reason +1');
+  await expect(detail.getByText('Scored on every case: Completeness · Coherence')).toBeVisible();
+  await cases.getByRole('button', { name: 'Case 2 · pass' }).click();
+  const conversation = cases.getByLabel('Conversation');
+  await expect(conversation).toContainText('Which order should I refund?');
+  await expect(conversation).toContainText('Form submission');
+  await expect(conversation).toContainText('00012345');
+  await expect(cases.getByLabel('Context variables')).toContainText('currentObjectApiName');
+  await expect(cases.getByLabel('Last run')).toContainText('Last run · pass');
+  await cases.getByLabel('Context variables').scrollIntoViewIfNeeded();
+  await beat();
+  await conversation.getByRole('button', { name: 'Show raw utterance' }).click();
+  await expect(conversation).toContainText('""orderNumber""');
+  await cases.getByLabel('Context variables').scrollIntoViewIfNeeded();
+  await beat();
+  await cases.getByRole('button', { name: 'Case 2 · pass' }).click();
+  await detail.getByRole('button', { name: 'Failed 1' }).click();
+  await expect(cases.locator('tr.sf-oc-row')).toHaveCount(1);
+  await cases.getByRole('button', { name: 'Case 3 · fail' }).click();
+  await expect(cases.getByLabel('Last run')).toContainText('expected Billing');
+  await cases.getByLabel('Last run').scrollIntoViewIfNeeded();
+  await beat();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-org-tests-cases.png'));
+
+  // The failing case becomes a local scenario case.
+  await run.getByRole('button', { name: 'Import failing to suite' }).click();
+  await expect(view.getByRole('status')).toHaveText('Imported 1 case into the suite.');
+  await beat();
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Cases' }).click();
+  await expect(tests.getByTestId('tests-table')).toContainText('Cancel my subscription');
+  await beat();
+
+  const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, unknown> }>;
+  expect(requests.filter(r => r.path.endsWith('/einstein/ai-evaluations/runs')).map(r => r.body)).toEqual([{ aiEvaluationDefinitionName: 'Support_Regression' }]);
+  expect(requests.some(r => r.path.includes('/einstein/ai-evaluations/runs/4KB000000000001AAA/results'))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('Agentforce Studio window: Org tests sit in the activity rail, and an agent runs one that the Studio follows live', async ({ app, home }, testInfo) => {
+  const { window: main, electron } = app;
+  const errors: string[] = [];
+  main.on('pageerror', e => errors.push(`main: ${e.message}`));
+  expect(await main.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = main.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => main.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await main.evaluate(async path => {
+    const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id;
+  }, join(home, 'dx'));
+  await main.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await main.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await main.getByTestId('salesforce-workbench').getByTestId('plugin-tab-open-in-window').click();
+  let studio: Page | undefined;
+  await expect.poll(() => (studio = app.electron.windows().find(w => !w.isClosed() && w.url().includes('surface=plugin-view') && w.url().includes('pluginId=salesforce'))) ? 'open' : 'waiting', { timeout: 20_000 }).toBe('open');
+  const page = studio!;
+  await page.waitForSelector('#root', { timeout: 30_000 });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  page.on('pageerror', e => errors.push(`studio: ${e.message}`));
+  const beat = () => process.env.ZCC_E2E_RECORD_VIDEO ? page.waitForTimeout(1800) : Promise.resolve();
+  // A recorded demo names each step on screen, so the agent's calls are visible too.
+  const caption = async (text: string) => {
+    if (!process.env.ZCC_E2E_RECORD_VIDEO) return;
+    await page.evaluate(value => {
+      let node = document.getElementById('e2e-caption');
+      if (!node) {
+        node = Object.assign(document.createElement('div'), { id: 'e2e-caption' });
+        node.style.cssText = 'position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:99999;padding:10px 16px;border-radius:10px;background:rgba(20,24,33,.92);color:#fff;font:600 15px/1.35 -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35);border:1px solid rgba(120,160,255,.6);pointer-events:none;max-width:80%;text-align:center';
+        document.body.appendChild(node);
+      }
+      node.textContent = value;
+    }, text);
+  };
+  const panel = page.getByTestId('salesforce-agent-script-panel');
+  // A fresh window may take the click before its editor is ready, so retry the open.
+  await caption('You: open Support.agent in the Studio window');
+  await expect(async () => {
+    await panel.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+    await expect(panel.getByTestId('salesforce-agent-script-no-file')).toHaveCount(0, { timeout: 3_000 });
+  }).toPass({ timeout: 30_000 });
+  await beat();
+
+  // The activity rail: Files, Agents, Org tests, Go to file. Org tests opens as a full-width editor tab.
+  const rail = panel.getByRole('toolbar', { name: 'Studio activity' });
+  expect(await rail.getByRole('button').evaluateAll(nodes => nodes.map(n => n.getAttribute('aria-label')))).toEqual(['Files', 'Agents', 'Org tests', 'Go to file']);
+  await caption('You: click Org tests in the left activity rail');
+  await rail.getByRole('button', { name: 'Org tests' }).click();
+  const tab = panel.getByTestId('studio-org-tests-view');
+  await expect(panel.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Org tests/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(tab.getByRole('heading', { name: 'Org tests' })).toBeVisible();
+  await expect(tab).toContainText('studio');
+  const table = tab.getByTestId('org-tests-table');
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
+  await expect(tab.getByText('Pick a test to see its cases and runs.')).toBeVisible();
+  await caption('You: switch to All agents to see every agent\'s org tests');
+  await tab.getByRole('group', { name: 'Scope' }).getByRole('button', { name: 'All agents' }).click();
+  await table.getByRole('button', { name: /^Billing/ }).click();
+  await expect(table.getByRole('button', { name: 'Billing smoke', exact: true })).toBeVisible();
+  await beat();
+  // Going back to the agent keeps the tab mounted behind it.
+  await caption('You: go back to editing Support.agent');
+  await panel.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Support\.agent/ }).click();
+  await expect(tab).toBeHidden();
+  await beat();
+
+  // The agent's side: the same sf_workbench actions a thread calls.
+  async function cli(argv: string[]) {
+    return main.evaluate(async ({ argv, projectId }) => {
+      const response = await fetch('/api/v1/plugins/salesforce/cli', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ argv, projectId }) });
+      if (!response.ok) throw Error(await response.text());
+      const result = await response.json();
+      if (!result.stdout) throw Error(result.stderr || 'Missing CLI result');
+      return JSON.parse(result.stdout);
+    }, { argv, projectId });
+  }
+  const action = (name: string, input = {}) => cli(['action', name, '--input', JSON.stringify(input), '--json']);
+  await caption('Agent → sf_workbench orgTests.list');
+  await beat();
+  const listed = await action('orgTests.list');
+  expect(listed).toMatchObject({ ok: true, definitions: expect.arrayContaining([expect.objectContaining({ name: 'Support_Regression' })]) });
+  await caption('Agent → sf_workbench orgTests.run { name: "Support_Regression" }');
+  await beat();
+  const started = await action('orgTests.run', { name: 'Support_Regression' });
+  expect(started).toMatchObject({ ok: true, run: { runId: '4KB000000000001AAA', definition: 'Support_Regression', status: expect.stringMatching(/new|in_progress/) } });
+  let viewId = '';
+  await expect.poll(async () => {
+    const views = (await action('ui.views')).views as Array<{ id: string; surface: string; window?: string; commands: string[] }>;
+    viewId = views.find(v => v.surface === 'agentforce' && v.window === 'plugin-view' && v.commands.includes('orgTests.open'))?.id ?? '';
+    return viewId;
+  }).not.toBe('');
+  await caption(`Agent → ui.command orgTests.open { runId: "${started.run.runId}" }`);
+  await beat();
+  const job = await action('ui.command', { viewId, command: 'orgTests.open', input: { runId: started.run.runId } });
+  expect(job).toMatchObject({ ok: true });
+  let shown: any;
+  await expect.poll(async () => { shown = await action('ui.result', { commandId: job.commandId }); return shown.state; }, { timeout: 15_000 }).not.toBe('pending');
+  expect(shown).toMatchObject({ ok: true });
+
+  // The Studio follows: the tab comes back on the run's definition and polls the run to completion.
+  await expect(tab).toBeVisible();
+  await expect(tab.getByTestId('org-def-detail').getByRole('heading', { name: 'Support regression' })).toBeVisible();
+  const run = tab.getByTestId('org-run-detail');
+  await expect(run).toContainText('4KB000000000001AAA');
+  await caption('Studio follows the run live: polling the org until it finishes');
+  await beat();
+  await expect(run.getByTestId('org-run-counts')).toContainText('2 pass · 1 fail · 0 error of 3', { timeout: 30_000 });
+  await expect(run).toContainText('completed');
+  await beat();
+  await caption('Agent → sf_workbench orgTests.result → 2 pass · 1 fail');
+  await beat();
+  // The agent reads the same results.
+  await expect.poll(async () => (await action('orgTests.result', { runId: '4KB000000000001AAA' })).run?.status).toBe('completed');
+  expect((await action('orgTests.result', { runId: '4KB000000000001AAA' })).run.counts).toMatchObject({ total: 3, pass: 2, fail: 1 });
+  expect((await action('orgTests.runs')).runs).toEqual([expect.objectContaining({ runId: '4KB000000000001AAA', status: 'completed' })]);
+
+  // The person looks at the failure in the wide tab.
+  await caption('You: Failing filter, expand the failing case');
+  await run.getByRole('tablist', { name: 'Case filter' }).getByRole('tab', { name: /Failing/ }).click();
+  await run.getByRole('button', { name: 'Cancel my subscription' }).click();
+  await expect(run.getByRole('table', { name: 'Case 3 metrics' })).toContainText('The agent routed to General_FAQ instead of Billing.');
+  await beat();
+  await caption('Expected topic Billing, the agent routed to General_FAQ');
+  await beat();
+  await captureElectronScreenshot(electron, page, testInfo.outputPath('studio-window-org-tests.png'));
+  await beat();
+
+  const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, unknown> }>;
+  expect(requests.filter(r => r.path.endsWith('/einstein/ai-evaluations/runs')).map(r => r.body)).toEqual([{ aiEvaluationDefinitionName: 'Support_Regression' }]);
+  expect(errors).toEqual([]);
 });

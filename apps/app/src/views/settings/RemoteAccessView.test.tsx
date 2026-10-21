@@ -6,7 +6,7 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { RemoteAccessView } from './RemoteAccessView.js';
 
 vi.mock('./SharedPreviews.js', () => ({ SharedPreviews: () => <div>Shared previews</div> }));
-const h = vi.hoisted(() => ({ desktop: true, mobile: { status: vi.fn(), browserAddress: vi.fn(), disconnectAccount: vi.fn() }, config: { set: vi.fn() } }));
+const h = vi.hoisted(() => ({ desktop: true, mobile: { status: vi.fn(), browserAddress: vi.fn(), disconnectAccount: vi.fn(), enroll: vi.fn(), pollEnrollment: vi.fn(), cancelEnrollment: vi.fn() }, config: { set: vi.fn() } }));
 vi.mock('../../lib/product-client.js', () => ({ product: { mobile: h.mobile, config: h.config } }));
 vi.mock('../../lib/app-surface.js', () => ({ hasDesktopBridge: () => h.desktop }));
 vi.mock('./ConnectCodePairing.js', () => ({ ConnectCodePairing: ({ onPaired }: any) => <button onClick={onPaired}>Pair computer</button> }));
@@ -172,4 +172,23 @@ it('puts computer registration before the separate existing-instance sign-in and
   expect(pairing.compareDocumentPosition(existing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(existing.closest('details')?.open).toBe(false);
   expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('shows a friendly revoked message and restarts sign-in without the IPC prefix', async () => {
+  h.mobile.browserAddress.mockRejectedValue(new Error("Error invoking remote method 'mobile:browserAddress': Error: This computer's access was revoked. Sign in again to reconnect."));
+  h.mobile.enroll.mockResolvedValue({ verificationUrl: 'https://zana-ide.com/connect/?code=abc', expiresAt: Date.now() + 60_000 });
+  h.mobile.pollEnrollment.mockResolvedValue({ pending: true });
+  vi.spyOn(window, 'open').mockReturnValue(null);
+  view();
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toBe("This computer's access was revoked. Sign in again to reconnect.");
+  expect(screen.queryByText(/Error invoking/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
+  await waitFor(() => expect(h.mobile.enroll).toHaveBeenCalledWith('https://zana-ide.com'));
+  expect(window.open).toHaveBeenCalledWith('https://zana-ide.com/connect/?code=abc', '_blank', 'noopener,noreferrer');
+});
+it('strips the IPC prefix from other address lookup failures', async () => {
+  h.mobile.browserAddress.mockRejectedValue(new Error("Error invoking remote method 'mobile:browserAddress': Error: Connect returned 500."));
+  view(); expect((await screen.findByRole('alert')).textContent).toBe('Connect returned 500.');
+  expect(screen.queryByRole('button', { name: 'Sign in again' })).toBeNull();
 });

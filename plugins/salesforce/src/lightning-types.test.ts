@@ -3,13 +3,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { indexProjectActions } from '../lib/action-source.js';
-import { LIGHTNING_TYPE_LIMITS, lightningTypeBundlePath, parseLightningTypeRef, readLightningType, referencedLightningTypes, schemaProperties } from '../lib/lightning-types.js';
+import { LIGHTNING_TYPE_LIMITS, componentOverrides, lightningTypeBundlePath, lwcBundlePath, parseComponentRef, parseLightningTypeRef, readLightningType, readLwcBundle, referencedLightningTypes, schemaProperties } from '../lib/lightning-types.js';
 import { createNodeDeps } from '../lib/node-deps.js';
 import { buildLocalExplorer, registerStudioExplorer } from '../lib/studio-explorer.js';
 import type { StudioServerContext } from '../lib/studio-server-context.js';
 
 const dirs: string[] = [];
 const TYPES = 'force-app/main/default/lightningTypes';
+const LWC = 'force-app/main/default/lwc';
 const AGENT = [
   'subagent orders:',
   '  actions:',
@@ -172,5 +173,154 @@ describe('studio.lightningType RPC', () => {
     expect(await call({ ref: '@apexClassType/c__Req' })).toMatchObject({ ok: false, code: 'lightning_type_failed', error: 'Not a Lightning Type reference.' });
     const broken = setup(project(), { ...createNodeDeps(), realpath: () => { throw 'boom'; } });
     expect(await broken({ ref: 'c__OrderRequest' })).toMatchObject({ ok: false, code: 'lightning_type_failed', error: 'The Lightning Type could not be read.' });
+  });
+});
+
+describe('Lightning Type components', () => {
+  const deps = createNodeDeps();
+  const RENDERER = JSON.stringify({ renderer: { componentOverrides: { $: { definition: 'c/orderCard' }, notes: { definition: 'acme/noteChip' }, bad: { definition: 'Not A Ref' } } } });
+  const EDITOR = JSON.stringify({ editor: { componentOverrides: { $: { definition: 'c/orderForm' } } } });
+  function withComponents(extra: Record<string, string> = {}) {
+    return project({
+      [`${TYPES}/OrderRequest/lightningDesktopGenAi/renderer.json`]: RENDERER,
+      [`${TYPES}/OrderRequest/lightningDesktopGenAi/editor.json`]: EDITOR,
+      [`${LWC}/orderCard/orderCard.js-meta.xml`]: '<meta/>',
+      [`${LWC}/orderCard/orderCard.js`]: 'export default class OrderCard {}',
+      [`${LWC}/orderCard/orderCard.html`]: '<template></template>',
+      [`${LWC}/orderCard/helpers.js`]: 'export const x = 1;',
+      [`${LWC}/orderCard/.eslintrc`]: '{}',
+      [`${LWC}/orderCard/__tests__/orderCard.test.js`]: 'test',
+      ...extra
+    });
+  }
+  it('parses local and namespaced component references only', () => {
+    expect(parseComponentRef('c/orderCard')).toEqual({ namespace: 'c', name: 'orderCard' });
+    expect(parseComponentRef(' acme/note_chip ')).toEqual({ namespace: 'acme', name: 'note_chip' });
+    for (const bad of ['orderCard', 'c/OrderCard', 'c/a/b', '', 'C/x']) expect(parseComponentRef(bad)).toBeNull();
+  });
+  it('collects every override definition with its role, channel and target', () => {
+    expect(componentOverrides(JSON.parse(RENDERER), 'renderer.json', 'lightningDesktopGenAi')).toEqual([
+      { ref: 'c/orderCard', namespace: 'c', name: 'orderCard', role: 'renderer', channel: 'lightningDesktopGenAi', target: '$' },
+      { ref: 'acme/noteChip', namespace: 'acme', name: 'noteChip', role: 'renderer', channel: 'lightningDesktopGenAi', target: 'notes' }
+    ]);
+    // Without a role key the file name decides; a non-object config has nothing.
+    expect(componentOverrides({ componentOverrides: { $: { definition: 'c/x' } } }, 'editor.json', '')).toEqual([{ ref: 'c/x', namespace: 'c', name: 'x', role: 'editor', channel: '', target: '$' }]);
+    for (const value of [null, 'x', [1]]) expect(componentOverrides(value, 'renderer.json', '')).toEqual([]);
+    const deep = { renderer: [1, 2, 3, 4, 5, 6, 7, 8, 9].reduce<Record<string, unknown>>(acc => ({ a: acc }), { definition: 'c/deep' }) };
+    expect(componentOverrides(deep, 'renderer.json', '')).toEqual([]);
+    const many = { renderer: { componentOverrides: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`p${i}`, { definition: `c/x${i}` }])) } };
+    expect(componentOverrides(many, 'renderer.json', '')).toHaveLength(LIGHTNING_TYPE_LIMITS.components);
+  });
+  it('resolves components the project owns, by index or the standard-path probe', () => {
+    const root = withComponents({ 'sfdx-project.json': JSON.stringify({ namespace: 'acme', packageDirectories: [{ path: 'force-app' }] }) });
+    const index = indexProjectActions(root, deps);
+    expect(lwcBundlePath(index, 'c/orderCard')).toBe(`${LWC}/orderCard`);
+    expect(lwcBundlePath(index, 'acme/orderCard')).toBe(`${LWC}/orderCard`);
+    expect(lwcBundlePath(index, 'other/orderCard')).toBeUndefined();
+    expect(lwcBundlePath(index, 'nope')).toBeUndefined();
+    const partial = { ...index, lwc: new Map<string, string[]>(), incomplete: true, probe: indexProjectActions(root, { ...deps, readdir: (p: string) => p.endsWith('force-app') ? Array.from({ length: 6001 }, (_, i) => `f${i}`) : deps.readdir(p) }).probe };
+    expect(lwcBundlePath(partial, 'c/orderCard')).toBe(`${LWC}/orderCard`);
+    expect(lwcBundlePath(partial, 'c/absent')).toBeUndefined();
+  });
+  it('lists the components a type renders and edits with', () => {
+    const root = withComponents();
+    const view = readLightningType(root, 'c__OrderRequest', deps, indexProjectActions(root, deps));
+    expect(view.components).toEqual([
+      { ref: 'c/orderForm', namespace: 'c', name: 'orderForm', role: 'editor', channel: 'lightningDesktopGenAi', target: '$' },
+      { ref: 'c/orderCard', namespace: 'c', name: 'orderCard', role: 'renderer', channel: 'lightningDesktopGenAi', target: '$', path: `${LWC}/orderCard` },
+      { ref: 'acme/noteChip', namespace: 'acme', name: 'noteChip', role: 'renderer', channel: 'lightningDesktopGenAi', target: 'notes' }
+    ]);
+    // Bad JSON and bundle-root configs: skipped or read with no channel.
+    const other = withComponents({ [`${TYPES}/OrderRequest/lightningDesktopGenAi/renderer.json`]: '{nope', [`${TYPES}/OrderRequest/root.json`]: JSON.stringify({ renderer: { componentOverrides: { $: { definition: 'c/rootCard' } } } }) });
+    expect(readLightningType(other, 'c__OrderRequest', deps, indexProjectActions(other, deps)).components.map(row => [row.ref, row.channel])).toEqual([['c/orderForm', 'lightningDesktopGenAi'], ['c/rootCard', '']]);
+    expect(readLightningType(root, 'lightning__textType', deps, indexProjectActions(root, deps)).components).toEqual([]);
+    expect(readLightningType(root, 'c__Ghost', deps, indexProjectActions(root, deps)).components).toEqual([]);
+  });
+  it('reads a component bundle: markup and controller first, nested folders and dotfiles skipped', () => {
+    const root = withComponents();
+    const index = indexProjectActions(root, deps);
+    const view = readLwcBundle('c/orderCard', deps, index);
+    expect(view).toMatchObject({ ref: 'c/orderCard', name: 'orderCard', status: 'ready', path: `${LWC}/orderCard` });
+    expect(view.files.map(file => file.path.split('/').pop())).toEqual(['orderCard.html', 'orderCard.js', 'orderCard.js-meta.xml', 'helpers.js']);
+    expect(view.files[1]!.content).toContain('OrderCard');
+    expect(view.message).toBeUndefined();
+  });
+  it('explains missing and foreign components, refuses bad refs, and never follows a link out', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'sf-lwc-out-')); dirs.push(outside);
+    writeFileSync(join(outside, 'secret.js'), 'secret');
+    const root = withComponents({ [`${LWC}/empty/.keep`]: '', [`${LWC}/big/big.js`]: 'x'.repeat(LIGHTNING_TYPE_LIMITS.fileBytes + 1) });
+    symlinkSync(join(outside, 'secret.js'), join(root, LWC, 'empty', 'leak.js'));
+    const index = indexProjectActions(root, deps);
+    expect(readLwcBundle('c/ghost', deps, index).message).toContain('LightningComponentBundle:ghost');
+    expect(readLwcBundle('acme/noteChip', deps, index)).toMatchObject({ status: 'missing', message: expect.stringContaining('acme package') });
+    expect(() => readLwcBundle('Nope', deps, index)).toThrow(/Not a Lightning Web Component/);
+    expect(readLwcBundle('c/empty', deps, index)).toMatchObject({ status: 'ready', files: [], message: 'This bundle has no readable files.' });
+    expect(readLwcBundle('c/big', deps, index).files).toEqual([{ path: `${LWC}/big/big.js`, content: '', truncated: true }]);
+    expect(() => readLwcBundle('c/orderCard', deps, { ...index, lwc: new Map([['orderCard', ['../outside']]]) })).toThrow(/outside this project/);
+    const unreadable = readLwcBundle('c/orderCard', { ...deps, readdir: (p: string) => { if (p.endsWith('orderCard')) throw Error('EACCES'); return deps.readdir(p); } }, index);
+    expect(unreadable).toMatchObject({ status: 'ready', files: [] });
+  });
+  it('caps the files a bundle shows', () => {
+    const root = withComponents(Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`${LWC}/many/f${i}.js`, 'x'])));
+    expect(readLwcBundle('c/many', deps, indexProjectActions(root, deps)).files).toHaveLength(LIGHTNING_TYPE_LIMITS.lwcFiles);
+  });
+  it('adds components to the explorer and to the agents that reach them through a type', () => {
+    const nodes = buildLocalExplorer(withComponents(), deps).nodes;
+    const by = ['force-app/main/default/aiAuthoringBundles/Orders/Orders.agent'];
+    expect(nodes.filter(node => node.kind === 'lwc')).toEqual([
+      { kind: 'lwc', apiName: 'acme/noteChip', usedBy: by, via: ['c__OrderRequest'] },
+      { kind: 'lwc', apiName: 'c/orderCard', path: `${LWC}/orderCard`, usedBy: by, via: ['c__OrderRequest'] },
+      { kind: 'lwc', apiName: 'c/orderForm', usedBy: by, via: ['c__OrderRequest'] }
+    ]);
+    expect(nodes.find(node => node.kind === 'agent')!.uses!.filter(use => use.kind === 'lwc').map(use => use.apiName)).toEqual(['c/orderForm', 'c/orderCard', 'acme/noteChip']);
+  });
+  it('skips components when the project cannot be indexed or a type cannot be read', () => {
+    const root = withComponents();
+    let calls = 0;
+    const flaky = { ...deps, realpath: (p: string) => { if (p.endsWith('OrderRequest') && ++calls > 1) throw Error('gone'); return deps.realpath(p); } };
+    expect(buildLocalExplorer(root, flaky).nodes.filter(node => node.kind === 'lwc')).toEqual([]);
+  });
+});
+
+describe('explorer components through .zcc copies', () => {
+  it('reads the components of a type only a .zcc copy references, without listing the copy as a user', () => {
+    const copy = '.zcc/agent-versions/Orders/Orders.agent';
+    const root = project({
+      'force-app/main/default/aiAuthoringBundles/Orders/Orders.agent': 'nothing typed here',
+      [copy]: AGENT,
+      [`${TYPES}/OrderRequest/lightningDesktopGenAi/renderer.json`]: JSON.stringify({ renderer: { componentOverrides: { $: { definition: 'c/orderCard' } } } }),
+      [`${LWC}/orderCard/orderCard.js`]: 'x'
+    });
+    const nodes = buildLocalExplorer(root, createNodeDeps(), copy).nodes;
+    expect(nodes.find(node => node.kind === 'lwc')).toEqual({ kind: 'lwc', apiName: 'c/orderCard', path: `${LWC}/orderCard`, usedBy: [], via: ['c__OrderRequest'] });
+    expect(nodes.find(node => node.path === copy)!.uses).toContainEqual({ kind: 'lwc', apiName: 'c/orderCard' });
+  });
+});
+
+describe('studio.lwc RPC', () => {
+  function setup(root: string, deps = createNodeDeps()) {
+    const handlers = new Map<string, (args: unknown) => unknown>();
+    const studio = {
+      zcc: { onDispose: () => undefined },
+      registerRpc: (name: string, handler: (args: unknown) => unknown) => handlers.set(name, handler),
+      contexts: { current: () => ({ settings: { projectRoot: root, defaultOrg: '' } }) },
+      sdk: { connect: vi.fn() },
+      deps: { ...deps, execSf: vi.fn() }
+    } as unknown as StudioServerContext;
+    registerStudioExplorer(studio);
+    return (args: unknown) => handlers.get('studio.lwc')!(args) as Promise<any>;
+  }
+  it('refuses without a project or a ref', async () => {
+    expect(await setup('')({ ref: 'c/x' })).toMatchObject({ ok: false, code: 'not_configured' });
+    const call = setup(project());
+    expect(await call({})).toMatchObject({ ok: false, code: 'invalid_argument' });
+    expect(await call({ ref: 'x'.repeat(201) })).toMatchObject({ ok: false, code: 'invalid_argument' });
+  });
+  it('returns the bundle and reports read failures', async () => {
+    const call = setup(project({ [`${LWC}/orderCard/orderCard.js`]: 'x' }));
+    expect(await call({ ref: 'c/orderCard' })).toMatchObject({ ok: true, data: { status: 'ready', files: [{ path: `${LWC}/orderCard/orderCard.js` }] } });
+    expect(await call({ ref: 'Bad' })).toMatchObject({ ok: false, code: 'lwc_failed', error: 'Not a Lightning Web Component reference.' });
+    const broken = setup(project(), { ...createNodeDeps(), realpath: () => { throw 'boom'; } });
+    expect(await broken({ ref: 'c/orderCard' })).toMatchObject({ ok: false, code: 'lwc_failed', error: 'The component could not be read.' });
   });
 });

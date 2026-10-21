@@ -495,11 +495,21 @@ export function migrate(database: SqliteDatabase): void {
   // that predates this version.
   if (!applied.has(36)) applyVersion(database, 36,
     hasColumn(database, 'hosts', 'name_user_set') ? [] : ['ALTER TABLE hosts ADD COLUMN name_user_set INTEGER']);
+  // Threads whose provider session was opened and not released by the user.
+  // Thread status only tracks turns, so this is what survives a daemon restart.
+  if (!applied.has(37)) applyVersion(database, 37, [
+    `CREATE TABLE IF NOT EXISTS thread_open_sessions (
+      thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+      opened_at INTEGER NOT NULL
+    )`
+  ]);
   // Branch builds used 33/34 for enrollment capabilities and 35 for host purpose.
-  // Keep 35 replayable, including its prerequisites; v37 repairs main/pre-release
-  // histories that already recorded those IDs without the peer schema. Never
-  // rewrite history or overwrite persisted capabilities, names, or link uses.
-  for (const version of [35, 37]) {
+  // Keep 35 replayable, including its prerequisites; v38 repairs main/pre-release
+  // histories that already recorded those IDs without the peer schema. v37 is
+  // owned by main (thread_open_sessions), so the branch replay-repair moved from
+  // 37 to 38. Never rewrite history or overwrite persisted capabilities, names,
+  // or link uses.
+  for (const version of [35, 38]) {
     if (!applied.has(version)) applyVersion(database, version, [
       ...(hasColumn(database, 'hosts', 'enrollment_capability')
         ? []

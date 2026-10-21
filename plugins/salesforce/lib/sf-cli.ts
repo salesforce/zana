@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from 'node:child_process';
+import { execFile as execFileCb, spawn as spawnChild, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
   DEFAULT_API_VERSION,
   SF_CLI_TIMEOUT_MS,
@@ -12,31 +12,117 @@ import {
 } from './types.js';
 import { classifyOrgKind } from './org-resolution.js';
 import { readJsonObject } from './dx-project.js';
+import { resolveWindowsSf, type SfLaunch } from './sf-windows-resolver.js';
 
 const MAX_BUFFER = 2_000_000;
 
-export function createExecSf(): (args: string[], opts?: ExecSfOptions) => Promise<ExecResult> {
-  return (args, opts) =>
-    new Promise((resolve) => {
-      execFileCb(
-        'sf',
-        args,
-        {
-          timeout: opts?.timeoutMs ?? SF_CLI_TIMEOUT_MS,
-          maxBuffer: MAX_BUFFER,
-          windowsHide: true,
-          ...(opts?.signal ? { signal: opts.signal } : {}),
-          ...(opts?.cwd ? { cwd: opts.cwd } : {})
-        },
-        (error, stdout, stderr) => {
-          resolve({
-            code: execCode(error),
-            stdout: stdout ?? '',
-            stderr: stderr ?? ''
-          });
-        }
-      );
-    });
+export interface CliProcessDeps {
+  spawn(command: string, args: string[], options: SpawnOptions): ChildProcess;
+  platform: NodeJS.Platform;
+  resolveWindowsSf(): SfLaunch | null;
+  killTree(pid: number): void;
+}
+
+export const NODE_CLI_PROCESS: CliProcessDeps = {
+  spawn: spawnChild,
+  platform: process.platform,
+  resolveWindowsSf: () => resolveWindowsSf(process.env),
+  killTree: (pid) => { execFileCb('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); }
+};
+
+/**
+ * On Windows `sf` is an `sf.cmd` shim that cannot be spawned without a shell,
+ * so every call used to fail as "CLI not found". There we launch the install's
+ * own `node.exe` on its CLI entry instead (see `resolveWindowsSf`). Other
+ * platforms keep the `execFile('sf')` capture unchanged.
+ */
+export function createExecSf(deps: CliProcessDeps = NODE_CLI_PROCESS): (args: string[], opts?: ExecSfOptions) => Promise<ExecResult> {
+  return async (args, opts) => {
+    if (deps.platform !== 'win32') return execSf(args, opts);
+    const launch = deps.resolveWindowsSf();
+    if (!launch) return { code: 127, stdout: '', stderr: 'Salesforce CLI (sf) was not found on PATH.' };
+    return runCli(launch.command, [...launch.args, ...args], { ...opts, env: launch.env }, deps);
+  };
+}
+
+function execSf(args: string[], opts?: ExecSfOptions): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    execFileCb(
+      'sf',
+      args,
+      {
+        timeout: opts?.timeoutMs ?? SF_CLI_TIMEOUT_MS,
+        maxBuffer: MAX_BUFFER,
+        windowsHide: true,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+        ...(opts?.cwd ? { cwd: opts.cwd } : {})
+      },
+      (error, stdout, stderr) => {
+        resolve({
+          code: execCode(error),
+          stdout: stdout ?? '',
+          stderr: stderr ?? ''
+        });
+      }
+    );
+  });
+}
+
+/**
+ * Runs a CLI without a shell, bounded by a timeout, an optional abort signal
+ * and an output cap shared by stdout and stderr. `env` is layered over the
+ * current environment. On Windows a stop kills the whole process tree, so an
+ * abandoned `sf org login web` does not keep holding its callback port.
+ */
+export function runCli(
+  command: string,
+  args: string[],
+  opts: ExecSfOptions & { env?: Record<string, string> } = {},
+  deps: CliProcessDeps = NODE_CLI_PROCESS
+): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let bytes = 0;
+    let settled = false;
+    let child: ChildProcess | undefined;
+    const finish = (code: number) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', stop);
+      resolve({ code, stdout, stderr });
+    };
+    function stop() {
+      if (child?.pid !== undefined && deps.platform === 'win32') deps.killTree(child.pid);
+      else child?.kill('SIGTERM');
+      finish(1);
+    }
+    const timer = setTimeout(stop, opts.timeoutMs ?? SF_CLI_TIMEOUT_MS);
+    if (opts.signal?.aborted) return stop();
+    opts.signal?.addEventListener('abort', stop, { once: true });
+    try {
+      child = deps.spawn(command, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}),
+        ...(opts.cwd ? { cwd: opts.cwd } : {})
+      });
+    } catch (error) {
+      return finish(execCode(error as Error));
+    }
+    const collect = (stream: 'stdout' | 'stderr') => (text: string) => {
+      if (settled) return;
+      bytes += Buffer.byteLength(text);
+      if (bytes > MAX_BUFFER) return stop();
+      if (stream === 'stdout') stdout += text;
+      else stderr += text;
+    };
+    child.stdout?.setEncoding('utf8').on('data', collect('stdout'));
+    child.stderr?.setEncoding('utf8').on('data', collect('stderr'));
+    child.on('error', (error) => finish(execCode(error)));
+    child.on('close', (code) => finish(code ?? 1));
+  });
 }
 
 function execCode(error: Error | null): number {

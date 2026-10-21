@@ -818,9 +818,7 @@ textarea.dd-doc-summary { display: block; }
 
 /* ── Rail ───────────────────────────────────────────────────────────── */
 .dd-rail { display: flex; flex-direction: column; flex: 0 0 320px; width: 320px; min-height: 0; border-left: 1px solid var(--border); background: var(--bg-base); }
-.dd-rail.dd-rail-chat { flex-basis: 420px; width: 420px; }
 .dd-rail-floating .dd-rail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 15; width: min(340px, 100%); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25); }
-.dd-rail-floating .dd-rail.dd-rail-chat { width: min(420px, 100%); }
 .dd-rail-tabs { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 36px; padding: 0 6px; border-bottom: 1px solid var(--border); }
 .dd-rail-tab {
   display: inline-flex;
@@ -894,10 +892,6 @@ textarea.dd-doc-summary { display: block; }
 .dd-history-note { color: var(--text-muted); font-size: 12px; }
 .dd-history-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
 
-.dd-agent-chat-head { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; height: 36px; padding: 0 6px; border-bottom: 1px solid var(--border); }
-.dd-agent-chat-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; }
-.dd-agent-chat-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-.dd-agent-chat-body > * { flex: 1 1 auto; min-height: 0; }
 .dd-thread-list { margin: 0 0 12px; padding: 0; list-style: none; }
 .dd-thread { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; padding-right: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); }
 .dd-thread-open { display: flex; align-items: flex-start; gap: 8px; flex: 1 1 auto; min-width: 0; padding: 8px 10px; border: 0; background: none; text-align: left; cursor: pointer; }

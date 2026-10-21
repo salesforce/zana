@@ -26,6 +26,7 @@ import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useHasPluginNavPanel } from '../plugins/PluginNavPanelHost.js';
 import { isSplitWorkspacePath } from '../lib/split-layout/splitThreadNavigation.js';
+import { PluginPanelHostLayout } from '../views/thread-detail/PluginPanelHostLayout.js';
 
 function generationFor(pluginId: string): number {
   return listNavPanels().find((panel) => panel.pluginId === pluginId)?.generation ?? 0;
@@ -94,7 +95,14 @@ export function ModulePanelHost() {
 
   if (isSplitWorkspacePath(location.pathname) || pluginPanel) return null;
 
-  return <ModulePanelBody mod={mod ?? null} />;
+  if (!mod) return null;
+  return (
+    <div className="module-panel-host">
+      <PluginPanelHostLayout pluginId={mod.id} panelPath={mod.id}>
+        <ModulePanelBody mod={mod} />
+      </PluginPanelHostLayout>
+    </div>
+  );
 }
 
 const hosts = new Map<string, ModuleHost>();
