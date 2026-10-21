@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesktopBrowserRevealRequest } from "@zana-ai/zcc-desktop-contract";
 import { useDesktopBrowserReveal } from "./use-desktop-browser-reveal";
+import { resetDesktopBrowserRevealQueueForTest, startDesktopBrowserRevealQueue } from "./desktop-browser-reveal-queue";
 
 const listeners = vi.hoisted(
   () => new Set<(request: DesktopBrowserRevealRequest) => void>(),
@@ -18,9 +19,13 @@ vi.mock("./desktop-browser", () => ({
   }),
 }));
 
+// main.tsx starts the queue at app init, before any thread view mounts.
+beforeEach(() => startDesktopBrowserRevealQueue());
+
 afterEach(() => {
   cleanup();
   listeners.clear();
+  resetDesktopBrowserRevealQueueForTest();
 });
 
 function reveal(threadId = "thread-a") {
@@ -69,7 +74,7 @@ describe("desktop browser reveal focus", () => {
     expect(activateTab).toHaveBeenCalledExactlyOnceWith("browser-a");
   });
 
-  it("ignores other threads and does not replay background requests on focus", () => {
+  it("ignores other threads and keeps a background reveal until its thread is focused", () => {
     const activateTab = vi.fn();
     const { rerender } = renderHook(
       ({ isFocused }) =>
@@ -82,14 +87,28 @@ describe("desktop browser reveal focus", () => {
       { initialProps: { isFocused: false } },
     );
     reveal();
-    rerender({ isFocused: true });
     reveal("thread-b");
     expect(activateTab).not.toHaveBeenCalled();
-    reveal();
+    rerender({ isFocused: true });
     expect(activateTab).toHaveBeenCalledExactlyOnceWith("browser-a");
+    rerender({ isFocused: false });
+    rerender({ isFocused: true });
+    expect(activateTab).toHaveBeenCalledOnce();
   });
 
-  it("discards a pending reveal when focus leaves before the tab arrives", () => {
+  it("adds a tab revealed before the thread view mounted", () => {
+    const addTab = vi.fn(), activateTab = vi.fn();
+    renderHook(() => useDesktopBrowserReveal({
+      threadId: "thread-a", isFocused: false, browserTabs: [], addTab, activateTab,
+    }));
+    reveal();
+    renderHook(() => useDesktopBrowserReveal({
+      threadId: "thread-a", isFocused: true, browserTabs: [], addTab, activateTab,
+    }));
+    expect(addTab).toHaveBeenCalledExactlyOnceWith({ id: "browser-a", kind: "browser", title: "Browser", url: "" });
+  });
+
+  it("keeps an unfinished reveal for the next focus when focus leaves before the tab arrives", () => {
     const activateTab = vi.fn();
     const { rerender } = renderHook(
       ({ isFocused, browserTabs }) =>
@@ -105,7 +124,8 @@ describe("desktop browser reveal focus", () => {
     );
     reveal();
     rerender({ isFocused: false, browserTabs: [] });
-    rerender({ isFocused: true, browserTabs: [{ id: "browser-a" }] });
     expect(activateTab).not.toHaveBeenCalled();
+    rerender({ isFocused: true, browserTabs: [{ id: "browser-a" }] });
+    expect(activateTab).toHaveBeenCalledExactlyOnceWith("browser-a");
   });
 });

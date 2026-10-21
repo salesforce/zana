@@ -1,6 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DesktopBrowserRevealRequest } from "@zana-ai/zcc-desktop-contract";
-import { getDesktopBrowserApi } from "./desktop-browser";
+import {
+  returnDesktopBrowserReveal,
+  subscribeDesktopBrowserReveals,
+  takeDesktopBrowserReveal,
+} from "./desktop-browser-reveal-queue";
 
 export function useDesktopBrowserReveal({
   threadId,
@@ -18,14 +22,23 @@ export function useDesktopBrowserReveal({
   const [pending, setPending] = useState<DesktopBrowserRevealRequest | null>(
     null,
   );
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
 
+  // Reveals for an unfocused thread wait in the queue and are taken as soon
+  // as this thread's view is focused, so they never take over another view.
   useEffect(() => {
     if (!isFocused) return;
-    const unsubscribe = getDesktopBrowserApi()?.onReveal?.((request) => {
-      if (request.threadId === threadId) setPending(request);
-    });
+    const take = () => {
+      const request = takeDesktopBrowserReveal(threadId);
+      if (request) setPending(request);
+    };
+    const unsubscribe = subscribeDesktopBrowserReveals(take);
+    take();
     return () => {
-      unsubscribe?.();
+      unsubscribe();
+      const unfinished = pendingRef.current;
+      if (unfinished?.threadId === threadId) returnDesktopBrowserReveal(unfinished);
       setPending(null);
     };
   }, [isFocused, threadId]);
@@ -42,10 +55,12 @@ export function useDesktopBrowserReveal({
       });
       // addTab already opens/selects the tab. Consume the request before another
       // render or native close can replay it and recreate the tab.
+      pendingRef.current = null;
       setPending(null);
       return;
     }
     activateTab(pending.tabId);
+    pendingRef.current = null;
     setPending(null);
   }, [isFocused, threadId, pending, browserTabs, activateTab, addTab]);
 }
