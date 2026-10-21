@@ -522,7 +522,8 @@ async function answerReports() {
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', function (chunk) {
     log('stdin', JSON.stringify(String(chunk)));
-    buf += String(chunk);
+    // Terminal-generated mouse and focus reports can precede or split a report; they are not text.
+    buf += String(chunk).replace(/\x1b\[(?:<[0-9;]*[Mm]|[IO])/g, '');
     const m = buf.match(REPORT_RE);
     if (!m || answering) return;
     answering = true;
@@ -538,6 +539,7 @@ async function answerReports() {
         await sleep(500);
       }
       setIdle();
+      answering = false;
     })();
   });
   process.stdin.resume();
@@ -562,6 +564,8 @@ async function proposer() {
   const check = await tryMcp('squad_plan_check', { path: spec.planPath });
   log('plan_check', JSON.stringify(check));
   for (const entry of spec.proposals) {
+    // An entry with waitFor starts only once the spec has created that file in the project folder.
+    if (entry.waitFor) while (!fs.existsSync(path.join(CWD, entry.waitFor))) await sleep(500);
     const proposed = await tryMcp(entry.tool || 'squad_propose', entry.input);
     log('propose[' + entry.label + ']', JSON.stringify(proposed));
     if (entry.tool === 'squad_launch' && proposed.ok && proposed.value && proposed.value.executionId) {
