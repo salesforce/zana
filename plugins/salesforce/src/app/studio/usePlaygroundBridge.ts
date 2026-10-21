@@ -25,6 +25,8 @@ export interface PlaygroundSend {
   setOrg(org: Body<'setOrg'>['org']): void;
   setTheme(theme: 'light' | 'dark'): void;
   saved(body: Body<'saved'>): void;
+  /** The open file changed on disk: the editor reloads it, or offers it as a proposal over unsaved edits. */
+  fileChanged(body: Body<'fileChanged'>): void;
   revealLine(line: number): void;
   /** Ask the editor to persist its current draft (optionally as a new file). */
   flushSave(body?: Body<'flushSave'>): void;
@@ -78,6 +80,7 @@ export function usePlaygroundBridge(activeDraft: MutableRefObject<string>): UseP
       setOrg: org => make('setOrg', { org }),
       setTheme: theme => make('setTheme', { theme }),
       saved: body => make('saved', body),
+      fileChanged: body => make('fileChanged', body),
       revealLine: line => make('revealLine', { line }),
       flushSave: body => make('flushSave', body),
       proposeEdit: body => make('proposeEdit', body),

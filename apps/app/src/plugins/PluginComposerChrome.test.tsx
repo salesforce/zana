@@ -50,6 +50,15 @@ describe('PluginComposerChrome create-plugin action', () => {
     expect(html).toContain('Create plugin');
   });
 
+  it('drops the action when the host composer turns it off', () => {
+    const html = renderToStaticMarkup(
+      <PluginComposerChrome scope={{ kind: 'new-thread', projectId: 'proj-1' }} text="" setText={() => undefined}
+        focus={() => undefined} allowCreatePlugin={false}
+      ><span>composer</span></PluginComposerChrome>
+    );
+    expect(html).not.toContain('composer-create-plugin');
+  });
+
   it('hides the action on an existing thread', () => {
     const html = render({ kind: 'thread', threadId: 't1' });
     expect(html).not.toContain('composer-create-plugin');

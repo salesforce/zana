@@ -8,6 +8,8 @@ const h = vi.hoisted(() => {
   const model = {
     getValue: () => state.value,
     setValue: vi.fn((v: string) => { state.value = v; state.content?.(); }),
+    getFullModelRange: () => ({ full: true }),
+    pushEditOperations: vi.fn((_s: unknown, edits: { text: string }[]) => { state.value = edits[0]!.text; state.content?.(); return null; }),
     getLineContent: (n: number) => state.value.split('\n')[n - 1] ?? '',
     dispose: vi.fn()
   };
@@ -29,6 +31,8 @@ vi.mock('./editor', () => ({ ensureAgentScriptMonaco: () => h.host, applyDiagnos
 vi.mock('./studio-layer', () => ({ StudioLayer: vi.fn(function () { return h.layer; }) }));
 
 import App from './App.js';
+import { StudioLayer } from './studio-layer';
+import { writeAgentDraft } from '../../src/app/agent-script-drafts.js';
 import { ACTION_AGENT } from '../../src/action-fixtures.js';
 
 let post: any;
@@ -111,4 +115,74 @@ it('ctrl-click on a target line opens the matching action', () => {
   expect(sent('openAction')).toHaveLength(0);
   h.state.mouse!({ event: { metaKey: true }, target: { position: { lineNumber: line } } });
   expect(sent("openAction")).toHaveLength(1);
+});
+
+const SHA_A = 'a'.repeat(64);
+const SHA_B = 'b'.repeat(64);
+const SHA_C = 'c'.repeat(64);
+
+it('reloads a clean editor when the file changes on disk, as one undoable edit', () => {
+  render(<App />);
+  send({ type: 'setFile', path: 'a.agent', content: ACTION_AGENT, dialect: 'agentforce', readOnly: false, draftKey: 'k', sha256: SHA_A });
+  // Its own version, another file's change and an unchanged sha are no-ops.
+  send({ type: 'fileChanged', draftKey: 'other', content: 'x', sha256: SHA_B });
+  send({ type: 'fileChanged', draftKey: 'k', content: ACTION_AGENT, sha256: SHA_A });
+  expect(h.model.pushEditOperations).not.toHaveBeenCalled();
+  const next = ACTION_AGENT.replace('\n', '\n# agent edit\n');
+  send({ type: 'fileChanged', draftKey: 'k', content: next, sha256: SHA_B });
+  expect(h.model.pushEditOperations).toHaveBeenCalledWith([], [{ range: { full: true }, text: next }], expect.any(Function));
+  expect(h.state.value).toBe(next);
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: false, baseSha: SHA_B }));
+  expect(sent('snapshot').at(-1)).toEqual(expect.objectContaining({ content: next }));
+  expect(h.layer.setProposal).not.toHaveBeenCalled();
+});
+
+it('keeps unsaved edits and offers the disk version as a proposal; a save conflicts until it is decided', () => {
+  render(<App />);
+  const layerPost = (vi.mocked(StudioLayer).mock.calls.at(-1) as unknown[])[2] as (m: Record<string, unknown>) => void;
+  send({ type: 'setFile', path: 'a.agent', content: ACTION_AGENT, dialect: 'agentforce', readOnly: false, draftKey: 'k', sha256: SHA_A });
+  h.state.value = ACTION_AGENT + '\n# mine';
+  act(() => h.state.content!());
+  const next = ACTION_AGENT + '\n# theirs';
+  send({ type: 'fileChanged', draftKey: 'k', content: next, sha256: SHA_B });
+  expect(h.model.pushEditOperations).not.toHaveBeenCalled();
+  expect(h.state.value).toBe(ACTION_AGENT + '\n# mine');
+  const proposalId = `disk:${'b'.repeat(16)}`;
+  expect(h.layer.setProposal).toHaveBeenCalledWith(expect.objectContaining({ proposalId, content: next, actor: 'File changed on disk' }));
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: true, baseSha: SHA_A }));
+  // The same version is not offered again on the next check.
+  send({ type: 'fileChanged', draftKey: 'k', content: next, sha256: SHA_B });
+  expect(h.layer.setProposal).toHaveBeenCalledTimes(1);
+  // A proposal closed undecided, or another proposal, leaves the edits on the old version.
+  act(() => layerPost({ type: 'proposalResolved', proposalId, note: 'file changed', content: h.state.value }));
+  act(() => layerPost({ type: 'proposalResolved', proposalId: 'agent-1', content: h.state.value }));
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ baseSha: SHA_A }));
+  expect(sent('proposalResolved')).toHaveLength(2);
+  // Rejecting it keeps the edits, now on the new version, so a save goes over it.
+  act(() => layerPost({ type: 'proposalResolved', proposalId, outcome: 'rejected', content: h.state.value }));
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: true, baseSha: SHA_B }));
+  // A disk version that already matches the edits just settles the draft.
+  send({ type: 'fileChanged', draftKey: 'k', content: h.state.value, sha256: SHA_C });
+  expect(h.layer.setProposal).toHaveBeenCalledTimes(1);
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: false, baseSha: SHA_C }));
+});
+
+it('offers the disk version over a stored draft written against an older one', () => {
+  render(<App />);
+  send({ type: 'setFile', path: 'a.agent', content: ACTION_AGENT, dialect: 'agentforce', readOnly: false, draftKey: 'k', sha256: SHA_A });
+  h.state.value = ACTION_AGENT + '\n# mine';
+  act(() => h.state.content!());
+  send({ type: 'setFile', path: null, content: '', dialect: 'agentforce', readOnly: true, draftKey: '' });
+  const next = ACTION_AGENT + '\n# theirs';
+  send({ type: 'setFile', path: 'a.agent', content: next, dialect: 'agentforce', readOnly: false, draftKey: 'k', sha256: SHA_B });
+  expect(h.state.value).toBe(ACTION_AGENT + '\n# mine');
+  expect(h.layer.setProposal).toHaveBeenCalledWith(expect.objectContaining({ content: next }));
+  // Until it is decided, the draft keeps its checksum, so a save cannot overwrite the outside change.
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: true, baseSha: SHA_A }));
+  // A stale draft that already matches the disk opens clean on the new version.
+  h.layer.setProposal.mockClear();
+  writeAgentDraft({ key: 'k', content: next, baseSha: SHA_A, dialect: 'agentforce' });
+  send({ type: 'setFile', path: 'a.agent', content: next, dialect: 'agentforce', readOnly: false, draftKey: 'k', sha256: SHA_C });
+  expect(h.layer.setProposal).not.toHaveBeenCalled();
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: false, baseSha: SHA_C }));
 });

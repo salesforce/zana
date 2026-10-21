@@ -156,6 +156,44 @@ describe('AgentScriptPanel studio layout', () => {
     expect(sent(el).filter((m: any) => m.type === 'flushSave')).toHaveLength(1);
   });
 
+  it('sends the open file to the editor when it changes on disk', async () => {
+    const intervals: Array<{ fn: () => void; ms?: number }> = [];
+    const realInterval = window.setInterval.bind(window);
+    vi.spyOn(window, 'setInterval').mockImplementation(((fn: () => void, ms?: number) => { intervals.push({ fn, ms }); return realInterval(() => undefined, 1_000_000); }) as typeof window.setInterval);
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    const changes = () => sent(el).filter((m: any) => m.type === 'fileChanged');
+    const reads = () => rpc.mock.calls.filter(c => c[1] === 'agentFiles.read').length;
+    // The editor reports the version it holds; the same sha on disk sends nothing.
+    await post(el, { type: 'dirty', dirty: false, draftKey: sent(el).find((m: any) => m.type === 'setFile' && m.path)!.draftKey, baseSha: SHA });
+    await act(async () => { realtime?.({ kind: 'files', projectId: 'proj-1', path: 'force-app/bots/QC.agent' }); });
+    await flush();
+    expect(changes()).toHaveLength(0);
+    // Another file's write, or another project's, does not read this one.
+    const before = reads();
+    await act(async () => { realtime?.({ kind: 'files', projectId: 'proj-1', path: 'force-app/bots/Help.agent' }); realtime?.({ kind: 'files', projectId: 'other', path: 'force-app/bots/QC.agent' }); });
+    await flush();
+    expect(reads()).toBe(before);
+    // An agent's write: the new version goes to the editor under the open draft key.
+    const NEXT = 'b'.repeat(64);
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => method === 'agentFiles.read' ? { ok: true, file: { path: args?.path, content: 'start_agent:\n  z\n', sha256: NEXT } } : baseRpc(p, method, args));
+    await act(async () => { realtime?.({ kind: 'files', projectId: 'proj-1', path: 'force-app/bots/QC.agent' }); });
+    await flush();
+    expect(changes().at(-1)).toEqual(expect.objectContaining({ content: 'start_agent:\n  z\n', sha256: NEXT, draftKey: expect.stringContaining('file:force-app/bots/QC.agent') }));
+    // A native edit is caught by the poll, focus and visibility checks; a failed read just waits for the next one.
+    const poll = intervals.find(row => row.ms === 2500)!;
+    expect(poll).toBeTruthy();
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => { if (method === 'agentFiles.read') throw Error('offline'); return baseRpc(p, method, args); });
+    await act(async () => { poll.fn(); });
+    await flush();
+    expect(changes()).toHaveLength(1);
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => method === 'agentFiles.read' ? { ok: false } : baseRpc(p, method, args));
+    await act(async () => { window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); });
+    await flush();
+    expect(changes()).toHaveLength(1);
+    rpc.mockImplementation(baseRpc);
+  });
+
   it('handles comment and ask-selection requests from the editor', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);

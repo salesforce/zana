@@ -218,9 +218,16 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
   await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-preview.png'));
   await sidePanel.getByTestId('thread-secondary-new-tab').click();
   await expect(sidePanel.getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toBeVisible();
+  // The window has no app shell, yet its Agent composer keeps the desktop toolbar.
   await sidePanel.getByTestId('thread-new-tab-agent').click();
   const panelComposer = sidePanel.getByTestId('panel-agent-tab-composer');
   await expect(panelComposer).toBeVisible();
+  await expect(panelComposer.locator('.thread-command-option-label').first()).toBeHidden();
+  await expect(panelComposer.locator('.thread-command-options-toggle')).toBeHidden();
+  // The page's project is fixed, so there is no project, folder or machine to pick, and no Create plugin.
+  await expect(panelComposer.locator('.thread-command-project')).toHaveCount(0);
+  await expect(panelComposer.locator('.composer-run-setting')).toHaveCount(0);
+  await expect(panelComposer.getByTestId('composer-create-plugin')).toHaveCount(0);
   await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-agent.png'));
   await panelComposer.getByTestId('thread-command-input').fill('Help me review this agent before previewing it.');
   await expect(panelComposer.getByTestId('thread-command-send')).toBeEnabled();

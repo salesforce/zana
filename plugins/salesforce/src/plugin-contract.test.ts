@@ -10,6 +10,7 @@ import plugin from '../server.ts';
 import app from '../app.tsx';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import { CONSTITUTION_INSTRUCTIONS } from '../lib/constitution.js';
+import { STUDIO_CHANGED_CHANNEL } from '../lib/studio-contract.js';
 import type { SalesforceSdk } from '../lib/sdk-contract.js';
 import type { SalesforceDeps, SalesforceRequest } from '../lib/types.js';
 
@@ -76,6 +77,7 @@ describe('salesforce plugin contract', () => {
     const create = vi.fn(); deps.createFile = create;
     await createSalesforcePlugin(zcc, deps);
     await expect(harness.callRpc('agentFiles.create', { projectId: 'p', path: 'Copy.agent', content: 'draft', projectRoot: '/untrusted' })).resolves.toMatchObject({ ok: true, file: { path: 'Copy.agent' } });
+    expect(harness.published).toContainEqual({ event: STUDIO_CHANGED_CHANNEL, payload: { projectId: 'p', path: 'Copy.agent', kind: 'files' } });
     expect(create).toHaveBeenCalledWith('/project/Copy.agent', 'draft');
     create.mockClear();
     for (const args of [
