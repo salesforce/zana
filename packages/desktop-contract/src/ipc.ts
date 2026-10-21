@@ -266,6 +266,8 @@ export const IPC = {
     pick: 'executionSources:pick'
   },
   openers: {
+    fileLocation: 'openers:fileLocation',
+    revealFile: 'openers:revealFile',
     openIn: 'openers:openIn'
   },
   clipboard: {

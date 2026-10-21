@@ -774,6 +774,8 @@ const api: CcApi = {
     pick: (projectId) => ipcRenderer.invoke(IPC.executionSources.pick, projectId)
   },
   openers: {
+    fileLocation: (input) => ipcRenderer.invoke(IPC.openers.fileLocation, input),
+    revealFile: (input) => ipcRenderer.invoke(IPC.openers.revealFile, input),
     openIn: (target, path, options) => ipcRenderer.invoke(IPC.openers.openIn, target, path, options)
   },
   clipboard: {
