@@ -452,6 +452,17 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await commentRow.getByRole('button', { name: 'Delete', exact: true, includeHidden: true }).click();
   await commentRow.getByRole('button', { name: 'Confirm delete', exact: true, includeHidden: true }).click();
   await expect(frame.locator('.sf-comment-glyph')).toHaveCount(0);
+  // Opening a comment glyph earlier auto-opened the Comments host tool, so the side panel now shows
+  // a Comments tab and "Show side panel" would reopen it (it restores the last host tool). Switch
+  // the panel back to Preview and close Comments so the rest of the flow starts from its baseline:
+  // Preview as the last host tool, panel hidden.
+  await expect(activeSidePanelTab(page)).toHaveText('Comments');
+  await openTool(studio, 'Preview');
+  await sidePanel(page).getByRole('button', { name: 'Close Comments', exact: true }).click();
+  await expect(sidePanel(page).locator('.thread-secondary-tab-label', { hasText: 'Comments' })).toHaveCount(0);
+  await expect(activeSidePanelTab(page)).toHaveText('Preview');
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  await expect(sidePanel(page)).toBeHidden();
   // "Show side panel" opens the host side panel beside the tab; its New Tab page lists only Studio's tools.
   await studioPanel(page).getByRole('button', { name: 'Show side panel', exact: true }).first().click();
   await expect(sidePanel(page)).toBeVisible();
