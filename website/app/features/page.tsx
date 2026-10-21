@@ -44,7 +44,7 @@ export default function FeaturesPage() {
             </p>
             <div className="zcc-actions">
               <Link className="zcc-btn zcc-btn-primary" href="/download/">
-                Download for macOS
+                Download Zana
               </Link>
               <Link className="zcc-btn zcc-btn-ghost" href="/docs/">
                 Read the docs
