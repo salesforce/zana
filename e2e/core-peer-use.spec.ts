@@ -66,8 +66,11 @@ async function expectUsed(apps: PeerApp[], used: boolean): Promise<void> {
     const computer = window.getByTestId('peer-computer');
     await expect(computer).toHaveCount(1, { timeout: 60_000 });
     if (used) {
-      await expect(computer).toContainText(`Used by: ${PROBE_NAME}`, { timeout: 60_000 });
+      // The panel now shows a "Used by" heading with each plugin name in its own use row, rather than
+      // a single "Used by: <name>" line.
+      await expect(computer).toContainText('Used by', { timeout: 60_000 });
       await expect(computer.getByTestId('peer-link-use')).toHaveCount(1);
+      await expect(computer.getByTestId('peer-link-use')).toContainText(PROBE_NAME, { timeout: 60_000 });
     } else {
       await expect(computer).toContainText('No plugin uses this computer.', { timeout: 60_000 });
       await expect(computer.getByTestId('peer-link-use')).toHaveCount(0);
@@ -88,22 +91,28 @@ test('core use: request and approve on both computers, traffic needs confirmatio
     await useOnBothSides(a, b);
     await expectUsed([a, b], true);
 
-    // Real traffic through the use, then Remove asks before cutting it off; Cancel keeps everything.
+    // Real traffic through the use, then "Stop syncing" that use asks before cutting it off while a
+    // transfer is live; "Keep syncing" cancels and keeps everything. (The active-transfer gate now lives
+    // on the per-plugin use row, not on the computer-level Remove.)
     const peerOfA = await connectionTo(a);
     await allowTraffic(a, b);
     await expect.poll(() => probeRpc<{ text: string }>(a, 'echo', { computerId: peerOfA.computerId, text: 'hello' }).then(r => r.text, () => null), { timeout: 60_000 }).toBe('hello');
     const { window } = await reopenCorePeers(a);
-    const entry = window.getByTestId('peer-link');
-    await entry.getByRole('button', { name: 'Remove link', exact: true }).click();
+    await window.getByTestId('peer-link-use').getByRole('button', { name: `Stop syncing ${PROBE_NAME}`, exact: true }).click();
     const active = window.getByRole('alertdialog', { name: /^Active transfer with / });
     await expect(active).toContainText(`${PROBE_NAME} is transferring with`);
     await expect(active).toContainText('Stop anyway?');
-    await active.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await active.getByRole('button', { name: 'Keep syncing', exact: true }).click();
     await expect(active).toHaveCount(0);
     await expectUsed([a, b], true);
 
-    // Stop using ends the plugin's use only; the link stays and reads as zero-use.
-    await probeRpc(a, 'stopUsing', { computerId: peerOfA.computerId });
+    // Confirming "Stop anyway" ends the plugin's use only; the link itself stays and reads as zero-use.
+    // (The active-transfer gate is the confirmation, so stopping a live use must go through this dialog
+    // rather than a direct stopUsing call.)
+    await window.getByTestId('peer-link-use').getByRole('button', { name: `Stop syncing ${PROBE_NAME}`, exact: true }).click();
+    const stopping = window.getByRole('alertdialog', { name: /^Active transfer with / });
+    await stopping.getByRole('button', { name: 'Stop anyway', exact: true }).click();
+    await expect(stopping).toHaveCount(0);
     await expect.poll(async () => (await connectionTo(a)).usedByThisPlugin, { timeout: 60_000 }).toBe(false);
     await expectUsed([a], false);
     await expect(a.window.getByTestId('peer-link')).toHaveCount(1);
@@ -125,11 +134,16 @@ test('core use: Remove with active traffic is confirmed, then runs the plugin cl
     await expect.poll(() => probeRpc<{ text: string }>(b, 'echo', { computerId: target.computerId, text: 'ping' }).then(r => r.text, () => null), { timeout: 60_000 }).toBe('ping');
 
     const { window } = await reopenCorePeers(b);
-    await window.getByTestId('peer-link').getByRole('button', { name: 'Remove link', exact: true }).click();
+    // Active traffic is confirmed on the per-use "Stop syncing" gate; Stop anyway ends the use. The link
+    // itself is then dropped from the computer-level Remove, which runs the plugin cleanup.
+    await window.getByTestId('peer-link-use').getByRole('button', { name: `Stop syncing ${PROBE_NAME}`, exact: true }).click();
     const active = window.getByRole('alertdialog', { name: /^Active transfer with / });
     await expect(active).toContainText(`${PROBE_NAME} is transferring with`);
     await active.getByRole('button', { name: 'Stop anyway', exact: true }).click();
-    await window.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Confirm remove', exact: true }).click();
+    await expect(active).toHaveCount(0);
+
+    await window.getByTestId('peer-computer').getByRole('button', { name: 'Remove computer', exact: true }).click();
+    await window.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Remove', exact: true }).click();
 
     await expect(window.getByTestId('peer-link')).toHaveCount(0, { timeout: 30_000 });
     await expect(window.locator('.peers-error')).toHaveCount(0);
@@ -150,11 +164,11 @@ test('core use: Remove with an unreachable peer is immediate and never asks abou
     await peers.close(b);
 
     const { window } = await reopenCorePeers(a);
-    await window.getByTestId('peer-link').getByRole('button', { name: 'Remove link', exact: true }).click();
+    await window.getByTestId('peer-computer').getByRole('button', { name: 'Remove computer', exact: true }).click();
     await expect(window.getByRole('alertdialog', { name: /^Active transfer with / })).toHaveCount(0);
     const confirm = window.getByRole('alertdialog', { name: 'Confirm removing computer link' });
     await expect(confirm).toContainText(`Plugins using it: ${PROBE_NAME}`);
-    await confirm.getByRole('button', { name: 'Confirm remove', exact: true }).click();
+    await confirm.getByRole('button', { name: 'Remove', exact: true }).click();
 
     // Immediate: no wait on the unreachable peer, no hook-failure dialog, no error banner.
     await expect(window.getByTestId('peer-link')).toHaveCount(0, { timeout: 15_000 });

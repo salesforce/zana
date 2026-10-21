@@ -66,14 +66,18 @@ const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 export async function pairComputers(inviter: PeerApp, redeemer: PeerApp, rows: { inviter: number; redeemer: number } = { inviter: 1, redeemer: 1 }): Promise<void> {
   const { window } = await openCorePeers(inviter);
   await window.getByRole('button', { name: 'Add computer', exact: true }).click();
-  const token = window.getByTestId('add-computer').getByRole('textbox', { name: 'Invitation', exact: true });
+  const add = window.getByTestId('add-computer');
+  const token = add.getByRole('textbox', { name: 'Invitation', exact: true });
   await expect(token).toHaveValue(/^zccinv1\./, { timeout: 60_000 });
   const invitation = await token.inputValue();
+  // The join panel now takes both the invitation and the spoken approval code the inviter shows.
+  const approvalCode = (await add.getByTestId('approval-code').locator('strong').innerText()).trim();
 
   const joiner = (await openCorePeers(redeemer)).window;
   await joiner.getByRole('button', { name: 'Join computer', exact: true }).click();
   const join = joiner.getByTestId('join-computer');
-  await join.getByRole('textbox').fill(invitation);
+  await join.getByRole('textbox', { name: 'Invitation', exact: true }).fill(invitation);
+  await join.getByRole('textbox', { name: 'Approval code', exact: true }).fill(approvalCode);
   await join.getByRole('button', { name: 'Join', exact: true }).click();
   const shown = join.getByTestId('pairing-code');
   await expect(shown).toHaveText(CODE, { timeout: 90_000 });
