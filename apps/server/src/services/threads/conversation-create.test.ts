@@ -8,6 +8,7 @@ import {
   getThreadProvider,
   listThreadProviders,
   registerThreadProvider,
+  holdThreadProviderStartup,
   trackThreadProviderStartup,
   waitForThreadProvider
 } from './thread-provider-catalog.js';
@@ -287,6 +288,18 @@ describe('waitForThreadProvider', () => {
     settle().then(startup.resolve, startup.reject);
     await waiting;
     expect(getThreadProvider('claude-code')).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('holds waits from before plugin startup begins until released', async () => {
+    vi.useFakeTimers();
+    const release = holdThreadProviderStartup();
+    let resolved = false;
+    const waiting = waitForThreadProvider('claude-code').then(() => { resolved = true; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(resolved).toBe(false);
+    release();
+    await waiting;
     expect(vi.getTimerCount()).toBe(0);
   });
 

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getThreadProvider, registerThreadProvider, trackThreadProviderStartup } from './thread-provider-catalog.js';
+import {
+  getThreadProvider,
+  registerThreadProvider,
+  THREAD_PROVIDER_STARTUP_WAIT_MS,
+  trackThreadProviderStartup
+} from './thread-provider-catalog.js';
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
@@ -2347,13 +2352,16 @@ describe('resuming open sessions after a host restart', () => {
     trackThreadProviderStartup(new Promise(() => {}));
     try {
       const rpc = vi.fn(async () => ({ threadId: idle.id, resumed: true }));
+      vi.useFakeTimers();
       const pass = resumeOpenConversationSessionsAfterHostRestart(ctx(rpc, { threadSessionReleaseMinutes: 0 }), 'host-1');
-      await new Promise(resolve => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(THREAD_PROVIDER_STARTUP_WAIT_MS - 1);
       expect(rpc).not.toHaveBeenCalled();
+      vi.useRealTimers();
       providerHandles.push(registerThreadProvider('test', declaration));
       await expect(pass).resolves.toBe(1);
       expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'thread.resume', threadId: idle.id }) }));
     } finally {
+      vi.useRealTimers();
       trackThreadProviderStartup(Promise.resolve());
     }
   });
