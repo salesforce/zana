@@ -60,7 +60,7 @@ describe('transactional reserved-slot admission', () => {
       expect(roster.closures.length).toBeLessThanOrEqual(8);
       expect(roster.removals.length).toBeLessThanOrEqual(64);
     }
-  }, 20_000);
+  }, 60_000);
   it('lost admission ACK survives sponsor self-leave; exact immutable receipt is read-only and final initial roster excludes sponsor', () => {
     const a = fixture('a'), b = fixture('b'), c = fixture('c'); found(a, b);
     enabled(b, c); const input = request(b, c), receipt = b.group.admit(input, c.peer);

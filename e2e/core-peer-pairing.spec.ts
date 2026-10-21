@@ -17,22 +17,24 @@ function dumpLogs(app: PeerApp): void {
 const WRONG_CODE = 'ZZZZ-ZZZZ';
 const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 
-/** Core Add computer: returns the invitation token shown on `inviter`. */
-async function addComputer(inviter: PeerApp): Promise<string> {
+/** Core Add computer: returns the invitation token and the spoken approval code shown on `inviter`. */
+async function addComputer(inviter: PeerApp): Promise<{ token: string; approvalCode: string }> {
   const { window } = await openCorePeers(inviter);
   await window.getByRole('button', { name: 'Add computer', exact: true }).click();
   const panel = window.getByTestId('add-computer');
   const token = panel.getByRole('textbox', { name: 'Invitation', exact: true });
   await expect(token).toHaveValue(/^zccinv1\./, { timeout: 60_000 });
-  return token.inputValue();
+  const approvalCode = (await panel.getByTestId('approval-code').locator('strong').innerText()).trim();
+  return { token: await token.inputValue(), approvalCode };
 }
 
-/** Core Join computer: returns the pairing code the redeemer shows. */
-async function joinComputer(redeemer: PeerApp, token: string): Promise<string> {
+/** Core Join computer: types the invitation and spoken approval code, returns the pairing code the redeemer shows. */
+async function joinComputer(redeemer: PeerApp, invitation: { token: string; approvalCode: string }): Promise<string> {
   const { window } = await openCorePeers(redeemer);
   await window.getByRole('button', { name: 'Join computer', exact: true }).click();
   const panel = window.getByTestId('join-computer');
-  await panel.getByRole('textbox').fill(token);
+  await panel.getByRole('textbox', { name: 'Invitation', exact: true }).fill(invitation.token);
+  await panel.getByRole('textbox', { name: 'Approval code', exact: true }).fill(invitation.approvalCode);
   await panel.getByRole('button', { name: 'Join', exact: true }).click();
   const code = panel.getByTestId('pairing-code');
   await expect(code).toHaveText(CODE, { timeout: 90_000 });
@@ -47,8 +49,8 @@ test('core pairing: invite, join, typed code, approve and a zero-use link on bot
     const a = await peers.launch('app-a', { initialConfig: corePeerConfig, env: { ZCC_E2E_PEER_SSH_ENDPOINT: sshd.endpoint() } });
     const b = await peers.launch('app-b', { initialConfig: corePeerConfig });
 
-    const token = await addComputer(a);
-    const code = await joinComputer(b, token);
+    const invitation = await addComputer(a);
+    const code = await joinComputer(b, invitation);
 
     const approve = a.window.getByTestId('peer-approve');
     await expect(approve).toBeVisible({ timeout: 90_000 });

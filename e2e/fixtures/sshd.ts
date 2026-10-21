@@ -81,7 +81,7 @@ export async function startPrivateSshd(authorizedKeysFiles: string[]): Promise<P
   await writeFile(join(dir, 'sshd_config'), [
     `Port ${port}`, 'ListenAddress 127.0.0.1', `HostKey ${join(dir, 'host_key')}`, `AuthorizedKeysFile ${authorizedKeysFiles.join(' ')}`,
     'PasswordAuthentication no', 'KbdInteractiveAuthentication no', 'UsePAM no', `PidFile ${join(dir, 'sshd.pid')}`,
-    'AllowTcpForwarding yes', 'GatewayPorts no', 'AllowAgentForwarding no', 'X11Forwarding no', 'PermitTunnel no', 'StrictModes no', `AllowUsers ${user}`, ''
+    'AllowTcpForwarding yes', 'AllowStreamLocalForwarding no', 'GatewayPorts no', 'AllowAgentForwarding no', 'X11Forwarding no', 'PermitTunnel no', 'StrictModes no', `AllowUsers ${user}`, ''
   ].join('\n'), { mode: 0o600 });
   const check = spawnSync(SSHD, ['-t', '-f', join(dir, 'sshd_config')], { encoding: 'utf8' });
   if (check.status !== 0) throw new Error(`sshd config rejected: ${check.stderr}`);

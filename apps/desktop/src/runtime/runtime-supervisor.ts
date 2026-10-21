@@ -461,7 +461,10 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
         console.warn(`[peers] protected peer key unavailable: ${peerKeyReason}; peer links and invitations are off`);
         return null;
       })
-      : null;
+      // Isolated E2E substitutes a fixture-provided key for the Keychain, via the same boot-key path.
+      : process.env.ZCC_E2E_HOME && /^[0-9a-f]{64}$/.test(process.env.ZCC_E2E_PEER_BOOT_KEY_HEX ?? '')
+         ? Buffer.from(process.env.ZCC_E2E_PEER_BOOT_KEY_HEX!, 'hex')
+         : null;
     const peerEnv = { ...options.extraEnv,
       [PEER_KEY_REASON_ENV]: peerKeyReason };
     try {

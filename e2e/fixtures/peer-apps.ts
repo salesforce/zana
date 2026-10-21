@@ -71,13 +71,16 @@ export function createPeerApps(home: string) {
         const now = Date.now; Date.now = () => now() + offset; }
       `, { mode: 0o600 });
       // The peer storage key is fixed per HOME so sealed peer state stays readable across a relaunch.
+      // E2E skips the real Keychain (ZCC_E2E_HOME); the supervisor reads this hex key from the env and
+      // feeds it through the same peerBootKey 'start'-message path production uses, so invitations work.
       writeFileSync(join(launcher, 'main.mjs'), `import { utilityProcess } from 'electron';
-        const key = ${JSON.stringify(randomBytes(32).toString('base64url'))};
+        // Main-process env so the runtime supervisor can read it; E2E-only, gated by ZCC_E2E_HOME there.
+        process.env.ZCC_E2E_PEER_BOOT_KEY_HEX = ${JSON.stringify(randomBytes(32).toString('hex'))};
         const clock = ${JSON.stringify(join(launcher, 'clock.cjs'))};
         const fork = utilityProcess.fork.bind(utilityProcess);
         utilityProcess.fork = (entry, args, options) => {
           if (entry.endsWith('server-runtime.js')) options = { ...options, execArgv: [...(options?.execArgv ?? []), '--require', clock],
-            env: { ...options?.env, ZCC_PEER_STORAGE_BOOT_KEY: key, NODE_OPTIONS: [options?.env?.NODE_OPTIONS, '--require', clock].filter(Boolean).join(' ') } };
+            env: { ...options?.env, NODE_OPTIONS: [options?.env?.NODE_OPTIONS, '--require', clock].filter(Boolean).join(' ') } };
           return fork(entry, args, options);
         };
         await import(${JSON.stringify(pathToFileURL(join(root!, 'out/main/index.js')).href)});
